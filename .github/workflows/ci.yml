@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run lint
+        run: ruff check src/
+
+      - name: Run test suite
+        run: pytest -q
+
+      - name: Check shipped modules compile and import
+        run: |
+          python -m compileall -q src/aspose_pdf
+          python -c "import aspose_pdf.annotations.pdf3d, aspose_pdf.svg, aspose_pdf.xmp"
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check distribution metadata
+        run: python -m twine check dist/*

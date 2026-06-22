@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aspose-pdf-foss-for-python"
+description = "Open-source Python library for PDF parsing, manipulation, validation, and extraction."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dynamic = ["version"]
+authors = [
+  { name = "Aspose Pty Ltd" },
+]
+keywords = ["pdf", "document", "text-extraction", "merge", "watermark"]
+dependencies = [
+  "cryptography>=42",
+  "asn1crypto>=1.5",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Text Processing",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/aspose-pdf/aspose-pdf-foss-for-python"
+Repository = "https://github.com/aspose-pdf/aspose-pdf-foss-for-python"
+Issues = "https://github.com/aspose-pdf/aspose-pdf-foss-for-python/issues"
+Changelog = "https://github.com/aspose-pdf/aspose-pdf-foss-for-python/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+images = [
+  "Pillow>=10",
+]
+woff2 = [
+  "Brotli>=1.0",
+]
+dev = [
+  "build>=1.2",
+  "pytest>=8",
+  "ruff>=0.6",
+  "setuptools>=77",
+  "twine>=5",
+  "wheel",
+  "Brotli>=1.0",
+  "fonttools>=4.40",
+  "Pillow>=10",
+]
+
+[tool.setuptools]
+include-package-data = true
+package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "aspose_pdf._version.__release_version__" }
+
+[tool.setuptools.package-data]
+aspose_pdf = ["py.typed"]
+"aspose_pdf.engine.data" = [
+  "fonts/*.ttf.zlib",
+  "fonts/LICENSE-OFL.txt",
+  "fonts/README.md",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["aspose_pdf", "aspose_pdf.*"]
+exclude = ["tests*", "build*", "dist*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"

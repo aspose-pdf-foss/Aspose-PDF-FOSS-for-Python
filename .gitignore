@@ -1,0 +1,16 @@
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+tests/output/
+tests/temp/
+tests/test_output/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example

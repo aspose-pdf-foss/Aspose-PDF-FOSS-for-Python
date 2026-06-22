@@ -1,0 +1,63 @@
+name: Bug report
+description: Report incorrect or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security vulnerabilities here. Report them
+        privately through [GitHub Security Advisories](https://github.com/aspose-pdf-foss/Aspose-PDF-FOSS-for-Python/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: Output of `python -c "import aspose_pdf; print(aspose_pdf.__version__)"`
+      placeholder: 0.1.0a0
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04, Windows 11, macOS 15"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug, plus the expected vs. actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: |
+        Provide a short, self-contained code snippet that reproduces the issue.
+        Upload any required sample files in the field below.
+      render: python
+    validations:
+      required: true
+  - type: upload
+    id: sample-files
+    attributes:
+      label: Sample files
+      description: |
+        Upload a minimal PDF or other files needed to reproduce the issue.
+        Only include files that can be shared publicly.
+    validations:
+      required: false
+      accept: ".pdf,.zip,.json,.txt"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Traceback / logs
+      render: shell
