@@ -193,7 +193,8 @@ shared publicly whenever possible.
 ## Security
 
 PDF files are untrusted binary input. If you discover a security issue, please
-contact the project maintainers privately instead of opening a public issue.
+follow the [security policy](SECURITY.md) and use GitHub private vulnerability
+reporting instead of opening a public issue.
 
 ## License
 
