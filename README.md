@@ -193,9 +193,7 @@ shared publicly whenever possible.
 ## Security
 
 PDF files are untrusted binary input. If you discover a security issue, please
-report it privately through
-[GitHub Security Advisories](https://github.com/aspose-pdf-foss/Aspose-PDF-FOSS-for-Python/security/advisories/new)
-instead of opening a public issue.
+contact the project maintainers privately instead of opening a public issue.
 
 ## License
 
