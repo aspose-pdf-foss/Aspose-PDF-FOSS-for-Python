@@ -776,6 +776,86 @@ def _is_standard14_base_font_name(base: Optional[str]) -> bool:
     return key in standard
 
 
+def _resource_signature(
+    pdf: "SimplePdf", obj: Any, active: Optional[Set[Tuple[str, int]]] = None
+) -> Any:
+    """Return a stable, hashable representation of a COS resource."""
+    if active is None:
+        active = set()
+
+    if isinstance(obj, PdfIndirectReference):
+        marker = ("ref", obj.object_number)
+        if marker in active:
+            return ("cycle", marker)
+        active.add(marker)
+        try:
+            return _resource_signature(pdf, pdf._resolve(obj), active)
+        finally:
+            active.remove(marker)
+
+    if isinstance(obj, PdfStream):
+        marker = ("obj", id(obj))
+        if marker in active:
+            return ("cycle", marker)
+        active.add(marker)
+        try:
+            mapping = tuple(
+                sorted(
+                    (
+                        key.name,
+                        _resource_signature(pdf, value, active),
+                    )
+                    for key, value in obj.mapping.items()
+                    if key != PdfName("Length")
+                )
+            )
+            return ("stream", mapping, bytes(obj.content))
+        finally:
+            active.remove(marker)
+
+    if isinstance(obj, PdfDictionary):
+        marker = ("obj", id(obj))
+        if marker in active:
+            return ("cycle", marker)
+        active.add(marker)
+        try:
+            return (
+                "dict",
+                tuple(
+                    sorted(
+                        (
+                            key.name,
+                            _resource_signature(pdf, value, active),
+                        )
+                        for key, value in obj.mapping.items()
+                    )
+                ),
+            )
+        finally:
+            active.remove(marker)
+
+    if isinstance(obj, PdfArray):
+        return (
+            "array",
+            tuple(_resource_signature(pdf, item, active) for item in obj.items),
+        )
+    if isinstance(obj, PdfName):
+        return ("name", obj.name)
+    if isinstance(obj, PdfString):
+        return ("string", bytes(obj.value))
+    if isinstance(obj, PdfNumber):
+        return ("number", obj.value)
+    if isinstance(obj, PdfBoolean):
+        return ("boolean", obj.value)
+    if obj is None:
+        return ("null",)
+    if isinstance(obj, (bytes, bytearray)):
+        return ("bytes", bytes(obj))
+    if isinstance(obj, (str, int, float, bool)):
+        return (type(obj).__name__, obj)
+    return (type(obj).__name__, repr(obj))
+
+
 # ---------------------------------------------------------------------------
 # SimplePdf - main document class
 # ---------------------------------------------------------------------------
@@ -1561,6 +1641,7 @@ class SimplePdf:
         # Track used resource names and hashes for deduplication
         all_res_names = set()
         res_data_to_name = {}  # hash -> name
+        font_signature_to_name = {}
 
         for pdf_idx, pdf in enumerate(pdfs):
             if not isinstance(pdf, SimplePdf):
@@ -1609,10 +1690,13 @@ class SimplePdf:
 
             # Process Fonts
             for old_name, font_obj in pdf.fonts.items():
-                # For fonts, we don't easily have data hash, so we use name/idx
-                new_name = get_safe_name(old_name)
+                signature = _resource_signature(pdf, font_obj)
+                new_name = font_signature_to_name.get(signature)
+                if new_name is None:
+                    new_name = get_safe_name(old_name)
+                    font_signature_to_name[signature] = new_name
+                    merged.fonts[new_name] = font_obj
                 name_map[old_name] = new_name
-                merged.fonts[new_name] = font_obj
 
             # Process ExtGStates
             for old_name, gs_obj in pdf.extgstates.items():
