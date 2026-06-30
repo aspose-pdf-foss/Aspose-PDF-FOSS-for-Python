@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
-from .text_edit import _ALL_SHOW_OPS, _NEUTRAL_OPS, _decode_operand, _find_matches, _lex
+from .text_edit import _NEUTRAL_OPS, _decode_operand, _find_matches, _lex
 
 Matrix = Tuple[float, float, float, float, float, float]
 Point = Tuple[float, float]

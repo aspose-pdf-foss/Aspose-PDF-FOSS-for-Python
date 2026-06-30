@@ -43,16 +43,24 @@ def _build_ttf(*, family="WoffTwo Sans", hinted=False, overlap=False) -> bytes:
     glyphs[".notdef"] = pen.glyph()
 
     pen = TTGlyphPen(None)
-    pen.moveTo((100, 0)); pen.lineTo((300, 0)); pen.lineTo((200, 400)); pen.closePath()
+    pen.moveTo((100, 0))
+    pen.lineTo((300, 0))
+    pen.lineTo((200, 400))
+    pen.closePath()
     glyphs["A"] = pen.glyph()
 
     pen = TTGlyphPen(None)  # off-curve points
-    pen.moveTo((50, 50)); pen.qCurveTo((200, 300), (350, 50)); pen.closePath()
+    pen.moveTo((50, 50))
+    pen.qCurveTo((200, 300), (350, 50))
+    pen.closePath()
     glyphs["B"] = pen.glyph()
 
     pen = TTGlyphPen(None)  # large coordinates -> multi-byte triplets
-    pen.moveTo((0, 0)); pen.lineTo((5000, 0)); pen.lineTo((5000, 9000))
-    pen.lineTo((0, 9000)); pen.closePath()
+    pen.moveTo((0, 0))
+    pen.lineTo((5000, 0))
+    pen.lineTo((5000, 9000))
+    pen.lineTo((0, 9000))
+    pen.closePath()
     glyphs["D"] = pen.glyph()
 
     pen = TTGlyphPen(glyphs)  # composite: translated + scaled components
