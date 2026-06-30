@@ -3255,9 +3255,10 @@ class SimplePdf:
         """Replace existing text in simple page-content text-showing operands.
 
         This edits literal and hex string operands used by ``Tj``, ``'``, ``"``
-        and individual string elements inside ``TJ`` arrays. It does not perform
-        layout reflow or rewrite phrases split across multiple ``TJ`` elements.
-        Returns the number of replacements made.
+        and individual string elements inside ``TJ`` arrays. A phrase split
+        across several ``TJ`` elements or across consecutive show operators (e.g.
+        two adjacent ``Tj``) is matched and rewritten across the boundary; it
+        does not perform layout reflow. Returns the number of replacements made.
         """
         self._ensure_not_disposed()
         if not isinstance(search, str):

@@ -16,6 +16,25 @@ from aspose_pdf.exceptions import PdfValidationException
 _WHITESPACE = b" \t\n\r\x0c"
 _DELIMITERS = b"()<>[]{}/%"
 _TEXT_SHOW_OPS = {"Tj", "'", '"'}
+_ALL_SHOW_OPS = _TEXT_SHOW_OPS | {"TJ"}
+_LINE_SHOW_OPS = {"'", '"'}
+
+# Operators that may appear between two text-showing operators without breaking
+# the logical text run: they change neither the font, the spacing/scale, nor the
+# pen position. A run interrupted by anything else (positioning, font, CTM or
+# graphics-state save/restore) starts a fresh run.
+_NEUTRAL_OPS = frozenset(
+    {
+        # colour selection
+        "g", "G", "rg", "RG", "k", "K", "cs", "CS", "sc", "scn", "SC", "SCN",
+        # non-text graphics state (no effect on glyph metrics or pen position)
+        "gs", "ri", "i", "j", "J", "M", "d", "w", "Tr",
+        # marked content (positionally neutral; common in tagged PDFs)
+        "BMC", "BDC", "EMC", "DP", "MP",
+        # dict delimiters of a BDC/DP property list
+        "<<", ">>",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -39,34 +58,24 @@ def replace_text_in_content(
 
     ``max_count=0`` means unlimited. Replacement is attempted for literal and
     hex string operands used by ``Tj``, ``'``, ``"`` and inside ``TJ`` arrays,
-    where the string elements are matched as one logical string so a phrase
-    split across several elements (common with kerning) is rewritten across the
-    boundary: the replacement is placed in the first matched element and the
-    remaining matched characters are removed from the others.
+    where the string elements are matched as one logical string. Consecutive
+    text-showing operators (e.g. two adjacent ``Tj``, or a ``Tj`` followed by a
+    ``TJ``) separated only by positionally-neutral operators are likewise joined
+    into one logical run, so a phrase split across several show operators —
+    common with kerning or per-word painting — is rewritten across the boundary:
+    the replacement is placed in the first matched element and the remaining
+    matched characters are removed from the others. A line-moving operator
+    (``'``/``"``) or any positioning, font or CTM change starts a new run.
     """
     _validate_edit_args(search, max_count)
     tokens = _lex(content)
+    groups = _group_show_runs(tokens)
     replacements: list[tuple[int, int, bytes]] = []
     total = 0
-    in_text = False
 
-    for idx, token in enumerate(tokens):
+    for segs in groups:
         if max_count and total >= max_count:
             break
-        if token.kind != "word":
-            continue
-        if token.value == "BT":
-            in_text = True
-            continue
-        if token.value == "ET":
-            in_text = False
-            continue
-        if not in_text:
-            continue
-
-        segs = _show_operator_strings(tokens, idx, token.value)
-        if not segs:
-            continue
         remaining = 0 if max_count == 0 else max(max_count - total, 0)
         edits, count = _edit_string_group(
             segs,
@@ -82,6 +91,69 @@ def replace_text_in_content(
     if not replacements:
         return content, 0
     return _apply_replacements(content, replacements), total
+
+
+def _is_number_word(value: str) -> bool:
+    try:
+        float(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
+    """Group consecutive text-showing operators into logical-string runs.
+
+    Inside a ``BT``/``ET`` block a run is a maximal sequence of show operators
+    separated only by neutral operators (colour or minor graphics state that
+    changes neither the font, spacing/scale nor pen position). The string
+    operands of every show operator in the run are concatenated, so a phrase
+    split across several operators is matched as one string. A line-moving show
+    operator (``'``/``"``) or any positioning/font/CTM/state operator starts a
+    new run. Each returned list holds the run's string-operand tokens in order.
+    """
+    groups: list[list[_Token]] = []
+    current: list[_Token] = []
+    in_text = False
+    broke = True  # a run boundary currently separates us from ``current``
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            groups.append(current)
+            current = []
+
+    for idx, token in enumerate(tokens):
+        if token.kind != "word":
+            continue  # operands belong to the operator that follows them
+        value = token.value
+        if value == "BT":
+            flush()
+            in_text = True
+            broke = True
+            continue
+        if value == "ET":
+            flush()
+            in_text = False
+            broke = True
+            continue
+        if not in_text:
+            continue
+        if value in _ALL_SHOW_OPS:
+            segs = _show_operator_strings(tokens, idx, value)
+            if value in _LINE_SHOW_OPS or broke:
+                flush()
+                current = list(segs)
+            else:
+                current.extend(segs)
+            broke = False
+            continue
+        if value in _NEUTRAL_OPS or _is_number_word(value):
+            continue  # does not break the current run
+        broke = True  # any other operator is a run boundary
+
+    flush()
+    return groups
 
 
 def _show_operator_strings(

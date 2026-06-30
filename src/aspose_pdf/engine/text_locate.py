@@ -3,8 +3,9 @@
 This is a best-effort text-position tracker used to draw redaction overlay
 boxes. It walks the content stream tracking the CTM, text matrix and text
 state, resolving advance widths from the page's simple fonts. For each match of
-the search string (matched the same way as the redactor, across ``TJ`` element
-boundaries) it returns a quadrilateral in default user space.
+the search string (matched the same way as the redactor -- across ``TJ`` element
+boundaries and across consecutive show operators joined into one logical run) it
+returns a quadrilateral in default user space.
 
 It is deliberately conservative: only single-byte simple fonts are handled, and
 whenever the pen position cannot be tracked confidently (an unresolved or
@@ -19,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
-from .text_edit import _decode_operand, _find_matches, _lex
+from .text_edit import _ALL_SHOW_OPS, _NEUTRAL_OPS, _decode_operand, _find_matches, _lex
 
 Matrix = Tuple[float, float, float, float, float, float]
 Point = Tuple[float, float]
@@ -202,9 +203,24 @@ def locate_matches(
     state = _TextState(ctm=base_ctm)
     gstack: List[tuple] = []
     operands: List[tuple] = []
+    pending: List[tuple] = []  # segments of the current logical show run
 
     def remaining() -> int:
         return 0 if max_count == 0 else max(max_count - len(quads), 0)
+
+    def flush() -> None:
+        """Show the accumulated run as one unit, then reset it.
+
+        Consecutive show operators separated only by neutral operators share the
+        same font, spacing and pen, so the whole run is positioned in a single
+        ``_show`` pass -- a match spanning the boundary yields one box.
+        """
+        if pending:
+            state.valid = _show(
+                state, pending, search, quads,
+                case_sensitive=case_sensitive, remaining=remaining(),
+            )
+            pending.clear()
 
     i = 0
     n = len(tokens)
@@ -250,66 +266,18 @@ def locate_matches(
             continue
 
         op = tok.value
-        if op == "q":
-            gstack.append(
-                (
-                    state.ctm, state.font, state.size, state.char_spacing,
-                    state.word_spacing, state.h_scale, state.leading, state.rise,
-                )
-            )
-        elif op == "Q":
-            if gstack:
-                (
-                    state.ctm, state.font, state.size, state.char_spacing,
-                    state.word_spacing, state.h_scale, state.leading, state.rise,
-                ) = gstack.pop()
-        elif op == "cm":
-            cm = _operand_matrix(operands)
-            if cm is not None:
-                state.ctm = _mul(cm, state.ctm)
-        elif op == "BT":
-            state.tm = state.tlm = _IDENTITY
-            state.valid = True
-        elif op == "Tf":
-            name = _last_name(operands)
-            state.size = _last_num(operands, state.size)
-            state.font = font_for_name(name) if name is not None else None
-        elif op == "Tc":
-            state.char_spacing = _last_num(operands, state.char_spacing)
-        elif op == "Tw":
-            state.word_spacing = _last_num(operands, state.word_spacing)
-        elif op == "Tz":
-            state.h_scale = _last_num(operands, state.h_scale * 100.0) / 100.0
-        elif op == "TL":
-            state.leading = _last_num(operands, state.leading)
-        elif op == "Ts":
-            state.rise = _last_num(operands, state.rise)
-        elif op in ("Td", "TD"):
-            pair = _trailing_nums(operands, 2)
-            if pair is not None:
-                tx, ty = pair
-                if op == "TD":
-                    state.leading = -ty
-                state.tlm = _mul((1.0, 0.0, 0.0, 1.0, tx, ty), state.tlm)
-                state.tm = state.tlm
-                state.valid = True
-        elif op == "Tm":
-            m = _operand_matrix(operands)
-            if m is not None:
-                state.tm = state.tlm = m
-                state.valid = True
-        elif op == "T*":
-            state.tlm = _mul((1.0, 0.0, 0.0, 1.0, 0.0, -state.leading), state.tlm)
-            state.tm = state.tlm
-            state.valid = True
-        elif op == "Tj":
+        if op == "Tj":
             seg = _last_string(operands)
             if seg is not None:
-                state.valid = _show(
-                    state, [seg], search, quads,
-                    case_sensitive=case_sensitive, remaining=remaining(),
-                )
+                pending.append(seg)  # accumulate; positioned at the next flush
+        elif op == "TJ":
+            arr = _last_array(operands)
+            if arr is not None:
+                pending.extend(arr)
         elif op in ("'", '"'):
+            # A line-moving show operator ends the previous run, then begins a
+            # new one on the next line that following operators can extend.
+            flush()
             if op == '"':
                 aw_ac = _leading_nums(operands, 2)
                 if aw_ac is not None:
@@ -319,19 +287,66 @@ def locate_matches(
             state.valid = True
             seg = _last_string(operands)
             if seg is not None:
-                state.valid = _show(
-                    state, [seg], search, quads,
-                    case_sensitive=case_sensitive, remaining=remaining(),
+                pending.append(seg)
+        elif op in _NEUTRAL_OPS:
+            pass  # keeps the current run open
+        else:
+            flush()  # any other operator ends the run before it takes effect
+            if op == "q":
+                gstack.append(
+                    (
+                        state.ctm, state.font, state.size, state.char_spacing,
+                        state.word_spacing, state.h_scale, state.leading, state.rise,
+                    )
                 )
-        elif op == "TJ":
-            arr = _last_array(operands)
-            if arr is not None:
-                state.valid = _show(
-                    state, arr, search, quads,
-                    case_sensitive=case_sensitive, remaining=remaining(),
-                )
+            elif op == "Q":
+                if gstack:
+                    (
+                        state.ctm, state.font, state.size, state.char_spacing,
+                        state.word_spacing, state.h_scale, state.leading, state.rise,
+                    ) = gstack.pop()
+            elif op == "cm":
+                cm = _operand_matrix(operands)
+                if cm is not None:
+                    state.ctm = _mul(cm, state.ctm)
+            elif op == "BT":
+                state.tm = state.tlm = _IDENTITY
+                state.valid = True
+            elif op == "Tf":
+                name = _last_name(operands)
+                state.size = _last_num(operands, state.size)
+                state.font = font_for_name(name) if name is not None else None
+            elif op == "Tc":
+                state.char_spacing = _last_num(operands, state.char_spacing)
+            elif op == "Tw":
+                state.word_spacing = _last_num(operands, state.word_spacing)
+            elif op == "Tz":
+                state.h_scale = _last_num(operands, state.h_scale * 100.0) / 100.0
+            elif op == "TL":
+                state.leading = _last_num(operands, state.leading)
+            elif op == "Ts":
+                state.rise = _last_num(operands, state.rise)
+            elif op in ("Td", "TD"):
+                pair = _trailing_nums(operands, 2)
+                if pair is not None:
+                    tx, ty = pair
+                    if op == "TD":
+                        state.leading = -ty
+                    state.tlm = _mul((1.0, 0.0, 0.0, 1.0, tx, ty), state.tlm)
+                    state.tm = state.tlm
+                    state.valid = True
+            elif op == "Tm":
+                m = _operand_matrix(operands)
+                if m is not None:
+                    state.tm = state.tlm = m
+                    state.valid = True
+            elif op == "T*":
+                state.tlm = _mul((1.0, 0.0, 0.0, 1.0, 0.0, -state.leading), state.tlm)
+                state.tm = state.tlm
+                state.valid = True
 
         operands = []
         i += 1
 
+    flush()  # position any run still open at end of content
     return quads
