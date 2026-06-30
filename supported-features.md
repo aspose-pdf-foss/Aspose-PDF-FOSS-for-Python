@@ -404,7 +404,9 @@ Supported:
   `Document.generate_field_appearances()` or `Form.generate_appearances()`:
   text and choice fields are drawn from their `/V` and default appearance
   (`/DA` font, size — including auto-size — and colour, with `/Q` quadding and
-  multi-line support), resolving the font from the AcroForm `/DR` (synthesising
+  multi-line support, wrapping the value to the field width with greedy word
+  wrap that honours explicit newlines), resolving the font from the AcroForm
+  `/DR` (synthesising
   Helvetica when absent); check box / radio `/AS` states are pointed at the
   value. The AcroForm `/NeedAppearances` flag is cleared so the generated
   appearance is honoured. `flatten()` runs this automatically.
@@ -416,9 +418,10 @@ Supported:
 Boundaries:
 
 - Dynamic XFA processing is not implemented.
-- Variable-text layout is single-font with explicit line breaks only (no
-  automatic word wrapping or rich-text `/RV`); centre/right quadding uses an
-  estimated advance width. Push-button and check box *glyph* appearances are not
+- Variable-text layout is single-font; multi-line fields word-wrap to the field
+  width using an estimated advance width (no rich-text `/RV`, and the wrap point
+  is approximate rather than glyph-metric exact), and centre/right quadding uses
+  the same estimate. Push-button and check box *glyph* appearances are not
   synthesised (existing `/AP` states are reused via `/AS`).
 
 ## Annotations

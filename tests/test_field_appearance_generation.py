@@ -19,6 +19,7 @@ from aspose_pdf.engine.field_appearance import (
     auto_font_size,
     build_text_appearance,
     parse_default_appearance,
+    _wrap_text,
 )
 from aspose_pdf.engine.simple_pdf import SimplePdf
 
@@ -76,6 +77,58 @@ def test_build_text_appearance_quadding_shifts_origin():
     left = build_text_appearance("word", 200, 20, font_name="Helv", font_size=12, quadding=0)
     right = build_text_appearance("word", 200, 20, font_name="Helv", font_size=12, quadding=2)
     assert left != right  # right-aligned starts further along x
+
+
+# ---------------------------------------------------------------------------
+# Word wrapping for multiline fields
+# ---------------------------------------------------------------------------
+
+
+def test_wrap_text_packs_words_greedily():
+    # fs 10 -> char width 6; max_width 24 -> 4 chars per line.
+    assert _wrap_text("aaa bbb ccc", 24, 10) == ["aaa", "bbb", "ccc"]
+
+
+def test_wrap_text_keeps_words_together_when_they_fit():
+    assert _wrap_text("a b c", 240, 10) == ["a b c"]
+
+
+def test_wrap_text_hard_breaks_overlong_word():
+    # A 10-char word with a 4-char line is split across lines.
+    assert _wrap_text("abcdefghij", 24, 10) == ["abcd", "efgh", "ij"]
+
+
+def test_wrap_text_honours_explicit_newlines():
+    assert _wrap_text("ab\ncd", 240, 10) == ["ab", "cd"]
+
+
+def test_wrap_text_preserves_blank_paragraph():
+    assert _wrap_text("a\n\nb", 240, 10) == ["a", "", "b"]
+
+
+def test_wrap_text_empty_value_yields_one_line():
+    assert _wrap_text("", 240, 10) == [""]
+
+
+def test_build_multiline_wraps_long_text():
+    content = build_text_appearance(
+        "one two three four five",
+        60,
+        80,
+        font_name="Helv",
+        font_size=10,
+        multiline=True,
+    )
+    # The long line wraps to several rows (one Tj each); no row exceeds the field.
+    assert content.count(b" Tj") == 3
+    assert content.count(b" Tm") == 3
+
+
+def test_build_single_line_is_not_wrapped():
+    content = build_text_appearance(
+        "one two three four five", 60, 20, font_name="Helv", font_size=10
+    )
+    assert content.count(b" Tj") == 1  # single-line fields never wrap
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +246,17 @@ def test_multiline_text_field_breaks_lines():
     assert engine.generate_field_appearances() == 1
     content = _ap_content(engine, field)
     assert b"(line1) Tj" in content and b"(line2) Tj" in content
+
+
+def test_multiline_text_field_word_wraps_long_value():
+    # A long single-paragraph value (no explicit newlines) in a 200-wide,
+    # 12pt field wraps into multiple rows.
+    widget = _text_widget("the quick brown fox jumps over the lazy dog")
+    widget.mapping[PdfName("Ff")] = PdfNumber(1 << 12)  # multiline flag
+    engine, field, _ = _engine_with_acroform(widget)
+    assert engine.generate_field_appearances() == 1
+    content = _ap_content(engine, field)
+    assert content.count(b" Tj") > 1  # wrapped across rows despite no newline
 
 
 def test_choice_field_renders_selected_value():
