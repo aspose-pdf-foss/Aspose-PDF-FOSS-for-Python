@@ -6,6 +6,7 @@ import io
 
 from aspose_pdf import Document
 from aspose_pdf.engine.appearance import build_appearance
+from aspose_pdf.engine.cos import AnnotationName
 
 
 def _new_page_doc() -> Document:
@@ -108,9 +109,82 @@ def test_build_underline_and_strikeout_draw_lines():
     assert under.content != strike.content
 
 
+# ---------------------------------------------------------------------------
+# FreeText / Stamp / Caret builders
+# ---------------------------------------------------------------------------
+
+
+def test_build_freetext_draws_wrapped_text_and_border():
+    gen = build_appearance(
+        "FreeText",
+        (0, 0, 60, 80),
+        {"Contents": "the quick brown fox jumps", "DA": "/Helv 10 Tf 0 g"},
+    )
+    assert gen is not None
+    assert b"/Helv 10 Tf" in gen.content
+    assert b"0 g" in gen.content  # DA text colour
+    assert gen.content.count(b" Tj") > 1  # wrapped across lines
+    assert b" re" in gen.content and b"\nS\n" in gen.content  # border box
+    # A font resource is requested so the caller can build /Resources /Font.
+    assert "Helv" in gen.fonts
+
+
+def test_build_freetext_fills_background_from_c():
+    gen = build_appearance(
+        "FreeText", (0, 0, 100, 40), {"Contents": "hi", "C": [1, 1, 0]}
+    )
+    assert gen is not None
+    assert b"1 1 0 rg" in gen.content  # yellow background fill
+    assert b"\nf\n" in gen.content
+
+
+def test_build_freetext_uses_default_appearance_size_and_colour():
+    gen = build_appearance(
+        "FreeText", (0, 0, 200, 30), {"Contents": "hi", "DA": "/Helv 14 Tf 1 0 0 rg"}
+    )
+    assert gen is not None
+    assert b"/Helv 14 Tf" in gen.content
+    assert b"1 0 0 rg" in gen.content
+
+
+def test_build_stamp_draws_named_caption_in_red_by_default():
+    gen = build_appearance(
+        "Stamp", (0, 0, 120, 40), {"Name": "NotApproved"}
+    )
+    assert gen is not None
+    assert b"1 0 0 RG" in gen.content  # default rubber-stamp red border
+    assert b"(NOT APPROVED) Tj" in gen.content  # camel-split, upper-cased
+    assert "Helv" in gen.fonts
+
+
+def test_build_stamp_honours_colour_and_contents_fallback():
+    gen = build_appearance(
+        "Stamp", (0, 0, 120, 40), {"C": [0, 0, 1], "Contents": "Reviewed"}
+    )
+    assert gen is not None
+    assert b"0 0 1 RG" in gen.content and b"0 0 1 rg" in gen.content
+    assert b"(Reviewed) Tj" in gen.content  # falls back to /Contents
+
+
+def test_build_caret_draws_filled_triangle():
+    gen = build_appearance("Caret", (0, 0, 20, 20), {})
+    assert gen is not None
+    assert b"0 g" in gen.content  # defaults to black
+    assert gen.content.count(b" l\n") == 2  # two edges of the triangle
+    assert b"\nh\n" in gen.content and b"\nf\n" in gen.content
+    assert gen.fonts == {}  # marker shape needs no font
+
+
+def test_build_caret_honours_rgb_colour():
+    gen = build_appearance("Caret", (0, 0, 20, 20), {"C": [1, 0, 0]})
+    assert gen is not None
+    assert b"1 0 0 rg" in gen.content
+
+
 def test_build_unsupported_subtype_returns_none():
     assert build_appearance("Text", (0, 0, 20, 20), {}) is None
-    assert build_appearance("FreeText", (0, 0, 20, 20), {}) is None
+    assert build_appearance("Popup", (0, 0, 20, 20), {}) is None
+    assert build_appearance("Widget", (0, 0, 20, 20), {}) is None
 
 
 def test_build_missing_geometry_returns_none():
@@ -150,6 +224,39 @@ def test_highlight_generate_appearance_has_extgstate_resource():
     )
     assert ann.generate_appearance() is True
     assert b"/GsMul gs" in ann.appearance_normal
+
+
+def test_freetext_generate_appearance_registers_font_resource():
+    doc = _new_page_doc()
+    ann = doc.pages[0].annotations.add(
+        "FreeText",
+        (100, 100, 300, 160),
+        "hello from a free text box",
+        properties={"DA": "/Helv 12 Tf 0 g"},
+    )
+    assert ann.generate_appearance() is True
+    assert b"/Helv 12 Tf" in ann.appearance_normal
+    # The generated form XObject carries the /Helv font in its /Resources.
+    engine = doc._engine_pdf
+    annot = engine.get_annotations(0)[0]
+    assert annot["has_AP"] is True
+    assert b"Tj" in annot["AP_N"]
+
+
+def test_stamp_generate_appearance_end_to_end():
+    doc = _new_page_doc()
+    ann = doc.pages[0].annotations.add(
+        "Stamp", (100, 100, 260, 150), "", properties={"Name": AnnotationName("Approved")}
+    )
+    assert ann.generate_appearance() is True
+    assert b"(APPROVED) Tj" in ann.appearance_normal
+
+
+def test_caret_generate_appearance_end_to_end():
+    doc = _new_page_doc()
+    ann = doc.pages[0].annotations.add("Caret", (100, 100, 120, 120), "")
+    assert ann.generate_appearance() is True
+    assert b"\nf\n" in ann.appearance_normal
 
 
 def test_generate_appearance_unsupported_subtype_returns_false():

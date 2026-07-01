@@ -4108,21 +4108,34 @@ class SimplePdf:
         return self._cos_doc.register_object(ap_dict)
 
     def _build_appearance_resources(
-        self, ext_gstates: Dict[str, Dict[str, Any]]
+        self,
+        ext_gstates: Dict[str, Dict[str, Any]],
+        fonts: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Optional[PdfDictionary]:
-        """Build a form ``/Resources`` dict carrying generated ``/ExtGState`` entries."""
-        if not ext_gstates:
+        """Build a form ``/Resources`` dict for generated ``/ExtGState``/``/Font``."""
+        if not ext_gstates and not fonts:
             return None
-        gs_dict = PdfDictionary({})
-        for name, params in ext_gstates.items():
-            entry = PdfDictionary({})
-            for key, value in params.items():
-                if key == "BM":
-                    entry.mapping[PdfName("BM")] = PdfName(str(value))
-                elif key in ("ca", "CA"):
-                    entry.mapping[PdfName(key)] = PdfNumber(float(value))
-            gs_dict.mapping[PdfName(str(name))] = entry
-        return PdfDictionary({PdfName("ExtGState"): gs_dict})
+        resources = PdfDictionary({})
+        if ext_gstates:
+            gs_dict = PdfDictionary({})
+            for name, params in ext_gstates.items():
+                entry = PdfDictionary({})
+                for key, value in params.items():
+                    if key == "BM":
+                        entry.mapping[PdfName("BM")] = PdfName(str(value))
+                    elif key in ("ca", "CA"):
+                        entry.mapping[PdfName(key)] = PdfNumber(float(value))
+                gs_dict.mapping[PdfName(str(name))] = entry
+            resources.mapping[PdfName("ExtGState")] = gs_dict
+        if fonts:
+            font_dict = PdfDictionary({})
+            for name, spec in fonts.items():
+                fd = PdfDictionary({PdfName("Type"): PdfName("Font")})
+                for key, value in spec.items():
+                    fd.mapping[PdfName(str(key))] = PdfName(str(value))
+                font_dict.mapping[PdfName(str(name))] = self._cos_doc.register_object(fd)
+            resources.mapping[PdfName("Font")] = font_dict
+        return resources
 
     def generate_annotation_appearance(
         self, page_index: int, annot_index: int, *, force: bool = False
@@ -4163,11 +4176,18 @@ class SimplePdf:
         subtype = self._get_cos_name(annot.mapping.get(PdfName("Subtype")))
         rect = self._get_cos_rect(annot.mapping.get(PdfName("Rect")))
         props = self._extract_annotation_properties(annot)
+        # /Contents is a reserved key (not surfaced as a property) but text-bearing
+        # subtypes (FreeText, Stamp) need it, so add its decoded text here.
+        contents = self._resolve(annot.mapping.get(PdfName("Contents")))
+        if isinstance(contents, PdfString):
+            props.setdefault("Contents", decode_pdf_text_string(contents))
         generated = build_appearance(subtype, rect, props)
         if generated is None:
             return False
 
-        resources = self._build_appearance_resources(generated.ext_gstates)
+        resources = self._build_appearance_resources(
+            generated.ext_gstates, generated.fonts
+        )
         annot.mapping[PdfName("AP")] = self._register_annotation_appearance(
             rect, {"N": generated.content}, resources
         )

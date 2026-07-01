@@ -443,18 +443,27 @@ Supported:
 - Auto-generate normal appearance streams (`/AP /N`) from geometry and colours
   for the standard shape and text-markup subtypes — `Square`, `Circle`, `Line`,
   `Polygon`, `PolyLine`, `Ink`, `Highlight` (multiply blend), `Underline`,
-  `StrikeOut`, `Squiggly` — via `Annotation.generate_appearance()`,
+  `StrikeOut`, `Squiggly` — plus the text-bearing/marker subtypes `FreeText`
+  (word-wrapped `/Contents` with the `/DA` font size and colour, `/Q` quadding,
+  `/C` background and a border box), `Stamp` (a captioned box from `/Name` or
+  `/Contents`, rubber-stamp red by default), and `Caret` (a filled marker
+  triangle) — via `Annotation.generate_appearance()`,
   `Page.annotations.generate_appearances()`, or `Document.generate_appearances()`.
+  Text-bearing subtypes register a synthesised Helvetica font in the form's
+  `/Resources /Font`.
 - Flatten annotations into page content, mapping each appearance form's `/BBox`
   (and `/Matrix`) onto the annotation `/Rect`; appearances are synthesised for
   supported subtypes first so they are not dropped.
 
 Boundaries:
 
-- Appearance synthesis covers the shape / text-markup subtypes above; other
-  subtypes (`FreeText`, `Stamp`, `Caret`, widgets, …) and decorations such as
-  line endings (`/LE`), dash patterns, and cloud borders (`/BE`) are not drawn —
-  supply an appearance via `appearance_normal` for those.
+- Appearance synthesis covers the shape, text-markup, `FreeText`, `Stamp` and
+  `Caret` subtypes above; `FreeText`/`Stamp` text uses a synthesised Helvetica
+  with an estimated advance width (no rich-text `/RC`, embedded fonts, or exact
+  glyph metrics), and `Stamp` is a captioned box rather than the standard rubber-
+  stamp artwork. Other subtypes (widgets, `Sound`, `3D`, …) and decorations such
+  as line endings (`/LE`), dash patterns, and cloud borders (`/BE`) are not drawn
+  — supply an appearance via `appearance_normal` for those.
 
 ## Attachments
 

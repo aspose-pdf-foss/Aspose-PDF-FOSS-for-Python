@@ -17,8 +17,19 @@ caller wraps the returned bytes in a form XObject and registers it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from .field_appearance import (
+    _CHAR_WIDTH_EM,
+    _pdf_literal,
+    _quad_x,
+    _text_width,
+    _wrap_text,
+    auto_font_size,
+    parse_default_appearance,
+)
 
 # Subtypes this module can synthesise an appearance for.
 SUPPORTED_SUBTYPES = frozenset(
@@ -33,11 +44,22 @@ SUPPORTED_SUBTYPES = frozenset(
         "Underline",
         "StrikeOut",
         "Squiggly",
+        "FreeText",
+        "Stamp",
+        "Caret",
     }
 )
 
 # Quarter-ellipse Bézier control-point constant (4/3 * (sqrt(2) - 1)).
 _KAPPA = 0.5522847498307936
+
+# Resource name and Type1 program for the synthesised annotation text font.
+_ANNOT_FONT_NAME = "Helv"
+_ANNOT_FONT_SPEC = {
+    "Subtype": "Type1",
+    "BaseFont": "Helvetica",
+    "Encoding": "WinAnsiEncoding",
+}
 
 
 @dataclass
@@ -47,10 +69,16 @@ class GeneratedAppearance:
     *ext_gstates* maps a resource name to a small parameter dict (e.g.
     ``{"GsMul": {"BM": "Multiply"}}``); the caller materialises these into the
     form's ``/Resources /ExtGState``. It is empty for opaque shapes.
+
+    *fonts* maps a resource name to a simple Type1 font spec (e.g.
+    ``{"Helv": {"Subtype": "Type1", "BaseFont": "Helvetica"}}``) for text-bearing
+    subtypes; the caller materialises these into ``/Resources /Font``. It is
+    empty for shape-only appearances.
     """
 
     content: bytes
     ext_gstates: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    fonts: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 def _fmt(value: float) -> str:
@@ -411,6 +439,159 @@ def _build_highlight(
     )
 
 
+# ---------------------------------------------------------------------------
+# Text-bearing subtypes (FreeText, Stamp) and the Caret marker
+# ---------------------------------------------------------------------------
+
+
+def _str_prop(value: Any) -> str:
+    """Coerce an annotation property to display text (``""`` when absent)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _text_block(
+    text: str,
+    w: float,
+    h: float,
+    *,
+    font_size: float,
+    color_op: str,
+    quadding: int,
+    padding: float,
+) -> List[str]:
+    """Emit a ``BT``…``ET`` word-wrapped text block filling ``(w, h)`` from the top."""
+    fs = font_size if font_size > 0 else auto_font_size(h, multiline=True)
+    leading = fs * 1.15
+    lines = _wrap_text(text, w - 2.0 * padding, fs)
+    body = ["BT", f"/{_ANNOT_FONT_NAME} {_fmt(fs)} Tf", color_op]
+    ly = h - padding - fs
+    for line in lines:
+        tx = _quad_x(line, w, fs, quadding, padding)
+        body.append(f"1 0 0 1 {_fmt(tx)} {_fmt(ly)} Tm")
+        body.append(f"{_pdf_literal(line)} Tj")
+        ly -= leading
+    body.append("ET")
+    return body
+
+
+def _build_freetext(
+    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> Optional[GeneratedAppearance]:
+    text = _str_prop(props.get("Contents"))
+    da = props.get("DA")
+    _fn, size, color = parse_default_appearance(da if isinstance(da, str) else None)
+    q_raw = props.get("Q")
+    quadding = int(q_raw) if isinstance(q_raw, (int, float)) and int(q_raw) in (0, 1, 2) else 0
+    bw = _border_width(props)
+    background = _color_op(props.get("C"), stroke=False)
+
+    lines = ["q"]
+    if background:  # /C is the FreeText box background colour
+        lines.append(background)
+        lines.append(f"0 0 {_fmt(w)} {_fmt(h)} re")
+        lines.append("f")
+    if bw > 0:
+        inset = bw / 2.0
+        rw, rh = w - bw, h - bw
+        if rw > 0 and rh > 0:
+            lines.append("0 G")
+            lines.append(f"{_fmt(bw)} w")
+            lines.append(f"{_fmt(inset)} {_fmt(inset)} {_fmt(rw)} {_fmt(rh)} re")
+            lines.append("S")
+    fonts: Dict[str, Dict[str, Any]] = {}
+    if text:
+        pad = max(2.0, bw + 1.0)
+        lines += _text_block(
+            text, w, h, font_size=size, color_op=color, quadding=quadding, padding=pad
+        )
+        fonts = {_ANNOT_FONT_NAME: dict(_ANNOT_FONT_SPEC)}
+    lines.append("Q")
+    return GeneratedAppearance(
+        ("\n".join(lines) + "\n").encode("latin-1", "replace"), fonts=fonts
+    )
+
+
+def _stamp_label(props: Dict[str, Any]) -> str:
+    """Derive a stamp caption from ``/Name`` (camel-split) or ``/Contents``."""
+    name = props.get("Name")
+    text = _str_prop(name).strip()
+    if text:
+        # "NotApproved" / "SBApproved" -> "NOT APPROVED" / "SB APPROVED".
+        spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+        return spaced.upper()
+    contents = _str_prop(props.get("Contents")).strip()
+    if contents:
+        return contents.splitlines()[0]
+    return "STAMP"
+
+
+def _build_stamp(
+    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> Optional[GeneratedAppearance]:
+    label = _stamp_label(props)
+    comps = _as_floats(props.get("C"))
+    stroke = _color_op(comps, stroke=True) or "1 0 0 RG"  # rubber-stamp red
+    fill = _color_op(comps, stroke=False) or "1 0 0 rg"
+    bw = max(_border_width(props), 1.0)
+
+    inset = bw / 2.0
+    rw, rh = w - bw, h - bw
+    lines = ["q", stroke, f"{_fmt(bw)} w"]
+    if rw > 0 and rh > 0:
+        lines.append(f"{_fmt(inset)} {_fmt(inset)} {_fmt(rw)} {_fmt(rh)} re")
+        lines.append("S")
+
+    # Single centred caption sized to fit the box.
+    pad = max(4.0, bw * 2.0)
+    n = max(len(label), 1)
+    fs_w = max(1.0, w - 2.0 * pad) / (_CHAR_WIDTH_EM * n)
+    fs = max(4.0, min(h * 0.5, fs_w))
+    tw = _text_width(label, fs)
+    tx = max(pad, (w - tw) / 2.0)
+    ty = (h - fs) / 2.0 + fs * 0.25
+    lines += [
+        "BT",
+        f"/{_ANNOT_FONT_NAME} {_fmt(fs)} Tf",
+        fill,
+        f"1 0 0 1 {_fmt(tx)} {_fmt(ty)} Tm",
+        f"{_pdf_literal(label)} Tj",
+        "ET",
+        "Q",
+    ]
+    return GeneratedAppearance(
+        ("\n".join(lines) + "\n").encode("latin-1", "replace"),
+        fonts={_ANNOT_FONT_NAME: dict(_ANNOT_FONT_SPEC)},
+    )
+
+
+def _build_caret(
+    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> Optional[GeneratedAppearance]:
+    fill = _color_op(props.get("C"), stroke=False) or "0 g"
+    # An upward-pointing filled triangle marks the insertion point.
+    ix, iy = w * 0.15, h * 0.10
+    x0, x1 = ix, w - ix
+    y0, y1 = iy, h - iy
+    if x1 <= x0 or y1 <= y0:
+        x0, y0, x1, y1 = 0.0, 0.0, w, h
+    cx = (x0 + x1) / 2.0
+    lines = [
+        "q",
+        fill,
+        f"{_fmt(x0)} {_fmt(y0)} m",
+        f"{_fmt(cx)} {_fmt(y1)} l",
+        f"{_fmt(x1)} {_fmt(y0)} l",
+        "h",
+        "f",
+        "Q",
+    ]
+    return GeneratedAppearance(("\n".join(lines) + "\n").encode("ascii"))
+
+
 _BUILDERS = {
     "Square": _build_square,
     "Circle": _build_circle,
@@ -422,4 +603,7 @@ _BUILDERS = {
     "Underline": lambda p, x, y, w, h: _build_text_markup(p, x, y, "Underline"),
     "StrikeOut": lambda p, x, y, w, h: _build_text_markup(p, x, y, "StrikeOut"),
     "Squiggly": lambda p, x, y, w, h: _build_text_markup(p, x, y, "Squiggly"),
+    "FreeText": _build_freetext,
+    "Stamp": _build_stamp,
+    "Caret": _build_caret,
 }
