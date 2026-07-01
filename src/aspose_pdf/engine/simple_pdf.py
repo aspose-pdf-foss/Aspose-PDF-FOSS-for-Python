@@ -3109,28 +3109,78 @@ class SimplePdf:
         self._append_struct_root_kid(struct_root, elem_ref)
         return tag_name, mcid
 
+    def _register_grouped_marked_content(
+        self,
+        page_index: int,
+        tag: Optional[str],
+        count: int,
+        *,
+        alt: Optional[str] = None,
+        actual_text: Optional[str] = None,
+    ) -> Optional[Tuple[str, List[int]]]:
+        """Create one StructElem spanning *count* marked-content sequences.
+
+        Allocates *count* MCIDs on the page and points each at the same element,
+        so a paragraph split across several lines/text objects is a single ``/P``
+        with a ``/K`` array of MCIDs. Returns ``(tag_name, [mcid, ...])``.
+        """
+        tag_name = self._coerce_structure_type(tag)
+        if tag_name is None or count <= 0:
+            return None
+        struct_root, struct_ref = self._ensure_struct_tree_root()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page dictionary is unavailable.")
+        page_ref = self._page_ref_for_structure(page_index)
+        parent_array = self._parent_tree_array_for_page(struct_root, page)
+        elem = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("StructElem"),
+                PdfName("S"): PdfName(tag_name),
+                PdfName("P"): struct_ref,
+                PdfName("Pg"): page_ref,
+            }
+        )
+        if alt is not None:
+            elem.mapping[PdfName("Alt")] = PdfString(str(alt))
+        if actual_text is not None:
+            elem.mapping[PdfName("ActualText")] = PdfString(str(actual_text))
+        elem_ref = self._cos_doc.register_object(elem)
+        mcids: List[int] = []
+        for _ in range(count):
+            mcids.append(len(parent_array.items))
+            parent_array.items.append(elem_ref)
+        if len(mcids) == 1:
+            elem.mapping[PdfName("K")] = PdfNumber(mcids[0])
+        else:
+            elem.mapping[PdfName("K")] = PdfArray([PdfNumber(m) for m in mcids])
+        self._append_struct_root_kid(struct_root, elem_ref)
+        return tag_name, mcids
+
     def auto_tag(
         self,
         image_alt: Optional[Union[str, Callable[[str], str]]] = "Image",
     ) -> int:
         """Heuristically tag existing page content into the structure tree.
 
-        Each text object (``BT`` ... ``ET``) on every page becomes a ``/P`` (or
-        ``/H1`` when its font size dominates) structure element, and each image
-        XObject paint (``/Name Do``) becomes a ``/Figure`` with ``/Alt`` --
-        wrapped in marked content and linked, in reading (stream) order, through
-        the page ``/StructParents`` and the ``/StructTreeRoot /ParentTree``.
-        Pages that already carry marked content are skipped.  Returns the number
-        of structure elements created.
+        Text objects (``BT`` ... ``ET``) and image paints (``/Name Do``) are
+        located with their page position, sorted into reading order
+        (top-to-bottom, then left-to-right) and grouped: consecutive body-text
+        lines of similar size and spacing collapse into one ``/P`` paragraph
+        (spanning several marked-content sequences), while a dominant-size line
+        becomes an ``/H1`` and each image becomes a ``/Figure`` with ``/Alt``.
+        Every group is linked through the page ``/StructParents`` and the
+        ``/StructTreeRoot /ParentTree``.  Pages that already carry marked content
+        are skipped.  Returns the number of structure elements created.
 
         ``image_alt`` controls the figure alternate text: a string used for
         every image, a callable mapping an image's resource name to its alt
         text, or ``None`` to leave images untagged (text only).  Image alt text
         cannot be inferred, so the default placeholder needs human review.
 
-        This is a heuristic aid -- it does not infer fine-grained reading order
-        or paragraph/list/table grouping -- so the result is a real (if coarse)
-        tag tree, not certified accessibility.
+        This is a heuristic aid -- reading order is geometric and paragraph
+        grouping is proximity-based (it cannot see columns, lists or tables) --
+        so the result is a real (if coarse) tag tree, not certified accessibility.
         """
         self._ensure_not_disposed()
         if self._cos_doc is None:
@@ -3152,10 +3202,12 @@ class SimplePdf:
         image_alt: Optional[Union[str, Callable[[str], str]]],
     ) -> int:
         from .auto_tag import (
+            TextObject,
+            assign_reading_order,
             build_tagged_content,
             choose_tags,
-            find_text_objects,
-            find_xobject_invocations,
+            find_layout_elements,
+            group_into_paragraphs,
             has_marked_content,
         )
 
@@ -3166,35 +3218,49 @@ class SimplePdf:
         if not content or has_marked_content(content):
             return 0
 
-        text_objects = find_text_objects(content)
-        tags = choose_tags(text_objects)
-        # (start, end, tag, alt) items; sorted by start so MCIDs follow reading
-        # order across both text objects and image figures.
-        items: List[Tuple[int, int, str, Optional[str]]] = [
-            (obj.start, obj.end, tag, None)
-            for obj, tag in zip(text_objects, tags)
-        ]
+        elements = find_layout_elements(content)
+        # Tag text objects (P vs H1) by font size, reusing the shared heuristic.
+        text_elems = [e for e in elements if e.kind == "text"]
+        text_tags = choose_tags(
+            [TextObject(e.start, e.end, e.font_size, e.text_length) for e in text_elems]
+        )
+        for elem, tag in zip(text_elems, text_tags):
+            elem.tag = tag
+        # Tag image XObjects as figures (form XObjects and untagged text drop out).
         if image_alt is not None:
             image_names = self._image_xobject_names(page_index)
             if image_names:
-                for name, start, end in find_xobject_invocations(content):
-                    if name.lstrip("/") in image_names:
-                        items.append(
-                            (start, end, "Figure", self._figure_alt(image_alt, name))
-                        )
-        if not items:
+                for elem in elements:
+                    if (
+                        elem.kind == "xobject"
+                        and elem.name is not None
+                        and elem.name.lstrip("/") in image_names
+                    ):
+                        elem.tag = "Figure"
+                        elem.alt = self._figure_alt(image_alt, elem.name)
+
+        tagged = [e for e in elements if e.tag is not None]
+        if not tagged:
             return 0
-        items.sort(key=lambda item: item[0])
+        ordered = assign_reading_order(tagged)
+        groups = group_into_paragraphs(ordered)
 
         marks: List[Tuple[int, int, str, int]] = []
-        for start, end, tag, alt in items:
-            registered = self._register_marked_content(page_index, tag, alt=alt)
-            if registered is not None:
-                marks.append((start, end, registered[0], registered[1]))
+        created = 0
+        for group in groups:
+            registered = self._register_grouped_marked_content(
+                page_index, group[0].tag, len(group), alt=group[0].alt
+            )
+            if registered is None:
+                continue
+            tag_name, mcids = registered
+            for elem, mcid in zip(group, mcids):
+                marks.append((elem.start, elem.end, tag_name, mcid))
+            created += 1
         if not marks:
             return 0
         self._set_page_content(page_index, build_tagged_content(content, marks))
-        return len(marks)
+        return created
 
     def _figure_alt(
         self, image_alt: Union[str, Callable[[str], str]], name: str

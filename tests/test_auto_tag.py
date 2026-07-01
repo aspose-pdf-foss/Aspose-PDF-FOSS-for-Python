@@ -2,10 +2,14 @@
 
 from aspose_pdf import Document
 from aspose_pdf.engine.auto_tag import (
+    LayoutElement,
+    assign_reading_order,
     build_tagged_content,
     choose_tags,
+    find_layout_elements,
     find_text_objects,
     find_xobject_invocations,
+    group_into_paragraphs,
     has_marked_content,
 )
 from aspose_pdf.engine.cos import (
@@ -68,6 +72,79 @@ def test_build_tagged_content_splices_without_rewriting():
     assert b"/P <</MCID 1>> BDC" in out
     # Original operators are preserved verbatim.
     assert b"(Heading) Tj" in out and b"(Body text, a bit longer) Tj" in out
+
+
+# ---------------------------------------------------------------------------
+# Position tracking, reading order and paragraph grouping (unit tests)
+# ---------------------------------------------------------------------------
+
+
+def test_find_layout_elements_tracks_text_position():
+    els = find_layout_elements(b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (A) Tj ET")
+    assert len(els) == 1
+    e = els[0]
+    assert e.kind == "text"
+    assert round(e.x) == 72 and round(e.y) == 700
+    assert e.font_size == 12.0
+
+
+def test_find_layout_elements_honours_cm_for_images():
+    els = find_layout_elements(b"q 100 0 0 80 72 600 cm /Im0 Do Q")
+    assert len(els) == 1
+    e = els[0]
+    assert e.kind == "xobject" and e.name == "/Im0"
+    # Centre of the placed unit square: (72 + 100*0.5, 600 + 80*0.5).
+    assert round(e.x) == 122 and round(e.y) == 640
+
+
+def test_assign_reading_order_sorts_top_to_bottom():
+    content = (
+        b"BT /F1 12 Tf 1 0 0 1 72 600 Tm (lower) Tj ET\n"
+        b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (upper) Tj ET"
+    )
+    ordered = assign_reading_order(find_layout_elements(content))
+    assert [round(e.y) for e in ordered] == [700, 600]  # top of page first
+
+
+def test_assign_reading_order_left_to_right_on_a_line():
+    content = (
+        b"BT /F1 12 Tf 1 0 0 1 300 700 Tm (right) Tj ET\n"
+        b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (left) Tj ET"
+    )
+    ordered = assign_reading_order(find_layout_elements(content))
+    assert [round(e.x) for e in ordered] == [72, 300]
+
+
+def _p(y, fs=12.0):
+    return LayoutElement("text", 0, 0, x=72.0, y=y, font_size=fs, tag="P")
+
+
+def test_group_into_paragraphs_merges_close_lines():
+    groups = group_into_paragraphs([_p(700), _p(686), _p(672)])
+    assert len(groups) == 1 and len(groups[0]) == 3
+
+
+def test_group_into_paragraphs_splits_on_large_gap():
+    groups = group_into_paragraphs([_p(700), _p(686), _p(600)])
+    assert [len(g) for g in groups] == [2, 1]
+
+
+def test_group_into_paragraphs_splits_on_size_change():
+    groups = group_into_paragraphs([_p(700), _p(686, fs=20)])
+    assert [len(g) for g in groups] == [1, 1]
+
+
+def test_group_into_paragraphs_heading_is_its_own_group():
+    heading = LayoutElement("text", 0, 0, y=720, font_size=24, tag="H1")
+    groups = group_into_paragraphs([heading, _p(700), _p(686)])
+    assert [g[0].tag for g in groups] == ["H1", "P"]
+    assert [len(g) for g in groups] == [1, 2]
+
+
+def test_group_into_paragraphs_figure_breaks_run():
+    fig = LayoutElement("xobject", 0, 0, y=650, tag="Figure", alt="Image")
+    groups = group_into_paragraphs([_p(700), fig, _p(600)])
+    assert [len(g) for g in groups] == [1, 1, 1]
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +224,54 @@ def test_convert_to_pdfua_auto_tag_creates_real_tree():
     root = pdf._resolve(pdf._cos_doc.trailer.get(PdfName("Root")))
     mark_info = pdf._resolve(root.mapping.get(PdfName("MarkInfo")))
     assert mark_info.mapping.get(PdfName("Marked")).value is True
+
+
+_PARAGRAPH_LINES = (
+    b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (First line of a paragraph) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 686 Tm (second line continues on) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 672 Tm (and a third line here) Tj ET"
+)
+
+
+def test_auto_tag_groups_lines_into_one_paragraph():
+    pdf = SimplePdf(pages=[(0, 0, 612, 792)], page_contents=[_PARAGRAPH_LINES])
+    pdf._ensure_cos()
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    created = doc.auto_tag()
+
+    assert created == 1  # the three lines collapse into one /P
+    kids = pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K")))
+    assert len(kids.items) == 1
+    elem = pdf._resolve(kids.items[0])
+    assert elem.mapping.get(PdfName("S")).name.lstrip("/") == "P"
+    # The paragraph spans three marked-content sequences via a /K array.
+    k = pdf._resolve(elem.mapping.get(PdfName("K")))
+    assert isinstance(k, PdfArray) and len(k.items) == 3
+    content = pdf.get_page_content(0)
+    assert content.count(b"BDC") == 3 and content.count(b"EMC") == 3
+
+
+def test_auto_tag_reading_order_reorders_stream():
+    # A long body line is streamed *before* the title, but the title sits higher
+    # on the page, so reading order must place the heading first.
+    content = (
+        b"BT /F1 12 Tf 1 0 0 1 72 600 Tm (this is a fairly long body paragraph) Tj ET\n"
+        b"BT /F1 24 Tf 1 0 0 1 72 700 Tm (Title) Tj ET"
+    )
+    pdf = SimplePdf(pages=[(0, 0, 612, 792)], page_contents=[content])
+    pdf._ensure_cos()
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    doc.auto_tag()
+
+    tags = [
+        pdf._resolve(k).mapping.get(PdfName("S")).name.lstrip("/")
+        for k in pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K"))).items
+    ]
+    assert tags == ["H1", "P"]  # heading (top of page) leads despite stream order
 
 
 def test_auto_tag_survives_save_roundtrip():

@@ -603,14 +603,18 @@ Supported:
   can also be tagged explicitly. These segments are linked by MCID through the
   page `/StructParents` entry and `/StructTreeRoot /ParentTree`.
 - Heuristically tag *existing* page content into a structure tree with
-  `Document.auto_tag()` (or `convert_to_pdfua(auto_tag=True)`). Each text object
-  (`BT` ... `ET`) becomes a `/P` element (or `/H1` when its font size dominates
-  the page), and each image XObject paint (`/Name Do`) becomes a `/Figure` with
-  `/Alt` (the `image_alt` argument takes a string, a name→text callable, or
-  `None` to skip images). Elements are wrapped in `BDC`/`EMC` by a byte-level
-  splice (originals preserved, inline images skipped) and linked by MCID in
-  reading order through `/StructParents` and the `/ParentTree`. Pages already
-  carrying marked content are left untouched.
+  `Document.auto_tag()` (or `convert_to_pdfua(auto_tag=True)`). Text objects
+  (`BT` ... `ET`) and image paints (`/Name Do`) are located with their page
+  position (tracking the CTM and text matrix), sorted into reading order
+  (top-to-bottom, then left-to-right) and grouped: consecutive body-text lines
+  of similar size and spacing collapse into one `/P` paragraph — a single
+  structure element spanning several MCIDs via a `/K` array — while a
+  dominant-size line becomes an `/H1` and each image XObject paint becomes a
+  `/Figure` with `/Alt` (the `image_alt` argument takes a string, a name→text
+  callable, or `None` to skip images). Elements are wrapped in `BDC`/`EMC` by a
+  byte-level splice (originals preserved, inline images skipped) and linked by
+  MCID through `/StructParents` and the `/ParentTree`. Pages already carrying
+  marked content are left untouched.
 - Resolve XMP namespace prefixes and URIs with `NamespaceProvider` (public) /
   `XmpNamespaceProvider` (engine), preloaded with the standard XMP namespaces
   (Dublin Core, Adobe XMP, PDF, PDF/A, EXIF, TIFF, ...) and extensible with
@@ -655,12 +659,13 @@ Boundaries:
   coverage, colour fidelity, or the semantic correctness of a tag tree. Use a
   dedicated validator such as veraPDF for formal compliance.
 - The PDF/UA structure-tree checks validate a tag tree that already exists; they
-  do not verify full marked-content (MCID) coverage or visual reading order for
-  arbitrary existing PDFs. `auto_tag()` infers a real but **coarse** tree: one
-  element per text object, headings by font size only, and image `/Figure`
-  alternate text that is a caller-supplied placeholder (alt text cannot be
-  inferred) — with no paragraph/list/table grouping or fine reading-order
-  analysis. It is a starting point a human refines, not certified accessibility.
+  do not verify full marked-content (MCID) coverage for arbitrary existing PDFs.
+  `auto_tag()` infers a real but **coarse** tree: reading order is geometric
+  (top-to-bottom, left-to-right) and paragraphs are grouped by proximity, but
+  headings are inferred from font size only, image `/Figure` alternate text is a
+  caller-supplied placeholder (alt text cannot be inferred), and grouping cannot
+  see columns, lists or tables. It is a starting point a human refines, not
+  certified accessibility.
   Content authored through the page APIs carries caller-supplied semantic tags
   and alt text.
 - XMP covers the full data model: simple values, structured values, arrays
