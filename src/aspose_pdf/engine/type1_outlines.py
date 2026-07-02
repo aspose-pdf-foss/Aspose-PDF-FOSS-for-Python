@@ -12,16 +12,18 @@ caller resolves a character code to a glyph name (through the PDF ``/Encoding``
 or the font's own built-in encoding, both surfaced here) and looks the outline
 up by the synthetic glyph id assigned in charstring order.
 
-The flex and hint-replacement OtherSubrs (0-3) are emulated; ``seac`` accent
-composition is skipped (best effort).  Parsing is defensive: malformed input
-yields an inert source rather than raising.
+The flex and hint-replacement OtherSubrs (0-3) are emulated, and ``seac``
+accent composition is rendered by drawing the base and accent component glyphs
+(looked up through StandardEncoding, as the spec defines) with the accent
+translated by the ``(asb, adx, ady)`` operands.  Parsing is defensive:
+malformed input yields an inert source rather than raising.
 """
 
 from __future__ import annotations
 
 import re
 import struct
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 __all__ = ["Type1Outlines"]
 
@@ -201,12 +203,24 @@ class Type1Outlines:
         if cached is not None:
             return cached
         try:
-            interp = _T1Glyph(self._subrs)
+            interp = _T1Glyph(self._subrs, std_lookup=self._charstring_for_std_code)
             contours = interp.run(self._charstrings[gid])
         except (struct.error, IndexError, ValueError):
             contours = []
         self._cache[gid] = contours
         return contours
+
+    def _charstring_for_std_code(self, code: int) -> Optional[bytes]:
+        """Charstring for a StandardEncoding *code* (``seac`` component lookup)."""
+        from .symbol_encodings import STANDARD_ENCODING_NAMES
+
+        name = STANDARD_ENCODING_NAMES.get(code)
+        if name is None:
+            return None
+        gid = self.name_to_gid.get(name)
+        if gid is None:
+            return None
+        return self._charstrings[gid]
 
     def advance_width(self, gid: int) -> Optional[int]:
         """Type 1 advance widths are not surfaced (PDF ``/Widths`` is used)."""
@@ -227,8 +241,15 @@ def _read_operand(data: bytes, i: int, b0: int) -> Tuple[float, int]:
 class _T1Glyph:
     """Type 1 charstring interpreter producing flattened, filled contours."""
 
-    def __init__(self, subrs: Dict[int, bytes]):
+    def __init__(
+        self,
+        subrs: Dict[int, bytes],
+        std_lookup: Optional[Callable[[int], Optional[bytes]]] = None,
+        seac_depth: int = 0,
+    ):
         self._subrs = subrs
+        self._std_lookup = std_lookup
+        self._seac_depth = seac_depth
         self.stack: List[float] = []
         self.ps_stack: List[float] = []
         self.x = 0.0
@@ -239,6 +260,7 @@ class _T1Glyph:
         self._flex = False
         self._flex_pts: List[Point] = []
         self._flex_start: Point = (0.0, 0.0)
+        self._sbx = 0.0  # left sidebearing from hsbw/sbw (seac accent origin)
 
     def run(self, charstring: bytes) -> List[Contour]:
         self._exec(charstring, 0)
@@ -258,7 +280,7 @@ class _T1Glyph:
                 continue
             i += 1
             if b0 == 13:  # hsbw: sbx wx
-                self.x = self.stack[0] if self.stack else 0.0
+                self.x = self._sbx = self.stack[0] if self.stack else 0.0
                 self.y = 0.0
                 self.stack.clear()
             elif b0 == 21:  # rmoveto
@@ -280,10 +302,14 @@ class _T1Glyph:
                 self._rel_curve(*self.stack[:6])
                 self.stack.clear()
             elif b0 == 30:  # vhcurveto
-                self._rel_curve(0.0, self._a(0), self._a(1), self._a(2), self._a(3), 0.0)
+                self._rel_curve(
+                    0.0, self._a(0), self._a(1), self._a(2), self._a(3), 0.0
+                )
                 self.stack.clear()
             elif b0 == 31:  # hvcurveto
-                self._rel_curve(self._a(0), 0.0, self._a(1), self._a(2), 0.0, self._a(3))
+                self._rel_curve(
+                    self._a(0), 0.0, self._a(1), self._a(2), 0.0, self._a(3)
+                )
                 self.stack.clear()
             elif b0 == 9:  # closepath
                 self.stack.clear()
@@ -367,11 +393,10 @@ class _T1Glyph:
             self._callothersubr()
         elif b1 == 17:  # pop
             self.stack.append(self.ps_stack.pop() if self.ps_stack else 0.0)
-        elif b1 == 6:  # seac (accent composition) -- not rendered
-            self.stack.clear()
-            self._done = True
+        elif b1 == 6:  # seac: asb adx ady bchar achar
+            self._seac()
         elif b1 == 7:  # sbw
-            self.x = self._a(0)
+            self.x = self._sbx = self._a(0)
             self.y = self._a(1)
             self.stack.clear()
         elif b1 == 33:  # setcurrentpoint
@@ -381,6 +406,33 @@ class _T1Glyph:
         else:  # dotsection / vstem3 / hstem3 / reserved
             self.stack.clear()
         return i
+
+    def _seac(self) -> None:
+        """Compose an accented glyph from its StandardEncoding components.
+
+        The base character is drawn as-is (the spec requires its sidebearing to
+        match the composite's); the accent is translated so that its
+        sidebearing point lands ``(adx, ady)`` away from the composite's
+        sidebearing point (``asb`` is the accent's own sidebearing, which its
+        charstring re-applies). Component lookups go through StandardEncoding
+        regardless of the font's own encoding, per the Type 1 spec.
+        """
+        args = self.stack[-5:] if len(self.stack) >= 5 else None
+        self.stack.clear()
+        self._done = True
+        if args is None or self._std_lookup is None or self._seac_depth >= 2:
+            return
+        asb, adx, ady, bchar, achar = args
+        components = (
+            (self._std_lookup(int(bchar)), 0.0, 0.0),
+            (self._std_lookup(int(achar)), self._sbx + adx - asb, ady),
+        )
+        for charstring, dx, dy in components:
+            if charstring is None:
+                continue
+            child = _T1Glyph(self._subrs, self._std_lookup, self._seac_depth + 1)
+            for contour in child.run(charstring):
+                self.contours.append([(x + dx, y + dy) for (x, y) in contour])
 
     def _callothersubr(self) -> None:
         if len(self.stack) < 2:

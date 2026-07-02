@@ -2,15 +2,17 @@
 
 The Standard-14 fonts (Helvetica/Times/Courier families, Symbol, ZapfDingbats)
 are never embedded in a PDF, so the page renderer has no outline data for them
-and falls back to drawing glyph boxes. To render real glyphs we ship
-metric-compatible open fonts (Liberation, SIL OFL 1.1; see
-``data/fonts/README.md``) subset to a Latin Unicode set and zlib-compressed.
+and falls back to drawing glyph boxes. To render real glyphs we ship subset,
+zlib-compressed open fonts (see ``data/fonts/README.md``): **Liberation**
+(SIL OFL 1.1, metric-compatible) for the Latin families and **DejaVu Sans**
+(Bitstream Vera license) shape subsets for Symbol and ZapfDingbats.
 
 This module maps a PDF base-font name -- optionally refined by FontDescriptor
-signals -- to one of twelve bundled faces (``{sans,serif,mono}`` x
-``{regular,bold,italic,bolditalic}``) and decompresses it on demand with the
-stdlib ``zlib`` module. Symbol and ZapfDingbats have no metric-compatible OFL
-source and resolve to ``None`` so the renderer keeps drawing boxes for them.
+signals -- to one of the bundled faces (``{sans,serif,mono}`` x
+``{regular,bold,italic,bolditalic}``, plus ``symbol`` and ``dingbats``) and
+decompresses it on demand with the stdlib ``zlib`` module. The symbolic faces
+are indexed by Unicode through the built-in Symbol/ZapfDingbats encodings
+(``substitute_code_to_unicode``), not a Latin code page.
 """
 
 from __future__ import annotations
@@ -18,12 +20,13 @@ from __future__ import annotations
 import re
 import zlib
 from importlib.resources import files
-from typing import Optional
+from typing import Dict, Optional
 
 __all__ = [
     "resolve_substitute_key",
     "load_substitute_sfnt",
     "strip_subset_prefix",
+    "substitute_code_to_unicode",
 ]
 
 # FontDescriptor /Flags bits (PDF 32000-1 Table 121), as 0-based masks.
@@ -52,9 +55,13 @@ def strip_subset_prefix(name: str) -> str:
     return _SUBSET_PREFIX.sub("", name)
 
 
-def _is_symbolic_standard(name: str) -> bool:
-    """True for Symbol / ZapfDingbats, which have no OFL substitute."""
-    return name in ("symbol", "zapfdingbats", "dingbats")
+def _symbolic_standard_key(name: str) -> Optional[str]:
+    """Bundled face key for Symbol / ZapfDingbats, or ``None``."""
+    if name == "symbol":
+        return "symbol"
+    if name in ("zapfdingbats", "dingbats"):
+        return "dingbats"
+    return None
 
 
 def _family(name: str, flags: int) -> Optional[str]:
@@ -94,15 +101,18 @@ def resolve_substitute_key(
 
     *base_font* is the PDF ``/BaseFont`` name (a subset prefix is stripped).
     The FontDescriptor signals refine the choice when the name is ambiguous or
-    missing. Returns ``None`` for Symbol/ZapfDingbats (no metric-compatible OFL
-    source) so the caller keeps its box fallback.
+    missing. Symbol and ZapfDingbats resolve to the dedicated ``symbol`` /
+    ``dingbats`` shape-substitute faces (indexed through their built-in
+    encodings, see :func:`substitute_code_to_unicode`); other unrecognised
+    symbolic fonts resolve to ``None`` so the caller keeps its box fallback.
     """
     raw = strip_subset_prefix(base_font or "")
     # Normalise: lower-case and drop separators so "Times-BoldItalic",
     # "Times New Roman,BoldItalic" and "TimesNewRomanPS-BoldItalicMT" align.
     name = re.sub(r"[\s,_+-]", "", raw).lower()
-    if _is_symbolic_standard(name):
-        return None
+    symbolic = _symbolic_standard_key(name)
+    if symbolic is not None:
+        return symbolic
 
     family = _family(name, flags)
     if family is None:
@@ -129,6 +139,24 @@ def resolve_substitute_key(
     else:
         style = "regular"
     return f"{family}-{style}"
+
+
+def substitute_code_to_unicode(key: Optional[str]) -> Optional[Dict[int, int]]:
+    """Built-in ``code -> Unicode`` table for a symbolic face key, or ``None``.
+
+    Symbol and ZapfDingbats text is encoded with the fonts' built-in encodings,
+    not a Latin code page; callers use this table (instead of cp1252) to index
+    the substitute's Unicode cmap. Latin face keys return ``None``.
+    """
+    if key == "symbol":
+        from .symbol_encodings import SYMBOL_TO_UNICODE
+
+        return SYMBOL_TO_UNICODE
+    if key == "dingbats":
+        from .symbol_encodings import ZAPF_DINGBATS_TO_UNICODE
+
+        return ZAPF_DINGBATS_TO_UNICODE
+    return None
 
 
 _sfnt_cache: dict[str, Optional[bytes]] = {}

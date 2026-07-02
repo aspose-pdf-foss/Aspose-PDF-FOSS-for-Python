@@ -1,10 +1,11 @@
-"""Standard-14 fonts render as real glyphs via bundled OFL substitutes.
+"""Standard-14 fonts render as real glyphs via bundled substitutes.
 
 The Standard-14 fonts are never embedded, so before substitution the renderer
 drew a solid box per glyph. These tests cover the name->substitute resolution,
 the bundled-font loading, and that the page renderer now fills real glyph
 outlines (sparser than solid boxes) for the Helvetica/Times/Courier families
-while Symbol/ZapfDingbats keep the box fallback.
+(Liberation) and for Symbol/ZapfDingbats (DejaVu shape subsets indexed by
+their built-in encodings).
 """
 
 from __future__ import annotations
@@ -48,10 +49,10 @@ def test_resolve_substitute_key_by_name(base_font: str, expected: str) -> None:
     assert resolve_substitute_key(base_font) == expected
 
 
-def test_resolve_symbol_and_dingbats_have_no_substitute() -> None:
-    assert resolve_substitute_key("Symbol") is None
-    assert resolve_substitute_key("ZapfDingbats") is None
-    assert resolve_substitute_key("ABCDEF+Symbol") is None
+def test_resolve_symbol_and_dingbats_use_shape_substitutes() -> None:
+    assert resolve_substitute_key("Symbol") == "symbol"
+    assert resolve_substitute_key("ZapfDingbats") == "dingbats"
+    assert resolve_substitute_key("ABCDEF+Symbol") == "symbol"
 
 
 def test_resolve_uses_descriptor_signals() -> None:
@@ -103,6 +104,13 @@ def test_load_substitute_sfnt_misses_return_none() -> None:
     assert load_substitute_sfnt("bogus-key") is None
 
 
+def test_load_symbolic_substitutes() -> None:
+    for key in ("symbol", "dingbats"):
+        data = load_substitute_sfnt(key)
+        assert data is not None
+        assert data[:4] in (b"\x00\x01\x00\x00", b"true", b"OTTO")
+
+
 def test_substitute_is_metric_compatible_with_helvetica() -> None:
     # Liberation Sans is metric-compatible with Helvetica/Arial: the advance of
     # 'A' is 667/1000 em. This is what keeps text positioning correct when a
@@ -137,19 +145,30 @@ def _dark_pixels(raster) -> int:
     )
 
 
-def test_helvetica_renders_real_glyphs_not_boxes() -> None:
-    # Real glyph outlines are far sparser than the solid-box fallback that
-    # Symbol (no substitute) still uses for the same string.
+def _box_pixels(monkeypatch, text: str, font_name: str) -> int:
+    """Ink of the solid-box fallback (substitute bundle simulated missing)."""
+    monkeypatch.setattr(
+        "aspose_pdf.engine.rasterizer.load_substitute_sfnt", lambda key: None
+    )
+    try:
+        return _dark_pixels(_render_text(text, font_name))
+    finally:
+        monkeypatch.undo()
+
+
+def test_helvetica_renders_real_glyphs_not_boxes(monkeypatch) -> None:
+    # Real glyph outlines are far sparser than the solid-box fallback drawn
+    # when no substitute is available for the same string.
     glyphs = _dark_pixels(_render_text("Helvetica", "Helvetica"))
-    boxes = _dark_pixels(_render_text("Helvetica", "Symbol"))
+    boxes = _box_pixels(monkeypatch, "Helvetica", "Helvetica")
     assert glyphs > 0
     assert glyphs < boxes
 
 
-def test_times_and_courier_render_glyphs() -> None:
+def test_times_and_courier_render_glyphs(monkeypatch) -> None:
     for font in ("Times-Roman", "Courier"):
         glyphs = _dark_pixels(_render_text("Sample", font))
-        boxes = _dark_pixels(_render_text("Sample", "Symbol"))
+        boxes = _box_pixels(monkeypatch, "Sample", font)
         assert 0 < glyphs < boxes
 
 
@@ -173,9 +192,29 @@ def test_bold_is_heavier_than_regular() -> None:
     assert bold > regular
 
 
-def test_symbol_still_falls_back_to_boxes() -> None:
-    # Symbol/ZapfDingbats have no metric-compatible OFL source; they keep the
-    # solid-box fallback (dense ink), unlike the now-glyph Latin Standard-14.
-    symbol = _dark_pixels(_render_text("ABCDE", "Symbol"))
-    helv = _dark_pixels(_render_text("ABCDE", "Helvetica"))
-    assert symbol > helv
+def test_symbol_renders_real_glyphs(monkeypatch) -> None:
+    # Symbol code 0x61.. maps to Greek alpha/beta/gamma through the built-in
+    # Symbol encoding; real outlines are sparser than the box fallback.
+    glyphs = _dark_pixels(_render_text("abg", "Symbol"))
+    boxes = _box_pixels(monkeypatch, "abg", "Symbol")
+    assert 0 < glyphs < boxes
+
+
+def test_zapfdingbats_renders_real_glyphs(monkeypatch) -> None:
+    # ZapfDingbats codes 0x33/0x34 are the check marks U+2713/U+2714.
+    glyphs = _dark_pixels(_render_text("34", "ZapfDingbats"))
+    boxes = _box_pixels(monkeypatch, "34", "ZapfDingbats")
+    assert 0 < glyphs < boxes
+
+
+def test_symbol_glyphs_differ_from_latin() -> None:
+    # The same codes drawn with Symbol (Greek) and Helvetica (Latin) must
+    # produce different rasters -- i.e. the built-in encoding is honoured.
+    symbol = _render_text("abg", "Symbol")
+    helv = _render_text("abg", "Helvetica")
+    differs = any(
+        symbol.get_pixel(x, y) != helv.get_pixel(x, y)
+        for y in range(symbol.height)
+        for x in range(symbol.width)
+    )
+    assert differs

@@ -154,12 +154,15 @@ Supported:
   (`/FontFile`, eexec/charstring-decrypted Type 1 charstrings with flex and
   hint-replacement OtherSubrs) -- resolved through Identity CID maps, a simple
   font's `/Encoding`/symbol cmap, the CFF charset/built-in encoding, or the
-  Type 1 built-in encoding. Fonts with no embedded program -- the Standard 14
-  (Helvetica/Times/Courier families) and other non-embedded simple fonts -- are
-  filled from bundled metric-compatible open substitutes (Liberation, SIL OFL
-  1.1), chosen by base-font name and FontDescriptor flags, so common text
-  renders as real glyphs; only Symbol and ZapfDingbats keep the glyph-box
-  fallback.
+  Type 1 built-in encoding, with Type 1 `seac` accent composites drawn from
+  their StandardEncoding components. Fonts with no embedded program -- the
+  Standard 14 and other non-embedded simple fonts -- are filled from bundled
+  open substitutes chosen by base-font name and FontDescriptor flags:
+  metric-compatible Liberation faces (SIL OFL 1.1) for the
+  Helvetica/Times/Courier families, and DejaVu Sans shape subsets (Bitstream
+  Vera license) for Symbol and ZapfDingbats, indexed through those fonts'
+  built-in encodings -- so common text, Greek/math symbols and dingbats all
+  render as real glyphs.
 - Anti-alias the raster by supersampling: `antialias=True` (the default) renders
   at 3x and box-downsamples for smooth text, fill, stroke, and image edges; an
   integer 1-8 sets the factor, and `False` (or `1`) renders hard-edged.
@@ -202,14 +205,16 @@ Boundaries:
   and non-isolated backdrops are not modelled) and the `/Alpha` soft-mask
   subtype approximates alpha with painted coverage.
 - Glyph outline rasterization covers all three embedded program formats --
-  TrueType (`glyf`), CFF (`/FontFile3`), and Type 1 (`/FontFile`). Fonts with no
-  embedded program are filled from bundled metric-compatible substitutes (the
-  Standard 14 Helvetica/Times/Courier families, and unknown non-embedded fonts
-  routed to a sans/serif/mono substitute by their FontDescriptor flags). The
-  substitutes are Latin-subset Liberation faces, so glyphs outside that coverage,
-  Symbol and ZapfDingbats (no metric-compatible substitute), Type 1 `seac` accent
-  composites, a simple CFF font that relies on a predefined (Standard/Expert)
-  encoding, and text shaping (ligatures, GSUB/GPOS) are drawn as glyph boxes.
+  TrueType (`glyf`), CFF (`/FontFile3`), and Type 1 (`/FontFile`, including
+  `seac` accent composites). Fonts with no embedded program are filled from
+  bundled substitutes (the Standard 14 families plus Symbol/ZapfDingbats, and
+  unknown non-embedded fonts routed to a sans/serif/mono substitute by their
+  FontDescriptor flags). The Latin substitutes are Latin-subset Liberation
+  faces and the symbolic ones DejaVu subsets, so glyphs outside that coverage
+  (including Symbol's private-use bracket-extender pieces), a simple CFF font
+  that relies on a predefined (Standard/Expert) encoding, unknown symbolic
+  fonts (e.g. non-embedded Wingdings), and text shaping (ligatures, GSUB/GPOS)
+  are drawn as glyph boxes.
 - Layout reflow remains out of scope in this prerelease.
 
 ## Text
@@ -308,11 +313,12 @@ Boundaries:
   *collections* (`ttcf` flavour) are not reconstructed.
 - Embedded glyph outlines are rasterized by the page renderer (see
   [Pages](#pages)) for all three program formats: TrueType (`glyf`), CFF
-  (`/FontFile3`, name-keyed and CID-keyed), and Type 1 (`/FontFile`). The
-  Standard 14 fonts (never embedded) are rendered from bundled metric-compatible
-  open substitutes (Liberation, SIL OFL 1.1, Latin subset); Symbol and
-  ZapfDingbats have no substitute and fall back to glyph boxes. Text shaping
-  (ligatures, GSUB/GPOS) and Type 1 `seac` accents are not implemented.
+  (`/FontFile3`, name-keyed and CID-keyed), and Type 1 (`/FontFile`, including
+  `seac` accent composites). The Standard 14 fonts (never embedded) are
+  rendered from bundled open substitutes: metric-compatible Liberation faces
+  (SIL OFL 1.1, Latin subset) for the text families, and DejaVu Sans shape
+  subsets (Bitstream Vera license) for Symbol and ZapfDingbats via their
+  built-in encodings. Text shaping (ligatures, GSUB/GPOS) is not implemented.
   (Embedded TrueType and CFF — including CID-keyed CFF — glyph subsetting is
   available through `OptimizationOptions.subset_fonts`; see
   [Optimization](#optimization).)

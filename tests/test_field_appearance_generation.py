@@ -199,7 +199,8 @@ def test_substitute_width_fn_resolves_real_metrics():
     fn = substitute_width_fn("Helvetica")
     assert fn is not None
     assert fn(ord("i")) < fn(ord("W"))  # real (Liberation) advances, not flat
-    assert substitute_width_fn("Symbol") is None  # no substitute -> flat fallback
+    # A symbolic font with no substitute -> None (flat fallback).
+    assert substitute_width_fn("Wingdings", flags=1 << 2) is None
 
 
 # ---------------------------------------------------------------------------

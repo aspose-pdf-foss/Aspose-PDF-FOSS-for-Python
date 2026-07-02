@@ -1384,8 +1384,9 @@ class _PageRasterizer:
                 elif descriptor.mapping.get(PdfName("FontFile")) is not None:
                     font = self._build_type1_font(font_dict, descriptor)
         # No embedded program (or it failed to parse): fall back to a bundled
-        # metric-compatible substitute so the Standard-14 fonts render as real
-        # glyphs instead of boxes. Symbol/ZapfDingbats have no substitute.
+        # substitute so the Standard-14 fonts render as real glyphs instead of
+        # boxes (Liberation for the Latin families, DejaVu shape subsets for
+        # Symbol/ZapfDingbats).
         if font is None:
             font = self._build_substitute_font(font_dict)
         return font
@@ -1417,28 +1418,35 @@ class _PageRasterizer:
         outlines = TrueTypeOutlines(sfnt)
         if not outlines.ok:
             return None
-        code_to_gid = self._substitute_code_to_gid(font_dict, outlines)
+        code_to_gid = self._substitute_code_to_gid(font_dict, outlines, key)
         width_1000 = self._simple_widths(font_dict, outlines, code_to_gid)
         return _GlyphFont(outlines, code_to_gid, width_1000, bytes_per_code=1)
 
     def _substitute_code_to_gid(
-        self, font_dict: PdfDictionary, outlines: TrueTypeOutlines
+        self, font_dict: PdfDictionary, outlines: TrueTypeOutlines, key: str
     ) -> Callable[[int], Optional[int]]:
         from .font_subset import read_unicode_cmap
+        from .std_font_data import substitute_code_to_unicode
 
         uni = read_unicode_cmap(outlines._data)
-        # Default to WinAnsi (cp1252) -- the de-facto Standard-14 Latin encoding
-        # used when a font omits /Encoding -- then overlay any explicit PDF
-        # /Encoding (named base and/or /Differences) the document declares.
-        code_to_unicode: dict[int, int] = {}
-        for code in range(256):
-            try:
-                code_to_unicode[code] = ord(bytes([code]).decode("cp1252"))
-            except (UnicodeDecodeError, TypeError):
-                pass
+        # Symbol/ZapfDingbats text uses the fonts' built-in encodings; Latin
+        # faces default to WinAnsi (cp1252) -- the de-facto Standard-14 Latin
+        # encoding used when a font omits /Encoding. Then overlay any explicit
+        # PDF /Encoding (named base and/or /Differences) the document declares.
+        builtin = substitute_code_to_unicode(key)
+        if builtin is not None:
+            code_to_unicode = dict(builtin)
+        else:
+            code_to_unicode = {}
+            for code in range(256):
+                try:
+                    code_to_unicode[code] = ord(bytes([code]).decode("cp1252"))
+                except (UnicodeDecodeError, TypeError):
+                    pass
         if hasattr(self.pdf, "_simple_code_to_unicode"):
             try:
-                code_to_unicode.update(self.pdf._simple_code_to_unicode(font_dict) or {})
+                explicit = self.pdf._simple_code_to_unicode(font_dict) or {}
+                code_to_unicode.update(explicit)
             except Exception:
                 pass
 

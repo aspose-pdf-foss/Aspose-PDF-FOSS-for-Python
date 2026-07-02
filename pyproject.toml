@@ -67,6 +67,7 @@ aspose_pdf = ["py.typed"]
 "aspose_pdf.engine.data" = [
   "fonts/*.ttf.zlib",
   "fonts/LICENSE-OFL.txt",
+  "fonts/LICENSE-DEJAVU.txt",
   "fonts/README.md",
 ]
 

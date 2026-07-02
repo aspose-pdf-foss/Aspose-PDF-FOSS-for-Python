@@ -8,6 +8,13 @@ those fonts are never embedded in a PDF. We bundle the **Liberation** fonts
 Arial/Times New Roman/Courier New -- themselves metric-compatible with
 Helvetica/Times/Courier -- so glyph advances match the Standard-14 metrics.
 
+Symbol and ZapfDingbats have no metric-compatible open source, so they are
+substituted (glyph shapes only, not metrics) with subsets of **DejaVu Sans**
+(Bitstream Vera license + public-domain additions), which covers nearly the
+whole Adobe Symbol and ITC ZapfDingbats repertoires. The Unicode coverage for
+those two subsets comes from the runtime encoding tables in
+``aspose_pdf.engine.symbol_encodings``.
+
 To keep the wheel small the fonts are subset to a Latin-focused Unicode set
 (Basic Latin, Latin-1, Latin Extended-A, plus the punctuation/symbols used by
 the WinAnsi/MacRoman/Standard encodings) and stored zlib-compressed. The page
@@ -20,7 +27,8 @@ Usage::
 
 ``--src`` defaults to ``$LIBERATION_SRC`` then to the LibreOffice bundle. The
 source directory must contain the canonical ``Liberation{Sans,Serif,Mono}-*``
-``.ttf`` files. fontTools is required only to run this script, not at runtime.
+``.ttf`` files plus ``DejaVuSans.ttf``. fontTools is required only to run this
+script, not at runtime.
 """
 
 from __future__ import annotations
@@ -45,6 +53,13 @@ FACES = {
     "mono-bold": "LiberationMono-Bold.ttf",
     "mono-italic": "LiberationMono-Italic.ttf",
     "mono-bolditalic": "LiberationMono-BoldItalic.ttf",
+}
+
+# Symbol/ZapfDingbats substitute faces (shape coverage, not metric-compatible).
+# Coverage is the value set of the runtime code->Unicode encoding tables.
+SYMBOL_FACES = {
+    "symbol": ("DejaVuSans.ttf", "SYMBOL_TO_UNICODE"),
+    "dingbats": ("DejaVuSans.ttf", "ZAPF_DINGBATS_TO_UNICODE"),
 }
 
 # Glyph coverage: every code the WinAnsi/MacRoman/Standard encodings can map,
@@ -74,7 +89,18 @@ def _unicodes() -> list[int]:
     return sorted(unis)
 
 
-def _subset(src_path: Path) -> bytes:
+def _symbol_unicodes(table_name: str) -> list[int]:
+    """Unicode coverage for a symbolic face from the runtime encoding table."""
+    src_root = Path(__file__).resolve().parent.parent / "src"
+    sys.path.insert(0, str(src_root))
+    try:
+        from aspose_pdf.engine import symbol_encodings
+    finally:
+        sys.path.pop(0)
+    return sorted(set(getattr(symbol_encodings, table_name).values()))
+
+
+def _subset(src_path: Path, unicodes: list[int]) -> bytes:
     import io
 
     from fontTools import subset
@@ -90,7 +116,7 @@ def _subset(src_path: Path) -> bytes:
     opts.name_IDs = []  # name table only bloats a substitute; identity is in this repo
     font = TTFont(str(src_path))
     sub = subset.Subsetter(options=opts)
-    sub.populate(unicodes=_unicodes())
+    sub.populate(unicodes=unicodes)
     sub.subset(font)
     buf = io.BytesIO()
     font.save(buf)
@@ -112,17 +138,22 @@ def main() -> int:
 
     _OUT_DIR.mkdir(parents=True, exist_ok=True)
     total = 0
-    for key, face in FACES.items():
+    jobs = [(key, face, _unicodes()) for key, face in FACES.items()]
+    jobs += [
+        (key, face, _symbol_unicodes(table))
+        for key, (face, table) in SYMBOL_FACES.items()
+    ]
+    for key, face, unicodes in jobs:
         src_path = src_dir / face
         if not src_path.is_file():
             print(f"missing source face: {src_path}", file=sys.stderr)
             return 2
-        data = zlib.compress(_subset(src_path), 9)
+        data = zlib.compress(_subset(src_path, unicodes), 9)
         out_path = _OUT_DIR / f"{key}.ttf.zlib"
         out_path.write_bytes(data)
         total += len(data)
         print(f"  {key:18s} <- {face:32s} {len(data):>7d} bytes")
-    print(f"wrote {len(FACES)} fonts, {total} bytes total -> {_OUT_DIR}")
+    print(f"wrote {len(jobs)} fonts, {total} bytes total -> {_OUT_DIR}")
     return 0
 
 

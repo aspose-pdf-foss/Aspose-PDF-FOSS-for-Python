@@ -172,12 +172,91 @@ def test_type1_splits_via_eexec_without_lengths():
     # No Length1/Length2: the parser locates the eexec section heuristically.
     outlines = Type1Outlines(font)
     assert outlines.ok
-    assert round(max(p[0] for p in outlines.outline(outlines.name_to_gid["A"])[0])) == 500
+    contour = outlines.outline(outlines.name_to_gid["A"])[0]
+    assert round(max(p[0] for p in contour)) == 500
 
 
 def test_type1_rejects_junk():
     assert not Type1Outlines(b"not a font").ok
     assert Type1Outlines(b"junk").outline(0) == []
+
+
+def _seac_cs(asb, adx, ady, bchar, achar, *, sbx=0) -> bytes:
+    return (
+        _t1num(sbx) + _t1num(500) + b"\x0d"  # hsbw
+        + _t1num(asb) + _t1num(adx) + _t1num(ady)
+        + _t1num(bchar) + _t1num(achar)
+        + b"\x0c\x06"  # seac
+    )
+
+
+def test_type1_seac_composes_base_and_accent():
+    # "aacute" = "a" (StandardEncoding 0x61) + "acute" (0xC2) shifted by
+    # (adx - asb, ady). Both components are boxes so the result is exactly
+    # two contours at predictable positions.
+    font, l1, l2 = _make_type1(
+        {
+            ".notdef": _box_cs(0, 0, 0, 0),
+            "a": _box_cs(0, 0, 500, 500),
+            "acute": _box_cs(0, 600, 100, 700),
+            "aacute": _seac_cs(0, 250, 400, 0x61, 0xC2),
+        }
+    )
+    outlines = Type1Outlines(font, l1, l2)
+    assert outlines.ok
+
+    contours = outlines.outline(outlines.name_to_gid["aacute"])
+    assert len(contours) == 2
+    base, accent = contours
+    assert round(max(p[0] for p in base)) == 500  # the base "a" box, unshifted
+    assert round(min(p[1] for p in base)) == 0
+    # The accent box (x 0..100, y 600..700) lands at (+250, +400).
+    assert round(min(p[0] for p in accent)) == 250
+    assert round(max(p[0] for p in accent)) == 350
+    assert round(min(p[1] for p in accent)) == 1000
+    assert round(max(p[1] for p in accent)) == 1100
+
+
+def test_type1_seac_honours_accent_sidebearing():
+    # asb re-applies the accent's own sidebearing: translation is adx - asb.
+    font, l1, l2 = _make_type1(
+        {
+            ".notdef": _box_cs(0, 0, 0, 0),
+            "a": _box_cs(0, 0, 500, 500),
+            "acute": _box_cs(0, 600, 100, 700),
+            "aacute": _seac_cs(40, 250, 0, 0x61, 0xC2),
+        }
+    )
+    outlines = Type1Outlines(font, l1, l2)
+    accent = outlines.outline(outlines.name_to_gid["aacute"])[1]
+    assert round(min(p[0] for p in accent)) == 210  # 250 - 40
+
+
+def test_type1_seac_missing_component_degrades_gracefully():
+    # An accent code with no charstring in the font: only the base is drawn.
+    font, l1, l2 = _make_type1(
+        {
+            ".notdef": _box_cs(0, 0, 0, 0),
+            "a": _box_cs(0, 0, 500, 500),
+            "aacute": _seac_cs(0, 250, 400, 0x61, 0xC2),  # no "acute" glyph
+        }
+    )
+    outlines = Type1Outlines(font, l1, l2)
+    contours = outlines.outline(outlines.name_to_gid["aacute"])
+    assert len(contours) == 1
+
+
+def test_type1_seac_recursion_is_bounded():
+    # A pathological font whose seac components are themselves seac composites
+    # must terminate (depth-limited), not loop forever.
+    font, l1, l2 = _make_type1(
+        {
+            ".notdef": _box_cs(0, 0, 0, 0),
+            "a": _seac_cs(0, 10, 10, 0x61, 0x61),  # "a" composed of "a"...
+        }
+    )
+    outlines = Type1Outlines(font, l1, l2)
+    assert outlines.outline(outlines.name_to_gid["a"]) == []
 
 
 # ---------------------------------------------------------------------------
