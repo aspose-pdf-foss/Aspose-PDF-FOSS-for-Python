@@ -723,7 +723,8 @@ def _extract_xmp_pdfaid_fields(xmp_bytes: bytes) -> Tuple[Optional[str], Optiona
 def _scan_resources_for_device_colors(
     obj: Any, rgb: List[bool], cmyk: List[bool]
 ) -> None:
-    """Recursively mark ``DeviceRGB`` / ``DeviceGray`` / ``DeviceCMYK`` usage in *resources*."""
+    """Recursively mark ``DeviceRGB``/``DeviceGray``/``DeviceCMYK`` usage in
+    *resources*."""
     if isinstance(obj, str):
         name = obj.replace("/", "")
         if name in ("DeviceRGB", "DeviceGray"):
@@ -1052,7 +1053,8 @@ class SimplePdf:
         return len(self.pages)
 
     def _ensure_page_cache(self) -> None:
-        """Populate the page reference cache if it's invalid (resolves O(N^2) traversal)."""
+        """Populate the page reference cache if it's invalid (resolves O(N^2)
+        traversal)."""
         if self._page_cache_valid and self._page_refs:
             return
 
@@ -1091,7 +1093,8 @@ class SimplePdf:
         self._page_cache_valid = True
 
     def _get_page_dict(self, page_index: int) -> Optional[Any]:
-        """Find the page dictionary for the given index, using cache for O(1) retrieval."""
+        """Find the page dictionary for the given index, using cache for O(1)
+        retrieval."""
         if not self._cos_doc:
             if not self.pages:
                 return None
@@ -1181,7 +1184,8 @@ class SimplePdf:
         )
 
     def _update_page_count_recursive(self, node_ref: Any, delta: int) -> None:
-        """Update /Count in the page tree nodes up to the root (Structural Integrity fix)."""
+        """Update /Count in the page tree nodes up to the root (Structural
+        Integrity fix)."""
         from .cos import PdfName, PdfNumber, PdfDictionary
 
         curr_ref = node_ref
@@ -1278,7 +1282,8 @@ class SimplePdf:
         # Use mmap for files larger than 50MB
         if file_size > cls.MIN_MMAP_SIZE:
             logger.info(
-                f"Large file detected ({file_size / 1024 / 1024:.2f} MB). Using memory-mapped processing."
+                f"Large file detected ({file_size / 1024 / 1024:.2f} MB). "
+                "Using memory-mapped processing."
             )
             with open(p, "rb") as f:
                 # Note: mmap keeps the file open; we must close it in dispose()
@@ -1634,7 +1639,8 @@ class SimplePdf:
 
     @classmethod
     def merge(cls, *pdfs: "SimplePdf") -> "SimplePdf":
-        """Merge multiple PDFs into one, resolving resource name collisions and deduplicating."""
+        """Merge multiple PDFs into one, resolving resource name collisions
+        and deduplicating."""
         merged = cls()
         passwords = set()
 
@@ -1658,7 +1664,8 @@ class SimplePdf:
             # SimplePdf currently only exposes 'images' and 'attachments'
             # Fonts are hidden in _cos_doc usually.
             # For a truly robust merge, we'd need to parse resources from each page.
-            # Here we implement a renaming strategy for all dictionary-based resources we know.
+            # Here we implement a renaming strategy for all dictionary-based
+            # resources we know.
 
             # Helper for renaming
             def get_safe_name(old_name, data_hash=None):
@@ -1853,7 +1860,8 @@ class SimplePdf:
             return
         cos_page_count = len(getattr(self, "_page_obj_ids", []))
         if cos_page_count == 0:
-            # COS has no known pages — page tree may be absent; do not attempt to inject.
+            # COS has no known pages — page tree may be absent; do not
+            # attempt to inject.
             return
         for i in range(cos_page_count, len(self.pages)):
             rect = self.pages[i]
@@ -2198,7 +2206,8 @@ class SimplePdf:
 
         if writer and self._cos_doc:
             # 1. Update modified content streams
-            # We compare current page_contents with the original data only if we have the mapping
+            # We compare current page_contents with the original data only if
+            # we have the mapping
             for i, content in enumerate(self.page_contents):
                 if i < len(self._content_obj_ids) and self._content_obj_ids[i] > 0:
                     obj_id = self._content_obj_ids[i]
@@ -2212,9 +2221,10 @@ class SimplePdf:
                             len(content)
                         )
 
-                        obj_bytes = f"{obj_id} 0 obj\n{writer.serialize_object(original_obj)}\nendobj\n".encode(
-                            "latin-1"
-                        )
+                        obj_bytes = (
+                            f"{obj_id} 0 obj\n"
+                            f"{writer.serialize_object(original_obj)}\nendobj\n"
+                        ).encode("latin-1")
                         incr.add_object(obj_id, obj_bytes)
                         modified = True
 
@@ -2237,9 +2247,10 @@ class SimplePdf:
                                     v.encode("utf-8")
                                 )
 
-                            obj_bytes = f"{info_id} 0 obj\n{writer.serialize_object(info_dict)}\nendobj\n".encode(
-                                "latin-1"
-                            )
+                            obj_bytes = (
+                                f"{info_id} 0 obj\n"
+                                f"{writer.serialize_object(info_dict)}\nendobj\n"
+                            ).encode("latin-1")
                             incr.add_object(info_id, obj_bytes)
                             modified = True
 
@@ -2538,7 +2549,8 @@ class SimplePdf:
                                     )
                                     if not embedded:
                                         problems.append(
-                                            f"Font {font.get(PdfName('BaseFont'))} on page {i + 1} is not embedded."
+                                            f"Font {font.get(PdfName('BaseFont'))}"
+                                            f" on page {i + 1} is not embedded."
                                         )
 
                                     flags_val = descriptor.get(PdfName("Flags"))
@@ -2550,25 +2562,31 @@ class SimplePdf:
                                     has_encoding = (
                                         font.get(PdfName("Encoding")) is not None
                                     )
-                                    # Symbolic font: valid PDF/A text mapping needs Encoding or ToUnicode
+                                    # Symbolic font: valid PDF/A text mapping
+                                    # needs Encoding or ToUnicode
                                     if (flags_n & 4) != 0 and not (
                                         has_tounicode or has_encoding
                                     ):
                                         problems.append(
-                                            f"Symbolic font {font.get(PdfName('BaseFont'))} on page {i + 1} "
+                                            "Symbolic font "
+                                            f"{font.get(PdfName('BaseFont'))} "
+                                            f"on page {i + 1} "
                                             "requires an Encoding or ToUnicode map."
                                         )
 
-                                    # Level A: non-standard fonts must be searchable (ToUnicode)
+                                    # Level A: non-standard fonts must be
+                                    # searchable (ToUnicode)
                                     if level_norm.endswith("a") and not standard_subset:
                                         if not has_tounicode:
                                             problems.append(
-                                                f"Font {font.get(PdfName('BaseFont'))} on page {i + 1} "
-                                                "missing required ToUnicode map for PDF/A level A."
+                                                f"Font {font.get(PdfName('BaseFont'))}"
+                                                f" on page {i + 1} missing required"
+                                                " ToUnicode map for PDF/A level A."
                                             )
                                 else:
                                     problems.append(
-                                        f"Font {font.get(PdfName('BaseFont'))} on page {i + 1} missing FontDescriptor."
+                                        f"Font {font.get(PdfName('BaseFont'))}"
+                                        f" on page {i + 1} missing FontDescriptor."
                                     )
 
         # 6. OutputIntents + device color spaces (content-level)
@@ -2598,7 +2616,8 @@ class SimplePdf:
                 oi = self._resolve(oi_ref)
                 if not isinstance(oi, PdfArray) or len(oi.items) == 0:
                     problems.append(
-                        "PDF/A: Catalog /OutputIntents with a valid ICC profile is required."
+                        "PDF/A: Catalog /OutputIntents with a valid ICC "
+                        "profile is required."
                     )
                 if has_rgb or has_cmyk:
                     if not isinstance(oi, PdfArray) or len(oi.items) == 0:
@@ -2620,7 +2639,8 @@ class SimplePdf:
                         if not has_icc:
                             problems.append(
                                 "PDF/A: OutputIntents must include DestOutputProfile "
-                                "pointing to a valid ICC profile stream when device color spaces are used."
+                                "pointing to a valid ICC profile stream when "
+                                "device color spaces are used."
                             )
 
         # 7. XMP pdfaid fields vs. declared validation level
@@ -2640,23 +2660,27 @@ class SimplePdf:
                         xm_part, xm_conf = _extract_xmp_pdfaid_fields(xmp_bytes)
                         if expected is None:
                             problems.append(
-                                f"Cannot validate XMP pdfaid fields: unrecognized level {level!r}."
+                                "Cannot validate XMP pdfaid fields: "
+                                f"unrecognized level {level!r}."
                             )
                         else:
                             exp_part, exp_conf = expected
                             if xm_part is None or xm_conf is None:
                                 problems.append(
-                                    "XMP metadata must declare pdfaid:part and pdfaid:conformance."
+                                    "XMP metadata must declare pdfaid:part "
+                                    "and pdfaid:conformance."
                                 )
                             else:
                                 if xm_part != exp_part:
                                     problems.append(
-                                        f"XMP pdfaid:part is {xm_part!r} but validation level "
+                                        f"XMP pdfaid:part is {xm_part!r} "
+                                        "but validation level "
                                         f"requires part {exp_part!r}."
                                     )
                                 if xm_conf != exp_conf:
                                     problems.append(
-                                        f"XMP pdfaid:conformance is {xm_conf!r} but validation level "
+                                        f"XMP pdfaid:conformance is {xm_conf!r} "
+                                        "but validation level "
                                         f"requires {exp_conf!r}."
                                     )
 
@@ -2700,7 +2724,8 @@ class SimplePdf:
 
         if problems:
             logger.warning(
-                f"PDF/A compliance check failed for level {level}: {len(problems)} issues found."
+                f"PDF/A compliance check failed for level {level}: "
+                f"{len(problems)} issues found."
             )
         else:
             logger.info(f"PDF/A compliance check passed for level {level}.")
@@ -2758,7 +2783,8 @@ class SimplePdf:
 
         if root.get(PdfName("Lang")) is None:
             warnings.append(
-                "PDF/UA: Catalog /Lang is recommended for natural language of the document."
+                "PDF/UA: Catalog /Lang is recommended for natural language "
+                "of the document."
             )
 
         ext_errors, ext_warnings = conformance.pdfua_extended(self)
@@ -2906,7 +2932,9 @@ class SimplePdf:
             return direct
 
         inherited = self._resolve_resources_cos(page)
-        mapping = dict(inherited.mapping) if isinstance(inherited, PdfDictionary) else {}
+        mapping = (
+            dict(inherited.mapping) if isinstance(inherited, PdfDictionary) else {}
+        )
         resources = PdfDictionary(mapping)
         page.mapping[resources_key] = resources
         return resources
@@ -3032,7 +3060,9 @@ class SimplePdf:
                 num = self._resolve(item)
                 if isinstance(num, PdfNumber):
                     used_keys.append(int(num.value))
-            next_key_obj = self._resolve(struct_root.mapping.get(PdfName("ParentTreeNextKey")))
+            next_key_obj = self._resolve(
+                struct_root.mapping.get(PdfName("ParentTreeNextKey"))
+            )
             next_key = (
                 int(next_key_obj.value)
                 if isinstance(next_key_obj, PdfNumber)
@@ -3349,7 +3379,9 @@ class SimplePdf:
             remaining = 0 if max_count == 0 else max_count - total
             if max_count and remaining <= 0:
                 break
-            content = self.page_contents[index] if index < len(self.page_contents) else b""
+            content = (
+                self.page_contents[index] if index < len(self.page_contents) else b""
+            )
             updated, count = replace_text_in_content(
                 content,
                 search,
@@ -3405,7 +3437,9 @@ class SimplePdf:
             remaining = 0 if max_count == 0 else max_count - total
             if max_count and remaining <= 0:
                 break
-            content = self.page_contents[index] if index < len(self.page_contents) else b""
+            content = (
+                self.page_contents[index] if index < len(self.page_contents) else b""
+            )
             quads = []
             if overlay:
                 from .text_locate import locate_matches
@@ -3525,10 +3559,8 @@ class SimplePdf:
         self, font_dict: Any, descriptor: Any, ascent: float, descent: float
     ):
         from .cos import PdfDictionary, PdfName
-        from .font_subset import read_unicode_cmap
-        from .glyph_outlines import TrueTypeOutlines
-        from .std_font_data import load_substitute_sfnt, resolve_substitute_key
         from .text_locate import SimpleFontMetric
+        from .text_metrics import substitute_width_fn
 
         base = self._get_name(font_dict.mapping.get(PdfName("BaseFont")))
         flags, italic_angle, font_weight = 0, 0.0, None
@@ -3539,32 +3571,11 @@ class SimplePdf:
             flags = int(f) if f is not None else 0
             italic_angle = ia if ia is not None else 0.0
             font_weight = fw
-        key = resolve_substitute_key(
+        width_of = substitute_width_fn(
             base, flags=flags, italic_angle=italic_angle, font_weight=font_weight
         )
-        sfnt = load_substitute_sfnt(key)
-        if sfnt is None:
+        if width_of is None:
             return None
-        try:
-            outlines = TrueTypeOutlines(sfnt)
-            if not outlines.ok:
-                return None
-            uni = read_unicode_cmap(sfnt)
-        except (struct.error, IndexError, ValueError, TypeError, KeyError):
-            return None
-        upm = outlines.units_per_em or 1000
-
-        def width_of(code: int, _o=outlines, _u=uni, _upm=upm) -> float:
-            try:
-                cp = ord(bytes([code]).decode("cp1252"))
-            except (UnicodeDecodeError, TypeError):
-                cp = code
-            gid = _u.get(cp)
-            if not gid:
-                return 500.0
-            adv = _o.advance_width(gid)
-            return adv * 1000.0 / _upm if adv else 500.0
-
         return SimpleFontMetric(width_of=width_of, ascent=ascent, descent=descent)
 
     def _register_standard_font_resource(
@@ -4030,7 +4041,8 @@ class SimplePdf:
         self._page_image_map = new_image_map
 
     def _delete_cos_page(self, index: int) -> None:
-        """Remove a page from the COS page tree and update counts (Nested Tree support)."""
+        """Remove a page from the COS page tree and update counts (Nested
+        Tree support)."""
         if not self._cos_doc:
             return
 
@@ -4199,7 +4211,9 @@ class SimplePdf:
                 fd = PdfDictionary({PdfName("Type"): PdfName("Font")})
                 for key, value in spec.items():
                     fd.mapping[PdfName(str(key))] = PdfName(str(value))
-                font_dict.mapping[PdfName(str(name))] = self._cos_doc.register_object(fd)
+                font_dict.mapping[PdfName(str(name))] = (
+                    self._cos_doc.register_object(fd)
+                )
             resources.mapping[PdfName("Font")] = font_dict
         return resources
 
@@ -4233,7 +4247,9 @@ class SimplePdf:
         if not isinstance(annot, PdfDictionary):
             return False
 
-        has_ap = isinstance(self._resolve(annot.mapping.get(PdfName("AP"))), PdfDictionary)
+        has_ap = isinstance(
+            self._resolve(annot.mapping.get(PdfName("AP"))), PdfDictionary
+        )
         if has_ap and not force:
             return True
 
@@ -4720,7 +4736,8 @@ class SimplePdf:
                 if not hasattr(self._cos_doc, "objects") or not self._cos_doc.objects:
                     return False
 
-                # 5. Deep Structural Validation (Detect circular references & deep recursion)
+                # 5. Deep Structural Validation (Detect circular references
+                # & deep recursion)
                 visited = set()
 
                 def _validate_object(obj: Any, depth: int) -> bool:
@@ -4847,7 +4864,8 @@ class SimplePdf:
                 except (ValueError, TypeError):
                     self.pages[i] = (0, 0, 612, 792)
 
-        # 5. Check if _cos_doc is present, if not, try a safe re-parsing if data available
+        # 5. Check if _cos_doc is present, if not, try a safe re-parsing if
+        # data available
         if not self._cos_doc and self._raw_bytes:
             try:
                 from .pdf_parser_cos import PdfCosParser
@@ -6020,7 +6038,8 @@ class SimplePdf:
         1. Synthesises appearances for supported annotations that lack one
         2. Iterates through all pages
         3. Retrieves the /Annots array
-        4. For each annotation with an appearance stream (/AP), appends it to page content
+        4. For each annotation with an appearance stream (/AP), appends it to
+           page content
         5. Removes the /Annots entry and /AcroForm from the trailer
         """
         self._ensure_not_disposed()
@@ -6325,6 +6344,14 @@ class SimplePdf:
         font_name = font_name or "Helv"
         multiline = ft == "Tx" and bool(ff & (1 << 12))
         font_ref, used_name = self._resolve_field_font(font_name, acro)
+        # Glyph-metric advances for wrap/quadding: the field font's /Widths, or
+        # a bundled substitute's metrics; None (e.g. Type0) -> flat estimate.
+        width_fn = None
+        font_obj = self._resolve(font_ref)
+        if isinstance(font_obj, PdfDictionary):
+            metric = self._simple_font_metric(font_obj)
+            if metric is not None:
+                width_fn = metric.width_of
         content = build_text_appearance(
             text,
             w,
@@ -6334,6 +6361,7 @@ class SimplePdf:
             color_op=color,
             quadding=q if q in (0, 1, 2) else 0,
             multiline=multiline,
+            width_fn=width_fn,
         )
         resources = PdfDictionary(
             {PdfName("Font"): PdfDictionary({PdfName(used_name): font_ref})}
@@ -6896,7 +6924,8 @@ class SimplePdf:
                 if not base_font:
                     continue
 
-                # Clean base font name (remove subset prefix if any, e.g. ABCDEF+Arial -> Arial)
+                # Clean base font name (remove subset prefix if any,
+                # e.g. ABCDEF+Arial -> Arial)
                 font_name = base_font.split("+")[-1]
 
                 # Search for font file in lookup directory
@@ -7175,7 +7204,8 @@ class CosExtractor:
         return b""
 
     def _decode_stream(self, stream: Any, source_ref: Any = None) -> bytes:
-        """Decode a PdfStream: Standard security decryption (if configured), then filters."""
+        """Decode a PdfStream: Standard security decryption (if configured),
+        then filters."""
         from .cos import (
             PdfName,
             PdfStream as PdfStreamCls,
@@ -7298,7 +7328,8 @@ class CosExtractor:
         fonts_out: dict,
         extgstates_out: dict,
     ) -> None:
-        """Traverse the page tree collecting MediaBoxes, object IDs, and resource metadata.
+        """Traverse the page tree collecting MediaBoxes, object IDs, and
+        resource metadata.
 
         Unlike ``_traverse_page_tree`` this method does **not** decode content
         streams. It records page bounding boxes and COS object numbers, and
@@ -7736,7 +7767,8 @@ class CosExtractor:
         )
 
     def encryption_password_allows_access(self, password: str) -> bool:
-        """True if *password* is correct, or verification is unavailable (minimal /Encrypt dict)."""
+        """True if *password* is correct, or verification is unavailable
+        (minimal /Encrypt dict)."""
         if not self.detect_encryption():
             return True
         from .cos import PdfName, PdfDictionary, PdfString
@@ -8060,7 +8092,8 @@ class CosExtractor:
         Returns
         -------
         dict
-            Mapping of field name to {"value": ..., "type": "text"|"checkbox"|"radio"|"choice"}.
+            Mapping of field name to
+            {"value": ..., "type": "text"|"checkbox"|"radio"|"choice"}.
         """
         from .cos import PdfName, PdfDictionary, PdfArray
 
@@ -8251,7 +8284,9 @@ class CosExtractor:
                 f_stream,
                 f_ref if isinstance(f_ref, PdfIndirectReference) else None,
             )
-            entries.append((filename, data, self._read_filespec_meta(val_obj, f_stream)))
+            entries.append(
+                (filename, data, self._read_filespec_meta(val_obj, f_stream))
+            )
 
         return entries
 
@@ -8266,7 +8301,9 @@ class CosExtractor:
 
         meta: dict = {}
 
-        mime = _decode_mime_name(self._resolve(ef_stream.mapping.get(PdfName("Subtype"))))
+        mime = _decode_mime_name(
+            self._resolve(ef_stream.mapping.get(PdfName("Subtype")))
+        )
         if mime:
             meta["mime"] = mime
 
@@ -8328,7 +8365,8 @@ class PdfWriterV0:
 
         if self.pdf.encryption_algorithm.startswith("AES"):
             # AES encryption (AES-128 or AES-256)
-            # AES V4 usually encrypts streams/strings using the key directly (or with per-object salt in some versions).
+            # AES V4 usually encrypts streams/strings using the key directly
+            # (or with per-object salt in some versions).
             # For this task, we use the simple AES-CBC from Utils with the key.
             # We don't modify the key with obj_id for AES V4 (usually).
             # (Actually V4 uses CFB? Standard is CBC for streams in V4).
@@ -8534,11 +8572,13 @@ class PdfWriterV0:
             mbox = self.pdf.pages[i] if i < len(self.pdf.pages) else (0, 0, 612, 792)
             self._start_obj(f_p_id + i)
             self._write_line(
-                f"<< /Type /Page /Parent 2 0 R /MediaBox [{mbox[0]} {mbox[1]} {mbox[2]} {mbox[3]}]".encode()
+                f"<< /Type /Page /Parent 2 0 R /MediaBox "
+                f"[{mbox[0]} {mbox[1]} {mbox[2]} {mbox[3]}]".encode()
             )
             self._write_line(f"/Contents {f_c_id + i} 0 R".encode())
             self._write_line(
-                b"/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >>"
+                b"/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 "
+                b"/BaseFont /Helvetica >> >>"
             )
             if visible_images:
                 xobjs = " ".join(
@@ -8556,7 +8596,10 @@ class PdfWriterV0:
                 self.pdf.page_contents[i] if i < len(self.pdf.page_contents) else b""
             )
             if self.pdf.watermark_text:
-                watermark = f"BT /F1 48 Tf 0.5 G 1 0 0 1 100 100 Tm ({self.pdf.watermark_text}) Tj ET".encode()
+                watermark = (
+                    f"BT /F1 48 Tf 0.5 G 1 0 0 1 100 100 Tm "
+                    f"({self.pdf.watermark_text}) Tj ET"
+                ).encode()
                 content += b"\n" + watermark
             if self.pdf.encrypted:
                 content = self._encrypt_data(content, f_c_id + i)
@@ -8574,7 +8617,8 @@ class PdfWriterV0:
             self._start_obj(img_id)
             w, h = self.pdf._image_sizes.get(name, (1, 1))
             self._write_line(
-                f"<< /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length {len(img_data)} >>".encode()
+                f"<< /Subtype /Image /Width {w} /Height {h} /ColorSpace "
+                f"/DeviceRGB /BitsPerComponent 8 /Length {len(img_data)} >>".encode()
             )
             self._write_line(b"stream")
             self.out.extend(img_data)
@@ -8602,7 +8646,8 @@ class PdfWriterV0:
                 O_val = self.pdf.O.hex() if self.pdf.O else "00" * 32
                 U_val = self.pdf.U.hex() if self.pdf.U else "00" * 32
                 self._write_line(
-                    f"<< /Filter /Standard /V 1 /R 2 /O <{O_val}> /U <{U_val}> /P {self.pdf.P} >>".encode()
+                    f"<< /Filter /Standard /V 1 /R 2 /O <{O_val}> "
+                    f"/U <{U_val}> /P {self.pdf.P} >>".encode()
                 )
             elif self.pdf.encryption_algorithm.startswith("AES"):
                 # Minimal AES metadata
@@ -8650,7 +8695,9 @@ class PdfWriterV0:
                 "ETSI.CAdES.detached" if self.pdf.pades else "adbe.pkcs7.detached"
             )
             self.out.extend(
-                f"<< /Type /Signature /Filter /Adobe.PPKLite /SubFilter /{sub_filter} /Reason ({reason}) /Location ({location})".encode()
+                f"<< /Type /Signature /Filter /Adobe.PPKLite "
+                f"/SubFilter /{sub_filter} /Reason ({reason}) "
+                f"/Location ({location})".encode()
             )
             # DocMDP certification reference binds document permissions to this sig.
             if self.pdf.certify_permissions in (1, 2, 3):
@@ -8703,7 +8750,10 @@ class PdfWriterV0:
             contact = self.pdf.signature.get("ContactInfo", "")
             location = self.pdf.signature.get("Location", "")
             self._write_line(
-                f"<< /Type /Signature /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Reason ({reason}) /ContactInfo ({contact}) /Location ({location}) /Contents <0000> >>".encode()
+                f"<< /Type /Signature /Filter /Adobe.PPKLite "
+                f"/SubFilter /adbe.pkcs7.detached /Reason ({reason}) "
+                f"/ContactInfo ({contact}) /Location ({location}) "
+                f"/Contents <0000> >>".encode()
             )
             self._end_obj()
 
@@ -8759,7 +8809,10 @@ class PdfWriterV0:
             range2 = [contents_end_offset, file_len - contents_end_offset]
 
             # Patch ByteRange (43 bytes: 10 + 1 + 10 + 1 + 10 + 1 + 10)
-            br_patched = f"{range1[0]:010d} {range1[1]:010d} {range2[0]:010d} {range2[1]:010d}".encode()
+            br_patched = (
+                f"{range1[0]:010d} {range1[1]:010d} "
+                f"{range2[0]:010d} {range2[1]:010d}"
+            ).encode()
             self.out[br_start_offset : br_start_offset + 43] = br_patched
 
             # Calculate Digest

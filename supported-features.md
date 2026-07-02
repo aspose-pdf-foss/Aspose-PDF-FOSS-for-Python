@@ -407,7 +407,10 @@ Supported:
   multi-line support, wrapping the value to the field width with greedy word
   wrap that honours explicit newlines), resolving the font from the AcroForm
   `/DR` (synthesising
-  Helvetica when absent); check box / radio `/AS` states are pointed at the
+  Helvetica when absent). Wrap points and centre/right quadding use real
+  glyph-metric advance widths — from the field font's `/Widths` or the bundled
+  metric-compatible substitute (Liberation) — falling back to a flat estimate
+  only when neither resolves; check box / radio `/AS` states are pointed at the
   value. The AcroForm `/NeedAppearances` flag is cleared so the generated
   appearance is honoured. `flatten()` runs this automatically.
 - Flatten form fields and annotations into static page content (generating
@@ -418,11 +421,10 @@ Supported:
 Boundaries:
 
 - Dynamic XFA processing is not implemented.
-- Variable-text layout is single-font; multi-line fields word-wrap to the field
-  width using an estimated advance width (no rich-text `/RV`, and the wrap point
-  is approximate rather than glyph-metric exact), and centre/right quadding uses
-  the same estimate. Push-button and check box *glyph* appearances are not
-  synthesised (existing `/AP` states are reused via `/AS`).
+- Variable-text layout is single-font and has no rich-text `/RV` support; text
+  is measured per byte code (single-byte simple fonts — composite/Type0 field
+  fonts fall back to a flat width estimate). Push-button and check box *glyph*
+  appearances are not synthesised (existing `/AP` states are reused via `/AS`).
 
 ## Annotations
 
@@ -459,9 +461,9 @@ Boundaries:
 
 - Appearance synthesis covers the shape, text-markup, `FreeText`, `Stamp` and
   `Caret` subtypes above; `FreeText`/`Stamp` text uses a synthesised Helvetica
-  with an estimated advance width (no rich-text `/RC`, embedded fonts, or exact
-  glyph metrics), and `Stamp` is a captioned box rather than the standard rubber-
-  stamp artwork. Other subtypes (widgets, `Sound`, `3D`, …) and decorations such
+  measured with the bundled substitute's real glyph metrics (no rich-text `/RC`
+  or embedded fonts), and `Stamp` is a captioned box rather than the standard
+  rubber-stamp artwork. Other subtypes (widgets, `Sound`, `3D`, …) and decorations such
   as line endings (`/LE`), dash patterns, and cloud borders (`/BE`) are not drawn
   — supply an appearance via `appearance_normal` for those.
 

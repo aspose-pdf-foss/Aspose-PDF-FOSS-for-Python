@@ -11,8 +11,10 @@ The geometry properties (``L``/``Vertices``/``InkList``/``QuadPoints``) live in
 default user space (absolute page coordinates), so each coordinate is translated
 by ``-(llx, lly)`` into local space here.
 
-This module is pure (no COS / engine imports) so it stays trivially testable; the
-caller wraps the returned bytes in a form XObject and registers it.
+This module is pure (no COS imports) so it stays trivially testable; the
+caller wraps the returned bytes in a form XObject and registers it. Text is
+measured with the bundled Helvetica-compatible substitute's glyph metrics
+(``text_metrics.py``), degrading to a flat estimate if the bundle is missing.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .field_appearance import (
-    _CHAR_WIDTH_EM,
+    WidthFn,
     _pdf_literal,
     _quad_x,
     _text_width,
@@ -60,6 +62,13 @@ _ANNOT_FONT_SPEC = {
     "BaseFont": "Helvetica",
     "Encoding": "WinAnsiEncoding",
 }
+
+
+def _annot_width_fn() -> Optional[WidthFn]:
+    """Glyph metrics for the synthesised Helvetica (cached by ``text_metrics``)."""
+    from .text_metrics import substitute_width_fn
+
+    return substitute_width_fn(_ANNOT_FONT_SPEC["BaseFont"])
 
 
 @dataclass
@@ -348,7 +357,9 @@ def _build_ink(
     return GeneratedAppearance(("\n".join(lines) + "\n").encode("ascii"))
 
 
-def _quads(props: Dict[str, Any], llx: float, lly: float) -> List[List[Tuple[float, float]]]:
+def _quads(
+    props: Dict[str, Any], llx: float, lly: float
+) -> List[List[Tuple[float, float]]]:
     """Split ``QuadPoints`` into a list of 4-corner quads (local coordinates)."""
     flat = _as_floats(props.get("QuadPoints"))
     if not flat or len(flat) < 8:
@@ -466,11 +477,12 @@ def _text_block(
     """Emit a ``BT``…``ET`` word-wrapped text block filling ``(w, h)`` from the top."""
     fs = font_size if font_size > 0 else auto_font_size(h, multiline=True)
     leading = fs * 1.15
-    lines = _wrap_text(text, w - 2.0 * padding, fs)
+    width_fn = _annot_width_fn()
+    lines = _wrap_text(text, w - 2.0 * padding, fs, width_fn)
     body = ["BT", f"/{_ANNOT_FONT_NAME} {_fmt(fs)} Tf", color_op]
     ly = h - padding - fs
     for line in lines:
-        tx = _quad_x(line, w, fs, quadding, padding)
+        tx = _quad_x(line, w, fs, quadding, padding, width_fn)
         body.append(f"1 0 0 1 {_fmt(tx)} {_fmt(ly)} Tm")
         body.append(f"{_pdf_literal(line)} Tj")
         ly -= leading
@@ -485,7 +497,9 @@ def _build_freetext(
     da = props.get("DA")
     _fn, size, color = parse_default_appearance(da if isinstance(da, str) else None)
     q_raw = props.get("Q")
-    quadding = int(q_raw) if isinstance(q_raw, (int, float)) and int(q_raw) in (0, 1, 2) else 0
+    quadding = (
+        int(q_raw) if isinstance(q_raw, (int, float)) and int(q_raw) in (0, 1, 2) else 0
+    )
     bw = _border_width(props)
     background = _color_op(props.get("C"), stroke=False)
 
@@ -547,10 +561,11 @@ def _build_stamp(
 
     # Single centred caption sized to fit the box.
     pad = max(4.0, bw * 2.0)
-    n = max(len(label), 1)
-    fs_w = max(1.0, w - 2.0 * pad) / (_CHAR_WIDTH_EM * n)
+    width_fn = _annot_width_fn()
+    unit_w = _text_width(label, 1.0, width_fn)  # caption width per point of size
+    fs_w = max(1.0, w - 2.0 * pad) / max(unit_w, 1e-6)
     fs = max(4.0, min(h * 0.5, fs_w))
-    tw = _text_width(label, fs)
+    tw = _text_width(label, fs, width_fn)
     tx = max(pad, (w - tw) / 2.0)
     ty = (h - fs) / 2.0 + fs * 0.25
     lines += [

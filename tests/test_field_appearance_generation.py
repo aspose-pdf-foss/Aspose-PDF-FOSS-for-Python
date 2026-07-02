@@ -19,6 +19,7 @@ from aspose_pdf.engine.field_appearance import (
     auto_font_size,
     build_text_appearance,
     parse_default_appearance,
+    _text_width,
     _wrap_text,
 )
 from aspose_pdf.engine.simple_pdf import SimplePdf
@@ -31,7 +32,11 @@ from aspose_pdf.engine.simple_pdf import SimplePdf
 
 def test_parse_default_appearance_font_size_colour():
     assert parse_default_appearance("/Helv 12 Tf 0 g") == ("Helv", 12.0, "0 g")
-    assert parse_default_appearance("/Arial 0 Tf 1 0 0 rg") == ("Arial", 0.0, "1 0 0 rg")
+    assert parse_default_appearance("/Arial 0 Tf 1 0 0 rg") == (
+        "Arial",
+        0.0,
+        "1 0 0 rg",
+    )
     assert parse_default_appearance("0 0 0 1 k") == (None, 0.0, "0 0 0 1 k")
     assert parse_default_appearance("") == (None, 0.0, "0 g")
 
@@ -74,8 +79,12 @@ def test_build_text_appearance_autosize_when_zero():
 
 
 def test_build_text_appearance_quadding_shifts_origin():
-    left = build_text_appearance("word", 200, 20, font_name="Helv", font_size=12, quadding=0)
-    right = build_text_appearance("word", 200, 20, font_name="Helv", font_size=12, quadding=2)
+    left = build_text_appearance(
+        "word", 200, 20, font_name="Helv", font_size=12, quadding=0
+    )
+    right = build_text_appearance(
+        "word", 200, 20, font_name="Helv", font_size=12, quadding=2
+    )
     assert left != right  # right-aligned starts further along x
 
 
@@ -132,6 +141,68 @@ def test_build_single_line_is_not_wrapped():
 
 
 # ---------------------------------------------------------------------------
+# Glyph-metric text measurement (width_fn)
+# ---------------------------------------------------------------------------
+
+
+def _narrow_wide_metric(code: int) -> float:
+    """Toy metric: 'i' is 250/1000 units wide, everything else 1000/1000."""
+    return 250.0 if chr(code) == "i" else 1000.0
+
+
+def test_text_width_uses_width_fn():
+    assert _text_width("ii", 10, _narrow_wide_metric) == 5.0
+    assert _text_width("WW", 10, _narrow_wide_metric) == 20.0
+    assert _text_width("WW", 10) == 12.0  # flat 0.6 em fallback
+
+
+def test_wrap_text_packs_more_narrow_glyphs_with_width_fn():
+    # 30pt line at fs 10: twelve 'i' (2.5pt each) fit, but only three 'W' (10pt).
+    assert _wrap_text("iiiiiiiiiiii WWW W", 30, 10, _narrow_wide_metric) == [
+        "iiiiiiiiiiii",
+        "WWW",
+        "W",
+    ]
+
+
+def test_wrap_text_hard_breaks_by_measured_width():
+    # 'W' is 10pt at fs 10 -> only two fit in a 25pt line.
+    assert _wrap_text("WWWWW", 25, 10, _narrow_wide_metric) == ["WW", "WW", "W"]
+
+
+def test_quadding_centres_by_glyph_metrics():
+    def tm_x(content: bytes) -> float:
+        for line in content.split(b"\n"):
+            if line.endswith(b" Tm"):
+                return float(line.split()[4])
+        raise AssertionError("no Tm in content")
+
+    flat = build_text_appearance(
+        "iiii", 200, 20, font_name="Helv", font_size=10, quadding=1
+    )
+    metric = build_text_appearance(
+        "iiii",
+        200,
+        20,
+        font_name="Helv",
+        font_size=10,
+        quadding=1,
+        width_fn=_narrow_wide_metric,
+    )
+    # Narrow glyphs measure 2.5pt each vs the flat 6pt -> centring shifts right.
+    assert tm_x(metric) > tm_x(flat)
+
+
+def test_substitute_width_fn_resolves_real_metrics():
+    from aspose_pdf.engine.text_metrics import substitute_width_fn
+
+    fn = substitute_width_fn("Helvetica")
+    assert fn is not None
+    assert fn(ord("i")) < fn(ord("W"))  # real (Liberation) advances, not flat
+    assert substitute_width_fn("Symbol") is None  # no substitute -> flat fallback
+
+
+# ---------------------------------------------------------------------------
 # Engine: COS-level field appearance generation
 # ---------------------------------------------------------------------------
 
@@ -148,7 +219,10 @@ def _engine_with_acroform(field: PdfDictionary, *, dr=None, da="/Helv 0 Tf 0 g")
         acro_map[PdfName("DR")] = dr
     acro = PdfDictionary(acro_map)
     root = PdfDictionary(
-        {PdfName("Type"): PdfName("Catalog"), PdfName("AcroForm"): doc.register_object(acro)}
+        {
+            PdfName("Type"): PdfName("Catalog"),
+            PdfName("AcroForm"): doc.register_object(acro),
+        }
     )
     doc.trailer = PdfDictionary({PdfName("Root"): doc.register_object(root)})
     engine = SimplePdf()
@@ -224,7 +298,10 @@ def test_text_field_reuses_existing_dr_font():
         {PdfName("Fields"): PdfArray([field_ref]), PdfName("DR"): dr}
     )
     root = PdfDictionary(
-        {PdfName("Type"): PdfName("Catalog"), PdfName("AcroForm"): doc.register_object(acro)}
+        {
+            PdfName("Type"): PdfName("Catalog"),
+            PdfName("AcroForm"): doc.register_object(acro),
+        }
     )
     doc.trailer = PdfDictionary({PdfName("Root"): doc.register_object(root)})
     engine = SimplePdf()
@@ -257,6 +334,23 @@ def test_multiline_text_field_word_wraps_long_value():
     assert engine.generate_field_appearances() == 1
     content = _ap_content(engine, field)
     assert content.count(b" Tj") > 1  # wrapped across rows despite no newline
+
+
+def test_centred_field_uses_real_helvetica_metrics():
+    def centred_x(value: str) -> float:
+        widget = _text_widget(value)
+        widget.mapping[PdfName("Q")] = PdfNumber(1)  # centred
+        engine, field, _ = _engine_with_acroform(widget)
+        assert engine.generate_field_appearances() == 1
+        for line in _ap_content(engine, field).split(b"\n"):
+            if line.endswith(b" Tm"):
+                return float(line.split()[4])
+        raise AssertionError("no Tm in content")
+
+    # 'iiii' is far narrower than 'WWWW' in real Helvetica metrics, so its
+    # centred origin sits further right; the flat estimate would centre both
+    # at the same x.
+    assert centred_x("iiii") > centred_x("WWWW") + 10.0
 
 
 def test_choice_field_renders_selected_value():
@@ -348,7 +442,10 @@ def test_radio_selects_matching_kid_widget():
     )
     acro = PdfDictionary({PdfName("Fields"): PdfArray([doc.register_object(field)])})
     root = PdfDictionary(
-        {PdfName("Type"): PdfName("Catalog"), PdfName("AcroForm"): doc.register_object(acro)}
+        {
+            PdfName("Type"): PdfName("Catalog"),
+            PdfName("AcroForm"): doc.register_object(acro),
+        }
     )
     doc.trailer = PdfDictionary({PdfName("Root"): doc.register_object(root)})
     engine = SimplePdf()

@@ -58,7 +58,9 @@ def test_build_line_converts_to_local_coordinates():
 
 def test_build_polygon_closes_and_fills():
     gen = build_appearance(
-        "Polygon", (0, 0, 100, 100), {"Vertices": [0, 0, 100, 0, 50, 100], "IC": [0, 0, 1]}
+        "Polygon",
+        (0, 0, 100, 100),
+        {"Vertices": [0, 0, 100, 0, 50, 100], "IC": [0, 0, 1]},
     )
     assert gen is not None
     assert b"0 0 m" in gen.content
@@ -145,6 +147,38 @@ def test_build_freetext_uses_default_appearance_size_and_colour():
     assert gen is not None
     assert b"/Helv 14 Tf" in gen.content
     assert b"1 0 0 rg" in gen.content
+
+
+def test_build_freetext_wraps_by_glyph_metrics():
+    # Same word count, same box: wide 'W' words need more lines than narrow
+    # 'i' words under real Helvetica metrics (a flat estimate would tie).
+    wide = build_appearance(
+        "FreeText",
+        (0, 0, 60, 200),
+        {"Contents": "WW WW WW WW WW", "DA": "/Helv 12 Tf 0 g"},
+    )
+    narrow = build_appearance(
+        "FreeText",
+        (0, 0, 60, 200),
+        {"Contents": "ii ii ii ii ii", "DA": "/Helv 12 Tf 0 g"},
+    )
+    assert narrow is not None and wide is not None
+    assert narrow.content.count(b" Tj") < wide.content.count(b" Tj")
+
+
+def test_build_stamp_caption_size_fits_glyph_metrics():
+    import re as _re
+
+    def tf_size(content: bytes) -> float:
+        m = _re.search(rb"/Helv ([\d.]+) Tf", content)
+        assert m is not None
+        return float(m.group(1))
+
+    wide = build_appearance("Stamp", (0, 0, 120, 40), {"Contents": "WWWWWWWW"})
+    narrow = build_appearance("Stamp", (0, 0, 120, 40), {"Contents": "iiiiiiii"})
+    assert wide is not None and narrow is not None
+    # The narrow caption is auto-sized larger because it measures narrower.
+    assert tf_size(narrow.content) > tf_size(wide.content)
 
 
 def test_build_stamp_draws_named_caption_in_red_by_default():
@@ -246,7 +280,10 @@ def test_freetext_generate_appearance_registers_font_resource():
 def test_stamp_generate_appearance_end_to_end():
     doc = _new_page_doc()
     ann = doc.pages[0].annotations.add(
-        "Stamp", (100, 100, 260, 150), "", properties={"Name": AnnotationName("Approved")}
+        "Stamp",
+        (100, 100, 260, 150),
+        "",
+        properties={"Name": AnnotationName("Approved")},
     )
     assert ann.generate_appearance() is True
     assert b"(APPROVED) Tj" in ann.appearance_normal
@@ -295,7 +332,9 @@ def test_document_generate_appearances_across_pages():
     doc.pages.add()
     doc.pages.add()
     doc.pages[0].annotations.add("Square", (0, 0, 50, 50), "")
-    doc.pages[1].annotations.add("Line", (0, 0, 50, 50), "", properties={"L": [0, 0, 50, 50]})
+    doc.pages[1].annotations.add(
+        "Line", (0, 0, 50, 50), "", properties={"L": [0, 0, 50, 50]}
+    )
     assert doc.generate_appearances() == 2
     # Second call is a no-op (appearances already present).
     assert doc.generate_appearances() == 0
@@ -322,7 +361,9 @@ def test_generated_appearance_survives_save_load():
 
 def test_flatten_generates_and_inlines_missing_appearance():
     doc = _new_page_doc()
-    doc.pages[0].annotations.add("Square", (100, 100, 200, 200), "", properties={"C": [0, 0, 0]})
+    doc.pages[0].annotations.add(
+        "Square", (100, 100, 200, 200), "", properties={"C": [0, 0, 0]}
+    )
     before = doc._engine_pdf.page_contents[0]
     doc.flatten()
     after = doc._engine_pdf.page_contents[0]
@@ -335,7 +376,10 @@ def test_flatten_matrix_maps_bbox_to_rect_without_double_scaling():
     doc = _new_page_doc()
     # Manual appearance authored in annot-local coords; BBox is [0 0 100 100].
     doc.pages[0].annotations.add(
-        "Square", (100, 100, 200, 200), "", appearance_normal=b"0.5 g\n0 0 100 100 re f\n"
+        "Square",
+        (100, 100, 200, 200),
+        "",
+        appearance_normal=b"0.5 g\n0 0 100 100 re f\n",
     )
     doc.flatten()
     content = doc._engine_pdf.page_contents[0]

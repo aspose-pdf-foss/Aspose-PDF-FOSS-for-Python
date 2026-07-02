@@ -9,14 +9,22 @@ appearance string (``/DA``).
 It is pure (no COS / engine imports): the caller resolves the font object and
 wraps the returned bytes in a form XObject. Content is emitted in the widget's
 local coordinate space (origin lower-left, spanning ``(0, 0)`` to ``(w, h)``).
+
+Text is measured with an optional ``width_fn`` (``code -> advance`` in
+1000-unit glyph space, resolved by the caller from the font's ``/Widths`` or a
+bundled substitute — see ``text_metrics.py``); without one, a flat 0.6 em
+estimate is used.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
-# Standard-14 Helvetica is ~0.5em average, but this engine's width table is a
-# flat 600/1000 unit advance, so mirror that for consistent centring estimates.
+# code (single-byte, cp1252 domain) -> advance width in 1000-unit glyph space.
+WidthFn = Callable[[int], float]
+
+# Fallback estimate when no glyph metrics are available: Standard-14 Helvetica
+# is ~0.5em average; 0.6 keeps a safety margin so estimates rarely overflow.
 _CHAR_WIDTH_EM = 0.6
 
 
@@ -80,40 +88,64 @@ def _split_lines(text: str) -> List[str]:
     return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
-def _text_width(text: str, font_size: float) -> float:
-    """Estimate the rendered width of *text* with this engine's flat metric."""
-    return len(text) * _CHAR_WIDTH_EM * font_size
+def _char_code(ch: str) -> int:
+    """The single-byte code *ch* is emitted as (mirrors ``_pdf_literal``)."""
+    code = ord(ch)
+    return code if code < 256 else 0x3F  # non-Latin-1 becomes "?"
 
 
-def _wrap_text(text: str, max_width: float, font_size: float) -> List[str]:
-    """Greedily wrap *text* into lines no wider than *max_width* (estimated).
+def _text_width(
+    text: str, font_size: float, width_fn: Optional[WidthFn] = None
+) -> float:
+    """Measure *text* with *width_fn* glyph metrics (flat estimate without)."""
+    if width_fn is None:
+        return len(text) * _CHAR_WIDTH_EM * font_size
+    return sum(width_fn(_char_code(ch)) for ch in text) / 1000.0 * font_size
+
+
+def _wrap_text(
+    text: str,
+    max_width: float,
+    font_size: float,
+    width_fn: Optional[WidthFn] = None,
+) -> List[str]:
+    """Greedily wrap *text* into lines no wider than *max_width*.
 
     Explicit newlines are honoured as hard paragraph breaks; within a paragraph,
     words are packed greedily and a single word too long for the line is
-    hard-broken so it never overflows. Widths use the flat ``_CHAR_WIDTH_EM``
-    estimate, matching the quadding origin calculation. At least one (possibly
-    empty) line is always returned.
+    hard-broken so it never overflows. Widths come from *width_fn* glyph metrics
+    when given (falling back to the flat ``_CHAR_WIDTH_EM`` estimate), matching
+    the quadding origin calculation. At least one (possibly empty) line is
+    always returned.
     """
-    char_w = _CHAR_WIDTH_EM * font_size
-    if max_width <= 0 or char_w <= 0:
+    if max_width <= 0 or font_size <= 0:
         return _split_lines(text)
-    max_chars = max(1, int(max_width / char_w))
+
+    def measure(s: str) -> float:
+        return _text_width(s, font_size, width_fn)
 
     lines: List[str] = []
     for paragraph in _split_lines(text):
         current = ""
         for word in paragraph.split():
-            while len(word) > max_chars:  # word longer than a whole line
+            while word and measure(word) > max_width:  # word longer than a line
                 if current:
                     lines.append(current)
                     current = ""
-                lines.append(word[:max_chars])
-                word = word[max_chars:]
+                # Longest prefix that fits (always >= 1 char so we progress).
+                k = 1
+                while k < len(word) and measure(word[: k + 1]) <= max_width:
+                    k += 1
+                lines.append(word[:k])
+                word = word[k:]
+            if not word:
+                continue
             candidate = word if current == "" else current + " " + word
-            if len(candidate) <= max_chars:
+            if measure(candidate) <= max_width:
                 current = candidate
             else:
-                lines.append(current)
+                if current:
+                    lines.append(current)
                 current = word
         lines.append(current)  # flush the paragraph's trailing line (may be "")
     return lines or [""]
@@ -137,12 +169,17 @@ def _pdf_literal(text: str) -> str:
 
 
 def _quad_x(
-    line: str, width: float, font_size: float, quadding: int, padding: float
+    line: str,
+    width: float,
+    font_size: float,
+    quadding: int,
+    padding: float,
+    width_fn: Optional[WidthFn] = None,
 ) -> float:
     """Left-edge x for *line* honouring the quadding (0 left, 1 centre, 2 right)."""
     if quadding not in (1, 2):
         return padding
-    est_width = _text_width(line, font_size)
+    est_width = _text_width(line, font_size, width_fn)
     if quadding == 1:  # centred
         return max(padding, (width - est_width) / 2.0)
     return max(padding, width - padding - est_width)  # right-aligned
@@ -159,19 +196,21 @@ def build_text_appearance(
     quadding: int = 0,
     multiline: bool = False,
     padding: float = 2.0,
+    width_fn: Optional[WidthFn] = None,
 ) -> bytes:
     """Build a ``/Tx``-marked variable-text appearance content stream.
 
     Multiline fields wrap *value* to the field width (greedy word wrap, honouring
     explicit newlines as hard breaks); single-line fields collapse newlines and
-    are vertically centred.
+    are vertically centred. *width_fn* supplies glyph-metric advances for the
+    wrap and quadding maths (flat estimate without).
     """
     text = value if value is not None else ""
     fs = font_size if font_size > 0 else auto_font_size(height, multiline=multiline)
     leading = fs * 1.15
 
     if multiline:
-        lines = _wrap_text(text, width - 2.0 * padding, fs)
+        lines = _wrap_text(text, width - 2.0 * padding, fs, width_fn)
     else:
         lines = [text.replace("\r", " ").replace("\n", " ")]
 
@@ -182,7 +221,7 @@ def build_text_appearance(
         ly = max(padding, (height - fs) / 2.0 + fs * 0.2)
 
     for line in lines:
-        tx = _quad_x(line, width, fs, quadding, padding)
+        tx = _quad_x(line, width, fs, quadding, padding, width_fn)
         body.append(f"1 0 0 1 {_fmt(tx)} {_fmt(ly)} Tm")
         body.append(f"{_pdf_literal(line)} Tj")
         ly -= leading
