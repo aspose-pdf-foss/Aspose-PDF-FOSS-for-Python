@@ -243,14 +243,14 @@ Supported:
   `Document.replace_text`, `Document.redact_text`, `Page.replace_text`, and
   `Page.redact_text`. The editor rewrites literal and hexadecimal string
   operands used by `Tj`, `'`, `"`, and `TJ`. A `TJ` array's string elements are
-  matched as one logical string, and consecutive show operators (e.g. two
-  adjacent `Tj`, or a `Tj` followed by a `TJ`) separated only by
-  positionally-neutral operators are joined into one logical run, so a phrase
-  split across several elements or operators (common with kerning or per-word
-  painting) is rewritten across the boundary: the replacement is placed in the
-  element holding the match start and the remaining matched characters are
-  removed from the others, leaving the kerning adjustments and unmatched
-  elements intact. A line-moving operator (`'`/`"`) or any positioning, font or
+  matched as one logical string, and consecutive show operators (including
+  line-moving `'`/`"`, e.g. two adjacent `Tj`, or a `Tj` followed by a `'` or
+  `TJ`) separated only by positionally-neutral operators are joined into one
+  logical run, so a phrase split across several elements or operators (common
+  with kerning, per-word painting, or line breaks) is rewritten across the
+  boundary: the replacement is placed in the element holding the match start and
+  the remaining matched characters are removed from the others, leaving the
+  kerning adjustments and unmatched elements intact. Any positioning, font or
   CTM change starts a new run. Each element keeps its own literal/hex style and
   Latin-1/UTF-16BE encoding. Case-insensitive matching and `max_count` are
   supported (a spanning match counts once); lazy page contents are materialized

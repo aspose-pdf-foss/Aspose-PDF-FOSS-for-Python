@@ -1,11 +1,11 @@
 """Cross-show-operator phrase matching for replace/redact.
 
-A phrase split across several *consecutive* text-showing operators (e.g. two
-adjacent ``Tj``, or a ``Tj`` followed by a ``TJ``) is matched as one logical
-string when the operators are separated only by positionally-neutral operators.
-The replacement lands in the element holding the match start and the remaining
-matched characters are removed from the others; a line-moving operator
-(``'``/``"``) or any positioning/font/CTM change starts a new run.
+A phrase split across several *consecutive* text-showing operators (including
+line-moving operators ``'``/``"``, e.g. two adjacent ``Tj``, or a ``Tj`` followed
+by a ``'`` or ``TJ``) is matched as one logical string when the operators are
+separated only by positionally-neutral operators. The replacement lands in the
+element holding the match start and the remaining matched characters are removed
+from the others; any positioning/font/CTM change starts a new run.
 """
 
 from __future__ import annotations
@@ -107,12 +107,21 @@ def test_font_change_breaks_run() -> None:
     assert out == content
 
 
-def test_line_show_operator_breaks_run() -> None:
-    # The quote operator moves to a new line, so the two runs are separate.
+def test_line_show_operator_does_not_break_run() -> None:
+    # The quote operator shows text but doesn't break the run; phrases can cross.
     content = _content("BT (Hel) Tj (lo) ' ET")
     out, count = replace_text_in_content(content, "Hello", "Hi")
-    assert count == 0
-    assert out == content
+    assert count == 1
+    # Replacement in the first operator; matched chars removed from the second.
+    assert out == _content("BT (Hi) Tj () ' ET")
+
+
+def test_phrase_across_double_quote_operator() -> None:
+    # The double-quote operator also allows phrase matching across its boundary.
+    content = _content("BT (Hel) Tj 0 0.1 (lo) \" ET")
+    out, count = replace_text_in_content(content, "Hello", "Hi")
+    assert count == 1
+    assert out == _content("BT (Hi) Tj 0 0.1 () \" ET")
 
 
 def test_bt_et_boundary_breaks_run() -> None:

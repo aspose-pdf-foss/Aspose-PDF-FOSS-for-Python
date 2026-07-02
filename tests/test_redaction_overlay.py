@@ -123,3 +123,13 @@ def test_redact_overlay_skips_untrackable_font_but_still_removes_text():
     content = doc.pages[0].content
     assert b"Secret" not in content
     assert b"h f" not in content  # no bar drawn for the untrackable run
+
+
+def test_locate_match_spanning_line_break_operator():
+    # Phrases split across ' (line-moving operator) are now matched as one.
+    quads = locate_matches(b"BT /F1 10 Tf 100 200 Td (Hel) Tj (lo) ' ET", "Hello", _FONTS)
+    assert len(quads) == 1
+    (x0, _y0), (x1, _y1), _tr, _tl = quads[0]
+    # Both operands are included in the same match; "Hel" (3*5=15) + "lo" (2*5=10) = 25 wide.
+    assert round(x0, 1) == 100.0
+    assert round(x1, 1) == 125.0

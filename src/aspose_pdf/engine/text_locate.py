@@ -275,9 +275,8 @@ def locate_matches(
             if arr is not None:
                 pending.extend(arr)
         elif op in ("'", '"'):
-            # A line-moving show operator ends the previous run, then begins a
-            # new one on the next line that following operators can extend.
-            flush()
+            # A line-moving show operator updates the text position and appends
+            # text to the current run (not breaking it), so phrases can span across.
             if op == '"':
                 aw_ac = _leading_nums(operands, 2)
                 if aw_ac is not None:
@@ -287,7 +286,7 @@ def locate_matches(
             state.valid = True
             seg = _last_string(operands)
             if seg is not None:
-                pending.append(seg)
+                pending.append(seg)  # extends the current run
         elif op in _NEUTRAL_OPS:
             pass  # keeps the current run open
         else:

@@ -59,13 +59,14 @@ def replace_text_in_content(
     ``max_count=0`` means unlimited. Replacement is attempted for literal and
     hex string operands used by ``Tj``, ``'``, ``"`` and inside ``TJ`` arrays,
     where the string elements are matched as one logical string. Consecutive
-    text-showing operators (e.g. two adjacent ``Tj``, or a ``Tj`` followed by a
-    ``TJ``) separated only by positionally-neutral operators are likewise joined
-    into one logical run, so a phrase split across several show operators —
-    common with kerning or per-word painting — is rewritten across the boundary:
-    the replacement is placed in the first matched element and the remaining
-    matched characters are removed from the others. A line-moving operator
-    (``'``/``"``) or any positioning, font or CTM change starts a new run.
+    text-showing operators (including line-moving operators ``'``/``"``, e.g. two
+    adjacent ``Tj``, or a ``Tj`` followed by a ``'`` or ``TJ``) separated only by
+    positionally-neutral operators are likewise joined into one logical run, so a
+    phrase split across several show operators — common with kerning, per-word
+    painting, or line breaks — is rewritten across the boundary: the replacement
+    is placed in the first matched element and the remaining matched characters
+    are removed from the others. Any positioning, font or CTM change starts a new
+    run.
     """
     _validate_edit_args(search, max_count)
     tokens = _lex(content)
@@ -108,9 +109,10 @@ def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
     separated only by neutral operators (colour or minor graphics state that
     changes neither the font, spacing/scale nor pen position). The string
     operands of every show operator in the run are concatenated, so a phrase
-    split across several operators is matched as one string. A line-moving show
-    operator (``'``/``"``) or any positioning/font/CTM/state operator starts a
-    new run. Each returned list holds the run's string-operand tokens in order.
+    split across several operators (including across line-moving operators
+    ``'``/``"``) is matched as one string. Any positioning/font/CTM/state
+    operator starts a new run. Each returned list holds the run's string-operand
+    tokens in order.
     """
     groups: list[list[_Token]] = []
     current: list[_Token] = []
@@ -141,7 +143,7 @@ def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
             continue
         if value in _ALL_SHOW_OPS:
             segs = _show_operator_strings(tokens, idx, value)
-            if value in _LINE_SHOW_OPS or broke:
+            if broke:
                 flush()
                 current = list(segs)
             else:
