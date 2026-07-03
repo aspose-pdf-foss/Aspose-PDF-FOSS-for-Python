@@ -3581,6 +3581,10 @@ class SimplePdf:
         if not isinstance(cid_font, PdfDictionary):
             return None
         to_unicode = self._font_to_unicode_map(font_dict)
+        # Identity-H show strings are strictly two-byte; the overlay tracker
+        # only trusts two-byte codes (code == CID), so restrict the map here.
+        if to_unicode:
+            to_unicode = {c: t for c, t in to_unicode.items() if len(c) == 2}
         if not to_unicode:
             return None
 
@@ -3621,19 +3625,20 @@ class SimplePdf:
             data = self._decode_cos_stream(stream, ref)
         except Exception:
             return None
-        mapping = {
-            code: text
-            for code, text in parse_to_unicode_cmap(data).items()
-            if len(code) == 2
-        }
+        mapping = parse_to_unicode_cmap(data)
         return mapping or None
 
     def _build_text_codecs(self, page_index: int):
         """Return a ``name -> CidTextCodec|None`` resolver for a page.
 
-        A codec is produced only for Identity-H Type0 fonts with a usable
-        ToUnicode CMap; every other font resolves to ``None`` and keeps the
-        default Latin-1/UTF-16BE operand matching.
+        A codec is produced for any Type0 font with a usable ToUnicode CMap,
+        regardless of its ``Encoding``: ToUnicode maps the character codes in
+        show strings straight to Unicode, so matching works for named or
+        embedded CMaps and Identity-V as well, not just Identity-H. Every other
+        font resolves to ``None`` and keeps the default Latin-1/UTF-16BE
+        operand matching. (Redaction-overlay geometry stays Identity-H only --
+        see :meth:`_composite_font_metric` -- so non-identity edits degrade to
+        no bar rather than a mispositioned one.)
         """
         from .cos import PdfDictionary, PdfName
         from .text_edit import CidTextCodec
@@ -3656,8 +3661,6 @@ class SimplePdf:
                     isinstance(font_dict, PdfDictionary)
                     and self._get_name(font_dict.mapping.get(PdfName("Subtype")))
                     == "Type0"
-                    and self._get_name(font_dict.mapping.get(PdfName("Encoding")))
-                    == "Identity-H"
                 ):
                     to_unicode = self._font_to_unicode_map(font_dict)
                     if to_unicode:

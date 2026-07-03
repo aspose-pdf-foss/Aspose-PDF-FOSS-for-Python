@@ -262,13 +262,17 @@ Supported:
   gap (≥ 0.18 em) matching a single space. Rise changes (`Ts`), CTM changes,
   `q`/`Q`, off-baseline or distant (> 1 em) jumps, and unmeasurable fonts
   start a new run. Each element keeps its own literal/hex style and
-  Latin-1/UTF-16BE encoding. Identity-H Type0 (composite) fonts with a usable
-  `ToUnicode` CMap are edited as well: the two-byte CID strings are matched
-  over their ToUnicode-decoded text, matched codes are spliced out of the raw
-  operand byte-for-byte (matches must cover whole codes — a match ending
-  inside a multi-character ligature code is skipped), and replacement text is
-  encoded through the reverse `ToUnicode` mapping (an unmappable replacement
-  raises). Case-insensitive matching and `max_count` are supported (a spanning
+  Latin-1/UTF-16BE encoding. Type0 (composite) fonts with a usable
+  `ToUnicode` CMap are edited as well, regardless of their `Encoding` —
+  Identity-H, a named or embedded CMap, or Identity-V — because `ToUnicode`
+  maps the character codes in show strings straight to Unicode: the code
+  strings are matched over their ToUnicode-decoded text, matched codes are
+  spliced out of the raw operand byte-for-byte (matches must cover whole codes
+  — a match ending inside a multi-character ligature code is skipped), and
+  replacement text is encoded through the reverse `ToUnicode` mapping (an
+  unmappable replacement raises). Code length is inferred from the `ToUnicode`
+  keys (a uniform one- or two-byte codespace, or greedy longest-match for a
+  mixed codespace). Case-insensitive matching and `max_count` are supported (a spanning
   match counts once); lazy page contents are materialized before editing and
   the rewritten content persists on save.
 - Draw a redaction overlay bar with `redact_text(..., overlay=True,
@@ -296,11 +300,12 @@ Boundaries:
   gap thresholds in em units) that requires advance widths, so fonts without
   usable metrics keep positioning operators as run boundaries, and phrases
   split across columns, rise changes, or CTM changes are not matched. Type0
-  editing covers Identity-H fonts with a `ToUnicode` CMap; non-identity
-  CMaps, Identity-V, and Type0 fonts without `ToUnicode` fall back to raw
-  Latin-1 byte matching (effectively unmatched). The redaction-overlay
+  editing covers any font with a `ToUnicode` CMap (Identity-H, named/embedded
+  CMaps, and Identity-V); only Type0 fonts *without* `ToUnicode` fall back to
+  raw Latin-1 byte matching (effectively unmatched). The redaction-overlay
   position tracker handles single-byte simple fonts and Identity-H Type0
-  fonts; unresolved fonts get no bar (the text is still removed), and the bar
+  fonts; other composite encodings and unresolved fonts get no bar (the text
+  is still removed), and the bar
   assumes a balanced content stream (identity CTM at its end). Layout
   analysis, font shaping, rich text, and paragraph layout are not implemented
   as public product features.

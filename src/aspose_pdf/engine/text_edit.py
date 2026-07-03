@@ -56,19 +56,31 @@ class _Token:
 
 
 class CidTextCodec:
-    """Two-byte code codec for a composite (Type0) font's show strings.
+    """Code codec for a composite (Type0) font's show strings.
 
-    Built from the font's ToUnicode CMap. Decoding walks the operand two bytes
-    at a time (the Identity-H codespace) and yields one *unit* per code, so
-    matched units can be spliced out of the raw operand byte-for-byte without
-    re-encoding the untouched codes. Encoding (for replacement text) uses the
-    reverse mapping and fails softly when a character has no known code.
+    Built from the font's ToUnicode CMap, which maps the character codes that
+    appear in show strings directly to Unicode -- so matching does not depend
+    on the font's ``Encoding`` (Identity-H, a named CMap, an embedded CMap or
+    Identity-V all work as long as a usable ToUnicode is present). Decoding
+    yields one *unit* per code, so matched units can be spliced out of the raw
+    operand byte-for-byte without re-encoding the untouched codes. Encoding
+    (for replacement text) uses the reverse mapping and fails softly when a
+    character has no known code.
+
+    Code length is inferred from the ToUnicode keys: a codespace with a single
+    code length (the common case -- Identity-H's two-byte codes, or a one-byte
+    encoding) tokenizes by fixed-size chunks; a mixed-length codespace falls
+    back to greedy longest-code matching. Either way the units partition the
+    operand exactly, so untouched bytes are always re-emitted verbatim.
     """
 
     def __init__(self, code_to_text: Mapping[bytes, str]) -> None:
         self.code_to_text = {
-            code: text for code, text in code_to_text.items() if len(code) == 2
+            code: text for code, text in code_to_text.items() if code
         }
+        lengths = {len(code) for code in self.code_to_text}
+        self._code_lengths = sorted(lengths, reverse=True) or [2]
+        self._min_len = self._code_lengths[-1]
         self._reverse: dict[str, bytes] = {}
         self._max_reverse_len = 1
         for code, text in self.code_to_text.items():
@@ -81,17 +93,36 @@ class CidTextCodec:
 
         An unmapped code decodes to U+FFFD (it can never match a search
         string but keeps its raw bytes when the operand is rebuilt); a
-        trailing odd byte becomes its own unmapped unit.
+        trailing partial code becomes its own unmapped unit.
         """
         units: list[tuple[int, int, str]] = []
         i = 0
         n = len(raw)
+        if len(self._code_lengths) == 1:
+            # Uniform code length: fixed-size chunks (e.g. Identity-H's two
+            # bytes). A trailing partial code keeps its bytes as one unit.
+            step = self._code_lengths[0]
+            while i < n:
+                take = min(step, n - i)
+                units.append((i, take, self.code_to_text.get(raw[i : i + take], "�")))
+                i += take
+            return units
+        # Mixed-length codespace: greedily match the longest known code at each
+        # position; an unknown prefix consumes the shortest code length. The
+        # units still partition the operand exactly, so a splice re-emits
+        # untouched bytes verbatim regardless of how they were grouped.
         while i < n:
-            if i + 2 > n:
-                units.append((i, n - i, "�"))
-                break
-            units.append((i, 2, self.code_to_text.get(raw[i : i + 2], "�")))
-            i += 2
+            for length in self._code_lengths:
+                if i + length <= n:
+                    text = self.code_to_text.get(raw[i : i + length])
+                    if text is not None:
+                        units.append((i, length, text))
+                        i += length
+                        break
+            else:
+                take = min(self._min_len, n - i)
+                units.append((i, take, "�"))
+                i += take
         return units
 
     def encode(self, text: str) -> Optional[bytes]:
