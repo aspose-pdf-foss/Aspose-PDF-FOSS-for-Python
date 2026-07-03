@@ -1,20 +1,19 @@
 """Locate the page-space rectangles of text matches in a content stream.
 
 This is a best-effort text-position tracker used to draw redaction overlay
-boxes. It walks the content stream tracking the CTM, text matrix and text
-state, resolving advance widths from the page's fonts. For each match of
-the search string (matched the same way as the redactor -- across ``TJ`` element
-boundaries and across consecutive show operators joined into one logical run) it
-returns a quadrilateral in default user space.
+boxes. It reuses the editor's geometric show-run walker
+(:func:`aspose_pdf.engine.text_edit._walk_show_runs`), so matches are grouped,
+decoded and filtered exactly like the redactor edits them -- across ``TJ``
+element boundaries, consecutive show operators, font changes, and
+same-baseline positioning operators. For each match it returns one
+quadrilateral per baseline in default user space.
 
 It is deliberately conservative: single-byte simple fonts and Identity-H
-composite fonts (via :class:`CompositeFontMetric`, decoded through the font's
-ToUnicode CMap) are handled, and whenever the pen position cannot be tracked
-confidently (an unresolved font, a UTF-16BE operand, or an odd-length CID
-string) overlay emission is suspended until the next absolute text-position
-reset (``BT``/``Tm``/``Td``/``TD``/``T*``). Because the matched text has
-already been removed from the content, a skipped box only means a missing
-cosmetic mark, never leaked text.
+composite fonts (decoded through the font's ToUnicode CMap) are handled, and
+a run whose pen cannot be tracked confidently (an unresolved font, a UTF-16BE
+operand, or an odd-length CID string) emits no boxes. Because the matched
+text has already been removed from the content, a skipped box only means a
+missing cosmetic mark, never leaked text.
 """
 
 from __future__ import annotations
@@ -22,7 +21,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, List, Mapping, Optional, Tuple, Union
 
-from .text_edit import _NEUTRAL_OPS, _decode_operand, _find_matches, _lex
+from .text_edit import (
+    _aligned_spans,
+    _lex,
+    _run_char_data,
+    _walk_show_runs,
+)
 
 Matrix = Tuple[float, float, float, float, float, float]
 Point = Tuple[float, float]
@@ -59,190 +63,92 @@ class CompositeFontMetric:
 FontMetric = Union[SimpleFontMetric, CompositeFontMetric]
 
 
-def _mul(m: Matrix, n: Matrix) -> Matrix:
-    """Compose affines: apply *m* then *n* (PDF row-vector convention)."""
-    a, b, c, d, e, f = m
-    A, B, C, D, E, F = n
-    return (
-        a * A + b * C,
-        a * B + b * D,
-        c * A + d * C,
-        c * B + d * D,
-        e * A + f * C + E,
-        e * B + f * D + F,
-    )
-
-
 def _apply(m: Matrix, x: float, y: float) -> Point:
     a, b, c, d, e, f = m
     return (a * x + c * y + e, b * x + d * y + f)
 
 
-def _to_float(text: str) -> Optional[float]:
-    try:
-        return float(text)
-    except ValueError:
-        return None
+def _char_geometry(run, infos) -> Optional[List[Tuple[float, float, float, float, float]]]:
+    """Per-char ``(x0, x1, y, low, high)`` in the run origin's text space.
 
-
-def _nums(operands: List[tuple]) -> List[float]:
-    return [v for (kind, *rest) in operands if kind == "num" for v in (rest[0],)]
-
-
-def _operand_matrix(operands: List[tuple]) -> Optional[Matrix]:
-    vals = _nums(operands)
-    if len(vals) < 6:
-        return None
-    return tuple(vals[-6:])  # type: ignore[return-value]
-
-
-def _last_num(operands: List[tuple], default: float) -> float:
-    vals = _nums(operands)
-    return vals[-1] if vals else default
-
-
-def _trailing_nums(operands: List[tuple], k: int) -> Optional[List[float]]:
-    vals = _nums(operands)
-    return vals[-k:] if len(vals) >= k else None
-
-
-def _leading_nums(operands: List[tuple], k: int) -> Optional[List[float]]:
-    vals = _nums(operands)
-    return vals[:k] if len(vals) >= k else None
-
-
-def _last_name(operands: List[tuple]) -> Optional[str]:
-    for entry in reversed(operands):
-        if entry[0] == "name":
-            return entry[1]
-    return None
-
-
-def _last_string(operands: List[tuple]) -> Optional[tuple]:
-    for entry in reversed(operands):
-        if entry[0] == "str":
-            return entry
-    return None
-
-
-def _last_array(operands: List[tuple]) -> Optional[List[tuple]]:
-    for entry in reversed(operands):
-        if entry[0] == "arr":
-            return entry[1]
-    return None
-
-
-@dataclass
-class _TextState:
-    ctm: Matrix
-    tm: Matrix = _IDENTITY
-    tlm: Matrix = _IDENTITY
-    font: Optional[FontMetric] = None
-    size: float = 0.0
-    char_spacing: float = 0.0
-    word_spacing: float = 0.0
-    h_scale: float = 1.0
-    leading: float = 0.0
-    rise: float = 0.0
-    valid: bool = True  # pen position is currently known
-
-
-def _show(
-    state: _TextState,
-    segments: List[tuple],
-    search: str,
-    quads: List[Quad],
-    *,
-    case_sensitive: bool,
-    remaining: int,
-) -> bool:
-    """Advance the text matrix over *segments*; append match quads.
-
-    Returns whether the run was tracked confidently. When it was not (no usable
-    font, or a UTF-16BE operand), the text matrix is left unchanged and the
-    caller suspends overlay emission until the next position reset.
+    Chars of a multi-char code unit (a ligature) share the unit's whole
+    extent; synthesized gap chars cover the gap. Returns ``None`` when any
+    segment cannot be measured (the caller then draws no boxes for the run).
     """
-    font = state.font
-    if font is None or not state.valid:
-        return False
-    composite = isinstance(font, CompositeFontMetric)
-
-    size = state.size
-    chars: List[str] = []
-    starts: List[float] = []  # per matched char: left edge of its code unit
-    ends: List[float] = []  # per matched char: right edge of its code unit
-    unit_first: List[bool] = []  # char is the first of its code unit
-    unit_last: List[bool] = []  # char is the last of its code unit
-    pen = 0.0
-    for seg in segments:
-        if seg[0] == "num":
-            pen += -seg[1] / 1000.0 * size * state.h_scale
+    geometry: List[Tuple[float, float, float, float, float]] = []
+    for seg, (kind, text, units) in zip(run.segments, infos):
+        if seg.pen is None:
+            return None
+        pen_x, pen_y = seg.pen
+        y = pen_y + seg.rise
+        metric = seg.metric
+        ascent = getattr(metric, "ascent", 800.0) / 1000.0 * seg.size
+        descent = getattr(metric, "descent", -200.0) / 1000.0 * seg.size
+        if kind == "virtual":
+            for _ch in text:
+                geometry.append((pen_x, pen_x + seg.gap_width, y, descent, ascent))
             continue
-        if composite:
-            raw = seg[1]
-            if len(raw) % 2:
-                return False  # odd-length CID string -> pen not trackable
-            for i in range(0, len(raw), 2):
-                cid = int.from_bytes(raw[i : i + 2], "big")
-                text = font.code_to_text.get(raw[i : i + 2], "�")
-                glyph = font.width_of(cid) / 1000.0 * size
-                # Word spacing applies only to single-byte code 32, never to
-                # two-byte codes (PDF 32000-1, 9.3.3).
-                advance = (glyph + state.char_spacing) * state.h_scale
-                # A multi-char unit (ligature) shares one advance: every char
-                # spans the whole unit.
-                for ci, ch in enumerate(text):
-                    chars.append(ch)
-                    starts.append(pen)
-                    ends.append(pen + advance)
-                    unit_first.append(ci == 0)
-                    unit_last.append(ci == len(text) - 1)
-                pen += advance
-            continue
-        text, encoding = _decode_operand(seg[1])
-        if encoding != "latin-1":
-            return False  # UTF-16BE operand -> not a single-byte simple font
-        for ch in text:
-            code = ord(ch) & 0xFF
-            glyph = font.width_of(code) / 1000.0 * size
-            extra = state.char_spacing + (state.word_spacing if code == 32 else 0.0)
-            advance = (glyph + extra) * state.h_scale
-            chars.append(ch)
-            starts.append(pen)
-            ends.append(pen + advance)
-            unit_first.append(True)
-            unit_last.append(True)
-            pen += advance
-
-    new_tm = _mul((1.0, 0.0, 0.0, 1.0, pen, 0.0), state.tm)
-    full = "".join(chars)
-    if full:
-        # Mirror the redactor: a match must cover whole code units, so a span
-        # ending inside a multi-char unit (ligature) is not emitted.
-        spans = [
-            (ms, me)
-            for ms, me in _find_matches(full, search, case_sensitive, 0)
-            if unit_first[ms] and unit_last[me - 1]
-        ]
-        if remaining:
-            spans = spans[:remaining]
-        if spans:
-            trm = _mul(state.tm, state.ctm)
-            y0 = font.descent / 1000.0 * size + state.rise
-            y1 = font.ascent / 1000.0 * size + state.rise
-            for ms, me in spans:
-                x0 = starts[ms]
-                x1 = ends[me - 1]
-                quads.append(
-                    (
-                        _apply(trm, x0, y0),
-                        _apply(trm, x1, y0),
-                        _apply(trm, x1, y1),
-                        _apply(trm, x0, y1),
-                    )
+        if metric is None:
+            return None
+        raw = seg.token.value
+        if kind == "cid":
+            x = pen_x
+            for off, length, unit_text in units:
+                if length != 2:
+                    return None
+                cid = int.from_bytes(raw[off : off + 2], "big")
+                glyph = metric.width_of(cid) / 1000.0 * seg.size
+                advance = (glyph + seg.char_spacing) * seg.h_scale
+                for _ch in unit_text:
+                    geometry.append((x, x + advance, y, descent, ascent))
+                x += advance
+        elif kind == "latin-1":
+            x = pen_x
+            for ch in text:
+                code = ord(ch) & 0xFF
+                glyph = metric.width_of(code) / 1000.0 * seg.size
+                extra = seg.char_spacing + (
+                    seg.word_spacing if code == 32 else 0.0
                 )
-    state.tm = new_tm
-    return True
+                advance = (glyph + extra) * seg.h_scale
+                geometry.append((x, x + advance, y, descent, ascent))
+                x += advance
+        else:
+            return None  # UTF-16BE operand -> byte codes are not glyph codes
+    return geometry
+
+
+def _span_quads(
+    trm: Matrix,
+    geometry: List[Tuple[float, float, float, float, float]],
+    start: int,
+    end: int,
+) -> List[Quad]:
+    """One quad per baseline covered by the matched char range."""
+    quads: List[Quad] = []
+    i = start
+    while i < end:
+        x0, x1, y, low, high = geometry[i]
+        y0 = y + low
+        y1 = y + high
+        j = i + 1
+        while j < end and abs(geometry[j][2] - y) <= 1e-9:
+            gx0, gx1, gy, glow, ghigh = geometry[j]
+            x0 = min(x0, gx0)
+            x1 = max(x1, gx1)
+            y0 = min(y0, gy + glow)
+            y1 = max(y1, gy + ghigh)
+            j += 1
+        quads.append(
+            (
+                _apply(trm, x0, y0),
+                _apply(trm, x1, y0),
+                _apply(trm, x1, y1),
+                _apply(trm, x0, y1),
+            )
+        )
+        i = j
+    return quads
 
 
 def locate_matches(
@@ -254,155 +160,33 @@ def locate_matches(
     max_count: int = 0,
     base_ctm: Matrix = _IDENTITY,
 ) -> List[Quad]:
-    """Return user-space quads covering each match of *search* in *content*."""
+    """Return user-space quads covering each match of *search* in *content*.
+
+    Runs, decoding and match filtering mirror the redactor exactly (the same
+    walker and span alignment are used), so every returned box corresponds to
+    text the redactor would remove. A match spanning several baselines (a
+    line-moving ``'``/``"`` inside the run) yields one quad per baseline.
+    """
     tokens = _lex(content)
+    runs = _walk_show_runs(
+        tokens, metric_for_name=font_for_name, base_ctm=base_ctm
+    )
     quads: List[Quad] = []
-    state = _TextState(ctm=base_ctm)
-    gstack: List[tuple] = []
-    operands: List[tuple] = []
-    pending: List[tuple] = []  # segments of the current logical show run
-
-    def remaining() -> int:
-        return 0 if max_count == 0 else max(max_count - len(quads), 0)
-
-    def flush() -> None:
-        """Show the accumulated run as one unit, then reset it.
-
-        Consecutive show operators separated only by neutral operators share the
-        same font, spacing and pen, so the whole run is positioned in a single
-        ``_show`` pass -- a match spanning the boundary yields one box.
-        """
-        if pending:
-            state.valid = _show(
-                state, pending, search, quads,
-                case_sensitive=case_sensitive, remaining=remaining(),
-            )
-            pending.clear()
-
-    i = 0
-    n = len(tokens)
-    while i < n:
-        if max_count and len(quads) >= max_count:
+    matches = 0
+    for run in runs:
+        if max_count and matches >= max_count:
             break
-        tok = tokens[i]
-        kind = tok.kind
-        if kind == "string":
-            operands.append(("str", tok.value, tok.style))
-            i += 1
+        if not run.geometry_ok or run.origin_trm is None:
             continue
-        if kind == "name":
-            operands.append(("name", tok.value.lstrip("/")))
-            i += 1
+        infos, full, entries, _seg_starts = _run_char_data(run)
+        if not full:
             continue
-        if kind == "array_start":
-            arr: List[tuple] = []
-            i += 1
-            while i < n and tokens[i].kind != "array_end":
-                inner = tokens[i]
-                if inner.kind == "string":
-                    arr.append(("str", inner.value, inner.style))
-                elif inner.kind == "word":
-                    val = _to_float(inner.value)
-                    if val is not None:
-                        arr.append(("num", val))
-                i += 1
-            i += 1  # skip array_end
-            operands.append(("arr", arr))
+        geometry = _char_geometry(run, infos)
+        if geometry is None:
             continue
-        if kind == "array_end":
-            i += 1
-            continue
-        if kind != "word":
-            i += 1
-            continue
-
-        val = _to_float(tok.value)
-        if val is not None:
-            operands.append(("num", val))
-            i += 1
-            continue
-
-        op = tok.value
-        if op == "Tj":
-            seg = _last_string(operands)
-            if seg is not None:
-                pending.append(seg)  # accumulate; positioned at the next flush
-        elif op == "TJ":
-            arr = _last_array(operands)
-            if arr is not None:
-                pending.extend(arr)
-        elif op in ("'", '"'):
-            # A line-moving show operator updates the text position and appends
-            # text to the current run (not breaking it), so phrases can span across.
-            if op == '"':
-                aw_ac = _leading_nums(operands, 2)
-                if aw_ac is not None:
-                    state.word_spacing, state.char_spacing = aw_ac
-            state.tlm = _mul((1.0, 0.0, 0.0, 1.0, 0.0, -state.leading), state.tlm)
-            state.tm = state.tlm
-            state.valid = True
-            seg = _last_string(operands)
-            if seg is not None:
-                pending.append(seg)  # extends the current run
-        elif op in _NEUTRAL_OPS:
-            pass  # keeps the current run open
-        else:
-            flush()  # any other operator ends the run before it takes effect
-            if op == "q":
-                gstack.append(
-                    (
-                        state.ctm, state.font, state.size, state.char_spacing,
-                        state.word_spacing, state.h_scale, state.leading, state.rise,
-                    )
-                )
-            elif op == "Q":
-                if gstack:
-                    (
-                        state.ctm, state.font, state.size, state.char_spacing,
-                        state.word_spacing, state.h_scale, state.leading, state.rise,
-                    ) = gstack.pop()
-            elif op == "cm":
-                cm = _operand_matrix(operands)
-                if cm is not None:
-                    state.ctm = _mul(cm, state.ctm)
-            elif op == "BT":
-                state.tm = state.tlm = _IDENTITY
-                state.valid = True
-            elif op == "Tf":
-                name = _last_name(operands)
-                state.size = _last_num(operands, state.size)
-                state.font = font_for_name(name) if name is not None else None
-            elif op == "Tc":
-                state.char_spacing = _last_num(operands, state.char_spacing)
-            elif op == "Tw":
-                state.word_spacing = _last_num(operands, state.word_spacing)
-            elif op == "Tz":
-                state.h_scale = _last_num(operands, state.h_scale * 100.0) / 100.0
-            elif op == "TL":
-                state.leading = _last_num(operands, state.leading)
-            elif op == "Ts":
-                state.rise = _last_num(operands, state.rise)
-            elif op in ("Td", "TD"):
-                pair = _trailing_nums(operands, 2)
-                if pair is not None:
-                    tx, ty = pair
-                    if op == "TD":
-                        state.leading = -ty
-                    state.tlm = _mul((1.0, 0.0, 0.0, 1.0, tx, ty), state.tlm)
-                    state.tm = state.tlm
-                    state.valid = True
-            elif op == "Tm":
-                m = _operand_matrix(operands)
-                if m is not None:
-                    state.tm = state.tlm = m
-                    state.valid = True
-            elif op == "T*":
-                state.tlm = _mul((1.0, 0.0, 0.0, 1.0, 0.0, -state.leading), state.tlm)
-                state.tm = state.tlm
-                state.valid = True
-
-        operands = []
-        i += 1
-
-    flush()  # position any run still open at end of content
+        remaining = 0 if max_count == 0 else max_count - matches
+        spans = _aligned_spans(full, entries, search, case_sensitive, remaining)
+        for start, end in spans:
+            matches += 1
+            quads.extend(_span_quads(run.origin_trm, geometry, start, end))
     return quads

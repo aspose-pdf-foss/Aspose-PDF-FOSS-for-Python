@@ -15,9 +15,18 @@ from aspose_pdf.exceptions import PdfValidationException
 
 _WHITESPACE = b" \t\n\r\x0c"
 _DELIMITERS = b"()<>[]{}/%"
-_TEXT_SHOW_OPS = {"Tj", "'", '"'}
-_ALL_SHOW_OPS = _TEXT_SHOW_OPS | {"TJ"}
 _LINE_SHOW_OPS = {"'", '"'}
+
+_ID_MATRIX = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+# Geometric run-joining thresholds, as fractions of the current font size.
+# A positioning operator (Td/TD/Tm/T*) continues the current run when the new
+# position stays on the same baseline and the horizontal gap from the pen is
+# small; a word-sized gap contributes a synthetic space to the logical string.
+_JOIN_BASELINE_TOL = 0.05
+_JOIN_MIN_GAP = -0.10
+_JOIN_MAX_GAP = 1.0
+_JOIN_SPACE_GAP = 0.18
 
 # Operators that may appear between two text-showing operators without breaking
 # the logical text run: they change neither the font, the spacing/scale, nor the
@@ -106,6 +115,386 @@ class CidTextCodec:
         return bytes(out)
 
 
+# ---------------------------------------------------------------------------
+# Geometric show-run walker
+# ---------------------------------------------------------------------------
+
+
+def _mat_mul(m: tuple, n: tuple) -> tuple:
+    """Compose affines: apply *m* then *n* (PDF row-vector convention)."""
+    a, b, c, d, e, f = m
+    A, B, C, D, E, F = n
+    return (
+        a * A + b * C,
+        a * B + b * D,
+        c * A + d * C,
+        c * B + d * D,
+        e * A + f * C + E,
+        e * B + f * D + F,
+    )
+
+
+def _linear_close(m: tuple, n: tuple) -> bool:
+    """Whether two matrices share the same rotation/scale part."""
+    return all(abs(m[i] - n[i]) <= 1e-6 * max(1.0, abs(m[i])) for i in range(4))
+
+
+def _text_delta(origin: tuple, m: tuple) -> Optional[tuple[float, float]]:
+    """Translation of *m* relative to *origin*, in origin's text space."""
+    if not _linear_close(origin, m):
+        return None
+    a, b, c, d = origin[:4]
+    det = a * d - b * c
+    if abs(det) < 1e-12:
+        return None
+    dx = m[4] - origin[4]
+    dy = m[5] - origin[5]
+    return ((dx * d - dy * c) / det, (dy * a - dx * b) / det)
+
+
+@dataclass
+class _RunSegment:
+    """One string operand (or a synthesized inter-operator gap) of a run."""
+
+    token: Optional[_Token]  # None for a synthesized gap
+    codec: Optional[CidTextCodec]
+    metric: Any  # duck-typed: width_of / ascent / descent / code_to_text
+    size: float
+    char_spacing: float
+    word_spacing: float
+    h_scale: float
+    rise: float
+    pen: Optional[tuple[float, float]]  # text-space offset from the run origin
+    gap_text: str = ""  # synthesized logical text ("" or " ")
+    gap_width: float = 0.0  # text-space width of the synthesized gap
+
+
+@dataclass
+class _Run:
+    """A logical text run: show operands joined into one matchable string."""
+
+    segments: list[_RunSegment]
+    origin_trm: Optional[tuple]  # tm x ctm at the run start, if trackable
+    geometry_ok: bool  # per-segment pens and advances are trustworthy
+
+
+def _string_advance(
+    raw: bytes,
+    codec: Optional[CidTextCodec],
+    metric: Any,
+    size: float,
+    char_spacing: float,
+    word_spacing: float,
+    h_scale: float,
+) -> Optional[float]:
+    """Text-space advance of a show string, or None when unmeasurable."""
+    if metric is None:
+        return None
+    total = 0.0
+    if codec is not None:
+        if len(raw) % 2:
+            return None
+        for i in range(0, len(raw), 2):
+            cid = int.from_bytes(raw[i : i + 2], "big")
+            glyph = metric.width_of(cid) / 1000.0 * size
+            # Word spacing applies only to single-byte code 32, never to
+            # two-byte codes (PDF 32000-1, 9.3.3).
+            total += (glyph + char_spacing) * h_scale
+        return total
+    if raw.startswith(b"\xfe\xff"):
+        return None  # UTF-16BE operand -> byte codes are not glyph codes
+    for code in raw:
+        glyph = metric.width_of(code) / 1000.0 * size
+        extra = char_spacing + (word_spacing if code == 32 else 0.0)
+        total += (glyph + extra) * h_scale
+    return total
+
+
+def _walk_show_runs(
+    tokens: list[_Token],
+    *,
+    codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
+    metric_for_name: Optional[Callable[[str], Any]] = None,
+    base_ctm: tuple = _ID_MATRIX,
+) -> list[_Run]:
+    """Walk a content stream and group show operands into logical runs.
+
+    A run is a maximal sequence of show operands whose text reads as one
+    string. Besides positionally-neutral operators, the following keep a run
+    open: ``Tf``/``Tc``/``Tw``/``Tz``/``TL`` (the pen does not move), the
+    line-moving show operators ``'``/``"``, and -- when advance widths are
+    available from *metric_for_name* -- positioning operators (``Td``, ``TD``,
+    ``Tm``, ``T*``) whose target stays on the same baseline within a small
+    horizontal gap of the tracked pen; a word-sized gap synthesizes a space
+    segment. Without metrics the pen is untrackable, so positioning operators
+    break runs exactly as before.
+
+    For composite fonts the segment codec falls back to one derived from the
+    metric's ``code_to_text`` map, keeping editor and locator matching
+    identical by construction.
+    """
+    runs: list[_Run] = []
+
+    ctm = base_ctm
+    gstack: list[tuple] = []
+    tm = tlm = _ID_MATRIX
+    tm_valid = True
+    metric: Any = None
+    codec: Optional[CidTextCodec] = None
+    size = 0.0
+    char_spacing = 0.0
+    word_spacing = 0.0
+    h_scale = 1.0
+    leading = 0.0
+    rise = 0.0
+
+    cur: list[_RunSegment] = []
+    origin_tm: Optional[tuple] = None
+    origin_trm: Optional[tuple] = None
+    geom_ok = False
+    broke = True
+
+    def close_run() -> None:
+        nonlocal cur
+        if cur:
+            runs.append(_Run(cur, origin_trm, geom_ok))
+            cur = []
+
+    def start_run() -> None:
+        nonlocal origin_tm, origin_trm, geom_ok
+        close_run()
+        origin_tm = tm if tm_valid else None
+        origin_trm = _mat_mul(tm, ctm) if tm_valid else None
+        geom_ok = tm_valid
+
+    def add_string(tok: _Token) -> None:
+        nonlocal broke, geom_ok, tm, tm_valid
+        if broke:
+            start_run()
+            broke = False
+        pen = (
+            _text_delta(origin_tm, tm)
+            if origin_tm is not None and tm_valid
+            else None
+        )
+        if pen is None:
+            geom_ok = False
+        cur.append(
+            _RunSegment(
+                tok, codec, metric, size, char_spacing, word_spacing,
+                h_scale, rise, pen,
+            )
+        )
+        advance = _string_advance(
+            tok.value, codec, metric, size, char_spacing, word_spacing, h_scale
+        )
+        if advance is None:
+            geom_ok = False
+            tm_valid = False
+        else:
+            tm = _mat_mul((1.0, 0.0, 0.0, 1.0, advance, 0.0), tm)
+
+    def add_kern(value: float) -> None:
+        nonlocal tm
+        tm = _mat_mul(
+            (1.0, 0.0, 0.0, 1.0, -value / 1000.0 * size * h_scale, 0.0), tm
+        )
+
+    def move_text_position(new_tm: tuple, new_tlm: tuple) -> None:
+        """Apply a positioning operator, joining the run when it continues."""
+        nonlocal tm, tlm, tm_valid, broke
+        joined = False
+        if cur and not broke and tm_valid and origin_tm is not None and size > 0:
+            pen_end = _text_delta(origin_tm, tm)
+            pen_new = _text_delta(origin_tm, new_tm)
+            if pen_end is not None and pen_new is not None:
+                dy = pen_new[1] - pen_end[1]
+                gap = pen_new[0] - pen_end[0]
+                if (
+                    abs(dy) <= _JOIN_BASELINE_TOL * size
+                    and _JOIN_MIN_GAP * size <= gap <= _JOIN_MAX_GAP * size
+                ):
+                    joined = True
+                    if gap >= _JOIN_SPACE_GAP * size:
+                        cur.append(
+                            _RunSegment(
+                                None, codec, metric, size, char_spacing,
+                                word_spacing, h_scale, rise, pen_end,
+                                gap_text=" ", gap_width=gap,
+                            )
+                        )
+        tm, tlm = new_tm, new_tlm
+        tm_valid = True
+        if not joined:
+            broke = True
+
+    def resolve_font(name: Optional[str]) -> None:
+        nonlocal metric, codec
+        metric = metric_for_name(name) if metric_for_name and name else None
+        codec = codec_for_name(name) if codec_for_name else None
+        if codec is None and metric is not None:
+            code_to_text = getattr(metric, "code_to_text", None)
+            if code_to_text:
+                codec = CidTextCodec(code_to_text)
+
+    operands: list[tuple] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        tok = tokens[i]
+        kind = tok.kind
+        if kind == "string":
+            operands.append(("str", tok))
+            i += 1
+            continue
+        if kind == "name":
+            operands.append(("name", tok.value.lstrip("/")))
+            i += 1
+            continue
+        if kind == "array_start":
+            arr: list = []
+            i += 1
+            while i < n and tokens[i].kind != "array_end":
+                inner = tokens[i]
+                if inner.kind == "string":
+                    arr.append(inner)
+                elif inner.kind == "word" and _is_number_word(inner.value):
+                    arr.append(float(inner.value))
+                i += 1
+            i += 1  # skip array_end
+            operands.append(("arr", arr))
+            continue
+        if kind == "array_end":
+            i += 1
+            continue
+        if kind != "word":
+            i += 1
+            continue
+
+        value = tok.value
+        if _is_number_word(value):
+            operands.append(("num", float(value)))
+            i += 1
+            continue
+
+        if value == "Tj":
+            seg = _last_operand(operands, "str")
+            if seg is not None:
+                add_string(seg)
+        elif value == "TJ":
+            arr = _last_operand(operands, "arr")
+            if arr is not None:
+                for item in arr:
+                    if isinstance(item, _Token):
+                        add_string(item)
+                    else:
+                        add_kern(item)
+        elif value in _LINE_SHOW_OPS:
+            # Line-moving show operators extend the current run (phrases may
+            # span line breaks); the pen moves to the next line first.
+            if value == '"':
+                nums = [v for k, v in operands if k == "num"]
+                if len(nums) >= 2:
+                    word_spacing, char_spacing = nums[0], nums[1]
+            tlm = _mat_mul((1.0, 0.0, 0.0, 1.0, 0.0, -leading), tlm)
+            tm = tlm
+            tm_valid = True
+            seg = _last_operand(operands, "str")
+            if seg is not None:
+                add_string(seg)
+        elif value == "Tf":
+            name = _last_operand(operands, "name")
+            nums = [v for k, v in operands if k == "num"]
+            if nums:
+                size = nums[-1]
+            resolve_font(name)
+            # The pen does not move: the run continues across a font change.
+        elif value == "Tc":
+            nums = [v for k, v in operands if k == "num"]
+            if nums:
+                char_spacing = nums[-1]
+        elif value == "Tw":
+            nums = [v for k, v in operands if k == "num"]
+            if nums:
+                word_spacing = nums[-1]
+        elif value == "Tz":
+            nums = [v for k, v in operands if k == "num"]
+            if nums:
+                h_scale = nums[-1] / 100.0
+        elif value == "TL":
+            nums = [v for k, v in operands if k == "num"]
+            if nums:
+                leading = nums[-1]
+        elif value in ("Td", "TD"):
+            nums = [v for k, v in operands if k == "num"]
+            if len(nums) >= 2:
+                tx, ty = nums[-2], nums[-1]
+                if value == "TD":
+                    leading = -ty
+                new_tlm = _mat_mul((1.0, 0.0, 0.0, 1.0, tx, ty), tlm)
+                move_text_position(new_tlm, new_tlm)
+            else:
+                broke = True
+        elif value == "Tm":
+            nums = [v for k, v in operands if k == "num"]
+            if len(nums) >= 6:
+                new = tuple(nums[-6:])
+                move_text_position(new, new)
+            else:
+                broke = True
+        elif value == "T*":
+            new_tlm = _mat_mul((1.0, 0.0, 0.0, 1.0, 0.0, -leading), tlm)
+            move_text_position(new_tlm, new_tlm)
+        elif value == "BT":
+            tm = tlm = _ID_MATRIX
+            tm_valid = True
+            broke = True
+        elif value == "ET":
+            broke = True
+        elif value == "q":
+            gstack.append(
+                (
+                    ctm, metric, codec, size, char_spacing, word_spacing,
+                    h_scale, leading, rise,
+                )
+            )
+            broke = True
+        elif value == "Q":
+            if gstack:
+                (
+                    ctm, metric, codec, size, char_spacing, word_spacing,
+                    h_scale, leading, rise,
+                ) = gstack.pop()
+            broke = True
+        elif value == "cm":
+            nums = [v for k, v in operands if k == "num"]
+            if len(nums) >= 6:
+                ctm = _mat_mul(tuple(nums[-6:]), ctm)
+            broke = True
+        elif value == "Ts":
+            nums = [v for k, v in operands if k == "num"]
+            if nums:
+                rise = nums[-1]
+            broke = True
+        elif value in _NEUTRAL_OPS:
+            pass  # keeps the current run open
+        else:
+            broke = True
+
+        operands = []
+        i += 1
+
+    close_run()
+    return runs
+
+
+def _last_operand(operands: list[tuple], kind: str):
+    for entry_kind, entry_value in reversed(operands):
+        if entry_kind == kind:
+            return entry_value
+    return None
+
+
 def replace_text_in_content(
     content: bytes,
     search: str,
@@ -114,6 +503,7 @@ def replace_text_in_content(
     case_sensitive: bool = True,
     max_count: int = 0,
     codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
+    metric_for_name: Optional[Callable[[str], Any]] = None,
 ) -> tuple[bytes, int]:
     """Replace text inside PDF text-showing operands.
 
@@ -126,32 +516,39 @@ def replace_text_in_content(
     phrase split across several show operators — common with kerning, per-word
     painting, or line breaks — is rewritten across the boundary: the replacement
     is placed in the first matched element and the remaining matched characters
-    are removed from the others. Any positioning, font or CTM change starts a new
-    run.
+    are removed from the others.
 
-    ``codec_for_name`` maps the run's active font resource name to a
+    Font and text-state changes (``Tf``/``Tc``/``Tw``/``Tz``/``TL``) do not
+    move the pen and never break a run, so a phrase with a styled word in the
+    middle is matched across the font change (each element keeps its own
+    font's encoding). When *metric_for_name* provides advance widths, a
+    positioning operator that continues the same baseline within a small gap
+    also keeps the run open, and a word-sized gap is matched as a single
+    space; without metrics any positioning or CTM change starts a new run.
+
+    ``codec_for_name`` maps the segment's font resource name to a
     :class:`CidTextCodec` for composite (Type0) fonts, enabling matching over
-    the ToUnicode-decoded text of two-byte show strings. Runs whose resolver
-    returns ``None`` use the default Latin-1/UTF-16BE operand decoding.
+    the ToUnicode-decoded text of two-byte show strings. Fonts without a codec
+    use the default Latin-1/UTF-16BE operand decoding.
     """
     _validate_edit_args(search, max_count)
     tokens = _lex(content)
-    groups = _group_show_runs_with_fonts(tokens)
+    runs = _walk_show_runs(
+        tokens, codec_for_name=codec_for_name, metric_for_name=metric_for_name
+    )
     replacements: list[tuple[int, int, bytes]] = []
     total = 0
 
-    for font_name, segs in groups:
+    for run in runs:
         if max_count and total >= max_count:
             break
         remaining = 0 if max_count == 0 else max(max_count - total, 0)
-        codec = codec_for_name(font_name) if codec_for_name is not None else None
-        edits, count = _edit_string_group(
-            segs,
+        edits, count = _edit_run(
+            run,
             search,
             replacement,
             case_sensitive=case_sensitive,
             max_count=remaining,
-            codec=codec,
         )
         if count:
             replacements.extend(edits)
@@ -171,113 +568,17 @@ def _is_number_word(value: str) -> bool:
 
 
 def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
-    """Group consecutive text-showing operators into logical-string runs."""
-    return [segs for _font, segs in _group_show_runs_with_fonts(tokens)]
-
-
-def _group_show_runs_with_fonts(
-    tokens: list[_Token],
-) -> list[tuple[Optional[str], list[_Token]]]:
     """Group consecutive text-showing operators into logical-string runs.
 
-    Inside a ``BT``/``ET`` block a run is a maximal sequence of show operators
-    separated only by neutral operators (colour or minor graphics state that
-    changes neither the font, spacing/scale nor pen position). The string
-    operands of every show operator in the run are concatenated, so a phrase
-    split across several operators (including across line-moving operators
-    ``'``/``"``) is matched as one string. Any positioning/font/CTM/state
-    operator starts a new run. Each returned entry pairs the run's active font
-    resource name (from the last ``Tf``, tracked through ``q``/``Q``) with the
-    run's string-operand tokens in order; the font cannot change inside a run
-    because ``Tf`` itself is a run boundary.
+    Compatibility view over :func:`_walk_show_runs` (no metrics, so
+    positioning operators break runs): each returned list holds the run's
+    string-operand tokens in order.
     """
-    groups: list[tuple[Optional[str], list[_Token]]] = []
-    current: list[_Token] = []
-    current_font: Optional[str] = None  # font of the open run
-    font: Optional[str] = None  # font currently selected by Tf
-    font_stack: list[Optional[str]] = []
-    pending_name: Optional[str] = None  # most recent name operand (Tf's target)
-    in_text = False
-    broke = True  # a run boundary currently separates us from ``current``
-
-    def flush() -> None:
-        nonlocal current
-        if current:
-            groups.append((current_font, current))
-            current = []
-
-    for idx, token in enumerate(tokens):
-        if token.kind == "name":
-            pending_name = str(token.value).lstrip("/")
-        if token.kind != "word":
-            continue  # operands belong to the operator that follows them
-        value = token.value
-        if value == "BT":
-            flush()
-            in_text = True
-            broke = True
-            continue
-        if value == "ET":
-            flush()
-            in_text = False
-            broke = True
-            continue
-        if value == "Tf":
-            flush()
-            font = pending_name
-            broke = True
-            continue
-        if value == "q":
-            flush()
-            font_stack.append(font)
-            broke = True
-            continue
-        if value == "Q":
-            flush()
-            if font_stack:
-                font = font_stack.pop()
-            broke = True
-            continue
-        if not in_text:
-            continue
-        if value in _ALL_SHOW_OPS:
-            segs = _show_operator_strings(tokens, idx, value)
-            if broke:
-                flush()
-                current = list(segs)
-                current_font = font
-            else:
-                current.extend(segs)
-            broke = False
-            continue
-        if value in _NEUTRAL_OPS or _is_number_word(value):
-            continue  # does not break the current run
-        broke = True  # any other operator is a run boundary
-
-    flush()
-    return groups
-
-
-def _show_operator_strings(
-    tokens: list[_Token], idx: int, op: str
-) -> list[_Token]:
-    """Return the string operand(s) painted by the show operator at *idx*.
-
-    A single string for ``Tj``/``'``/``"``; every string element of the array
-    for ``TJ`` (so a phrase spanning elements can be matched as one string).
-    """
-    if op in _TEXT_SHOW_OPS:
-        prev = _previous_token(tokens, idx)
-        return [prev] if prev is not None and prev.kind == "string" else []
-    if op == "TJ":
-        prev = _previous_token(tokens, idx)
-        if prev is None or prev.kind != "array_end":
-            return []
-        start_idx = _matching_array_start(tokens, idx - 1)
-        if start_idx is None:
-            return []
-        return [t for t in tokens[start_idx + 1 : idx - 1] if t.kind == "string"]
-    return []
+    return [
+        [seg.token for seg in run.segments if seg.token is not None]
+        for run in _walk_show_runs(tokens)
+        if any(seg.token is not None for seg in run.segments)
+    ]
 
 
 def redact_text_in_content(
@@ -287,6 +588,7 @@ def redact_text_in_content(
     case_sensitive: bool = True,
     max_count: int = 0,
     codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
+    metric_for_name: Optional[Callable[[str], Any]] = None,
 ) -> tuple[bytes, int]:
     """Remove text from simple text-showing operands."""
     return replace_text_in_content(
@@ -296,6 +598,7 @@ def redact_text_in_content(
         case_sensitive=case_sensitive,
         max_count=max_count,
         codec_for_name=codec_for_name,
+        metric_for_name=metric_for_name,
     )
 
 
@@ -306,23 +609,6 @@ def _validate_edit_args(search: str, max_count: int) -> None:
         raise ValueError("search must not be empty")
     if int(max_count) < 0:
         raise ValueError("max_count must be greater than or equal to zero")
-
-
-def _previous_token(tokens: list[_Token], index: int) -> Optional[_Token]:
-    return tokens[index - 1] if index > 0 else None
-
-
-def _matching_array_start(tokens: list[_Token], end_index: int) -> Optional[int]:
-    depth = 0
-    for i in range(end_index, -1, -1):
-        token = tokens[i]
-        if token.kind == "array_end":
-            depth += 1
-        elif token.kind == "array_start":
-            depth -= 1
-            if depth == 0:
-                return i
-    return None
 
 
 def _find_matches(
@@ -349,147 +635,167 @@ def _find_matches(
     return spans
 
 
-def _edit_string_group(
-    segs: list[_Token],
+def _run_char_data(run: _Run):
+    """Decode a run into its logical string plus per-char metadata.
+
+    Returns ``(infos, full, entries, seg_starts)``. ``infos[i]`` is
+    ``(kind, text, units)`` per segment, where *kind* is ``"cid"`` (two-byte
+    codes decoded through the segment codec, *units* from
+    :meth:`CidTextCodec.decode_units`), ``"virtual"`` (a synthesized gap), or
+    the operand encoding (``"latin-1"``/``"utf-16-be-bom"``). ``entries[g]``
+    is ``(seg, unit, first, last, virtual)`` for the char at global index
+    *g* -- *unit* is the code-unit index for CID segments and the char index
+    otherwise. ``seg_starts[i]`` is the global index of segment *i*'s first
+    char.
+    """
+    infos: list[tuple[str, str, Optional[list]]] = []
+    for seg in run.segments:
+        if seg.token is None:
+            infos.append(("virtual", seg.gap_text, None))
+        elif seg.codec is not None:
+            units = seg.codec.decode_units(seg.token.value)
+            infos.append(("cid", "".join(u[2] for u in units), units))
+        else:
+            text, encoding = _decode_operand(seg.token.value)
+            infos.append((encoding, text, None))
+
+    full_parts: list[str] = []
+    entries: list[tuple[int, int, bool, bool, bool]] = []
+    seg_starts: list[int] = []
+    pos = 0
+    for si, (kind, text, units) in enumerate(infos):
+        seg_starts.append(pos)
+        if kind == "cid":
+            for ui, (_off, _length, unit_text) in enumerate(units):
+                m = len(unit_text)
+                for ci in range(m):
+                    entries.append((si, ui, ci == 0, ci == m - 1, False))
+        else:
+            virtual = kind == "virtual"
+            for ci in range(len(text)):
+                entries.append((si, ci, True, True, virtual))
+        full_parts.append(text)
+        pos += len(text)
+    return infos, "".join(full_parts), entries, seg_starts
+
+
+def _aligned_spans(
+    full: str,
+    entries: list[tuple[int, int, bool, bool, bool]],
+    search: str,
+    case_sensitive: bool,
+    max_count: int,
+) -> list[tuple[int, int]]:
+    """Match spans that cover whole code units and at least one real char.
+
+    A span ending inside a multi-char code unit (a ligature) cannot be
+    spliced code-exactly and is skipped; a span covering only synthesized gap
+    chars has nothing to edit.
+    """
+    kept: list[tuple[int, int]] = []
+    for s, e in _find_matches(full, search, case_sensitive, 0):
+        if not entries[s][2] or not entries[e - 1][3]:
+            continue
+        if all(entries[i][4] for i in range(s, e)):
+            continue
+        kept.append((s, e))
+        if max_count and len(kept) >= max_count:
+            break
+    return kept
+
+
+def _edit_run(
+    run: _Run,
     search: str,
     replacement: str,
     *,
     case_sensitive: bool,
     max_count: int,
-    codec: Optional[CidTextCodec] = None,
 ) -> tuple[list[tuple[int, int, bytes]], int]:
-    """Match *search* across the concatenation of *segs* and rewrite them.
+    """Match *search* across the run's logical string and rewrite operands.
 
     The matched characters are removed from every element they cover and the
-    replacement is injected into the element that holds the match start, so a
-    phrase split across ``TJ`` elements is replaced in place. Each element is
-    re-encoded with its own literal/hex style and Latin-1/UTF-16BE encoding
-    (or two-byte codes when *codec* is given for a composite font); untouched
-    elements are left byte-for-byte intact.
+    replacement is injected into the element holding the first real matched
+    char. Simple-font elements are re-encoded with their own literal/hex
+    style and Latin-1/UTF-16BE encoding; composite-font elements are spliced
+    byte-for-byte per two-byte code and the replacement is encoded through
+    the reverse ToUnicode map (raising when unmappable). Untouched elements
+    are left byte-for-byte intact; synthesized gaps have no bytes to edit.
     """
-    if codec is not None:
-        return _edit_cid_string_group(
-            segs,
-            search,
-            replacement,
-            case_sensitive=case_sensitive,
-            max_count=max_count,
-            codec=codec,
-        )
-    decoded = [_decode_operand(s.value) for s in segs]
-    texts = [d[0] for d in decoded]
-    full = "".join(texts)
+    segs = run.segments
+    infos, full, entries, seg_starts = _run_char_data(run)
     if not full:
         return [], 0
-    spans = _find_matches(full, search, case_sensitive, max_count)
+    spans = _aligned_spans(full, entries, search, case_sensitive, max_count)
     if not spans:
         return [], 0
 
-    char_seg: list[int] = []
-    for si, text in enumerate(texts):
-        char_seg.extend([si] * len(text))
-
-    rebuilt = ["" for _ in segs]
-    i = 0
-    mi = 0
-    n = len(full)
-    while i < n:
-        if mi < len(spans) and i == spans[mi][0]:
-            rebuilt[char_seg[i]] += replacement
-            i = spans[mi][1]
-            mi += 1
-        else:
-            rebuilt[char_seg[i]] += full[i]
-            i += 1
-
-    edits: list[tuple[int, int, bytes]] = []
-    for si, seg in enumerate(segs):
-        if rebuilt[si] == texts[si]:
-            continue  # leave unmatched elements byte-for-byte intact
-        new_bytes = _format_operand(
-            _encode_operand(rebuilt[si], decoded[si][1]), seg.style
-        )
-        edits.append((seg.start, seg.end, new_bytes))
-    return edits, len(spans)
-
-
-def _edit_cid_string_group(
-    segs: list[_Token],
-    search: str,
-    replacement: str,
-    *,
-    case_sensitive: bool,
-    max_count: int,
-    codec: CidTextCodec,
-) -> tuple[list[tuple[int, int, bytes]], int]:
-    """Match *search* over ToUnicode-decoded two-byte codes and splice them.
-
-    Each operand is decoded into per-code units; matches must cover whole
-    units (a match ending inside a multi-character unit such as a ligature is
-    skipped rather than approximated). Covered units are removed byte-for-byte
-    from the raw operand, so untouched codes are never re-encoded; the
-    replacement is encoded via the reverse ToUnicode map and injected where
-    the match starts.
-    """
-    seg_units = [codec.decode_units(s.value) for s in segs]
-    full_parts: list[str] = []
-    unit_span: list[tuple[int, int]] = []  # (seg index, unit index) per char
-    unit_start_char: dict[tuple[int, int], int] = {}
-    unit_end_char: dict[tuple[int, int], int] = {}
-    pos = 0
-    for si, units in enumerate(seg_units):
-        for ui, (_off, _length, text) in enumerate(units):
-            unit_start_char[(si, ui)] = pos
-            pos += len(text)
-            unit_end_char[(si, ui)] = pos
-            full_parts.append(text)
-            unit_span.extend([(si, ui)] * len(text))
-    full = "".join(full_parts)
-    if not full:
-        return [], 0
-
-    spans = _find_matches(full, search, case_sensitive, 0)
-    kept: list[tuple[int, int]] = []
+    covered = [False] * len(full)
+    inject: dict[int, dict[int, Any]] = {}  # seg -> unit/char index -> payload
     for s, e in spans:
-        first = unit_span[s]
-        last = unit_span[e - 1]
-        if unit_start_char[first] == s and unit_end_char[last] == e:
-            kept.append((s, e))
-            if max_count and len(kept) >= max_count:
-                break
-    if not kept:
-        return [], 0
-
-    encoded_replacement = b""
-    if replacement:
-        encoded = codec.encode(replacement)
-        if encoded is None:
-            raise PdfValidationException(
-                "Replacement text cannot be encoded with this font's "
-                "ToUnicode CMap."
-            )
-        encoded_replacement = encoded
-
-    covered: set[tuple[int, int]] = set()
-    inject_at: dict[tuple[int, int], bytes] = {}
-    for s, e in kept:
-        inject_at[unit_span[s]] = encoded_replacement
         for i in range(s, e):
-            covered.add(unit_span[i])
+            covered[i] = True
+        target = next(i for i in range(s, e) if not entries[i][4])
+        t_seg, t_unit = entries[target][0], entries[target][1]
+        if infos[t_seg][0] == "cid":
+            payload: Any = b""
+            if replacement:
+                encoded = segs[t_seg].codec.encode(replacement)
+                if encoded is None:
+                    raise PdfValidationException(
+                        "Replacement text cannot be encoded with this font's "
+                        "ToUnicode CMap."
+                    )
+                payload = encoded
+        else:
+            payload = replacement
+        inject.setdefault(t_seg, {})[t_unit] = payload
 
     edits: list[tuple[int, int, bytes]] = []
     for si, seg in enumerate(segs):
-        if not any(key[0] == si for key in covered):
+        kind, text, units = infos[si]
+        if kind == "virtual":
+            continue
+        g0 = seg_starts[si]
+        if si not in inject and not any(
+            covered[g0 + j] for j in range(len(text))
+        ):
             continue  # leave unmatched elements byte-for-byte intact
-        raw = seg.value
-        out = bytearray()
-        for ui, (off, length, _text) in enumerate(seg_units[si]):
-            key = (si, ui)
-            out += inject_at.get(key, b"")
-            if key not in covered:
-                out += raw[off : off + length]
-        edits.append((seg.start, seg.end, _format_operand(bytes(out), seg.style)))
-    return edits, len(kept)
+        token = seg.token
+        seg_inject = inject.get(si, {})
+        if kind == "cid":
+            raw = token.value
+            out = bytearray()
+            local = 0
+            for ui, (off, length, unit_text) in enumerate(units):
+                payload = seg_inject.get(ui)
+                if payload is not None:
+                    out += payload
+                unit_covered = bool(unit_text) and covered[g0 + local]
+                if not unit_covered:
+                    out += raw[off : off + length]
+                local += len(unit_text)
+            edits.append(
+                (token.start, token.end, _format_operand(bytes(out), token.style))
+            )
+        else:
+            parts: list[str] = []
+            for j, ch in enumerate(text):
+                if j in seg_inject:
+                    parts.append(seg_inject[j])
+                if not covered[g0 + j]:
+                    parts.append(ch)
+            new_text = "".join(parts)
+            if new_text == text:
+                continue
+            edits.append(
+                (
+                    token.start,
+                    token.end,
+                    _format_operand(_encode_operand(new_text, kind), token.style),
+                )
+            )
+    return edits, len(spans)
 
 
 def _decode_operand(raw: bytes) -> tuple[str, str]:

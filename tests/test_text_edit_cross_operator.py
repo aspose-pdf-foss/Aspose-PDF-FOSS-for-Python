@@ -3,9 +3,12 @@
 A phrase split across several *consecutive* text-showing operators (including
 line-moving operators ``'``/``"``, e.g. two adjacent ``Tj``, or a ``Tj`` followed
 by a ``'`` or ``TJ``) is matched as one logical string when the operators are
-separated only by positionally-neutral operators. The replacement lands in the
-element holding the match start and the remaining matched characters are removed
-from the others; any positioning/font/CTM change starts a new run.
+separated only by positionally-neutral operators or pen-neutral text-state
+changes (``Tf``/``Tc``/``Tw``/``Tz``/``TL``). The replacement lands in the
+element holding the match start and the remaining matched characters are
+removed from the others; without font metrics any positioning or CTM change
+starts a new run (see test_text_edit_cross_position.py for metric-driven
+same-baseline joins).
 """
 
 from __future__ import annotations
@@ -100,11 +103,12 @@ def test_positioning_operator_breaks_run() -> None:
     assert out == content
 
 
-def test_font_change_breaks_run() -> None:
+def test_font_change_does_not_break_run() -> None:
+    # Tf does not move the pen, so a styled word continues the phrase.
     content = _content("BT /F1 10 Tf (Hel) Tj /F2 10 Tf (lo) Tj ET")
     out, count = replace_text_in_content(content, "Hello", "Hi")
-    assert count == 0
-    assert out == content
+    assert count == 1
+    assert out == _content("BT /F1 10 Tf (Hi) Tj /F2 10 Tf () Tj ET")
 
 
 def test_line_show_operator_does_not_break_run() -> None:

@@ -3389,6 +3389,7 @@ class SimplePdf:
                 case_sensitive=case_sensitive,
                 max_count=remaining,
                 codec_for_name=self._build_text_codecs(index),
+                metric_for_name=self._build_simple_font_metrics(index),
             )
             if count:
                 self._set_page_content(index, updated)
@@ -3460,6 +3461,7 @@ class SimplePdf:
                 case_sensitive=case_sensitive,
                 max_count=remaining,
                 codec_for_name=self._build_text_codecs(index),
+                metric_for_name=self._build_simple_font_metrics(index),
             )
             if count:
                 if overlay and quads:
