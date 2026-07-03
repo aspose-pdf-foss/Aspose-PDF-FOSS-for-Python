@@ -21,6 +21,126 @@ from .pdf_matrix import (
 )
 
 
+def load_cid_widths(w_obj: Any) -> Dict[int, int]:
+    """Parse a CIDFont /W array (plain Python lists) into code -> width."""
+    out: Dict[int, int] = {}
+    if not isinstance(w_obj, list):
+        return out
+    i = 0
+    n = len(w_obj)
+    while i < n:
+        first = w_obj[i]
+        if i + 1 >= n:
+            break
+        second = w_obj[i + 1]
+        if isinstance(second, list):
+            if isinstance(first, (int, float)):
+                code0 = int(first)
+                for j, w in enumerate(second):
+                    if isinstance(w, (int, float)):
+                        out[code0 + j] = int(w)
+            i += 2
+        elif i + 2 < n:
+            third = w_obj[i + 2]
+            if (
+                isinstance(first, (int, float))
+                and isinstance(second, (int, float))
+                and isinstance(third, (int, float))
+            ):
+                c1, c2, w = int(first), int(second), int(third)
+                for code in range(c1, c2 + 1):
+                    out[code] = w
+            i += 3
+        else:
+            i += 1
+    return out
+
+
+def parse_to_unicode_cmap(cmap_bytes: bytes) -> Dict[bytes, str]:
+    """Parse a ToUnicode CMap stream into a code-bytes -> unicode-text map."""
+    mapping: Dict[bytes, str] = {}
+    try:
+        text = cmap_bytes.decode("utf-8", errors="ignore")
+    except UnicodeError:
+        return mapping
+
+    lines: list[str] = []
+    for raw in text.splitlines():
+        if "%" in raw:
+            raw = raw.split("%", 1)[0]
+        stripped = raw.strip()
+        if stripped:
+            lines.append(stripped)
+    mode = None
+    for line in lines:
+        if line.endswith("beginbfchar"):
+            mode = "bfchar"
+            continue
+        if line.endswith("endbfchar"):
+            mode = None
+            continue
+        if line.endswith("beginbfrange"):
+            mode = "bfrange"
+            continue
+        if line.endswith("endbfrange"):
+            mode = None
+            continue
+
+        if mode == "bfchar":
+            hexes = re.findall(r"<([0-9A-Fa-f]+)>", line)
+            for i in range(0, len(hexes) - 1, 2):
+                try:
+                    src = bytes.fromhex(hexes[i])
+                    dst = bytes.fromhex(hexes[i + 1]).decode("utf-16-be")
+                    mapping[src] = dst
+                except (ValueError, TypeError, UnicodeError):
+                    pass
+        elif mode == "bfrange":
+            # Array form is matched by the second pass below.
+            if "[" in line:
+                continue
+            hexes = re.findall(r"<([0-9A-Fa-f]+)>", line)
+            for j in range(0, len(hexes) - 2, 3):
+                try:
+                    start_src = bytes.fromhex(hexes[j])
+                    end_src = bytes.fromhex(hexes[j + 1])
+                    dst_hex = hexes[j + 2]
+
+                    dst_start_val = int(dst_hex, 16)
+                    start_int = int.from_bytes(start_src, "big")
+                    end_int = int.from_bytes(end_src, "big")
+
+                    src_len = len(start_src)
+
+                    for idx, code in enumerate(range(start_int, end_int + 1)):
+                        src_bytes = code.to_bytes(src_len, "big")
+                        dst_char = chr(dst_start_val + idx)
+                        mapping[src_bytes] = dst_char
+                except (ValueError, TypeError, OverflowError, UnicodeError):
+                    pass
+    # bfrange with destination array (often one line): <s> <e> [ <h1> <h2> ... ]
+    for m in re.finditer(
+        r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]+)\]",
+        text,
+    ):
+        try:
+            start_src = bytes.fromhex(m.group(1))
+            end_src = bytes.fromhex(m.group(2))
+            inner = m.group(3)
+            dest_hexes = re.findall(r"<([0-9A-Fa-f]+)>", inner)
+            start_int = int.from_bytes(start_src, "big")
+            end_int = int.from_bytes(end_src, "big")
+            src_len = len(start_src)
+            for idx, code in enumerate(range(start_int, end_int + 1)):
+                src_bytes = code.to_bytes(src_len, "big")
+                if idx < len(dest_hexes):
+                    dst = bytes.fromhex(dest_hexes[idx]).decode("utf-16-be")
+                    mapping[src_bytes] = dst
+        except (ValueError, TypeError, IndexError, OverflowError, UnicodeError):
+            pass
+    return mapping
+
+
 class ContentStreamParser:
     """Parse a PDF content stream and extract plain text.
 
@@ -341,37 +461,7 @@ class ContentStreamParser:
 
     def _load_cid_widths(self, w_obj: Any) -> Dict[int, int]:
         """Parse a CIDFont /W array into code -> width (thousandths)."""
-        out: Dict[int, int] = {}
-        if not isinstance(w_obj, list):
-            return out
-        i = 0
-        n = len(w_obj)
-        while i < n:
-            first = w_obj[i]
-            if i + 1 >= n:
-                break
-            second = w_obj[i + 1]
-            if isinstance(second, list):
-                if isinstance(first, (int, float)):
-                    code0 = int(first)
-                    for j, w in enumerate(second):
-                        if isinstance(w, (int, float)):
-                            out[code0 + j] = int(w)
-                i += 2
-            elif i + 2 < n:
-                third = w_obj[i + 2]
-                if (
-                    isinstance(first, (int, float))
-                    and isinstance(second, (int, float))
-                    and isinstance(third, (int, float))
-                ):
-                    c1, c2, w = int(first), int(second), int(third)
-                    for code in range(c1, c2 + 1):
-                        out[code] = w
-                i += 3
-            else:
-                i += 1
-        return out
+        return load_cid_widths(w_obj)
 
     def _load_simple_widths(self, font: Dict[str, Any]) -> Dict[int, int]:
         out: Dict[int, int] = {}
@@ -746,87 +836,7 @@ class ContentStreamParser:
         return data.decode("utf-8", errors="ignore")
 
     def _parse_to_unicode(self, cmap_bytes: bytes) -> Dict[bytes, str]:
-        mapping: Dict[bytes, str] = {}
-        try:
-            text = cmap_bytes.decode("utf-8", errors="ignore")
-        except UnicodeError:
-            return mapping
-
-        lines: list[str] = []
-        for raw in text.splitlines():
-            if "%" in raw:
-                raw = raw.split("%", 1)[0]
-            stripped = raw.strip()
-            if stripped:
-                lines.append(stripped)
-        mode = None
-        for line in lines:
-            if line.endswith("beginbfchar"):
-                mode = "bfchar"
-                continue
-            if line.endswith("endbfchar"):
-                mode = None
-                continue
-            if line.endswith("beginbfrange"):
-                mode = "bfrange"
-                continue
-            if line.endswith("endbfrange"):
-                mode = None
-                continue
-
-            if mode == "bfchar":
-                hexes = re.findall(r"<([0-9A-Fa-f]+)>", line)
-                for i in range(0, len(hexes) - 1, 2):
-                    try:
-                        src = bytes.fromhex(hexes[i])
-                        dst = bytes.fromhex(hexes[i + 1]).decode("utf-16-be")
-                        mapping[src] = dst
-                    except (ValueError, TypeError, UnicodeError):
-                        pass
-            elif mode == "bfrange":
-                # Array form is matched by the second pass below.
-                if "[" in line:
-                    continue
-                hexes = re.findall(r"<([0-9A-Fa-f]+)>", line)
-                for j in range(0, len(hexes) - 2, 3):
-                    try:
-                        start_src = bytes.fromhex(hexes[j])
-                        end_src = bytes.fromhex(hexes[j + 1])
-                        dst_hex = hexes[j + 2]
-
-                        dst_start_val = int(dst_hex, 16)
-                        start_int = int.from_bytes(start_src, "big")
-                        end_int = int.from_bytes(end_src, "big")
-
-                        src_len = len(start_src)
-
-                        for idx, code in enumerate(range(start_int, end_int + 1)):
-                            src_bytes = code.to_bytes(src_len, "big")
-                            dst_char = chr(dst_start_val + idx)
-                            mapping[src_bytes] = dst_char
-                    except (ValueError, TypeError, OverflowError, UnicodeError):
-                        pass
-        # bfrange with destination array (often one line): <s> <e> [ <h1> <h2> ... ]
-        for m in re.finditer(
-            r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]+)\]",
-            text,
-        ):
-            try:
-                start_src = bytes.fromhex(m.group(1))
-                end_src = bytes.fromhex(m.group(2))
-                inner = m.group(3)
-                dest_hexes = re.findall(r"<([0-9A-Fa-f]+)>", inner)
-                start_int = int.from_bytes(start_src, "big")
-                end_int = int.from_bytes(end_src, "big")
-                src_len = len(start_src)
-                for idx, code in enumerate(range(start_int, end_int + 1)):
-                    src_bytes = code.to_bytes(src_len, "big")
-                    if idx < len(dest_hexes):
-                        dst = bytes.fromhex(dest_hexes[idx]).decode("utf-16-be")
-                        mapping[src_bytes] = dst
-            except (ValueError, TypeError, IndexError, OverflowError, UnicodeError):
-                pass
-        return mapping
+        return parse_to_unicode_cmap(cmap_bytes)
 
     # ---------------------------------------------------------------------
     # Tokenizer

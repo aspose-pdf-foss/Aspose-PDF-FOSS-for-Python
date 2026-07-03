@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 from aspose_pdf.exceptions import PdfValidationException
 
@@ -46,6 +46,66 @@ class _Token:
     style: str = ""
 
 
+class CidTextCodec:
+    """Two-byte code codec for a composite (Type0) font's show strings.
+
+    Built from the font's ToUnicode CMap. Decoding walks the operand two bytes
+    at a time (the Identity-H codespace) and yields one *unit* per code, so
+    matched units can be spliced out of the raw operand byte-for-byte without
+    re-encoding the untouched codes. Encoding (for replacement text) uses the
+    reverse mapping and fails softly when a character has no known code.
+    """
+
+    def __init__(self, code_to_text: Mapping[bytes, str]) -> None:
+        self.code_to_text = {
+            code: text for code, text in code_to_text.items() if len(code) == 2
+        }
+        self._reverse: dict[str, bytes] = {}
+        self._max_reverse_len = 1
+        for code, text in self.code_to_text.items():
+            if text and text not in self._reverse:
+                self._reverse[text] = code
+                self._max_reverse_len = max(self._max_reverse_len, len(text))
+
+    def decode_units(self, raw: bytes) -> list[tuple[int, int, str]]:
+        """Split *raw* into ``(offset, length, text)`` units, one per code.
+
+        An unmapped code decodes to U+FFFD (it can never match a search
+        string but keeps its raw bytes when the operand is rebuilt); a
+        trailing odd byte becomes its own unmapped unit.
+        """
+        units: list[tuple[int, int, str]] = []
+        i = 0
+        n = len(raw)
+        while i < n:
+            if i + 2 > n:
+                units.append((i, n - i, "�"))
+                break
+            units.append((i, 2, self.code_to_text.get(raw[i : i + 2], "�")))
+            i += 2
+        return units
+
+    def encode(self, text: str) -> Optional[bytes]:
+        """Encode *text* as code bytes, or None if any part is unmappable.
+
+        Greedy longest-match against the reverse ToUnicode map, so multi-char
+        targets (ligature codes) are usable as well.
+        """
+        out = bytearray()
+        i = 0
+        n = len(text)
+        while i < n:
+            for length in range(min(self._max_reverse_len, n - i), 0, -1):
+                code = self._reverse.get(text[i : i + length])
+                if code is not None:
+                    out += code
+                    i += length
+                    break
+            else:
+                return None
+        return bytes(out)
+
+
 def replace_text_in_content(
     content: bytes,
     search: str,
@@ -53,6 +113,7 @@ def replace_text_in_content(
     *,
     case_sensitive: bool = True,
     max_count: int = 0,
+    codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
 ) -> tuple[bytes, int]:
     """Replace text inside PDF text-showing operands.
 
@@ -67,23 +128,30 @@ def replace_text_in_content(
     is placed in the first matched element and the remaining matched characters
     are removed from the others. Any positioning, font or CTM change starts a new
     run.
+
+    ``codec_for_name`` maps the run's active font resource name to a
+    :class:`CidTextCodec` for composite (Type0) fonts, enabling matching over
+    the ToUnicode-decoded text of two-byte show strings. Runs whose resolver
+    returns ``None`` use the default Latin-1/UTF-16BE operand decoding.
     """
     _validate_edit_args(search, max_count)
     tokens = _lex(content)
-    groups = _group_show_runs(tokens)
+    groups = _group_show_runs_with_fonts(tokens)
     replacements: list[tuple[int, int, bytes]] = []
     total = 0
 
-    for segs in groups:
+    for font_name, segs in groups:
         if max_count and total >= max_count:
             break
         remaining = 0 if max_count == 0 else max(max_count - total, 0)
+        codec = codec_for_name(font_name) if codec_for_name is not None else None
         edits, count = _edit_string_group(
             segs,
             search,
             replacement,
             case_sensitive=case_sensitive,
             max_count=remaining,
+            codec=codec,
         )
         if count:
             replacements.extend(edits)
@@ -103,6 +171,13 @@ def _is_number_word(value: str) -> bool:
 
 
 def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
+    """Group consecutive text-showing operators into logical-string runs."""
+    return [segs for _font, segs in _group_show_runs_with_fonts(tokens)]
+
+
+def _group_show_runs_with_fonts(
+    tokens: list[_Token],
+) -> list[tuple[Optional[str], list[_Token]]]:
     """Group consecutive text-showing operators into logical-string runs.
 
     Inside a ``BT``/``ET`` block a run is a maximal sequence of show operators
@@ -111,21 +186,29 @@ def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
     operands of every show operator in the run are concatenated, so a phrase
     split across several operators (including across line-moving operators
     ``'``/``"``) is matched as one string. Any positioning/font/CTM/state
-    operator starts a new run. Each returned list holds the run's string-operand
-    tokens in order.
+    operator starts a new run. Each returned entry pairs the run's active font
+    resource name (from the last ``Tf``, tracked through ``q``/``Q``) with the
+    run's string-operand tokens in order; the font cannot change inside a run
+    because ``Tf`` itself is a run boundary.
     """
-    groups: list[list[_Token]] = []
+    groups: list[tuple[Optional[str], list[_Token]]] = []
     current: list[_Token] = []
+    current_font: Optional[str] = None  # font of the open run
+    font: Optional[str] = None  # font currently selected by Tf
+    font_stack: list[Optional[str]] = []
+    pending_name: Optional[str] = None  # most recent name operand (Tf's target)
     in_text = False
     broke = True  # a run boundary currently separates us from ``current``
 
     def flush() -> None:
         nonlocal current
         if current:
-            groups.append(current)
+            groups.append((current_font, current))
             current = []
 
     for idx, token in enumerate(tokens):
+        if token.kind == "name":
+            pending_name = str(token.value).lstrip("/")
         if token.kind != "word":
             continue  # operands belong to the operator that follows them
         value = token.value
@@ -139,6 +222,22 @@ def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
             in_text = False
             broke = True
             continue
+        if value == "Tf":
+            flush()
+            font = pending_name
+            broke = True
+            continue
+        if value == "q":
+            flush()
+            font_stack.append(font)
+            broke = True
+            continue
+        if value == "Q":
+            flush()
+            if font_stack:
+                font = font_stack.pop()
+            broke = True
+            continue
         if not in_text:
             continue
         if value in _ALL_SHOW_OPS:
@@ -146,6 +245,7 @@ def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
             if broke:
                 flush()
                 current = list(segs)
+                current_font = font
             else:
                 current.extend(segs)
             broke = False
@@ -186,6 +286,7 @@ def redact_text_in_content(
     *,
     case_sensitive: bool = True,
     max_count: int = 0,
+    codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
 ) -> tuple[bytes, int]:
     """Remove text from simple text-showing operands."""
     return replace_text_in_content(
@@ -194,6 +295,7 @@ def redact_text_in_content(
         "",
         case_sensitive=case_sensitive,
         max_count=max_count,
+        codec_for_name=codec_for_name,
     )
 
 
@@ -254,15 +356,26 @@ def _edit_string_group(
     *,
     case_sensitive: bool,
     max_count: int,
+    codec: Optional[CidTextCodec] = None,
 ) -> tuple[list[tuple[int, int, bytes]], int]:
     """Match *search* across the concatenation of *segs* and rewrite them.
 
     The matched characters are removed from every element they cover and the
     replacement is injected into the element that holds the match start, so a
     phrase split across ``TJ`` elements is replaced in place. Each element is
-    re-encoded with its own literal/hex style and Latin-1/UTF-16BE encoding;
-    untouched elements are left byte-for-byte intact.
+    re-encoded with its own literal/hex style and Latin-1/UTF-16BE encoding
+    (or two-byte codes when *codec* is given for a composite font); untouched
+    elements are left byte-for-byte intact.
     """
+    if codec is not None:
+        return _edit_cid_string_group(
+            segs,
+            search,
+            replacement,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            codec=codec,
+        )
     decoded = [_decode_operand(s.value) for s in segs]
     texts = [d[0] for d in decoded]
     full = "".join(texts)
@@ -298,6 +411,85 @@ def _edit_string_group(
         )
         edits.append((seg.start, seg.end, new_bytes))
     return edits, len(spans)
+
+
+def _edit_cid_string_group(
+    segs: list[_Token],
+    search: str,
+    replacement: str,
+    *,
+    case_sensitive: bool,
+    max_count: int,
+    codec: CidTextCodec,
+) -> tuple[list[tuple[int, int, bytes]], int]:
+    """Match *search* over ToUnicode-decoded two-byte codes and splice them.
+
+    Each operand is decoded into per-code units; matches must cover whole
+    units (a match ending inside a multi-character unit such as a ligature is
+    skipped rather than approximated). Covered units are removed byte-for-byte
+    from the raw operand, so untouched codes are never re-encoded; the
+    replacement is encoded via the reverse ToUnicode map and injected where
+    the match starts.
+    """
+    seg_units = [codec.decode_units(s.value) for s in segs]
+    full_parts: list[str] = []
+    unit_span: list[tuple[int, int]] = []  # (seg index, unit index) per char
+    unit_start_char: dict[tuple[int, int], int] = {}
+    unit_end_char: dict[tuple[int, int], int] = {}
+    pos = 0
+    for si, units in enumerate(seg_units):
+        for ui, (_off, _length, text) in enumerate(units):
+            unit_start_char[(si, ui)] = pos
+            pos += len(text)
+            unit_end_char[(si, ui)] = pos
+            full_parts.append(text)
+            unit_span.extend([(si, ui)] * len(text))
+    full = "".join(full_parts)
+    if not full:
+        return [], 0
+
+    spans = _find_matches(full, search, case_sensitive, 0)
+    kept: list[tuple[int, int]] = []
+    for s, e in spans:
+        first = unit_span[s]
+        last = unit_span[e - 1]
+        if unit_start_char[first] == s and unit_end_char[last] == e:
+            kept.append((s, e))
+            if max_count and len(kept) >= max_count:
+                break
+    if not kept:
+        return [], 0
+
+    encoded_replacement = b""
+    if replacement:
+        encoded = codec.encode(replacement)
+        if encoded is None:
+            raise PdfValidationException(
+                "Replacement text cannot be encoded with this font's "
+                "ToUnicode CMap."
+            )
+        encoded_replacement = encoded
+
+    covered: set[tuple[int, int]] = set()
+    inject_at: dict[tuple[int, int], bytes] = {}
+    for s, e in kept:
+        inject_at[unit_span[s]] = encoded_replacement
+        for i in range(s, e):
+            covered.add(unit_span[i])
+
+    edits: list[tuple[int, int, bytes]] = []
+    for si, seg in enumerate(segs):
+        if not any(key[0] == si for key in covered):
+            continue  # leave unmatched elements byte-for-byte intact
+        raw = seg.value
+        out = bytearray()
+        for ui, (off, length, _text) in enumerate(seg_units[si]):
+            key = (si, ui)
+            out += inject_at.get(key, b"")
+            if key not in covered:
+                out += raw[off : off + length]
+        edits.append((seg.start, seg.end, _format_operand(bytes(out), seg.style)))
+    return edits, len(kept)
 
 
 def _decode_operand(raw: bytes) -> tuple[str, str]:

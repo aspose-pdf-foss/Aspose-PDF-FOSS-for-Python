@@ -252,18 +252,25 @@ Supported:
   the remaining matched characters are removed from the others, leaving the
   kerning adjustments and unmatched elements intact. Any positioning, font or
   CTM change starts a new run. Each element keeps its own literal/hex style and
-  Latin-1/UTF-16BE encoding. Case-insensitive matching and `max_count` are
-  supported (a spanning match counts once); lazy page contents are materialized
-  before editing and the rewritten content persists on save.
+  Latin-1/UTF-16BE encoding. Identity-H Type0 (composite) fonts with a usable
+  `ToUnicode` CMap are edited as well: the two-byte CID strings are matched
+  over their ToUnicode-decoded text, matched codes are spliced out of the raw
+  operand byte-for-byte (matches must cover whole codes — a match ending
+  inside a multi-character ligature code is skipped), and replacement text is
+  encoded through the reverse `ToUnicode` mapping (an unmappable replacement
+  raises). Case-insensitive matching and `max_count` are supported (a spanning
+  match counts once); lazy page contents are materialized before editing and
+  the rewritten content persists on save.
 - Draw a redaction overlay bar with `redact_text(..., overlay=True,
   overlay_color=(r, g, b))`. After removing the matched text, a filled
   rectangle (a DeviceRGB triple of 0..1, default black) is drawn over each
   removed run's location. The location is found by a best-effort text-position
-  tracker (CTM, text matrix, and simple-font advance widths from `/Widths` or a
-  bundled metric-compatible substitute). The bar is cosmetic — the text is
-  already removed from the content — so a run whose position cannot be tracked
-  (a multi-byte/Type0 or unresolved font) is left unmarked rather than risking a
-  leak.
+  tracker (CTM, text matrix, and advance widths from `/Widths` for simple
+  fonts, from the CIDFont `/W`/`/DW` arrays for Identity-H Type0 fonts, or
+  from a bundled metric-compatible substitute). The bar is cosmetic — the text
+  is already removed from the content — so a run whose position cannot be
+  tracked (an unresolved font, a non-identity CMap) is left unmarked rather
+  than risking a leak.
 - Add positioned text to pages with Standard-14 Type1 font resources.
 - Mark newly authored text with a structure tag and optional `/ActualText`.
 
@@ -271,14 +278,16 @@ Boundaries:
 
 - OCR is not implemented.
 - Existing text replacement/redaction edits the content stream but does not
-  reflow layout or infer font-specific `ToUnicode` reverse mappings. Phrases
-  split across several `TJ` elements or across consecutive show operators are
-  matched and rewritten, but a phrase split across a line break or a
-  positioning/font change between operators is not (those start a new run). The
-  redaction-overlay position tracker handles single-byte simple fonts only;
-  multi-byte/Type0 or unresolved fonts get no bar (the text is still removed),
-  and the bar assumes a balanced content stream (identity CTM at its end).
-  Layout analysis, font shaping, rich text, and paragraph layout are not
+  reflow layout. Phrases split across several `TJ` elements or across
+  consecutive show operators are matched and rewritten, but a phrase split
+  across a positioning/font change between operators is not (those start a new
+  run). Type0 editing covers Identity-H fonts with a `ToUnicode` CMap;
+  non-identity CMaps, Identity-V, and Type0 fonts without `ToUnicode` fall
+  back to raw Latin-1 byte matching (effectively unmatched). The
+  redaction-overlay position tracker handles single-byte simple fonts and
+  Identity-H Type0 fonts; unresolved fonts get no bar (the text is still
+  removed), and the bar assumes a balanced content stream (identity CTM at its
+  end). Layout analysis, font shaping, rich text, and paragraph layout are not
   implemented as public product features.
 
 ## Fonts

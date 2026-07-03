@@ -3388,6 +3388,7 @@ class SimplePdf:
                 replacement,
                 case_sensitive=case_sensitive,
                 max_count=remaining,
+                codec_for_name=self._build_text_codecs(index),
             )
             if count:
                 self._set_page_content(index, updated)
@@ -3411,10 +3412,12 @@ class SimplePdf:
 
         When *overlay* is true, a filled rectangle (``overlay_color``, a
         DeviceRGB triple of 0..1, default black) is drawn over each removed
-        run's location -- the classic redaction bar. The bar is cosmetic: the
-        text is already removed from the content stream, so a run whose position
-        cannot be tracked (a multi-byte/Type0 font, an unresolved font) is simply
-        left unmarked rather than leaking text.
+        run's location -- the classic redaction bar. Simple single-byte fonts
+        and Identity-H Type0 fonts (matched through their ToUnicode CMap) are
+        tracked. The bar is cosmetic: the text is already removed from the
+        content stream, so a run whose position cannot be tracked (an
+        unresolved font, a non-identity CMap) is simply left unmarked rather
+        than leaking text.
         """
         self._ensure_not_disposed()
         if not isinstance(search, str):
@@ -3456,6 +3459,7 @@ class SimplePdf:
                 search,
                 case_sensitive=case_sensitive,
                 max_count=remaining,
+                codec_for_name=self._build_text_codecs(index),
             )
             if count:
                 if overlay and quads:
@@ -3499,7 +3503,7 @@ class SimplePdf:
         return None
 
     def _build_simple_font_metrics(self, page_index: int):
-        """Return a ``name -> SimpleFontMetric|None`` resolver for a page."""
+        """Return a ``name -> SimpleFontMetric|CompositeFontMetric|None`` resolver."""
         from .cos import PdfDictionary, PdfName
 
         page_dict = self._get_page_dict(page_index)
@@ -3524,12 +3528,12 @@ class SimplePdf:
         return resolver
 
     def _simple_font_metric(self, font_dict: Any):
-        """Build a ``SimpleFontMetric`` for a single-byte simple font, or None."""
+        """Build a ``SimpleFontMetric``/``CompositeFontMetric``, or None."""
         from .cos import PdfArray, PdfDictionary, PdfName
         from .text_locate import SimpleFontMetric
 
         if self._get_name(font_dict.mapping.get(PdfName("Subtype"))) == "Type0":
-            return None  # multi-byte / composite -> not a simple font
+            return self._composite_font_metric(font_dict)
         descriptor = self._resolve(font_dict.mapping.get(PdfName("FontDescriptor")))
         ascent, descent, missing = 800.0, -200.0, 0.0
         if isinstance(descriptor, PdfDictionary):
@@ -3554,6 +3558,112 @@ class SimplePdf:
         # No /Widths (common for the Standard 14): use a bundled substitute's
         # metrics, which are metric-compatible with Helvetica/Times/Courier.
         return self._substitute_font_metric(font_dict, descriptor, ascent, descent)
+
+    def _composite_font_metric(self, font_dict: Any):
+        """Build a ``CompositeFontMetric`` for an Identity-H Type0 font, or None.
+
+        Requires a usable ToUnicode CMap (matching is impossible without one)
+        and a horizontal identity encoding; anything else stays untracked so
+        the overlay degrades safely.
+        """
+        from .cos import PdfArray, PdfDictionary, PdfName
+        from .content_stream_parser import load_cid_widths
+        from .text_locate import CompositeFontMetric
+
+        if self._get_name(font_dict.mapping.get(PdfName("Encoding"))) != "Identity-H":
+            return None
+        descendants = self._resolve(font_dict.mapping.get(PdfName("DescendantFonts")))
+        if not isinstance(descendants, PdfArray) or not descendants.items:
+            return None
+        cid_font = self._resolve(descendants.items[0])
+        if not isinstance(cid_font, PdfDictionary):
+            return None
+        to_unicode = self._font_to_unicode_map(font_dict)
+        if not to_unicode:
+            return None
+
+        default_width = self._pdf_number(cid_font.mapping.get(PdfName("DW")))
+        if default_width is None:
+            default_width = 1000.0
+        widths = load_cid_widths(
+            self._convert_cos_to_dict(cid_font.mapping.get(PdfName("W")))
+        )
+        descriptor = self._resolve(cid_font.mapping.get(PdfName("FontDescriptor")))
+        ascent, descent = 800.0, -200.0
+        if isinstance(descriptor, PdfDictionary):
+            a = self._pdf_number(descriptor.mapping.get(PdfName("Ascent")))
+            d = self._pdf_number(descriptor.mapping.get(PdfName("Descent")))
+            ascent = a if a is not None else ascent
+            descent = d if d is not None else descent
+
+        def width_of(cid: int, _w=widths, _dw=default_width) -> float:
+            return float(_w.get(cid, _dw))
+
+        return CompositeFontMetric(
+            width_of=width_of,
+            code_to_text=to_unicode,
+            ascent=ascent,
+            descent=descent,
+        )
+
+    def _font_to_unicode_map(self, font_dict: Any) -> Optional[Dict[bytes, str]]:
+        """Parse a font's ToUnicode CMap into a two-byte code -> text map."""
+        from .cos import PdfName, PdfStream
+        from .content_stream_parser import parse_to_unicode_cmap
+
+        ref = font_dict.mapping.get(PdfName("ToUnicode"))
+        stream = self._resolve(ref)
+        if not isinstance(stream, PdfStream):
+            return None
+        try:
+            data = self._decode_cos_stream(stream, ref)
+        except Exception:
+            return None
+        mapping = {
+            code: text
+            for code, text in parse_to_unicode_cmap(data).items()
+            if len(code) == 2
+        }
+        return mapping or None
+
+    def _build_text_codecs(self, page_index: int):
+        """Return a ``name -> CidTextCodec|None`` resolver for a page.
+
+        A codec is produced only for Identity-H Type0 fonts with a usable
+        ToUnicode CMap; every other font resolves to ``None`` and keeps the
+        default Latin-1/UTF-16BE operand matching.
+        """
+        from .cos import PdfDictionary, PdfName
+        from .text_edit import CidTextCodec
+
+        page_dict = self._get_page_dict(page_index)
+        fonts_cos = None
+        if isinstance(page_dict, PdfDictionary):
+            resources = self._resolve_resources_cos(page_dict)
+            if isinstance(resources, PdfDictionary):
+                fonts_cos = self._resolve(resources.mapping.get(PdfName("Font")))
+        cache: Dict[Optional[str], Any] = {}
+
+        def resolver(name: Optional[str]):
+            if name in cache:
+                return cache[name]
+            codec = None
+            if name is not None and isinstance(fonts_cos, PdfDictionary):
+                font_dict = self._resolve(fonts_cos.mapping.get(PdfName(name)))
+                if (
+                    isinstance(font_dict, PdfDictionary)
+                    and self._get_name(font_dict.mapping.get(PdfName("Subtype")))
+                    == "Type0"
+                    and self._get_name(font_dict.mapping.get(PdfName("Encoding")))
+                    == "Identity-H"
+                ):
+                    to_unicode = self._font_to_unicode_map(font_dict)
+                    if to_unicode:
+                        codec = CidTextCodec(to_unicode)
+            cache[name] = codec
+            return codec
+
+        return resolver
 
     def _substitute_font_metric(
         self, font_dict: Any, descriptor: Any, ascent: float, descent: float

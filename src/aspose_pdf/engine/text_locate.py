@@ -2,23 +2,25 @@
 
 This is a best-effort text-position tracker used to draw redaction overlay
 boxes. It walks the content stream tracking the CTM, text matrix and text
-state, resolving advance widths from the page's simple fonts. For each match of
+state, resolving advance widths from the page's fonts. For each match of
 the search string (matched the same way as the redactor -- across ``TJ`` element
 boundaries and across consecutive show operators joined into one logical run) it
 returns a quadrilateral in default user space.
 
-It is deliberately conservative: only single-byte simple fonts are handled, and
-whenever the pen position cannot be tracked confidently (an unresolved or
-multi-byte font, or a UTF-16BE operand) overlay emission is suspended until the
-next absolute text-position reset (``BT``/``Tm``/``Td``/``TD``/``T*``). Because
-the matched text has already been removed from the content, a skipped box only
-means a missing cosmetic mark, never leaked text.
+It is deliberately conservative: single-byte simple fonts and Identity-H
+composite fonts (via :class:`CompositeFontMetric`, decoded through the font's
+ToUnicode CMap) are handled, and whenever the pen position cannot be tracked
+confidently (an unresolved font, a UTF-16BE operand, or an odd-length CID
+string) overlay emission is suspended until the next absolute text-position
+reset (``BT``/``Tm``/``Td``/``TD``/``T*``). Because the matched text has
+already been removed from the content, a skipped box only means a missing
+cosmetic mark, never leaked text.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Mapping, Optional, Tuple, Union
 
 from .text_edit import _NEUTRAL_OPS, _decode_operand, _find_matches, _lex
 
@@ -36,6 +38,25 @@ class SimpleFontMetric:
     width_of: Callable[[int], float]
     ascent: float = 800.0
     descent: float = -200.0
+
+
+@dataclass(frozen=True)
+class CompositeFontMetric:
+    """Advance metrics for an Identity-H composite (Type0) font.
+
+    ``width_of`` resolves a two-byte CID to its advance from the CIDFont's
+    ``/W`` array (falling back to ``/DW``); ``code_to_text`` is the font's
+    ToUnicode mapping restricted to two-byte codes, used to index match
+    positions over the same decoded text the redactor edits.
+    """
+
+    width_of: Callable[[int], float]
+    code_to_text: Mapping[bytes, str]
+    ascent: float = 800.0
+    descent: float = -200.0
+
+
+FontMetric = Union[SimpleFontMetric, CompositeFontMetric]
 
 
 def _mul(m: Matrix, n: Matrix) -> Matrix:
@@ -116,7 +137,7 @@ class _TextState:
     ctm: Matrix
     tm: Matrix = _IDENTITY
     tlm: Matrix = _IDENTITY
-    font: Optional[SimpleFontMetric] = None
+    font: Optional[FontMetric] = None
     size: float = 0.0
     char_spacing: float = 0.0
     word_spacing: float = 0.0
@@ -144,38 +165,74 @@ def _show(
     font = state.font
     if font is None or not state.valid:
         return False
+    composite = isinstance(font, CompositeFontMetric)
 
     size = state.size
     chars: List[str] = []
-    char_x: List[float] = []
+    starts: List[float] = []  # per matched char: left edge of its code unit
+    ends: List[float] = []  # per matched char: right edge of its code unit
+    unit_first: List[bool] = []  # char is the first of its code unit
+    unit_last: List[bool] = []  # char is the last of its code unit
     pen = 0.0
     for seg in segments:
         if seg[0] == "num":
             pen += -seg[1] / 1000.0 * size * state.h_scale
+            continue
+        if composite:
+            raw = seg[1]
+            if len(raw) % 2:
+                return False  # odd-length CID string -> pen not trackable
+            for i in range(0, len(raw), 2):
+                cid = int.from_bytes(raw[i : i + 2], "big")
+                text = font.code_to_text.get(raw[i : i + 2], "�")
+                glyph = font.width_of(cid) / 1000.0 * size
+                # Word spacing applies only to single-byte code 32, never to
+                # two-byte codes (PDF 32000-1, 9.3.3).
+                advance = (glyph + state.char_spacing) * state.h_scale
+                # A multi-char unit (ligature) shares one advance: every char
+                # spans the whole unit.
+                for ci, ch in enumerate(text):
+                    chars.append(ch)
+                    starts.append(pen)
+                    ends.append(pen + advance)
+                    unit_first.append(ci == 0)
+                    unit_last.append(ci == len(text) - 1)
+                pen += advance
             continue
         text, encoding = _decode_operand(seg[1])
         if encoding != "latin-1":
             return False  # UTF-16BE operand -> not a single-byte simple font
         for ch in text:
             code = ord(ch) & 0xFF
-            chars.append(ch)
-            char_x.append(pen)
             glyph = font.width_of(code) / 1000.0 * size
             extra = state.char_spacing + (state.word_spacing if code == 32 else 0.0)
-            pen += (glyph + extra) * state.h_scale
-    char_x.append(pen)  # sentinel: end of the last glyph's advance
+            advance = (glyph + extra) * state.h_scale
+            chars.append(ch)
+            starts.append(pen)
+            ends.append(pen + advance)
+            unit_first.append(True)
+            unit_last.append(True)
+            pen += advance
 
     new_tm = _mul((1.0, 0.0, 0.0, 1.0, pen, 0.0), state.tm)
     full = "".join(chars)
     if full:
-        spans = _find_matches(full, search, case_sensitive, remaining)
+        # Mirror the redactor: a match must cover whole code units, so a span
+        # ending inside a multi-char unit (ligature) is not emitted.
+        spans = [
+            (ms, me)
+            for ms, me in _find_matches(full, search, case_sensitive, 0)
+            if unit_first[ms] and unit_last[me - 1]
+        ]
+        if remaining:
+            spans = spans[:remaining]
         if spans:
             trm = _mul(state.tm, state.ctm)
             y0 = font.descent / 1000.0 * size + state.rise
             y1 = font.ascent / 1000.0 * size + state.rise
             for ms, me in spans:
-                x0 = char_x[ms]
-                x1 = char_x[me]
+                x0 = starts[ms]
+                x1 = ends[me - 1]
                 quads.append(
                     (
                         _apply(trm, x0, y0),
@@ -191,7 +248,7 @@ def _show(
 def locate_matches(
     content: bytes,
     search: str,
-    font_for_name: Callable[[str], Optional[SimpleFontMetric]],
+    font_for_name: Callable[[str], Optional[FontMetric]],
     *,
     case_sensitive: bool = True,
     max_count: int = 0,
