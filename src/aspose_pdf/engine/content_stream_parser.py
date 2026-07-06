@@ -141,6 +141,81 @@ def parse_to_unicode_cmap(cmap_bytes: bytes) -> Dict[bytes, str]:
     return mapping
 
 
+def parse_encoding_cmap(cmap_bytes: bytes) -> Tuple[Dict[bytes, int], List[int]]:
+    """Parse a CID Encoding CMap into ``(code-bytes -> CID, sorted code lengths)``.
+
+    Reads ``codespacerange`` (for the code lengths), ``cidrange`` and
+    ``cidchar``; the CID destinations are decimal integers. Predefined imports
+    (``usecmap``) are ignored -- an embedded CMap stream that defines its own
+    ranges is handled, a bare reference to a predefined CJK CMap is not.
+    """
+    code_to_cid: Dict[bytes, int] = {}
+    lengths: set[int] = set()
+    try:
+        text = cmap_bytes.decode("latin-1", errors="ignore")
+    except UnicodeError:
+        return code_to_cid, []
+
+    lines: list[str] = []
+    for raw in text.splitlines():
+        if "%" in raw:
+            raw = raw.split("%", 1)[0]
+        stripped = raw.strip()
+        if stripped:
+            lines.append(stripped)
+
+    mode = None
+    for line in lines:
+        if line.endswith("begincodespacerange"):
+            mode = "csr"
+            continue
+        if line.endswith("begincidrange"):
+            mode = "cidrange"
+            continue
+        if line.endswith("begincidchar"):
+            mode = "cidchar"
+            continue
+        if line.startswith("end"):
+            mode = None
+            continue
+
+        if mode == "csr":
+            for hex_str in re.findall(r"<([0-9A-Fa-f]+)>", line):
+                if len(hex_str) % 2 == 0:
+                    lengths.add(len(hex_str) // 2)
+        elif mode == "cidrange":
+            m = re.match(
+                r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(\d+)", line
+            )
+            if not m or len(m.group(1)) % 2 or len(m.group(2)) % 2:
+                continue
+            try:
+                lo = bytes.fromhex(m.group(1))
+                hi = bytes.fromhex(m.group(2))
+                cid0 = int(m.group(3))
+            except ValueError:
+                continue
+            n = len(lo)
+            a, b = int.from_bytes(lo, "big"), int.from_bytes(hi, "big")
+            if not 0 <= b - a < 1 << 20:  # guard pathological ranges
+                continue
+            lengths.add(n)
+            for i, code in enumerate(range(a, b + 1)):
+                code_to_cid[code.to_bytes(n, "big")] = cid0 + i
+        elif mode == "cidchar":
+            m = re.match(r"<([0-9A-Fa-f]+)>\s*(\d+)", line)
+            if not m or len(m.group(1)) % 2:
+                continue
+            try:
+                code = bytes.fromhex(m.group(1))
+            except ValueError:
+                continue
+            code_to_cid[code] = int(m.group(2))
+            lengths.add(len(code))
+
+    return code_to_cid, sorted(lengths)
+
+
 class ContentStreamParser:
     """Parse a PDF content stream and extract plain text.
 

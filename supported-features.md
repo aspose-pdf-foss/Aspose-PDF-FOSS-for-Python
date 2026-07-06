@@ -272,7 +272,10 @@ Supported:
   replacement text is encoded through the reverse `ToUnicode` mapping (an
   unmappable replacement raises). Code length is inferred from the `ToUnicode`
   keys (a uniform one- or two-byte codespace, or greedy longest-match for a
-  mixed codespace). Case-insensitive matching and `max_count` are supported (a spanning
+  mixed codespace). When `ToUnicode` is absent, an **embedded CIDFontType2
+  (TrueType) under an Identity encoding** is still editable: the code → text
+  map is reconstructed by inverting the font's Unicode `cmap` (code = CID = GID
+  via the `CIDToGIDMap`). Case-insensitive matching and `max_count` are supported (a spanning
   match counts once); lazy page contents are materialized before editing and
   the rewritten content persists on save.
 - Draw a redaction overlay bar with `redact_text(..., overlay=True,
@@ -280,13 +283,18 @@ Supported:
   rectangle (a DeviceRGB triple of 0..1, default black) is drawn over each
   removed run's location. The location is found by a best-effort text-position
   tracker (CTM, text matrix, and advance widths from `/Widths` for simple
-  fonts, from the CIDFont `/W`/`/DW` arrays for Identity-H Type0 fonts, or
+  fonts, from the CIDFont `/W`/`/DW` arrays for composite fonts, or
   from a bundled metric-compatible substitute) that shares the redactor's run
   grouping, so bars follow matches across font changes and same-baseline
   positioning gaps, and a match spanning a line-moving `'`/`"` draws one bar
-  per baseline. The bar is cosmetic — the text is already removed from the
-  content — so a run whose position cannot be tracked (an unresolved font, a
-  non-identity CMap) is left unmarked rather than risking a leak.
+  per baseline. Composite fonts are tracked for Identity-H/V (the code is the
+  CID) and for embedded Encoding CMaps (parsed for a code → CID mapping of any
+  byte length), with the match text from `ToUnicode` or a reconstructed
+  CIDFontType2 cmap; a vertical font (Identity-V or `WMode 1`) draws a stacked
+  column bar. The bar is cosmetic — the text is already removed from the
+  content — so a run whose position cannot be tracked (an unresolved font, or a
+  predefined non-identity CMap with no code → CID) is left unmarked rather than
+  risking a leak.
 - Add positioned text to pages with Standard-14 Type1 font resources.
 - Mark newly authored text with a structure tag and optional `/ActualText`.
 
@@ -301,11 +309,15 @@ Boundaries:
   usable metrics keep positioning operators as run boundaries, and phrases
   split across columns, rise changes, or CTM changes are not matched. Type0
   editing covers any font with a `ToUnicode` CMap (Identity-H, named/embedded
-  CMaps, and Identity-V); only Type0 fonts *without* `ToUnicode` fall back to
-  raw Latin-1 byte matching (effectively unmatched). The redaction-overlay
-  position tracker handles single-byte simple fonts and Identity-H Type0
-  fonts; other composite encodings and unresolved fonts get no bar (the text
-  is still removed), and the bar
+  CMaps, and Identity-V), plus embedded CIDFontType2 fonts under an Identity
+  encoding *without* `ToUnicode` (reconstructed from the font's Unicode cmap);
+  CIDFontType0 (CID-keyed CFF) and predefined CJK CMaps without `ToUnicode`
+  still fall back to raw Latin-1 byte matching (effectively unmatched), as they
+  need external Adobe CMap tables. The redaction-overlay position tracker
+  handles single-byte simple fonts and composite fonts under Identity-H/V or an
+  embedded Encoding CMap; a predefined non-identity CMap (no code → CID) and
+  unresolved fonts get no bar (the text is still removed), the vertical-font bar
+  uses a uniform one-em advance (per-glyph `/W2` is not applied), and the bar
   assumes a balanced content stream (identity CTM at its end). Layout
   analysis, font shaping, rich text, and paragraph layout are not implemented
   as public product features.

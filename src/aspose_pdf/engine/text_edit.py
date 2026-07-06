@@ -209,6 +209,16 @@ class _Run:
     geometry_ok: bool  # per-segment pens and advances are trustworthy
 
 
+def _code_to_cid(metric: Any, code: bytes) -> Optional[int]:
+    """Resolve a composite show-string code to its CID (duck-typed metric)."""
+    fn = getattr(metric, "code_to_cid", None)
+    if fn is not None:
+        return fn(code)
+    if len(code) == 2:  # identity: the two-byte code is the CID
+        return int.from_bytes(code, "big")
+    return None  # a truncated/odd-length identity code is untrackable
+
+
 def _string_advance(
     raw: bytes,
     codec: Optional[CidTextCodec],
@@ -218,18 +228,29 @@ def _string_advance(
     word_spacing: float,
     h_scale: float,
 ) -> Optional[float]:
-    """Text-space advance of a show string, or None when unmeasurable."""
+    """Advance of a show string along the font's writing axis, or None.
+
+    For composite fonts the string is tokenized through *codec* (codes may be
+    one or more bytes); each CID's horizontal advance comes from the metric's
+    ``/W``. A vertical composite font stacks glyphs at a uniform one-em advance.
+    The returned scalar is a magnitude along the writing axis; the caller
+    applies it to the correct axis.
+    """
     if metric is None:
         return None
     total = 0.0
     if codec is not None:
-        if len(raw) % 2:
-            return None
-        for i in range(0, len(raw), 2):
-            cid = int.from_bytes(raw[i : i + 2], "big")
+        vertical = bool(getattr(metric, "vertical", False))
+        for off, length, _text in codec.decode_units(raw):
+            if vertical:
+                total += size + char_spacing  # uniform one-em stack
+                continue
+            cid = _code_to_cid(metric, raw[off : off + length])
+            if cid is None:
+                return None
             glyph = metric.width_of(cid) / 1000.0 * size
             # Word spacing applies only to single-byte code 32, never to
-            # two-byte codes (PDF 32000-1, 9.3.3).
+            # multi-byte codes (PDF 32000-1, 9.3.3).
             total += (glyph + char_spacing) * h_scale
         return total
     if raw.startswith(b"\xfe\xff"):
@@ -322,20 +343,30 @@ def _walk_show_runs(
         if advance is None:
             geom_ok = False
             tm_valid = False
+        elif bool(getattr(metric, "vertical", False)):
+            tm = _mat_mul((1.0, 0.0, 0.0, 1.0, 0.0, -advance), tm)
         else:
             tm = _mat_mul((1.0, 0.0, 0.0, 1.0, advance, 0.0), tm)
 
     def add_kern(value: float) -> None:
         nonlocal tm
-        tm = _mat_mul(
-            (1.0, 0.0, 0.0, 1.0, -value / 1000.0 * size * h_scale, 0.0), tm
-        )
+        if bool(getattr(metric, "vertical", False)):
+            # Vertical writing: the adjustment is subtracted from the (downward)
+            # vertical advance, so a positive number moves the pen back up.
+            tm = _mat_mul((1.0, 0.0, 0.0, 1.0, 0.0, value / 1000.0 * size), tm)
+        else:
+            tm = _mat_mul(
+                (1.0, 0.0, 0.0, 1.0, -value / 1000.0 * size * h_scale, 0.0), tm
+            )
 
     def move_text_position(new_tm: tuple, new_tlm: tuple) -> None:
         """Apply a positioning operator, joining the run when it continues."""
         nonlocal tm, tlm, tm_valid, broke
         joined = False
-        if cur and not broke and tm_valid and origin_tm is not None and size > 0:
+        # Same-baseline positional joining is a horizontal heuristic; for
+        # vertical fonts a positioning operator conservatively breaks the run.
+        vertical = bool(getattr(metric, "vertical", False))
+        if not vertical and cur and not broke and tm_valid and origin_tm is not None and size > 0:
             pen_end = _text_delta(origin_tm, tm)
             pen_new = _text_delta(origin_tm, new_tm)
             if pen_end is not None and pen_new is not None:

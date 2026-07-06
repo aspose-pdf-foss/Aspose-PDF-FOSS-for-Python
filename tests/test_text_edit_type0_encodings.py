@@ -3,8 +3,9 @@
 Matching a composite font's show strings only needs the font's ToUnicode CMap,
 which maps character codes straight to Unicode -- so editing works for named or
 embedded CMaps, one-byte codespaces and Identity-V too, not just Identity-H.
-Redaction-overlay geometry stays Identity-H only (code == CID), so a
-non-identity edit still removes the text but draws no bar.
+Redaction-overlay geometry needs code -> CID: Identity-H/V and embedded Encoding
+CMaps draw a bar, but a *predefined* non-identity CMap (no code -> CID without
+external Adobe tables) still removes the text and draws no bar.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.engine.text_edit import (
     CidTextCodec,
     redact_text_in_content,
-    replace_text_in_content,
 )
 
 # --- CidTextCodec: code lengths ---------------------------------------------
@@ -137,8 +137,9 @@ def test_redact_identity_v_removes_text() -> None:
     assert b"00010002" not in content
 
 
-def test_non_identity_edit_draws_no_overlay_bar() -> None:
-    # Editing works, but overlay geometry is Identity-H only: no bar, no leak.
+def test_predefined_non_identity_edit_draws_no_overlay_bar() -> None:
+    # A predefined CMap has no code -> CID without Adobe tables: text is removed
+    # but no bar is drawn (cosmetic gap, never a leak).
     doc = _type0_doc("UniGB-UCS2-H")
     assert doc.pages[0].redact_text("Hi", overlay=True) == 1
     content = doc.pages[0].content
