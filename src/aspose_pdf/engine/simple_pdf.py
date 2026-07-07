@@ -4430,6 +4430,25 @@ class SimplePdf:
         ap_dict = PdfDictionary({PdfName("N"): stream_ref})
         return self._cos_doc.register_object(ap_dict)
 
+    def _register_form_xobject(
+        self, w: float, h: float, gen: Any
+    ) -> PdfIndirectReference:
+        """Register a form XObject (``BBox [0 0 w h]``) from a GeneratedAppearance."""
+        resources = self._build_appearance_resources(gen.ext_gstates, gen.fonts)
+        mapping = {
+            PdfName("Type"): PdfName("XObject"),
+            PdfName("Subtype"): PdfName("Form"),
+            PdfName("FormType"): PdfNumber(1),
+            PdfName("BBox"): PdfArray(
+                [PdfNumber(0), PdfNumber(0), PdfNumber(w), PdfNumber(h)]
+            ),
+        }
+        if isinstance(resources, PdfDictionary):
+            mapping[PdfName("Resources")] = resources
+        return self._cos_doc.register_object(
+            PdfStream(content=gen.content, mapping=mapping)
+        )
+
     def _build_appearance_resources(
         self,
         ext_gstates: Dict[str, Dict[str, Any]],
@@ -6562,6 +6581,9 @@ class SimplePdf:
         if ft == "Btn":
             if ff & (1 << 16):  # push button: keep its own appearance
                 return False
+            # Synthesise check/radio glyph appearances when the widget has none,
+            # then point /AS at the state matching /V.
+            self._ensure_button_appearance_streams(widget, is_radio, v)
             return self._set_button_widget_state(widget, v, is_radio)
         if ft in ("Tx", "Ch"):
             return self._set_text_widget_appearance(
@@ -6678,6 +6700,98 @@ class SimplePdf:
             dr.mapping[PdfName("Font")] = fonts
         fonts.mapping[PdfName(font_name)] = font_ref
         return font_ref, font_name
+
+    def _cos_number_list(self, obj: Any) -> Optional[list]:
+        """Coerce a COS array of numbers to a ``list[float]`` (or ``None``)."""
+        obj = self._resolve(obj)
+        if not isinstance(obj, PdfArray):
+            return None
+        out: list = []
+        for item in obj.items:
+            num = self._pdf_number(item)
+            if num is None:
+                return None
+            out.append(num)
+        return out or None
+
+    def _button_border_width(self, widget: PdfDictionary) -> float:
+        bs = self._resolve(widget.mapping.get(PdfName("BS")))
+        if isinstance(bs, PdfDictionary):
+            w = self._pdf_number(bs.mapping.get(PdfName("W")))
+            if w is not None:
+                return max(0.0, w)
+        return 1.0
+
+    def _button_on_name(self, widget: PdfDictionary, v: Any) -> str:
+        """The on-state name for a synthesised button: ``/AS``, then ``/V``, else On."""
+        for src in (widget.mapping.get(PdfName("AS")), v):
+            res = self._resolve(src)
+            name: Optional[str] = None
+            if isinstance(res, PdfName):
+                name = res.name.lstrip("/")
+            elif isinstance(res, PdfString):
+                name = decode_pdf_text_string(res)
+            if name and name != "Off":
+                return name
+        return "On"
+
+    def _ensure_button_appearance_streams(
+        self, widget: PdfDictionary, is_radio: bool, v: Any
+    ) -> None:
+        """Synthesise ``/AP /N`` Off/On states when a button widget has none.
+
+        A check box / radio widget with no on-state appearance renders blank; we
+        draw the ``/MK`` background and border plus a check-mark (ZapfDingbats
+        ``/CA`` caption) or radio dot so the control is visible. Widgets that
+        already carry an on-state appearance are left untouched.
+        """
+        ap = self._resolve(widget.mapping.get(PdfName("AP")))
+        if isinstance(ap, PdfDictionary):
+            n = self._resolve(ap.mapping.get(PdfName("N")))
+            if isinstance(n, PdfDictionary):
+                for key in n.mapping:
+                    if isinstance(key, PdfName) and key.name.lstrip("/") != "Off":
+                        return  # already has an on-state appearance
+        rect = self._get_cos_rect(widget.mapping.get(PdfName("Rect")))
+        llx, urx = min(rect[0], rect[2]), max(rect[0], rect[2])
+        lly, ury = min(rect[1], rect[3]), max(rect[1], rect[3])
+        w, h = urx - llx, ury - lly
+        if w <= 0 or h <= 0:
+            return
+
+        from .appearance import build_button_appearance
+
+        border_color = background = caption = None
+        mk = self._resolve(widget.mapping.get(PdfName("MK")))
+        if isinstance(mk, PdfDictionary):
+            border_color = self._cos_number_list(mk.mapping.get(PdfName("BC")))
+            background = self._cos_number_list(mk.mapping.get(PdfName("BG")))
+            ca = self._resolve(mk.mapping.get(PdfName("CA")))
+            if isinstance(ca, PdfString):
+                caption = decode_pdf_text_string(ca)
+        if border_color is None:
+            border_color = [0.0]  # a visible default border
+        bw = self._button_border_width(widget)
+        on_name = self._button_on_name(widget, v)
+
+        off_gen = build_button_appearance(
+            w, h, on=False, radio=is_radio,
+            border_color=border_color, bg_color=background, border_width=bw,
+        )
+        on_gen = build_button_appearance(
+            w, h, on=True, radio=is_radio, caption=caption,
+            border_color=border_color, bg_color=background, border_width=bw,
+        )
+        n_dict = PdfDictionary(
+            {
+                PdfName("Off"): self._register_form_xobject(w, h, off_gen),
+                PdfName(on_name): self._register_form_xobject(w, h, on_gen),
+            }
+        )
+        if not isinstance(ap, PdfDictionary):
+            ap = PdfDictionary({})
+            widget.mapping[PdfName("AP")] = ap
+        ap.mapping[PdfName("N")] = n_dict
 
     def _set_button_widget_state(
         self, widget: PdfDictionary, v: Any, is_radio: bool

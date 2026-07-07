@@ -857,6 +857,105 @@ def _build_stamp(
     )
 
 
+# ---------------------------------------------------------------------------
+# Button widgets (check box / radio) — synthesised /AP /N state appearances
+# ---------------------------------------------------------------------------
+
+# ZapfDingbats is a Standard-14 font; "4" is its check mark. Radio buttons draw
+# a vector dot instead, so they need no font resource.
+_ZAPF_FONT_NAME = "ZaDb"
+_ZAPF_FONT_SPEC = {"Subtype": "Type1", "BaseFont": "ZapfDingbats"}
+_DEFAULT_CHECK = "4"
+
+
+def _ellipse_path(cx: float, cy: float, rx: float, ry: float) -> List[str]:
+    """Four cubic Béziers tracing an ellipse centred at ``(cx, cy)``."""
+    kx, ky = rx * _KAPPA, ry * _KAPPA
+    return [
+        f"{_fmt(cx + rx)} {_fmt(cy)} m",
+        f"{_fmt(cx + rx)} {_fmt(cy + ky)} {_fmt(cx + kx)} {_fmt(cy + ry)} {_fmt(cx)} {_fmt(cy + ry)} c",
+        f"{_fmt(cx - kx)} {_fmt(cy + ry)} {_fmt(cx - rx)} {_fmt(cy + ky)} {_fmt(cx - rx)} {_fmt(cy)} c",
+        f"{_fmt(cx - rx)} {_fmt(cy - ky)} {_fmt(cx - kx)} {_fmt(cy - ry)} {_fmt(cx)} {_fmt(cy - ry)} c",
+        f"{_fmt(cx + kx)} {_fmt(cy - ry)} {_fmt(cx + rx)} {_fmt(cy - ky)} {_fmt(cx + rx)} {_fmt(cy)} c",
+    ]
+
+
+def build_button_appearance(
+    w: float,
+    h: float,
+    *,
+    on: bool,
+    radio: bool,
+    caption: Optional[str] = None,
+    border_color: Optional[Any] = None,
+    bg_color: Optional[Any] = None,
+    border_width: float = 1.0,
+) -> GeneratedAppearance:
+    """Build one check box / radio widget state (``/AP /N`` Off or On).
+
+    Draws the ``/MK`` background (``/BG``) and border (``/BC``) — a rectangle for
+    a check box, a circle for a radio — and, for the *on* state, the "checked"
+    mark: a ZapfDingbats caption glyph (``/MK /CA``, default ``4``) for a check
+    box or a filled vector dot for a radio button. The Off state is background
+    and border only.
+    """
+    if w <= 0 or h <= 0:
+        return GeneratedAppearance(b"")
+    bw = max(float(border_width), 0.0)
+    lines = ["q"]
+    fonts: Dict[str, Dict[str, Any]] = {}
+
+    bg = _color_op(bg_color, stroke=False)
+    if bg:
+        lines.append(bg)
+        if radio:
+            lines += _ellipse_path(w / 2.0, h / 2.0, w / 2.0, h / 2.0)
+            lines.append("f")
+        else:
+            lines.append(f"0 0 {_fmt(w)} {_fmt(h)} re")
+            lines.append("f")
+
+    bc = _color_op(border_color, stroke=True)
+    if bc and bw > 0:
+        inset = bw / 2.0
+        lines.append(bc)
+        lines.append(f"{_fmt(bw)} w")
+        if radio:
+            lines += _ellipse_path(w / 2.0, h / 2.0, w / 2.0 - inset, h / 2.0 - inset)
+            lines.append("S")
+        else:
+            rw, rh = w - bw, h - bw
+            if rw > 0 and rh > 0:
+                lines.append(f"{_fmt(inset)} {_fmt(inset)} {_fmt(rw)} {_fmt(rh)} re")
+                lines.append("S")
+
+    if on:
+        mark = _color_op(border_color, stroke=False) or "0 g"
+        if radio:
+            r = min(w, h) * 0.3
+            lines.append(mark)
+            lines += _ellipse_path(w / 2.0, h / 2.0, r, r)
+            lines.append("f")
+        else:
+            glyph = (caption or _DEFAULT_CHECK)[:1] or _DEFAULT_CHECK
+            fs = min(w, h) * 0.8
+            tx = (w - fs * 0.78) / 2.0
+            ty = (h - fs * 0.70) / 2.0
+            lines += [
+                mark,
+                "BT",
+                f"/{_ZAPF_FONT_NAME} {_fmt(fs)} Tf",
+                f"1 0 0 1 {_fmt(tx)} {_fmt(ty)} Tm",
+                f"{_pdf_literal(glyph)} Tj",
+                "ET",
+            ]
+            fonts = {_ZAPF_FONT_NAME: dict(_ZAPF_FONT_SPEC)}
+    lines.append("Q")
+    return GeneratedAppearance(
+        ("\n".join(lines) + "\n").encode("latin-1", "replace"), fonts=fonts
+    )
+
+
 def _build_caret(
     props: Dict[str, Any], llx: float, lly: float, w: float, h: float
 ) -> Optional[GeneratedAppearance]:

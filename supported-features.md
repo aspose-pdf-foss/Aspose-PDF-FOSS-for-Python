@@ -457,8 +457,13 @@ Supported:
   Helvetica when absent). Wrap points and centre/right quadding use real
   glyph-metric advance widths — from the field font's `/Widths` or the bundled
   metric-compatible substitute (Liberation) — falling back to a flat estimate
-  only when neither resolves; check box / radio `/AS` states are pointed at the
-  value. The AcroForm `/NeedAppearances` flag is cleared so the generated
+  only when neither resolves. Check box / radio widgets that already carry an
+  on-state appearance have their `/AS` pointed at the value; a widget with *no*
+  appearance streams gets a synthesised `/AP /N` Off/On pair — the `/MK`
+  background (`/BG`) and border (`/BC`) plus a check mark (a ZapfDingbats `/CA`
+  caption glyph, default `4`) for a check box or a filled vector dot for a
+  radio — with the on-state name taken from `/AS`/`/V` (defaulting to `On`). The
+  AcroForm `/NeedAppearances` flag is cleared so the generated
   appearance is honoured. `flatten()` runs this automatically.
 - Flatten form fields and annotations into static page content (generating
   missing appearances first), mapping each appearance form's `/BBox` onto the
@@ -470,8 +475,9 @@ Boundaries:
 - Dynamic XFA processing is not implemented.
 - Variable-text layout is single-font and has no rich-text `/RV` support; text
   is measured per byte code (single-byte simple fonts — composite/Type0 field
-  fonts fall back to a flat width estimate). Push-button and check box *glyph*
-  appearances are not synthesised (existing `/AP` states are reused via `/AS`).
+  fonts fall back to a flat width estimate). Check box / radio appearances are
+  synthesised (a ZapfDingbats check or a vector dot); push-button face
+  appearances (caption/icon) are not synthesised — an existing `/AP` is reused.
 
 ## Annotations
 
@@ -500,6 +506,12 @@ Supported:
   `Page.annotations.generate_appearances()`, or `Document.generate_appearances()`.
   Text-bearing subtypes register a synthesised Helvetica font in the form's
   `/Resources /Font`.
+- Draw border and line decorations on the shape subtypes: dashed borders (from
+  `/BS /S /D` with `/D`, or a legacy `/Border` dash array) on `Square`,
+  `Circle`, `Line`, `Polygon`, `PolyLine` and the `FreeText` box; line endings
+  (`/LE`) on `Line`/`PolyLine` (`OpenArrow`, `ClosedArrow`, their reversed
+  variants, `Circle`, `Square`, `Diamond`, `Butt`, `Slash`); and cloud borders
+  (`/BE /S /C`, intensity `/I`) as outward scallops on `Square` and `Polygon`.
 - Draw border and line decorations on those appearances: dash patterns (from
   `/BS /S /D` with `/D`, or a legacy `/Border` dash array) on `Square`,
   `Circle`, `Line`, `Polygon`, `PolyLine` and `FreeText` borders; `Line`/
@@ -520,8 +532,9 @@ Boundaries:
   or embedded fonts), and `Stamp` is a captioned box rather than the standard
   rubber-stamp artwork. Dash patterns, `/LE` line endings and `/BE` cloud borders
   are drawn (see above); the cloud is a uniform scallop approximation and line
-  endings are sized heuristically from the border width. Other subtypes (widgets,
-  `Sound`, `3D`, …) still need an appearance supplied via `appearance_normal`.
+  endings are sized heuristically from the border width. Check-box/radio *widget*
+  appearances are synthesised through the forms API (see Forms); other subtypes
+  (`Sound`, `3D`, …) still need an appearance supplied via `appearance_normal`.
 
 ## Attachments
 

@@ -550,3 +550,90 @@ def test_flatten_inlines_generated_field_appearance():
     assert len(after) > len(before)
     assert b"Do" in after
     assert len(doc._engine_pdf.get_annotations(0)) == 0
+
+
+# ---------------------------------------------------------------------------
+# Button widgets: synthesised check-box / radio /AP /N appearances
+# ---------------------------------------------------------------------------
+
+
+def _button_widget(*, ff=0, v=None, mk=None):
+    m = {
+        PdfName("Type"): PdfName("Annot"),
+        PdfName("Subtype"): PdfName("Widget"),
+        PdfName("FT"): PdfName("Btn"),
+        PdfName("T"): PdfString(b"btn1"),
+        PdfName("Rect"): PdfArray(
+            [PdfNumber(100), PdfNumber(700), PdfNumber(118), PdfNumber(718)]
+        ),
+    }
+    if ff:
+        m[PdfName("Ff")] = PdfNumber(ff)
+    if v is not None:
+        m[PdfName("V")] = PdfName(v)
+    if mk is not None:
+        m[PdfName("MK")] = mk
+    return PdfDictionary(m)
+
+
+def _n_states(engine, field):
+    ap = engine._resolve(field.mapping[PdfName("AP")])
+    return engine._resolve(ap.mapping[PdfName("N")])
+
+
+def test_checkbox_without_ap_synthesizes_states():
+    engine, field, _acro = _engine_with_acroform(_button_widget(v="Yes"))
+    assert engine.generate_field_appearances() == 1
+    n = _n_states(engine, field)
+    assert isinstance(n, PdfDictionary)
+    assert {k.name.lstrip("/") for k in n.mapping} == {"Off", "Yes"}
+    on = engine._resolve(n.mapping[PdfName("Yes")])
+    assert b"Tj" in on.content and b"/ZaDb" in on.content
+    res = engine._resolve(on.mapping[PdfName("Resources")])
+    fonts = engine._resolve(res.mapping[PdfName("Font")])
+    assert PdfName("ZaDb") in fonts.mapping
+    assert field.mapping[PdfName("AS")].name.lstrip("/") == "Yes"
+
+
+def test_checkbox_off_value_sets_as_off():
+    engine, field, _acro = _engine_with_acroform(_button_widget(v="Off"))
+    engine.generate_field_appearances()
+    assert field.mapping[PdfName("AS")].name.lstrip("/") == "Off"
+
+
+def test_radio_without_ap_draws_vector_dot():
+    engine, field, _acro = _engine_with_acroform(_button_widget(ff=1 << 15, v="On"))
+    engine.generate_field_appearances()
+    on = engine._resolve(_n_states(engine, field).mapping[PdfName("On")])
+    assert b"\nf\n" in on.content and b"Tj" not in on.content  # dot, no font glyph
+
+
+def test_checkbox_uses_mk_caption_and_colours():
+    mk = PdfDictionary(
+        {
+            PdfName("CA"): PdfString(b"8"),  # a cross instead of the default check
+            PdfName("BC"): PdfArray([PdfNumber(1), PdfNumber(0), PdfNumber(0)]),
+            PdfName("BG"): PdfArray(
+                [PdfNumber(0.9), PdfNumber(0.9), PdfNumber(0.9)]
+            ),
+        }
+    )
+    engine, field, _acro = _engine_with_acroform(_button_widget(v="Yes", mk=mk))
+    engine.generate_field_appearances()
+    on = engine._resolve(_n_states(engine, field).mapping[PdfName("Yes")])
+    assert b"(8) Tj" in on.content  # the /CA caption glyph
+    assert b"1 0 0 RG" in on.content  # red border from /BC
+    assert b"0.9 0.9 0.9 rg" in on.content  # grey background from /BG
+
+
+def test_existing_button_appearance_is_not_overwritten():
+    engine, field, _acro = _engine_with_acroform(_button_widget(v="Yes"))
+    marker = engine._cos_doc.register_object(PdfStream(content=b"MARKER", mapping={}))
+    off = engine._cos_doc.register_object(PdfStream(content=b"", mapping={}))
+    field.mapping[PdfName("AP")] = PdfDictionary(
+        {PdfName("N"): PdfDictionary({PdfName("Off"): off, PdfName("Yes"): marker})}
+    )
+    engine.generate_field_appearances()
+    on = engine._resolve(_n_states(engine, field).mapping[PdfName("Yes")])
+    assert on.content == b"MARKER"  # left untouched
+    assert field.mapping[PdfName("AS")].name.lstrip("/") == "Yes"
