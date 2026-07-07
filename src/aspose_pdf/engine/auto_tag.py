@@ -4,16 +4,20 @@ Wraps the text and image content of a page in marked-content sequences so it can
 be reflected in the structure tree -- turning untagged content into a real (if
 coarse) tag tree instead of an empty catalog shell.  Text objects (``BT`` ...
 ``ET``) and image paints (``/Name Do``) are located together with their page
-position, sorted into reading order (top-to-bottom, then left-to-right) and
-grouped so consecutive body-text lines collapse into a single paragraph
-(``/P``).  Headings are inferred from font size relative to the page's dominant
-body size; each heading and each figure is its own structure element.
+position, split into left-to-right column bands (so a two-column page is not
+read straight across), sorted into reading order within each column
+(top-to-bottom, then left-to-right) and grouped so consecutive body-text lines
+collapse into a single paragraph (``/P``).  Headings are inferred from font size
+relative to the page's dominant body size and ranked into levels (``/H1`` for
+the largest tier, then ``/H2``, ``/H3``); each heading and each figure is its
+own structure element.
 
 This is a heuristic *aid*, not certified accessibility: reading order is derived
-from geometry rather than semantics, paragraph grouping is proximity-based (it
-cannot see columns, lists or tables), and images are described with a
-placeholder ``/Alt``.  Pages that already carry marked content are left
-untouched.
+from geometry rather than semantics, column detection is a whitespace-gutter
+heuristic (a banner spanning the columns may be mis-assigned), paragraph
+grouping is proximity-based (it cannot see lists or tables), heading levels come
+from font size alone, and images are described with a placeholder ``/Alt``.
+Pages that already carry marked content are left untouched.
 
 The rewrite is a pure byte splice -- ``BDC``/``EMC`` are inserted around the
 existing operators without re-serializing them -- so the original content is
@@ -31,6 +35,7 @@ __all__ = [
     "find_text_objects",
     "find_xobject_invocations",
     "find_layout_elements",
+    "detect_columns",
     "assign_reading_order",
     "group_into_paragraphs",
     "has_marked_content",
@@ -43,13 +48,23 @@ _WS = b" \t\r\n\x0c\x00"
 _DELIM = b"()<>[]{}/%"
 _ENDERS = _WS + _DELIM
 
-_HEADING_RATIO = 1.4
+_HEADING_RATIO = 1.4       # size >= this * body size is a heading
+_HEADING_LEVEL_RATIO = 1.05  # heading sizes within this ratio share a level
+_MAX_HEADING_LEVEL = 3     # deepest heading tier (/H1../H3)
 
 # Paragraph-grouping heuristics (see :func:`group_into_paragraphs`).
 _PARA_SIZE_MIN = 0.8      # min ratio of consecutive line font sizes to still group
 _PARA_SIZE_MAX = 1.25     # max ratio ...
 _LINE_TOL_RATIO = 0.35    # |Δbaseline| within this * font size == same line
 _PARA_GAP_RATIO = 1.6     # baseline step up to this * font size stays in-paragraph
+
+# Column-detection heuristics (see :func:`detect_columns`).
+_COL_MIN_ELEMENTS = 4     # too few elements to infer columns reliably
+_COL_GUTTER_EM = 3.0      # a column gutter is at least this * font size wide
+_COL_GUTTER_MIN = 18.0    # ... and at least this many user units
+_COL_OVERLAP_RATIO = 0.5  # column bands must share this fraction of their y-span
+_COL_MIN_SPAN_EM = 0.5    # each band must span more than a single line vertically
+_MAX_COL_DEPTH = 3        # recursion cap for nested vertical cuts
 
 Matrix = Tuple[float, float, float, float, float, float]
 _IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
@@ -363,6 +378,71 @@ def find_xobject_invocations(content: bytes) -> List[Tuple[str, int, int]]:
     ]
 
 
+def _median(values: List[float]) -> float:
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    return ordered[mid] if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def _side_by_side(
+    left: List[LayoutElement], right: List[LayoutElement], med_fs: float
+) -> bool:
+    """Whether two x-separated bands truly sit side by side (vertical overlap)."""
+    ly0, ly1 = min(e.y for e in left), max(e.y for e in left)
+    ry0, ry1 = min(e.y for e in right), max(e.y for e in right)
+    overlap = min(ly1, ry1) - max(ly0, ry0)
+    if overlap <= 0:
+        return False
+    smaller = min(ly1 - ly0, ry1 - ry0)
+    if smaller < _COL_MIN_SPAN_EM * med_fs:
+        return False  # a single-row pair is a line, not two columns
+    return overlap >= _COL_OVERLAP_RATIO * smaller
+
+
+def _split_columns(
+    elements: List[LayoutElement], med_fs: float, depth: int
+) -> List[List[LayoutElement]]:
+    """Recursively cut *elements* at whitespace gutters into column bands."""
+    if depth >= _MAX_COL_DEPTH or len(elements) < _COL_MIN_ELEMENTS:
+        return [elements]
+    xs = sorted(e.x for e in elements)
+    best_gap, best_at = 0.0, None
+    for lo, hi in zip(xs, xs[1:]):
+        if hi - lo > best_gap:
+            best_gap, best_at = hi - lo, (lo + hi) / 2.0
+    if best_at is None or best_gap < max(_COL_GUTTER_MIN, _COL_GUTTER_EM * med_fs):
+        return [elements]
+    left = [e for e in elements if e.x < best_at]
+    right = [e for e in elements if e.x >= best_at]
+    if len(left) < 2 or len(right) < 2 or not _side_by_side(left, right, med_fs):
+        return [elements]
+    return (
+        _split_columns(left, med_fs, depth + 1)
+        + _split_columns(right, med_fs, depth + 1)
+    )
+
+
+def detect_columns(elements: List[LayoutElement]) -> List[List[LayoutElement]]:
+    """Partition *elements* into left-to-right column bands (one or more).
+
+    A band boundary is a vertical whitespace gutter -- a horizontal gap between
+    element x-anchors that is wide relative to the text size and straddled by
+    content that coexists vertically (so a genuine two-column split, not a
+    ragged margin or an indented block).  Pages without such a gutter yield a
+    single band, so single-column content is ordered exactly as before.  The
+    caller applies :func:`assign_reading_order` within each band, so columns are
+    read fully top-to-bottom before moving right.
+    """
+    if len(elements) < _COL_MIN_ELEMENTS:
+        return [list(elements)] if elements else []
+    sizes = [e.font_size for e in elements if e.font_size > 0]
+    med_fs = _median(sizes) or 10.0
+    return _split_columns(list(elements), med_fs, 0)
+
+
 def assign_reading_order(elements: List[LayoutElement]) -> List[LayoutElement]:
     """Sort *elements* into reading order: top-to-bottom, then left-to-right.
 
@@ -428,11 +508,30 @@ def group_into_paragraphs(ordered: List[LayoutElement]) -> List[List[LayoutEleme
     return groups
 
 
+def _heading_levels(sizes_desc: List[float]) -> dict[float, str]:
+    """Map heading font sizes (largest first) to ``H1``/``H2``/``H3`` tiers.
+
+    Sizes within :data:`_HEADING_LEVEL_RATIO` of each other share a tier; the
+    next distinctly smaller size drops a level, clamped at
+    :data:`_MAX_HEADING_LEVEL`.
+    """
+    levels: dict[float, str] = {}
+    level = 0
+    prev: Optional[float] = None
+    for size in sizes_desc:
+        if prev is None or prev / size > _HEADING_LEVEL_RATIO:
+            level += 1
+            prev = size
+        levels[size] = "H" + str(min(level, _MAX_HEADING_LEVEL))
+    return levels
+
+
 def choose_tags(objects: List[TextObject]) -> List[str]:
-    """Pick a structure tag (``H1`` or ``P``) for each text object by font size.
+    """Pick a structure tag (``H1``/``H2``/``H3`` or ``P``) per text object.
 
     The body size is the font size carrying the most shown text; objects whose
-    size is at least :data:`_HEADING_RATIO` times that are treated as headings.
+    size is at least :data:`_HEADING_RATIO` times that are headings, ranked into
+    levels by size (the largest tier is ``H1``, then ``H2``, ``H3``).
     """
     weight: dict[float, int] = {}
     for obj in objects:
@@ -440,12 +539,17 @@ def choose_tags(objects: List[TextObject]) -> List[str]:
             weight[obj.max_font_size] = (
                 weight.get(obj.max_font_size, 0) + obj.text_length + 1
             )
-    body = max(weight, key=lambda size: (weight[size], -size)) if weight else 0.0
-    tags: List[str] = []
-    for obj in objects:
-        is_heading = body > 0 and obj.max_font_size >= body * _HEADING_RATIO
-        tags.append("H1" if is_heading else "P")
-    return tags
+    if not weight:
+        return ["P" for _ in objects]
+    body = max(weight, key=lambda size: (weight[size], -size))
+    heading_sizes = sorted(
+        (s for s in weight if s >= body * _HEADING_RATIO), reverse=True
+    )
+    levels = _heading_levels(heading_sizes)
+    return [
+        levels.get(obj.max_font_size, "P") if obj.max_font_size > 0 else "P"
+        for obj in objects
+    ]
 
 
 def build_tagged_content(

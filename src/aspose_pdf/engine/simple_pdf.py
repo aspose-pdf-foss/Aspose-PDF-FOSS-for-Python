@@ -3236,6 +3236,7 @@ class SimplePdf:
             assign_reading_order,
             build_tagged_content,
             choose_tags,
+            detect_columns,
             find_layout_elements,
             group_into_paragraphs,
             has_marked_content,
@@ -3272,8 +3273,12 @@ class SimplePdf:
         tagged = [e for e in elements if e.tag is not None]
         if not tagged:
             return 0
-        ordered = assign_reading_order(tagged)
-        groups = group_into_paragraphs(ordered)
+        # Split into column bands first, then order and group within each band so
+        # a multi-column page is read column-by-column, not straight across.
+        groups: List[List[Any]] = []
+        for column in detect_columns(tagged):
+            ordered = assign_reading_order(column)
+            groups.extend(group_into_paragraphs(ordered))
 
         marks: List[Tuple[int, int, str, int]] = []
         created = 0

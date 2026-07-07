@@ -654,11 +654,14 @@ Supported:
 - Heuristically tag *existing* page content into a structure tree with
   `Document.auto_tag()` (or `convert_to_pdfua(auto_tag=True)`). Text objects
   (`BT` ... `ET`) and image paints (`/Name Do`) are located with their page
-  position (tracking the CTM and text matrix), sorted into reading order
+  position (tracking the CTM and text matrix), split into left-to-right column
+  bands at whitespace gutters (so a multi-column page is read column-by-column,
+  not straight across), sorted into reading order within each column
   (top-to-bottom, then left-to-right) and grouped: consecutive body-text lines
   of similar size and spacing collapse into one `/P` paragraph — a single
-  structure element spanning several MCIDs via a `/K` array — while a
-  dominant-size line becomes an `/H1` and each image XObject paint becomes a
+  structure element spanning several MCIDs via a `/K` array — while larger lines
+  become headings ranked into levels by font size (`/H1` for the largest tier,
+  then `/H2`, `/H3`) and each image XObject paint becomes a
   `/Figure` with `/Alt` (the `image_alt` argument takes a string, a name→text
   callable, or `None` to skip images). Elements are wrapped in `BDC`/`EMC` by a
   byte-level splice (originals preserved, inline images skipped) and linked by
@@ -710,11 +713,13 @@ Boundaries:
 - The PDF/UA structure-tree checks validate a tag tree that already exists; they
   do not verify full marked-content (MCID) coverage for arbitrary existing PDFs.
   `auto_tag()` infers a real but **coarse** tree: reading order is geometric
-  (top-to-bottom, left-to-right) and paragraphs are grouped by proximity, but
-  headings are inferred from font size only, image `/Figure` alternate text is a
-  caller-supplied placeholder (alt text cannot be inferred), and grouping cannot
-  see columns, lists or tables. It is a starting point a human refines, not
-  certified accessibility.
+  (columns split at whitespace gutters, then top-to-bottom, left-to-right) and
+  paragraphs are grouped by proximity, but headings are inferred from font size
+  only (levels `/H1`–`/H3` by size tier), image `/Figure` alternate text is a
+  caller-supplied placeholder (alt text cannot be inferred), column detection is
+  a whitespace heuristic (a full-width banner over the columns may be
+  mis-assigned), and grouping cannot see lists or tables. It is a starting point
+  a human refines, not certified accessibility.
   Content authored through the page APIs carries caller-supplied semantic tags
   and alt text.
 - XMP covers the full data model: simple values, structured values, arrays

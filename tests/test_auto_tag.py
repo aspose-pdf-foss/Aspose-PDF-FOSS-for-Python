@@ -3,9 +3,11 @@
 from aspose_pdf import Document
 from aspose_pdf.engine.auto_tag import (
     LayoutElement,
+    TextObject,
     assign_reading_order,
     build_tagged_content,
     choose_tags,
+    detect_columns,
     find_layout_elements,
     find_text_objects,
     find_xobject_invocations,
@@ -132,6 +134,83 @@ def test_group_into_paragraphs_splits_on_large_gap():
 def test_group_into_paragraphs_splits_on_size_change():
     groups = group_into_paragraphs([_p(700), _p(686, fs=20)])
     assert [len(g) for g in groups] == [1, 1]
+
+
+# ---------------------------------------------------------------------------
+# Column detection
+# ---------------------------------------------------------------------------
+
+
+def _e(x, y, fs=12.0, tag="P"):
+    return LayoutElement("text", 0, 0, x=x, y=y, font_size=fs, tag=tag)
+
+
+def test_detect_columns_splits_two_columns():
+    left = [_e(72, y) for y in (700, 686, 672)]
+    right = [_e(320, y) for y in (700, 686, 672)]
+    cols = detect_columns(left + right)
+    assert len(cols) == 2
+    assert all(e.x == 72 for e in cols[0])
+    assert all(e.x == 320 for e in cols[1])
+
+
+def test_detect_columns_single_column_stays_one_band():
+    els = [_e(72, y) for y in (700, 686, 672, 658)]
+    assert len(detect_columns(els)) == 1
+
+
+def test_detect_columns_ignores_stacked_blocks():
+    # A left block on top and a right-shifted block strictly below do not
+    # coexist vertically, so they are one reading flow, not two columns.
+    top = [_e(72, y) for y in (700, 686, 672)]
+    bottom = [_e(320, y) for y in (300, 286, 272)]
+    assert len(detect_columns(top + bottom)) == 1
+
+
+def test_detect_columns_ignores_small_indent():
+    # A 12 pt indent is far below the gutter threshold: still one column.
+    els = [_e(72, 700), _e(84, 686), _e(72, 672), _e(72, 658)]
+    assert len(detect_columns(els)) == 1
+
+
+def test_columns_read_fully_before_moving_right():
+    els = [_e(72, 700), _e(72, 686), _e(320, 700), _e(320, 686)]
+    order = []
+    for col in detect_columns(els):
+        order.extend(assign_reading_order(col))
+    # All of column 1 (x=72) precedes column 2 (x=320), despite the shared rows.
+    assert [e.x for e in order] == [72, 72, 320, 320]
+
+
+# ---------------------------------------------------------------------------
+# Heading levels
+# ---------------------------------------------------------------------------
+
+
+def test_choose_tags_ranks_heading_levels():
+    objects = [
+        TextObject(0, 0, 30.0, 5),
+        TextObject(0, 0, 20.0, 5),
+        TextObject(0, 0, 15.0, 5),
+        TextObject(0, 0, 10.0, 100),  # dominant body size
+    ]
+    assert choose_tags(objects) == ["H1", "H2", "H3", "P"]
+
+
+def test_choose_tags_clamps_deep_headings_to_h3():
+    objects = [TextObject(0, 0, s, 5) for s in (40.0, 30.0, 22.0, 17.0)]
+    objects.append(TextObject(0, 0, 12.0, 100))
+    assert choose_tags(objects) == ["H1", "H2", "H3", "H3", "P"]
+
+
+def test_choose_tags_close_sizes_share_a_level():
+    # 24 and 23 are within 5 %: one heading tier, not two.
+    objects = [
+        TextObject(0, 0, 24.0, 5),
+        TextObject(0, 0, 23.0, 5),
+        TextObject(0, 0, 12.0, 100),
+    ]
+    assert choose_tags(objects) == ["H1", "H1", "P"]
 
 
 def test_group_into_paragraphs_heading_is_its_own_group():
@@ -272,6 +351,63 @@ def test_auto_tag_reading_order_reorders_stream():
         for k in pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K"))).items
     ]
     assert tags == ["H1", "P"]  # heading (top of page) leads despite stream order
+
+
+_TWO_COLUMNS = (
+    # Stream order interleaves the columns; reading order must not.
+    b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (leftTop) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 320 700 Tm (rightTop) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 686 Tm (leftBot) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 320 686 Tm (rightBot) Tj ET"
+)
+
+
+def _mcid_before(content, snippet):
+    """The MCID of the marked-content sequence wrapping *snippet*."""
+    idx = content.index(snippet)
+    open_at = content.rfind(b"<</MCID ", 0, idx)
+    end = content.index(b">>", open_at)
+    return int(content[open_at + len(b"<</MCID ") : end])
+
+
+def test_auto_tag_reads_columns_in_order():
+    pdf = SimplePdf(pages=[(0, 0, 612, 792)], page_contents=[_TWO_COLUMNS])
+    pdf._ensure_cos()
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    created = doc.auto_tag()
+
+    assert created == 2  # one /P per column, not one paragraph read across
+    content = pdf.get_page_content(0)
+    # Column 1 (left) is fully numbered before column 2 (right).
+    assert _mcid_before(content, b"(leftTop)") == 0
+    assert _mcid_before(content, b"(leftBot)") == 1
+    assert _mcid_before(content, b"(rightTop)") == 2
+    assert _mcid_before(content, b"(rightBot)") == 3
+
+
+_THREE_HEADING_LEVELS = (
+    b"BT /F1 28 Tf 1 0 0 1 72 700 Tm (Title) Tj ET\n"
+    b"BT /F1 20 Tf 1 0 0 1 72 660 Tm (Section) Tj ET\n"
+    b"BT /F1 17 Tf 1 0 0 1 72 620 Tm (Subsection) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 590 Tm (Body paragraph text goes here) Tj ET"
+)
+
+
+def test_auto_tag_assigns_heading_levels():
+    pdf = SimplePdf(pages=[(0, 0, 612, 792)], page_contents=[_THREE_HEADING_LEVELS])
+    pdf._ensure_cos()
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    doc.auto_tag()
+
+    tags = [
+        pdf._resolve(k).mapping.get(PdfName("S")).name.lstrip("/")
+        for k in pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K"))).items
+    ]
+    assert tags == ["H1", "H2", "H3", "P"]
 
 
 def test_auto_tag_survives_save_roundtrip():
