@@ -500,6 +500,14 @@ Supported:
   `Page.annotations.generate_appearances()`, or `Document.generate_appearances()`.
   Text-bearing subtypes register a synthesised Helvetica font in the form's
   `/Resources /Font`.
+- Draw border and line decorations on those appearances: dash patterns (from
+  `/BS /S /D` with `/D`, or a legacy `/Border` dash array) on `Square`,
+  `Circle`, `Line`, `Polygon`, `PolyLine` and `FreeText` borders; `Line`/
+  `PolyLine` endings (`/LE`) — `OpenArrow`, `ClosedArrow`, `ROpenArrow`,
+  `RClosedArrow`, `Circle`, `Square`, `Diamond`, `Butt`, `Slash` (closed heads
+  filled with the interior/line colour); and cloud borders (`/BE /S /C`, with
+  intensity `/I`) that replace the straight edges of `Square` and `Polygon` with
+  outward Bézier scallops.
 - Flatten annotations into page content, mapping each appearance form's `/BBox`
   (and `/Matrix`) onto the annotation `/Rect`; appearances are synthesised for
   supported subtypes first so they are not dropped.
@@ -510,9 +518,10 @@ Boundaries:
   `Caret` subtypes above; `FreeText`/`Stamp` text uses a synthesised Helvetica
   measured with the bundled substitute's real glyph metrics (no rich-text `/RC`
   or embedded fonts), and `Stamp` is a captioned box rather than the standard
-  rubber-stamp artwork. Other subtypes (widgets, `Sound`, `3D`, …) and decorations such
-  as line endings (`/LE`), dash patterns, and cloud borders (`/BE`) are not drawn
-  — supply an appearance via `appearance_normal` for those.
+  rubber-stamp artwork. Dash patterns, `/LE` line endings and `/BE` cloud borders
+  are drawn (see above); the cloud is a uniform scallop approximation and line
+  endings are sized heuristically from the border width. Other subtypes (widgets,
+  `Sound`, `3D`, …) still need an appearance supplied via `appearance_normal`.
 
 ## Attachments
 

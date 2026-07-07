@@ -19,6 +19,7 @@ measured with the bundled Helvetica-compatible substitute's glyph metrics
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -169,6 +170,248 @@ def _polyline_path(points: Sequence[Tuple[float, float]]) -> str:
     return "\n".join(segs)
 
 
+def _name(value: Any) -> str:
+    """Coerce a PDF name-ish value (``AnnotationName``/str) to its bare string."""
+    return str(value).lstrip("/") if value is not None else ""
+
+
+# ---------------------------------------------------------------------------
+# Border decorations: dash patterns, line endings, and cloud (/BE) borders
+# ---------------------------------------------------------------------------
+
+
+def _dash_array(props: Dict[str, Any]) -> Optional[List[float]]:
+    """Resolve a dash pattern from ``/BS`` (style ``D``) or a legacy ``/Border``."""
+    bs = props.get("BS")
+    if isinstance(bs, dict) and _name(bs.get("S")) == "D":
+        dash = _as_floats(bs.get("D"))
+        if dash and any(v > 0 for v in dash):
+            return [max(0.0, v) for v in dash]
+        return [3.0]  # /S /D with no explicit array: a sensible default dash
+    border = props.get("Border")
+    if isinstance(border, (list, tuple)) and len(border) >= 4:
+        dash = _as_floats(border[3])
+        if dash and any(v > 0 for v in dash):
+            return [max(0.0, v) for v in dash]
+    return None
+
+
+def _dash_op(props: Dict[str, Any]) -> Optional[str]:
+    """Return a ``d`` dash operator for the annotation's border, or ``None``."""
+    dash = _dash_array(props)
+    if not dash:
+        return None
+    return f"[{' '.join(_fmt(v) for v in dash)}] 0 d"
+
+
+def _stroke_setup(
+    stroke: str, bw: float, props: Dict[str, Any]
+) -> List[str]:
+    """Stroke colour, width and (optional) dash operators, in order."""
+    ops = [stroke, f"{_fmt(bw)} w"]
+    dash = _dash_op(props)
+    if dash:
+        ops.append(dash)
+    return ops
+
+
+def _unit(dx: float, dy: float) -> Optional[Tuple[float, float]]:
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        return None
+    return (dx / length, dy / length)
+
+
+def _rot(v: Tuple[float, float], angle: float) -> Tuple[float, float]:
+    ca, sa = math.cos(angle), math.sin(angle)
+    return (v[0] * ca - v[1] * sa, v[0] * sa + v[1] * ca)
+
+
+# Line-ending styles this module can draw (others degrade to no decoration).
+_LINE_ENDINGS = frozenset(
+    {
+        "OpenArrow", "ClosedArrow", "ROpenArrow", "RClosedArrow",
+        "Circle", "Square", "Diamond", "Butt", "Slash",
+    }
+)
+
+
+def _line_ending_styles(props: Dict[str, Any]) -> Tuple[str, str]:
+    """Return ``(start, end)`` line-ending style names from ``/LE``."""
+    le = props.get("LE")
+    if isinstance(le, (list, tuple)) and le:
+        start = _name(le[0])
+        end = _name(le[1]) if len(le) >= 2 else "None"
+        return start, end
+    if le is not None:  # a bare name applies to the line's end
+        return "None", _name(le)
+    return "None", "None"
+
+
+def _ending_ops(
+    end: Tuple[float, float],
+    outward: Tuple[float, float],
+    style: str,
+    size: float,
+    fill_op: str,
+) -> List[str]:
+    """Draw a *style* line ending at *end*, opening along *outward* (unit)."""
+    if style not in _LINE_ENDINGS or size <= 0:
+        return []
+    ex, ey = end
+    ox, oy = outward
+    px, py = -oy, ox  # perpendicular
+    half = size / 2.0
+
+    def pt(along: float, across: float) -> str:
+        return f"{_fmt(ex + ox * along + px * across)} {_fmt(ey + oy * along + py * across)}"
+
+    if style in ("OpenArrow", "ClosedArrow", "ROpenArrow", "RClosedArrow"):
+        # Reversed arrows point back along the line instead of outward.
+        inward = (-ox, -oy) if style in ("OpenArrow", "ClosedArrow") else (ox, oy)
+        theta = math.radians(30.0)
+        w1 = _rot(inward, theta)
+        w2 = _rot(inward, -theta)
+        p1 = f"{_fmt(ex + w1[0] * size)} {_fmt(ey + w1[1] * size)}"
+        p2 = f"{_fmt(ex + w2[0] * size)} {_fmt(ey + w2[1] * size)}"
+        tip = f"{_fmt(ex)} {_fmt(ey)}"
+        if style in ("OpenArrow", "ROpenArrow"):
+            return [f"{p1} m", f"{tip} l", f"{p2} l", "S"]
+        return [fill_op, f"{tip} m", f"{p1} l", f"{p2} l", "h", "b"]
+    if style == "Butt":
+        return [f"{pt(0.0, half)} m", f"{pt(0.0, -half)} l", "S"]
+    if style == "Slash":
+        d = _rot(outward, math.radians(60.0))
+        a = f"{_fmt(ex + d[0] * half)} {_fmt(ey + d[1] * half)}"
+        b = f"{_fmt(ex - d[0] * half)} {_fmt(ey - d[1] * half)}"
+        return [f"{a} m", f"{b} l", "S"]
+    if style == "Square":
+        return [
+            fill_op,
+            f"{_fmt(ex - half)} {_fmt(ey - half)} {_fmt(size)} {_fmt(size)} re",
+            "b",
+        ]
+    if style == "Diamond":
+        return [
+            fill_op,
+            f"{pt(half, 0.0)} m",
+            f"{pt(0.0, half)} l",
+            f"{pt(-half, 0.0)} l",
+            f"{pt(0.0, -half)} l",
+            "h",
+            "b",
+        ]
+    # Circle: four Béziers about *end*.
+    r = half
+    k = r * _KAPPA
+    return [
+        fill_op,
+        f"{_fmt(ex + r)} {_fmt(ey)} m",
+        f"{_fmt(ex + r)} {_fmt(ey + k)} {_fmt(ex + k)} {_fmt(ey + r)} {_fmt(ex)} {_fmt(ey + r)} c",
+        f"{_fmt(ex - k)} {_fmt(ey + r)} {_fmt(ex - r)} {_fmt(ey + k)} {_fmt(ex - r)} {_fmt(ey)} c",
+        f"{_fmt(ex - r)} {_fmt(ey - k)} {_fmt(ex - k)} {_fmt(ey - r)} {_fmt(ex)} {_fmt(ey - r)} c",
+        f"{_fmt(ex + k)} {_fmt(ey - r)} {_fmt(ex + r)} {_fmt(ey - k)} {_fmt(ex + r)} {_fmt(ey)} c",
+        "b",
+    ]
+
+
+def _line_ending_size(bw: float, span: float) -> float:
+    """A line-ending marker size that scales with width but fits the segment."""
+    return min(max(bw * 4.0, 8.0), span * 0.4)
+
+
+def _draw_endings(
+    pts: Sequence[Tuple[float, float]],
+    styles: Tuple[str, str],
+    bw: float,
+    fill_op: str,
+) -> List[str]:
+    """Ops for the start/end line endings of a (poly)line, oriented outward.
+
+    The start ending points back along the first edge and the end ending along
+    the last edge; each marker's size scales with the border width but is capped
+    to its edge length, so short segments do not overshoot.
+    """
+    if len(pts) < 2:
+        return []
+    start_style, end_style = styles
+    ops: List[str] = []
+    if start_style != "None":
+        first_len = math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1])
+        out = _unit(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1])
+        if out is not None:
+            ops += _ending_ops(
+                pts[0], out, start_style, _line_ending_size(bw, first_len), fill_op
+            )
+    if end_style != "None":
+        last_len = math.hypot(pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1])
+        out = _unit(pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1])
+        if out is not None:
+            ops += _ending_ops(
+                pts[-1], out, end_style, _line_ending_size(bw, last_len), fill_op
+            )
+    return ops
+
+
+def _cloud_intensity(props: Dict[str, Any]) -> float:
+    """Return the ``/BE`` cloud intensity (``>0`` enables a cloudy border)."""
+    be = props.get("BE")
+    if not isinstance(be, dict) or _name(be.get("S")) != "C":
+        return 0.0
+    i = be.get("I")
+    intensity = float(i) if isinstance(i, (int, float)) and not isinstance(i, bool) else 1.0
+    return max(0.0, intensity)
+
+
+def _cloud_bulge(intensity: float) -> float:
+    """Half the scallop diameter for a cloud of *intensity* (1 or 2)."""
+    return (8.0 + 6.0 * max(1.0, min(intensity, 2.0))) / 2.0
+
+
+def _cloud_path(points: Sequence[Tuple[float, float]], intensity: float) -> Optional[str]:
+    """Trace a closed cloud (outward convex scallops) around *points*."""
+    if len(points) < 3:
+        return None
+    bulge = _cloud_bulge(intensity)
+    diameter = bulge * 2.0
+    cx = sum(p[0] for p in points) / len(points)
+    cy = sum(p[1] for p in points) / len(points)
+    segs: List[str] = []
+    started = False
+    n = len(points)
+    for i in range(n):
+        ax, ay = points[i]
+        bx, by = points[(i + 1) % n]
+        edge = _unit(bx - ax, by - ay)
+        elen = math.hypot(bx - ax, by - ay)
+        if edge is None or elen < 1e-6:
+            continue
+        ux, uy = edge
+        px, py = -uy, ux  # perpendicular; flip to point away from the centroid
+        midx, midy = (ax + bx) / 2.0 - cx, (ay + by) / 2.0 - cy
+        if px * midx + py * midy < 0:
+            px, py = -px, -py
+        steps = max(1, round(elen / diameter))
+        seg = elen / steps
+        for s in range(steps):
+            sx, sy = ax + ux * seg * s, ay + uy * seg * s
+            ex, ey = ax + ux * seg * (s + 1), ay + uy * seg * (s + 1)
+            if not started:
+                segs.append(f"{_fmt(sx)} {_fmt(sy)} m")
+                started = True
+            c1x = sx + ux * seg * 0.25 + px * bulge
+            c1y = sy + uy * seg * 0.25 + py * bulge
+            c2x = ex - ux * seg * 0.25 + px * bulge
+            c2y = ey - uy * seg * 0.25 + py * bulge
+            segs.append(
+                f"{_fmt(c1x)} {_fmt(c1y)} {_fmt(c2x)} {_fmt(c2y)} {_fmt(ex)} {_fmt(ey)} c"
+            )
+    if not segs:
+        return None
+    segs.append("h")
+    return "\n".join(segs)
+
+
 def build_appearance(
     subtype: str,
     rect: Tuple[float, float, float, float],
@@ -208,6 +451,27 @@ def _build_square(
     has_stroke = bw > 0
     if stroke is None and has_stroke:
         stroke = "0 G"  # default to a black border so the shape is visible
+
+    # A /BE cloud border replaces the straight edges with outward scallops.
+    intensity = _cloud_intensity(props)
+    if intensity > 0 and has_stroke and stroke:
+        inset = bw / 2.0 + _cloud_bulge(intensity)
+        rw, rh = w - 2.0 * inset, h - 2.0 * inset
+        if rw > 0 and rh > 0:
+            corners = [
+                (inset, inset), (inset + rw, inset),
+                (inset + rw, inset + rh), (inset, inset + rh),
+            ]
+            path = _cloud_path(corners, intensity)
+            if path:
+                lines = ["q", *_stroke_setup(stroke, bw, props)]
+                if fill:
+                    lines.append(fill)
+                lines.append(path)
+                lines.append(_paint_op(fill is not None, True) or "S")
+                lines.append("Q")
+                return GeneratedAppearance(("\n".join(lines) + "\n").encode("ascii"))
+
     inset = bw / 2.0
     x, y = inset, inset
     rw, rh = w - bw, h - bw
@@ -219,8 +483,7 @@ def _build_square(
         return None
     lines = ["q"]
     if has_stroke and stroke:
-        lines.append(stroke)
-        lines.append(f"{_fmt(bw)} w")
+        lines += _stroke_setup(stroke, bw, props)
     if fill:
         lines.append(fill)
     lines.append(f"{_fmt(x)} {_fmt(y)} {_fmt(rw)} {_fmt(rh)} re")
@@ -251,8 +514,7 @@ def _build_circle(
     kx, ky = rx * _KAPPA, ry * _KAPPA
     lines = ["q"]
     if has_stroke and stroke:
-        lines.append(stroke)
-        lines.append(f"{_fmt(bw)} w")
+        lines += _stroke_setup(stroke, bw, props)
     if fill:
         lines.append(fill)
     # Four cubic Béziers, counter-clockwise from the right vertex.
@@ -287,15 +549,15 @@ def _build_line(
     pts = _local_points(coords[:4], llx, lly)
     bw = max(_border_width(props), 0.0) or 1.0
     stroke = _color_op(props.get("C"), stroke=True) or "0 G"
-    lines = [
-        "q",
-        stroke,
-        f"{_fmt(bw)} w",
-        f"{_fmt(pts[0][0])} {_fmt(pts[0][1])} m",
-        f"{_fmt(pts[1][0])} {_fmt(pts[1][1])} l",
-        "S",
-        "Q",
-    ]
+    fill_op = _color_op(props.get("IC"), stroke=False) or _color_op(
+        props.get("C"), stroke=False
+    ) or "0 g"
+    lines = ["q", *_stroke_setup(stroke, bw, props)]
+    lines.append(f"{_fmt(pts[0][0])} {_fmt(pts[0][1])} m")
+    lines.append(f"{_fmt(pts[1][0])} {_fmt(pts[1][1])} l")
+    lines.append("S")
+    lines += _draw_endings(pts, _line_ending_styles(props), bw, fill_op)
+    lines.append("Q")
     return GeneratedAppearance(("\n".join(lines) + "\n").encode("ascii"))
 
 
@@ -322,13 +584,26 @@ def _build_poly(
     stroke = _color_op(props.get("C"), stroke=True) or "0 G"
     fill = _color_op(props.get("IC"), stroke=False) if closed else None
     paint = _paint_op(fill is not None, True)
-    lines = ["q", stroke, f"{_fmt(bw)} w"]
+    lines = ["q", *_stroke_setup(stroke, bw, props)]
     if fill:
         lines.append(fill)
-    lines.append(_polyline_path(pts))
-    if closed:
-        lines.append("h")
-    lines.append(paint or "S")
+
+    # A closed polygon with a /BE cloud border draws scalloped edges.
+    intensity = _cloud_intensity(props) if closed else 0.0
+    cloud = _cloud_path(pts, intensity) if intensity > 0 else None
+    if cloud is not None:
+        lines.append(cloud)
+        lines.append(paint or "S")
+    else:
+        lines.append(_polyline_path(pts))
+        if closed:
+            lines.append("h")
+        lines.append(paint or "S")
+        if not closed:  # PolyLine: draw its /LE start/end line endings
+            fill_op = _color_op(props.get("IC"), stroke=False) or _color_op(
+                props.get("C"), stroke=False
+            ) or "0 g"
+            lines += _draw_endings(pts, _line_ending_styles(props), bw, fill_op)
     lines.append("Q")
     return GeneratedAppearance(("\n".join(lines) + "\n").encode("ascii"))
 
@@ -512,8 +787,7 @@ def _build_freetext(
         inset = bw / 2.0
         rw, rh = w - bw, h - bw
         if rw > 0 and rh > 0:
-            lines.append("0 G")
-            lines.append(f"{_fmt(bw)} w")
+            lines += _stroke_setup("0 G", bw, props)
             lines.append(f"{_fmt(inset)} {_fmt(inset)} {_fmt(rw)} {_fmt(rh)} re")
             lines.append("S")
     fonts: Dict[str, Dict[str, Any]] = {}
