@@ -5398,10 +5398,13 @@ class SimplePdf:
         if self._cos_doc is not None and (
             options.image_compression_quality is not None
             or options.image_max_dimension is not None
+            or options.image_target_dpi is not None
         ):
             try:
                 self._recompress_images_cos(
-                    options.image_compression_quality, options.image_max_dimension
+                    options.image_compression_quality,
+                    options.image_max_dimension,
+                    options.image_target_dpi,
                 )
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning(
@@ -5609,22 +5612,68 @@ class SimplePdf:
     )
     _JPEG_FILTERS = frozenset({"DCTDecode", "DCT"})
 
+    def _image_display_sizes(self) -> Dict[int, Tuple[float, float]]:
+        """Map each placed image XObject's object number to its largest on-page
+        display size in points (for effective-DPI downsampling).
+
+        Only page-level placements are measured; an image reachable only through
+        a form XObject is absent from the map, so the caller leaves it untouched
+        (its display size — hence DPI — is unknown).
+        """
+        from .auto_tag import find_image_placements
+        from .cos import PdfDictionary, PdfName
+
+        sizes: Dict[int, Tuple[float, float]] = {}
+        for i in range(len(self.pages)):
+            page = self._get_page_dict(i)
+            if not isinstance(page, PdfDictionary):
+                continue
+            resources = self._resolve_resources_cos(page)
+            if not isinstance(resources, PdfDictionary):
+                continue
+            xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
+            if not isinstance(xobjects, PdfDictionary):
+                continue
+            name_to_obj: Dict[str, int] = {}
+            for key, value in xobjects.mapping.items():
+                if isinstance(value, PdfIndirectReference):
+                    name_to_obj[key.name.lstrip("/")] = value.object_number
+            if not name_to_obj:
+                continue
+            try:
+                content = self.get_page_content(i)
+            except PDF_OPERATION_ERRORS:
+                continue
+            for name, w, h in find_image_placements(content):
+                obj_num = name_to_obj.get(name.lstrip("/"))
+                if obj_num is None:
+                    continue
+                pw, ph = sizes.get(obj_num, (0.0, 0.0))
+                sizes[obj_num] = (max(pw, w), max(ph, h))
+        return sizes
+
     def _recompress_images_cos(
-        self, quality: Optional[int], max_dim: Optional[int]
+        self,
+        quality: Optional[int],
+        max_dim: Optional[int],
+        target_dpi: Optional[int] = None,
     ) -> None:
         """Recompress and/or downscale eligible RGB/grayscale image XObjects.
 
         With *quality* set, eligible images are re-encoded as baseline JPEG
-        (``/DCTDecode``) at that quality; *max_dim* caps the longest pixel side,
-        downscaling first.  An image is rewritten only when the result is
-        smaller and its colour model is reproduced exactly, so masks, odd colour
-        spaces and images carrying a ``/Decode`` array are left untouched.
+        (``/DCTDecode``) at that quality; *max_dim* caps the longest pixel side
+        and *target_dpi* caps the effective resolution at the image's on-page
+        display size, downscaling first.  An image is rewritten only when the
+        result is smaller and its colour model is reproduced exactly, so masks,
+        odd colour spaces and images carrying a ``/Decode`` array are untouched.
         """
         if self._cos_doc is None or getattr(self, "encryption_key", None):
             return
-        if quality is None and max_dim is None:
+        if quality is None and max_dim is None and target_dpi is None:
             return
         from .cos import PdfName, PdfStream
+
+        display_sizes = self._image_display_sizes() if target_dpi else {}
 
         objects = self._cos_doc.objects
         # Objects used as soft masks / stencil masks must not be lossily
@@ -5644,14 +5693,19 @@ class SimplePdf:
                 continue
             stream = objects[obj_num]
             if isinstance(stream, PdfStream) and self._recompress_one_image(
-                stream, quality, max_dim
+                stream, quality, max_dim, target_dpi, display_sizes.get(obj_num)
             ):
                 count += 1
         if count:
             logger.info("Recompressed/resized %d image(s).", count)
 
     def _recompress_one_image(
-        self, stream: Any, quality: Optional[int], max_dim: Optional[int]
+        self,
+        stream: Any,
+        quality: Optional[int],
+        max_dim: Optional[int],
+        target_dpi: Optional[int] = None,
+        display_size: Optional[Tuple[float, float]] = None,
     ) -> bool:
         from . import dct, jpeg_encoder
         from .cos import PdfBoolean, PdfName, PdfNumber
@@ -5677,6 +5731,19 @@ class SimplePdf:
         new_w, new_h = (
             fit_within(width, height, max_dim) if max_dim else (width, height)
         )
+        # Cap the effective resolution at the image's on-page display size:
+        # bring both axes to <= target_dpi, preserving aspect and only shrinking.
+        if target_dpi and display_size:
+            dw, dh = display_size
+            if dw > 0 and dh > 0:
+                scale = min(
+                    1.0,
+                    target_dpi * dw / (72.0 * new_w),
+                    target_dpi * dh / (72.0 * new_h),
+                )
+                if scale < 1.0:
+                    new_w = max(1, round(new_w * scale))
+                    new_h = max(1, round(new_h * scale))
         resized = new_w != width or new_h != height
         if quality is None and not resized:
             return False  # nothing to do for this image.

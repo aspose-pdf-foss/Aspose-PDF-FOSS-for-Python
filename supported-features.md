@@ -91,6 +91,12 @@ Supported (honored options):
   image, box-averaging it down first (aspect ratio preserved). Combined with
   `image_compression_quality` the downscale happens before JPEG encoding; on its
   own a lossless raster is downscaled and kept lossless (Flate).
+- `image_target_dpi` (DPI, default off) — cap an image's *effective* resolution
+  at its on-page display size. Each image's largest placement is measured from
+  the page content (the CTM's transformed unit square); an image whose pixels
+  exceed the target DPI at that size is box-downscaled to match (aspect
+  preserved, only ever shrinking). An image with no page-level placement has an
+  unknown display size and is left untouched.
 - `use_object_streams` (default on) — after optimizing, a full save packs
   eligible objects into an object stream (`ObjStm`) located by a cross-reference
   stream (`XRef`), the single biggest file-size lever. Produces PDF 1.5+ output
@@ -103,7 +109,9 @@ Boundaries:
   (and ICCBased with N=1/3, 4:2:0 chroma) and DeviceCMYK (full-resolution,
   Adobe-marked); Indexed, Lab, ICC-based CMYK, masks and images with a `/Decode`
   array are left untouched, as are JPX/CCITT/JBIG2 payloads. Resampling is
-  box-average downscaling only (no upscaling, no DPI target).
+  box-average downscaling only (no upscaling); DPI targeting measures page-level
+  placements only, so an image reached solely through a form XObject keeps its
+  resolution.
 - Font subsetting (glyph erasure) covers embedded **TrueType** (`/FontFile2`) and
   **CFF** (`/FontFile3`) programs. Handled: Type0 fonts with Identity encoding
   over a CIDFontType2 (TrueType) or a CIDFontType0 backed by either a name-keyed
@@ -438,8 +446,8 @@ Boundaries:
 - High-level image insertion/placement into pages is not a public feature in this
   prerelease. The JPEG encoder is baseline with optimized Huffman tables; RGB
   uses fixed 4:2:0 subsampling and CMYK is full-resolution (no progressive
-  output); resampling is box-average downscaling (no upscaling or DPI-targeted
-  resampling).
+  output); resampling is box-average downscaling (no upscaling), with an
+  optional DPI target driven by on-page placement size (see Optimization).
 - JPX/JPEG 2000 page-render painting still depends on optional Pillow decode
   availability; arithmetic-coded JPEG remains unsupported by the pure-Python
   raster path.

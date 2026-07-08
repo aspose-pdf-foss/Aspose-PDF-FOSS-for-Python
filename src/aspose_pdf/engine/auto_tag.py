@@ -36,6 +36,7 @@ __all__ = [
     "find_text_objects",
     "find_xobject_invocations",
     "find_layout_elements",
+    "find_image_placements",
     "detect_columns",
     "assign_reading_order",
     "group_rows",
@@ -456,6 +457,49 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
         last_name = None
 
     return elements
+
+
+def find_image_placements(content: bytes) -> List[Tuple[str, float, float]]:
+    """Return ``(xobject_name, displayed_width, displayed_height)`` per ``Do``.
+
+    The name keeps its leading slash. Sizes are in default user-space units
+    (points): an XObject fills the unit square ``[0,1]²``, so its displayed axes
+    are the lengths of the CTM's transformed ``(1,0)`` and ``(0,1)`` vectors.
+    Form and image XObjects share ``Do``; the caller keeps only the image names.
+    """
+    placements: List[Tuple[str, float, float]] = []
+    ctm: Matrix = _IDENTITY
+    ctm_stack: List[Matrix] = []
+    nums: List[float] = []
+    last_name: Optional[str] = None
+
+    for token, _tok_start, _tok_end in _tokens(content):
+        if token is None or token in ("[", "]", "{", "}", "<<", ">>"):
+            continue
+        if token.startswith("/"):
+            last_name = token
+            continue
+        val = _to_float(token)
+        if val is not None:
+            nums.append(val)
+            continue
+        op = token
+        if op == "q":
+            ctm_stack.append(ctm)
+        elif op == "Q":
+            if ctm_stack:
+                ctm = ctm_stack.pop()
+        elif op == "cm":
+            if len(nums) >= 6:
+                ctm = _mul(tuple(nums[-6:]), ctm)  # type: ignore[arg-type]
+        elif op == "Do" and last_name is not None:
+            a, b, c, d = ctm[0], ctm[1], ctm[2], ctm[3]
+            placements.append(
+                (last_name, (a * a + b * b) ** 0.5, (c * c + d * d) ** 0.5)
+            )
+        nums = []
+        last_name = None
+    return placements
 
 
 def find_text_objects(content: bytes) -> List[TextObject]:

@@ -16,6 +16,7 @@ class OptimizationOptions:
     unembed_fonts: bool = False
     image_compression_quality: int | None = None
     image_max_dimension: int | None = None
+    image_target_dpi: int | None = None
     remove_duplicate_images: bool = True
     compress_fonts: bool = True
     use_object_streams: bool = True
@@ -28,6 +29,8 @@ class OptimizationOptions:
             raise ValueError("image_compression_quality must be between 0 and 100")
         if self.image_max_dimension is not None and self.image_max_dimension <= 0:
             raise ValueError("image_max_dimension must be a positive pixel count")
+        if self.image_target_dpi is not None and self.image_target_dpi <= 0:
+            raise ValueError("image_target_dpi must be a positive DPI value")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -38,6 +41,7 @@ class OptimizationOptions:
             "unembed_fonts": self.unembed_fonts,
             "image_compression_quality": self.image_compression_quality,
             "image_max_dimension": self.image_max_dimension,
+            "image_target_dpi": self.image_target_dpi,
             "remove_duplicate_images": self.remove_duplicate_images,
             "compress_fonts": self.compress_fonts,
             "use_object_streams": self.use_object_streams,

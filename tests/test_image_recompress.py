@@ -314,3 +314,86 @@ def test_cmyk_recompresses_flate_to_jpeg():
     decoded = dct.decode(img.content)
     assert decoded is not None
     assert (decoded.width, decoded.height, decoded.components) == (_W, _H, 4)
+
+
+# ---------------------------------------------------------------------------
+# Effective-DPI downsampling (image_target_dpi)
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+from aspose_pdf.engine.auto_tag import find_image_placements  # noqa: E402
+
+
+def _noise_gray(w: int, h: int) -> bytes:
+    # Deterministic high-entropy pattern so a downscale genuinely shrinks it.
+    return bytes(((x * 73 + y * 151 + x * y * 29) % 256) for y in range(h) for x in range(w))
+
+
+def _placed_gray_pdf(disp_w, disp_h, px_w, px_h, raw, *, place=True):
+    pdf = SimplePdf()
+    pdf.pages = [(0, 0, 600, 600)]
+    if place:
+        pdf.page_contents = [f"q {disp_w} 0 0 {disp_h} 20 20 cm /Im0 Do Q".encode()]
+    else:
+        pdf.page_contents = [b"q Q"]
+    pdf._ensure_cos()
+    cos = pdf._cos_doc
+    data = zlib.compress(raw, 9)
+    mapping = {
+        PdfName("Subtype"): PdfName("Image"),
+        PdfName("Width"): PdfNumber(px_w),
+        PdfName("Height"): PdfNumber(px_h),
+        PdfName("BitsPerComponent"): PdfNumber(8),
+        PdfName("ColorSpace"): PdfName("DeviceGray"),
+        PdfName("Filter"): PdfName("FlateDecode"),
+        PdfName("Length"): PdfNumber(len(data)),
+    }
+    img = cos.register_object(PdfStream(data, mapping))
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {PdfName("XObject"): PdfDictionary({PdfName("Im0"): img})}
+    )
+    return pdf, img.object_number
+
+
+def test_find_image_placements_reports_display_size():
+    placements = find_image_placements(b"q 100 0 0 80 10 10 cm /Im0 Do Q")
+    assert placements == [("/Im0", 100.0, 80.0)]
+
+
+def test_target_dpi_downsamples_high_dpi_image():
+    # 200x150 px shown at 48x36 pt -> 300 DPI; target 96 -> ~64x48 px, lossless.
+    pdf, num = _placed_gray_pdf(48, 36, 200, 150, _noise_gray(200, 150))
+    pdf.optimize(_opts(image_target_dpi=96))
+    img = pdf._cos_doc.objects[num]
+    new_w = int(img.mapping[PdfName("Width")].value)
+    assert new_w < 200 and 58 <= new_w <= 70  # ~96*48/72 = 64 px
+    assert img.mapping[PdfName("Filter")] == PdfName("FlateDecode")  # stays lossless
+
+
+def test_target_dpi_leaves_low_resolution_image():
+    # 60x45 px shown at 60x45 pt -> 72 DPI; target 150 -> unchanged.
+    pdf, num = _placed_gray_pdf(60, 45, 60, 45, _noise_gray(60, 45))
+    pdf.optimize(_opts(image_target_dpi=150))
+    img = pdf._cos_doc.objects[num]
+    assert int(img.mapping[PdfName("Width")].value) == 60
+
+
+def test_target_dpi_skips_unplaced_image():
+    # No page placement -> display size (hence DPI) unknown -> left untouched.
+    pdf, num = _placed_gray_pdf(48, 36, 200, 150, _noise_gray(200, 150), place=False)
+    pdf.optimize(_opts(image_target_dpi=96))
+    assert int(pdf._cos_doc.objects[num].mapping[PdfName("Width")].value) == 200
+
+
+def test_target_dpi_plus_quality_downsamples_and_jpegs():
+    pdf, num = _placed_gray_pdf(40, 30, 160, 120, _gray_gradient(160, 120))
+    pdf.optimize(_opts(image_target_dpi=150, image_compression_quality=70))
+    img = pdf._cos_doc.objects[num]
+    assert int(img.mapping[PdfName("Width")].value) < 160
+    assert img.mapping[PdfName("Filter")] == PdfName("DCTDecode")
+
+
+def test_target_dpi_must_be_positive():
+    with pytest.raises(ValueError):
+        OptimizationOptions(image_target_dpi=0)
