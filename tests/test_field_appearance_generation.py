@@ -637,3 +637,52 @@ def test_existing_button_appearance_is_not_overwritten():
     on = engine._resolve(_n_states(engine, field).mapping[PdfName("Yes")])
     assert on.content == b"MARKER"  # left untouched
     assert field.mapping[PdfName("AS")].name.lstrip("/") == "Yes"
+
+
+# ---------------------------------------------------------------------------
+# Rich-text fields (/RV, Ff bit 26)
+# ---------------------------------------------------------------------------
+
+
+def _rich_text_widget(rv: str, *, ff: int = 1 << 25, da: str = "/Helv 12 Tf 0 g"):
+    return PdfDictionary(
+        {
+            PdfName("Type"): PdfName("Annot"),
+            PdfName("Subtype"): PdfName("Widget"),
+            PdfName("FT"): PdfName("Tx"),
+            PdfName("T"): PdfString(b"rich1"),
+            PdfName("Ff"): PdfNumber(ff),
+            PdfName("Rect"): PdfArray(
+                [PdfNumber(100), PdfNumber(680), PdfNumber(300), PdfNumber(740)]
+            ),
+            PdfName("DA"): PdfString(da.encode()),
+            PdfName("RV"): PdfString(rv.encode()),
+        }
+    )
+
+
+def test_rich_text_field_renders_rv():
+    rv = '<body><p><span style="color:#ff0000;font-weight:bold">Red</span> tail</p></body>'
+    engine, field, _acro = _engine_with_acroform(_rich_text_widget(rv))
+    assert engine.generate_field_appearances() == 1
+    content = _ap_content(engine, field)
+    assert b"/Tx BMC" in content
+    assert b"1 0 0 rg" in content  # the red span
+    assert b"(Red) Tj" in content and b"(tail) Tj" in content
+    # The bold face is registered in the appearance's font resources.
+    ap = engine._resolve(field.mapping[PdfName("AP")])
+    n = engine._resolve(ap.mapping[PdfName("N")])
+    res = engine._resolve(n.mapping[PdfName("Resources")])
+    fonts = engine._resolve(res.mapping[PdfName("Font")])
+    assert PdfName("HeBo") in fonts.mapping
+
+
+def test_rich_text_flag_off_uses_plain_value():
+    # Without the RichText flag the field renders its plain /V, not /RV markup.
+    field = _rich_text_widget("<body><p>ignored</p></body>", ff=0)
+    field.mapping[PdfName("V")] = PdfString(b"plainval")
+    engine, field, _acro = _engine_with_acroform(field)
+    engine.generate_field_appearances()
+    content = _ap_content(engine, field)
+    assert b"(plainval) Tj" in content
+    assert b"ignored" not in content

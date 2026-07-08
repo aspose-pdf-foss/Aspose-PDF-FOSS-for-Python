@@ -473,11 +473,14 @@ Supported:
 Boundaries:
 
 - Dynamic XFA processing is not implemented.
-- Variable-text layout is single-font and has no rich-text `/RV` support; text
-  is measured per byte code (single-byte simple fonts — composite/Type0 field
-  fonts fall back to a flat width estimate). Check box / radio appearances are
-  synthesised (a ZapfDingbats check or a vector dot); push-button face
-  appearances (caption/icon) are not synthesised — an existing `/AP` is reused.
+- Rich-text fields (`/RV`, Ff bit 26) are rendered from their XHTML markup with
+  per-span size/colour/bold/italic and paragraph alignment in the Helvetica
+  family (see Annotations for the shared renderer's limits); a plain
+  variable-text value is single-font and measured per byte code (single-byte
+  simple fonts — composite/Type0 field fonts fall back to a flat width
+  estimate). Check box / radio appearances are synthesised (a ZapfDingbats check
+  or a vector dot); push-button face appearances (caption/icon) are not
+  synthesised — an existing `/AP` is reused.
 
 ## Annotations
 
@@ -499,19 +502,14 @@ Supported:
   for the standard shape and text-markup subtypes — `Square`, `Circle`, `Line`,
   `Polygon`, `PolyLine`, `Ink`, `Highlight` (multiply blend), `Underline`,
   `StrikeOut`, `Squiggly` — plus the text-bearing/marker subtypes `FreeText`
-  (word-wrapped `/Contents` with the `/DA` font size and colour, `/Q` quadding,
-  `/C` background and a border box), `Stamp` (a captioned box from `/Name` or
-  `/Contents`, rubber-stamp red by default), and `Caret` (a filled marker
-  triangle) — via `Annotation.generate_appearance()`,
+  (`/Contents` word-wrapped in the `/DA` font size and colour, or the `/RC`
+  rich-text markup when present — per-span size/colour/bold/italic and paragraph
+  alignment; with `/Q` quadding, `/C` background and a border box), `Stamp` (a
+  captioned box from `/Name` or `/Contents`, rubber-stamp red by default), and
+  `Caret` (a filled marker triangle) — via `Annotation.generate_appearance()`,
   `Page.annotations.generate_appearances()`, or `Document.generate_appearances()`.
-  Text-bearing subtypes register a synthesised Helvetica font in the form's
-  `/Resources /Font`.
-- Draw border and line decorations on the shape subtypes: dashed borders (from
-  `/BS /S /D` with `/D`, or a legacy `/Border` dash array) on `Square`,
-  `Circle`, `Line`, `Polygon`, `PolyLine` and the `FreeText` box; line endings
-  (`/LE`) on `Line`/`PolyLine` (`OpenArrow`, `ClosedArrow`, their reversed
-  variants, `Circle`, `Square`, `Diamond`, `Butt`, `Slash`); and cloud borders
-  (`/BE /S /C`, intensity `/I`) as outward scallops on `Square` and `Polygon`.
+  Text-bearing subtypes register the synthesised Helvetica-family fonts they use
+  in the form's `/Resources /Font`.
 - Draw border and line decorations on those appearances: dash patterns (from
   `/BS /S /D` with `/D`, or a legacy `/Border` dash array) on `Square`,
   `Circle`, `Line`, `Polygon`, `PolyLine` and `FreeText` borders; `Line`/
@@ -527,10 +525,12 @@ Supported:
 Boundaries:
 
 - Appearance synthesis covers the shape, text-markup, `FreeText`, `Stamp` and
-  `Caret` subtypes above; `FreeText`/`Stamp` text uses a synthesised Helvetica
-  measured with the bundled substitute's real glyph metrics (no rich-text `/RC`
-  or embedded fonts), and `Stamp` is a captioned box rather than the standard
-  rubber-stamp artwork. Dash patterns, `/LE` line endings and `/BE` cloud borders
+  `Caret` subtypes above; text uses the synthesised Helvetica family measured
+  with the bundled substitute's real glyph metrics. Rich text (`/RC`, `/RV`)
+  renders a subset — `<p>`/`<span>`/`<b>`/`<i>` with `font-size`, `color`,
+  `font-weight`, `font-style` and `text-align` — in the Helvetica family only
+  (no embedded/other fonts, backgrounds, or nested block layout), and `Stamp` is
+  a captioned box rather than the standard rubber-stamp artwork. Dash patterns, `/LE` line endings and `/BE` cloud borders
   are drawn (see above); the cloud is a uniform scallop approximation and line
   endings are sized heuristically from the border width. Check-box/radio *widget*
   appearances are synthesised through the forms API (see Forms); other subtypes

@@ -6772,6 +6772,15 @@ class SimplePdf:
         font_name, size, color = parse_default_appearance(da or "/Helv 0 Tf 0 g")
         font_name = font_name or "Helv"
         multiline = ft == "Tx" and bool(ff & (1 << 12))
+        # Rich-text fields (Ff bit 26) render their /RV styled markup.
+        if ft == "Tx" and (ff & (1 << 25)):
+            rich = self._rich_text_widget_appearance(widget, size, color, q, w, h)
+            if rich is not None:
+                content, resources = rich
+                widget.mapping[PdfName("AP")] = self._register_annotation_appearance(
+                    rect, {"N": content}, resources
+                )
+                return True
         font_ref, used_name = self._resolve_field_font(font_name, acro)
         # Glyph-metric advances for wrap/quadding: the field font's /Widths, or
         # a bundled substitute's metrics; None (e.g. Type0) -> flat estimate.
@@ -6799,6 +6808,35 @@ class SimplePdf:
             rect, {"N": content}, resources
         )
         return True
+
+    def _rich_text_widget_appearance(
+        self,
+        widget: PdfDictionary,
+        size: float,
+        color: str,
+        quadding: Any,
+        w: float,
+        h: float,
+    ) -> Optional[Tuple[bytes, Optional[PdfDictionary]]]:
+        """Build a rich-text field appearance from ``/RV``, or ``None``."""
+        rv = self._resolve(widget.mapping.get(PdfName("RV")))
+        rc = decode_pdf_text_string(rv) if isinstance(rv, PdfString) else None
+        if not rc or not rc.strip():
+            return None
+        from .rich_text import RichStyle, build_rich_text_content
+
+        default = RichStyle(size=size if size > 0 else 12.0, color=color or "0 g")
+        align = quadding if quadding in (0, 1, 2) else 0
+        built = build_rich_text_content(
+            rc, w, h, default_style=default, padding=2.0, default_align=align
+        )
+        if built is None:
+            return None
+        body, fonts = built
+        content = ("/Tx BMC\nq\n" + "\n".join(body) + "\nQ\nEMC\n").encode(
+            "latin-1", "replace"
+        )
+        return content, self._build_appearance_resources({}, fonts)
 
     def _field_value_to_text(self, v: Any) -> str:
         """Render a form-field ``/V`` value as display text."""

@@ -791,8 +791,14 @@ def _build_freetext(
             lines.append(f"{_fmt(inset)} {_fmt(inset)} {_fmt(rw)} {_fmt(rh)} re")
             lines.append("S")
     fonts: Dict[str, Dict[str, Any]] = {}
-    if text:
-        pad = max(2.0, bw + 1.0)
+    pad = max(2.0, bw + 1.0)
+    # Prefer the /RC rich text (styled spans) when present; fall back to the
+    # plain /Contents rendered in the /DA font.
+    rich = _rich_text_block(props.get("RC"), w, h, size, color, quadding, pad)
+    if rich is not None:
+        rich_body, fonts = rich
+        lines += rich_body
+    elif text:
         lines += _text_block(
             text, w, h, font_size=size, color_op=color, quadding=quadding, padding=pad
         )
@@ -800,6 +806,26 @@ def _build_freetext(
     lines.append("Q")
     return GeneratedAppearance(
         ("\n".join(lines) + "\n").encode("latin-1", "replace"), fonts=fonts
+    )
+
+
+def _rich_text_block(
+    rc: Any,
+    w: float,
+    h: float,
+    size: float,
+    color: str,
+    quadding: int,
+    padding: float,
+) -> Optional[Tuple[List[str], Dict[str, Dict[str, Any]]]]:
+    """Lay out ``/RC``/``/RV`` rich text, or ``None`` when absent/empty."""
+    if not isinstance(rc, str) or not rc.strip():
+        return None
+    from .rich_text import RichStyle, build_rich_text_content
+
+    default = RichStyle(size=size if size > 0 else 12.0, color=color or "0 g")
+    return build_rich_text_content(
+        rc, w, h, default_style=default, padding=padding, default_align=quadding
     )
 
 
