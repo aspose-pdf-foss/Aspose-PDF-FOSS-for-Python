@@ -388,17 +388,21 @@ def encode(
     quality: int = 75,
     *,
     optimize: bool = True,
+    progressive: bool = False,
 ) -> bytes:
-    """Encode interleaved 8-bit *samples* as a baseline JPEG.
+    """Encode interleaved 8-bit *samples* as a JPEG.
 
     *components* must be 1 (grayscale), 3 (RGB) or 4 (CMYK).  Raises
     ``ValueError`` for other component counts or a sample buffer of the wrong
-    length. RGB uses YCbCr with 4:2:0 chroma; CMYK keeps all four channels at
-    full resolution and writes an Adobe ``APP14`` marker with inverted samples
-    (the de-facto convention PDF viewers and :mod:`aspose_pdf.engine.dct` expect).
-    With *optimize* (the default), per-image Huffman tables are computed from the
-    actual symbol statistics (Annex K.2), which is smaller than the fixed Annex
-    K tables at no quality cost; pass ``optimize=False`` for the standard tables.
+    length. Baseline RGB uses YCbCr with 4:2:0 chroma; CMYK keeps all four
+    channels at full resolution and writes an Adobe ``APP14`` marker with
+    inverted samples (the de-facto convention PDF viewers and
+    :mod:`aspose_pdf.engine.dct` expect). With *optimize* (the default),
+    per-image Huffman tables are computed from the actual symbol statistics
+    (Annex K.2), which is smaller than the fixed Annex K tables at no quality
+    cost; pass ``optimize=False`` for the standard tables. With *progressive*,
+    a spectral-selection progressive stream (SOF2: one DC scan then one AC scan
+    per component, full resolution) is produced instead of a baseline one.
     """
     if components not in (1, 3, 4):
         raise ValueError("jpeg_encoder supports 1, 3 or 4 components only")
@@ -406,6 +410,9 @@ def encode(
         raise ValueError("invalid image dimensions")
     if len(samples) < width * height * components:
         raise ValueError("sample buffer too small for the given dimensions")
+
+    if progressive:
+        return _encode_progressive(width, height, components, samples, quality, optimize)
 
     luma_qt = _scaled_qt(_STD_LUMA_QT, quality)
     chroma_qt = _scaled_qt(_STD_CHROMA_QT, quality)
@@ -451,21 +458,156 @@ def encode(
     )
 
 
-def _sof0(width, height, comps) -> bytes:
+# ---------------------------------------------------------------------------
+# Progressive (SOF2) encoding: spectral selection only (Ss/Se split, Ah=Al=0).
+# One DC scan (interleaved) then one AC scan per component, full resolution.
+# ---------------------------------------------------------------------------
+
+
+def _progressive_planes(width, height, components, samples, luma_qt, chroma_qt):
+    """Return ``(planes, comp_spec, dqt, app)`` for a progressive stream.
+
+    *planes* is a list of ``(byte_plane, quant_table)`` per component at full
+    resolution; *comp_spec* is ``(component_id, qt_id, dc_table_id, ac_table_id)``.
+    """
+    app = _marker_segment(0xE0, b"JFIF\x00" + bytes([1, 1, 0, 0, 1, 0, 1, 0, 0]))
+    if components == 1:
+        planes = [(samples, luma_qt)]
+        comp_spec = [(1, 0, 0, 0)]
+        dqt = _dqt(0, luma_qt)
+    elif components == 3:
+        y, cb, cr = _rgb_to_ycbcr_planes(width, height, samples)
+        planes = [(y, luma_qt), (cb, chroma_qt), (cr, chroma_qt)]
+        comp_spec = [(1, 0, 0, 0), (2, 1, 1, 1), (3, 1, 1, 1)]
+        dqt = _dqt(0, luma_qt) + _dqt(1, chroma_qt)
+    else:  # CMYK: Adobe-inverted channels, all on the luma tables.
+        n = width * height
+        planes = [
+            (bytes(255 - samples[i * 4 + c] for i in range(n)), luma_qt)
+            for c in range(4)
+        ]
+        comp_spec = [(i, 0, 0, 0) for i in (1, 2, 3, 4)]
+        dqt = _dqt(0, luma_qt)
+        app = _marker_segment(0xEE, b"Adobe\x00\x64\x00\x00\x00\x00\x00")  # transform 0
+    return planes, comp_spec, dqt, app
+
+
+def _progressive_dc_tokens(comp_blocks, dc_keys, freq) -> list:
+    """DC-scan tokens, interleaved across components (one DC per block)."""
+    tokens: list = []
+    prev = [0] * len(comp_blocks)
+    for b in range(len(comp_blocks[0])):
+        for c, blocks in enumerate(comp_blocks):
+            dc = blocks[b][0]
+            diff = dc - prev[c]
+            prev[c] = dc
+            size = _category(diff)
+            tokens.append((dc_keys[c], size, diff, size))
+            freq[dc_keys[c]][size] += 1
+    return tokens
+
+
+def _progressive_ac_tokens(blocks, ac_key, freq) -> list:
+    """AC-scan tokens for one component (full band 1..63, EOB run of one)."""
+    tokens: list = []
+    for coeffs in blocks:
+        run = 0
+        for k in range(1, 64):
+            value = coeffs[_ZIGZAG[k]]
+            if value == 0:
+                run += 1
+                continue
+            while run > 15:
+                tokens.append((ac_key, 0xF0, 0, 0))
+                freq[ac_key][0xF0] += 1
+                run -= 16
+            size = _category(value)
+            symbol = (run << 4) | size
+            tokens.append((ac_key, symbol, value, size))
+            freq[ac_key][symbol] += 1
+            run = 0
+        if run > 0:  # trailing zeros -> single end-of-band (EOB run of one).
+            tokens.append((ac_key, 0x00, 0, 0))
+            freq[ac_key][0x00] += 1
+    return tokens
+
+
+def _scan_bits(tokens, tables) -> bytes:
+    writer = _BitWriter()
+    _emit_tokens(tokens, tables, writer)
+    writer.flush()
+    return bytes(writer.out)
+
+
+def _encode_progressive(width, height, components, samples, quality, optimize) -> bytes:
+    luma_qt = _scaled_qt(_STD_LUMA_QT, quality)
+    chroma_qt = _scaled_qt(_STD_CHROMA_QT, quality)
+    planes, comp_spec, dqt, app = _progressive_planes(
+        width, height, components, samples, luma_qt, chroma_qt
+    )
+
+    blocks_x = (width + 7) // 8
+    blocks_y = (height + 7) // 8
+    comp_blocks = []
+    for plane, qt in planes:
+        blocks = [
+            _fdct_quantize(_extract_block(plane, width, height, i * 8, j * 8), qt)
+            for j in range(blocks_y)
+            for i in range(blocks_x)
+        ]
+        comp_blocks.append(blocks)
+
+    dc_keys = ["dl" if spec[2] == 0 else "dc" for spec in comp_spec]
+    ac_keys = ["al" if spec[3] == 0 else "ac" for spec in comp_spec]
+    freq = {k: [0] * 256 for k in ("dl", "al", "dc", "ac")}
+    dc_tokens = _progressive_dc_tokens(comp_blocks, dc_keys, freq)
+    ac_tokens = [
+        _progressive_ac_tokens(comp_blocks[c], ac_keys[c], freq)
+        for c in range(components)
+    ]
+
+    dht = b""
+    tables: dict[str, dict[int, tuple[int, int]]] = {}
+    for table_class, table_id, key in ((0, 0, "dl"), (1, 0, "al"), (0, 1, "dc"), (1, 1, "ac")):
+        if not any(freq[key]):
+            continue
+        bits, vals = _optimal_table(freq[key]) if optimize else _FIXED_SPEC[key]
+        tables[key] = _build_huffman(bits, vals)
+        dht += _dht(table_class, table_id, bits, vals)
+
+    sof = _sof2(width, height, [(cid, 1, 1, qid) for cid, qid, _dc, _ac in comp_spec])
+    scans = _sos(
+        [(cid, dc_id, ac_id) for cid, _qid, dc_id, ac_id in comp_spec], ss=0, se=0
+    ) + _scan_bits(dc_tokens, tables)
+    for c, (cid, _qid, dc_id, ac_id) in enumerate(comp_spec):
+        scans += _sos([(cid, dc_id, ac_id)], ss=1, se=63) + _scan_bits(ac_tokens[c], tables)
+
+    return b"\xFF\xD8" + app + dqt + sof + dht + scans + b"\xFF\xD9"
+
+
+def _sof(marker: int, width, height, comps) -> bytes:
     body = bytearray([8])
     body += height.to_bytes(2, "big")
     body += width.to_bytes(2, "big")
     body.append(len(comps))
     for cid, h, v, qid in comps:
         body += bytes([cid, (h << 4) | v, qid])
-    return _marker_segment(0xC0, bytes(body))
+    return _marker_segment(marker, bytes(body))
 
 
-def _sos(comps) -> bytes:
+def _sof0(width, height, comps) -> bytes:
+    return _sof(0xC0, width, height, comps)  # baseline sequential
+
+
+def _sof2(width, height, comps) -> bytes:
+    return _sof(0xC2, width, height, comps)  # progressive
+
+
+def _sos(comps, ss: int = 0, se: int = 63, ah: int = 0, al: int = 0) -> bytes:
     body = bytearray([len(comps)])
     for cid, dc_id, ac_id in comps:
         body += bytes([cid, (dc_id << 4) | ac_id])
-    body += bytes([0, 63, 0])  # Ss, Se, Ah/Al
+    body += bytes([ss, se, (ah << 4) | al])  # spectral selection / approximation
     return _marker_segment(0xDA, bytes(body))
 
 

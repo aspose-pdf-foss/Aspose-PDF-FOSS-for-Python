@@ -196,3 +196,54 @@ def test_cmyk_preserves_zero_ink_and_full_ink():
     assert no_ink is not None and full_ink is not None
     assert max(no_ink.samples) < 6
     assert min(full_ink.samples) > 249
+
+
+# ---------------------------------------------------------------------------
+# Progressive (SOF2) encoding
+# ---------------------------------------------------------------------------
+
+
+def test_progressive_gray_roundtrip():
+    w, h = 48, 40
+    src = _gradient_gray(w, h)
+    jpg = je.encode(w, h, 1, src, quality=85, progressive=True)
+    assert b"\xff\xc2" in jpg  # SOF2 (progressive) frame marker
+    assert jpg.count(b"\xff\xda") == 2  # a DC scan plus one AC scan
+    decoded = dct.decode(jpg)
+    assert decoded is not None
+    assert (decoded.width, decoded.height, decoded.components) == (w, h, 1)
+    assert _mae(decoded.samples, src) < 3.0
+
+
+def test_progressive_rgb_roundtrip():
+    w, h = 64, 48
+    src = _gradient_rgb(w, h)
+    jpg = je.encode(w, h, 3, src, quality=85, progressive=True)
+    assert b"\xff\xc2" in jpg and b"\xff\xc0" not in jpg  # progressive, not baseline
+    assert jpg.count(b"\xff\xda") == 4  # DC scan + one AC scan per component
+    decoded = dct.decode(jpg)
+    assert decoded is not None
+    assert (decoded.width, decoded.height, decoded.components) == (w, h, 3)
+    assert _mae(decoded.samples, src) < 6.0
+
+
+def test_progressive_cmyk_roundtrip():
+    w, h = 40, 32
+    src = _gradient_cmyk(w, h)
+    jpg = je.encode(w, h, 4, src, quality=88, progressive=True)
+    assert b"\xff\xc2" in jpg and b"Adobe" in jpg
+    assert jpg.count(b"\xff\xda") == 5  # DC scan + four AC scans
+    decoded = dct.decode(jpg)
+    assert decoded is not None
+    assert (decoded.width, decoded.height, decoded.components) == (w, h, 4)
+    assert _mae(decoded.samples, src) < 4.0
+
+
+def test_progressive_pillow_decodes():
+    Image = pytest.importorskip("PIL.Image")
+    w, h = 64, 48
+    jpg = je.encode(w, h, 3, _gradient_rgb(w, h), quality=85, progressive=True)
+    im = Image.open(io.BytesIO(jpg))
+    im.load()
+    assert im.size == (w, h) and im.mode == "RGB"
+    assert im.info.get("progression") == 1  # Pillow confirms it is progressive

@@ -397,3 +397,27 @@ def test_target_dpi_plus_quality_downsamples_and_jpegs():
 def test_target_dpi_must_be_positive():
     with pytest.raises(ValueError):
         OptimizationOptions(image_target_dpi=0)
+
+
+def test_image_progressive_produces_sof2():
+    extra = {
+        PdfName("ColorSpace"): PdfName("DeviceRGB"),
+        PdfName("Filter"): PdfName("FlateDecode"),
+    }
+    pdf, num = _pdf_with_image(extra, _flate_rgb())
+    pdf.optimize(_opts(image_compression_quality=70, image_progressive=True))
+    img = pdf._cos_doc.objects[num]
+    assert img.mapping[PdfName("Filter")] == PdfName("DCTDecode")
+    assert b"\xff\xc2" in img.content and b"\xff\xc0" not in img.content  # progressive
+    assert dct.decode(img.content) is not None
+
+
+def test_image_progressive_defaults_to_baseline():
+    extra = {
+        PdfName("ColorSpace"): PdfName("DeviceRGB"),
+        PdfName("Filter"): PdfName("FlateDecode"),
+    }
+    pdf, num = _pdf_with_image(extra, _flate_rgb())
+    pdf.optimize(_opts(image_compression_quality=70))
+    img = pdf._cos_doc.objects[num]
+    assert b"\xff\xc0" in img.content and b"\xff\xc2" not in img.content  # baseline

@@ -17,6 +17,7 @@ class OptimizationOptions:
     image_compression_quality: int | None = None
     image_max_dimension: int | None = None
     image_target_dpi: int | None = None
+    image_progressive: bool = False
     remove_duplicate_images: bool = True
     compress_fonts: bool = True
     use_object_streams: bool = True
@@ -42,6 +43,7 @@ class OptimizationOptions:
             "image_compression_quality": self.image_compression_quality,
             "image_max_dimension": self.image_max_dimension,
             "image_target_dpi": self.image_target_dpi,
+            "image_progressive": self.image_progressive,
             "remove_duplicate_images": self.remove_duplicate_images,
             "compress_fonts": self.compress_fonts,
             "use_object_streams": self.use_object_streams,

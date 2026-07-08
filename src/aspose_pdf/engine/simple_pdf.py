@@ -5405,6 +5405,7 @@ class SimplePdf:
                     options.image_compression_quality,
                     options.image_max_dimension,
                     options.image_target_dpi,
+                    options.image_progressive,
                 )
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning(
@@ -5657,6 +5658,7 @@ class SimplePdf:
         quality: Optional[int],
         max_dim: Optional[int],
         target_dpi: Optional[int] = None,
+        progressive: bool = False,
     ) -> None:
         """Recompress and/or downscale eligible RGB/grayscale image XObjects.
 
@@ -5693,7 +5695,8 @@ class SimplePdf:
                 continue
             stream = objects[obj_num]
             if isinstance(stream, PdfStream) and self._recompress_one_image(
-                stream, quality, max_dim, target_dpi, display_sizes.get(obj_num)
+                stream, quality, max_dim, target_dpi,
+                display_sizes.get(obj_num), progressive,
             ):
                 count += 1
         if count:
@@ -5706,6 +5709,7 @@ class SimplePdf:
         max_dim: Optional[int],
         target_dpi: Optional[int] = None,
         display_size: Optional[Tuple[float, float]] = None,
+        progressive: bool = False,
     ) -> bool:
         from . import dct, jpeg_encoder
         from .cos import PdfBoolean, PdfName, PdfNumber
@@ -5787,7 +5791,9 @@ class SimplePdf:
         else:
             try:
                 new_content = jpeg_encoder.encode(
-                    new_w, new_h, comps, samples, quality if quality is not None else 90
+                    new_w, new_h, comps, samples,
+                    quality if quality is not None else 90,
+                    progressive=progressive,
                 )
             except (ValueError, OverflowError):
                 return False

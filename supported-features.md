@@ -97,6 +97,8 @@ Supported (honored options):
   exceed the target DPI at that size is box-downscaled to match (aspect
   preserved, only ever shrinking). An image with no page-level placement has an
   unknown display size and is left untouched.
+- `image_progressive` (default off) — emit recompressed JPEGs as progressive
+  (SOF2) instead of baseline; applies to the `image_compression_quality` path.
 - `use_object_streams` (default on) — after optimizing, a full save packs
   eligible objects into an object stream (`ObjStm`) located by a cross-reference
   stream (`XRef`), the single biggest file-size lever. Produces PDF 1.5+ output
@@ -431,12 +433,14 @@ Supported:
   baseline/progressive DCT/JPEG streams are painted into the page raster,
   honouring an image `/SMask` as per-pixel alpha (see [Pages](#pages)).
 - Deduplicate identical image payloads during optimization.
-- **Encode** pixels back to a baseline JPEG with a **dependency-free** encoder
+- **Encode** pixels back to a JPEG with a **dependency-free** encoder
   (`aspose_pdf.engine.jpeg_encoder`: grayscale, RGB with 4:2:0 chroma
   subsampling, and CMYK — four full-resolution channels with an Adobe `APP14`
-  marker; plus per-image **optimized Huffman** tables computed from the actual
-  symbol statistics — smaller than the fixed Annex K tables at no quality cost)
-  and **box-downscale** pixels (`aspose_pdf.engine.image_resample`).
+  marker; per-image **optimized Huffman** tables computed from the actual symbol
+  statistics — smaller than the fixed Annex K tables at no quality cost; and an
+  optional **progressive** (SOF2) mode — one DC scan then one AC scan per
+  component, full resolution) and **box-downscale** pixels
+  (`aspose_pdf.engine.image_resample`).
   `Document.optimize` uses both to apply `image_compression_quality` (recompress
   to JPEG) and `image_max_dimension` (cap the longest side); see
   [Optimization](#optimization).
@@ -444,10 +448,12 @@ Supported:
 Boundaries:
 
 - High-level image insertion/placement into pages is not a public feature in this
-  prerelease. The JPEG encoder is baseline with optimized Huffman tables; RGB
-  uses fixed 4:2:0 subsampling and CMYK is full-resolution (no progressive
-  output); resampling is box-average downscaling (no upscaling), with an
-  optional DPI target driven by on-page placement size (see Optimization).
+  prerelease. The JPEG encoder has optimized Huffman tables and baseline or
+  progressive output; baseline RGB uses fixed 4:2:0 subsampling while progressive
+  and CMYK are full-resolution (progressive is spectral-selection only, without
+  successive approximation); resampling is box-average downscaling (no
+  upscaling), with an optional DPI target driven by on-page placement size (see
+  Optimization).
 - JPX/JPEG 2000 page-render painting still depends on optional Pillow decode
   availability; arithmetic-coded JPEG remains unsupported by the pure-Python
   raster path.
