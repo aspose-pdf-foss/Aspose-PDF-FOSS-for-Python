@@ -84,8 +84,9 @@ Supported (honored options):
   optimized Huffman tables). Images are
   rewritten only when the result is smaller, so already-small or incompressible
   images are left as-is. Masks, soft-mask targets, images with a `/Decode`
-  array, Indexed/CMYK/Lab colour, and opaque codecs (JPX/CCITT/JBIG2) are
-  skipped so colour and transparency are never altered unexpectedly.
+  array, Indexed/Lab colour, and opaque codecs (JPX/CCITT/JBIG2) are
+  skipped so colour and transparency are never altered unexpectedly; DeviceCMYK
+  is recompressed (as Adobe-marked 4-channel JPEG), but ICC-based CMYK is not.
 - `image_max_dimension` (pixels, default off) — cap the longest side of an
   image, box-averaging it down first (aspect ratio preserved). Combined with
   `image_compression_quality` the downscale happens before JPEG encoding; on its
@@ -98,10 +99,11 @@ Supported (honored options):
 
 Boundaries:
 
-- Image recompression uses a baseline (4:2:0) JPEG encoder for DeviceRGB /
-  DeviceGray (and ICCBased with N=1/3); CMYK, Indexed, Lab, masks and images
-  with a `/Decode` array are left untouched, as are JPX/CCITT/JBIG2 payloads.
-  Resampling is box-average downscaling only (no upscaling, no DPI target).
+- Image recompression uses a baseline JPEG encoder for DeviceRGB / DeviceGray
+  (and ICCBased with N=1/3, 4:2:0 chroma) and DeviceCMYK (full-resolution,
+  Adobe-marked); Indexed, Lab, ICC-based CMYK, masks and images with a `/Decode`
+  array are left untouched, as are JPX/CCITT/JBIG2 payloads. Resampling is
+  box-average downscaling only (no upscaling, no DPI target).
 - Font subsetting (glyph erasure) covers embedded **TrueType** (`/FontFile2`) and
   **CFF** (`/FontFile3`) programs. Handled: Type0 fonts with Identity encoding
   over a CIDFontType2 (TrueType) or a CIDFontType0 backed by either a name-keyed
@@ -422,10 +424,11 @@ Supported:
   honouring an image `/SMask` as per-pixel alpha (see [Pages](#pages)).
 - Deduplicate identical image payloads during optimization.
 - **Encode** pixels back to a baseline JPEG with a **dependency-free** encoder
-  (`aspose_pdf.engine.jpeg_encoder`: grayscale and RGB with 4:2:0 chroma
-  subsampling, and per-image **optimized Huffman** tables computed from the
-  actual symbol statistics — smaller than the fixed Annex K tables at no quality
-  cost) and **box-downscale** pixels (`aspose_pdf.engine.image_resample`).
+  (`aspose_pdf.engine.jpeg_encoder`: grayscale, RGB with 4:2:0 chroma
+  subsampling, and CMYK — four full-resolution channels with an Adobe `APP14`
+  marker; plus per-image **optimized Huffman** tables computed from the actual
+  symbol statistics — smaller than the fixed Annex K tables at no quality cost)
+  and **box-downscale** pixels (`aspose_pdf.engine.image_resample`).
   `Document.optimize` uses both to apply `image_compression_quality` (recompress
   to JPEG) and `image_max_dimension` (cap the longest side); see
   [Optimization](#optimization).
@@ -433,9 +436,9 @@ Supported:
 Boundaries:
 
 - High-level image insertion/placement into pages is not a public feature in this
-  prerelease. The JPEG encoder is baseline for grayscale/RGB only, with optimized
-  Huffman tables but fixed 4:2:0 subsampling (no CMYK or progressive output);
-  resampling is box-average downscaling (no upscaling or DPI-targeted
+  prerelease. The JPEG encoder is baseline with optimized Huffman tables; RGB
+  uses fixed 4:2:0 subsampling and CMYK is full-resolution (no progressive
+  output); resampling is box-average downscaling (no upscaling or DPI-targeted
   resampling).
 - JPX/JPEG 2000 page-render painting still depends on optional Pillow decode
   availability; arithmetic-coded JPEG remains unsupported by the pure-Python

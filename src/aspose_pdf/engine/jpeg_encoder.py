@@ -391,14 +391,17 @@ def encode(
 ) -> bytes:
     """Encode interleaved 8-bit *samples* as a baseline JPEG.
 
-    *components* must be 1 (grayscale) or 3 (RGB).  Raises ``ValueError`` for
-    other component counts or a sample buffer of the wrong length. With
-    *optimize* (the default), per-image Huffman tables are computed from the
+    *components* must be 1 (grayscale), 3 (RGB) or 4 (CMYK).  Raises
+    ``ValueError`` for other component counts or a sample buffer of the wrong
+    length. RGB uses YCbCr with 4:2:0 chroma; CMYK keeps all four channels at
+    full resolution and writes an Adobe ``APP14`` marker with inverted samples
+    (the de-facto convention PDF viewers and :mod:`aspose_pdf.engine.dct` expect).
+    With *optimize* (the default), per-image Huffman tables are computed from the
     actual symbol statistics (Annex K.2), which is smaller than the fixed Annex
     K tables at no quality cost; pass ``optimize=False`` for the standard tables.
     """
-    if components not in (1, 3):
-        raise ValueError("jpeg_encoder supports 1 or 3 components only")
+    if components not in (1, 3, 4):
+        raise ValueError("jpeg_encoder supports 1, 3 or 4 components only")
     if width <= 0 or height <= 0:
         raise ValueError("invalid image dimensions")
     if len(samples) < width * height * components:
@@ -408,18 +411,26 @@ def encode(
     chroma_qt = _scaled_qt(_STD_CHROMA_QT, quality)
 
     freq = {k: [0] * 256 for k in ("dl", "al", "dc", "ac")}
+    app = _marker_segment(0xE0, b"JFIF\x00" + bytes([1, 1, 0, 0, 1, 0, 1, 0, 0]))
     if components == 1:
         tokens = _tokenize_gray(width, height, samples, luma_qt, freq)
         keys = [(0, 0, "dl"), (1, 0, "al")]
         sof = _sof0(width, height, [(1, 1, 1, 0)])
         dqt = _dqt(0, luma_qt)
         sos = _sos([(1, 0, 0)])
-    else:
+    elif components == 3:
         tokens = _tokenize_rgb_420(width, height, samples, luma_qt, chroma_qt, freq)
         keys = [(0, 0, "dl"), (1, 0, "al"), (0, 1, "dc"), (1, 1, "ac")]
         sof = _sof0(width, height, [(1, 2, 2, 0), (2, 1, 1, 1), (3, 1, 1, 1)])
         dqt = _dqt(0, luma_qt) + _dqt(1, chroma_qt)
         sos = _sos([(1, 0, 0), (2, 1, 1), (3, 1, 1)])
+    else:  # CMYK: four full-resolution channels, Adobe-marked and inverted.
+        tokens = _tokenize_cmyk(width, height, samples, luma_qt, freq)
+        keys = [(0, 0, "dl"), (1, 0, "al")]
+        sof = _sof0(width, height, [(i, 1, 1, 0) for i in (1, 2, 3, 4)])
+        dqt = _dqt(0, luma_qt)
+        sos = _sos([(i, 0, 0) for i in (1, 2, 3, 4)])
+        app = _marker_segment(0xEE, b"Adobe\x00\x64\x00\x00\x00\x00\x00")  # transform 0
 
     dht = b""
     code_tables: dict[str, dict[int, tuple[int, int]]] = {}
@@ -435,11 +446,8 @@ def encode(
     _emit_tokens(tokens, code_tables, writer)
     writer.flush()
 
-    jfif = _marker_segment(
-        0xE0, b"JFIF\x00" + bytes([1, 1, 0, 0, 1, 0, 1, 0, 0])
-    )
     return (
-        b"\xFF\xD8" + jfif + dqt + sof + dht + sos + bytes(writer.out) + b"\xFF\xD9"
+        b"\xFF\xD8" + app + dqt + sof + dht + sos + bytes(writer.out) + b"\xFF\xD9"
     )
 
 
@@ -499,4 +507,35 @@ def _tokenize_rgb_420(width, height, samples, luma_qt, chroma_qt, freq) -> list:
             dc_cr = _block_tokens(
                 _fdct_quantize(cr_block, chroma_qt), dc_cr, "dc", "ac", tokens, freq
             )
+    return tokens
+
+
+def _extract_cmyk_block(samples, width, height, comp, bx, by):
+    """8x8 block of CMYK channel *comp*, Adobe-inverted and level-shifted.
+
+    Interleaved 4-channel samples are read for one channel; storing ``255 - c``
+    matches the Adobe convention (the decoder de-inverts it back to standard
+    ``0 = no ink`` CMYK). Edges are clamped (padding).
+    """
+    block = [0] * 64
+    for yy in range(8):
+        sy = min(by + yy, height - 1)
+        row = sy * width
+        for xx in range(8):
+            sx = min(bx + xx, width - 1)
+            block[yy * 8 + xx] = (255 - samples[(row + sx) * 4 + comp]) - 128
+    return block
+
+
+def _tokenize_cmyk(width, height, samples, luma_qt, freq) -> list:
+    tokens: list = []
+    blocks_x = (width + 7) // 8
+    blocks_y = (height + 7) // 8
+    dc = [0, 0, 0, 0]
+    for by in range(blocks_y):
+        for bx in range(blocks_x):
+            for comp in range(4):  # one full-resolution block per channel per MCU
+                block = _extract_cmyk_block(samples, width, height, comp, bx * 8, by * 8)
+                coeffs = _fdct_quantize(block, luma_qt)
+                dc[comp] = _block_tokens(coeffs, dc[comp], "dl", "al", tokens, freq)
     return tokens

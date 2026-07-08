@@ -5671,7 +5671,7 @@ class SimplePdf:
             return False
         width, height = int(width), int(height)
         comps = self._cs_components(m.get(PdfName("ColorSpace")))
-        if comps not in (1, 3):
+        if comps not in (1, 3, 4):
             return False
 
         new_w, new_h = (

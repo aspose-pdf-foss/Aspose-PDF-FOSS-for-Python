@@ -156,3 +156,43 @@ def test_optimize_false_embeds_standard_tables():
     jpg = je.encode(16, 16, 1, _gradient_gray(16, 16), optimize=False)
     # The standard DC luma BITS (Annex K.3) appear verbatim in a DHT segment.
     assert bytes([0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0]) in jpg
+
+
+# ---------------------------------------------------------------------------
+# CMYK (4-component) encoding
+# ---------------------------------------------------------------------------
+
+
+def _gradient_cmyk(w: int, h: int) -> bytes:
+    s = bytearray(w * h * 4)
+    for y in range(h):
+        for x in range(w):
+            i = (y * w + x) * 4
+            s[i] = (x * 255) // max(1, w - 1)
+            s[i + 1] = (y * 255) // max(1, h - 1)
+            s[i + 2] = ((x + y) * 255) // max(1, w + h - 2)
+            s[i + 3] = 48  # constant K
+    return bytes(s)
+
+
+def test_cmyk_roundtrip_through_own_decoder():
+    w, h = 40, 32
+    src = _gradient_cmyk(w, h)
+    jpg = je.encode(w, h, 4, src, quality=88)
+    # CMYK is Adobe-marked (APP14), not JFIF.
+    assert b"Adobe" in jpg and b"JFIF" not in jpg
+    decoded = dct.decode(jpg)
+    assert decoded is not None
+    assert (decoded.width, decoded.height, decoded.components) == (w, h, 4)
+    assert _mae(decoded.samples, src) < 4.0  # near-lossless at q88
+
+
+def test_cmyk_preserves_zero_ink_and_full_ink():
+    # Solid fills round-trip near-exactly, verifying the Adobe inversion is not
+    # flipped: "no ink" (0) stays near 0 and "full ink" (255) stays near 255.
+    w, h = 16, 16
+    no_ink = dct.decode(je.encode(w, h, 4, b"\x00" * (w * h * 4), quality=95))
+    full_ink = dct.decode(je.encode(w, h, 4, b"\xff" * (w * h * 4), quality=95))
+    assert no_ink is not None and full_ink is not None
+    assert max(no_ink.samples) < 6
+    assert min(full_ink.samples) > 249

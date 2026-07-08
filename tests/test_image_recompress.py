@@ -284,3 +284,33 @@ def test_defaults_leave_images_untouched():
     before = pdf._cos_doc.objects[num].content
     pdf.optimize(_opts())  # no quality, no max_dimension
     assert pdf._cos_doc.objects[num].content == before
+
+
+def _cmyk_gradient(w=_W, h=_H) -> bytes:
+    s = bytearray(w * h * 4)
+    for y in range(h):
+        for x in range(w):
+            i = (y * w + x) * 4
+            s[i] = (x * 255) // (w - 1)
+            s[i + 1] = (y * 255) // (h - 1)
+            s[i + 2] = ((x + y) * 255) // (w + h - 2)
+            s[i + 3] = 40
+    return bytes(s)
+
+
+def test_cmyk_recompresses_flate_to_jpeg():
+    extra = {
+        PdfName("ColorSpace"): PdfName("DeviceCMYK"),
+        PdfName("Filter"): PdfName("FlateDecode"),
+    }
+    pdf, num = _pdf_with_image(extra, zlib.compress(_cmyk_gradient(), 9))
+    before = len(pdf._cos_doc.objects[num].content)
+
+    pdf.optimize(_opts(image_compression_quality=70))
+
+    img = pdf._cos_doc.objects[num]
+    assert img.mapping[PdfName("Filter")] == PdfName("DCTDecode")
+    assert len(img.content) < before
+    decoded = dct.decode(img.content)
+    assert decoded is not None
+    assert (decoded.width, decoded.height, decoded.components) == (_W, _H, 4)
