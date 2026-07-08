@@ -3256,6 +3256,57 @@ class SimplePdf:
         self._append_struct_root_kid(struct_root, l_ref)
         return marks
 
+    def _register_table_marked_content(
+        self, page_index: int, rows: List[List[Any]]
+    ) -> Optional[List[Tuple[int, int, str, int]]]:
+        """Build a nested ``/Table`` → ``/TR`` → ``/TD`` structure for *rows*.
+
+        Each row is a ``/TR`` and each cell (one text element) a ``/TD`` owning
+        that cell's MCID. Returns the marks ``(start, end, "TD", mcid)`` for
+        every cell, or ``None`` if empty.
+        """
+        struct_root, struct_ref = self._ensure_struct_tree_root()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page dictionary is unavailable.")
+        page_ref = self._page_ref_for_structure(page_index)
+        parent_array = self._parent_tree_array_for_page(struct_root, page)
+
+        def struct_elem(tag: str, parent: Any) -> Tuple[PdfDictionary, Any]:
+            elem = PdfDictionary(
+                {
+                    PdfName("Type"): PdfName("StructElem"),
+                    PdfName("S"): PdfName(tag),
+                    PdfName("P"): parent,
+                    PdfName("Pg"): page_ref,
+                }
+            )
+            return elem, self._cos_doc.register_object(elem)
+
+        table_elem, table_ref = struct_elem("Table", struct_ref)
+        tr_refs: List[Any] = []
+        marks: List[Tuple[int, int, str, int]] = []
+        for row in rows:
+            if not row:
+                continue
+            tr_elem, tr_ref = struct_elem("TR", table_ref)
+            td_refs: List[Any] = []
+            for cell in row:
+                td_elem, td_ref = struct_elem("TD", tr_ref)
+                mcid = len(parent_array.items)
+                parent_array.items.append(td_ref)
+                td_elem.mapping[PdfName("K")] = PdfNumber(mcid)
+                marks.append((cell.start, cell.end, "TD", mcid))
+                td_refs.append(td_ref)
+            tr_elem.mapping[PdfName("K")] = PdfArray(td_refs)
+            tr_refs.append(tr_ref)
+
+        if not tr_refs:
+            return None
+        table_elem.mapping[PdfName("K")] = PdfArray(tr_refs)
+        self._append_struct_root_kid(struct_root, table_ref)
+        return marks
+
     def auto_tag(
         self,
         image_alt: Optional[Union[str, Callable[[str], str]]] = "Image",
@@ -3302,14 +3353,13 @@ class SimplePdf:
     ) -> int:
         from .auto_tag import (
             TextObject,
-            assign_reading_order,
             build_tagged_content,
             choose_tags,
             detect_columns,
+            detect_tables,
             find_layout_elements,
-            group_into_paragraphs,
+            group_rows,
             has_marked_content,
-            is_list_item,
         )
 
         try:
@@ -3343,19 +3393,46 @@ class SimplePdf:
         tagged = [e for e in elements if e.tag is not None]
         if not tagged:
             return 0
-        # Split into column bands first, then order and group within each band so
-        # a multi-column page is read column-by-column, not straight across.
-        groups: List[List[Any]] = []
+        # Split into column bands first so a multi-column page is read
+        # column-by-column; within each band, pull out aligned tables and hand
+        # the remaining flow to paragraph/list structuring.
+        marks: List[Tuple[int, int, str, int]] = []
+        created = 0
         for column in detect_columns(tagged):
-            ordered = assign_reading_order(column)
-            groups.extend(group_into_paragraphs(ordered))
+            for seg_kind, seg_rows in detect_tables(group_rows(column)):
+                if seg_kind == "table":
+                    table_marks = self._register_table_marked_content(
+                        page_index, seg_rows
+                    )
+                    if table_marks:
+                        marks.extend(table_marks)
+                        created += 1
+                else:
+                    flow = [e for row in seg_rows for e in row]
+                    c, m = self._emit_flow_groups(page_index, flow)
+                    created += c
+                    marks.extend(m)
+        if not marks:
+            return 0
+        self._set_page_content(page_index, build_tagged_content(content, marks))
+        return created
 
+    def _emit_flow_groups(
+        self, page_index: int, flow: List[Any]
+    ) -> Tuple[int, List[Tuple[int, int, str, int]]]:
+        """Structure non-table *flow* elements into paragraphs, headings, lists.
+
+        Returns ``(created, marks)``: consecutive list-item paragraphs collapse
+        into one nested ``/L``; every other paragraph/heading/figure is a single
+        flat structure element.
+        """
+        from .auto_tag import group_into_paragraphs, is_list_item
+
+        groups = group_into_paragraphs(flow)
         marks: List[Tuple[int, int, str, int]] = []
         created = 0
         i, total = 0, len(groups)
         while i < total:
-            # A run of two or more consecutive list-item paragraphs becomes one
-            # nested /L; anything else stays a single flat structure element.
             if is_list_item(groups[i]):
                 run = [groups[i]]
                 j = i + 1
@@ -3380,10 +3457,7 @@ class SimplePdf:
             for elem, mcid in zip(group, mcids):
                 marks.append((elem.start, elem.end, tag_name, mcid))
             created += 1
-        if not marks:
-            return 0
-        self._set_page_content(page_index, build_tagged_content(content, marks))
-        return created
+        return created, marks
 
     def _figure_alt(
         self, image_alt: Union[str, Callable[[str], str]], name: str

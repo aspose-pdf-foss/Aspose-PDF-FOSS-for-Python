@@ -689,7 +689,9 @@ Supported:
   begins with a list marker (a bullet/dash, or a numbered/lettered/roman
   `1.`/`(a)`/`iv)` prefix) are wrapped into a nested `/L` → `/LI` → `/LBody`
   list (two or more items required; a continuation line without a marker folds
-  into its item). Elements are wrapped in `BDC`/`EMC` by a
+  into its item). Consecutive rows forming a regular aligned grid (two or more
+  rows, each with the same number of column-aligned cells) become a nested
+  `/Table` → `/TR` → `/TD`. Elements are wrapped in `BDC`/`EMC` by a
   byte-level splice (originals preserved, inline images skipped) and linked by
   MCID through `/StructParents` and the `/ParentTree`. Pages already carrying
   marked content are left untouched.
@@ -741,13 +743,16 @@ Boundaries:
   `auto_tag()` infers a real but **coarse** tree: reading order is geometric
   (columns split at whitespace gutters, then top-to-bottom, left-to-right),
   paragraphs are grouped by proximity, headings are inferred from font size
-  only (levels `/H1`–`/H3` by size tier), and lists are recognised from leading
-  markers. Image `/Figure` alternate text is a caller-supplied placeholder (alt
-  text cannot be inferred), column detection is a whitespace heuristic (a
-  full-width banner over the columns may be mis-assigned), list detection is
-  marker-text based (an unmarked or image-bulleted list is not recognised, and
-  nesting is flat), and tables are not detected. It is a starting point a human
-  refines, not certified accessibility.
+  only (levels `/H1`–`/H3` by size tier), lists are recognised from leading
+  markers, and regular aligned grids are tagged as tables. Image `/Figure`
+  alternate text is a caller-supplied placeholder (alt text cannot be inferred),
+  column detection is a whitespace heuristic (a full-width banner over the
+  columns may be mis-assigned), list detection is marker-text based (an unmarked
+  or image-bulleted list is not recognised, and nesting is flat), and table
+  detection needs a regular grid whose columns are closer than the
+  column-split gutter (a wide-gutter table reads as columns, and merged/empty
+  cells break the grid). It is a starting point a human refines, not certified
+  accessibility.
   Content authored through the page APIs carries caller-supplied semantic tags
   and alt text.
 - XMP covers the full data model: simple values, structured values, arrays

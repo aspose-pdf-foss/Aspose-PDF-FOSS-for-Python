@@ -38,6 +38,8 @@ __all__ = [
     "find_layout_elements",
     "detect_columns",
     "assign_reading_order",
+    "group_rows",
+    "detect_tables",
     "group_into_paragraphs",
     "list_marker",
     "is_list_item",
@@ -68,6 +70,12 @@ _COL_GUTTER_MIN = 18.0    # ... and at least this many user units
 _COL_OVERLAP_RATIO = 0.5  # column bands must share this fraction of their y-span
 _COL_MIN_SPAN_EM = 0.5    # each band must span more than a single line vertically
 _MAX_COL_DEPTH = 3        # recursion cap for nested vertical cuts
+
+# Table-detection heuristics (see :func:`detect_tables`).
+_TABLE_MIN_ROWS = 2       # a table needs at least this many aligned rows
+_TABLE_MIN_COLS = 2       # ... each with at least this many cells
+_TABLE_COL_TOL_EM = 0.6   # cell x-alignment tolerance as a fraction of font size
+_TABLE_COL_TOL_MIN = 4.0  # ... with this floor in user units
 
 # List-detection heuristics (see :func:`list_marker`).
 _HEAD_CAP = 32            # bytes of leading shown text kept for marker sniffing
@@ -539,17 +547,17 @@ def detect_columns(elements: List[LayoutElement]) -> List[List[LayoutElement]]:
     return _split_columns(list(elements), med_fs, 0)
 
 
-def assign_reading_order(elements: List[LayoutElement]) -> List[LayoutElement]:
-    """Sort *elements* into reading order: top-to-bottom, then left-to-right.
+def group_rows(elements: List[LayoutElement]) -> List[List[LayoutElement]]:
+    """Group *elements* into rows of one visual line each, in reading order.
 
-    Elements whose baselines are within a small tolerance are treated as one
-    line and ordered left-to-right; lines are stacked from the top of the page
-    down.  This recovers the intended order even when the stream order differs.
+    Elements whose baselines are within a small tolerance form one row, ordered
+    left-to-right; rows are stacked from the top of the page down.  This is the
+    row model shared by reading-order flattening and table detection.
     """
     if not elements:
         return []
     ordered = sorted(elements, key=lambda e: (-e.y, e.x))
-    result: List[LayoutElement] = []
+    rows: List[List[LayoutElement]] = []
     line: List[LayoutElement] = [ordered[0]]
     for e in ordered[1:]:
         ref = line[0]
@@ -557,10 +565,93 @@ def assign_reading_order(elements: List[LayoutElement]) -> List[LayoutElement]:
         if abs(e.y - ref.y) <= tol:
             line.append(e)
         else:
-            result.extend(sorted(line, key=lambda el: el.x))
+            rows.append(sorted(line, key=lambda el: el.x))
             line = [e]
-    result.extend(sorted(line, key=lambda el: el.x))
+    rows.append(sorted(line, key=lambda el: el.x))
+    return rows
+
+
+def assign_reading_order(elements: List[LayoutElement]) -> List[LayoutElement]:
+    """Sort *elements* into reading order: top-to-bottom, then left-to-right.
+
+    Elements whose baselines are within a small tolerance are treated as one
+    line and ordered left-to-right; lines are stacked from the top of the page
+    down.  This recovers the intended order even when the stream order differs.
+    """
+    result: List[LayoutElement] = []
+    for row in group_rows(elements):
+        result.extend(row)
     return result
+
+
+def _row_tol(row: List[LayoutElement]) -> float:
+    """Column x-alignment tolerance for a table *row*, scaled by its font size."""
+    fs = _median([e.font_size for e in row if e.font_size > 0]) or 10.0
+    return max(_TABLE_COL_TOL_MIN, _TABLE_COL_TOL_EM * fs)
+
+
+def _xs_aligned(xs: List[float], anchors: List[float], tol: float) -> bool:
+    """Whether cell x-positions *xs* line up with column *anchors* within *tol*."""
+    if len(xs) != len(anchors):
+        return False
+    return all(abs(x - a) <= tol for x, a in zip(xs, anchors))
+
+
+def _table_run(rows: List[List[LayoutElement]], start: int) -> Optional[List[List[LayoutElement]]]:
+    """Maximal grid of aligned rows starting at *start*, or ``None``.
+
+    A grid is two or more consecutive rows that each hold the same number of
+    cells (at least two) whose x-positions line up column-for-column. This is
+    deliberately strict — it recognises a regular table and leaves ragged text,
+    single-column paragraphs and merged/empty cells to the flow path.
+    """
+    first = rows[start]
+    k = len(first)
+    if k < _TABLE_MIN_COLS:
+        return None
+    anchors = [e.x for e in first]
+    tol = _row_tol(first)
+    run = [first]
+    j = start + 1
+    while (
+        j < len(rows)
+        and len(rows[j]) == k
+        and _xs_aligned([e.x for e in rows[j]], anchors, tol)
+    ):
+        run.append(rows[j])
+        j += 1
+    return run if len(run) >= _TABLE_MIN_ROWS else None
+
+
+def detect_tables(
+    rows: List[List[LayoutElement]],
+) -> List[Tuple[str, List[List[LayoutElement]]]]:
+    """Segment *rows* into ``("table", grid_rows)`` and ``("flow", rows)`` runs.
+
+    Consecutive rows forming a regular aligned grid (see :func:`_table_run`)
+    become a table segment; everything else is coalesced into flow segments for
+    ordinary paragraph/list handling.
+    """
+    segments: List[Tuple[str, List[List[LayoutElement]]]] = []
+    flow: List[List[LayoutElement]] = []
+
+    def flush_flow() -> None:
+        if flow:
+            segments.append(("flow", list(flow)))
+            flow.clear()
+
+    i, n = 0, len(rows)
+    while i < n:
+        grid = _table_run(rows, i)
+        if grid is not None:
+            flush_flow()
+            segments.append(("table", grid))
+            i += len(grid)
+        else:
+            flow.append(rows[i])
+            i += 1
+    flush_flow()
+    return segments
 
 
 def _same_paragraph(prev: LayoutElement, cur: LayoutElement) -> bool:

@@ -8,6 +8,7 @@ from aspose_pdf.engine.auto_tag import (
     build_tagged_content,
     choose_tags,
     detect_columns,
+    detect_tables,
     find_layout_elements,
     find_text_objects,
     find_xobject_invocations,
@@ -618,3 +619,94 @@ def test_list_parent_tree_links_lbody():
     assert len(page_array.items) == 3  # one MCID slot per list line
     owner = pdf._resolve(page_array.items[0])
     assert owner.mapping.get(PdfName("S")).name.lstrip("/") == "LBody"
+
+
+# ---------------------------------------------------------------------------
+# Table detection (/Table -> /TR -> /TD)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_tables_finds_aligned_grid():
+    rows = [
+        [_e(72, 700), _e(300, 700)],
+        [_e(72, 686), _e(300, 686)],
+        [_e(72, 672), _e(300, 672)],
+    ]
+    segs = detect_tables(rows)
+    assert [(k, len(v)) for k, v in segs] == [("table", 3)]
+
+
+def test_detect_tables_ignores_single_column():
+    rows = [[_e(72, 700)], [_e(72, 686)]]
+    assert [k for k, _ in detect_tables(rows)] == ["flow"]
+
+
+def test_detect_tables_ignores_misaligned_rows():
+    rows = [
+        [_e(72, 700), _e(300, 700)],
+        [_e(72, 686), _e(400, 686)],  # the second column is shifted out of line
+    ]
+    assert all(k == "flow" for k, _ in detect_tables(rows))
+
+
+def test_detect_tables_requires_two_rows():
+    rows = [[_e(72, 700), _e(300, 700)], [_e(72, 686)]]  # second row has one cell
+    assert all(k == "flow" for k, _ in detect_tables(rows))
+
+
+def test_detect_tables_splits_table_from_following_flow():
+    rows = [
+        [_e(72, 700), _e(300, 700)],
+        [_e(72, 686), _e(300, 686)],
+        [_e(72, 660)],  # a normal paragraph line under the table
+    ]
+    segs = detect_tables(rows)
+    assert [(k, len(v)) for k, v in segs] == [("table", 2), ("flow", 1)]
+
+
+# A compact grid whose column gap stays under the column-split gutter, so it is
+# kept in one band and recognised as a table rather than split into columns.
+_TABLE = (
+    b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (Name) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 102 700 Tm (Age) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 686 Tm (Al) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 102 686 Tm (30) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 672 Tm (Bo) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 102 672 Tm (25) Tj ET"
+)
+
+
+def test_auto_tag_builds_table_structure():
+    doc, pdf = _list_doc(_TABLE)
+    assert doc.auto_tag() == 1  # one /Table
+    kids = pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K")))
+    assert len(kids.items) == 1
+    table = pdf._resolve(kids.items[0])
+    assert table.mapping.get(PdfName("S")).name.lstrip("/") == "Table"
+    tr_refs = pdf._resolve(table.mapping.get(PdfName("K")))
+    assert len(tr_refs.items) == 3  # three rows
+    tr0 = pdf._resolve(tr_refs.items[0])
+    assert tr0.mapping.get(PdfName("S")).name.lstrip("/") == "TR"
+    td_refs = pdf._resolve(tr0.mapping.get(PdfName("K")))
+    assert len(td_refs.items) == 2  # two cells
+    assert pdf._resolve(td_refs.items[0]).mapping.get(PdfName("S")).name.lstrip("/") == "TD"
+    content = pdf.get_page_content(0)
+    assert content.count(b"/TD <</MCID") == 6  # six cells marked
+    assert content.count(b"BDC") == 6
+
+
+def test_wide_gutter_grid_reads_as_columns_not_table():
+    # A wide inter-column gap is split into columns first, so the aligned grid is
+    # not recognised as a table (documented boundary).
+    doc, pdf = _list_doc(
+        b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (a) Tj ET\n"
+        b"BT /F1 12 Tf 1 0 0 1 400 700 Tm (b) Tj ET\n"
+        b"BT /F1 12 Tf 1 0 0 1 72 686 Tm (c) Tj ET\n"
+        b"BT /F1 12 Tf 1 0 0 1 400 686 Tm (d) Tj ET"
+    )
+    doc.auto_tag()
+    tags = {
+        pdf._resolve(k).mapping.get(PdfName("S")).name.lstrip("/")
+        for k in pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K"))).items
+    }
+    assert "Table" not in tags
