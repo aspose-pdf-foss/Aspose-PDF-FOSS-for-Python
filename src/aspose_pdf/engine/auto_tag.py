@@ -26,6 +26,7 @@ preserved exactly.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterator, List, Optional, Tuple
 
@@ -38,6 +39,8 @@ __all__ = [
     "detect_columns",
     "assign_reading_order",
     "group_into_paragraphs",
+    "list_marker",
+    "is_list_item",
     "has_marked_content",
     "choose_tags",
     "build_tagged_content",
@@ -65,6 +68,14 @@ _COL_GUTTER_MIN = 18.0    # ... and at least this many user units
 _COL_OVERLAP_RATIO = 0.5  # column bands must share this fraction of their y-span
 _COL_MIN_SPAN_EM = 0.5    # each band must span more than a single line vertically
 _MAX_COL_DEPTH = 3        # recursion cap for nested vertical cuts
+
+# List-detection heuristics (see :func:`list_marker`).
+_HEAD_CAP = 32            # bytes of leading shown text kept for marker sniffing
+# Common bullet glyphs, including the WinAnsi bullet (byte 0x95) and dashes.
+_BULLET_CHARS = set("•·◦‣▪●■⁃-–—*\x95")
+# An ordered marker: an optional "(", then digits / a letter / a small roman
+# numeral, then "." or ")" -- e.g. "1.", "(a)", "iv)".
+_ORDERED_RE = re.compile(r"^\(?(?:[0-9]{1,3}|[ivxlcdmIVXLCDM]{1,5}|[A-Za-z])[.)]$")
 
 Matrix = Tuple[float, float, float, float, float, float]
 _IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
@@ -99,6 +110,7 @@ class LayoutElement:
     name: Optional[str] = None  # xobject resource name, with leading slash
     tag: Optional[str] = None
     alt: Optional[str] = None
+    text_head: str = ""  # leading shown text of the object, for list sniffing
 
 
 def _mul(m: Matrix, n: Matrix) -> Matrix:
@@ -231,6 +243,84 @@ def _to_float(token: str) -> Optional[float]:
         return None
 
 
+def _unescape_literal(raw: bytes) -> str:
+    """Decode a PDF literal-string body's leading bytes (escapes handled)."""
+    out = bytearray()
+    i, n = 0, len(raw)
+    while i < n and len(out) < _HEAD_CAP * 2:
+        b = raw[i]
+        if b == 0x5C and i + 1 < n:  # backslash escape
+            nxt = raw[i + 1]
+            simple = {0x6E: 0x0A, 0x72: 0x0D, 0x74: 0x09, 0x28: 0x28, 0x29: 0x29, 0x5C: 0x5C}
+            if nxt in simple:
+                out.append(simple[nxt])
+                i += 2
+                continue
+            if 0x30 <= nxt <= 0x37:  # octal escape (1-3 digits)
+                j, digits = i + 1, bytearray()
+                while j < n and len(digits) < 3 and 0x30 <= raw[j] <= 0x37:
+                    digits.append(raw[j])
+                    j += 1
+                out.append(int(digits.decode("ascii"), 8) & 0xFF)
+                i = j
+                continue
+            out.append(nxt)
+            i += 2
+            continue
+        out.append(b)
+        i += 1
+    return out.decode("latin-1", "replace")
+
+
+def _decode_string_span(content: bytes, start: int, end: int) -> str:
+    """Best-effort decode of a string operand span to text (for marker sniffing).
+
+    Literals are unescaped and hex strings are decoded, both as Latin-1. This is
+    approximate (composite-font codes are not glyph characters), which is fine:
+    a non-matching decode simply yields no list marker.
+    """
+    if start >= end:
+        return ""
+    lead = content[start:start + 1]
+    if lead == b"(":
+        return _unescape_literal(content[start + 1:end - 1])
+    if lead == b"<":
+        hex_body = content[start + 1:end - 1].decode("latin-1").strip()
+        try:
+            return bytes.fromhex(hex_body).decode("latin-1", "replace")
+        except ValueError:
+            return ""
+    return ""
+
+
+def list_marker(head: str) -> Optional[str]:
+    """Classify a line's leading text as a list marker: ``"ul"``, ``"ol"`` or None.
+
+    Unordered when it starts with a bullet/dash glyph standing alone or followed
+    by whitespace; ordered when the first token is an optionally-parenthesised
+    number, letter or small roman numeral closed by ``.`` or ``)``.
+    """
+    s = head.strip()
+    if not s:
+        return None
+    if s[0] in _BULLET_CHARS:
+        if len(s) == 1 or s[1].isspace():
+            return "ul"
+        return None
+    token = s.split(None, 1)[0]
+    if _ORDERED_RE.match(token):
+        return "ol"
+    return None
+
+
+def is_list_item(group: List["LayoutElement"]) -> bool:
+    """Whether a paragraph *group* is a list item (a ``/P`` line with a marker)."""
+    if not group:
+        return False
+    head = group[0]
+    return head.kind == "text" and head.tag == "P" and list_marker(head.text_head) is not None
+
+
 def has_marked_content(content: bytes) -> bool:
     """Return ``True`` if the stream already contains marked-content operators."""
     for token, _start, _end in _tokens(content):
@@ -258,6 +348,7 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
     start = 0
     max_size = 0.0
     text_length = 0
+    text_head = ""
     anchor: Optional[Tuple[float, float]] = None
 
     nums: List[float] = []
@@ -272,6 +363,9 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
         if token is None:  # a string literal / hex string operand
             if in_text:
                 text_length += tok_end - tok_start
+                if len(text_head) < _HEAD_CAP:
+                    seg = _decode_string_span(content, tok_start, tok_end)
+                    text_head = (text_head + " " + seg if text_head else seg)[:_HEAD_CAP]
             continue
         if token in ("[", "]", "{", "}", "<<", ">>"):
             continue  # array / dict punctuation: not an operator, keep operands
@@ -298,6 +392,7 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
             start = tok_start
             max_size = 0.0
             text_length = 0
+            text_head = ""
             anchor = None
             tm = tlm = _IDENTITY
         elif op == "ET":
@@ -305,7 +400,8 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
                 ax, ay = anchor if anchor is not None else _apply(_mul(tm, ctm), 0.0, 0.0)
                 elements.append(
                     LayoutElement(
-                        "text", start, tok_end, ax, ay, max_size, text_length
+                        "text", start, tok_end, ax, ay, max_size, text_length,
+                        text_head=text_head,
                     )
                 )
             in_text = False
@@ -473,6 +569,8 @@ def _same_paragraph(prev: LayoutElement, cur: LayoutElement) -> bool:
         return False
     if prev.tag != "P" or cur.tag != "P":
         return False
+    if list_marker(cur.text_head) is not None:
+        return False  # a new list marker begins a new item (its own group)
     fp, fc = prev.font_size, cur.font_size
     if fp > 0 and fc > 0:
         ratio = fc / fp

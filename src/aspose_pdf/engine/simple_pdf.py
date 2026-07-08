@@ -3187,6 +3187,75 @@ class SimplePdf:
         self._append_struct_root_kid(struct_root, elem_ref)
         return tag_name, mcids
 
+    def _register_list_marked_content(
+        self, page_index: int, items: List[List[Any]]
+    ) -> Optional[List[Tuple[int, int, str, int]]]:
+        """Build a nested ``/L`` → ``/LI`` → ``/LBody`` structure for *items*.
+
+        Each item (a list of line elements) becomes an ``/LI`` whose ``/LBody``
+        owns the item's line MCIDs. Returns the marks
+        ``(start, end, "LBody", mcid)`` for every line, or ``None`` if empty.
+        """
+        struct_root, struct_ref = self._ensure_struct_tree_root()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page dictionary is unavailable.")
+        page_ref = self._page_ref_for_structure(page_index)
+        parent_array = self._parent_tree_array_for_page(struct_root, page)
+
+        l_elem = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("StructElem"),
+                PdfName("S"): PdfName("L"),
+                PdfName("P"): struct_ref,
+                PdfName("Pg"): page_ref,
+            }
+        )
+        l_ref = self._cos_doc.register_object(l_elem)
+
+        li_refs: List[Any] = []
+        marks: List[Tuple[int, int, str, int]] = []
+        for item in items:
+            if not item:
+                continue
+            li_elem = PdfDictionary(
+                {
+                    PdfName("Type"): PdfName("StructElem"),
+                    PdfName("S"): PdfName("LI"),
+                    PdfName("P"): l_ref,
+                    PdfName("Pg"): page_ref,
+                }
+            )
+            li_ref = self._cos_doc.register_object(li_elem)
+            lbody_elem = PdfDictionary(
+                {
+                    PdfName("Type"): PdfName("StructElem"),
+                    PdfName("S"): PdfName("LBody"),
+                    PdfName("P"): li_ref,
+                    PdfName("Pg"): page_ref,
+                }
+            )
+            lbody_ref = self._cos_doc.register_object(lbody_elem)
+            mcids: List[int] = []
+            for line in item:
+                mcid = len(parent_array.items)
+                parent_array.items.append(lbody_ref)
+                mcids.append(mcid)
+                marks.append((line.start, line.end, "LBody", mcid))
+            lbody_elem.mapping[PdfName("K")] = (
+                PdfNumber(mcids[0])
+                if len(mcids) == 1
+                else PdfArray([PdfNumber(m) for m in mcids])
+            )
+            li_elem.mapping[PdfName("K")] = lbody_ref
+            li_refs.append(li_ref)
+
+        if not li_refs:
+            return None
+        l_elem.mapping[PdfName("K")] = PdfArray(li_refs)
+        self._append_struct_root_kid(struct_root, l_ref)
+        return marks
+
     def auto_tag(
         self,
         image_alt: Optional[Union[str, Callable[[str], str]]] = "Image",
@@ -3240,6 +3309,7 @@ class SimplePdf:
             find_layout_elements,
             group_into_paragraphs,
             has_marked_content,
+            is_list_item,
         )
 
         try:
@@ -3282,7 +3352,25 @@ class SimplePdf:
 
         marks: List[Tuple[int, int, str, int]] = []
         created = 0
-        for group in groups:
+        i, total = 0, len(groups)
+        while i < total:
+            # A run of two or more consecutive list-item paragraphs becomes one
+            # nested /L; anything else stays a single flat structure element.
+            if is_list_item(groups[i]):
+                run = [groups[i]]
+                j = i + 1
+                while j < total and is_list_item(groups[j]):
+                    run.append(groups[j])
+                    j += 1
+                if len(run) >= 2:
+                    item_marks = self._register_list_marked_content(page_index, run)
+                    if item_marks:
+                        marks.extend(item_marks)
+                        created += 1
+                    i = j
+                    continue
+            group = groups[i]
+            i += 1
             registered = self._register_grouped_marked_content(
                 page_index, group[0].tag, len(group), alt=group[0].alt
             )

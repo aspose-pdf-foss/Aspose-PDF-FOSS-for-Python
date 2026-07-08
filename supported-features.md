@@ -685,7 +685,11 @@ Supported:
   become headings ranked into levels by font size (`/H1` for the largest tier,
   then `/H2`, `/H3`) and each image XObject paint becomes a
   `/Figure` with `/Alt` (the `image_alt` argument takes a string, a name→text
-  callable, or `None` to skip images). Elements are wrapped in `BDC`/`EMC` by a
+  callable, or `None` to skip images). Consecutive paragraphs whose first line
+  begins with a list marker (a bullet/dash, or a numbered/lettered/roman
+  `1.`/`(a)`/`iv)` prefix) are wrapped into a nested `/L` → `/LI` → `/LBody`
+  list (two or more items required; a continuation line without a marker folds
+  into its item). Elements are wrapped in `BDC`/`EMC` by a
   byte-level splice (originals preserved, inline images skipped) and linked by
   MCID through `/StructParents` and the `/ParentTree`. Pages already carrying
   marked content are left untouched.
@@ -735,13 +739,15 @@ Boundaries:
 - The PDF/UA structure-tree checks validate a tag tree that already exists; they
   do not verify full marked-content (MCID) coverage for arbitrary existing PDFs.
   `auto_tag()` infers a real but **coarse** tree: reading order is geometric
-  (columns split at whitespace gutters, then top-to-bottom, left-to-right) and
-  paragraphs are grouped by proximity, but headings are inferred from font size
-  only (levels `/H1`–`/H3` by size tier), image `/Figure` alternate text is a
-  caller-supplied placeholder (alt text cannot be inferred), column detection is
-  a whitespace heuristic (a full-width banner over the columns may be
-  mis-assigned), and grouping cannot see lists or tables. It is a starting point
-  a human refines, not certified accessibility.
+  (columns split at whitespace gutters, then top-to-bottom, left-to-right),
+  paragraphs are grouped by proximity, headings are inferred from font size
+  only (levels `/H1`–`/H3` by size tier), and lists are recognised from leading
+  markers. Image `/Figure` alternate text is a caller-supplied placeholder (alt
+  text cannot be inferred), column detection is a whitespace heuristic (a
+  full-width banner over the columns may be mis-assigned), list detection is
+  marker-text based (an unmarked or image-bulleted list is not recognised, and
+  nesting is flat), and tables are not detected. It is a starting point a human
+  refines, not certified accessibility.
   Content authored through the page APIs carries caller-supplied semantic tags
   and alt text.
 - XMP covers the full data model: simple values, structured values, arrays

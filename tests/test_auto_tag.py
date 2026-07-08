@@ -534,3 +534,87 @@ def test_auto_tag_image_alt_callable():
     alt = figure.mapping.get(PdfName("Alt")).value
     text = alt.decode() if isinstance(alt, bytes) else alt
     assert text == "Figure: Im0"
+
+
+# ---------------------------------------------------------------------------
+# List structure (/L -> /LI -> /LBody)
+# ---------------------------------------------------------------------------
+
+
+def _list_doc(content: bytes):
+    pdf = SimplePdf(pages=[(0, 0, 612, 792)], page_contents=[content])
+    pdf._ensure_cos()
+    doc = Document()
+    doc._engine_pdf = pdf
+    return doc, pdf
+
+
+_BULLET_LIST = (
+    b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (\x95 First item) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 686 Tm (\x95 Second item) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 672 Tm (\x95 Third item) Tj ET"
+)
+
+
+def test_auto_tag_builds_list_structure():
+    doc, pdf = _list_doc(_BULLET_LIST)
+    assert doc.auto_tag() == 1  # one /L structure element
+    kids = pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K")))
+    assert len(kids.items) == 1
+    lst = pdf._resolve(kids.items[0])
+    assert lst.mapping.get(PdfName("S")).name.lstrip("/") == "L"
+    li_refs = pdf._resolve(lst.mapping.get(PdfName("K")))
+    assert len(li_refs.items) == 3
+    li0 = pdf._resolve(li_refs.items[0])
+    assert li0.mapping.get(PdfName("S")).name.lstrip("/") == "LI"
+    lbody = pdf._resolve(li0.mapping.get(PdfName("K")))
+    assert lbody.mapping.get(PdfName("S")).name.lstrip("/") == "LBody"
+    content = pdf.get_page_content(0)
+    assert b"/LBody <</MCID 0>>" in content
+    assert content.count(b"BDC") == 3 and content.count(b"EMC") == 3
+
+
+def test_single_list_marker_stays_paragraph():
+    # A lone marker line is not a list (a list needs two or more items).
+    doc, pdf = _list_doc(b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (- lonely) Tj ET")
+    doc.auto_tag()
+    kids = pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K")))
+    tags = [pdf._resolve(k).mapping.get(PdfName("S")).name.lstrip("/") for k in kids.items]
+    assert tags == ["P"]
+
+
+_ORDERED_LIST = (
+    b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (1. First item) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 686 Tm (continues here) Tj ET\n"
+    b"BT /F1 12 Tf 1 0 0 1 72 672 Tm (2. Second item) Tj ET"
+)
+
+
+def test_auto_tag_ordered_list_with_multiline_item():
+    doc, pdf = _list_doc(_ORDERED_LIST)
+    assert doc.auto_tag() == 1
+    lst = pdf._resolve(
+        pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K"))).items[0]
+    )
+    li_refs = pdf._resolve(lst.mapping.get(PdfName("K")))
+    assert len(li_refs.items) == 2  # the continuation line folds into item 1
+    lbody0 = pdf._resolve(pdf._resolve(li_refs.items[0]).mapping.get(PdfName("K")))
+    k0 = pdf._resolve(lbody0.mapping.get(PdfName("K")))
+    assert isinstance(k0, PdfArray) and len(k0.items) == 2  # marker + continuation
+    lbody1 = pdf._resolve(pdf._resolve(li_refs.items[1]).mapping.get(PdfName("K")))
+    assert isinstance(pdf._resolve(lbody1.mapping.get(PdfName("K"))), PdfNumber)
+
+
+def test_list_parent_tree_links_lbody():
+    doc, pdf = _list_doc(_BULLET_LIST)
+    doc.auto_tag()
+    struct_root = _struct_root(pdf)
+    nums = pdf._resolve(
+        pdf._resolve(struct_root.mapping.get(PdfName("ParentTree"))).mapping.get(
+            PdfName("Nums")
+        )
+    )
+    page_array = pdf._resolve(nums.items[1])
+    assert len(page_array.items) == 3  # one MCID slot per list line
+    owner = pdf._resolve(page_array.items[0])
+    assert owner.mapping.get(PdfName("S")).name.lstrip("/") == "LBody"
