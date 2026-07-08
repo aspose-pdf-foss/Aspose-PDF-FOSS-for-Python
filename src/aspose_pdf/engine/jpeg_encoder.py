@@ -116,12 +116,6 @@ def _build_huffman(bits, vals) -> dict[int, tuple[int, int]]:
     return table
 
 
-_HUFF_DC_LUMA = _build_huffman(_BITS_DC_LUMA, _VALS_DC_LUMA)
-_HUFF_AC_LUMA = _build_huffman(_BITS_AC_LUMA, _VALS_AC_LUMA)
-_HUFF_DC_CHROMA = _build_huffman(_BITS_DC_CHROMA, _VALS_DC_CHROMA)
-_HUFF_AC_CHROMA = _build_huffman(_BITS_AC_CHROMA, _VALS_AC_CHROMA)
-
-
 def _scaled_qt(base: list[int], quality: int) -> list[int]:
     """Scale a base quantization table for *quality* (libjpeg convention)."""
     q = max(1, min(100, quality))
@@ -200,15 +194,20 @@ def _fdct_quantize(block: list[int], qt: list[int]) -> list[int]:
     return out
 
 
-def _encode_block(coeffs, prev_dc, dc_table, ac_table, writer) -> int:
-    """Huffman-encode one quantized block; return its DC value for prediction."""
+def _block_tokens(coeffs, prev_dc, dc_key, ac_key, tokens, freq) -> int:
+    """Append one block's Huffman tokens; count symbols; return its DC value.
+
+    A token is ``(table_key, symbol, amplitude_value, amplitude_size)``; ZRL and
+    end-of-block carry no amplitude (size 0). Deferring the actual bit writing
+    lets the caller either use the fixed tables or build optimized ones from the
+    gathered *freq* symbol counts.
+    """
+    dc_freq, ac_freq = freq[dc_key], freq[ac_key]
     dc = coeffs[0]
     diff = dc - prev_dc
     size = _category(diff)
-    code, length = dc_table[size]
-    writer.write(code, length)
-    if size:
-        writer.write(_amplitude_bits(diff, size), size)
+    tokens.append((dc_key, size, diff, size))
+    dc_freq[size] += 1
 
     run = 0
     for k in range(1, 64):
@@ -217,19 +216,88 @@ def _encode_block(coeffs, prev_dc, dc_table, ac_table, writer) -> int:
             run += 1
             continue
         while run > 15:
-            zrl_code, zrl_len = ac_table[0xF0]
-            writer.write(zrl_code, zrl_len)
+            tokens.append((ac_key, 0xF0, 0, 0))
+            ac_freq[0xF0] += 1
             run -= 16
         size = _category(value)
         symbol = (run << 4) | size
-        code, length = ac_table[symbol]
-        writer.write(code, length)
-        writer.write(_amplitude_bits(value, size), size)
+        tokens.append((ac_key, symbol, value, size))
+        ac_freq[symbol] += 1
         run = 0
     if run > 0:  # trailing zeros -> end-of-block.
-        eob_code, eob_len = ac_table[0x00]
-        writer.write(eob_code, eob_len)
+        tokens.append((ac_key, 0x00, 0, 0))
+        ac_freq[0x00] += 1
     return dc
+
+
+def _optimal_table(freq_in) -> tuple[list[int], list[int]]:
+    """Build an optimized ``(BITS, HUFFVAL)`` from symbol counts (Annex K.2).
+
+    A reserved symbol (index 256) with frequency 1 guarantees no code is all
+    ones, and the code lengths are limited to 16 bits per Annex K.3.
+    """
+    freq = list(freq_in) + [1]  # index 256: reserved
+    codesize = [0] * 257
+    others = [-1] * 257
+
+    while True:
+        c1 = c2 = -1
+        v = None
+        for i in range(257):  # least frequency, largest index on ties
+            if freq[i] and (v is None or freq[i] <= v):
+                v, c1 = freq[i], i
+        v = None
+        for i in range(257):
+            if freq[i] and i != c1 and (v is None or freq[i] <= v):
+                v, c2 = freq[i], i
+        if c2 < 0:
+            break
+        freq[c1] += freq[c2]
+        freq[c2] = 0
+        codesize[c1] += 1
+        while others[c1] >= 0:
+            c1 = others[c1]
+            codesize[c1] += 1
+        others[c1] = c2
+        codesize[c2] += 1
+        while others[c2] >= 0:
+            c2 = others[c2]
+            codesize[c2] += 1
+
+    bits = [0] * 33
+    for i in range(257):
+        if codesize[i]:
+            bits[codesize[i]] += 1
+
+    i = 32  # limit code lengths to 16 bits (Annex K, figure K.4)
+    while i > 16:
+        while bits[i] > 0:
+            j = i - 2
+            while bits[j] == 0:
+                j -= 1
+            bits[i] -= 2
+            bits[i - 1] += 1
+            bits[j + 1] += 2
+            bits[j] -= 1
+        i -= 1
+    i = 16  # remove the reserved symbol's (longest) code
+    while bits[i] == 0:
+        i -= 1
+    bits[i] -= 1
+
+    huffval = [
+        sym for size in range(1, 33) for sym in range(256) if codesize[sym] == size
+    ]
+    return bits[1:17], huffval
+
+
+def _emit_tokens(tokens, code_tables, writer) -> None:
+    """Write buffered *tokens* as bits using the per-key Huffman code tables."""
+    for key, symbol, amp_value, amp_size in tokens:
+        code, length = code_tables[key][symbol]
+        writer.write(code, length)
+        if amp_size:
+            writer.write(_amplitude_bits(amp_value, amp_size), amp_size)
 
 
 def _rgb_to_ycbcr_planes(width, height, samples):
@@ -303,17 +371,31 @@ def _dht(table_class: int, table_id: int, bits, vals) -> bytes:
     return _marker_segment(0xC4, body)
 
 
+# Fixed Annex K table specs, keyed like the gathered frequency counts.
+_FIXED_SPEC = {
+    "dl": (_BITS_DC_LUMA, _VALS_DC_LUMA),
+    "al": (_BITS_AC_LUMA, _VALS_AC_LUMA),
+    "dc": (_BITS_DC_CHROMA, _VALS_DC_CHROMA),
+    "ac": (_BITS_AC_CHROMA, _VALS_AC_CHROMA),
+}
+
+
 def encode(
     width: int,
     height: int,
     components: int,
     samples: bytes,
     quality: int = 75,
+    *,
+    optimize: bool = True,
 ) -> bytes:
     """Encode interleaved 8-bit *samples* as a baseline JPEG.
 
     *components* must be 1 (grayscale) or 3 (RGB).  Raises ``ValueError`` for
-    other component counts or a sample buffer of the wrong length.
+    other component counts or a sample buffer of the wrong length. With
+    *optimize* (the default), per-image Huffman tables are computed from the
+    actual symbol statistics (Annex K.2), which is smaller than the fixed Annex
+    K tables at no quality cost; pass ``optimize=False`` for the standard tables.
     """
     if components not in (1, 3):
         raise ValueError("jpeg_encoder supports 1 or 3 components only")
@@ -325,27 +407,32 @@ def encode(
     luma_qt = _scaled_qt(_STD_LUMA_QT, quality)
     chroma_qt = _scaled_qt(_STD_CHROMA_QT, quality)
 
-    writer = _BitWriter()
+    freq = {k: [0] * 256 for k in ("dl", "al", "dc", "ac")}
     if components == 1:
-        _encode_gray(width, height, samples, luma_qt, writer)
+        tokens = _tokenize_gray(width, height, samples, luma_qt, freq)
+        keys = [(0, 0, "dl"), (1, 0, "al")]
         sof = _sof0(width, height, [(1, 1, 1, 0)])
         dqt = _dqt(0, luma_qt)
-        dht = (
-            _dht(0, 0, _BITS_DC_LUMA, _VALS_DC_LUMA)
-            + _dht(1, 0, _BITS_AC_LUMA, _VALS_AC_LUMA)
-        )
         sos = _sos([(1, 0, 0)])
     else:
-        _encode_rgb_420(width, height, samples, luma_qt, chroma_qt, writer)
+        tokens = _tokenize_rgb_420(width, height, samples, luma_qt, chroma_qt, freq)
+        keys = [(0, 0, "dl"), (1, 0, "al"), (0, 1, "dc"), (1, 1, "ac")]
         sof = _sof0(width, height, [(1, 2, 2, 0), (2, 1, 1, 1), (3, 1, 1, 1)])
         dqt = _dqt(0, luma_qt) + _dqt(1, chroma_qt)
-        dht = (
-            _dht(0, 0, _BITS_DC_LUMA, _VALS_DC_LUMA)
-            + _dht(1, 0, _BITS_AC_LUMA, _VALS_AC_LUMA)
-            + _dht(0, 1, _BITS_DC_CHROMA, _VALS_DC_CHROMA)
-            + _dht(1, 1, _BITS_AC_CHROMA, _VALS_AC_CHROMA)
-        )
         sos = _sos([(1, 0, 0), (2, 1, 1), (3, 1, 1)])
+
+    dht = b""
+    code_tables: dict[str, dict[int, tuple[int, int]]] = {}
+    for table_class, table_id, key in keys:
+        if optimize:
+            bits, vals = _optimal_table(freq[key])
+        else:
+            bits, vals = _FIXED_SPEC[key]
+        dht += _dht(table_class, table_id, bits, vals)
+        code_tables[key] = _build_huffman(bits, vals)
+
+    writer = _BitWriter()
+    _emit_tokens(tokens, code_tables, writer)
     writer.flush()
 
     jfif = _marker_segment(
@@ -374,7 +461,8 @@ def _sos(comps) -> bytes:
     return _marker_segment(0xDA, bytes(body))
 
 
-def _encode_gray(width, height, samples, luma_qt, writer) -> None:
+def _tokenize_gray(width, height, samples, luma_qt, freq) -> list:
+    tokens: list = []
     prev_dc = 0
     blocks_x = (width + 7) // 8
     blocks_y = (height + 7) // 8
@@ -382,16 +470,16 @@ def _encode_gray(width, height, samples, luma_qt, writer) -> None:
         for bx in range(blocks_x):
             block = _extract_block(samples, width, height, bx * 8, by * 8)
             coeffs = _fdct_quantize(block, luma_qt)
-            prev_dc = _encode_block(
-                coeffs, prev_dc, _HUFF_DC_LUMA, _HUFF_AC_LUMA, writer
-            )
+            prev_dc = _block_tokens(coeffs, prev_dc, "dl", "al", tokens, freq)
+    return tokens
 
 
-def _encode_rgb_420(width, height, samples, luma_qt, chroma_qt, writer) -> None:
+def _tokenize_rgb_420(width, height, samples, luma_qt, chroma_qt, freq) -> list:
     y_plane, cb_full, cr_full = _rgb_to_ycbcr_planes(width, height, samples)
     cb_plane, cw, ch = _downsample_2x(cb_full, width, height)
     cr_plane, _cw, _ch = _downsample_2x(cr_full, width, height)
 
+    tokens: list = []
     mcus_x = (width + 15) // 16
     mcus_y = (height + 15) // 16
     dc_y = dc_cb = dc_cr = 0
@@ -402,16 +490,13 @@ def _encode_rgb_420(width, height, samples, luma_qt, chroma_qt, writer) -> None:
                     y_plane, width, height, mx * 16 + dx, my * 16 + dy
                 )
                 coeffs = _fdct_quantize(block, luma_qt)
-                dc_y = _encode_block(
-                    coeffs, dc_y, _HUFF_DC_LUMA, _HUFF_AC_LUMA, writer
-                )
+                dc_y = _block_tokens(coeffs, dc_y, "dl", "al", tokens, freq)
             cb_block = _extract_block(cb_plane, cw, ch, mx * 8, my * 8)
-            dc_cb = _encode_block(
-                _fdct_quantize(cb_block, chroma_qt),
-                dc_cb, _HUFF_DC_CHROMA, _HUFF_AC_CHROMA, writer,
+            dc_cb = _block_tokens(
+                _fdct_quantize(cb_block, chroma_qt), dc_cb, "dc", "ac", tokens, freq
             )
             cr_block = _extract_block(cr_plane, cw, ch, mx * 8, my * 8)
-            dc_cr = _encode_block(
-                _fdct_quantize(cr_block, chroma_qt),
-                dc_cr, _HUFF_DC_CHROMA, _HUFF_AC_CHROMA, writer,
+            dc_cr = _block_tokens(
+                _fdct_quantize(cr_block, chroma_qt), dc_cr, "dc", "ac", tokens, freq
             )
+    return tokens

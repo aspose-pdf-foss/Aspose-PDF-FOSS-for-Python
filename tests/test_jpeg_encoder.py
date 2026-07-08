@@ -100,3 +100,59 @@ def test_pillow_decodes_our_output():
     assert im.size == (w, h)
     pixels = im.convert("RGB").tobytes()
     assert _mae(pixels, src) < 6.0
+
+
+# ---------------------------------------------------------------------------
+# Optimized Huffman tables (Annex K.2)
+# ---------------------------------------------------------------------------
+
+
+def test_optimized_is_smaller_and_roundtrips():
+    w, h = 48, 32
+    src = _gradient_rgb(w, h)
+    opt = je.encode(w, h, 3, src, quality=80)
+    fixed = je.encode(w, h, 3, src, quality=80, optimize=False)
+    assert len(opt) < len(fixed)  # per-image tables beat the fixed Annex K ones
+    for jpg in (opt, fixed):
+        decoded = dct.decode(jpg)
+        assert decoded is not None
+        assert (decoded.width, decoded.height, decoded.components) == (w, h, 3)
+
+
+def test_optimal_table_is_a_valid_prefix_code():
+    from aspose_pdf.engine.jpeg_encoder import _optimal_table
+
+    freq = [0] * 256
+    for symbol, count in [(0, 100), (1, 50), (2, 25), (0x11, 10), (0xF0, 5)]:
+        freq[symbol] = count
+    bits, vals = _optimal_table(freq)
+    assert len(bits) == 16  # code lengths capped at 16 bits
+    assert sum(bits) == len(vals)  # one code per symbol
+    assert set(vals) == {0, 1, 2, 0x11, 0xF0}  # exactly the counted symbols
+    # A valid prefix code (Kraft sum <= 1); the reserved all-ones codeword is
+    # deliberately left free, so the sum is just under 1.
+    kraft = sum(n / (1 << length) for length, n in enumerate(bits, 1))
+    assert 0.0 < kraft < 1.0
+
+
+def test_optimal_table_single_symbol():
+    from aspose_pdf.engine.jpeg_encoder import _optimal_table
+
+    freq = [0] * 256
+    freq[7] = 1
+    bits, vals = _optimal_table(freq)
+    assert vals == [7] and sum(bits) == 1
+
+
+def test_solid_colour_image_roundtrips():
+    w, h = 32, 24
+    src = bytes([120, 60, 200]) * (w * h)
+    decoded = dct.decode(je.encode(w, h, 3, src, quality=90))
+    assert decoded is not None
+    assert _mae(decoded.samples, src) < 4.0  # near-constant output
+
+
+def test_optimize_false_embeds_standard_tables():
+    jpg = je.encode(16, 16, 1, _gradient_gray(16, 16), optimize=False)
+    # The standard DC luma BITS (Annex K.3) appear verbatim in a DHT segment.
+    assert bytes([0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0]) in jpg

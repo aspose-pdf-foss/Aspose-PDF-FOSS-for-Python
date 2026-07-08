@@ -80,7 +80,8 @@ Supported (honored options):
   confidently are left whole.
 - `image_compression_quality` (1–100, default off) — re-encode eligible
   RGB/grayscale image XObjects as baseline JPEG (`/DCTDecode`) at that quality
-  using the dependency-free encoder (`engine/jpeg_encoder.py`). Images are
+  using the dependency-free encoder (`engine/jpeg_encoder.py`, with per-image
+  optimized Huffman tables). Images are
   rewritten only when the result is smaller, so already-small or incompressible
   images are left as-is. Masks, soft-mask targets, images with a `/Decode`
   array, Indexed/CMYK/Lab colour, and opaque codecs (JPX/CCITT/JBIG2) are
@@ -422,7 +423,9 @@ Supported:
 - Deduplicate identical image payloads during optimization.
 - **Encode** pixels back to a baseline JPEG with a **dependency-free** encoder
   (`aspose_pdf.engine.jpeg_encoder`: grayscale and RGB with 4:2:0 chroma
-  subsampling) and **box-downscale** pixels (`aspose_pdf.engine.image_resample`).
+  subsampling, and per-image **optimized Huffman** tables computed from the
+  actual symbol statistics — smaller than the fixed Annex K tables at no quality
+  cost) and **box-downscale** pixels (`aspose_pdf.engine.image_resample`).
   `Document.optimize` uses both to apply `image_compression_quality` (recompress
   to JPEG) and `image_max_dimension` (cap the longest side); see
   [Optimization](#optimization).
@@ -430,9 +433,10 @@ Supported:
 Boundaries:
 
 - High-level image insertion/placement into pages is not a public feature in this
-  prerelease. The JPEG encoder is baseline (4:2:0) for grayscale/RGB only (no
-  CMYK, progressive, or optimized-Huffman output); resampling is box-average
-  downscaling (no upscaling or DPI-targeted resampling).
+  prerelease. The JPEG encoder is baseline for grayscale/RGB only, with optimized
+  Huffman tables but fixed 4:2:0 subsampling (no CMYK or progressive output);
+  resampling is box-average downscaling (no upscaling or DPI-targeted
+  resampling).
 - JPX/JPEG 2000 page-render painting still depends on optional Pillow decode
   availability; arithmetic-coded JPEG remains unsupported by the pure-Python
   raster path.
