@@ -5966,7 +5966,16 @@ class SimplePdf:
             ff_stream.mapping.pop(PdfName("Filter"), None)
             ff_stream.mapping.pop(PdfName("DecodeParms"), None)
             ff_stream.mapping[PdfName("Length")] = PdfNumber(len(new_program))
-            ff_stream.mapping[PdfName("Length1")] = PdfNumber(len(new_program))
+            if PdfName("Length2") in ff_stream.mapping:
+                # Type 1 (/FontFile): cleartext (/Length1) and trailer (/Length3)
+                # are unchanged; only the eexec section (/Length2) resized.
+                l1 = self._pdf_number(ff_stream.mapping.get(PdfName("Length1"))) or 0
+                l3 = self._pdf_number(ff_stream.mapping.get(PdfName("Length3"))) or 0
+                ff_stream.mapping[PdfName("Length2")] = PdfNumber(
+                    len(new_program) - int(l1) - int(l3)
+                )
+            else:
+                ff_stream.mapping[PdfName("Length1")] = PdfNumber(len(new_program))
             subset_count += 1
 
         if subset_count:
@@ -5984,8 +5993,95 @@ class SimplePdf:
         if subtype == "TrueType":
             return self._plan_simple_truetype_subset(font, codes)
         if subtype in ("Type1", "MMType1"):
+            # A simple font is backed by either /FontFile (Type 1) or /FontFile3
+            # (CFF); try each.
+            plan = self._plan_type1_subset(font, codes)
+            if plan is not None:
+                return plan
             return self._plan_simple_cff_subset(font, codes)
         return None
+
+    def _plan_type1_subset(self, font: Any, codes: set):
+        """Plan a subset for a simple Type 1 (``/FontFile``) font.
+
+        Unused glyphs' charstrings are emptied while every glyph name is kept
+        (see :func:`aspose_pdf.engine.font_subset_type1.subset_type1`). The kept
+        glyph names come from the effective simple-font encoding resolved without
+        any external table: the PDF ``/Differences`` (names map straight to Type 1
+        glyph names) over the font's own built-in encoding. A used code that
+        needs a predefined base encoding (a ``/Encoding`` name, or a dict with
+        ``/BaseEncoding``) bails, keeping the font whole.
+        """
+        from functools import partial
+
+        from .cos import PdfName
+        from .font_subset_type1 import subset_type1
+        from .type1_outlines import Type1Outlines
+
+        descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+        located = self._fontfile(descriptor)
+        if located is None:
+            return None
+        ff_stream, ff_ref = located
+        l1 = self._pdf_number(ff_stream.mapping.get(PdfName("Length1")))
+        l2 = self._pdf_number(ff_stream.mapping.get(PdfName("Length2")))
+        if l1 is None or l2 is None:
+            return None
+        length1, length2 = int(l1), int(l2)
+        try:
+            program = self._decode_cos_stream(ff_stream, ff_ref)
+        except PDF_OPERATION_ERRORS:
+            return None
+        outlines = Type1Outlines(program, length1, length2)
+        if not outlines.ok:
+            return None
+        keep_names = self._type1_used_names(font, outlines, codes)
+        if keep_names is None:
+            return None
+        subsetter = partial(subset_type1, length1=length1, length2=length2)
+        return ff_stream, keep_names, program, subsetter
+
+    def _type1_used_names(self, font: Any, outlines: Any, codes: set):
+        """Resolve the used glyph names of a simple Type 1 font, or ``None``."""
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber
+
+        enc = self._resolve(font.mapping.get(PdfName("Encoding")))
+        base_name = None
+        differences = None
+        if isinstance(enc, PdfName):
+            base_name = enc.name.lstrip("/")
+        elif isinstance(enc, PdfDictionary):
+            base_name = self._get_name(enc.mapping.get(PdfName("BaseEncoding")))
+            differences = self._resolve(enc.mapping.get(PdfName("Differences")))
+        diff_map: Dict[int, str] = {}
+        if isinstance(differences, PdfArray):
+            current = 0
+            for item in differences.items:
+                item = self._resolve(item)
+                if isinstance(item, PdfNumber):
+                    current = int(item.value)
+                elif isinstance(item, PdfName):
+                    diff_map[current] = item.name.lstrip("/")
+                    current += 1
+        builtin = outlines.builtin_encoding
+        keep = {".notdef"}
+        for code_bytes in codes:
+            for b in code_bytes:
+                name = diff_map.get(b)
+                if name is None:
+                    if base_name is not None:
+                        return None  # predefined base -> needs a table -> bail.
+                    name = builtin.get(b)
+                if name is None or name not in outlines.name_to_gid:
+                    return None  # unresolved/absent used glyph -> bail (no erase).
+                keep.add(name)
+        if len(keep) <= 1:
+            return None
+        return keep
+
+    def _fontfile(self, descriptor: Any):
+        """Return ``(stream, ref)`` for a descriptor's ``/FontFile`` or ``None``."""
+        return self._font_program_stream(descriptor, "FontFile")
 
     def _plan_simple_cff_subset(self, font: Any, codes: set):
         """Plan a subset for a simple Type1 font backed by a name-keyed CFF.

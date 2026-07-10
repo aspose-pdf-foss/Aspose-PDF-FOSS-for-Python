@@ -126,12 +126,17 @@ Boundaries:
   CFF (`/FontFile3`) is subset using the CFF's own **built-in encoding** (code →
   glyph id), applied only when the font has no PDF `/Encoding` override (an
   override would need name→glyph resolution through the CFF charset and standard
-  strings). **Not** subset (left whole): Type 1 (`/FontFile`, eexec-encrypted),
-  CFF2, CID-keyed CFF in a simple font, and simple CFF with a predefined
-  (Standard/Expert) encoding or a PDF `/Encoding`. Simple-font `/Encoding`
-  resolution falls back to leaving the font whole for any used code it cannot map
-  exactly (e.g. StandardEncoding or non-algorithmic glyph names), so a used glyph
-  is never erased.
+  strings). A simple **Type 1** font (`/FontFile`, eexec-encrypted) is subset by
+  re-encrypting its Private dict with each unused glyph's charstring emptied
+  (``0 0 hsbw endchar``); the kept glyph names come from the PDF `/Differences`
+  (which name Type 1 glyphs directly) over the font's own built-in encoding, so
+  no external table is needed. **Not** subset (left whole): CFF2, CID-keyed CFF
+  in a simple font, simple CFF with a predefined (Standard/Expert) encoding or a
+  PDF `/Encoding`, and Type 1 fonts whose used codes need a predefined base
+  encoding (a `/Encoding` name or a dict with `/BaseEncoding`). Simple-font
+  `/Encoding` resolution falls back to leaving the font whole for any used code
+  it cannot map exactly (e.g. StandardEncoding or non-algorithmic glyph names),
+  so a used glyph is never erased.
 
 ## Pages
 
