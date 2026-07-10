@@ -122,12 +122,16 @@ Boundaries:
   `Private` are relocated, and CIDs are mapped to glyph ids through the CFF
   charset). A simple `/TrueType` font is subset via its symbol `cmap`, or via the
   PDF `/Encoding` (a WinAnsi/MacRoman base plus `uniXXXX` `/Differences`) resolved
-  against the font's Unicode `cmap`. **Not** subset (left whole): Type 1
-  (`/FontFile`, eexec-encrypted), CFF2, and simple CFF fonts (`/FontFile3` in a
-  simple `/Type1`, which would need name→glyph resolution through the CFF
-  charset). Simple-TrueType `/Encoding` resolution falls back to leaving the font
-  whole for any used code it cannot map exactly (e.g. StandardEncoding or
-  non-algorithmic glyph names), so a used glyph is never erased.
+  against the font's Unicode `cmap`. A simple `/Type1` font backed by a name-keyed
+  CFF (`/FontFile3`) is subset using the CFF's own **built-in encoding** (code →
+  glyph id), applied only when the font has no PDF `/Encoding` override (an
+  override would need name→glyph resolution through the CFF charset and standard
+  strings). **Not** subset (left whole): Type 1 (`/FontFile`, eexec-encrypted),
+  CFF2, CID-keyed CFF in a simple font, and simple CFF with a predefined
+  (Standard/Expert) encoding or a PDF `/Encoding`. Simple-font `/Encoding`
+  resolution falls back to leaving the font whole for any used code it cannot map
+  exactly (e.g. StandardEncoding or non-algorithmic glyph names), so a used glyph
+  is never erased.
 
 ## Pages
 

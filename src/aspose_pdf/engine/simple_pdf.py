@@ -5983,7 +5983,52 @@ class SimplePdf:
             return self._plan_type0_subset(font, codes)
         if subtype == "TrueType":
             return self._plan_simple_truetype_subset(font, codes)
+        if subtype in ("Type1", "MMType1"):
+            return self._plan_simple_cff_subset(font, codes)
         return None
+
+    def _plan_simple_cff_subset(self, font: Any, codes: set):
+        """Plan a subset for a simple Type1 font backed by a name-keyed CFF.
+
+        The kept glyphs are read straight from the CFF's own built-in encoding
+        (code -> gid). This is applied only when the font carries no PDF
+        ``/Encoding`` override -- an override remaps codes to glyphs we cannot
+        resolve without the CFF charset and standard strings, so we keep the
+        font whole rather than risk erasing a used glyph. A predefined
+        (Standard/Expert) CFF encoding, a CID-keyed CFF, a ``/FontFile`` (Type1,
+        not CFF), or any unresolved used code likewise bails.
+        """
+        from .cff_outlines import CffOutlines
+        from .cos import PdfName
+        from .font_subset_cff import subset_cff
+
+        if font.mapping.get(PdfName("Encoding")) is not None:
+            return None
+        descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+        located = self._fontfile3(descriptor)
+        if located is None:
+            return None
+        ff_stream, ff_ref = located
+        try:
+            program = self._decode_cos_stream(ff_stream, ff_ref)
+        except PDF_OPERATION_ERRORS:
+            return None
+        outlines = CffOutlines(program)
+        if not outlines.ok or outlines._is_cid:
+            return None  # CID-keyed CFF is subset through the Type0 path only.
+        code_to_gid = outlines.encoding_code_to_gid()
+        if not code_to_gid:
+            return None  # predefined Standard/Expert encoding -> cannot resolve.
+        keep = {0}
+        for code_bytes in codes:
+            for b in code_bytes:
+                gid = code_to_gid.get(b)
+                if gid is None:
+                    return None  # unresolved used code -> bail (never erase it).
+                keep.add(gid)
+        if len(keep) <= 1:
+            return None
+        return ff_stream, keep, program, subset_cff
 
     def _plan_type0_subset(self, font: Any, codes: set):
         from .cos import PdfArray, PdfDictionary, PdfName

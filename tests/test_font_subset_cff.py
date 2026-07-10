@@ -423,3 +423,119 @@ def test_optimize_subsets_embedded_cid_keyed_cff():
     assert top.CharStrings[order[2]].bytecode != b"\x0e"  # CID 20 kept
     for gid in (1, 3):
         assert top.CharStrings[order[gid]].bytecode == b"\x0e"  # others erased
+
+
+# ---------------------------------------------------------------------------
+# Integration: optimize() subsets a simple (Type1) name-keyed CFF font
+# ---------------------------------------------------------------------------
+
+
+def _build_encoded_cff() -> bytes:
+    """A name-keyed CFF carrying a custom built-in encoding (0x80..0x83 -> A..D)."""
+    charstrings = {}
+    for name in _ORDER:
+        pen = T2CharStringPen(600, None)
+        if name in _BOXES:
+            x0, y0, x1, y1 = _BOXES[name]
+            pen.moveTo((x0, y0))
+            for k in range(25):
+                pen.lineTo((x1 - k, y0 + k))
+                pen.lineTo((x1, y1))
+            pen.closePath()
+        charstrings[name] = pen.getCharString()
+    fb = FontBuilder(unitsPerEm=1000, isTTF=False)
+    fb.setupGlyphOrder(_ORDER)
+    fb.setupCharacterMap({0x41: "A", 0x42: "B", 0x43: "C", 0x44: "D"})
+    fb.setupCFF("SubTest", {}, charstrings, {})
+    fb.setupHorizontalMetrics({g: (600, 0) for g in _ORDER})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": "SubTest", "styleName": "Regular"})
+    fb.setupOS2()
+    fb.setupPost()
+    cff = fb.font["CFF "]
+    top = cff.cff[cff.cff.fontNames[0]]
+    encoding = [".notdef"] * 256
+    encoding[0x80], encoding[0x81], encoding[0x82], encoding[0x83] = "A", "B", "C", "D"
+    top.Encoding = encoding  # a custom CFF encoding (not StandardEncoding)
+    buf = io.BytesIO()
+    fb.save(buf)
+    return TTFont(buf)["CFF "].compile(TTFont(buf))
+
+
+def _embed_simple_type1(cff_bytes: bytes, shown_codes, *, pdf_encoding=None):
+    from aspose_pdf.engine.cos import (
+        PdfDictionary,
+        PdfName,
+        PdfNumber,
+        PdfStream,
+    )
+    from aspose_pdf.engine.simple_pdf import SimplePdf
+
+    content = ("BT /F0 12 Tf <" + "".join(f"{c:02x}" for c in shown_codes) + "> Tj ET")
+    pdf = SimplePdf()
+    pdf.pages = [(0, 0, 200, 200)]
+    pdf.page_contents = [content.encode("latin-1")]
+    pdf._ensure_cos()
+    cos = pdf._cos_doc
+    ff = cos.register_object(
+        PdfStream(
+            cff_bytes,
+            {PdfName("Length"): PdfNumber(len(cff_bytes)), PdfName("Subtype"): PdfName("Type1C")},
+        )
+    )
+    descriptor = cos.register_object(
+        PdfDictionary(
+            {
+                PdfName("Type"): PdfName("FontDescriptor"),
+                PdfName("FontName"): PdfName("AAAAAA+SubTest"),
+                PdfName("FontFile3"): ff,
+            }
+        )
+    )
+    font_map = {
+        PdfName("Type"): PdfName("Font"),
+        PdfName("Subtype"): PdfName("Type1"),
+        PdfName("BaseFont"): PdfName("AAAAAA+SubTest"),
+        PdfName("FontDescriptor"): descriptor,
+    }
+    if pdf_encoding is not None:
+        font_map[PdfName("Encoding")] = PdfName(pdf_encoding)
+    font_obj = cos.register_object(PdfDictionary(font_map))
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {PdfName("Font"): PdfDictionary({PdfName("F0"): font_obj})}
+    )
+    return pdf, ff.object_number
+
+
+def test_optimize_subsets_simple_cff_via_builtin_encoding():
+    cff = _build_encoded_cff()
+    pdf, ff_num = _embed_simple_type1(cff, shown_codes=[0x81])  # 0x81 -> 'B' (gid 2)
+    original = pdf._cos_doc.objects[ff_num].content
+
+    pdf.optimize(_subset_opts(subset_fonts=True))
+
+    new_program = pdf._cos_doc.objects[ff_num].content
+    assert len(new_program) < len(original)
+    got = _charstrings(new_program)
+    assert got["B"].bytecode != b"\x0e"  # shown glyph kept
+    for name in ("A", "C", "D"):
+        assert got[name].bytecode == b"\x0e"  # unused glyphs erased
+
+
+def test_simple_cff_with_pdf_encoding_is_not_subset():
+    # A PDF /Encoding override cannot be resolved without the CFF charset and
+    # standard strings, so the font is kept whole (never erase a used glyph).
+    cff = _build_encoded_cff()
+    pdf, ff_num = _embed_simple_type1(cff, [0x81], pdf_encoding="WinAnsiEncoding")
+    original = pdf._cos_doc.objects[ff_num].content
+    pdf.optimize(_subset_opts(subset_fonts=True))
+    assert pdf._cos_doc.objects[ff_num].content == original
+
+
+def test_simple_cff_standard_encoding_is_not_subset():
+    # A predefined (Standard) CFF encoding yields no code->gid map -> keep whole.
+    cff = _build_cff()  # StandardEncoding
+    pdf, ff_num = _embed_simple_type1(cff, [0x41])
+    original = pdf._cos_doc.objects[ff_num].content
+    pdf.optimize(_subset_opts(subset_fonts=True))
+    assert pdf._cos_doc.objects[ff_num].content == original
