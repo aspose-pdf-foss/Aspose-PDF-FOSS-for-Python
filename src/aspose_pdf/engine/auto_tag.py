@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterator, List, Optional, Tuple
+from typing import Iterator, List, Optional, Set, Tuple
 
 __all__ = [
     "TextObject",
@@ -37,6 +37,7 @@ __all__ = [
     "find_xobject_invocations",
     "find_layout_elements",
     "find_image_placements",
+    "find_mcids",
     "detect_columns",
     "assign_reading_order",
     "group_rows",
@@ -500,6 +501,47 @@ def find_image_placements(content: bytes) -> List[Tuple[str, float, float]]:
         nums = []
         last_name = None
     return placements
+
+
+def find_mcids(content: bytes) -> Set[int]:
+    """Return the set of marked-content ``/MCID`` integers declared in *content*.
+
+    Scans the inline property dictionary of each ``BDC``/``DP`` operator for an
+    ``/MCID`` integer.  The tokenizer skips strings, comments and inline-image
+    data, so operators that merely *look* like marked content inside those are
+    ignored.  Named property lists (``/Tag /P1 BDC``) are not resolved, so their
+    MCIDs -- rare in generated content -- are not reported.
+    """
+    mcids: Set[int] = set()
+    depth = 0
+    current: Optional[int] = None
+    expect_value = False
+    for token, _tok_start, _tok_end in _tokens(content):
+        if token is None:
+            continue
+        if token == "<<":
+            depth += 1
+            if depth == 1:
+                current = None  # a fresh top-level BDC/DP property dict
+            continue
+        if token == ">>":
+            if depth > 0:
+                depth -= 1
+            continue
+        if depth > 0:
+            if expect_value:
+                value = _to_float(token)
+                if value is not None:
+                    current = int(value)
+                expect_value = False
+            elif token == "/MCID":
+                expect_value = True
+            continue
+        if token in ("BDC", "DP"):
+            if current is not None:
+                mcids.add(current)
+            current = None
+    return mcids
 
 
 def find_text_objects(content: bytes) -> List[TextObject]:

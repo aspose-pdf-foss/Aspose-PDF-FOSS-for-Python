@@ -808,6 +808,88 @@ def pdfua_pages(pdf: Any) -> Tuple[List[str], List[str]]:
     return errors, warnings
 
 
+def _parent_tree_map(pdf: Any, struct_root: PdfDictionary) -> dict:
+    """Return ``{StructParents key: parent PdfArray}`` from the ``/ParentTree``."""
+    parent_tree = _get_dict(pdf, struct_root.get(PdfName("ParentTree")))
+    if parent_tree is None:
+        return {}
+    nums = pdf._resolve(parent_tree.get(PdfName("Nums")))
+    if not isinstance(nums, PdfArray):
+        return {}
+    mapping: dict = {}
+    items = nums.items
+    for i in range(0, len(items) - 1, 2):
+        key = pdf._resolve(items[i])
+        arr = pdf._resolve(items[i + 1])
+        if isinstance(key, PdfNumber) and isinstance(arr, PdfArray):
+            mapping[int(key.value)] = arr
+    return mapping
+
+
+def pdfua_mcid_coverage(pdf: Any) -> Tuple[List[str], List[str]]:
+    """Advisory MCID coverage checks between page content and the structure tree.
+
+    For every page carrying a ``/StructParents`` key, each marked-content
+    ``/MCID`` in the content must map to a structure element through the
+    ``/ParentTree`` (uncovered marked content is not reachable from the tree),
+    and each ``/ParentTree`` slot that points at a structure element should
+    correspond to marked content that actually exists (a dangling reference).
+    All findings are warnings -- this is a heuristic, not certification.
+    """
+    from .auto_tag import find_mcids
+
+    errors: List[str] = []
+    warnings: List[str] = []
+    root = catalog(pdf)
+    if root is None:
+        return errors, warnings
+    struct_root = _get_dict(pdf, root.get(PdfName("StructTreeRoot")))
+    if struct_root is None:
+        return errors, warnings
+    key_to_arr = _parent_tree_map(pdf, struct_root)
+    if not key_to_arr:
+        return errors, warnings
+
+    try:
+        for i in range(len(pdf.pages)):
+            page = pdf._get_page_dict(i)
+            if not isinstance(page, PdfDictionary):
+                continue
+            key_obj = pdf._resolve(page.get(PdfName("StructParents")))
+            if not isinstance(key_obj, PdfNumber):
+                continue
+            arr = key_to_arr.get(int(key_obj.value))
+            if arr is None:
+                warnings.append(
+                    f"PDF/UA: page {i + 1} declares /StructParents "
+                    f"{int(key_obj.value)} with no matching /ParentTree entry."
+                )
+                continue
+            try:
+                used = find_mcids(pdf.get_page_content(i))
+            except PDF_OPERATION_ERRORS:
+                continue
+            length = len(arr.items)
+            for mcid in sorted(used):
+                parent = pdf._resolve(arr.items[mcid]) if 0 <= mcid < length else None
+                if not isinstance(parent, PdfDictionary):
+                    warnings.append(
+                        f"PDF/UA: marked-content MCID {mcid} on page {i + 1} is "
+                        "not mapped to a structure element in the /ParentTree."
+                    )
+            for mcid in range(length):
+                if mcid in used:
+                    continue
+                if isinstance(pdf._resolve(arr.items[mcid]), PdfDictionary):
+                    warnings.append(
+                        f"PDF/UA: /ParentTree maps MCID {mcid} on page {i + 1} "
+                        "but no marked content uses it."
+                    )
+    except PDF_OPERATION_ERRORS:
+        pass
+    return errors, warnings
+
+
 # ---------------------------------------------------------------------------
 # PDF/UA — catalog
 # ---------------------------------------------------------------------------
@@ -849,6 +931,9 @@ def pdfua_extended(pdf: Any) -> Tuple[List[str], List[str]]:
     page_errors, page_warnings = pdfua_pages(pdf)
     errors.extend(page_errors)
     warnings.extend(page_warnings)
+    mcid_errors, mcid_warnings = pdfua_mcid_coverage(pdf)
+    errors.extend(mcid_errors)
+    warnings.extend(mcid_warnings)
 
     return errors, warnings
 

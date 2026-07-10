@@ -692,7 +692,10 @@ Supported:
   `/ParentTree` once the tree carries content, heading-level skips, list/table
   containment, `/MarkInfo /Suspects true`, pages with annotations that omit
   `/Tabs /S`, annotations missing a `/Contents` text alternative or structure
-  nesting, and fonts that are not embedded.
+  nesting, and fonts that are not embedded. **MCID coverage** is cross-checked
+  per page: a marked-content `/MCID` with no `/ParentTree` structure element, a
+  `/ParentTree` slot referencing an MCID no marked content uses, and a page
+  `/StructParents` key with no matching `/ParentTree` entry are all reported.
 - Add the PDF/UA catalog shell with `Document.convert_to_pdfua` (structure tree
   with an empty `/ParentTree`, MarkInfo without `/Suspects`, `/Tabs /S` on pages
   carrying annotations, language, DisplayDocTitle, title, and a `pdfuaid` XMP
@@ -768,8 +771,10 @@ Boundaries:
   validation. They inspect document structure, not rendered output, glyph
   coverage, colour fidelity, or the semantic correctness of a tag tree. Use a
   dedicated validator such as veraPDF for formal compliance.
-- The PDF/UA structure-tree checks validate a tag tree that already exists; they
-  do not verify full marked-content (MCID) coverage for arbitrary existing PDFs.
+- The PDF/UA structure-tree checks validate a tag tree that already exists.
+  Marked-content (MCID) coverage is cross-checked against the `/ParentTree`
+  (advisory warnings), but named marked-content property lists (`/Tag /P1 BDC`,
+  which reference `/Properties` rather than an inline `/MCID`) are not resolved.
   `auto_tag()` infers a real but **coarse** tree: reading order is geometric
   (columns split at whitespace gutters, then top-to-bottom, left-to-right),
   paragraphs are grouped by proximity, headings are inferred from font size
