@@ -32,6 +32,8 @@ from aspose_pdf.engine.cos import (
 from aspose_pdf.engine.incremental_update import IncrementalUpdate
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
 from aspose_pdf.engine.pdf_writer_cos import PdfCosWriter
+from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 # Failures while reading a third-party DSS must degrade to "no material",
 # never raise into a validation path that promises not to.
@@ -341,39 +343,96 @@ def _resolve(doc, obj):
     return obj
 
 
-def _decoded_stream_bytes(doc, stream: PdfStream) -> Optional[bytes]:
+def _decoded_stream_bytes(
+    doc,
+    stream: PdfStream,
+    *,
+    limits: PdfLoadLimits,
+    budget: _LoadBudget,
+) -> Optional[bytes]:
     """Return a stream's decoded bytes, applying ``/Filter`` if present."""
     filt = _resolve(doc, stream.get(PdfName("Filter")))
     if filt is None:
-        return stream.content
-    from aspose_pdf.engine.filters import StreamDecoder
+        data = stream.content
+    else:
+        from aspose_pdf.engine.filters import StreamDecoder
 
-    parms = _resolve(doc, stream.get(PdfName("DecodeParms")))
-    try:
-        return StreamDecoder.decode(stream.content, filt, parms)
-    except Exception:
-        # Unknown/edge filter — fall back to the raw bytes.
-        return stream.content
+        parms = _resolve(doc, stream.get(PdfName("DecodeParms")))
+        try:
+            data = StreamDecoder.decode(
+                stream.content,
+                filt,
+                parms,
+                limits=limits,
+            )
+        except PdfResourceLimitException:
+            raise
+        except Exception:
+            # Unknown/edge filter — fall back to the raw bytes.
+            data = stream.content
+    budget.reserve_decoded(len(data), "DSS validation material stream")
+    return data
 
 
-def _read_stream_array(doc, arr) -> List[bytes]:
+def _read_stream_array(
+    doc,
+    arr,
+    *,
+    limits: PdfLoadLimits,
+    budget: _LoadBudget,
+) -> List[bytes]:
     arr = _resolve(doc, arr)
     if not isinstance(arr, PdfArray):
         return []
+    budget.check(
+        len(arr.items),
+        "max_container_items",
+        "DSS validation material entries",
+    )
     out: List[bytes] = []
     for item in arr.items:
         stream = _resolve(doc, item)
         if isinstance(stream, PdfStream):
-            data = _decoded_stream_bytes(doc, stream)
+            data = _decoded_stream_bytes(
+                doc,
+                stream,
+                limits=limits,
+                budget=budget,
+            )
             if data:
+                budget.check(
+                    len(out) + 1,
+                    "max_container_items",
+                    "decoded DSS validation material entries",
+                )
                 out.append(data)
     return out
 
 
-def read_dss(pdf_bytes: bytes) -> DssMaterial:
+def read_dss(
+    pdf_bytes: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> DssMaterial:
     """Harvest validation material from a document's ``/DSS`` (best effort)."""
+    if budget is None:
+        resolved_limits = _coerce_limits(limits)
+        active_budget = _LoadBudget(resolved_limits)
+    else:
+        if not isinstance(budget, _LoadBudget):
+            raise TypeError("budget must be a _LoadBudget instance or None")
+        if limits is not None and limits != budget.limits:
+            raise ValueError("limits must match budget.limits")
+        resolved_limits = budget.limits
+        active_budget = budget
+    active_budget.check_input(len(pdf_bytes))
     try:
-        doc = PdfCosParser(pdf_bytes).parse()
+        doc = PdfCosParser(
+            pdf_bytes,
+            limits=resolved_limits,
+            budget=active_budget,
+        ).parse()
         root = _resolve(doc, doc.trailer.get(PdfName("Root")))
         if not isinstance(root, PdfDictionary):
             return DssMaterial()
@@ -381,10 +440,27 @@ def read_dss(pdf_bytes: bytes) -> DssMaterial:
         if not isinstance(dss, PdfDictionary):
             return DssMaterial()
         return DssMaterial(
-            certs=_read_stream_array(doc, dss.get(PdfName("Certs"))),
-            crls=_read_stream_array(doc, dss.get(PdfName("CRLs"))),
-            ocsps=_read_stream_array(doc, dss.get(PdfName("OCSPs"))),
+            certs=_read_stream_array(
+                doc,
+                dss.get(PdfName("Certs")),
+                limits=resolved_limits,
+                budget=active_budget,
+            ),
+            crls=_read_stream_array(
+                doc,
+                dss.get(PdfName("CRLs")),
+                limits=resolved_limits,
+                budget=active_budget,
+            ),
+            ocsps=_read_stream_array(
+                doc,
+                dss.get(PdfName("OCSPs")),
+                limits=resolved_limits,
+                budget=active_budget,
+            ),
         ).deduped()
+    except PdfResourceLimitException:
+        raise
     except Exception:
         # read_dss feeds validation, which must never raise.
         return DssMaterial()

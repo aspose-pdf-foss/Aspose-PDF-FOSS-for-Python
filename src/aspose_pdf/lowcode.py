@@ -25,6 +25,7 @@ same plugin works regardless of where the PDF data lives.
 from __future__ import annotations
 
 import io
+import inspect
 from enum import Enum
 from pathlib import Path
 from typing import BinaryIO, Iterable
@@ -32,6 +33,12 @@ from typing import BinaryIO, Iterable
 from aspose_pdf.document import Document
 from aspose_pdf.exceptions import AsposePdfException
 from aspose_pdf.facades import PdfExtractor
+from aspose_pdf.load_limits import (
+    PdfLoadLimits,
+    _LoadBudget,
+    _coerce_limits,
+    _read_limited,
+)
 from aspose_pdf.optimization import OptimizationOptions
 
 __all__ = [
@@ -77,9 +84,11 @@ class DataSource:
 
     A data source can be read from (used as an input) and written to (used as
     an output). Subclasses implement :meth:`read_bytes` and :meth:`write_bytes`.
+    Reads apply the default PDF input limit unless a different ``limits``
+    policy is supplied.
     """
 
-    def read_bytes(self) -> bytes:
+    def read_bytes(self, *, limits: PdfLoadLimits | None = None) -> bytes:
         raise NotImplementedError(
             "This data source does not support reading; use it as an output "
             "or choose a readable source such as FileDataSource."
@@ -98,9 +107,12 @@ class FileDataSource(DataSource):
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
 
-    def read_bytes(self) -> bytes:
+    def read_bytes(self, *, limits: PdfLoadLimits | None = None) -> bytes:
+        budget = _LoadBudget(limits)
         try:
-            return self.path.read_bytes()
+            budget.check_input(self.path.stat().st_size)
+            with self.path.open("rb") as stream:
+                return _read_limited(stream, budget)
         except OSError as exc:
             raise AsposePdfException(
                 f"Could not read input file {self.path}: {exc}"
@@ -123,11 +135,12 @@ class StreamDataSource(DataSource):
         self.stream = stream
         self.name = name
 
-    def read_bytes(self) -> bytes:
-        data = self.stream.read()
-        if not isinstance(data, (bytes, bytearray)):
-            raise AsposePdfException("Stream read() did not return bytes")
-        return bytes(data)
+    def read_bytes(self, *, limits: PdfLoadLimits | None = None) -> bytes:
+        budget = _LoadBudget(limits)
+        try:
+            return _read_limited(self.stream, budget)
+        except TypeError as exc:
+            raise AsposePdfException("Stream read() did not return bytes") from exc
 
     def write_bytes(self, data: bytes) -> None:
         self.stream.write(data)
@@ -136,14 +149,34 @@ class StreamDataSource(DataSource):
 class ByteArrayDataSource(DataSource):
     """A data source backed by in-memory bytes."""
 
-    def __init__(self, data: bytes | None = None) -> None:
-        self.data = bytes(data) if data is not None else b""
+    def __init__(self, data: bytes | bytearray | None = None) -> None:
+        if data is None:
+            self.data: bytes | memoryview = b""
+        elif isinstance(data, bytearray):
+            self.data = memoryview(data)
+        elif isinstance(data, bytes):
+            self.data = data
+        else:
+            raise TypeError("data must be bytes, bytearray, or None")
 
-    def read_bytes(self) -> bytes:
-        return self.data
+    def read_bytes(self, *, limits: PdfLoadLimits | None = None) -> bytes:
+        _LoadBudget(limits).check_input(len(self.data))
+        return bytes(self.data)
 
     def write_bytes(self, data: bytes) -> None:
         self.data = bytes(data)
+
+
+def _read_source_bytes(source: DataSource, limits: PdfLoadLimits) -> bytes:
+    """Read a source while preserving the legacy no-argument override contract."""
+    reader = source.read_bytes
+    try:
+        inspect.signature(reader).bind(limits=limits)
+    except (TypeError, ValueError):
+        data = reader()
+        _LoadBudget(limits).check_input(len(data))
+        return data
+    return reader(limits=limits)
 
 
 # ---------------------------------------------------------------------------
@@ -217,9 +250,10 @@ class ResultContainer:
 
 
 class PluginOptions:
-    """Base options object holding input and output data sources."""
+    """Hold input/output data sources and their PDF resource-limit policy."""
 
-    def __init__(self) -> None:
+    def __init__(self, limits: PdfLoadLimits | None = None) -> None:
+        self.limits = _coerce_limits(limits)
         self.inputs: list[DataSource] = []
         self.outputs: list[DataSource] = []
 
@@ -256,8 +290,9 @@ class OptimizeOptions(PluginOptions):
         *,
         compress_streams: bool = True,
         remove_unused_objects: bool = True,
+        limits: PdfLoadLimits | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(limits=limits)
         self.compress_streams = compress_streams
         self.remove_unused_objects = remove_unused_objects
 
@@ -300,12 +335,13 @@ class Merger(PdfPlugin):
 
     def process(self, options: MergeOptions) -> ResultContainer:
         self._require_inputs(options)
-        base = Document()
+        limits = _coerce_limits(getattr(options, "limits", None))
+        base = Document(limits=limits)
         loaded: list[Document] = []
         try:
             for source in options.inputs:
-                doc = Document()
-                doc.load_from(source.read_bytes())
+                doc = Document(limits=limits)
+                doc.load_from(_read_source_bytes(source, limits))
                 loaded.append(doc)
             base.merge(*loaded)
             buffer = io.BytesIO()
@@ -324,6 +360,7 @@ class Optimizer(PdfPlugin):
 
     def process(self, options: OptimizeOptions) -> ResultContainer:
         self._require_inputs(options)
+        limits = _coerce_limits(getattr(options, "limits", None))
         remove_unused = getattr(options, "remove_unused_objects", True)
         compress = getattr(options, "compress_streams", True)
         if remove_unused:
@@ -339,9 +376,9 @@ class Optimizer(PdfPlugin):
             )
         results: list[OperationResult] = []
         for source in options.inputs:
-            doc = Document()
+            doc = Document(limits=limits)
             try:
-                doc.load_from(source.read_bytes())
+                doc.load_from(_read_source_bytes(source, limits))
                 doc.optimize(opts, compress_streams=compress)
                 buffer = io.BytesIO()
                 doc.save(buffer)
@@ -359,14 +396,19 @@ class Splitter(PdfPlugin):
         self._require_inputs(options)
         from aspose_pdf.engine.simple_pdf import SimplePdf
 
+        limits = _coerce_limits(getattr(options, "limits", None))
         source = options.inputs[0]
-        pdf = SimplePdf.from_bytes(source.read_bytes())
+        pdf = SimplePdf.from_bytes(
+            _read_source_bytes(source, limits), limits=limits
+        )
         results: list[OperationResult] = []
         try:
             page_count = len(pdf.pages)
             for index in range(page_count):
                 single = pdf.extract_pages([index])
                 try:
+                    single._load_limits = pdf.load_limits
+                    single._load_budget = pdf._load_budget
                     results.append(OperationResult(single.to_bytes()))
                 finally:
                     single.dispose()
@@ -381,11 +423,14 @@ class TextExtractor(PdfPlugin):
 
     def process(self, options: TextExtractorOptions) -> ResultContainer:
         self._require_inputs(options)
+        limits = _coerce_limits(getattr(options, "limits", None))
         results: list[OperationResult] = []
         for source in options.inputs:
             extractor = PdfExtractor()
             try:
-                extractor.bind_pdf(source.read_bytes())
+                extractor.bind_pdf(
+                    _read_source_bytes(source, limits), limits=limits
+                )
                 extractor.extract_text()
                 results.append(OperationResult(extractor.get_text()))
             finally:

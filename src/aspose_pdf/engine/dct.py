@@ -16,8 +16,9 @@ lossless JPEGs are **not** handled -- :func:`decode` returns ``None`` for those
 so the caller can fall back to Pillow.
 
 Only the standard library is used (``math``/``struct``), matching the engine's
-other pure-Python codecs. Parsing is defensive: malformed input never raises,
-:func:`decode` simply returns ``None``.
+other pure-Python codecs. Parsing is defensive: malformed input returns
+``None``. Configured resource-limit violations raise
+:class:`~aspose_pdf.exceptions.PdfResourceLimitException`.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ from __future__ import annotations
 import math
 import struct
 from dataclasses import dataclass
+
+from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits
 
 __all__ = ["decode", "DecodedJpeg"]
 
@@ -68,10 +72,17 @@ class DecodedJpeg:
         return {1: "L", 4: "CMYK"}.get(self.components, "RGB")
 
 
-def decode(data: bytes) -> DecodedJpeg | None:
-    """Decode baseline JPEG *data*; return ``None`` if it is not supported."""
+def decode(
+    data: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+) -> DecodedJpeg | None:
+    """Decode JPEG *data*; return ``None`` if it is not supported."""
+    resolved_limits = _coerce_limits(limits)
     try:
-        return _decode(data)
+        return _decode(data, resolved_limits)
+    except PdfResourceLimitException:
+        raise
     except (struct.error, IndexError, ValueError, ZeroDivisionError):
         return None
 
@@ -91,7 +102,7 @@ class _Component:
     ac_table: int = 0
 
 
-def _decode(data: bytes) -> DecodedJpeg | None:
+def _decode(data: bytes, limits: PdfLoadLimits) -> DecodedJpeg | None:
     if len(data) < 2 or data[0] != 0xFF or data[1] != 0xD8:
         return None  # missing SOI
 
@@ -125,8 +136,16 @@ def _decode(data: bytes) -> DecodedJpeg | None:
 
         if marker == 0xC0:  # SOF0 -- baseline
             width, height, components = _parse_sof(seg)
+            if not _validate_jpeg_layout(
+                width, height, components, limits, progressive=False
+            ):
+                return None
         elif marker == 0xC2:  # SOF2 -- progressive
             width, height, components = _parse_sof(seg)
+            if not _validate_jpeg_layout(
+                width, height, components, limits, progressive=True
+            ):
+                return None
             progressive = True
         elif marker in _UNSUPPORTED_SOF:
             return None  # extended/arithmetic/lossless: unsupported
@@ -160,6 +179,68 @@ def _decode(data: bytes) -> DecodedJpeg | None:
     if progressive and prog is not None:
         return prog.finalize(quant, adobe_transform)
     return None
+
+
+def _raise_limit(context: str, value: int, name: str, limit: int) -> None:
+    raise PdfResourceLimitException(
+        f"Resource limit exceeded for {context}: {value} exceeds {name}={limit}"
+    )
+
+
+def _validate_jpeg_layout(
+    width: int,
+    height: int,
+    components: list[_Component],
+    limits: PdfLoadLimits,
+    *,
+    progressive: bool,
+) -> bool:
+    """Validate SOF dimensions and all large decoder allocations."""
+    component_count = len(components)
+    if width <= 0 or height <= 0 or component_count not in (1, 3, 4):
+        return False
+    if any(comp.h <= 0 or comp.v <= 0 for comp in components):
+        return False
+
+    pixels = width * height
+    pixel_limit = limits.max_image_pixels
+    if pixel_limit is not None and pixels > pixel_limit:
+        _raise_limit("JPEG image pixels", pixels, "max_image_pixels", pixel_limit)
+
+    output_bytes = pixels * component_count
+    byte_limit = limits.max_decoded_stream_bytes
+    if byte_limit is not None and output_bytes > byte_limit:
+        _raise_limit(
+            "JPEG decoded samples",
+            output_bytes,
+            "max_decoded_stream_bytes",
+            byte_limit,
+        )
+
+    h_max = max(comp.h for comp in components)
+    v_max = max(comp.v for comp in components)
+    mcus_x = _ceil_div(width, 8 * h_max)
+    mcus_y = _ceil_div(height, 8 * v_max)
+    plane_bytes = sum(
+        mcus_x * comp.h * 8 * mcus_y * comp.v * 8
+        for comp in components
+    )
+
+    # `_assemble` temporarily holds both its bytearray and immutable bytes copy.
+    work_bytes = plane_bytes + 2 * output_bytes
+    if progressive:
+        # Progressive decoding stores Python integer coefficients in nested
+        # lists; account for both the list reference and non-small int objects.
+        work_bytes += plane_bytes * 36
+    work_limit = limits.max_codec_work_bytes
+    if work_limit is not None and work_bytes > work_limit:
+        _raise_limit(
+            "JPEG decoder working set",
+            work_bytes,
+            "max_codec_work_bytes",
+            work_limit,
+        )
+    return True
 
 
 def _parse_sof(seg: bytes):

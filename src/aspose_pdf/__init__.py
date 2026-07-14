@@ -41,6 +41,7 @@ from .lowcode import (
     TextExtractor,
     TextExtractorOptions,
 )
+from .load_limits import PdfLoadLimits
 from .optimization import OptimizationOptions
 from .pages import Page, PageCollection
 from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
@@ -56,6 +57,7 @@ from .validation import (
     ValidationResult,
     ValidationStatus,
 )
+from .exceptions import PdfResourceLimitException
 from .visualization import RasterizedPage
 from .xmp import (
     NamespaceProvider,
@@ -96,6 +98,8 @@ __all__ = [
     "Optimizer",
     "OptimizeOptions",
     "PdfPlugin",
+    "PdfLoadLimits",
+    "PdfResourceLimitException",
     "Plugin",
     "PluginOptions",
     "ResultContainer",

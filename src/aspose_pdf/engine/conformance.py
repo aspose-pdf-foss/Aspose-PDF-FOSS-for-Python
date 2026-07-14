@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from typing import Any, List, Optional, Set, Tuple
 
-from ..exceptions import PDF_OPERATION_ERRORS
+from ..exceptions import PDF_OPERATION_ERRORS, PdfResourceLimitException
 from .cos import (
     PdfArray,
     PdfBoolean,
@@ -116,6 +116,8 @@ def catalog(pdf: Any) -> Optional[PdfDictionary]:
         return None
     try:
         return _get_dict(pdf, pdf._cos_doc.trailer.get(PdfName("Root")))
+    except PdfResourceLimitException:
+        raise
     except PDF_OPERATION_ERRORS:
         return None
 
@@ -159,6 +161,8 @@ def pdfa_extended(pdf: Any, level_short: str) -> Tuple[List[str], List[str]]:
             _check_embedded_files(pdf, errors)
         if level_a:
             _check_tagging_for_level_a(pdf, errors, warnings)
+    except PdfResourceLimitException:
+        raise
     except PDF_OPERATION_ERRORS:
         # Conformance checks are best-effort: a malformed object must never
         # crash validation. The base checks already flag structural damage.
@@ -687,6 +691,8 @@ def _walk_struct_for(
             pdf, struct_root.get(PdfName("K")), role_map, ctx, None, set(), 0,
             errors, warnings,
         )
+    except PdfResourceLimitException:
+        raise
     except PDF_OPERATION_ERRORS:
         pass
     if full and ctx.get("numbered_headings") and ctx.get("unnumbered_headings"):
@@ -803,6 +809,8 @@ def pdfua_pages(pdf: Any) -> Tuple[List[str], List[str]]:
                             "have a /Contents text alternative."
                         )
         _check_fonts_embedded(pdf, errors)
+    except PdfResourceLimitException:
+        raise
     except PDF_OPERATION_ERRORS:
         pass
     return errors, warnings
@@ -866,7 +874,13 @@ def pdfua_mcid_coverage(pdf: Any) -> Tuple[List[str], List[str]]:
                 )
                 continue
             try:
-                used = find_mcids(pdf.get_page_content(i))
+                used = find_mcids(
+                    pdf.get_page_content(i),
+                    limits=pdf._load_limits,
+                    budget=pdf._load_budget,
+                )
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 continue
             length = len(arr.items)
@@ -885,6 +899,8 @@ def pdfua_mcid_coverage(pdf: Any) -> Tuple[List[str], List[str]]:
                         f"PDF/UA: /ParentTree maps MCID {mcid} on page {i + 1} "
                         "but no marked content uses it."
                     )
+    except PdfResourceLimitException:
+        raise
     except PDF_OPERATION_ERRORS:
         pass
     return errors, warnings
@@ -921,6 +937,8 @@ def pdfua_extended(pdf: Any) -> Tuple[List[str], List[str]]:
             )
         elif "pdfuaid:part" not in metadata.content.decode("utf-8", errors="replace"):
             errors.append("PDF/UA XMP metadata must declare pdfuaid:part (= 1).")
+    except PdfResourceLimitException:
+        raise
     except PDF_OPERATION_ERRORS:
         pass
 

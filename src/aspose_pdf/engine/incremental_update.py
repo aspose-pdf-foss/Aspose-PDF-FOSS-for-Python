@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Any
 from aspose_pdf.exceptions import PdfParseException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 
 @dataclass
@@ -40,17 +41,32 @@ class IncrementalUpdate:
     """
 
     original_data: bytes
+    limits: PdfLoadLimits | None = field(default=None, repr=False)
+    budget: _LoadBudget | None = field(default=None, repr=False)
     original_eof_offset: int = field(init=False)
     next_obj_num: int = field(init=False)
     modified_objects: Dict[int, bytes] = field(default_factory=dict)
     xref_entries: List[Tuple[int, int, int]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if self.budget is None:
+            self.limits = _coerce_limits(self.limits)
+            self.budget = _LoadBudget(self.limits)
+        else:
+            if not isinstance(self.budget, _LoadBudget):
+                raise TypeError("budget must be a _LoadBudget instance or None")
+            if self.limits is not None and self.limits != self.budget.limits:
+                raise ValueError("limits must match budget.limits")
+            self.limits = self.budget.limits
+        self.budget.check_input(len(self.original_data))
         self.original_eof_offset = self.find_last_eof()
         startxref = self.find_startxref()
         self._parse_existing_objects(startxref)
         # The next object number is one greater than the highest existing.
-        self.next_obj_num = max([0] + [obj for obj, _, _ in self.xref_entries]) + 1
+        self.next_obj_num = max(
+            (obj for obj, _, _ in self.xref_entries),
+            default=0,
+        ) + 1
 
     # ------------------------------------------------------------------
     # Parsing helpers
@@ -65,10 +81,19 @@ class IncrementalUpdate:
     def find_startxref(self) -> int:
         """Return the integer value after the last ``startxref`` keyword."""
         pattern = re.compile(rb"startxref\s*(\d+)")
-        matches = list(pattern.finditer(self.original_data))
-        if not matches:
+        last_match = None
+        section_count = 0
+        for match in pattern.finditer(self.original_data):
+            section_count += 1
+            self.budget.check(
+                section_count,
+                "max_xref_sections",
+                "incremental update xref sections",
+            )
+            last_match = match
+        if last_match is None:
             raise PdfParseException("PDF does not contain a startxref")
-        return int(matches[-1].group(1))
+        return int(last_match.group(1))
 
     def _parse_existing_objects(self, startxref: int) -> None:
         """Populate ``xref_entries`` with existing object metadata."""
@@ -76,9 +101,13 @@ class IncrementalUpdate:
         xref_start = startxref
         if xref_start + 4 > len(data) or data[xref_start : xref_start + 4] != b"xref":
             # Fallback: extract object numbers via a simple regex.
-            obj_numbers = set(
-                int(m.group(1)) for m in re.finditer(rb"(\d+)\s+0\s+obj", data)
-            )
+            obj_numbers: set[int] = set()
+            for match in re.finditer(rb"(\d+)\s+0\s+obj", data):
+                object_number = int(match.group(1))
+                self.budget.check_object_id(object_number)
+                if object_number not in obj_numbers:
+                    self.budget.check_objects(len(obj_numbers) + 1)
+                    obj_numbers.add(object_number)
             for num in sorted(obj_numbers):
                 self.xref_entries.append((num, 0, 0))
             return
@@ -86,17 +115,31 @@ class IncrementalUpdate:
         trailer_pos = data.find(b"trailer", xref_start)
         if trailer_pos == -1:
             trailer_pos = len(data)
-        xref_blob = data[xref_start:trailer_pos]
-        raw_lines = []
-        for raw in xref_blob.split(b"\n"):
-            line = raw.strip(b"\r")
-            if line.strip():
-                raw_lines.append(line)
 
         current_obj: int | None = None
         subsection_remaining = 0
-        for line in raw_lines:
+        pos = xref_start
+        line_count = 0
+        while pos < trailer_pos:
+            line_end = data.find(b"\n", pos, trailer_pos)
+            if line_end < 0:
+                line_end = trailer_pos
+            line_count += 1
+            self.budget.check(
+                line_count,
+                "max_container_items",
+                "incremental xref lines",
+            )
+            self.budget.check(
+                line_end - pos,
+                "max_object_bytes",
+                "incremental xref line bytes",
+            )
+            line = data[pos:line_end].strip(b"\r")
+            pos = line_end + 1
             stripped = line.strip()
+            if not stripped:
+                continue
             if stripped == b"xref" or stripped.startswith(b"xref"):
                 continue
             parts = stripped.split()
@@ -105,6 +148,10 @@ class IncrementalUpdate:
             if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
                 current_obj = int(parts[0])
                 subsection_remaining = int(parts[1])
+                if subsection_remaining:
+                    self.budget.check_object_id(
+                        current_obj + subsection_remaining - 1
+                    )
                 continue
             if len(parts) >= 3 and subsection_remaining > 0 and current_obj is not None:
                 try:
@@ -112,6 +159,8 @@ class IncrementalUpdate:
                     generation = int(parts[1])
                 except ValueError:
                     continue
+                self.budget.check_object_id(current_obj)
+                self.budget.check_objects(len(self.xref_entries) + 1)
                 self.xref_entries.append((current_obj, offset, generation))
                 current_obj += 1
                 subsection_remaining -= 1
@@ -124,6 +173,7 @@ class IncrementalUpdate:
     def get_next_object_number(self) -> int:
         """Return and reserve the next free object number."""
         obj_num = self.next_obj_num
+        self.budget.check_object_id(obj_num)
         self.next_obj_num += 1
         return obj_num
 
@@ -137,6 +187,14 @@ class IncrementalUpdate:
         obj_bytes: bytes
             Full object definition, including the ``obj`` and ``endobj`` keywords.
         """
+        self.budget.check_object_id(obj_num)
+        self.budget.check(
+            len(obj_bytes),
+            "max_object_bytes",
+            "incremental update object bytes",
+        )
+        if obj_num not in self.modified_objects:
+            self.budget.check_objects(len(self.modified_objects) + 1)
         self.modified_objects[obj_num] = obj_bytes
 
     def add_new_object(self, obj_bytes: bytes) -> int:
@@ -237,7 +295,11 @@ class IncrementalUpdate:
         from .pdf_parser_cos import PdfCosParser
         from .pdf_writer_cos import PdfCosWriter
 
-        prev_doc = PdfCosParser(self.original_data).parse()
+        prev_doc = PdfCosParser(
+            self.original_data,
+            limits=self.limits,
+            budget=self.budget,
+        ).parse()
         trailer_dict = PdfDictionary(dict(prev_doc.trailer.mapping))
         trailer_dict.mapping[PdfName("Size")] = PdfNumber(new_size)
         trailer_dict.mapping[PdfName("Prev")] = PdfNumber(prev_startxref)

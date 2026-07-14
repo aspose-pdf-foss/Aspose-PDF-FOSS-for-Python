@@ -15,7 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
-from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.exceptions import (
+    AsposePdfException,
+    PdfResourceLimitException,
+    PdfValidationException,
+)
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 from .cff_outlines import CffOutlines
 from .content_stream_parser import ContentStreamParser
@@ -172,12 +177,26 @@ class _Path:
         return [[tuple(p) for p in subpath] for subpath in self.subpaths]
 
 
+def _repeated_bytearray(pattern: bytes, count: int) -> bytearray:
+    """Build a repeated byte pattern without a full-size temporary object."""
+    out = bytearray(len(pattern) * count)
+    if not pattern or count <= 0:
+        return out
+    block = pattern * min(count, 64 * 1024)
+    view = memoryview(out)
+    for start in range(0, len(out), len(block)):
+        end = min(len(out), start + len(block))
+        view[start:end] = block[: end - start]
+    return out
+
+
 class _Canvas:
     def __init__(self, width: int, height: int, background: Color):
         self.width = width
         self.height = height
-        self.pixels = bytearray(background * (width * height))
-        self.clip = bytearray(b"\x01" * (width * height))
+        pixel_count = width * height
+        self.pixels = _repeated_bytearray(bytes(background), pixel_count)
+        self.clip = _repeated_bytearray(b"\x01", pixel_count)
         # Optional accumulated-alpha channel (0-255), allocated only for the
         # offscreen canvases used to build Alpha soft masks and to composite
         # transparency groups as a unit. None on the main page canvas.
@@ -299,13 +318,32 @@ class _PageRasterizer:
         background: Sequence[int],
         antialias: "bool | int" = True,
     ):
-        if dpi <= 0 or scale <= 0:
+        try:
+            dpi_value = float(dpi)
+            scale_value = float(scale)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise PdfValidationException("dpi and scale must be finite numbers") from exc
+        if (
+            not math.isfinite(dpi_value)
+            or not math.isfinite(scale_value)
+            or dpi_value <= 0
+            or scale_value <= 0
+        ):
             raise PdfValidationException("dpi and scale must be positive")
         self.pdf = pdf
         self.page_index = page_index
-        self.dpi = float(dpi)
+        budget = getattr(pdf, "_load_budget", None)
+        if isinstance(budget, _LoadBudget):
+            self._load_budget = budget
+            self._load_limits = budget.limits
+        else:
+            self._load_limits = _coerce_limits(getattr(pdf, "_load_limits", None))
+            self._load_budget = _LoadBudget(self._load_limits)
+        self.dpi = dpi_value
         self._ss = _normalize_antialias(antialias)
-        base_scale = (float(dpi) / 72.0) * float(scale)
+        base_scale = (dpi_value / 72.0) * scale_value
+        if not math.isfinite(base_scale) or base_scale <= 0:
+            raise PdfValidationException("dpi and scale produce invalid geometry")
         # Draw at ``base_scale * ss`` and box-downsample by ``ss`` at the end;
         # the drawing code uses self.width/height as the (supersampled) canvas
         # bounds, while the returned raster is the target resolution.
@@ -322,10 +360,24 @@ class _PageRasterizer:
             page_w, page_h = self.crop_height, self.crop_width
         else:
             page_w, page_h = self.crop_width, self.crop_height
-        self.target_width = max(1, int(math.ceil(page_w * base_scale)))
-        self.target_height = max(1, int(math.ceil(page_h * base_scale)))
+        scaled_width = page_w * base_scale
+        scaled_height = page_h * base_scale
+        if (
+            not math.isfinite(scaled_width)
+            or not math.isfinite(scaled_height)
+            or scaled_width <= 0
+            or scaled_height <= 0
+        ):
+            raise PdfValidationException("page dimensions produce invalid raster geometry")
+        self.target_width = max(1, int(math.ceil(scaled_width)))
+        self.target_height = max(1, int(math.ceil(scaled_height)))
         self.width = self.target_width * self._ss
         self.height = self.target_height * self._ss
+        self._load_budget.check_raster_pixels(
+            self.width,
+            self.height,
+            "supersampled page raster",
+        )
         self.page_width_pts = page_w
         self.page_height_pts = page_h
         self.background = _coerce_rgb(background)
@@ -384,9 +436,18 @@ class _PageRasterizer:
         return bytes(out)
 
     def _normalize_box(self, box: Any) -> Tuple[float, float, float, float]:
-        if not isinstance(box, (list, tuple)) or len(box) < 4:
+        if box is None:
             return (0.0, 0.0, 612.0, 792.0)
-        x0, y0, x1, y1 = (float(v) for v in box[:4])
+        if not isinstance(box, (list, tuple)) or len(box) < 4:
+            raise PdfValidationException("page box must contain four coordinates")
+        try:
+            x0, y0, x1, y1 = (float(v) for v in box[:4])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise PdfValidationException("page box coordinates must be finite") from exc
+        if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+            raise PdfValidationException("page box coordinates must be finite")
+        if x0 == x1 or y0 == y1:
+            raise PdfValidationException("page box must have positive area")
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
     def _page_rotation(self) -> int:
@@ -418,6 +479,8 @@ class _PageRasterizer:
         if hasattr(self.pdf, "_get_page_resources"):
             try:
                 resources = self.pdf._get_page_resources(self.page_index) or {}
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 resources = {}
         if not resources:
@@ -437,7 +500,16 @@ class _PageRasterizer:
         if depth > 8:
             return
         try:
-            tokens = list(ContentStreamParser(content, resources_plain)._tokenize())
+            tokens = list(
+                ContentStreamParser(
+                    content,
+                    resources_plain,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
+                )._tokenize()
+            )
+        except PdfResourceLimitException:
+            raise
         except Exception:
             return
 
@@ -597,7 +669,12 @@ class _PageRasterizer:
             or IDENTITY
         )
         if ptype is not None and int(ptype) == 2:
-            shading = build_shading(self.pdf, pattern.mapping.get(PdfName("Shading")))
+            shading = build_shading(
+                self.pdf,
+                pattern.mapping.get(PdfName("Shading")),
+                limits=self._load_limits,
+                budget=self._load_budget,
+            )
             if shading is not None:
                 self.state.fill_shading = (shading, matrix)
             else:
@@ -813,6 +890,8 @@ class _PageRasterizer:
                 if hasattr(self.pdf, "_decode_cos_stream")
                 else pattern.content
             )
+        except PdfResourceLimitException:
+            raise
         except Exception:
             content = pattern.content
         res_cos = self._resolve(pattern.mapping.get(PdfName("Resources")))
@@ -947,7 +1026,12 @@ class _PageRasterizer:
         shadings = self._resource_dict(resources_cos, "Shading")
         if shadings is None:
             return
-        shading = build_shading(self.pdf, shadings.mapping.get(PdfName(name)))
+        shading = build_shading(
+            self.pdf,
+            shadings.mapping.get(PdfName(name)),
+            limits=self._load_limits,
+            budget=self._load_budget,
+        )
         if shading is None:
             return
         to_shading = _invert_matrix(self.state.ctm)
@@ -1447,6 +1531,8 @@ class _PageRasterizer:
             try:
                 explicit = self.pdf._simple_code_to_unicode(font_dict) or {}
                 code_to_unicode.update(explicit)
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 pass
 
@@ -1548,6 +1634,8 @@ class _PageRasterizer:
         if hasattr(self.pdf, "_decode_cos_stream"):
             try:
                 program = self.pdf._decode_cos_stream(stream, ref)
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 program = stream.content
         length1 = self._cos_number(stream.mapping.get(PdfName("Length1")))
@@ -1624,6 +1712,8 @@ class _PageRasterizer:
         if hasattr(self.pdf, "_decode_cos_stream"):
             try:
                 return self.pdf._decode_cos_stream(stream, ref)
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 pass
         return stream.content
@@ -1632,6 +1722,8 @@ class _PageRasterizer:
         if hasattr(self.pdf, "_build_cid_to_gid"):
             try:
                 return self.pdf._build_cid_to_gid(cidfont)
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 pass
         return lambda cid: cid
@@ -1643,6 +1735,11 @@ class _PageRasterizer:
         w = self._resolve(cidfont.mapping.get(PdfName("W")))
         if isinstance(w, PdfArray):
             items = w.items
+            self._load_budget.check(
+                len(items),
+                "max_container_items",
+                "rasterizer CID width array items",
+            )
             i = 0
             while i < len(items):
                 c = self._cos_number(items[i])
@@ -1650,10 +1747,20 @@ class _PageRasterizer:
                     break
                 nxt = self._resolve(items[i + 1]) if i + 1 < len(items) else None
                 if isinstance(nxt, PdfArray):
+                    self._load_budget.check(
+                        len(nxt.items),
+                        "max_container_items",
+                        "rasterizer CID width subarray items",
+                    )
                     for j, item in enumerate(nxt.items):
                         wv = self._cos_number(item)
                         if wv is not None:
                             table[int(c) + j] = wv
+                            self._load_budget.check(
+                                len(table),
+                                "max_container_items",
+                                "rasterizer CID width mappings",
+                            )
                     i += 2
                 else:
                     clast = self._cos_number(nxt)
@@ -1664,8 +1771,21 @@ class _PageRasterizer:
                     )
                     if clast is None or wv is None:
                         break
-                    for cid in range(int(c), int(clast) + 1):
-                        table[cid] = wv
+                    first_cid = int(c)
+                    last_cid = int(clast)
+                    if last_cid >= first_cid:
+                        self._load_budget.check(
+                            last_cid - first_cid + 1,
+                            "max_container_items",
+                            "rasterizer CID width range entries",
+                        )
+                        for cid in range(first_cid, last_cid + 1):
+                            table[cid] = wv
+                            self._load_budget.check(
+                                len(table),
+                                "max_container_items",
+                                "rasterizer CID width mappings",
+                            )
                     i += 3
         return lambda cid, _t=table, _d=default: _t.get(cid, _d)
 
@@ -1681,6 +1801,8 @@ class _PageRasterizer:
         if hasattr(self.pdf, "_simple_code_to_unicode"):
             try:
                 code_to_unicode = self.pdf._simple_code_to_unicode(font_dict) or {}
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 code_to_unicode = {}
 
@@ -1779,6 +1901,8 @@ class _PageRasterizer:
                 data = self.pdf._decode_cos_stream(stream, ref)
             else:
                 data = stream.content
+        except PdfResourceLimitException:
+            raise
         except Exception:
             data = stream.content
         meta = self._image_meta_from_stream(stream)
@@ -1810,10 +1934,12 @@ class _PageRasterizer:
                 if hasattr(self.pdf, "_decode_cos_stream")
                 else sm.content
             )
+        except PdfResourceLimitException:
+            raise
         except Exception:
             data = sm.content
         meta = self._image_meta_from_stream(sm)
-        decoded = _decode_image_to_rgb(meta, data)
+        decoded = _decode_image_to_rgb(meta, data, limits=self._load_limits)
         if decoded is None:
             return None
         w, h, rgb = decoded
@@ -1887,7 +2013,14 @@ class _PageRasterizer:
         ):
             return None
         try:
-            fn = build_function(self.pdf, tr)
+            fn = build_function(
+                self.pdf,
+                tr,
+                limits=self._load_limits,
+                budget=self._load_budget,
+            )
+        except PdfResourceLimitException:
+            raise
         except Exception:
             fn = None
         if fn is None:
@@ -1897,6 +2030,8 @@ class _PageRasterizer:
             try:
                 out = fn.eval(v / 255.0)
                 val = out[0] if isinstance(out, (list, tuple)) else out
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 val = v / 255.0
             lut.append(_byte(float(val) * 255.0))
@@ -1976,6 +2111,8 @@ class _PageRasterizer:
             content = self.pdf._decode_cos_stream(stream, ref) if hasattr(
                 self.pdf, "_decode_cos_stream"
             ) else stream.content
+        except PdfResourceLimitException:
+            raise
         except Exception:
             content = stream.content
         saved = copy.deepcopy(self.state)
@@ -2060,7 +2197,7 @@ class _PageRasterizer:
         matrix: Matrix,
         smask: Optional[Tuple[int, int, bytes]] = None,
     ) -> None:
-        image = _decode_image_to_rgb(meta, data)
+        image = _decode_image_to_rgb(meta, data, limits=self._load_limits)
         if image is None:
             return
         width, height, pixels = image
@@ -2158,6 +2295,8 @@ class _PageRasterizer:
                 elif isinstance(lookup, PdfStream):
                     try:
                         palette = self.pdf._decode_cos_stream(lookup, cs.items[3])
+                    except PdfResourceLimitException:
+                        raise
                     except Exception:
                         palette = lookup.content
                 return ("indexed", 1, palette, base_comps or 3)
@@ -2251,17 +2390,35 @@ class _PageRasterizer:
         return (self.crop_box[0] + lx, self.crop_box[1] + ly)
 
 
-def _decode_image_to_rgb(meta: dict, data: bytes) -> Optional[Tuple[int, int, bytes]]:
+def _decode_image_to_rgb(
+    meta: dict,
+    data: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+) -> Optional[Tuple[int, int, bytes]]:
+    resolved_limits = _coerce_limits(limits)
+    budget = _LoadBudget(resolved_limits)
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
     if width <= 0 or height <= 0:
         return None
+    budget.check_image_pixels(width, height, "rasterized image")
+    budget.check(
+        width * height * 3,
+        "max_decoded_stream_bytes",
+        "rasterized image RGB bytes",
+    )
+    budget.check(
+        len(data) + (width * height * 7),
+        "max_codec_work_bytes",
+        "rasterized image conversion working set",
+    )
     filt = str(meta.get("filter") or "").lstrip("/")
     sniff = ext_from_magic(data)
     if filt in ("DCTDecode", "DCT") or sniff == "jpg":
         from .dct import decode as decode_jpeg
 
-        decoded = decode_jpeg(data)
+        decoded = decode_jpeg(data, limits=resolved_limits)
         if decoded is None:
             return None
         pixels = decoded.samples

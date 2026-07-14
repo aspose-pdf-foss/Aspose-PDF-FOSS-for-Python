@@ -10,6 +10,7 @@ __all__ = (
     "PdfParseException",
     "InvalidPdfFileFormatException",
     "PdfValidationException",
+    "PdfResourceLimitException",
     "PdfSecurityException",
     "IncorrectCMapUsageException",
     "InvalidPasswordException",
@@ -55,6 +56,12 @@ class IncorrectCMapUsageException(AsposePdfException):
 
 class PdfValidationException(PdfException):
     """Raised when a PDF document fails validation or compliance checks."""
+
+    pass
+
+
+class PdfResourceLimitException(PdfValidationException):
+    """Raised when processing a PDF would exceed a configured resource limit."""
 
     pass
 

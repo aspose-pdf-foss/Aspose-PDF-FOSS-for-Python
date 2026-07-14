@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import codecs
 import re
+from collections import deque
 from decimal import Decimal
-from typing import Any, Dict, List, Tuple, Union, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
-from aspose_pdf.exceptions import CONTENT_PARSER_RECOVERABLE
+from aspose_pdf.exceptions import (
+    CONTENT_PARSER_RECOVERABLE,
+    PdfResourceLimitException,
+)
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 from .pdf_matrix import (
     identity_affine_decimal,
@@ -21,11 +26,120 @@ from .pdf_matrix import (
 )
 
 
-def load_cid_widths(w_obj: Any) -> Dict[int, int]:
+def _resolve_resource_budget(
+    limits: PdfLoadLimits | None,
+    budget: _LoadBudget | None,
+) -> _LoadBudget:
+    """Return a validated budget for a font-resource parsing operation."""
+    if budget is None:
+        return _LoadBudget(_coerce_limits(limits))
+    if not isinstance(budget, _LoadBudget):
+        raise TypeError("budget must be a _LoadBudget instance or None")
+    if limits is not None and limits != budget.limits:
+        raise ValueError("limits must match budget.limits")
+    return budget
+
+
+def _iter_cmap_lines(text: str) -> Iterator[str]:
+    """Yield CR/LF-delimited lines without first materializing every line."""
+    start = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] not in "\r\n":
+            i += 1
+            continue
+        yield text[start:i]
+        if text[i] == "\r" and i + 1 < n and text[i + 1] == "\n":
+            i += 1
+        i += 1
+        start = i
+    if start < n:
+        yield text[start:]
+
+
+def _cmap_lines(
+    text: str,
+    budget: _LoadBudget,
+    context: str,
+) -> List[str]:
+    """Return bounded, nonempty CMap lines with comments removed."""
+    lines: List[str] = []
+    for raw in _iter_cmap_lines(text):
+        if "%" in raw:
+            raw = raw.split("%", 1)[0]
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        budget.check(
+            len(lines) + 1,
+            "max_container_items",
+            f"{context} nonempty lines",
+        )
+        lines.append(stripped)
+    return lines
+
+
+def _check_cmap_input(
+    cmap_bytes: bytes,
+    budget: _LoadBudget,
+    context: str,
+) -> None:
+    budget.check(
+        len(cmap_bytes),
+        "max_decoded_stream_bytes",
+        f"{context} bytes",
+    )
+
+
+def _put_bounded(
+    target: Dict[Any, Any],
+    key: Any,
+    value: Any,
+    budget: _LoadBudget,
+    context: str,
+) -> None:
+    if key not in target:
+        budget.check(
+            len(target) + 1,
+            "max_container_items",
+            context,
+        )
+    target[key] = value
+
+
+def _add_bounded(
+    target: set[int],
+    value: int,
+    budget: _LoadBudget,
+    context: str,
+) -> None:
+    if value not in target:
+        budget.check(
+            len(target) + 1,
+            "max_container_items",
+            context,
+        )
+    target.add(value)
+
+
+def load_cid_widths(
+    w_obj: Any,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> Dict[int, int]:
     """Parse a CIDFont /W array (plain Python lists) into code -> width."""
+    active_budget = _resolve_resource_budget(limits, budget)
     out: Dict[int, int] = {}
     if not isinstance(w_obj, list):
         return out
+    active_budget.check(1, "max_nesting_depth", "CID width array nesting")
+    active_budget.check(
+        len(w_obj),
+        "max_container_items",
+        "CID width array items",
+    )
     i = 0
     n = len(w_obj)
     while i < n:
@@ -34,11 +148,23 @@ def load_cid_widths(w_obj: Any) -> Dict[int, int]:
             break
         second = w_obj[i + 1]
         if isinstance(second, list):
+            active_budget.check(2, "max_nesting_depth", "CID width array nesting")
+            active_budget.check(
+                len(second),
+                "max_container_items",
+                "CID width subarray items",
+            )
             if isinstance(first, (int, float)):
                 code0 = int(first)
                 for j, w in enumerate(second):
                     if isinstance(w, (int, float)):
-                        out[code0 + j] = int(w)
+                        _put_bounded(
+                            out,
+                            code0 + j,
+                            int(w),
+                            active_budget,
+                            "CID width mappings",
+                        )
             i += 2
         elif i + 2 < n:
             third = w_obj[i + 2]
@@ -48,29 +174,42 @@ def load_cid_widths(w_obj: Any) -> Dict[int, int]:
                 and isinstance(third, (int, float))
             ):
                 c1, c2, w = int(first), int(second), int(third)
-                for code in range(c1, c2 + 1):
-                    out[code] = w
+                if c2 >= c1:
+                    active_budget.check(
+                        c2 - c1 + 1,
+                        "max_container_items",
+                        "CID width range entries",
+                    )
+                    for code in range(c1, c2 + 1):
+                        _put_bounded(
+                            out,
+                            code,
+                            w,
+                            active_budget,
+                            "CID width mappings",
+                        )
             i += 3
         else:
             i += 1
     return out
 
 
-def parse_to_unicode_cmap(cmap_bytes: bytes) -> Dict[bytes, str]:
+def parse_to_unicode_cmap(
+    cmap_bytes: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> Dict[bytes, str]:
     """Parse a ToUnicode CMap stream into a code-bytes -> unicode-text map."""
+    active_budget = _resolve_resource_budget(limits, budget)
+    _check_cmap_input(cmap_bytes, active_budget, "ToUnicode CMap")
     mapping: Dict[bytes, str] = {}
     try:
         text = cmap_bytes.decode("utf-8", errors="ignore")
     except UnicodeError:
         return mapping
 
-    lines: list[str] = []
-    for raw in text.splitlines():
-        if "%" in raw:
-            raw = raw.split("%", 1)[0]
-        stripped = raw.strip()
-        if stripped:
-            lines.append(stripped)
+    lines = _cmap_lines(text, active_budget, "ToUnicode CMap")
     mode = None
     for line in lines:
         if line.endswith("beginbfchar"):
@@ -87,35 +226,64 @@ def parse_to_unicode_cmap(cmap_bytes: bytes) -> Dict[bytes, str]:
             continue
 
         if mode == "bfchar":
-            hexes = re.findall(r"<([0-9A-Fa-f]+)>", line)
-            for i in range(0, len(hexes) - 1, 2):
+            matches = iter(re.finditer(r"<([0-9A-Fa-f]+)>", line))
+            for src_match in matches:
+                dst_match = next(matches, None)
+                if dst_match is None:
+                    break
                 try:
-                    src = bytes.fromhex(hexes[i])
-                    dst = bytes.fromhex(hexes[i + 1]).decode("utf-16-be")
-                    mapping[src] = dst
+                    src = bytes.fromhex(src_match.group(1))
+                    dst = bytes.fromhex(dst_match.group(1)).decode("utf-16-be")
+                    _put_bounded(
+                        mapping,
+                        src,
+                        dst,
+                        active_budget,
+                        "ToUnicode CMap mappings",
+                    )
                 except (ValueError, TypeError, UnicodeError):
                     pass
         elif mode == "bfrange":
             # Array form is matched by the second pass below.
             if "[" in line:
                 continue
-            hexes = re.findall(r"<([0-9A-Fa-f]+)>", line)
-            for j in range(0, len(hexes) - 2, 3):
+            matches = iter(re.finditer(r"<([0-9A-Fa-f]+)>", line))
+            for start_match in matches:
+                end_match = next(matches, None)
+                dst_match = next(matches, None)
+                if end_match is None or dst_match is None:
+                    break
                 try:
-                    start_src = bytes.fromhex(hexes[j])
-                    end_src = bytes.fromhex(hexes[j + 1])
-                    dst_hex = hexes[j + 2]
+                    start_src = bytes.fromhex(start_match.group(1))
+                    end_src = bytes.fromhex(end_match.group(1))
+                    dst_hex = dst_match.group(1)
+
+                    if len(start_src) != len(end_src):
+                        continue
 
                     dst_start_val = int(dst_hex, 16)
                     start_int = int.from_bytes(start_src, "big")
                     end_int = int.from_bytes(end_src, "big")
+                    if end_int < start_int:
+                        continue
+                    active_budget.check(
+                        end_int - start_int + 1,
+                        "max_container_items",
+                        "ToUnicode bfrange entries",
+                    )
 
                     src_len = len(start_src)
 
                     for idx, code in enumerate(range(start_int, end_int + 1)):
                         src_bytes = code.to_bytes(src_len, "big")
                         dst_char = chr(dst_start_val + idx)
-                        mapping[src_bytes] = dst_char
+                        _put_bounded(
+                            mapping,
+                            src_bytes,
+                            dst_char,
+                            active_budget,
+                            "ToUnicode CMap mappings",
+                        )
                 except (ValueError, TypeError, OverflowError, UnicodeError):
                     pass
     # bfrange with destination array (often one line): <s> <e> [ <h1> <h2> ... ]
@@ -127,21 +295,44 @@ def parse_to_unicode_cmap(cmap_bytes: bytes) -> Dict[bytes, str]:
             start_src = bytes.fromhex(m.group(1))
             end_src = bytes.fromhex(m.group(2))
             inner = m.group(3)
-            dest_hexes = re.findall(r"<([0-9A-Fa-f]+)>", inner)
+            if len(start_src) != len(end_src):
+                continue
             start_int = int.from_bytes(start_src, "big")
             end_int = int.from_bytes(end_src, "big")
+            if end_int < start_int:
+                continue
+            active_budget.check(
+                end_int - start_int + 1,
+                "max_container_items",
+                "ToUnicode bfrange entries",
+            )
             src_len = len(start_src)
-            for idx, code in enumerate(range(start_int, end_int + 1)):
+            for idx, dst_match in enumerate(
+                re.finditer(r"<([0-9A-Fa-f]+)>", inner)
+            ):
+                code = start_int + idx
+                if code > end_int:
+                    break
                 src_bytes = code.to_bytes(src_len, "big")
-                if idx < len(dest_hexes):
-                    dst = bytes.fromhex(dest_hexes[idx]).decode("utf-16-be")
-                    mapping[src_bytes] = dst
+                dst = bytes.fromhex(dst_match.group(1)).decode("utf-16-be")
+                _put_bounded(
+                    mapping,
+                    src_bytes,
+                    dst,
+                    active_budget,
+                    "ToUnicode CMap mappings",
+                )
         except (ValueError, TypeError, IndexError, OverflowError, UnicodeError):
             pass
     return mapping
 
 
-def parse_encoding_cmap(cmap_bytes: bytes) -> Tuple[Dict[bytes, int], List[int]]:
+def parse_encoding_cmap(
+    cmap_bytes: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> Tuple[Dict[bytes, int], List[int]]:
     """Parse a CID Encoding CMap into ``(code-bytes -> CID, sorted code lengths)``.
 
     Reads ``codespacerange`` (for the code lengths), ``cidrange`` and
@@ -149,6 +340,8 @@ def parse_encoding_cmap(cmap_bytes: bytes) -> Tuple[Dict[bytes, int], List[int]]
     (``usecmap``) are ignored -- an embedded CMap stream that defines its own
     ranges is handled, a bare reference to a predefined CJK CMap is not.
     """
+    active_budget = _resolve_resource_budget(limits, budget)
+    _check_cmap_input(cmap_bytes, active_budget, "CID Encoding CMap")
     code_to_cid: Dict[bytes, int] = {}
     lengths: set[int] = set()
     try:
@@ -156,13 +349,7 @@ def parse_encoding_cmap(cmap_bytes: bytes) -> Tuple[Dict[bytes, int], List[int]]
     except UnicodeError:
         return code_to_cid, []
 
-    lines: list[str] = []
-    for raw in text.splitlines():
-        if "%" in raw:
-            raw = raw.split("%", 1)[0]
-        stripped = raw.strip()
-        if stripped:
-            lines.append(stripped)
+    lines = _cmap_lines(text, active_budget, "CID Encoding CMap")
 
     mode = None
     for line in lines:
@@ -180,9 +367,15 @@ def parse_encoding_cmap(cmap_bytes: bytes) -> Tuple[Dict[bytes, int], List[int]]
             continue
 
         if mode == "csr":
-            for hex_str in re.findall(r"<([0-9A-Fa-f]+)>", line):
+            for match in re.finditer(r"<([0-9A-Fa-f]+)>", line):
+                hex_str = match.group(1)
                 if len(hex_str) % 2 == 0:
-                    lengths.add(len(hex_str) // 2)
+                    _add_bounded(
+                        lengths,
+                        len(hex_str) // 2,
+                        active_budget,
+                        "CID Encoding CMap code lengths",
+                    )
         elif mode == "cidrange":
             m = re.match(
                 r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(\d+)", line
@@ -195,13 +388,31 @@ def parse_encoding_cmap(cmap_bytes: bytes) -> Tuple[Dict[bytes, int], List[int]]
                 cid0 = int(m.group(3))
             except ValueError:
                 continue
+            if len(lo) != len(hi):
+                continue
             n = len(lo)
             a, b = int.from_bytes(lo, "big"), int.from_bytes(hi, "big")
-            if not 0 <= b - a < 1 << 20:  # guard pathological ranges
+            if b < a:
                 continue
-            lengths.add(n)
+            active_budget.check(
+                b - a + 1,
+                "max_container_items",
+                "CID Encoding CMap range entries",
+            )
+            _add_bounded(
+                lengths,
+                n,
+                active_budget,
+                "CID Encoding CMap code lengths",
+            )
             for i, code in enumerate(range(a, b + 1)):
-                code_to_cid[code.to_bytes(n, "big")] = cid0 + i
+                _put_bounded(
+                    code_to_cid,
+                    code.to_bytes(n, "big"),
+                    cid0 + i,
+                    active_budget,
+                    "CID Encoding CMap mappings",
+                )
         elif mode == "cidchar":
             m = re.match(r"<([0-9A-Fa-f]+)>\s*(\d+)", line)
             if not m or len(m.group(1)) % 2:
@@ -210,8 +421,19 @@ def parse_encoding_cmap(cmap_bytes: bytes) -> Tuple[Dict[bytes, int], List[int]]
                 code = bytes.fromhex(m.group(1))
             except ValueError:
                 continue
-            code_to_cid[code] = int(m.group(2))
-            lengths.add(len(code))
+            _put_bounded(
+                code_to_cid,
+                code,
+                int(m.group(2)),
+                active_budget,
+                "CID Encoding CMap mappings",
+            )
+            _add_bounded(
+                lengths,
+                len(code),
+                active_budget,
+                "CID Encoding CMap code lengths",
+            )
 
     return code_to_cid, sorted(lengths)
 
@@ -225,9 +447,36 @@ class ContentStreamParser:
         Raw bytes of the page content stream.
     resources: dict
         Dictionary containing PDF resources (fonts, XObjects, …).
+    limits: PdfLoadLimits, optional
+        Resource limits applied while tokenizing the content stream.
+    budget: _LoadBudget, optional
+        Per-document budget shared with the PDF loader and lazy operations.
     """
 
-    def __init__(self, content_stream: bytes, resources: Dict[str, Any]):
+    def __init__(
+        self,
+        content_stream: bytes,
+        resources: Dict[str, Any],
+        *,
+        limits: PdfLoadLimits | None = None,
+        budget: _LoadBudget | None = None,
+    ):
+        if budget is None:
+            self._limits = _coerce_limits(limits)
+            self._budget = _LoadBudget(self._limits)
+        else:
+            if not isinstance(budget, _LoadBudget):
+                raise TypeError("budget must be a _LoadBudget instance or None")
+            if limits is not None and limits != budget.limits:
+                raise ValueError("limits must match budget.limits")
+            self._limits = budget.limits
+            self._budget = budget
+        self._budget.check(
+            len(content_stream),
+            "max_content_stream_bytes",
+            "PDF content stream bytes",
+        )
+        self._token_count = 0
         self._data = content_stream
         # We process text as latin1 strings to preserve byte values 1:1 while allowing string ops
         self._text = content_stream.decode("latin1")
@@ -352,6 +601,10 @@ class ContentStreamParser:
                     del stack[-needed:]
 
                 if token == "q":
+                    self._check_container_items(
+                        len(self._gs_stack) + 1,
+                        "PDF graphics state stack items",
+                    )
                     self._gs_stack.append(dict(self._gs_stack[-1]))
                 elif token == "Q":
                     if len(self._gs_stack) > 1:
@@ -384,6 +637,10 @@ class ContentStreamParser:
                     self._handle_operator(token, operands)
                 continue
 
+            self._check_container_items(
+                len(stack) + 1,
+                "PDF content operand stack items",
+            )
             stack.append(token)
 
         return "".join(self._buffer).strip()
@@ -436,6 +693,8 @@ class ContentStreamParser:
                             self._buffer.append(self._decode_bytes(item))
                         elif isinstance(item, (int, float)) and item < -200:
                             self._buffer.append(" ")
+        except PdfResourceLimitException:
+            raise
         except CONTENT_PARSER_RECOVERABLE:
             return ""
 
@@ -536,7 +795,7 @@ class ContentStreamParser:
 
     def _load_cid_widths(self, w_obj: Any) -> Dict[int, int]:
         """Parse a CIDFont /W array into code -> width (thousandths)."""
-        return load_cid_widths(w_obj)
+        return load_cid_widths(w_obj, budget=self._budget)
 
     def _load_simple_widths(self, font: Dict[str, Any]) -> Dict[int, int]:
         out: Dict[int, int] = {}
@@ -911,17 +1170,32 @@ class ContentStreamParser:
         return data.decode("utf-8", errors="ignore")
 
     def _parse_to_unicode(self, cmap_bytes: bytes) -> Dict[bytes, str]:
-        return parse_to_unicode_cmap(cmap_bytes)
+        return parse_to_unicode_cmap(cmap_bytes, budget=self._budget)
 
     # ---------------------------------------------------------------------
     # Tokenizer
     # ---------------------------------------------------------------------
+    def _count_token(self) -> None:
+        self._token_count += 1
+        self._budget.check(
+            self._token_count,
+            "max_content_tokens",
+            "PDF content stream tokens",
+        )
+
+    def _check_nesting(self, depth: int, context: str) -> None:
+        self._budget.check(depth, "max_nesting_depth", context)
+
+    def _check_container_items(self, count: int, context: str) -> None:
+        self._budget.check(count, "max_container_items", context)
+
     def _skip_ws(self):
         while self._pos < self._len and self._text[self._pos] in self.WHITESPACE:
             self._pos += 1
 
     def _tokenize(self) -> Iterator[Any]:
         self._pos = 0
+        self._token_count = 0
         while self._pos < self._len:
             self._skip_ws()
             if self._pos >= self._len:
@@ -936,7 +1210,9 @@ class ContentStreamParser:
                 continue
 
             if ch == "(":
-                yield self._read_string()
+                token = self._read_string()
+                self._count_token()
+                yield token
                 continue
 
             if ch == "<":
@@ -947,21 +1223,25 @@ class ContentStreamParser:
                     # ToUnicode parsing is done separately on the stream.
                     # Here we are parsing content stream. << could be inline image dict.
                     self._pos += 2
+                    self._count_token()
                     yield "<<"
                     continue
-                yield self._read_hex_string()
+                token = self._read_hex_string()
+                self._count_token()
+                yield token
                 continue
 
             if ch == ">":
                 if self._pos + 1 < self._len and self._text[self._pos + 1] == ">":
                     self._pos += 2
+                    self._count_token()
                     yield ">>"
                     continue
                 self._pos += 1
                 continue  # Unexpected >
 
             if ch == "[":
-                yield self._read_array()
+                yield self._read_array(1)
                 continue
 
             if ch == "]":
@@ -970,16 +1250,21 @@ class ContentStreamParser:
                 continue
 
             if ch == "/":
-                yield self._read_name()
+                token = self._read_name()
+                self._count_token()
+                yield token
                 continue
 
             # Number or Operator
-            yield self._read_number_or_operator()
+            token = self._read_number_or_operator()
+            self._count_token()
+            yield token
 
     def _read_string(self) -> bytes:
         # Assumes at "("
         self._pos += 1
         depth = 1
+        self._check_nesting(depth, "PDF content string nesting")
         acc = bytearray()
 
         while self._pos < self._len and depth > 0:
@@ -1021,6 +1306,7 @@ class ContentStreamParser:
                     acc.append(ord(esc))
             elif c == "(":
                 depth += 1
+                self._check_nesting(depth, "PDF content string nesting")
                 acc.append(ord(c))
             elif c == ")":
                 depth -= 1
@@ -1055,8 +1341,10 @@ class ContentStreamParser:
         except ValueError:
             return b""
 
-    def _read_array(self) -> List[Any]:
+    def _read_array(self, depth: int) -> List[Any]:
         # Assumes at "["; returns list of tokens inside
+        self._check_nesting(depth, "PDF content array nesting")
+        self._count_token()
         self._pos += 1
         arr = []
         while self._pos < self._len:
@@ -1078,9 +1366,13 @@ class ContentStreamParser:
             if ch == "(":
                 token = self._read_string()
             elif ch == "<":
-                token = self._read_hex_string()  # strictly <...>, simple check
+                if self._pos + 1 < self._len and self._text[self._pos + 1] == "<":
+                    self._pos += 2
+                    token = "<<"
+                else:
+                    token = self._read_hex_string()
             elif ch == "[":
-                token = self._read_array()
+                token = self._read_array(depth + 1)
             elif ch == "/":
                 token = self._read_name()
             elif ch in "%]":
@@ -1092,10 +1384,24 @@ class ContentStreamParser:
                     continue
                 # if ] should have handled by loop check.
                 pass
+            elif ch == ">":
+                self._pos += (
+                    2
+                    if self._pos + 1 < self._len
+                    and self._text[self._pos + 1] == ">"
+                    else 1
+                )
+                token = ">>"
             else:
                 token = self._read_number_or_operator()
 
             if token is not None:
+                if ch != "[":
+                    self._count_token()
+                self._check_container_items(
+                    len(arr) + 1,
+                    "PDF content array items",
+                )
                 arr.append(token)
 
         return arr
@@ -1133,6 +1439,9 @@ class ContentStreamParser:
 
 def parse_image_placements_from_content(
     content: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ) -> List[Tuple[str, Tuple[Decimal, ...]]]:
     """Parse PDF content stream and extract image placements (Do operator with matrix).
 
@@ -1142,11 +1451,38 @@ def parse_image_placements_from_content(
     away during ``cm`` chaining. Callers coerce to ``float`` where
     needed for API surfaces.
     """
+    if budget is None:
+        resolved_limits = _coerce_limits(limits)
+        active_budget = _LoadBudget(resolved_limits)
+    else:
+        if not isinstance(budget, _LoadBudget):
+            raise TypeError("budget must be a _LoadBudget instance or None")
+        if limits is not None and limits != budget.limits:
+            raise ValueError("limits must match budget.limits")
+        active_budget = budget
+    active_budget.check(
+        len(content),
+        "max_content_stream_bytes",
+        "image placement content stream bytes",
+    )
+
     result: List[Tuple[str, Tuple[Decimal, ...]]] = []
     IDENTITY = identity_affine_decimal()
+    token_count = 0
 
-    def _tokenize(data: bytes) -> List[Any]:
-        tokens: List[Any] = []
+    def _count_token() -> None:
+        nonlocal token_count
+        token_count += 1
+        active_budget.check(
+            token_count,
+            "max_content_tokens",
+            "image placement content tokens",
+        )
+
+    def _check_nesting(depth: int, context: str) -> None:
+        active_budget.check(depth, "max_nesting_depth", context)
+
+    def _tokenize(data: bytes) -> Iterator[Any]:
         text = data.decode("latin1", errors="replace")
         i = 0
         n = len(text)
@@ -1165,41 +1501,52 @@ def parse_image_placements_from_content(
                 i += 1
                 while i < n and text[i] not in ws + "()<>[]{}/%":
                     i += 1
-                tokens.append(text[start:i])
+                _count_token()
+                yield text[start:i]
                 continue
-            if text[i] in "()":
-                paren = text[i]
+            if text[i] == "(":
                 i += 1
                 depth = 1
+                _count_token()
+                _check_nesting(depth, "image placement string nesting")
                 while i < n and depth > 0:
                     if text[i] == "\\" and i + 1 < n:
                         i += 2
                         continue
-                    if text[i] == paren:
+                    if text[i] == "(":
                         depth += 1
-                    elif text[i] in "()":
+                        _check_nesting(depth, "image placement string nesting")
+                    elif text[i] == ")":
                         depth -= 1
                     i += 1
+                continue
+            if text[i] == ")":
+                i += 1
                 continue
             if text[i] == "<":
                 if i + 1 < n and text[i + 1] == "<":
                     i += 2
                     depth = 1
+                    _count_token()
+                    _check_nesting(depth, "image placement dictionary nesting")
                     while i < n and depth > 0:
                         if text[i] == "(":
-                            paren = text[i]
                             i += 1
                             while i < n:
                                 if text[i] == "\\" and i + 1 < n:
                                     i += 2
                                     continue
-                                if text[i] == paren:
+                                if text[i] == ")":
                                     i += 1
                                     break
                                 i += 1
                             continue
                         if i + 1 < n and text[i : i + 2] == "<<":
                             depth += 1
+                            _check_nesting(
+                                depth,
+                                "image placement dictionary nesting",
+                            )
                             i += 2
                             continue
                         if i + 1 < n and text[i : i + 2] == ">>":
@@ -1209,6 +1556,7 @@ def parse_image_placements_from_content(
                         i += 1
                     continue
                 i += 1
+                _count_token()
                 while i < n and text[i] != ">":
                     i += 1 if text[i] in ws else 2
                 if i < n:
@@ -1220,43 +1568,55 @@ def parse_image_placements_from_content(
             if text[i] == "[":
                 i += 1
                 depth = 1
+                _count_token()
+                _check_nesting(depth, "image placement array nesting")
                 while i < n and depth > 0:
                     if text[i] == "[":
                         depth += 1
+                        _check_nesting(depth, "image placement array nesting")
                     elif text[i] == "]":
                         depth -= 1
                     i += 1
+                continue
+            if text[i] == "]":
+                i += 1
                 continue
             start = i
             while i < n and text[i] not in ws + "()<>[]{}/%":
                 i += 1
             chunk = text[start:i]
             try:
-                tokens.append(float(chunk) if "." in chunk else int(chunk))
+                token = float(chunk) if "." in chunk else int(chunk)
             except ValueError:
-                tokens.append(chunk)
-        return tokens
+                token = chunk
+            _count_token()
+            yield token
 
-    tokens = _tokenize(content)
     ctm_stack: List[Tuple[Decimal, ...]] = [IDENTITY]
     ctm: Tuple[Decimal, ...] = IDENTITY
-    i = 0
+    recent: deque[Any] = deque(maxlen=6)
 
-    while i < len(tokens):
-        t = tokens[i]
+    for t in _tokenize(content):
         if t == "q":
+            active_budget.check(
+                len(ctm_stack) + 1,
+                "max_container_items",
+                "image placement graphics state stack items",
+            )
+            active_budget.check(
+                len(ctm_stack) + 1,
+                "max_nesting_depth",
+                "image placement graphics state depth",
+            )
             ctm_stack.append(ctm)
-            i += 1
         elif t == "Q":
             if len(ctm_stack) > 1:
                 ctm_stack.pop()
                 ctm = ctm_stack[-1]
-            i += 1
         elif t == "cm":
-            if i >= 6:
+            if len(recent) == 6:
                 vals_d: List[Decimal] = []
-                for j in range(i - 6, i):
-                    v = tokens[j]
+                for v in recent:
                     if isinstance(v, (int, float)):
                         vals_d.append(pdf_scalar_to_decimal(v))
                     else:
@@ -1265,15 +1625,17 @@ def parse_image_placements_from_content(
                 if len(vals_d) == 6:
                     ctm = multiply_pdf_affine(tuple(vals_d), ctm)
                     ctm_stack[-1] = ctm
-            i += 1
         elif t == "Do":
-            if i >= 1:
-                name = tokens[i - 1]
+            if recent:
+                name = recent[-1]
                 if isinstance(name, str):
                     name = name.lstrip("/")
+                active_budget.check(
+                    len(result) + 1,
+                    "max_container_items",
+                    "image placement results",
+                )
                 result.append((str(name), ctm))
-            i += 1
-        else:
-            i += 1
+        recent.append(t)
 
     return result

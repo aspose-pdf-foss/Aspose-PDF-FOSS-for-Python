@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     pass
 
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits
 
 
 # PDF default resolution (points per inch)
@@ -78,6 +79,7 @@ class ImagePlacement:
         rotation: int = 0,
         matrix: Optional[Tuple[float, float, float, float, float, float]] = None,
         meta: Optional[dict] = None,
+        limits: PdfLoadLimits | None = None,
     ) -> None:
         if not isinstance(name, str):
             raise TypeError("name must be a string")
@@ -95,6 +97,7 @@ class ImagePlacement:
         self._resolution = resolution
         self._rotation = rotation
         self._matrix = matrix
+        self._load_limits = _coerce_limits(limits)
         # Reconstruction metadata (colour space / bpc / palette / filter / ...)
         # captured at extraction time; enables save() to write a real image file.
         self._meta = dict(meta) if meta else None
@@ -155,7 +158,11 @@ class ImagePlacement:
         )
 
         out_bytes, produced_ext = reconstruct_image_file(
-            self._meta, self._image_data, Path(path).suffix, color_space
+            self._meta,
+            self._image_data,
+            Path(path).suffix,
+            color_space,
+            limits=self._load_limits,
         )
         file_path = resolve_output_path(path, produced_ext)
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,6 +247,7 @@ class ImagePlacementAbsorber:
 
     def __init__(self) -> None:
         self.image_placements: List[ImagePlacement] = []
+        self._load_limits = PdfLoadLimits()
 
     def _add_image(
         self,
@@ -263,6 +271,7 @@ class ImagePlacementAbsorber:
                 rotation=rotation,
                 matrix=matrix,
                 meta=meta,
+                limits=self._load_limits,
             )
         except Exception:
             return
@@ -277,6 +286,10 @@ class ImagePlacementAbsorber:
             A page object or SimplePdf instance to extract images from.
         """
         self.image_placements.clear()
+        limits = getattr(page_or_pdf, "load_limits", None)
+        if limits is None and hasattr(page_or_pdf, "_document"):
+            limits = getattr(page_or_pdf._document, "load_limits", None)
+        self._load_limits = _coerce_limits(limits)
 
         # 1. Handle SimplePdf directly (Engine level)
         is_engine = hasattr(page_or_pdf, "_is_engine_pdf") or (

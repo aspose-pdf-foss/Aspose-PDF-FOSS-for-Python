@@ -27,6 +27,12 @@ from aspose_pdf.engine.simple_pdf import (
     _parse_pdf_date,
 )
 from aspose_pdf.exceptions import AsposePdfException
+from aspose_pdf.load_limits import (
+    PdfLoadLimits,
+    _LoadBudget,
+    _coerce_limits,
+    _read_limited,
+)
 from aspose_pdf.outlines import OutlineCollection
 from aspose_pdf.pdfa import PdfAValidationResult
 from aspose_pdf.pdfua import PdfUaValidationResult
@@ -62,7 +68,10 @@ class Document:
 
     def __init__(self, *args, **kwargs) -> None:
         """Create a new Document instance."""
+        self._load_limits = _coerce_limits(kwargs.pop("limits", None))
         self._engine_pdf: SimplePdf = SimplePdf()  # Start with empty PDF
+        self._engine_pdf._load_limits = self._load_limits
+        self._engine_pdf._load_budget = _LoadBudget(self._load_limits)
         self._disposed: bool = False
         self._pages: Optional[Any] = None
         self._form: Optional[Any] = None
@@ -70,6 +79,11 @@ class Document:
         self._password: Optional[str] = None
         self._encrypted: bool = False
         self.file_name: Optional[str] = None
+
+    @property
+    def load_limits(self) -> PdfLoadLimits:
+        """Return the resource limits used for PDF loading and lazy processing."""
+        return self._load_limits
 
     def _ensure_not_disposed(self) -> None:
         """Raise if the document has been disposed."""
@@ -359,7 +373,11 @@ class Document:
 
     @classmethod
     def open_streaming(
-        cls, path: Union[str, Path], *, password: Optional[str] = None
+        cls,
+        path: Union[str, Path],
+        *,
+        password: Optional[str] = None,
+        limits: PdfLoadLimits | None = None,
     ) -> "Document":
         """Open a PDF in streaming/lazy mode for memory-efficient page processing.
 
@@ -383,6 +401,8 @@ class Document:
             File system path to the PDF.
         password:
             Optional password for encrypted PDFs.
+        limits:
+            Optional resource policy for untrusted input and later lazy work.
 
         Returns
         -------
@@ -397,8 +417,10 @@ class Document:
             If the PDF is encrypted and *password* is missing, empty, or
             whitespace-only (after stripping).
         """
-        doc = cls()
-        doc._engine_pdf = SimplePdf.from_file_lazy(Path(path), password=password)
+        doc = cls(limits=limits)
+        doc._engine_pdf = SimplePdf.from_file_lazy(
+            Path(path), password=password, limits=doc._load_limits
+        )
         doc.file_name = str(path)
         eff = _effective_encryption_password(password)
         if eff:
@@ -556,6 +578,7 @@ class Document:
         source: Union[str, bytes, bytearray, Path, BinaryIO],
         *,
         password: Optional[str] = None,
+        limits: PdfLoadLimits | None = None,
     ) -> "Document":
         """Load a PDF from a file path, raw bytes, or a binary stream.
 
@@ -568,6 +591,9 @@ class Document:
             the stream is **not** closed afterwards.
         password : str, optional
             Password for encrypted PDFs.
+        limits : PdfLoadLimits, optional
+            Resource policy for this load. When omitted, the policy configured
+            on the document is reused.
 
         Returns
         -------
@@ -584,6 +610,9 @@ class Document:
             If source is none of the accepted types.
         """
         self._ensure_not_disposed()
+        if limits is not None:
+            self._load_limits = _coerce_limits(limits)
+        resolved_limits = self._load_limits
         eff_pwd = _effective_encryption_password(password)
         self._password = eff_pwd if eff_pwd is not None else password
 
@@ -591,19 +620,33 @@ class Document:
             path = Path(source)
             if not path.is_file():
                 raise FileNotFoundError(f"File not found: {path}")
-            self._engine_pdf = SimplePdf.from_file(path, password=password)
+            self._engine_pdf = SimplePdf.from_file(
+                path, password=password, limits=resolved_limits
+            )
             self.file_name = str(path)
         elif isinstance(source, (bytes, bytearray)):
             # SimplePdf.from_bytes validates the PDF header; pass password so
             # that encrypted PDFs are not rejected before decrypt() is called.
-            self._engine_pdf = SimplePdf.from_bytes(bytes(source), password=password)
+            budget = _LoadBudget(resolved_limits)
+            budget.check_input(len(source))
+            data = bytes(source) if isinstance(source, bytearray) else source
+            self._engine_pdf = SimplePdf.from_bytes(
+                data,
+                password=password,
+                limits=resolved_limits,
+                _budget=budget,
+            )
             self.file_name = None
         elif hasattr(source, "read"):
             # BinaryIO / file-like object — read all bytes then delegate
-            data = source.read()
-            if not isinstance(data, (bytes, bytearray)):
-                raise TypeError("stream read() must return bytes")
-            self._engine_pdf = SimplePdf.from_bytes(bytes(data), password=password)
+            budget = _LoadBudget(resolved_limits)
+            data = _read_limited(source, budget)
+            self._engine_pdf = SimplePdf.from_bytes(
+                data,
+                password=password,
+                limits=resolved_limits,
+                _budget=budget,
+            )
             self.file_name = None
         else:
             raise TypeError(

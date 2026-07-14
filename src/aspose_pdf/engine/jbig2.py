@@ -7,9 +7,12 @@ module.  The public API remains compatible: a ``Decoder`` class exposing a
 static ``decode`` method.
 """
 
-import warnings
 import struct
+import warnings
 from typing import Dict, Optional
+
+from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 # The CCITT Group‑4 decoder is optional – the library can work without it.
 try:
@@ -59,14 +62,18 @@ class Decoder:
                 break
             seg_len = Decoder._read_uint32(data, offset)
             offset += 4
+            if seg_len > len(data) - offset:
+                break
             seg_data = data[offset : offset + seg_len]
             offset += seg_len
             yield seg_type, seg_data
-            if offset > len(data):
-                break
 
     @staticmethod
-    def _decode_generic_region(seg_data: bytes) -> bytes:
+    def _decode_generic_region(
+        seg_data: bytes,
+        *,
+        limits: PdfLoadLimits | None = None,
+    ) -> bytes:
         """Decode an Immediate Generic Region (type ``0x08``) segment.
 
         The first 13 bytes contain region information.  The least‑significant
@@ -78,25 +85,65 @@ class Decoder:
         if len(seg_data) < 13:
             return b""
 
+        resolved_limits = _coerce_limits(limits)
+        budget = _LoadBudget(resolved_limits)
+
         # Compression flag is the LSB of the first byte.
         mmr_flag = seg_data[0] & 0x01
         # The bitmap data follows the 13‑byte header.
         bitmap_payload = seg_data[13:]
+        # Width and height are stored as big-endian unsigned 32-bit values at
+        # offsets 5-8 and 9-12 respectively.
+        width = Decoder._read_uint32(seg_data, 5)
+        height = Decoder._read_uint32(seg_data, 9)
+        if width == 0 or height == 0:
+            return bitmap_payload
+        budget.check_image_pixels(width, height, "JBIG2 generic region")
+
+        declared_output_size = ((width + 7) // 8) * height
+        budget.check(
+            declared_output_size,
+            "max_decoded_stream_bytes",
+            "JBIG2 decoded bitmap bytes",
+        )
+        budget.check(
+            len(bitmap_payload),
+            "max_decoded_stream_bytes",
+            "JBIG2 generic region payload bytes",
+        )
+        budget.check(
+            len(bitmap_payload) + declared_output_size + (2 * width),
+            "max_codec_work_bytes",
+            "JBIG2 decoder working set",
+        )
 
         if mmr_flag and decode_group4:
-            # Width and height are stored as big‑endian unsigned 32‑bit values
-            # at offsets 5‑8 and 9‑12 respectively.
-            width = Decoder._read_uint32(seg_data, 5)
-            height = Decoder._read_uint32(seg_data, 9)
             try:
-                return decode_group4(bitmap_payload, width, height)
+                if limits is None:
+                    result = decode_group4(bitmap_payload, width, height)
+                else:
+                    result = decode_group4(
+                        bitmap_payload,
+                        width,
+                        height,
+                        limits=resolved_limits,
+                    )
+                budget.reserve_decoded(len(result), "JBIG2 decoded bitmap bytes")
+                return result
+            except PdfResourceLimitException:
+                raise
             except Exception as exc:  # pragma: no cover
                 warnings.warn(f"CCITT Group‑4 decode failed: {exc}", RuntimeWarning)
                 return bitmap_payload
         return bitmap_payload
 
     @staticmethod
-    def decode(data: bytes, params: Optional[Dict] = None) -> bytes:
+    def decode(
+        data: bytes,
+        params: Optional[Dict] = None,
+        *,
+        limits: PdfLoadLimits | None = None,
+    ) -> bytes:
         """Decode JBIG2 data and return a bitmap.
 
         Parameters
@@ -105,6 +152,8 @@ class Decoder:
             Raw JBIG2 byte stream.
         params : dict, optional
             Reserved for future extensions.
+        limits : PdfLoadLimits, optional
+            Resource limits for untrusted image data.
 
         Returns
         -------
@@ -112,15 +161,27 @@ class Decoder:
             Decoded bitmap data. If no suitable segment is found an empty
             ``bytes`` object is returned.
         """
+        resolved_limits = _coerce_limits(limits)
+        budget = _LoadBudget(resolved_limits)
+        budget.check_input(len(data))
+        budget.check(
+            len(data),
+            "max_codec_work_bytes",
+            "JBIG2 encoded input working set",
+        )
         try:
             for seg_type, seg_data in Decoder._parse_segments(data):
                 if seg_type == 0x08:  # Immediate Generic Region
-                    return Decoder._decode_generic_region(seg_data)
+                    result = Decoder._decode_generic_region(seg_data, limits=limits)
+                    budget.reserve_decoded(len(result), "JBIG2 decoded bitmap bytes")
+                    return result
             warnings.warn(
                 "JBIG2 stream contains no Immediate Generic Region segment",
                 RuntimeWarning,
             )
             return b""
+        except PdfResourceLimitException:
+            raise
         except Exception as exc:  # pragma: no cover
             warnings.warn(f"JBIG2 decoding error: {exc}", RuntimeWarning)
             return b""

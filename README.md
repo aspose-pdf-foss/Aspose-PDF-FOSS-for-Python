@@ -21,6 +21,7 @@ stable release.
 - Encrypt and decrypt documents with RC4 or AES
 - Create and inspect PDF signatures
 - Optimize streams, images, fonts, and unused objects
+- Apply configurable resource limits when processing untrusted PDFs
 - Work with XMP metadata and low-level PDF objects
 - Perform heuristic PDF/A and PDF/UA checks and conversions
 
@@ -192,9 +193,36 @@ shared publicly whenever possible.
 
 ## Security
 
-PDF files are untrusted binary input. If you discover a security issue, please
-follow the [security policy](SECURITY.md) and use GitHub private vulnerability
-reporting instead of opening a public issue.
+PDF files are untrusted binary input. Loading uses a generous default
+`PdfLoadLimits` policy that bounds input size, parser/object complexity,
+decoded streams, page content, images, and rasterization. Customize the policy
+when an application needs tighter limits:
+
+```python
+from aspose_pdf import Document, PdfLoadLimits, PdfResourceLimitException
+
+limits = PdfLoadLimits(
+    max_input_bytes=64 * 1024 * 1024,
+    max_decoded_stream_bytes=16 * 1024 * 1024,
+    max_image_pixels=25_000_000,
+)
+
+try:
+    with Document(limits=limits) as document:
+        document.load_from("input.pdf")
+except PdfResourceLimitException as error:
+    print(f"PDF rejected: {error}")
+```
+
+The same `limits=` argument is accepted by `Document.load_from()` and
+`Document.open_streaming()`; lazy decoding continues to use the document's
+shared budget. `PdfLoadLimits.unlimited()` disables every safeguard and should
+only be used for trusted input in an environment with external resource
+controls. These limits reduce known parser and allocation risks but are not an
+exhaustive DoS sandbox; isolate highly hostile workloads at the process level.
+
+If you discover a security issue, follow the [security policy](SECURITY.md) and
+use GitHub private vulnerability reporting instead of opening a public issue.
 
 ## License
 

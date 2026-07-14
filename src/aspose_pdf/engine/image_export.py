@@ -24,6 +24,9 @@ import struct
 import zlib
 from typing import Any, Dict, List, Optional, Tuple
 
+from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+
 try:  # optional, mirrors engine/jpx.py
     import io as _io
 
@@ -305,7 +308,13 @@ def _invert_bytes(data: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 # Reconstruction orchestrator
 # ---------------------------------------------------------------------------
-def _pillow_transcode(data: bytes, ext: str) -> bytes:
+def _pillow_transcode(
+    data: bytes,
+    ext: str,
+    limits: PdfLoadLimits | None = None,
+) -> bytes:
+    resolved_limits = _coerce_limits(limits)
+    budget = _LoadBudget(resolved_limits)
     fmt = {
         "jpg": "JPEG",
         "jpeg": "JPEG",
@@ -315,18 +324,51 @@ def _pillow_transcode(data: bytes, ext: str) -> bytes:
         "tiff": "TIFF",
         "gif": "GIF",
     }.get(ext, "PNG")
-    with _io.BytesIO(data) as bio:
-        with _PILImage.open(bio) as img:
-            if fmt in ("PNG", "BMP", "GIF") and img.mode not in (
-                "L",
-                "RGB",
-                "RGBA",
-                "P",
-            ):
-                img = img.convert("RGBA" if "A" in img.mode else "RGB")
-            buf = _io.BytesIO()
-            img.save(buf, format=fmt)
-            return buf.getvalue()
+    try:
+        with _io.BytesIO(data) as bio:
+            with _PILImage.open(bio) as source:
+                width, height = source.size
+                budget.check_image_pixels(width, height, "Pillow image transcode")
+                components = max(1, len(source.getbands()))
+                budget.check(
+                    width * height * components,
+                    "max_decoded_stream_bytes",
+                    "Pillow decoded image samples",
+                )
+                budget.check(
+                    len(data) + (width * height * (components + 4)),
+                    "max_codec_work_bytes",
+                    "Pillow image transcode working set",
+                )
+                converted = None
+                image = source
+                if fmt in ("PNG", "BMP", "GIF") and source.mode not in (
+                    "L",
+                    "RGB",
+                    "RGBA",
+                    "P",
+                ):
+                    converted = source.convert("RGBA" if "A" in source.mode else "RGB")
+                    image = converted
+                try:
+                    buf = _io.BytesIO()
+                    image.save(buf, format=fmt)
+                    output = buf.getvalue()
+                    budget.check(
+                        len(output),
+                        "max_codec_work_bytes",
+                        "Pillow image transcode output",
+                    )
+                    return output
+                finally:
+                    if converted is not None:
+                        converted.close()
+    except PdfResourceLimitException:
+        raise
+    except _PILImage.DecompressionBombError as exc:
+        raise PdfResourceLimitException(
+            "Resource limit exceeded for Pillow image pixels"
+        ) from exc
 
 
 def _decode_is_inverted(decode: Any, comps: int) -> bool:
@@ -413,10 +455,26 @@ def _apply_force_cs(
 
 
 def _samples_to_png(
-    meta: Dict[str, Any], decoded: bytes, force_cs: Optional[str] = None
+    meta: Dict[str, Any],
+    decoded: bytes,
+    force_cs: Optional[str] = None,
+    limits: PdfLoadLimits | None = None,
 ) -> bytes:
+    resolved_limits = _coerce_limits(limits)
+    budget = _LoadBudget(resolved_limits)
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
+    budget.check_image_pixels(width, height, "exported image")
+    budget.check(
+        width * height * 4,
+        "max_decoded_stream_bytes",
+        "exported image samples",
+    )
+    budget.check(
+        len(decoded) + (width * height * 8),
+        "max_codec_work_bytes",
+        "image export working set",
+    )
     mode, data, bit_depth, palette = _build_raster(meta, decoded)
     mode, data, bit_depth = _apply_force_cs(
         mode, data, bit_depth, force_cs, width, height
@@ -425,7 +483,10 @@ def _samples_to_png(
 
 
 def _dct_to_raster(
-    jpeg: bytes, want: str, force_cs: Optional[str]
+    jpeg: bytes,
+    want: str,
+    force_cs: Optional[str],
+    limits: PdfLoadLimits | None = None,
 ) -> Optional[Tuple[bytes, str]]:
     """Decode a JPEG to a raster file without Pillow.
 
@@ -436,7 +497,7 @@ def _dct_to_raster(
     """
     from aspose_pdf.engine.dct import decode as decode_jpeg
 
-    image = decode_jpeg(jpeg)
+    image = decode_jpeg(jpeg, limits=limits)
     if image is None:
         return None
     mode, data = image.mode, image.samples
@@ -456,6 +517,8 @@ def reconstruct_image_file(
     decoded: bytes,
     target_ext: Optional[str] = None,
     force_cs: Optional[str] = None,
+    *,
+    limits: PdfLoadLimits | None = None,
 ) -> Tuple[bytes, str]:
     """Turn decoded image bytes + metadata into a real image file.
 
@@ -473,10 +536,10 @@ def reconstruct_image_file(
     if sniff is not None:
         if want == "png" and sniff in ("jpg", "jp2"):
             if HAS_PILLOW:
-                return _pillow_transcode(decoded, "png"), "png"
+                return _pillow_transcode(decoded, "png", limits), "png"
             if sniff == "jpg":
                 # Dependency-free baseline JPEG -> PNG (Pillow not installed).
-                raster = _dct_to_raster(decoded, "png", force_cs)
+                raster = _dct_to_raster(decoded, "png", force_cs, limits)
                 if raster is not None:
                     return raster
         return decoded, sniff
@@ -489,7 +552,7 @@ def reconstruct_image_file(
     if filt in ("DCTDecode", "DCT"):
         # decoded is the original JPEG (pass-through filter).
         if want in ("png", "bmp", "tif", "tiff", "gif") and HAS_PILLOW:
-            return _pillow_transcode(decoded, want), want
+            return _pillow_transcode(decoded, want, limits), want
         return decoded, "jpg"
 
     if filt == "JPXDecode":
@@ -498,7 +561,9 @@ def reconstruct_image_file(
             if ext_from_magic(decoded) in ("jp2", None) and decoded[:4] in (
                 b"\xff\x4f\xff\x51",
             ):
-                return _pillow_transcode(decoded, want or "png"), (want or "png")
+                return _pillow_transcode(decoded, want or "png", limits), (
+                    want or "png"
+                )
             # raw pixels already decoded -> fall through to PNG packing below
         else:
             return decoded, "jp2"
@@ -508,4 +573,4 @@ def reconstruct_image_file(
     if width <= 0 or height <= 0:
         return decoded, want or "bin"
 
-    return _samples_to_png(meta, decoded, force_cs), "png"
+    return _samples_to_png(meta, decoded, force_cs, limits), "png"

@@ -30,6 +30,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterator, List, Optional, Set, Tuple
 
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+
 __all__ = [
     "TextObject",
     "LayoutElement",
@@ -142,7 +144,26 @@ def _apply(m: Matrix, x: float, y: float) -> Tuple[float, float]:
     return (a * x + c * y + e, b * x + d * y + f)
 
 
-def _tokens(content: bytes) -> Iterator[Tuple[Optional[str], int, int]]:
+def _resolve_scan_budget(
+    limits: PdfLoadLimits | None,
+    budget: _LoadBudget | None,
+) -> _LoadBudget:
+    """Return a validated budget for one content-scanning operation."""
+    if budget is None:
+        return _LoadBudget(_coerce_limits(limits))
+    if not isinstance(budget, _LoadBudget):
+        raise TypeError("budget must be a _LoadBudget instance or None")
+    if limits is not None and limits != budget.limits:
+        raise ValueError("limits must match budget.limits")
+    return budget
+
+
+def _tokens(
+    content: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> Iterator[Tuple[Optional[str], int, int]]:
     """Yield ``(token, start, end)`` for a content stream.
 
     ``token`` is the operator/operand/name text, or ``None`` for a literal or
@@ -150,6 +171,43 @@ def _tokens(content: bytes) -> Iterator[Tuple[Optional[str], int, int]]:
     Strings and comments are consumed so their bytes are never mistaken for
     operators (e.g. a ``(BT)`` literal is not a text object).
     """
+    active_budget = _resolve_scan_budget(limits, budget)
+    active_budget.check(
+        len(content),
+        "max_content_stream_bytes",
+        "auto-tag content stream bytes",
+    )
+
+    token_count = 0
+    container_stack: List[str] = []
+
+    def count_token() -> None:
+        nonlocal token_count
+        token_count += 1
+        active_budget.check(
+            token_count,
+            "max_content_tokens",
+            "auto-tag content stream tokens",
+        )
+
+    def push_container(kind: str) -> None:
+        depth = len(container_stack) + 1
+        active_budget.check(
+            depth,
+            "max_container_items",
+            "auto-tag content structure stack items",
+        )
+        active_budget.check(
+            depth,
+            "max_nesting_depth",
+            "auto-tag content structure nesting",
+        )
+        container_stack.append(kind)
+
+    def close_container(kind: str) -> None:
+        if container_stack and container_stack[-1] == kind:
+            container_stack.pop()
+
     i = 0
     n = len(content)
     while i < n:
@@ -164,6 +222,11 @@ def _tokens(content: bytes) -> Iterator[Tuple[Optional[str], int, int]]:
         if c == 0x28:  # '(' literal string
             start = i
             depth = 1
+            active_budget.check(
+                depth,
+                "max_nesting_depth",
+                "auto-tag literal string nesting",
+            )
             i += 1
             while i < n and depth > 0:
                 ch = content[i]
@@ -172,13 +235,21 @@ def _tokens(content: bytes) -> Iterator[Tuple[Optional[str], int, int]]:
                     continue
                 if ch == 0x28:
                     depth += 1
+                    active_budget.check(
+                        depth,
+                        "max_nesting_depth",
+                        "auto-tag literal string nesting",
+                    )
                 elif ch == 0x29:
                     depth -= 1
                 i += 1
+            count_token()
             yield (None, start, i)
             continue
         if c == 0x3C:  # '<'
             if i + 1 < n and content[i + 1] == 0x3C:  # '<<' dict open
+                push_container("<<")
+                count_token()
                 yield ("<<", i, i + 2)
                 i += 2
                 continue
@@ -187,17 +258,28 @@ def _tokens(content: bytes) -> Iterator[Tuple[Optional[str], int, int]]:
             while i < n and content[i] != 0x3E:  # up to '>'
                 i += 1
             i += 1
+            count_token()
             yield (None, start, i)
             continue
         if c == 0x3E:  # '>'
             if i + 1 < n and content[i + 1] == 0x3E:
+                close_container("<<")
+                count_token()
                 yield (">>", i, i + 2)
                 i += 2
                 continue
             i += 1
             continue
         if c in b"[]{}":
-            yield (chr(c), i, i + 1)
+            punctuation = chr(c)
+            if punctuation in ("[", "{"):
+                push_container(punctuation)
+            elif punctuation == "]":
+                close_container("[")
+            else:
+                close_container("{")
+            count_token()
+            yield (punctuation, i, i + 1)
             i += 1
             continue
         if c == 0x2F:  # '/' name
@@ -205,6 +287,7 @@ def _tokens(content: bytes) -> Iterator[Tuple[Optional[str], int, int]]:
             i += 1
             while i < n and content[i] not in _ENDERS:
                 i += 1
+            count_token()
             yield (content[start:i].decode("latin-1"), start, i)
             continue
         start = i
@@ -214,6 +297,7 @@ def _tokens(content: bytes) -> Iterator[Tuple[Optional[str], int, int]]:
             i += 1
             continue
         token = content[start:i].decode("latin-1")
+        count_token()
         yield (token, start, i)
         if token == "ID":  # inline image: skip the raw binary up to 'EI'
             i = _skip_inline_image(content, i, n)
@@ -331,15 +415,26 @@ def is_list_item(group: List["LayoutElement"]) -> bool:
     return head.kind == "text" and head.tag == "P" and list_marker(head.text_head) is not None
 
 
-def has_marked_content(content: bytes) -> bool:
+def has_marked_content(
+    content: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> bool:
     """Return ``True`` if the stream already contains marked-content operators."""
-    for token, _start, _end in _tokens(content):
+    active_budget = _resolve_scan_budget(limits, budget)
+    for token, _start, _end in _tokens(content, budget=active_budget):
         if token in ("BDC", "BMC", "DP", "MP"):
             return True
     return False
 
 
-def find_layout_elements(content: bytes) -> List[LayoutElement]:
+def find_layout_elements(
+    content: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> List[LayoutElement]:
     """Locate positioned text objects and image paints in *content*, in stream order.
 
     Tracks the CTM (``q``/``Q``/``cm``) and text matrix (``Tm``/``Td``/``TD``/
@@ -347,6 +442,7 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
     sorting.  Text objects also carry their maximum font size and shown-text
     length; image paints carry the invoked resource name.
     """
+    active_budget = _resolve_scan_budget(limits, budget)
     elements: List[LayoutElement] = []
     ctm: Matrix = _IDENTITY
     ctm_stack: List[Matrix] = []
@@ -369,7 +465,7 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
         if in_text and anchor is None:
             anchor = _apply(_mul(tm, ctm), 0.0, 0.0)
 
-    for token, tok_start, tok_end in _tokens(content):
+    for token, tok_start, tok_end in _tokens(content, budget=active_budget):
         if token is None:  # a string literal / hex string operand
             if in_text:
                 text_length += tok_end - tok_start
@@ -384,12 +480,28 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
             continue
         val = _to_float(token)
         if val is not None:
+            active_budget.check(
+                len(nums) + 1,
+                "max_container_items",
+                "auto-tag numeric operand buffer items",
+            )
             nums.append(val)
             continue
 
         # A bare keyword: an operator. Dispatch, then clear pending operands.
         op = token
         if op == "q":
+            stack_size = len(ctm_stack) + 1
+            active_budget.check(
+                stack_size,
+                "max_container_items",
+                "auto-tag graphics state stack items",
+            )
+            active_budget.check(
+                stack_size,
+                "max_nesting_depth",
+                "auto-tag graphics state nesting",
+            )
             ctm_stack.append(ctm)
         elif op == "Q":
             if ctm_stack:
@@ -408,6 +520,11 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
         elif op == "ET":
             if in_text:
                 ax, ay = anchor if anchor is not None else _apply(_mul(tm, ctm), 0.0, 0.0)
+                active_budget.check(
+                    len(elements) + 1,
+                    "max_container_items",
+                    "auto-tag layout results",
+                )
                 elements.append(
                     LayoutElement(
                         "text", start, tok_end, ax, ay, max_size, text_length,
@@ -443,6 +560,11 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
         elif op == "Do":
             if last_name is not None:
                 cx, cy = _apply(ctm, 0.5, 0.5)  # centre of the placed unit square
+                active_budget.check(
+                    len(elements) + 1,
+                    "max_container_items",
+                    "auto-tag layout results",
+                )
                 elements.append(
                     LayoutElement(
                         "xobject",
@@ -460,7 +582,12 @@ def find_layout_elements(content: bytes) -> List[LayoutElement]:
     return elements
 
 
-def find_image_placements(content: bytes) -> List[Tuple[str, float, float]]:
+def find_image_placements(
+    content: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> List[Tuple[str, float, float]]:
     """Return ``(xobject_name, displayed_width, displayed_height)`` per ``Do``.
 
     The name keeps its leading slash. Sizes are in default user-space units
@@ -468,13 +595,14 @@ def find_image_placements(content: bytes) -> List[Tuple[str, float, float]]:
     are the lengths of the CTM's transformed ``(1,0)`` and ``(0,1)`` vectors.
     Form and image XObjects share ``Do``; the caller keeps only the image names.
     """
+    active_budget = _resolve_scan_budget(limits, budget)
     placements: List[Tuple[str, float, float]] = []
     ctm: Matrix = _IDENTITY
     ctm_stack: List[Matrix] = []
     nums: List[float] = []
     last_name: Optional[str] = None
 
-    for token, _tok_start, _tok_end in _tokens(content):
+    for token, _tok_start, _tok_end in _tokens(content, budget=active_budget):
         if token is None or token in ("[", "]", "{", "}", "<<", ">>"):
             continue
         if token.startswith("/"):
@@ -482,10 +610,26 @@ def find_image_placements(content: bytes) -> List[Tuple[str, float, float]]:
             continue
         val = _to_float(token)
         if val is not None:
+            active_budget.check(
+                len(nums) + 1,
+                "max_container_items",
+                "image placement numeric operand buffer items",
+            )
             nums.append(val)
             continue
         op = token
         if op == "q":
+            stack_size = len(ctm_stack) + 1
+            active_budget.check(
+                stack_size,
+                "max_container_items",
+                "image placement graphics state stack items",
+            )
+            active_budget.check(
+                stack_size,
+                "max_nesting_depth",
+                "image placement graphics state nesting",
+            )
             ctm_stack.append(ctm)
         elif op == "Q":
             if ctm_stack:
@@ -495,6 +639,11 @@ def find_image_placements(content: bytes) -> List[Tuple[str, float, float]]:
                 ctm = _mul(tuple(nums[-6:]), ctm)  # type: ignore[arg-type]
         elif op == "Do" and last_name is not None:
             a, b, c, d = ctm[0], ctm[1], ctm[2], ctm[3]
+            active_budget.check(
+                len(placements) + 1,
+                "max_container_items",
+                "image placement results",
+            )
             placements.append(
                 (last_name, (a * a + b * b) ** 0.5, (c * c + d * d) ** 0.5)
             )
@@ -503,7 +652,12 @@ def find_image_placements(content: bytes) -> List[Tuple[str, float, float]]:
     return placements
 
 
-def find_mcids(content: bytes) -> Set[int]:
+def find_mcids(
+    content: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> Set[int]:
     """Return the set of marked-content ``/MCID`` integers declared in *content*.
 
     Scans the inline property dictionary of each ``BDC``/``DP`` operator for an
@@ -512,11 +666,12 @@ def find_mcids(content: bytes) -> Set[int]:
     ignored.  Named property lists (``/Tag /P1 BDC``) are not resolved, so their
     MCIDs -- rare in generated content -- are not reported.
     """
+    active_budget = _resolve_scan_budget(limits, budget)
     mcids: Set[int] = set()
     depth = 0
     current: Optional[int] = None
     expect_value = False
-    for token, _tok_start, _tok_end in _tokens(content):
+    for token, _tok_start, _tok_end in _tokens(content, budget=active_budget):
         if token is None:
             continue
         if token == "<<":
@@ -539,21 +694,37 @@ def find_mcids(content: bytes) -> Set[int]:
             continue
         if token in ("BDC", "DP"):
             if current is not None:
+                if current not in mcids:
+                    active_budget.check(
+                        len(mcids) + 1,
+                        "max_container_items",
+                        "marked-content ID results",
+                    )
                 mcids.add(current)
             current = None
     return mcids
 
 
-def find_text_objects(content: bytes) -> List[TextObject]:
+def find_text_objects(
+    content: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> List[TextObject]:
     """Return the ``BT`` ... ``ET`` text objects in *content*, in stream order."""
     return [
         TextObject(e.start, e.end, e.font_size, e.text_length)
-        for e in find_layout_elements(content)
+        for e in find_layout_elements(content, limits=limits, budget=budget)
         if e.kind == "text"
     ]
 
 
-def find_xobject_invocations(content: bytes) -> List[Tuple[str, int, int]]:
+def find_xobject_invocations(
+    content: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> List[Tuple[str, int, int]]:
     """Return ``(name, start, end)`` for each ``/Name Do`` in stream order.
 
     *name* keeps its leading slash; the span ``[start, end)`` covers the name
@@ -563,7 +734,7 @@ def find_xobject_invocations(content: bytes) -> List[Tuple[str, int, int]]:
     """
     return [
         (e.name, e.start, e.end)
-        for e in find_layout_elements(content)
+        for e in find_layout_elements(content, limits=limits, budget=budget)
         if e.kind == "xobject" and e.name is not None
     ]
 

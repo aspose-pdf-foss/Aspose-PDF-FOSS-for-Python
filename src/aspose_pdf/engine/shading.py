@@ -15,7 +15,10 @@ caller leaves such paints unpainted (best effort).
 from __future__ import annotations
 
 import math
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
 
@@ -38,10 +41,21 @@ def _num(pdf: Any, obj: Any) -> Optional[float]:
     return None
 
 
-def _num_array(pdf: Any, obj: Any) -> Optional[List[float]]:
+def _num_array(
+    pdf: Any,
+    obj: Any,
+    *,
+    budget: Optional[_LoadBudget] = None,
+    state: Optional["_FunctionBuildState"] = None,
+    context: str = "shading numeric array items",
+) -> Optional[List[float]]:
     obj = pdf._resolve(obj)
     if not isinstance(obj, PdfArray):
         return None
+    if budget is not None:
+        budget.check(len(obj.items), "max_container_items", context)
+    if state is not None:
+        state.charge_items(len(obj.items))
     out: List[float] = []
     for item in obj.items:
         value = _num(pdf, item)
@@ -49,10 +63,18 @@ def _num_array(pdf: Any, obj: Any) -> Optional[List[float]]:
     return out
 
 
-def _bool_array(pdf: Any, obj: Any) -> Optional[List[bool]]:
+def _bool_array(
+    pdf: Any,
+    obj: Any,
+    *,
+    budget: Optional[_LoadBudget] = None,
+    context: str = "shading boolean array items",
+) -> Optional[List[bool]]:
     obj = pdf._resolve(obj)
     if not isinstance(obj, PdfArray):
         return None
+    if budget is not None:
+        budget.check(len(obj.items), "max_container_items", context)
     return [bool(getattr(pdf._resolve(item), "value", False)) for item in obj.items]
 
 
@@ -117,38 +139,193 @@ def _color_converter(pdf: Any, cs_obj: Any):
 # ---------------------------------------------------------------------------
 
 
-def build_function(pdf: Any, obj: Any):
+class _FunctionBuildState:
+    """Track one bounded traversal of a PDF function graph."""
+
+    def __init__(self, budget: _LoadBudget) -> None:
+        self.budget = budget
+        self.active: Set[int] = set()
+        self.memo: Dict[Tuple[int, bool], Any] = {}
+        self.node_count = 0
+        self.item_count = 0
+
+    def charge_items(self, count: int) -> None:
+        self.item_count += count
+        self.budget.check(
+            self.item_count,
+            "max_container_items",
+            "PDF function materialized items",
+        )
+
+
+def _resolve_budget(
+    pdf: Any,
+    limits: Optional[PdfLoadLimits],
+    budget: Optional[_LoadBudget],
+) -> _LoadBudget:
+    if budget is not None:
+        if not isinstance(budget, _LoadBudget):
+            raise TypeError("budget must be a _LoadBudget instance or None")
+        return budget
+    existing = getattr(pdf, "_load_budget", None)
+    if limits is None and isinstance(existing, _LoadBudget):
+        return existing
+    if limits is None:
+        limits = getattr(pdf, "_load_limits", None)
+    return _LoadBudget(_coerce_limits(limits))
+
+
+def build_function(
+    pdf: Any,
+    obj: Any,
+    *,
+    limits: Optional[PdfLoadLimits] = None,
+    budget: Optional[_LoadBudget] = None,
+):
     """Build an evaluable function (types 0/2/3, or an array of them)."""
+    state = _FunctionBuildState(_resolve_budget(pdf, limits, budget))
+    return _build_function(pdf, obj, state, depth=1, allow_partial_array=True)
+
+
+def _build_function(
+    pdf: Any,
+    obj: Any,
+    state: _FunctionBuildState,
+    *,
+    depth: int,
+    allow_partial_array: bool,
+):
     obj = pdf._resolve(obj)
-    if isinstance(obj, PdfArray):
-        funcs = [build_function(pdf, item) for item in obj.items]
-        funcs = [f for f in funcs if f is not None]
-        return _ArrayFunction(funcs) if funcs else None
-    if not isinstance(obj, (PdfDictionary, PdfStream)):
+    if not isinstance(obj, (PdfArray, PdfDictionary, PdfStream)):
         return None
+
+    state.budget.check(
+        depth,
+        "max_nesting_depth",
+        "PDF function graph depth",
+    )
+    obj_id = id(obj)
+    memo_key = (obj_id, allow_partial_array)
+    if obj_id in state.active:
+        raise PdfParseException("PDF function graph contains a cycle")
+    if memo_key in state.memo:
+        return state.memo[memo_key]
+
+    state.node_count += 1
+    state.budget.check(
+        state.node_count,
+        "max_container_items",
+        "PDF function graph nodes",
+    )
+    state.active.add(obj_id)
+    try:
+        result = _build_function_object(
+            pdf,
+            obj,
+            state,
+            depth=depth,
+            allow_partial_array=allow_partial_array,
+        )
+        state.memo[memo_key] = result
+        return result
+    finally:
+        state.active.remove(obj_id)
+
+
+def _build_function_object(
+    pdf: Any,
+    obj: Any,
+    state: _FunctionBuildState,
+    *,
+    depth: int,
+    allow_partial_array: bool,
+):
+    if isinstance(obj, PdfArray):
+        state.budget.check(
+            len(obj.items),
+            "max_container_items",
+            "PDF function array items",
+        )
+        state.charge_items(len(obj.items))
+        funcs = [
+            _build_function(
+                pdf,
+                item,
+                state,
+                depth=depth + 1,
+                allow_partial_array=True,
+            )
+            for item in obj.items
+        ]
+        if not allow_partial_array and any(func is None for func in funcs):
+            return None
+        funcs = [func for func in funcs if func is not None]
+        return _ArrayFunction(funcs) if funcs else None
+
     mapping = obj.mapping
+    state.budget.check(
+        len(mapping),
+        "max_container_items",
+        "PDF function dictionary items",
+    )
     ftype = _num(pdf, mapping.get(PdfName("FunctionType")))
     if ftype is None:
         return None
-    domain = _num_array(pdf, mapping.get(PdfName("Domain"))) or [0.0, 1.0]
+    domain = _num_array(
+        pdf,
+        mapping.get(PdfName("Domain")),
+        budget=state.budget,
+        state=state,
+        context="PDF function Domain items",
+    ) or [0.0, 1.0]
     ftype = int(ftype)
     if ftype == 2:
-        c0 = _num_array(pdf, mapping.get(PdfName("C0"))) or [0.0]
-        c1 = _num_array(pdf, mapping.get(PdfName("C1"))) or [1.0]
+        c0 = _num_array(
+            pdf,
+            mapping.get(PdfName("C0")),
+            budget=state.budget,
+            state=state,
+            context="PDF function C0 items",
+        ) or [0.0]
+        c1 = _num_array(
+            pdf,
+            mapping.get(PdfName("C1")),
+            budget=state.budget,
+            state=state,
+            context="PDF function C1 items",
+        ) or [1.0]
         n = _num(pdf, mapping.get(PdfName("N"))) or 1.0
         return _ExpFunction(domain, c0, c1, n)
     if ftype == 3:
         funcs_obj = pdf._resolve(mapping.get(PdfName("Functions")))
         if not isinstance(funcs_obj, PdfArray):
             return None
-        funcs = [build_function(pdf, item) for item in funcs_obj.items]
-        if any(f is None for f in funcs):
+        funcs_array = _build_function(
+            pdf,
+            funcs_obj,
+            state,
+            depth=depth + 1,
+            allow_partial_array=False,
+        )
+        if not isinstance(funcs_array, _ArrayFunction):
             return None
-        bounds = _num_array(pdf, mapping.get(PdfName("Bounds"))) or []
-        encode = _num_array(pdf, mapping.get(PdfName("Encode"))) or []
-        return _StitchFunction(domain, funcs, bounds, encode)
+        bounds = _num_array(
+            pdf,
+            mapping.get(PdfName("Bounds")),
+            budget=state.budget,
+            state=state,
+            context="PDF function Bounds items",
+        ) or []
+        encode = _num_array(
+            pdf,
+            mapping.get(PdfName("Encode")),
+            budget=state.budget,
+            state=state,
+            context="PDF function Encode items",
+        ) or []
+        return _StitchFunction(domain, funcs_array.funcs, bounds, encode)
     if ftype == 0 and isinstance(obj, PdfStream):
-        sampled = _SampledFunction(pdf, obj, domain)
+        sampled = _SampledFunction(pdf, obj, domain, state)
         return sampled if sampled.ok else None
     return None  # type 4 (PostScript calculator) is unsupported.
 
@@ -204,23 +381,73 @@ class _ArrayFunction:
 
 
 class _SampledFunction:
-    def __init__(self, pdf, stream, domain):
+    def __init__(self, pdf, stream, domain, state: _FunctionBuildState):
         mapping = stream.mapping
+        budget = state.budget
         self.domain = domain
-        size = _num_array(pdf, mapping.get(PdfName("Size"))) or [2.0]
+        size = _num_array(
+            pdf,
+            mapping.get(PdfName("Size")),
+            budget=budget,
+            state=state,
+            context="sampled function Size items",
+        ) or [2.0]
         self.size = max(2, int(size[0]))
         self.bps = int(_num(pdf, mapping.get(PdfName("BitsPerSample"))) or 8)
-        self.range = _num_array(pdf, mapping.get(PdfName("Range"))) or [0.0, 1.0]
+        self.range = _num_array(
+            pdf,
+            mapping.get(PdfName("Range")),
+            budget=budget,
+            state=state,
+            context="sampled function Range items",
+        ) or [0.0, 1.0]
         self.n_out = max(1, len(self.range) // 2)
-        self.encode = _num_array(pdf, mapping.get(PdfName("Encode"))) or [
+        total = self.size * self.n_out
+        budget.check(
+            total,
+            "max_container_items",
+            "sampled function entries",
+        )
+        bytes_per_sample = 2 if self.bps == 16 else 1
+        required_bytes = total * bytes_per_sample
+        budget.check(
+            required_bytes,
+            "max_decoded_stream_bytes",
+            "sampled function bytes",
+        )
+        budget.check(
+            required_bytes + (total * 32),
+            "max_codec_work_bytes",
+            "sampled function working set",
+        )
+        self.encode = _num_array(
+            pdf,
+            mapping.get(PdfName("Encode")),
+            budget=budget,
+            state=state,
+            context="sampled function Encode items",
+        ) or [
             0.0,
             float(self.size - 1),
         ]
-        self.decode = _num_array(pdf, mapping.get(PdfName("Decode"))) or list(self.range)
+        self.decode = _num_array(
+            pdf,
+            mapping.get(PdfName("Decode")),
+            budget=budget,
+            state=state,
+            context="sampled function Decode items",
+        ) or list(self.range)
         try:
             data = pdf._decode_cos_stream(stream, None)
+        except PdfResourceLimitException:
+            raise
         except Exception:
             data = stream.content
+        budget.check(
+            len(data) + (total * 32),
+            "max_codec_work_bytes",
+            "sampled function working set",
+        )
         self.samples = self._read_samples(data)
         self.ok = self.samples is not None
 
@@ -343,8 +570,16 @@ class _RadialShading(Shading):
         return best
 
 
-def build_shading(pdf: Any, obj: Any, lut_size: int = 256) -> Optional[Shading]:
+def build_shading(
+    pdf: Any,
+    obj: Any,
+    lut_size: int = 256,
+    *,
+    limits: Optional[PdfLoadLimits] = None,
+    budget: Optional[_LoadBudget] = None,
+) -> Optional[Shading]:
     """Build an axial/radial :class:`Shading` from a COS shading dict, or ``None``."""
+    load_budget = _resolve_budget(pdf, limits, budget)
     obj = pdf._resolve(obj)
     if not isinstance(obj, (PdfDictionary, PdfStream)):
         return None
@@ -352,16 +587,36 @@ def build_shading(pdf: Any, obj: Any, lut_size: int = 256) -> Optional[Shading]:
     stype = _num(pdf, mapping.get(PdfName("ShadingType")))
     if stype is None or int(stype) not in (2, 3):
         return None
-    coords = _num_array(pdf, mapping.get(PdfName("Coords")))
+    coords = _num_array(
+        pdf,
+        mapping.get(PdfName("Coords")),
+        budget=load_budget,
+        context="shading Coords items",
+    )
     needed = 4 if int(stype) == 2 else 6
     if not coords or len(coords) < needed:
         return None
-    func = build_function(pdf, mapping.get(PdfName("Function")))
+    func = build_function(
+        pdf,
+        mapping.get(PdfName("Function")),
+        limits=load_budget.limits,
+        budget=load_budget,
+    )
     if func is None:
         return None
     convert = _color_converter(pdf, mapping.get(PdfName("ColorSpace")))
-    domain = _num_array(pdf, mapping.get(PdfName("Domain"))) or [0.0, 1.0]
-    extend = _bool_array(pdf, mapping.get(PdfName("Extend"))) or [False, False]
+    domain = _num_array(
+        pdf,
+        mapping.get(PdfName("Domain")),
+        budget=load_budget,
+        context="shading Domain items",
+    ) or [0.0, 1.0]
+    extend = _bool_array(
+        pdf,
+        mapping.get(PdfName("Extend")),
+        budget=load_budget,
+        context="shading Extend items",
+    ) or [False, False]
 
     lut: List[Color] = []
     d_lo, d_hi = domain[0], domain[1]

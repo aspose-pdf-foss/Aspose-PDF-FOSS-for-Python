@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from aspose_pdf.exceptions import AsposePdfException, PDF_OPERATION_ERRORS
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
 
 logger = logging.getLogger(__name__)
 
@@ -68,21 +69,39 @@ class PdfExtractor:
         self._password = value
 
     def bind_pdf(
-        self, source: Union[str, Path, bytes], password: Optional[str] = None
+        self,
+        source: Union[str, Path, bytes],
+        password: Optional[str] = None,
+        *,
+        limits: PdfLoadLimits | None = None,
     ) -> None:
         """Bind to a PDF source for extraction.
 
         For encrypted documents, pass ``password`` or set :attr:`PdfExtractor.password` first.
         An explicit ``password`` argument overrides the property for this call only.
+        Use ``limits`` to constrain loading and subsequent text extraction.
         """
         self._ensure_not_disposed()
         from aspose_pdf.engine.simple_pdf import SimplePdf
 
         pwd = self._password if password is None else password
+        load_kwargs = {} if limits is None else {"limits": limits}
         if isinstance(source, (str, Path)):
-            self._bound_pdf = SimplePdf.from_file(source, pwd)
+            self._bound_pdf = SimplePdf.from_file(source, pwd, **load_kwargs)
         else:
-            self._bound_pdf = SimplePdf.from_bytes(source, pwd)
+            self._bound_pdf = SimplePdf.from_bytes(source, pwd, **load_kwargs)
+
+    def _content_parser_options(self) -> dict[str, object]:
+        """Return the bound document's parser limits and shared budget."""
+        if self._bound_pdf is None:
+            return {}
+        budget = getattr(self._bound_pdf, "_load_budget", None)
+        if isinstance(budget, _LoadBudget):
+            return {"limits": budget.limits, "budget": budget}
+        limits = getattr(self._bound_pdf, "load_limits", None)
+        if isinstance(limits, PdfLoadLimits):
+            return {"limits": limits}
+        return {}
 
     def extract_text(self) -> None:
         """Extract text from bound PDF pages."""
@@ -102,7 +121,9 @@ class PdfExtractor:
             if hasattr(self._bound_pdf, "_get_page_resources"):
                 resources = self._bound_pdf._get_page_resources(i)
 
-            parser = ContentStreamParser(stream, resources)
+            parser = ContentStreamParser(
+                stream, resources, **self._content_parser_options()
+            )
             text = parser.extract_text()
             self._page_texts.append(text)
 
@@ -110,7 +131,9 @@ class PdfExtractor:
         """Deprecated: use ContentStreamParser instead."""
         from aspose_pdf.engine.content_stream_parser import ContentStreamParser
 
-        parser = ContentStreamParser(data, {})
+        parser = ContentStreamParser(
+            data, {}, **self._content_parser_options()
+        )
         return parser.extract_text()
 
     def get_text(self) -> str:

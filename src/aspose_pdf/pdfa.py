@@ -9,7 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import BinaryIO, List, Optional, Union
+
 from aspose_pdf.exceptions import PdfIOException, PdfValidationException
+from aspose_pdf.load_limits import (
+    PdfLoadLimits,
+    _LoadBudget,
+    _coerce_limits,
+    _read_limited,
+)
 
 
 class PdfAValidationResult:
@@ -119,8 +126,9 @@ class PdfAValidationResult:
 class PdfAValidateOptions:
     """Container for PDF/A validation settings."""
 
-    def __init__(self) -> None:
+    def __init__(self, limits: PdfLoadLimits | None = None) -> None:
         self._inputs: List[Union[Path, bytes]] = []
+        self.limits = _coerce_limits(limits)
         self.pdfa_version: str = "PDF/A-1b"
         self.optimize_file_size: bool = False
         self.is_low_memory_mode: bool = False
@@ -141,24 +149,33 @@ class PdfAValidateOptions:
         PdfAValidateOptions
             Self for method chaining.
         """
+        budget = _LoadBudget(self.limits)
         if isinstance(source, (str, Path)):
             path = Path(source)
             if not path.is_file():
                 raise PdfIOException(f"Input file does not exist: {path}")
+            budget.check_input(path.stat().st_size)
             self._inputs.append(path)
             return self
 
-        if isinstance(source, (bytes, bytearray)):
+        if isinstance(source, bytes):
+            budget.check_input(len(source))
+            self._inputs.append(source)
+            return self
+
+        if isinstance(source, bytearray):
+            budget.check_input(len(source))
             self._inputs.append(bytes(source))
             return self
 
         if hasattr(source, "read"):
-            data = source.read()
-            if isinstance(data, str):
-                data = data.encode()
-            if not isinstance(data, (bytes, bytearray)):
-                raise PdfValidationException("Binary stream did not return bytes")
-            self._inputs.append(bytes(data))
+            try:
+                data = _read_limited(source, budget)
+            except TypeError as exc:
+                raise PdfValidationException(
+                    "Binary stream did not return bytes"
+                ) from exc
+            self._inputs.append(data)
             return self
 
         raise PdfValidationException("Unsupported input type for add_input")
@@ -220,13 +237,9 @@ class PdfAValidator:
         results: List[PdfAValidationResult] = []
 
         for inp in options.inputs:
-            doc = Document()
-            if isinstance(inp, Path):
-                doc.load_from(str(inp))
-            else:
-                doc.load_from(inp)
-            result = doc.validate_pdfa(level)
-            results.append(result)
+            with Document(limits=options.limits) as doc:
+                doc.load_from(inp, limits=options.limits)
+                results.append(doc.validate_pdfa(level))
 
         return results
 

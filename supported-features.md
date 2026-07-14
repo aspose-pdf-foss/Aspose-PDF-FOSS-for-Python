@@ -41,6 +41,87 @@ Supported:
 - Run resource optimization and stream compression helpers.
 - Preserve and edit outlines/bookmarks.
 
+## Resource Limits For Untrusted PDFs
+
+`PdfLoadLimits` is the public, immutable resource policy used when a PDF is
+loaded and later processed. It can be supplied when constructing a document,
+for a particular eager load, or when opening a lazy document:
+
+```python
+from aspose_pdf import Document, PdfLoadLimits, PdfResourceLimitException
+
+limits = PdfLoadLimits(
+    max_input_bytes=64 * 1024 * 1024,
+    max_objects=50_000,
+    max_decoded_stream_bytes=16 * 1024 * 1024,
+    max_total_decoded_bytes=64 * 1024 * 1024,
+)
+
+with Document(limits=limits) as document:
+    document.load_from("input.pdf")
+
+with Document() as document:
+    document.load_from("input.pdf", limits=limits)
+
+with Document.open_streaming("input.pdf", limits=limits) as lazy_document:
+    first_page_bytes = lazy_document.pages[0].content
+```
+
+The effective policy is available as `document.load_limits`. Passing no policy
+uses the bounded defaults below. Every field accepts a positive integer or
+`None`; `None` disables only that field.
+
+| Field | Default | Guarded resource |
+| --- | ---: | --- |
+| `max_input_bytes` | 512 MiB | Bytes accepted from a path, bytes-like value, or binary stream; streams are read incrementally without being closed. |
+| `max_objects` | 250,000 | Object slots and object counts from traditional/reconstructed xref data, xref streams, and object streams. |
+| `max_xref_sections` | 256 | Incremental-update xref sections followed through `/Prev`. |
+| `max_nesting_depth` | 100 | Nested COS/content values and recursive page, outline, form, signature, annotation, resource, and function graphs. |
+| `max_container_items` | 1,000,000 | Parsed container items and materialized mappings, ranges, graph nodes, CMap lines, CID widths, and sampled-function entries. |
+| `max_object_bytes` | 128 MiB | Encoded body size of one indirect object. |
+| `max_decoded_stream_bytes` | 128 MiB | Decoded output of one PDF stream. |
+| `max_codec_work_bytes` | 512 MiB | Estimated temporary working set for DCT, JPX, CCITT, JBIG2, image conversion, and sampled-function paths. |
+| `max_compression_ratio` | 2,000 | Expansion ratio of a stream filter chain relative to its encoded input. |
+| `max_content_stream_bytes` | 64 MiB | Combined decoded page-content bytes, including `/Contents` arrays. |
+| `max_total_decoded_bytes` | 512 MiB | Cumulative decoded-stream budget shared by one document. |
+| `max_stream_filters` | 16 | Filters allowed in one stream filter chain. |
+| `max_pages` | 100,000 | Pages discovered while walking the page tree. |
+| `max_image_pixels` | 100,000,000 | Declared pixels in an image XObject before image processing. |
+| `max_raster_pixels` | 100,000,000 | Pixels in the renderer's supersampled working canvas before allocation. |
+| `max_content_tokens` | 5,000,000 | Tokens consumed by content interpretation, text editing/location, image-placement, auto-tag, and conformance scanners. |
+
+The eager and streaming/lazy paths use the same checks. Lazy opening still
+defers page-content decoding, but on-demand decoding, text parsing/editing,
+image access/export, rendering, validation, signatures/DSS, incremental
+updates, `PdfExtractor`, and low-code plugins continue to use the effective
+policy. CMap/CID ranges, sampled shading functions, and recursive auxiliary COS
+graphs are checked before their large materializations. Limit-aware APIs
+propagate the public `PdfResourceLimitException` (a `PdfValidationException`)
+instead of converting it to a raw-stream fallback, an empty lazy image, or a
+repaired empty document. The legacy boolean `PdfFileEditor` facade keeps its
+documented `False`/`last_exception` error contract. Cycles in `/Prev`, page,
+outline, field, annotation/resource, and function graphs are rejected with an
+explicit parse error.
+
+`PdfLoadLimits.unlimited()` returns a policy with every field disabled. This is
+an explicit opt-out for trusted inputs and should be paired with external
+process, memory, and time controls.
+
+Boundaries:
+
+- These limits cover the main PDF input, COS/xref/object-stream, document-graph
+  traversal, PDF stream-filter, content/text scanners, CMap/CID, sampled
+  shading, image-dimension, codec, and raster-allocation paths. DCT/JPX headers
+  and CCITT/JBIG2 bitmap geometry are checked before their large allocations.
+  The limits reduce known memory/CPU amplification risks; they are not a proof
+  that every possible PDF denial-of-service technique is bounded.
+- Decompression paths outside PDF loading are not all instrumented by this
+  policy. In particular, authored PNG input and WOFF/WOFF2 font decoding need
+  separate limits; third-party codecs can also have dependency-specific
+  behavior.
+- Run highly hostile documents in an isolated worker with operating-system
+  resource limits even when `PdfLoadLimits` is enabled.
+
 ## Optimization
 
 `Document.optimize(options)` (and its alias `optimize_resources`) reduce file

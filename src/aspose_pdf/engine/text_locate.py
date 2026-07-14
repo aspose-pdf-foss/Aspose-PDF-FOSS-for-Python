@@ -21,9 +21,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
 
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
+
 from .text_edit import (
     _aligned_spans,
+    _append_checked,
     _lex,
+    _resolve_load_budget,
     _run_char_data,
     _walk_show_runs,
 )
@@ -85,7 +89,12 @@ def _apply(m: Matrix, x: float, y: float) -> Point:
     return (a * x + c * y + e, b * x + d * y + f)
 
 
-def _char_geometry(run, infos) -> Optional[List[Tuple[float, float, float, float, float]]]:
+def _char_geometry(
+    run,
+    infos,
+    *,
+    budget: _LoadBudget,
+) -> Optional[List[Tuple[float, float, float, float, float]]]:
     """Per-char ``(bx0, bx1, by0, by1, line_key)`` boxes in the run's text space.
 
     Each entry is an axis-aligned box plus a grouping key identifying its
@@ -114,7 +123,12 @@ def _char_geometry(run, infos) -> Optional[List[Tuple[float, float, float, float
                 else:
                     box = (pen_x, pen_x + seg.gap_width,
                            y + descent, y + ascent, round(y, 3))
-                geometry.append(box)
+                _append_checked(
+                    geometry,
+                    box,
+                    budget,
+                    "text location character geometry",
+                )
             continue
         if metric is None:
             return None
@@ -127,7 +141,12 @@ def _char_geometry(run, infos) -> Optional[List[Tuple[float, float, float, float
                 for _off, _length, unit_text in units:
                     advance = size + seg.char_spacing  # uniform one-em stack
                     for _ch in unit_text:
-                        geometry.append((col0, col1, yy - advance, yy, key))
+                        _append_checked(
+                            geometry,
+                            (col0, col1, yy - advance, yy, key),
+                            budget,
+                            "text location character geometry",
+                        )
                     yy -= advance
             else:
                 x = pen_x
@@ -138,8 +157,11 @@ def _char_geometry(run, infos) -> Optional[List[Tuple[float, float, float, float
                     glyph = metric.width_of(cid) / 1000.0 * size
                     advance = (glyph + seg.char_spacing) * seg.h_scale
                     for _ch in unit_text:
-                        geometry.append(
-                            (x, x + advance, y + descent, y + ascent, round(y, 3))
+                        _append_checked(
+                            geometry,
+                            (x, x + advance, y + descent, y + ascent, round(y, 3)),
+                            budget,
+                            "text location character geometry",
                         )
                     x += advance
         elif kind == "latin-1":
@@ -151,8 +173,11 @@ def _char_geometry(run, infos) -> Optional[List[Tuple[float, float, float, float
                     seg.word_spacing if code == 32 else 0.0
                 )
                 advance = (glyph + extra) * seg.h_scale
-                geometry.append(
-                    (x, x + advance, y + descent, y + ascent, round(y, 3))
+                _append_checked(
+                    geometry,
+                    (x, x + advance, y + descent, y + ascent, round(y, 3)),
+                    budget,
+                    "text location character geometry",
                 )
                 x += advance
         else:
@@ -165,6 +190,8 @@ def _span_quads(
     geometry: List[Tuple[float, float, float, float, float]],
     start: int,
     end: int,
+    *,
+    budget: _LoadBudget,
 ) -> List[Quad]:
     """One quad per baseline/column covered by the matched char range."""
     quads: List[Quad] = []
@@ -179,13 +206,16 @@ def _span_quads(
             by0 = min(by0, gy0)
             by1 = max(by1, gy1)
             j += 1
-        quads.append(
+        _append_checked(
+            quads,
             (
                 _apply(trm, bx0, by0),
                 _apply(trm, bx1, by0),
                 _apply(trm, bx1, by1),
                 _apply(trm, bx0, by1),
-            )
+            ),
+            budget,
+            "text location span quads",
         )
         i = j
     return quads
@@ -199,6 +229,8 @@ def locate_matches(
     case_sensitive: bool = True,
     max_count: int = 0,
     base_ctm: Matrix = _IDENTITY,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ) -> List[Quad]:
     """Return user-space quads covering each match of *search* in *content*.
 
@@ -207,9 +239,13 @@ def locate_matches(
     text the redactor would remove. A match spanning several baselines (a
     line-moving ``'``/``"`` inside the run) yields one quad per baseline.
     """
-    tokens = _lex(content)
+    active_budget = _resolve_load_budget(limits, budget)
+    tokens = _lex(content, budget=active_budget)
     runs = _walk_show_runs(
-        tokens, metric_for_name=font_for_name, base_ctm=base_ctm
+        tokens,
+        metric_for_name=font_for_name,
+        base_ctm=base_ctm,
+        budget=active_budget,
     )
     quads: List[Quad] = []
     matches = 0
@@ -218,15 +254,37 @@ def locate_matches(
             break
         if not run.geometry_ok or run.origin_trm is None:
             continue
-        infos, full, entries, _seg_starts = _run_char_data(run)
+        infos, full, entries, _seg_starts = _run_char_data(
+            run,
+            budget=active_budget,
+        )
         if not full:
             continue
-        geometry = _char_geometry(run, infos)
+        geometry = _char_geometry(run, infos, budget=active_budget)
         if geometry is None:
             continue
         remaining = 0 if max_count == 0 else max_count - matches
-        spans = _aligned_spans(full, entries, search, case_sensitive, remaining)
+        spans = _aligned_spans(
+            full,
+            entries,
+            search,
+            case_sensitive,
+            remaining,
+            budget=active_budget,
+        )
         for start, end in spans:
             matches += 1
-            quads.extend(_span_quads(run.origin_trm, geometry, start, end))
+            span_quads = _span_quads(
+                run.origin_trm,
+                geometry,
+                start,
+                end,
+                budget=active_budget,
+            )
+            active_budget.check(
+                len(quads) + len(span_quads),
+                "max_container_items",
+                "text location result quads",
+            )
+            quads.extend(span_quads)
     return quads

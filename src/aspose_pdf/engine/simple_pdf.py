@@ -7,6 +7,7 @@ from __future__ import annotations
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import struct
 import zlib
@@ -80,9 +81,11 @@ from ..exceptions import (
     PDF_OPERATION_ERRORS,
     PDF_STREAM_DECODE_ERRORS,
     PdfParseException,
+    PdfResourceLimitException,
     PdfValidationException,
     PdfSecurityException,
 )
+from ..load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits, _read_limited
 from ..signature import PdfSignature
 
 if TYPE_CHECKING:
@@ -384,6 +387,8 @@ class TextFragmentAbsorber:
                     for line in text.split("\n"):
                         if line.strip():
                             self.fragments.append(TextFragment(page_idx, line.strip()))
+            except PdfResourceLimitException:
+                raise
             except CONTENT_PARSER_RECOVERABLE:
                 continue
 
@@ -462,12 +467,15 @@ class LazyImageDict(dict):
 
     def __getitem__(self, key: str) -> bytes:
         if key in self._loaders:
-            loader = self._loaders.pop(key)
+            loader = self._loaders[key]
             try:
                 data = loader()
+            except PdfResourceLimitException:
+                raise
             except PDF_STREAM_DECODE_ERRORS as e:
                 logger.error(f"Failed to lazy-decode image {key}: {e}")
                 data = b""
+            self._loaders.pop(key, None)
             super().__setitem__(key, data)
             return data
         return super().__getitem__(key)
@@ -506,12 +514,16 @@ class LazyImageDict(dict):
 
     def pop(self, key: str, *args) -> Any:
         if key in self._loaders:
-            loader = self._loaders.pop(key)
+            loader = self._loaders[key]
             try:
-                return loader()
+                data = loader()
+            except PdfResourceLimitException:
+                raise
             except PDF_STREAM_DECODE_ERRORS as e:
                 logger.error(f"Failed to lazy-decode image {key} during pop: {e}")
-                return b""
+                data = b""
+            self._loaders.pop(key, None)
+            return data
         return super().pop(key, *args)
 
     def copy(self) -> "LazyImageDict":
@@ -955,8 +967,19 @@ class SimplePdf:
     _xmp_packet: Optional[XmpPacket] = field(default=None, init=False, repr=False)
     _xmp_loaded: bool = field(default=False, init=False, repr=False)
     _xmp_dirty: bool = field(default=False, init=False, repr=False)
+    _load_limits: PdfLoadLimits = field(
+        default_factory=PdfLoadLimits, init=False, repr=False
+    )
+    _load_budget: _LoadBudget = field(
+        default_factory=_LoadBudget, init=False, repr=False
+    )
 
     MIN_MMAP_SIZE = 50 * 1024 * 1024  # 50MB
+
+    @property
+    def load_limits(self) -> PdfLoadLimits:
+        """Return the resource limits used for this document."""
+        return self._load_limits
 
     def __enter__(self) -> "SimplePdf":
         return self
@@ -1129,9 +1152,19 @@ class SimplePdf:
         from .cos import PdfDictionary, PdfName
 
         node = page_dict
-        seen: set = set()
-        while isinstance(node, PdfDictionary) and id(node) not in seen:
-            seen.add(id(node))
+        seen: Set[int] = set()
+        depth = 0
+        while isinstance(node, PdfDictionary):
+            depth += 1
+            self._load_budget.check(
+                depth,
+                "max_nesting_depth",
+                "inherited page attribute depth",
+            )
+            node_id = id(node)
+            if node_id in seen:
+                raise PdfParseException("Page parent chain contains a cycle")
+            seen.add(node_id)
             val = node.mapping.get(PdfName(key))
             if val is not None:
                 return self._resolve(val)
@@ -1189,10 +1222,22 @@ class SimplePdf:
         from .cos import PdfName, PdfNumber, PdfDictionary
 
         curr_ref = node_ref
+        seen: Set[int] = set()
+        depth = 0
         while curr_ref:
             node = self._resolve(curr_ref)
             if not isinstance(node, PdfDictionary):
                 break
+            depth += 1
+            self._load_budget.check(
+                depth,
+                "max_nesting_depth",
+                "page parent chain depth",
+            )
+            node_id = id(node)
+            if node_id in seen:
+                raise PdfParseException("Page parent chain contains a cycle")
+            seen.add(node_id)
 
             if PdfName("Count") in node.mapping:
                 count_obj = node.mapping[PdfName("Count")]
@@ -1201,7 +1246,14 @@ class SimplePdf:
 
             curr_ref = node.mapping.get(PdfName("Parent"))
 
-    def _convert_cos_to_dict(self, obj: Any) -> Any:
+    def _convert_cos_to_dict(
+        self,
+        obj: Any,
+        *,
+        _depth: int = 0,
+        _active: Optional[Set[int]] = None,
+        _item_count: Optional[List[int]] = None,
+    ) -> Any:
         """Convert COS objects to standard Python types recursively."""
         from .cos import (
             PdfName,
@@ -1214,13 +1266,78 @@ class SimplePdf:
         )
 
         obj = self._resolve(obj)
+        active = _active if _active is not None else set()
+        item_count = _item_count if _item_count is not None else [0]
         if isinstance(obj, PdfDictionary):
-            return {
-                k.name.lstrip("/"): self._convert_cos_to_dict(v)
-                for k, v in obj.mapping.items()
-            }
+            depth = _depth + 1
+            self._load_budget.check(
+                depth,
+                "max_nesting_depth",
+                "COS resource conversion depth",
+            )
+            self._load_budget.check(
+                len(obj.mapping),
+                "max_container_items",
+                "COS resource dictionary items",
+            )
+            obj_id = id(obj)
+            if obj_id in active:
+                raise PdfParseException("COS resource graph contains a cycle")
+            active.add(obj_id)
+            try:
+                result: Dict[str, Any] = {}
+                for key, value in obj.mapping.items():
+                    item_count[0] += 1
+                    self._load_budget.check(
+                        item_count[0],
+                        "max_container_items",
+                        "converted COS resource items",
+                    )
+                    result[key.name.lstrip("/")] = self._convert_cos_to_dict(
+                        value,
+                        _depth=depth,
+                        _active=active,
+                        _item_count=item_count,
+                    )
+                return result
+            finally:
+                active.remove(obj_id)
         elif isinstance(obj, PdfArray):
-            return [self._convert_cos_to_dict(v) for v in obj.items]
+            depth = _depth + 1
+            self._load_budget.check(
+                depth,
+                "max_nesting_depth",
+                "COS resource conversion depth",
+            )
+            self._load_budget.check(
+                len(obj.items),
+                "max_container_items",
+                "COS resource array items",
+            )
+            obj_id = id(obj)
+            if obj_id in active:
+                raise PdfParseException("COS resource graph contains a cycle")
+            active.add(obj_id)
+            try:
+                result_list: List[Any] = []
+                for value in obj.items:
+                    item_count[0] += 1
+                    self._load_budget.check(
+                        item_count[0],
+                        "max_container_items",
+                        "converted COS resource items",
+                    )
+                    result_list.append(
+                        self._convert_cos_to_dict(
+                            value,
+                            _depth=depth,
+                            _active=active,
+                            _item_count=item_count,
+                        )
+                    )
+                return result_list
+            finally:
+                active.remove(obj_id)
         elif isinstance(obj, PdfStream):
             # For resources, we usually want the stream dictionary
             res = self._convert_cos_to_dict(obj.mapping)
@@ -1271,14 +1388,21 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     @classmethod
     def from_file(
-        cls, path: Union[str, Path], password: Optional[str] = None
+        cls,
+        path: Union[str, Path],
+        password: Optional[str] = None,
+        *,
+        limits: PdfLoadLimits | None = None,
     ) -> "SimplePdf":
         """Load PDF from file path, using memory-mapping for large files."""
+        resolved_limits = _coerce_limits(limits)
+        budget = _LoadBudget(resolved_limits)
         p = Path(path)
         if not p.is_file():
             raise FileNotFoundError(f"File not found: {path}")
 
         file_size = p.stat().st_size
+        budget.check_input(file_size)
         # Use mmap for files larger than 50MB
         if file_size > cls.MIN_MMAP_SIZE:
             logger.info(
@@ -1288,20 +1412,54 @@ class SimplePdf:
             with open(p, "rb") as f:
                 # Note: mmap keeps the file open; we must close it in dispose()
                 mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-                return cls.from_bytes(mm, password)
+            try:
+                return cls.from_bytes(
+                    mm,
+                    password,
+                    limits=resolved_limits,
+                    _budget=budget,
+                )
+            except BaseException:
+                mm.close()
+                raise
         else:
-            data = p.read_bytes()
-            return cls.from_bytes(data, password)
+            with p.open("rb") as stream:
+                data = _read_limited(stream, budget)
+            return cls.from_bytes(
+                data,
+                password,
+                limits=resolved_limits,
+                _budget=budget,
+            )
 
     @classmethod
-    def from_bytes(cls, data: bytes, password: Optional[str] = None) -> "SimplePdf":
+    def from_bytes(
+        cls,
+        data: bytes | bytearray,
+        password: Optional[str] = None,
+        *,
+        limits: PdfLoadLimits | None = None,
+        _budget: _LoadBudget | None = None,
+    ) -> "SimplePdf":
         """Parse PDF from raw bytes using PdfCosParser."""
+        resolved_limits = _coerce_limits(limits)
+        budget = _budget or _LoadBudget(resolved_limits)
+        budget.check_input(len(data))
+        if isinstance(data, bytearray):
+            data = bytes(data)
         if data[0:5] != b"%PDF-":
             raise PdfParseException("Data does not start with a PDF header")
 
-        cos_doc = PdfCosParser(data).parse()
+        cos_doc = PdfCosParser(
+            data, limits=resolved_limits, budget=budget
+        ).parse()
 
-        extractor = CosExtractor(cos_doc, data)
+        extractor = CosExtractor(
+            cos_doc,
+            data,
+            limits=resolved_limits,
+            budget=budget,
+        )
 
         eff_pwd = _effective_encryption_password(password)
         if extractor.detect_encryption():
@@ -1315,6 +1473,8 @@ class SimplePdf:
             extractor.attach_stream_decryption(password)
 
         pdf = cls()
+        pdf._load_limits = resolved_limits
+        pdf._load_budget = budget
         pdf._cos_doc = cos_doc
         pdf._raw_bytes = data
 
@@ -1376,18 +1536,35 @@ class SimplePdf:
         return pdf
 
     @classmethod
-    def load_from(cls, source: Union[str, Path, bytes]) -> "SimplePdf":
+    def load_from(
+        cls,
+        source: Union[str, Path, bytes, bytearray],
+        *,
+        limits: PdfLoadLimits | None = None,
+    ) -> "SimplePdf":
         """Load from file path or bytes."""
         if isinstance(source, (str, Path)):
-            return cls.from_file(source)
+            return cls.from_file(source, limits=limits)
         elif isinstance(source, (bytes, bytearray)):
-            return cls.from_bytes(bytes(source))
+            resolved_limits = _coerce_limits(limits)
+            budget = _LoadBudget(resolved_limits)
+            budget.check_input(len(source))
+            data = bytes(source) if isinstance(source, bytearray) else source
+            return cls.from_bytes(
+                data,
+                limits=resolved_limits,
+                _budget=budget,
+            )
         else:
             raise TypeError("source must be a file path or bytes")
 
     @classmethod
     def from_file_lazy(
-        cls, path: Union[str, Path], password: Optional[str] = None
+        cls,
+        path: Union[str, Path],
+        password: Optional[str] = None,
+        *,
+        limits: PdfLoadLimits | None = None,
     ) -> "SimplePdf":
         """Open a PDF in streaming/lazy mode for memory-efficient page processing.
 
@@ -1425,6 +1602,9 @@ class SimplePdf:
         p = Path(path)
         if not p.is_file():
             raise FileNotFoundError(f"File not found: {path}")
+        resolved_limits = _coerce_limits(limits)
+        budget = _LoadBudget(resolved_limits)
+        budget.check_input(p.stat().st_size)
 
         f = open(p, "rb")
         try:
@@ -1434,27 +1614,40 @@ class SimplePdf:
 
         parse_ok = False
         try:
-            cos_doc = PdfCosParser(mm).parse()
+            cos_doc = PdfCosParser(
+                mm, limits=resolved_limits, budget=budget
+            ).parse()
             parse_ok = True
         finally:
             if not parse_ok:
                 mm.close()
 
-        extractor = CosExtractor(cos_doc, mm)
-        eff_pwd = _effective_encryption_password(password)
-        if extractor.detect_encryption():
-            if eff_pwd is None:
-                mm.close()
-                raise PdfSecurityException("Password required for encrypted document")
-            if not extractor.encryption_password_allows_access(eff_pwd):
-                mm.close()
-                raise PdfSecurityException("Incorrect password")
-            password = eff_pwd
+        extractor = CosExtractor(
+            cos_doc,
+            mm,
+            limits=resolved_limits,
+            budget=budget,
+        )
+        try:
+            eff_pwd = _effective_encryption_password(password)
+            if extractor.detect_encryption():
+                if eff_pwd is None:
+                    raise PdfSecurityException(
+                        "Password required for encrypted document"
+                    )
+                if not extractor.encryption_password_allows_access(eff_pwd):
+                    raise PdfSecurityException("Incorrect password")
+                password = eff_pwd
 
-        if extractor.detect_encryption():
-            extractor.attach_stream_decryption(password)
+            if extractor.detect_encryption():
+                extractor.attach_stream_decryption(password)
+        except BaseException:
+            mm.close()
+            raise
 
         pdf = cls()
+        pdf._load_limits = resolved_limits
+        pdf._load_budget = budget
         pdf._cos_doc = cos_doc
         pdf._raw_bytes = mm
         pdf._lazy = True
@@ -1465,45 +1658,52 @@ class SimplePdf:
         pdf.extgstates = {}
         pdf._page_image_map = {}
 
-        pdf.pages = extractor.extract_pages_lazy(
-            pdf.images, pdf._page_image_map, pdf.fonts, pdf.extgstates
-        )
-        pdf._page_obj_ids = list(extractor._page_obj_ids)
-        pdf._image_sizes = extractor.extract_image_sizes()
-        pdf._image_meta = extractor.extract_image_meta()
-        pdf.page_contents = []  # loaded on demand via get_page_content()
-        pdf.metadata = extractor.extract_metadata()
-
         try:
-            eol = mm.find(b"\n", 0)
-            header_line = bytes(mm[:eol]).rstrip() if eol > 0 else b""
-            if header_line.startswith(b"%PDF-"):
-                pdf.pdf_version = header_line[5:].decode("ascii", errors="ignore")
-        except (ValueError, TypeError, OSError):
-            pass
+            pdf.pages = extractor.extract_pages_lazy(
+                pdf.images, pdf._page_image_map, pdf.fonts, pdf.extgstates
+            )
+            pdf._page_obj_ids = list(extractor._page_obj_ids)
+            pdf._image_sizes = extractor.extract_image_sizes()
+            pdf._image_meta = extractor.extract_image_meta()
+            pdf.page_contents = []  # loaded on demand via get_page_content()
+            pdf.metadata = extractor.extract_metadata()
 
-        pdf.file_id = extractor.extract_file_id()
-        pdf._outlines_data = extractor.extract_outlines()
+            try:
+                eol = mm.find(b"\n", 0)
+                header_line = bytes(mm[:eol]).rstrip() if eol > 0 else b""
+                if header_line.startswith(b"%PDF-"):
+                    pdf.pdf_version = header_line[5:].decode(
+                        "ascii", errors="ignore"
+                    )
+            except (ValueError, TypeError, OSError):
+                pass
 
-        if extractor.detect_encryption():
-            pdf.encrypted = True
-            pdf.password = password
-            pdf.P = extractor.extract_permissions()
-            pdf.encryption_key = extractor._stream_decrypt_key
-            pdf.encryption_algorithm = extractor._stream_decrypt_algorithm
+            pdf.file_id = extractor.extract_file_id()
+            pdf._outlines_data = extractor.extract_outlines()
 
-        if not pdf.pages:
-            pdf.pages = [(0, 0, 612, 792)]
+            if extractor.detect_encryption():
+                pdf.encrypted = True
+                pdf.password = password
+                pdf.P = extractor.extract_permissions()
+                pdf.encryption_key = extractor._stream_decrypt_key
+                pdf.encryption_algorithm = extractor._stream_decrypt_algorithm
 
-        pdf._original_page_count = len(pdf.pages)
-        pdf._original_metadata = dict(pdf.metadata)
-        pdf._original_encrypted = pdf.encrypted
+            if not pdf.pages:
+                pdf.pages = [(0, 0, 612, 792)]
 
-        logger.info(
-            "Lazy-loaded PDF (%d pages, mmap). Page content streams will be "
-            "decoded on demand.",
-            len(pdf.pages),
-        )
+            pdf._original_page_count = len(pdf.pages)
+            pdf._original_metadata = dict(pdf.metadata)
+            pdf._original_encrypted = pdf.encrypted
+
+            logger.info(
+                "Lazy-loaded PDF (%d pages, mmap). Page content streams will be "
+                "decoded on demand.",
+                len(pdf.pages),
+            )
+        except BaseException:
+            pdf._raw_bytes = None
+            mm.close()
+            raise
         return pdf
 
     def get_page_content(self, index: int) -> bytes:
@@ -1532,6 +1732,8 @@ class SimplePdf:
                 self._raw_bytes,
                 stream_decrypt_key=self.encryption_key,
                 stream_decrypt_algorithm=self.encryption_algorithm,
+                limits=self._load_limits,
+                budget=self._load_budget,
             )
             extractor._page_obj_ids = list(self._page_obj_ids)
             return extractor.get_page_content(index)
@@ -1556,6 +1758,8 @@ class SimplePdf:
                 self._raw_bytes,
                 stream_decrypt_key=self.encryption_key,
                 stream_decrypt_algorithm=self.encryption_algorithm,
+                limits=self._load_limits,
+                budget=self._load_budget,
             )
             extractor._page_obj_ids = list(self._page_obj_ids)
             for i in range(page_count):
@@ -1569,7 +1773,11 @@ class SimplePdf:
 
     @classmethod
     def from_bytes_safe(
-        cls, data: bytes, password: Optional[str] = None
+        cls,
+        data: bytes | bytearray,
+        password: Optional[str] = None,
+        *,
+        limits: PdfLoadLimits | None = None,
     ) -> "SimplePdf":
         """Load PDF with automatic repair on error.
 
@@ -1583,8 +1791,20 @@ class SimplePdf:
         Returns:
             SimplePdf instance (potentially repaired)
         """
+        resolved_limits = _coerce_limits(limits)
+        budget = _LoadBudget(resolved_limits)
+        budget.check_input(len(data))
+        if isinstance(data, bytearray):
+            data = bytes(data)
         try:
-            pdf = cls.from_bytes(data, password)
+            pdf = cls.from_bytes(
+                data,
+                password,
+                limits=resolved_limits,
+                _budget=budget,
+            )
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS as exc:
             # Tolerating parse failure — log at WARNING for operability.
             logger.warning(
@@ -1594,6 +1814,8 @@ class SimplePdf:
             )
             # Try minimal parsing - create empty PDF
             pdf = cls()
+            pdf._load_limits = resolved_limits
+            pdf._load_budget = budget
             pdf.pages = [(0, 0, 612, 792)]
             pdf.page_contents = [b""]
             pdf._raw_bytes = data
@@ -1602,20 +1824,34 @@ class SimplePdf:
         return pdf
 
     @classmethod
-    def load_cos(cls, source: Union[str, Path, bytes]) -> "SimplePdf":
+    def load_cos(
+        cls,
+        source: Union[str, Path, bytes, bytearray],
+        *,
+        limits: PdfLoadLimits | None = None,
+    ) -> "SimplePdf":
         """Load PDF using the generic COS parser (preserves all data)."""
+        resolved_limits = _coerce_limits(limits)
+        budget = _LoadBudget(resolved_limits)
         if isinstance(source, (str, Path)):
             p = Path(source)
             if not p.is_file():
                 raise FileNotFoundError(f"File not found: {source}")
-            data = p.read_bytes()
+            budget.check_input(p.stat().st_size)
+            with p.open("rb") as stream:
+                data = _read_limited(stream, budget)
         elif isinstance(source, (bytes, bytearray)):
-            data = bytes(source)
+            budget.check_input(len(source))
+            data = bytes(source) if isinstance(source, bytearray) else source
         else:
             raise TypeError("source must be a file path or bytes")
 
-        doc = PdfCosParser(data).parse()
+        doc = PdfCosParser(
+            data, limits=resolved_limits, budget=budget
+        ).parse()
         pdf = cls()
+        pdf._load_limits = resolved_limits
+        pdf._load_budget = budget
         pdf._cos_doc = doc
         pdf._raw_bytes = data
 
@@ -1624,6 +1860,8 @@ class SimplePdf:
             root = doc.trailer.get(PdfName("Root"))
             if isinstance(root, Dict) or hasattr(root, "__getitem__"):
                 _ = root[PdfName("Pages")]
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS as exc:
             logger.warning(
                 "SimplePdf.load_cos: could not inspect catalog /Pages: %s",
@@ -1983,6 +2221,8 @@ class SimplePdf:
             self._raw_bytes or b"",
             stream_decrypt_key=self.encryption_key,
             stream_decrypt_algorithm=self.encryption_algorithm,
+            limits=self._load_limits,
+            budget=self._load_budget,
         )
         return extractor._decode_stream(stream, source_ref)
 
@@ -1999,6 +2239,8 @@ class SimplePdf:
             return XmpPacket()
         try:
             return parse_xmp(self._decode_cos_stream(meta, meta_ref))
+        except PdfResourceLimitException:
+            raise
         except Exception:
             logger.warning("Could not parse catalog /Metadata XMP", exc_info=True)
             return XmpPacket()
@@ -2027,6 +2269,8 @@ class SimplePdf:
                     )
                     if current == serialized:
                         return
+                except PdfResourceLimitException:
+                    raise
                 except Exception:
                     pass
             elif not self._xmp_packet.fields:
@@ -2198,7 +2442,11 @@ class SimplePdf:
 
         from .cos import PdfStream, PdfName, PdfNumber
 
-        incr = IncrementalUpdate(self._raw_bytes)
+        incr = IncrementalUpdate(
+            self._raw_bytes,
+            limits=self._load_limits,
+            budget=self._load_budget,
+        )
         writer = PdfCosWriter(self._cos_doc) if self._cos_doc else None
 
         # Track if any modifications actually occurred
@@ -2277,6 +2525,8 @@ class SimplePdf:
             self._raw_bytes,
             stream_decrypt_key=self.encryption_key,
             stream_decrypt_algorithm=self.encryption_algorithm,
+            limits=self._load_limits,
+            budget=self._load_budget,
         )
         # Traverse page tree to find all resources; this populates caches in extractor
         # It also populates _page_obj_ids and _content_obj_ids
@@ -2507,6 +2757,8 @@ class SimplePdf:
                             problems.append("PDF/A prohibits JavaScript.")
                     if PdfName("OpenAction") in root:
                         problems.append("PDF/A prohibits OpenAction.")
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 pass
 
@@ -2750,6 +3002,8 @@ class SimplePdf:
         try:
             root_ref = self._cos_doc.trailer.get(PdfName("Root"))
             root = self._resolve(root_ref)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             errors.append("Could not resolve document catalog.")
             return errors, warnings
@@ -2801,7 +3055,12 @@ class SimplePdf:
         if self.password and password != self.password:
             raise PdfSecurityException("Incorrect password")
         if self._cos_doc is not None and self.encryption_key is None:
-            probe = CosExtractor(self._cos_doc, self._raw_bytes or b"")
+            probe = CosExtractor(
+                self._cos_doc,
+                self._raw_bytes or b"",
+                limits=self._load_limits,
+                budget=self._load_budget,
+            )
             self.encryption_key = probe.extract_decryption_key(password)
             if self.encryption_key is not None:
                 self.encryption_algorithm = (
@@ -2818,6 +3077,8 @@ class SimplePdf:
                     self._raw_bytes,
                     stream_decrypt_key=self.encryption_key,
                     stream_decrypt_algorithm=self.encryption_algorithm,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
                 )
                 ext._page_obj_ids = list(self._page_obj_ids)
                 self.page_contents[i] = ext.get_page_content(i)
@@ -2864,6 +3125,8 @@ class SimplePdf:
                 self._raw_bytes or b"",
                 stream_decrypt_key=self.encryption_key,
                 stream_decrypt_algorithm=self.encryption_algorithm,
+                limits=self._load_limits,
+                budget=self._load_budget,
             )
             extractor._page_obj_ids = list(self._page_obj_ids)
             self.page_contents = [
@@ -3364,12 +3627,22 @@ class SimplePdf:
 
         try:
             content = self.get_page_content(page_index)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return 0
-        if not content or has_marked_content(content):
+        if not content or has_marked_content(
+            content,
+            limits=self._load_limits,
+            budget=self._load_budget,
+        ):
             return 0
 
-        elements = find_layout_elements(content)
+        elements = find_layout_elements(
+            content,
+            limits=self._load_limits,
+            budget=self._load_budget,
+        )
         # Tag text objects (P vs H1) by font size, reusing the shared heuristic.
         text_elems = [e for e in elements if e.kind == "text"]
         text_tags = choose_tags(
@@ -3465,6 +3738,8 @@ class SimplePdf:
         if callable(image_alt):
             try:
                 return str(image_alt(name.lstrip("/")))
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 return "Image"
         return str(image_alt)
@@ -3557,6 +3832,8 @@ class SimplePdf:
                 max_count=remaining,
                 codec_for_name=self._build_text_codecs(index),
                 metric_for_name=self._build_simple_font_metrics(index),
+                limits=self._load_limits,
+                budget=self._load_budget,
             )
             if count:
                 self._set_page_content(index, updated)
@@ -3623,6 +3900,8 @@ class SimplePdf:
                     self._build_simple_font_metrics(index),
                     case_sensitive=case_sensitive,
                     max_count=remaining,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
                 )
             updated, count = redact_text_in_content(
                 content,
@@ -3631,6 +3910,8 @@ class SimplePdf:
                 max_count=remaining,
                 codec_for_name=self._build_text_codecs(index),
                 metric_for_name=self._build_simple_font_metrics(index),
+                limits=self._load_limits,
+                budget=self._load_budget,
             )
             if count:
                 if overlay and quads:
@@ -3764,9 +4045,14 @@ class SimplePdf:
         elif isinstance(encoding_obj, PdfStream):
             try:
                 data = self._decode_cos_stream(encoding_obj, encoding_ref)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 return None
-            cmap, _lengths = parse_encoding_cmap(data)
+            cmap, _lengths = parse_encoding_cmap(
+                data,
+                budget=self._load_budget,
+            )
             if not cmap:
                 return None
             wmode = self._pdf_number(encoding_obj.mapping.get(PdfName("WMode")))
@@ -3781,7 +4067,8 @@ class SimplePdf:
         if default_width is None:
             default_width = 1000.0
         widths = load_cid_widths(
-            self._convert_cos_to_dict(cid_font.mapping.get(PdfName("W")))
+            self._convert_cos_to_dict(cid_font.mapping.get(PdfName("W"))),
+            budget=self._load_budget,
         )
         descriptor = self._resolve(cid_font.mapping.get(PdfName("FontDescriptor")))
         ascent, descent = 800.0, -200.0
@@ -3850,6 +4137,8 @@ class SimplePdf:
             return None
         try:
             uni = read_unicode_cmap(program)  # {codepoint: gid}
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return None
         if not uni:
@@ -3884,6 +4173,8 @@ class SimplePdf:
             return None
         try:
             return self._decode_cos_stream(stream, ref)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return None
 
@@ -3896,12 +4187,24 @@ class SimplePdf:
         if isinstance(mapping, PdfStream):
             try:
                 data = self._decode_cos_stream(mapping, ref)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 data = b""
+            self._load_budget.check(
+                len(data) // 2,
+                "max_container_items",
+                "CIDToGIDMap entries",
+            )
             inverse: Dict[int, int] = {}
             for cid in range(len(data) // 2):
                 gid = (data[2 * cid] << 8) | data[2 * cid + 1]
                 inverse.setdefault(gid, cid)
+                self._load_budget.check(
+                    len(inverse),
+                    "max_container_items",
+                    "CIDToGIDMap inverse entries",
+                )
             return lambda gid, _inv=inverse: _inv.get(gid)
         # /Identity (or absent) means glyph id equals CID.
         return lambda gid: gid
@@ -3917,9 +4220,14 @@ class SimplePdf:
             return None
         try:
             data = self._decode_cos_stream(stream, ref)
+        except PdfResourceLimitException:
+            raise
         except Exception:
             return None
-        mapping = parse_to_unicode_cmap(data)
+        mapping = parse_to_unicode_cmap(
+            data,
+            budget=self._load_budget,
+        )
         return mapping or None
 
     def _build_text_codecs(self, page_index: int):
@@ -4249,7 +4557,11 @@ class SimplePdf:
 
         path = Path(path)
         out_bytes, produced_ext = reconstruct_image_file(
-            self._image_meta.get(name), self.images[name], path.suffix, color_space
+            self._image_meta.get(name),
+            self.images[name],
+            path.suffix,
+            color_space,
+            limits=self._load_limits,
         )
         out_path = resolve_output_path(path, produced_ext)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4313,19 +4625,35 @@ class SimplePdf:
                         page_res = self._get_page_resources(i)
                         if page_res:
                             resources = page_res
+                    except PdfResourceLimitException:
+                        raise
                     except PDF_OPERATION_ERRORS:
                         pass
 
-                parser = ContentStreamParser(stream, resources)
+                parser = ContentStreamParser(
+                    stream,
+                    resources,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
+                )
                 text = parser.extract_text()
                 if not text:
                     text = parser.best_effort_extract_text()
                 texts.append(text)
+            except PdfResourceLimitException:
+                raise
             except CONTENT_PARSER_RECOVERABLE:
                 # Fallback to best-effort extraction if full parser fails
                 try:
-                    parser = ContentStreamParser(stream, resources)
+                    parser = ContentStreamParser(
+                        stream,
+                        resources,
+                        limits=self._load_limits,
+                        budget=self._load_budget,
+                    )
                     texts.append(parser.best_effort_extract_text())
+                except PdfResourceLimitException:
+                    raise
                 except CONTENT_PARSER_RECOVERABLE:
                     pass
 
@@ -4354,18 +4682,34 @@ class SimplePdf:
                         page_node = self._cos_doc.pages[self._page_text_cursor - 1]
                         if isinstance(page_node, dict) and "Resources" in page_node:
                             resources = page_node["Resources"]
+                except PdfResourceLimitException:
+                    raise
                 except PDF_OPERATION_ERRORS:
                     pass
 
-            parser = ContentStreamParser(stream, resources)
+            parser = ContentStreamParser(
+                stream,
+                resources,
+                limits=self._load_limits,
+                budget=self._load_budget,
+            )
             text = parser.extract_text()
             if not text:
                 text = parser.best_effort_extract_text()
             return text
+        except PdfResourceLimitException:
+            raise
         except CONTENT_PARSER_RECOVERABLE:
             try:
-                parser = ContentStreamParser(stream, resources)
+                parser = ContentStreamParser(
+                    stream,
+                    resources,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
+                )
                 return parser.best_effort_extract_text()
+            except PdfResourceLimitException:
+                raise
             except CONTENT_PARSER_RECOVERABLE:
                 return ""
 
@@ -4391,6 +4735,8 @@ class SimplePdf:
                 raise IndexError(f"Page index out of range: {i}")
 
         new_pdf = SimplePdf()
+        new_pdf._load_limits = self._load_limits
+        new_pdf._load_budget = self._load_budget
         new_pdf.pages = [self.pages[i] for i in indices]
         new_pdf.page_contents = [self.page_contents[i] for i in indices]
         new_pdf.images = dict(self.images)
@@ -4752,6 +5098,11 @@ class SimplePdf:
         resolved_annots = self._resolve(annots)
         if not isinstance(resolved_annots, PdfArray):
             return []
+        self._load_budget.check(
+            len(resolved_annots.items),
+            "max_container_items",
+            "page annotation entries",
+        )
 
         results = []
         for annot_ref in resolved_annots.items:
@@ -4776,6 +5127,11 @@ class SimplePdf:
                         entry["AP_N"] = n.content
                 entry["Properties"] = self._extract_annotation_properties(annot_dict)
                 results.append(entry)
+                self._load_budget.check(
+                    len(results),
+                    "max_container_items",
+                    "extracted page annotations",
+                )
         return results
 
     # Keys handled explicitly elsewhere (or unsafe to round-trip generically);
@@ -4785,9 +5141,18 @@ class SimplePdf:
         {"/Type", "/Subtype", "/Rect", "/Contents", "/T", "/AP", "/P"}
     )
 
-    def _annotation_cos_to_value(self, obj: Any) -> Any:
+    def _annotation_cos_to_value(
+        self,
+        obj: Any,
+        *,
+        _depth: int = 0,
+        _active: Optional[Set[int]] = None,
+        _item_count: Optional[List[int]] = None,
+    ) -> Any:
         """Convert a COS annotation property value into a plain Python value."""
         obj = self._resolve(obj)
+        active = _active if _active is not None else set()
+        item_count = _item_count if _item_count is not None else [0]
         if isinstance(obj, PdfBoolean):
             return obj.value
         if isinstance(obj, PdfNumber):
@@ -4803,13 +5168,78 @@ class SimplePdf:
             except (UnicodeDecodeError, AttributeError):
                 return bytes(obj.value)
         if isinstance(obj, PdfArray):
-            return [self._annotation_cos_to_value(item) for item in obj.items]
+            depth = _depth + 1
+            self._load_budget.check(
+                depth,
+                "max_nesting_depth",
+                "annotation property depth",
+            )
+            self._load_budget.check(
+                len(obj.items),
+                "max_container_items",
+                "annotation property array items",
+            )
+            obj_id = id(obj)
+            if obj_id in active:
+                raise PdfParseException("Annotation property graph contains a cycle")
+            active.add(obj_id)
+            try:
+                result: List[Any] = []
+                for item in obj.items:
+                    item_count[0] += 1
+                    self._load_budget.check(
+                        item_count[0],
+                        "max_container_items",
+                        "converted annotation property items",
+                    )
+                    result.append(
+                        self._annotation_cos_to_value(
+                            item,
+                            _depth=depth,
+                            _active=active,
+                            _item_count=item_count,
+                        )
+                    )
+                return result
+            finally:
+                active.remove(obj_id)
         if isinstance(obj, PdfDictionary):
-            return {
-                key.name.lstrip("/"): self._annotation_cos_to_value(val)
-                for key, val in obj.mapping.items()
-                if isinstance(key, PdfName)
-            }
+            depth = _depth + 1
+            self._load_budget.check(
+                depth,
+                "max_nesting_depth",
+                "annotation property depth",
+            )
+            self._load_budget.check(
+                len(obj.mapping),
+                "max_container_items",
+                "annotation property dictionary items",
+            )
+            obj_id = id(obj)
+            if obj_id in active:
+                raise PdfParseException("Annotation property graph contains a cycle")
+            active.add(obj_id)
+            try:
+                result_dict: Dict[str, Any] = {}
+                for key, value in obj.mapping.items():
+                    item_count[0] += 1
+                    self._load_budget.check(
+                        item_count[0],
+                        "max_container_items",
+                        "converted annotation property items",
+                    )
+                    if isinstance(key, PdfName):
+                        result_dict[key.name.lstrip("/")] = (
+                            self._annotation_cos_to_value(
+                                value,
+                                _depth=depth,
+                                _active=active,
+                                _item_count=item_count,
+                            )
+                        )
+                return result_dict
+            finally:
+                active.remove(obj_id)
         return None
 
     def _extract_annotation_properties(
@@ -4817,14 +5247,23 @@ class SimplePdf:
     ) -> Dict[str, Any]:
         """Collect type-specific annotation entries for the public surface."""
         props: Dict[str, Any] = {}
+        item_count = [0]
         for key, value in annot_dict.mapping.items():
             if not isinstance(key, PdfName):
                 continue
             if key.name in self._RESERVED_ANNOT_KEYS:
                 continue
-            converted = self._annotation_cos_to_value(value)
+            converted = self._annotation_cos_to_value(
+                value,
+                _item_count=item_count,
+            )
             if converted is not None:
                 props[key.name.lstrip("/")] = converted
+                self._load_budget.check(
+                    len(props),
+                    "max_container_items",
+                    "annotation properties",
+                )
         return props
 
     def _apply_annotation_properties(
@@ -5162,75 +5601,73 @@ class SimplePdf:
                 if not hasattr(self._cos_doc, "objects") or not self._cos_doc.objects:
                     return False
 
-                # 5. Deep Structural Validation (Detect circular references
-                # & deep recursion)
-                visited = set()
-
-                def _validate_object(obj: Any, depth: int) -> bool:
-                    if depth > max_depth:
-                        return False  # Exceeded max depth
-
-                    obj_id = id(obj)
-                    if obj_id in visited:
-                        return False  # Circular reference detected
-
-                    visited.add(obj_id)
-
-                    try:
-                        if isinstance(obj, PdfDictionary):
-                            for v in obj.mapping.values():
-                                if not _validate_object(v, depth + 1):
-                                    return False
-                        elif isinstance(obj, PdfArray):
-                            for item in obj.items:
-                                if not _validate_object(item, depth + 1):
-                                    return False
-                        elif isinstance(obj, PdfIndirectReference):
-                            # Follow reference if possible
-                            ref_obj = self._cos_doc.objects.get(obj.object_number)
-                            if ref_obj and not _validate_object(ref_obj, depth + 1):
-                                return False
-                    finally:
-                        # Backtrack so sibling branches can revisit shared nodes;
-                        # whole-document cycle detection runs separately below.
-                        visited.remove(obj_id)
-                    return True
-
-                # Reset visited and do global cycle detection
-                global_visited = set()
-
-                def _has_cycles(obj: Any, path: set) -> bool:
-                    obj_id = id(obj)
-                    if obj_id in path:
-                        return True
-                    if obj_id in global_visited:
-                        return False
-
-                    global_visited.add(obj_id)
-                    path.add(obj_id)
-
-                    res = False
-                    if isinstance(obj, PdfDictionary):
-                        for v in obj.mapping.values():
-                            if _has_cycles(v, path):
-                                res = True
-                                break
+                # 5. Deep structural validation with an explicit stack so a
+                # hostile graph cannot exhaust Python's recursion limit.
+                active: Set[Tuple[str, int]] = set()
+                complete: Set[Tuple[str, int]] = set()
+                checked_nodes = 0
+                stack: List[Tuple[Any, int, bool]] = [
+                    (self._cos_doc.trailer, 0, False)
+                ]
+                graph_invalid = False
+                while stack:
+                    obj, depth, exiting = stack.pop()
+                    if isinstance(obj, PdfIndirectReference):
+                        key = ("ref", obj.object_number)
+                        resolved = self._cos_doc.objects.get(obj.object_number)
+                        children = [resolved] if resolved is not None else []
+                    elif isinstance(obj, PdfDictionary):
+                        key = ("direct", id(obj))
+                        self._load_budget.check(
+                            len(obj.mapping),
+                            "max_container_items",
+                            "COS validation child entries",
+                        )
+                        children = list(obj.mapping.values())
                     elif isinstance(obj, PdfArray):
-                        for item in obj.items:
-                            if _has_cycles(item, path):
-                                res = True
-                                break
-                    elif isinstance(obj, PdfIndirectReference):
-                        ref_obj = self._cos_doc.objects.get(obj.object_number)
-                        if ref_obj and _has_cycles(ref_obj, path):
-                            res = True
+                        key = ("direct", id(obj))
+                        self._load_budget.check(
+                            len(obj.items),
+                            "max_container_items",
+                            "COS validation child entries",
+                        )
+                        children = list(obj.items)
+                    else:
+                        continue
 
-                    path.remove(obj_id)
-                    return res
+                    if exiting:
+                        active.remove(key)
+                        complete.add(key)
+                        continue
+                    if key in active:
+                        graph_invalid = True
+                        break
+                    if key in complete:
+                        continue
+                    if depth > max_depth:
+                        graph_invalid = True
+                        break
+                    self._load_budget.check(
+                        depth + 1,
+                        "max_nesting_depth",
+                        "COS validation graph depth",
+                    )
+                    checked_nodes += 1
+                    self._load_budget.check(
+                        checked_nodes,
+                        "max_container_items",
+                        "COS validation graph nodes",
+                    )
+                    active.add(key)
+                    stack.append((obj, depth, True))
+                    for child in reversed(children):
+                        stack.append((child, depth + 1, False))
 
-                if _has_cycles(self._cos_doc.trailer, set()):
+                if graph_invalid:
                     return False
 
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 return False
 
@@ -5296,8 +5733,14 @@ class SimplePdf:
             try:
                 from .pdf_parser_cos import PdfCosParser
 
-                parser = PdfCosParser(self._raw_bytes)
+                parser = PdfCosParser(
+                    self._raw_bytes,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
+                )
                 self._cos_doc = parser.parse()
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning(
                     "SimplePdf.repair: COS re-parse failed; continuing without "
@@ -5386,6 +5829,8 @@ class SimplePdf:
             if self._cos_doc is not None:
                 try:
                     self._dedup_images_cos()
+                except PdfResourceLimitException:
+                    raise
                 except PDF_OPERATION_ERRORS as exc:
                     logger.warning(
                         "SimplePdf.optimize: image dedup skipped: %s", exc
@@ -5407,6 +5852,8 @@ class SimplePdf:
                     options.image_target_dpi,
                     options.image_progressive,
                 )
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning(
                     "SimplePdf.optimize: image recompression skipped: %s", exc
@@ -5416,6 +5863,8 @@ class SimplePdf:
         if self._cos_doc is not None and options.link_duplicate_streams:
             try:
                 self._link_duplicate_streams(options.allow_reuse_page_content)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning("SimplePdf.optimize: stream linking skipped: %s", exc)
 
@@ -5424,6 +5873,8 @@ class SimplePdf:
         if self._cos_doc is not None and options.unembed_fonts:
             try:
                 self._unembed_fonts()
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning(
                     "SimplePdf.optimize: font unembedding skipped: %s", exc
@@ -5435,6 +5886,8 @@ class SimplePdf:
         if self._cos_doc is not None and options.subset_fonts:
             try:
                 self._subset_fonts()
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning(
                     "SimplePdf.optimize: font subsetting skipped: %s", exc
@@ -5447,6 +5900,8 @@ class SimplePdf:
                     self.garbage_collect()
                 elif options.remove_unused_streams:
                     self._prune_unused_streams()
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning(
                     "SimplePdf.optimize: garbage-collection skipped: %s", exc
@@ -5456,6 +5911,8 @@ class SimplePdf:
         if self._cos_doc is not None and compress_streams:
             try:
                 self.compress_streams(include_fonts=options.compress_fonts)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS as exc:
                 logger.warning(
                     "SimplePdf.optimize: stream compression skipped: %s", exc
@@ -5601,6 +6058,8 @@ class SimplePdf:
             return ("enc", terminal, hashlib.md5(stream.content).digest())
         try:
             raw = self._decode_cos_stream(stream)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return ("raw", hashlib.md5(stream.content).digest())
         return ("dec", hashlib.md5(raw).digest())
@@ -5643,9 +6102,15 @@ class SimplePdf:
                 continue
             try:
                 content = self.get_page_content(i)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 continue
-            for name, w, h in find_image_placements(content):
+            for name, w, h in find_image_placements(
+                content,
+                limits=self._load_limits,
+                budget=self._load_budget,
+            ):
                 obj_num = name_to_obj.get(name.lstrip("/"))
                 if obj_num is None:
                     continue
@@ -5759,7 +6224,7 @@ class SimplePdf:
 
         is_jpeg = terminal in self._JPEG_FILTERS
         if is_jpeg:
-            decoded = dct.decode(stream.content)
+            decoded = dct.decode(stream.content, limits=self._load_limits)
             if (
                 decoded is None
                 or decoded.components != comps
@@ -5773,6 +6238,8 @@ class SimplePdf:
                 return False
             try:
                 samples = self._decode_cos_stream(stream)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 return False
             if len(samples) < width * height * comps:
@@ -6030,6 +6497,8 @@ class SimplePdf:
         length1, length2 = int(l1), int(l2)
         try:
             program = self._decode_cos_stream(ff_stream, ff_ref)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return None
         outlines = Type1Outlines(program, length1, length2)
@@ -6107,6 +6576,8 @@ class SimplePdf:
         ff_stream, ff_ref = located
         try:
             program = self._decode_cos_stream(ff_stream, ff_ref)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return None
         outlines = CffOutlines(program)
@@ -6156,6 +6627,8 @@ class SimplePdf:
         ff_stream, ff_ref = located
         try:
             program = self._decode_cos_stream(ff_stream, ff_ref)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return None
 
@@ -6193,6 +6666,8 @@ class SimplePdf:
         ff_stream, ff_ref = located
         try:
             program = self._decode_cos_stream(ff_stream, ff_ref)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return None
 
@@ -6318,6 +6793,8 @@ class SimplePdf:
         if isinstance(mapping, PdfStream):
             try:
                 data = self._decode_cos_stream(mapping, ref)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 data = b""
 
@@ -6344,6 +6821,8 @@ class SimplePdf:
                 continue
             try:
                 content = self.get_page_content(i)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 continue
             self._scan_content_for_glyphs(content, resources, usage, visited, 0)
@@ -6353,16 +6832,26 @@ class SimplePdf:
         """Resolve a page/XObject ``/Resources`` dict, walking inherited /Parent."""
         from .cos import PdfDictionary, PdfName
 
-        seen: set = set()
+        seen: Set[int] = set()
         current = node
+        depth = 0
         while isinstance(current, PdfDictionary):
+            depth += 1
+            self._load_budget.check(
+                depth,
+                "max_nesting_depth",
+                "inherited resource depth",
+            )
+            current_id = id(current)
+            if current_id in seen:
+                raise PdfParseException("Resource parent chain contains a cycle")
+            seen.add(current_id)
             res = self._resolve(current.mapping.get(PdfName("Resources")))
             if isinstance(res, PdfDictionary):
                 return res
             parent = current.mapping.get(PdfName("Parent"))
-            if parent is None or id(parent) in seen:
+            if parent is None:
                 break
-            seen.add(id(parent))
             current = self._resolve(parent)
         return None
 
@@ -6376,7 +6865,16 @@ class SimplePdf:
         xobject_dict = self._resolve(resources.mapping.get(PdfName("XObject")))
 
         try:
-            tokens = list(ContentStreamParser(content, {})._tokenize())
+            tokens = list(
+                ContentStreamParser(
+                    content,
+                    {},
+                    limits=self._load_limits,
+                    budget=self._load_budget,
+                )._tokenize()
+            )
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return
 
@@ -6454,6 +6952,8 @@ class SimplePdf:
         visited.add(key)
         try:
             content = self._decode_cos_stream(xobj, ref)
+        except PdfResourceLimitException:
+            raise
         except PDF_OPERATION_ERRORS:
             return
         sub_resources = self._resolve(xobj.mapping.get(PdfName("Resources")))
@@ -6783,7 +7283,12 @@ class SimplePdf:
         if not self._cos_doc:
             return {}
 
-        extractor = CosExtractor(self._cos_doc, b"")
+        extractor = CosExtractor(
+            self._cos_doc,
+            b"",
+            limits=self._load_limits,
+            budget=self._load_budget,
+        )
         return extractor.extract_form_fields()
 
     def set_field_value(self, name: str, value: Any) -> None:
@@ -6931,6 +7436,8 @@ class SimplePdf:
             try:
                 if self._set_widget_appearance(field, ft, ff or 0, q or 0, v, da, acro):
                     count += 1
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 logger.warning("Could not generate field appearance", exc_info=True)
         return count
@@ -7645,6 +8152,8 @@ class SimplePdf:
                         )
                     )
                 xmp_bytes = serialize_xmp(packet)
+            except PdfResourceLimitException:
+                raise
             except PDF_OPERATION_ERRORS:
                 xmp_bytes = None
         if xmp_bytes is None:
@@ -7728,6 +8237,8 @@ class SimplePdf:
                         stream_ref = self._cos_doc.register_object(font_stream)
                         descriptor.mapping[PdfName(key)] = stream_ref
                         logger.info(f"Embedded font {base_font} from {font_file}")
+                    except PdfResourceLimitException:
+                        raise
                     except PDF_OPERATION_ERRORS as e:
                         logger.error(f"Failed to embed font {base_font}: {e}")
 
@@ -7753,9 +8264,13 @@ class CosExtractor:
         *,
         stream_decrypt_key: Optional[bytes] = None,
         stream_decrypt_algorithm: str = "AES-256",
+        limits: PdfLoadLimits | None = None,
+        budget: _LoadBudget | None = None,
     ) -> None:
         self._doc = doc
         self._raw = raw_data
+        self._limits = _coerce_limits(limits)
+        self._budget = budget or _LoadBudget(self._limits)
         self._stream_decrypt_key = stream_decrypt_key
         self._stream_decrypt_algorithm = stream_decrypt_algorithm
         from .cos import PdfName
@@ -7766,6 +8281,7 @@ class CosExtractor:
         self._image_meta: Dict[str, Dict[str, Any]] = {}
         self._page_obj_ids: List[int] = []
         self._content_obj_ids: List[int] = []
+        self._seen_page_nodes: Set[Tuple[str, int]] = set()
 
     def attach_stream_decryption(self, password: str) -> None:
         """Configure per-stream decryption after the password is verified."""
@@ -7827,6 +8343,44 @@ class CosExtractor:
         val = d.mapping.get(PdfName(key))
         return self._resolve(val) if val is not None else None
 
+    def _enter_page_tree_node(self, node_ref: Any, node: Any, depth: int) -> None:
+        """Apply traversal limits and reject cycles in a PDF page tree."""
+        self._budget.check(depth, "max_nesting_depth", "page tree depth")
+        if isinstance(node_ref, PdfIndirectReference):
+            key = ("ref", node_ref.object_number)
+        else:
+            key = ("direct", id(node))
+        if key in self._seen_page_nodes:
+            raise PdfParseException(
+                "Cycle or repeated node detected in the PDF page tree"
+            )
+        self._seen_page_nodes.add(key)
+
+    def _image_dimensions(
+        self, stream: Any, image_name: str
+    ) -> Optional[Tuple[int, int]]:
+        """Validate declared image geometry before any image codec runs."""
+        width_value = self._get_number(stream.mapping.get(PdfName("Width")))
+        height_value = self._get_number(stream.mapping.get(PdfName("Height")))
+        if width_value is None or height_value is None:
+            return None
+        if (
+            not math.isfinite(float(width_value))
+            or not math.isfinite(float(height_value))
+            or int(width_value) != width_value
+            or int(height_value) != height_value
+            or width_value <= 0
+            or height_value <= 0
+        ):
+            raise PdfValidationException(
+                f"Invalid image dimensions for {image_name}: "
+                f"{width_value}x{height_value}"
+            )
+        width = int(width_value)
+        height = int(height_value)
+        self._budget.check_image_pixels(width, height, f"image {image_name}")
+        return width, height
+
     # ----- page tree --------------------------------------------------------
     def _traverse_page_tree(
         self,
@@ -7837,12 +8391,14 @@ class CosExtractor:
         page_image_map: dict,
         fonts_out: dict,
         extgstates_out: dict,
+        _depth: int = 1,
     ) -> None:
         from .cos import PdfDictionary, PdfArray, PdfName, PdfStream
 
         node = self._resolve(node_ref)
         if not isinstance(node, PdfDictionary):
             return
+        self._enter_page_tree_node(node_ref, node, _depth)
 
         obj_id = (
             node_ref.object_number if isinstance(node_ref, PdfIndirectReference) else 0
@@ -7863,6 +8419,7 @@ class CosExtractor:
             else:
                 mbox = (0, 0, 612, 792)
             pages_out.append(mbox)
+            self._budget.check_pages(len(pages_out))
             self._page_obj_ids.append(obj_id)
 
             # -- Contents stream(s) -----------------------------------------
@@ -7889,6 +8446,9 @@ class CosExtractor:
                             )
                             if subtype == "Image":
                                 img_name = name_key.name.lstrip("/")
+                                dimensions = self._image_dimensions(
+                                    img_obj, img_name
+                                )
                                 # Lazy decoding: store a loader instead of bytes
                                 if isinstance(images_out, LazyImageDict):
 
@@ -7915,14 +8475,8 @@ class CosExtractor:
                                         else None,
                                     )
                                 # Extract dimensions
-                                w = self._get_number(
-                                    img_obj.mapping.get(PdfName("Width"))
-                                )
-                                h = self._get_number(
-                                    img_obj.mapping.get(PdfName("Height"))
-                                )
-                                if w is not None and h is not None:
-                                    self._image_sizes[img_name] = (int(w), int(h))
+                                if dimensions is not None:
+                                    self._image_sizes[img_name] = dimensions
                                 self._image_meta[img_name] = self._resolve_image_meta(
                                     img_obj
                                 )
@@ -7947,6 +8501,11 @@ class CosExtractor:
         kids = node.mapping.get(PdfName("Kids"))
         kids_arr = self._resolve(kids)
         if isinstance(kids_arr, PdfArray):
+            self._budget.check(
+                len(kids_arr.items),
+                "max_container_items",
+                "page tree child entries",
+            )
             for child_ref in kids_arr.items:
                 self._traverse_page_tree(
                     child_ref,
@@ -7956,6 +8515,7 @@ class CosExtractor:
                     page_image_map,
                     fonts_out,
                     extgstates_out,
+                    _depth + 1,
                 )
 
     def _read_content_stream(self, ref: Any) -> bytes:
@@ -7963,20 +8523,63 @@ class CosExtractor:
         from .cos import PdfArray, PdfStream, PdfIndirectReference
 
         obj = self._resolve(ref)
+        content_limit = self._limits.max_content_stream_bytes
         if isinstance(obj, PdfStream):
             src_ref = ref if isinstance(ref, PdfIndirectReference) else None
-            return self._decode_stream(obj, src_ref)
+            return self._decode_stream(
+                obj,
+                src_ref,
+                context="page content stream",
+                max_output_bytes=content_limit,
+            )
         if isinstance(obj, PdfArray):
-            parts = []
+            self._budget.check(
+                len(obj.items),
+                "max_container_items",
+                "page content stream entries",
+            )
+            parts: List[bytes] = []
+            total = 0
             for item in obj.items:
                 resolved = self._resolve(item)
                 if isinstance(resolved, PdfStream):
                     src_ref = item if isinstance(item, PdfIndirectReference) else None
-                    parts.append(self._decode_stream(resolved, src_ref))
+                    separator_bytes = 1 if parts else 0
+                    remaining = (
+                        None
+                        if content_limit is None
+                        else content_limit - total - separator_bytes
+                    )
+                    if remaining is not None and remaining < 0:
+                        self._budget.check(
+                            total + separator_bytes,
+                            "max_content_stream_bytes",
+                            "combined page content stream",
+                        )
+                    part = self._decode_stream(
+                        resolved,
+                        src_ref,
+                        context="page content stream",
+                        max_output_bytes=remaining,
+                    )
+                    total += separator_bytes + len(part)
+                    self._budget.check(
+                        total,
+                        "max_content_stream_bytes",
+                        "combined page content stream",
+                    )
+                    parts.append(part)
             return b"\n".join(parts)
         return b""
 
-    def _decode_stream(self, stream: Any, source_ref: Any = None) -> bytes:
+    def _decode_stream(
+        self,
+        stream: Any,
+        source_ref: Any = None,
+        *,
+        context: str = "PDF stream",
+        max_output_bytes: int | None = None,
+    ) -> bytes:
         """Decode a PdfStream: Standard security decryption (if configured),
         then filters."""
         from .cos import (
@@ -7993,6 +8596,12 @@ class CosExtractor:
         obj_id = 0
         if isinstance(source_ref, PdfIndirectReference):
             obj_id = source_ref.object_number
+        subtype = self._get_name(stream.mapping.get(PdfName("Subtype")))
+        image_dimensions = None
+        if subtype == "Image":
+            image_dimensions = self._image_dimensions(
+                stream, f"object {obj_id}" if obj_id else "stream"
+            )
         if self._stream_decrypt_key and data:
             data = EncryptionUtils.decrypt_writer_encrypted_stream(
                 self._stream_decrypt_key,
@@ -8005,6 +8614,17 @@ class CosExtractor:
         parms_obj = stream.mapping.get(PdfName("DecodeParms"))
 
         if filter_obj is None:
+            self._budget.check(
+                len(data),
+                "max_decoded_stream_bytes",
+                context,
+            )
+            if max_output_bytes is not None and len(data) > max_output_bytes:
+                raise PdfResourceLimitException(
+                    f"Resource limit exceeded for {context}: {len(data)} exceeds "
+                    f"max_content_stream_bytes={max_output_bytes}"
+                )
+            self._budget.reserve_decoded(len(data), context)
             return data
 
         # Normalize filter list
@@ -8014,6 +8634,7 @@ class CosExtractor:
         elif isinstance(filter_obj, PdfArray):
             filter_names = [self._get_name(f) or "" for f in filter_obj.items]
         else:
+            self._budget.reserve_decoded(len(data), context)
             return data
 
         # Normalize parms list
@@ -8030,15 +8651,34 @@ class CosExtractor:
         # Pad if needed
         while len(parms_list) < len(filter_names):
             parms_list.append(None)
+        if image_dimensions is not None:
+            width, height = image_dimensions
+            for index, filter_name in enumerate(filter_names):
+                if filter_name in {"CCITTFaxDecode", "CCF"}:
+                    if not isinstance(parms_list[index], dict):
+                        parms_list[index] = {}
+                    parms_list[index].setdefault("Columns", width)
+                    parms_list[index].setdefault("Rows", height)
 
         try:
-            return StreamDecoder.decode(
+            decoded = StreamDecoder.decode(
                 data,
                 filter_names if len(filter_names) > 1 else filter_names[0],
                 parms_list[0] if len(parms_list) == 1 else parms_list,
+                limits=self._limits,
+                max_output_bytes=max_output_bytes,
             )
+        except PdfResourceLimitException:
+            raise
         except PDF_STREAM_DECODE_ERRORS:
-            return data
+            decoded = data
+            if max_output_bytes is not None and len(decoded) > max_output_bytes:
+                raise PdfResourceLimitException(
+                    f"Resource limit exceeded for {context}: {len(decoded)} exceeds "
+                    f"max_content_stream_bytes={max_output_bytes}"
+                )
+        self._budget.reserve_decoded(len(decoded), context)
+        return decoded
 
     def _cos_dict_to_plain(self, obj: Any) -> Optional[dict]:
         """Convert PdfDictionary to plain dict with string keys for StreamDecoder."""
@@ -8068,6 +8708,7 @@ class CosExtractor:
         pmap: dict = {}
         fonts: dict = {}
         extgs: dict = {}
+        self._seen_page_nodes.clear()
         root = self._dict_get(self._doc.trailer, "Root")
         if root:
             pages_node = self._dict_get(root, "Pages")
@@ -8100,6 +8741,7 @@ class CosExtractor:
         page_image_map: dict,
         fonts_out: dict,
         extgstates_out: dict,
+        _depth: int = 1,
     ) -> None:
         """Traverse the page tree collecting MediaBoxes, object IDs, and
         resource metadata.
@@ -8113,6 +8755,7 @@ class CosExtractor:
         node = self._resolve(node_ref)
         if not isinstance(node, PdfDictionary):
             return
+        self._enter_page_tree_node(node_ref, node, _depth)
 
         node_type = self._get_name(node.mapping.get(PdfName("Type")))
 
@@ -8128,6 +8771,7 @@ class CosExtractor:
             else:
                 mbox = (0, 0, 612, 792)
             pages_out.append(mbox)
+            self._budget.check_pages(len(pages_out))
             obj_id = (
                 node_ref.object_number
                 if isinstance(node_ref, PdfIndirectReference)
@@ -8149,6 +8793,9 @@ class CosExtractor:
                             )
                             if subtype == "Image":
                                 img_name = name_key.name.lstrip("/")
+                                dimensions = self._image_dimensions(
+                                    img_obj, img_name
+                                )
                                 # Lazy decoding: store a loader
                                 if isinstance(images_out, LazyImageDict):
                                     images_out.add_loader(
@@ -8168,14 +8815,8 @@ class CosExtractor:
                                     pass
 
                                 # Extract dimensions for Absorbers
-                                w = self._get_number(
-                                    img_obj.mapping.get(PdfName("Width"))
-                                )
-                                h = self._get_number(
-                                    img_obj.mapping.get(PdfName("Height"))
-                                )
-                                if w is not None and h is not None:
-                                    self._image_sizes[img_name] = (int(w), int(h))
+                                if dimensions is not None:
+                                    self._image_sizes[img_name] = dimensions
                                 self._image_meta[img_name] = self._resolve_image_meta(
                                     img_obj
                                 )
@@ -8200,6 +8841,11 @@ class CosExtractor:
         kids = node.mapping.get(PdfName("Kids"))
         kids_arr = self._resolve(kids)
         if isinstance(kids_arr, PdfArray):
+            self._budget.check(
+                len(kids_arr.items),
+                "max_container_items",
+                "page tree child entries",
+            )
             for child_ref in kids_arr.items:
                 self._traverse_page_tree_lazy(
                     child_ref,
@@ -8208,6 +8854,7 @@ class CosExtractor:
                     page_image_map,
                     fonts_out,
                     extgstates_out,
+                    _depth + 1,
                 )
 
     def extract_pages_lazy(
@@ -8223,6 +8870,7 @@ class CosExtractor:
         :meth:`get_page_content` can decode content on demand.
         """
         pages: list = []
+        self._seen_page_nodes.clear()
         root = self._dict_get(self._doc.trailer, "Root")
         if root:
             pages_node = self._dict_get(root, "Pages")
@@ -8381,6 +9029,8 @@ class CosExtractor:
                 elif isinstance(lookup, PdfStream):
                     try:
                         palette = self._decode_stream(lookup, cs.items[3])
+                    except PdfResourceLimitException:
+                        raise
                     except PDF_STREAM_DECODE_ERRORS:
                         palette = lookup.content
                 return ("indexed", 1, palette, base_comps or 3)
@@ -8412,11 +9062,20 @@ class CosExtractor:
         matrix_map: Dict[Tuple[int, str], Tuple[float, ...]] = {}
         rect_map: Dict[Tuple[int, str], Tuple[float, float, float, float]] = {}
         contents = getattr(self, "_cached_contents", [])
-        _ = getattr(self, "_cached_pmap", {})  # pmap
+        page_image_map = getattr(self, "_cached_pmap", {})
 
         for page_idx, content in enumerate(contents):
-            placements = parse_image_placements_from_content(content)
+            image_names = set(page_image_map.get(page_idx, ()))
+            if not image_names:
+                continue
+            placements = parse_image_placements_from_content(
+                content,
+                limits=self._limits,
+                budget=self._budget,
+            )
             for name, matrix_dec in placements:
+                if name not in image_names:
+                    continue
                 key = (page_idx, name)
                 if key not in matrix_map:
                     matrix_map[key] = affine_decimal_to_float(matrix_dec)
@@ -8616,9 +9275,20 @@ class CosExtractor:
         first_ref = outlines.mapping.get(PdfName("First"))
         if _outline_link_absent(first_ref):
             return []
-        return self._collect_outline_items(first_ref)
+        return self._collect_outline_items(
+            first_ref,
+            _visited=set(),
+            _node_count=[0],
+        )
 
-    def _collect_outline_items(self, item_ref: Any, depth: int = 0) -> List[Dict]:
+    def _collect_outline_items(
+        self,
+        item_ref: Any,
+        depth: int = 0,
+        *,
+        _visited: Optional[Set[Tuple[str, int]]] = None,
+        _node_count: Optional[List[int]] = None,
+    ) -> List[Dict]:
         """Recursively walk the outline linked list, returning dicts.
 
         Raises
@@ -8634,8 +9304,14 @@ class CosExtractor:
             raise PdfParseException(
                 f"Outline tree nesting exceeds maximum depth ({OUTLINE_TREE_MAX_DEPTH})"
             )
+        self._budget.check(
+            depth + 1,
+            "max_nesting_depth",
+            "outline tree depth",
+        )
         items: List[Dict] = []
-        visited: set = set()
+        visited = _visited if _visited is not None else set()
+        node_count = _node_count if _node_count is not None else [0]
         while not _outline_link_absent(item_ref):
             item = self._resolve(item_ref)
             if item is None:
@@ -8647,14 +9323,20 @@ class CosExtractor:
                     "Outline item must be a dictionary; outline tree may be corrupt"
                 )
             if isinstance(item_ref, PdfIndirectReference):
-                cycle_key: Any = item_ref.object_number
+                cycle_key = ("ref", item_ref.object_number)
             else:
-                cycle_key = id(item)
+                cycle_key = ("direct", id(item))
             if cycle_key in visited:
                 raise PdfParseException(
                     "Outline tree contains a cycle (repeated outline item reference)"
                 )
             visited.add(cycle_key)
+            node_count[0] += 1
+            self._budget.check(
+                node_count[0],
+                "max_container_items",
+                "outline tree items",
+            )
 
             # Title
             title = ""
@@ -8684,7 +9366,12 @@ class CosExtractor:
             children: List[Dict] = []
             first_child = item.mapping.get(PdfName("First"))
             if not _outline_link_absent(first_child):
-                children = self._collect_outline_items(first_child, depth + 1)
+                children = self._collect_outline_items(
+                    first_child,
+                    depth + 1,
+                    _visited=visited,
+                    _node_count=node_count,
+                )
 
             items.append(
                 {
@@ -8749,18 +9436,60 @@ class CosExtractor:
                 fields = acroform.mapping.get(PdfName("Fields"))
                 fields = self._resolve(fields)
                 if isinstance(fields, PdfArray):
+                    self._budget.check(
+                        len(fields.items),
+                        "max_container_items",
+                        "signature field entries",
+                    )
+                    visited: Set[Tuple[str, int]] = set()
+                    node_count = [0]
                     for field_ref in fields.items:
-                        self._collect_signatures_from_field(field_ref, signatures, data)
+                        self._collect_signatures_from_field(
+                            field_ref,
+                            signatures,
+                            data,
+                            _visited=visited,
+                            _node_count=node_count,
+                        )
         return signatures
 
     def _collect_signatures_from_field(
-        self, field_ref: Any, signatures: List[PdfSignature], data: bytes
+        self,
+        field_ref: Any,
+        signatures: List[PdfSignature],
+        data: bytes,
+        *,
+        _depth: int = 1,
+        _visited: Optional[Set[Tuple[str, int]]] = None,
+        _node_count: Optional[List[int]] = None,
     ) -> None:
         from .cos import PdfName, PdfDictionary, PdfString, PdfArray
 
+        self._budget.check(
+            _depth,
+            "max_nesting_depth",
+            "signature field tree depth",
+        )
         field_obj = self._resolve(field_ref)
         if not isinstance(field_obj, PdfDictionary):
             return
+        visited = _visited if _visited is not None else set()
+        node_count = _node_count if _node_count is not None else [0]
+        if isinstance(field_ref, PdfIndirectReference):
+            node_key = ("ref", field_ref.object_number)
+        else:
+            node_key = ("direct", id(field_obj))
+        if node_key in visited:
+            raise PdfParseException(
+                "Signature field tree contains a cycle or repeated field"
+            )
+        visited.add(node_key)
+        node_count[0] += 1
+        self._budget.check(
+            node_count[0],
+            "max_container_items",
+            "signature field tree items",
+        )
 
         # Check FT
         ft = field_obj.mapping.get(PdfName("FT"))
@@ -8797,6 +9526,8 @@ class CosExtractor:
                             contents=pkcs7_content,
                             byte_range=byte_range,
                             reference_data=data,
+                            load_limits=self._limits,
+                            _load_budget=self._budget,
                         )
 
                         for key, attr in [
@@ -8821,6 +9552,11 @@ class CosExtractor:
                         sig.docmdp_level = self._extract_docmdp_level(v_obj)
 
                         signatures.append(sig)
+                        self._budget.check(
+                            len(signatures),
+                            "max_container_items",
+                            "PDF signatures",
+                        )
                     except (
                         ValueError,
                         TypeError,
@@ -8834,8 +9570,20 @@ class CosExtractor:
         kids = field_obj.mapping.get(PdfName("Kids"))
         kids = self._resolve(kids)
         if isinstance(kids, PdfArray):
+            self._budget.check(
+                len(kids.items),
+                "max_container_items",
+                "signature field child entries",
+            )
             for kid_ref in kids.items:
-                self._collect_signatures_from_field(kid_ref, signatures, data)
+                self._collect_signatures_from_field(
+                    kid_ref,
+                    signatures,
+                    data,
+                    _depth=_depth + 1,
+                    _visited=visited,
+                    _node_count=node_count,
+                )
 
     def _extract_docmdp_level(self, v_obj: Any) -> Optional[int]:
         """Return the DocMDP ``/P`` level of a certifying signature, if any."""
@@ -8880,18 +9628,57 @@ class CosExtractor:
                 fields_arr = acroform.mapping.get(PdfName("Fields"))
                 fields_arr = self._resolve(fields_arr)
                 if isinstance(fields_arr, PdfArray):
+                    self._budget.check(
+                        len(fields_arr.items),
+                        "max_container_items",
+                        "form field entries",
+                    )
+                    visited: Set[Tuple[str, int]] = set()
+                    node_count = [0]
                     for field_ref in fields_arr.items:
-                        self._collect_fields_rec(field_ref, fields)
+                        self._collect_fields_rec(
+                            field_ref,
+                            fields,
+                            _visited=visited,
+                            _node_count=node_count,
+                        )
         return fields
 
     def _collect_fields_rec(
-        self, field_ref: Any, fields: Dict[str, Dict[str, Any]], prefix: str = ""
+        self,
+        field_ref: Any,
+        fields: Dict[str, Dict[str, Any]],
+        prefix: str = "",
+        *,
+        _depth: int = 1,
+        _visited: Optional[Set[Tuple[str, int]]] = None,
+        _node_count: Optional[List[int]] = None,
     ) -> None:
         from .cos import PdfName, PdfDictionary, PdfString, PdfArray
 
+        self._budget.check(
+            _depth,
+            "max_nesting_depth",
+            "form field tree depth",
+        )
         field_obj = self._resolve(field_ref)
         if not isinstance(field_obj, PdfDictionary):
             return
+        visited = _visited if _visited is not None else set()
+        node_count = _node_count if _node_count is not None else [0]
+        if isinstance(field_ref, PdfIndirectReference):
+            node_key = ("ref", field_ref.object_number)
+        else:
+            node_key = ("direct", id(field_obj))
+        if node_key in visited:
+            raise PdfParseException("Form field tree contains a cycle or repeated field")
+        visited.add(node_key)
+        node_count[0] += 1
+        self._budget.check(
+            node_count[0],
+            "max_container_items",
+            "form field tree items",
+        )
 
         t = field_obj.mapping.get(PdfName("T"))
         t = self._resolve(t)
@@ -8944,6 +9731,11 @@ class CosExtractor:
                 else:
                     val = name_val
             elif isinstance(v, PdfArray):
+                self._budget.check(
+                    len(v.items),
+                    "max_container_items",
+                    "form field value entries",
+                )
                 items = []
                 for item in v.items:
                     item = self._resolve(item)
@@ -8963,12 +9755,29 @@ class CosExtractor:
             val = False if is_checkbox else None
 
         fields[full_name] = {"value": val, "type": field_type}
+        self._budget.check(
+            len(fields),
+            "max_container_items",
+            "extracted form fields",
+        )
 
         kids = field_obj.mapping.get(PdfName("Kids"))
         kids = self._resolve(kids)
         if isinstance(kids, PdfArray):
+            self._budget.check(
+                len(kids.items),
+                "max_container_items",
+                "form field child entries",
+            )
             for kid_ref in kids.items:
-                self._collect_fields_rec(kid_ref, fields, full_name)
+                self._collect_fields_rec(
+                    kid_ref,
+                    fields,
+                    full_name,
+                    _depth=_depth + 1,
+                    _visited=visited,
+                    _node_count=node_count,
+                )
 
     def extract_attachment_entries(self) -> List[Tuple[str, bytes, dict]]:
         """Walk ``/Names /EmbeddedFiles``, one entry per embedded file.

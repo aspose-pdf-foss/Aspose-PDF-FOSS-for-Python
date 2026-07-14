@@ -11,6 +11,12 @@ from typing import Any, BinaryIO, List, Optional, Union
 
 from aspose_pdf.engine.simple_pdf import SimplePdf, _effective_encryption_password
 from aspose_pdf.exceptions import AsposePdfException, PdfSecurityException
+from aspose_pdf.load_limits import (
+    PdfLoadLimits,
+    _LoadBudget,
+    _coerce_limits,
+    _read_limited,
+)
 
 
 class Document:
@@ -34,8 +40,11 @@ class Document:
         """
         self._init_args = args
         self._init_kwargs = kwargs
+        self._load_limits = _coerce_limits(kwargs.get("limits"))
         self._disposed: bool = False
         self._engine_doc: Optional[SimplePdf] = SimplePdf()
+        self._engine_doc._load_limits = self._load_limits
+        self._engine_doc._load_budget = _LoadBudget(self._load_limits)
 
         # Initialize defaults
         self._pages: List[Any] = (
@@ -65,7 +74,12 @@ class Document:
 
         if args and args[0]:
             pwd = kwargs.get("password")
-            self.load_from(args[0], password=pwd)
+            self.load_from(args[0], password=pwd, limits=self._load_limits)
+
+    @property
+    def load_limits(self) -> PdfLoadLimits:
+        """Return the resource limits used for loading this document."""
+        return self._load_limits
 
     # ---------------------------------------------------------------------
     # Core document operations
@@ -75,8 +89,12 @@ class Document:
         source: Union[str, bytes, bytearray, Path, BinaryIO],
         *,
         password: Optional[str] = None,
+        limits: PdfLoadLimits | None = None,
     ) -> "Document":
         """Load a document from *source* using native engine."""
+        if limits is not None:
+            self._load_limits = _coerce_limits(limits)
+        resolved_limits = self._load_limits
         eff_pwd = _effective_encryption_password(password)
         self._password = eff_pwd if eff_pwd is not None else password
 
@@ -86,16 +104,30 @@ class Document:
             path = Path(source)
             if not path.is_file():
                 raise FileNotFoundError(f"File not found: {path}")
-            self._engine_doc = SimplePdf.from_file(path, password=password)
+            self._engine_doc = SimplePdf.from_file(
+                path, password=password, limits=resolved_limits
+            )
             self.file_name = str(path)
         elif isinstance(source, (bytes, bytearray)):
-            self._engine_doc = SimplePdf.from_bytes(bytes(source), password=password)
+            budget = _LoadBudget(resolved_limits)
+            budget.check_input(len(source))
+            data = bytes(source) if isinstance(source, bytearray) else source
+            self._engine_doc = SimplePdf.from_bytes(
+                data,
+                password=password,
+                limits=resolved_limits,
+                _budget=budget,
+            )
             self.file_name = None
         elif hasattr(source, "read"):
-            data = source.read()
-            if not isinstance(data, (bytes, bytearray)):
-                raise TypeError("stream read() must return bytes")
-            self._engine_doc = SimplePdf.from_bytes(bytes(data), password=password)
+            budget = _LoadBudget(resolved_limits)
+            data = _read_limited(source, budget)
+            self._engine_doc = SimplePdf.from_bytes(
+                data,
+                password=password,
+                limits=resolved_limits,
+                _budget=budget,
+            )
             self.file_name = getattr(source, "name", None)
         else:
             raise TypeError(

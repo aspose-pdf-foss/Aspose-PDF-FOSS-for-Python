@@ -27,11 +27,14 @@ a :class:`~aspose_pdf.validation.ValidationResult`.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional, Tuple, Type
 
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.serialization import pkcs7
+
+from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 # Narrow catches for PKCS#7/DER work; unexpected failures propagate.
 _PKCS7_LOAD_ERRORS: Tuple[Type[BaseException], ...] = (
@@ -82,16 +85,36 @@ class PdfSignature:
     contact_info: Optional[str] = None
     sub_filter: Optional[str] = None  # e.g. adbe.pkcs7.detached
     docmdp_level: Optional[int] = None  # DocMDP /P (1/2/3) for certification sigs
+    load_limits: PdfLoadLimits | None = field(default=None, repr=False, compare=False)
+    _load_budget: _LoadBudget | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._load_budget is None:
+            self.load_limits = _coerce_limits(self.load_limits)
+            self._load_budget = _LoadBudget(self.load_limits)
+        else:
+            if not isinstance(self._load_budget, _LoadBudget):
+                raise TypeError("_load_budget must be a _LoadBudget instance or None")
+            if (
+                self.load_limits is not None
+                and self.load_limits != self._load_budget.limits
+            ):
+                raise ValueError("load_limits must match _load_budget.limits")
+            self.load_limits = self._load_budget.limits
 
     @property
     def valid(self) -> bool:
         """Public accessor that safely verifies the signature.
 
         Returns ``True`` only when the internal integrity checks succeed.
-        Any exception is caught and results in ``False``.
+        Validation failures result in ``False``; configured resource-limit
+        failures propagate so callers cannot mistake a rejected workload for
+        an ordinary invalid signature.
         """
         try:
             return self._verify_integrity()
+        except PdfResourceLimitException:
+            raise
         except Exception:
             # API contract: never raises; any verification failure → False.
             return False
@@ -117,7 +140,8 @@ class PdfSignature:
         Returns
         -------
         ValidationResult
-            Always returns a result; never raises.
+            Returns a structured result for signature-validation failures.
+            ``PdfResourceLimitException`` still propagates.
         """
         from aspose_pdf.validation import (
             ValidationOptions as _ValidationOptions,
@@ -127,6 +151,8 @@ class PdfSignature:
 
         if options is None:
             options = _ValidationOptions()
+
+        self._load_budget.check_input(len(self.reference_data))
 
         errors: List[str] = []
 
@@ -194,7 +220,11 @@ class PdfSignature:
             # store so chain building and revocation can use it offline (LTV).
             from aspose_pdf.engine import dss as _dss
 
-            dss_material = _dss.read_dss(self.reference_data)
+            dss_material = _dss.read_dss(
+                self.reference_data,
+                limits=self.load_limits,
+                budget=self._load_budget,
+            )
 
             return validate_cms(
                 self.contents,
@@ -211,8 +241,10 @@ class PdfSignature:
                     self.reference_data, signed_len
                 ),
             )
+        except PdfResourceLimitException:
+            raise
         except Exception as exc:
-            # Structured API must not raise; surface unexpected validation errors.
+            # Surface unexpected validation errors as a structured result.
             return _ValidationResult(
                 status=ValidationStatus.INVALID,
                 message=f"Signature validation error: {exc}",
@@ -270,6 +302,7 @@ class PdfSignature:
         if any(v < 0 for v in (start1, len1, start2, len2)):
             return False
         data_len = len(self.reference_data)
+        self._load_budget.check_input(data_len)
         signed_len = start2 + len2
         if start1 + len1 > data_len or signed_len > data_len:
             return False

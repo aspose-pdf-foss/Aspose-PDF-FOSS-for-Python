@@ -2,7 +2,12 @@
 import zlib
 from typing import Any, Dict, List, Union
 
-from aspose_pdf.exceptions import PDF_STREAM_DECODE_ERRORS, PdfValidationException
+from aspose_pdf.exceptions import (
+    PDF_STREAM_DECODE_ERRORS,
+    PdfResourceLimitException,
+    PdfValidationException,
+)
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits
 
 
 try:
@@ -25,7 +30,85 @@ class StreamDecoder:
     """Decode PDF stream data using supported filters."""
 
     @staticmethod
-    def _apply_predictor(data: bytes, parms: Union[Dict[str, Any], None]) -> bytes:
+    def _effective_output_limit(
+        limits: PdfLoadLimits, max_output_bytes: int | None
+    ) -> int | None:
+        candidates = [
+            value
+            for value in (limits.max_decoded_stream_bytes, max_output_bytes)
+            if value is not None
+        ]
+        return min(candidates) if candidates else None
+
+    @staticmethod
+    def _check_output(
+        data: bytes,
+        *,
+        input_size: int,
+        original_input_size: int,
+        limits: PdfLoadLimits,
+        max_output_bytes: int | None,
+        filter_name: str,
+    ) -> None:
+        output_limit = StreamDecoder._effective_output_limit(
+            limits, max_output_bytes
+        )
+        if output_limit is not None and len(data) > output_limit:
+            raise PdfResourceLimitException(
+                f"Resource limit exceeded for {filter_name} output: {len(data)} "
+                f"exceeds max_decoded_stream_bytes={output_limit}"
+            )
+        ratio = limits.max_compression_ratio
+        if ratio is not None and input_size > 0 and len(data) > input_size * ratio:
+            raise PdfResourceLimitException(
+                f"Resource limit exceeded for {filter_name} compression ratio: "
+                f"{len(data)} decoded bytes from {input_size} encoded bytes exceeds "
+                f"max_compression_ratio={ratio}"
+            )
+        if (
+            ratio is not None
+            and original_input_size > 0
+            and len(data) > original_input_size * ratio
+        ):
+            raise PdfResourceLimitException(
+                f"Resource limit exceeded for {filter_name} filter-chain "
+                f"compression ratio: {len(data)} decoded bytes from "
+                f"{original_input_size} encoded bytes exceeds "
+                f"max_compression_ratio={ratio}"
+            )
+
+    @staticmethod
+    def _decode_flate(
+        data: bytes,
+        max_output_bytes: int | None,
+        output_limit_name: str = "max_decoded_stream_bytes",
+    ) -> bytes:
+        """Decode one zlib stream without allocating beyond the output cap."""
+        if max_output_bytes is None:
+            return zlib.decompress(data)
+        decoder = zlib.decompressobj()
+        result = decoder.decompress(data, max_output_bytes + 1)
+        if len(result) > max_output_bytes or decoder.unconsumed_tail:
+            raise PdfResourceLimitException(
+                "Resource limit exceeded for FlateDecode output: decoded data "
+                f"exceeds {output_limit_name}={max_output_bytes}"
+            )
+        result += decoder.flush(max_output_bytes + 1 - len(result))
+        if len(result) > max_output_bytes:
+            raise PdfResourceLimitException(
+                "Resource limit exceeded for FlateDecode output: decoded data "
+                f"exceeds {output_limit_name}={max_output_bytes}"
+            )
+        if not decoder.eof:
+            raise zlib.error("incomplete or truncated zlib stream")
+        return result
+
+    @staticmethod
+    def _apply_predictor(
+        data: bytes,
+        parms: Union[Dict[str, Any], None],
+        max_output_bytes: int | None = None,
+    ) -> bytes:
         """Apply predictor post‑Flate decompression.
         Supports TIFF (Predictor 2) and PNG (Predictor 10‑15) predictors.
         """
@@ -38,8 +121,21 @@ class StreamDecoder:
         columns = int(parms.get("Columns", 1))
         colors = int(parms.get("Colors", 1))
         bits_per_component = int(parms.get("BitsPerComponent", 8))
+        if columns <= 0 or colors <= 0:
+            raise PdfValidationException(
+                "Predictor Columns and Colors must be positive integers"
+            )
+        if bits_per_component not in {1, 2, 4, 8, 16}:
+            raise PdfValidationException(
+                "Predictor BitsPerComponent must be one of 1, 2, 4, 8, or 16"
+            )
         bytes_per_pixel = max(1, (colors * bits_per_component + 7) // 8)
-        row_len = columns * bytes_per_pixel
+        row_len = (columns * colors * bits_per_component + 7) // 8
+        if max_output_bytes is not None and row_len > max_output_bytes:
+            raise PdfResourceLimitException(
+                "Resource limit exceeded for predictor row: "
+                f"{row_len} exceeds max_decoded_stream_bytes={max_output_bytes}"
+            )
 
         if predictor == 2:
             out = bytearray()
@@ -51,10 +147,18 @@ class StreamDecoder:
             return bytes(out)
 
         if 10 <= predictor <= 15:
+            if data and row_len + 1 > len(data):
+                raise PdfValidationException(
+                    "PNG predictor row is larger than the decoded stream"
+                )
             out = bytearray()
-            prev_row = bytearray([0] * row_len)
+            prev_row = bytearray(row_len)
             pos = 0
             while pos < len(data):
+                if len(data) - pos < row_len + 1:
+                    raise PdfValidationException(
+                        "PNG predictor stream ends in a partial row"
+                    )
                 filter_type = data[pos]
                 pos += 1
                 cur_row = bytearray(data[pos : pos + row_len])
@@ -103,27 +207,101 @@ class StreamDecoder:
         return data
 
     @staticmethod
-    def _decode_ascii85(data: bytes) -> bytes:
-        """Decode Adobe ASCII85 / Base85 encoded data."""
+    def _decode_ascii85(
+        data: bytes, max_output_bytes: int | None = None
+    ) -> bytes:
+        """Decode Adobe ASCII85 / Base85 data after bounding its output."""
         import base64
 
-        s = data.strip()
-        if not s.startswith(b"<~"):
-            s = b"<~" + s
-        if not s.endswith(b"~>"):
-            s = s + b"~>"
-        return base64.a85decode(s, adobe=True, ignorechars=b" \n\r\t")
+        start = 0
+        end = len(data)
+        whitespace = b" \n\r\t"
+        while start < end and data[start] in whitespace:
+            start += 1
+        while end > start and data[end - 1] in whitespace:
+            end -= 1
+        if data[start : start + 2] == b"<~":
+            start += 2
+        if data[max(start, end - 2) : end] == b"~>":
+            end -= 2
+
+        regular_chars = 0
+        zero_groups = 0
+        for value in data[start:end]:
+            if value in whitespace:
+                continue
+            if value == ord("z"):
+                zero_groups += 1
+            else:
+                regular_chars += 1
+        remainder = regular_chars % 5
+        decoded_upper_bound = (
+            zero_groups * 4
+            + (regular_chars // 5) * 4
+            + max(0, remainder - 1)
+        )
+        if (
+            max_output_bytes is not None
+            and decoded_upper_bound > max_output_bytes
+        ):
+            raise PdfResourceLimitException(
+                "Resource limit exceeded for ASCII85Decode output: decoded data "
+                f"exceeds max_decoded_stream_bytes={max_output_bytes}"
+            )
+
+        payload = data[start:end]
+        return base64.a85decode(
+            payload,
+            adobe=False,
+            ignorechars=whitespace,
+        )
 
     @staticmethod
-    def _decode_asciihex(data: bytes) -> bytes:
-        """Decode ASCIIHex encoded data."""
-        s = data.strip()
-        if s.endswith(b">"):
-            s = s[:-1]
-        s = b"".join(s.split())
-        if len(s) % 2:
-            s += b"0"
-        return bytes.fromhex(s.decode("ascii"))
+    def _decode_asciihex(
+        data: bytes, max_output_bytes: int | None = None
+    ) -> bytes:
+        """Decode ASCIIHex data incrementally without crossing the output cap."""
+        out = bytearray()
+        high_nibble: int | None = None
+        terminated = False
+        whitespace = b" \n\r\t\f\x00"
+
+        for value in data:
+            if value in whitespace:
+                continue
+            if value == ord(">"):
+                terminated = True
+                continue
+            if terminated:
+                raise ValueError("non-whitespace data follows ASCIIHex end marker")
+            if ord("0") <= value <= ord("9"):
+                nibble = value - ord("0")
+            elif ord("A") <= value <= ord("F"):
+                nibble = value - ord("A") + 10
+            elif ord("a") <= value <= ord("f"):
+                nibble = value - ord("a") + 10
+            else:
+                raise ValueError(f"invalid ASCIIHex digit: {chr(value)!r}")
+
+            if high_nibble is None:
+                high_nibble = nibble
+                continue
+            if max_output_bytes is not None and len(out) >= max_output_bytes:
+                raise PdfResourceLimitException(
+                    "Resource limit exceeded for ASCIIHexDecode output: decoded "
+                    f"data exceeds max_decoded_stream_bytes={max_output_bytes}"
+                )
+            out.append((high_nibble << 4) | nibble)
+            high_nibble = None
+
+        if high_nibble is not None:
+            if max_output_bytes is not None and len(out) >= max_output_bytes:
+                raise PdfResourceLimitException(
+                    "Resource limit exceeded for ASCIIHexDecode output: decoded "
+                    f"data exceeds max_decoded_stream_bytes={max_output_bytes}"
+                )
+            out.append(high_nibble << 4)
+        return bytes(out)
 
     @staticmethod
     def _decode_dct(data: bytes) -> bytes:
@@ -138,7 +316,11 @@ class StreamDecoder:
         return data
 
     @staticmethod
-    def _decode_lzw(data: bytes, parms: Union[Dict[str, Any], None] = None) -> bytes:
+    def _decode_lzw(
+        data: bytes,
+        parms: Union[Dict[str, Any], None] = None,
+        max_output_bytes: int | None = None,
+    ) -> bytes:
         """Decode LZW compressed data per PDF specification.
 
         LZW is used in older PDFs (PDF 1.0-1.4) for stream compression.
@@ -216,6 +398,14 @@ class StreamDecoder:
                     "(truncated stream or corrupt compression)"
                 )
 
+            if (
+                max_output_bytes is not None
+                and len(result) + len(entry) > max_output_bytes
+            ):
+                raise PdfResourceLimitException(
+                    "Resource limit exceeded for LZWDecode output: decoded data "
+                    f"exceeds max_decoded_stream_bytes={max_output_bytes}"
+                )
             result.extend(entry)
 
             # Add new entry to dictionary
@@ -233,12 +423,20 @@ class StreamDecoder:
 
         # Apply predictor if specified
         if parms:
-            result = bytearray(StreamDecoder._apply_predictor(bytes(result), parms))
+            result = bytearray(
+                StreamDecoder._apply_predictor(
+                    bytes(result), parms, max_output_bytes
+                )
+            )
 
         return bytes(result)
 
     @staticmethod
-    def _decode_ccitt(data: bytes, parms: Union[Dict[str, Any], None] = None) -> bytes:
+    def _decode_ccitt(
+        data: bytes,
+        parms: Union[Dict[str, Any], None] = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> bytes:
         """Decode CCITTFaxDecode (Group 3/4 fax) encoded data.
 
         Delegates to aspose_pdf.engine.ccitt.Decoder.
@@ -253,7 +451,12 @@ class StreamDecoder:
             )
 
         try:
-            result = CCITTDecoder.decode(data, parms or {})
+            if limits is None:
+                result = CCITTDecoder.decode(data, parms or {})
+            else:
+                result = CCITTDecoder.decode(data, parms or {}, limits=limits)
+        except PdfResourceLimitException:
+            raise
         except PDF_STREAM_DECODE_ERRORS as exc:
             raise PdfValidationException(
                 "CCITTFaxDecode failed while decoding the image stream"
@@ -272,7 +475,11 @@ class StreamDecoder:
         return result
 
     @staticmethod
-    def _decode_jbig2(data: bytes, parms: Union[Dict[str, Any], None] = None) -> bytes:
+    def _decode_jbig2(
+        data: bytes,
+        parms: Union[Dict[str, Any], None] = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> bytes:
         """Decode JBIG2 encoded data.
 
         Delegates to ``aspose_pdf.engine.jbig2.Decoder``. On failure, raises
@@ -289,7 +496,12 @@ class StreamDecoder:
             )
 
         try:
-            result = JBIG2Decoder.decode(data, parms or {})
+            if limits is None:
+                result = JBIG2Decoder.decode(data, parms or {})
+            else:
+                result = JBIG2Decoder.decode(data, parms or {}, limits=limits)
+        except PdfResourceLimitException:
+            raise
         except PDF_STREAM_DECODE_ERRORS as exc:
             raise PdfValidationException(
                 "JBIG2Decode failed while decoding the image stream"
@@ -303,7 +515,9 @@ class StreamDecoder:
         return result
 
     @staticmethod
-    def _decode_run_length(data: bytes) -> bytes:
+    def _decode_run_length(
+        data: bytes, max_output_bytes: int | None = None
+    ) -> bytes:
         """Decode RunLengthDecode encoded data.
 
         Run-length encoding uses the following scheme:
@@ -331,6 +545,14 @@ class StreamDecoder:
                 break
             elif length < 128:  # Literal run
                 count = length + 1
+                if (
+                    max_output_bytes is not None
+                    and len(result) + count > max_output_bytes
+                ):
+                    raise PdfResourceLimitException(
+                        "Resource limit exceeded for RunLengthDecode output: "
+                        f"decoded data exceeds max_decoded_stream_bytes={max_output_bytes}"
+                    )
                 end = pos + count
                 if end > len(data):
                     raise PdfValidationException(
@@ -341,6 +563,14 @@ class StreamDecoder:
                 pos = end
             else:  # Repeated byte
                 count = 257 - length
+                if (
+                    max_output_bytes is not None
+                    and len(result) + count > max_output_bytes
+                ):
+                    raise PdfResourceLimitException(
+                        "Resource limit exceeded for RunLengthDecode output: "
+                        f"decoded data exceeds max_decoded_stream_bytes={max_output_bytes}"
+                    )
                 if pos >= len(data):
                     raise PdfValidationException(
                         "RunLengthDecode failed: missing byte after repeat-length "
@@ -352,7 +582,11 @@ class StreamDecoder:
         return bytes(result)
 
     @staticmethod
-    def _decode_jpx(data: bytes, parms: Union[Dict[str, Any], None] = None) -> bytes:
+    def _decode_jpx(
+        data: bytes,
+        parms: Union[Dict[str, Any], None] = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> bytes:
         """Decode JPXDecode (JPEG 2000) stream bytes to raw pixels.
 
         Failures raise :class:`~aspose_pdf.exceptions.PdfValidationException` for
@@ -367,10 +601,19 @@ class StreamDecoder:
                 "JPXDecode is not available (JPX decoder module could not be loaded)"
             )
 
-        return JPXDecoder.decode(data, parms or {})
+        if limits is None:
+            return JPXDecoder.decode(data, parms or {})
+        return JPXDecoder.decode(data, parms or {}, limits=limits)
 
     @staticmethod
-    def decode(data: bytes, filters: Any, decode_parms: Any) -> bytes:
+    def decode(
+        data: bytes,
+        filters: Any,
+        decode_parms: Any,
+        *,
+        limits: PdfLoadLimits | None = None,
+        max_output_bytes: int | None = None,
+    ) -> bytes:
         """Decode ``data`` using ``filters`` and optional ``decode_parms``.
 
         Supports: FlateDecode (with predictor), LZWDecode, ASCII85Decode,
@@ -380,7 +623,17 @@ class StreamDecoder:
         callers do not get silently wrong bytes.
         ``filters`` may be a single name or a list of names.
         """
+        resolved_limits = _coerce_limits(limits)
+        original_input_size = len(data)
         if not filters:
+            StreamDecoder._check_output(
+                data,
+                input_size=len(data),
+                original_input_size=original_input_size,
+                limits=resolved_limits,
+                max_output_bytes=max_output_bytes,
+                filter_name="unfiltered stream",
+            )
             return data
 
         if isinstance(filters, (bytes, str)):
@@ -388,34 +641,74 @@ class StreamDecoder:
         else:
             filter_list = list(filters)
 
+        filter_limit = resolved_limits.max_stream_filters
+        if filter_limit is not None and len(filter_list) > filter_limit:
+            raise PdfResourceLimitException(
+                f"Resource limit exceeded for stream filter chain: "
+                f"{len(filter_list)} exceeds max_stream_filters={filter_limit}"
+            )
+
         if isinstance(decode_parms, list):
-            parms_list = decode_parms
+            parms_list = list(decode_parms)
         else:
             parms_list = [decode_parms] * len(filter_list)
+        if len(parms_list) < len(filter_list):
+            parms_list.extend([None] * (len(filter_list) - len(parms_list)))
 
         result = data
         for f, p in zip(filter_list, parms_list):
             name = f.decode("latin1") if isinstance(f, (bytes, bytearray)) else str(f)
             name = name.strip().lstrip("/")
+            input_size = len(result)
+            output_limit = StreamDecoder._effective_output_limit(
+                resolved_limits, max_output_bytes
+            )
+            output_limit_name = "max_decoded_stream_bytes"
+            if max_output_bytes is not None and (
+                resolved_limits.max_decoded_stream_bytes is None
+                or max_output_bytes <= resolved_limits.max_decoded_stream_bytes
+            ):
+                output_limit_name = "max_output_bytes"
+            ratio = resolved_limits.max_compression_ratio
+            if ratio is not None and input_size > 0:
+                ratio_limit = input_size * ratio
+                if output_limit is None or ratio_limit <= output_limit:
+                    output_limit_name = "max_compression_ratio"
+                output_limit = (
+                    ratio_limit
+                    if output_limit is None
+                    else min(output_limit, ratio_limit)
+                )
+            if ratio is not None and original_input_size > 0:
+                chain_ratio_limit = original_input_size * ratio
+                if output_limit is None or chain_ratio_limit <= output_limit:
+                    output_limit_name = "max_compression_ratio"
+                output_limit = (
+                    chain_ratio_limit
+                    if output_limit is None
+                    else min(output_limit, chain_ratio_limit)
+                )
             if name == "FlateDecode" or name == "Fl":
-                result = zlib.decompress(result)
-                result = StreamDecoder._apply_predictor(result, p)
+                result = StreamDecoder._decode_flate(
+                    result, output_limit, output_limit_name
+                )
+                result = StreamDecoder._apply_predictor(result, p, output_limit)
             elif name == "LZWDecode" or name == "LZW":
-                result = StreamDecoder._decode_lzw(result, p)
+                result = StreamDecoder._decode_lzw(result, p, output_limit)
             elif name == "ASCII85Decode" or name == "A85":
-                result = StreamDecoder._decode_ascii85(result)
+                result = StreamDecoder._decode_ascii85(result, output_limit)
             elif name == "ASCIIHexDecode" or name == "AHx":
-                result = StreamDecoder._decode_asciihex(result)
+                result = StreamDecoder._decode_asciihex(result, output_limit)
             elif name == "DCTDecode" or name == "DCT":
                 result = StreamDecoder._decode_dct(result)
             elif name == "CCITTFaxDecode" or name == "CCF":
-                result = StreamDecoder._decode_ccitt(result, p)
+                result = StreamDecoder._decode_ccitt(result, p, resolved_limits)
             elif name == "JBIG2Decode":
-                result = StreamDecoder._decode_jbig2(result, p)
+                result = StreamDecoder._decode_jbig2(result, p, resolved_limits)
             elif name == "RunLengthDecode" or name == "RL":
-                result = StreamDecoder._decode_run_length(result)
+                result = StreamDecoder._decode_run_length(result, output_limit)
             elif name == "JPXDecode":
-                result = StreamDecoder._decode_jpx(result, p)
+                result = StreamDecoder._decode_jpx(result, p, resolved_limits)
             elif name == "Crypt":
                 raise PdfValidationException(
                     "Crypt filter cannot be decoded here: the security handler must "
@@ -425,6 +718,14 @@ class StreamDecoder:
                 raise PdfValidationException(
                     f"Unsupported or unknown PDF stream filter: {name!r}"
                 )
+            StreamDecoder._check_output(
+                result,
+                input_size=input_size,
+                original_input_size=original_input_size,
+                limits=resolved_limits,
+                max_output_bytes=max_output_bytes,
+                filter_name=name,
+            )
         return result
 
 

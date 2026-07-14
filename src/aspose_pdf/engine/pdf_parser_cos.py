@@ -37,7 +37,13 @@ from .cos import (
     PdfStream,
     PdfString,
 )
-from aspose_pdf.exceptions import PdfParseException
+from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
+from aspose_pdf.load_limits import (
+    PdfLoadLimits,
+    _LoadBudget,
+    _coerce_limits,
+    _read_limited,
+)
 
 logger = logging.getLogger("aspose_pdf")
 
@@ -70,7 +76,9 @@ def _cos_buffer_rfind(buf, needle: bytes) -> int:
     return -1
 
 
-def _cos_dictionary_bytes_at(data: bytes, start: int) -> Optional[bytes]:
+def _cos_dictionary_bytes_at(
+    data: bytes, start: int, max_depth: int | None = None
+) -> Optional[bytes]:
     """Return the PDF dictionary bytes starting at *start*, using balanced ``<<``/``>>``.
 
     A DOTALL non-greedy regex such as ``<<.*?>>`` stops at the first ``>>``, which
@@ -84,6 +92,11 @@ def _cos_dictionary_bytes_at(data: bytes, start: int) -> Optional[bytes]:
     while i < n:
         if i + 1 < n and data[i : i + 2] == b"<<":
             depth += 1
+            if max_depth is not None and depth > max_depth:
+                raise PdfResourceLimitException(
+                    "Resource limit exceeded for COS dictionary nesting: "
+                    f"{depth} exceeds max_nesting_depth={max_depth}"
+                )
             i += 2
             continue
         if i + 1 < n and data[i : i + 2] == b">>":
@@ -98,6 +111,9 @@ def _cos_dictionary_bytes_at(data: bytes, start: int) -> Optional[bytes]:
 
 _PDF_WS = b" \t\n\r\f\x00"
 _ENDSTREAM_KW = b"endstream"
+_OBJECT_HEADER_RE = re.compile(rb"(\d+)\s+(\d+)\s+obj")
+_ENDOBJ_RE = re.compile(rb"endobj")
+_XREF_SUBSECTION_RE = re.compile(rb"(\d+)\s+(\d+)")
 
 
 def _skip_pdf_whitespace(data, pos: int, limit: int) -> int:
@@ -192,10 +208,37 @@ class _Tokenizer:
     Unicode code point preserving raw byte values for hex strings and streams.
     """
 
-    def __init__(self, data: str) -> None:
+    def __init__(
+        self,
+        data: str,
+        limits: PdfLoadLimits | None = None,
+        *,
+        start: int = 0,
+        end: int | None = None,
+    ) -> None:
+        resolved_end = len(data) if end is None else end
+        if start < 0 or resolved_end < start or resolved_end > len(data):
+            raise ValueError("tokenizer bounds are outside the source text")
         self.s = data
-        self.pos = 0
-        self.len = len(data)
+        self.pos = start
+        self.len = resolved_end
+        self._limits = _coerce_limits(limits)
+
+    def _check_depth(self, depth: int) -> None:
+        limit = self._limits.max_nesting_depth
+        if limit is not None and depth > limit:
+            raise PdfResourceLimitException(
+                f"Resource limit exceeded for COS nesting: {depth} exceeds "
+                f"max_nesting_depth={limit}"
+            )
+
+    def _check_items(self, count: int) -> None:
+        limit = self._limits.max_container_items
+        if limit is not None and count > limit:
+            raise PdfResourceLimitException(
+                f"Resource limit exceeded for COS container items: {count} "
+                f"exceeds max_container_items={limit}"
+            )
 
     # ---------------------------------------------------------------------
     # Basic helpers
@@ -219,16 +262,17 @@ class _Tokenizer:
     # ---------------------------------------------------------------------
     # Token readers
     # ---------------------------------------------------------------------
-    def read(self) -> Any:
+    def read(self, _depth: int = 0) -> Any:
+        self._check_depth(_depth)
         self._consume_whitespace()
         ch = self._peek()
         if ch == "<":
             if self.s.startswith("<<", self.pos):
-                return self._read_dictionary()
+                return self._read_dictionary(_depth + 1)
             else:
                 return self._read_hex_string()
         if ch == "[":
-            return self._read_array()
+            return self._read_array(_depth + 1)
         if ch == "(":
             return self._read_literal_string()
         if ch == "/":
@@ -310,6 +354,7 @@ class _Tokenizer:
                 continue
             if ch == "(":
                 depth += 1
+                self._check_depth(depth)
             elif ch == ")":
                 depth -= 1
                 if depth == 0:
@@ -317,6 +362,8 @@ class _Tokenizer:
                     break
             result.append(ch)
             self._consume()
+        if depth != 0:
+            raise PdfParseException("Unterminated PDF literal string")
         return PdfString("".join(result))
 
     def _read_hex_string(self) -> PdfString:
@@ -339,28 +386,38 @@ class _Tokenizer:
         raw = bytes.fromhex(hex_str)
         return PdfString(raw)
 
-    def _read_array(self) -> PdfArray:
+    def _read_array(self, _depth: int = 1) -> PdfArray:
+        self._check_depth(_depth)
         self._consume()  # '['
         items: List[Any] = []
         while True:
             self._consume_whitespace()
+            if not self._peek():
+                raise PdfParseException("Unterminated PDF array")
             if self._peek() == "]":
                 self._consume()
                 break
-            items.append(self.read())
+            items.append(self.read(_depth))
+            self._check_items(len(items))
         return PdfArray(items)
 
-    def _read_dictionary(self) -> PdfDictionary:
+    def _read_dictionary(self, _depth: int = 1) -> PdfDictionary:
+        self._check_depth(_depth)
         self._consume(2)  # '<<'
         mapping: Dict[PdfName, Any] = {}
+        parsed_pairs = 0
         while True:
             self._consume_whitespace()
+            if not self._peek():
+                raise PdfParseException("Unterminated PDF dictionary")
             if self.s.startswith(">>", self.pos):
                 self._consume(2)
                 break
             key = self._read_name()
-            value = self.read()
+            value = self.read(_depth)
             mapping[key] = value
+            parsed_pairs += 1
+            self._check_items(parsed_pairs)
         return PdfDictionary(mapping)
 
 
@@ -372,7 +429,15 @@ class PdfCosParser:
     and materializes each object body when first read through ``doc.objects``.
     """
 
-    def __init__(self, data) -> None:
+    def __init__(
+        self,
+        data,
+        *,
+        limits: PdfLoadLimits | None = None,
+        budget: _LoadBudget | None = None,
+    ) -> None:
+        self._limits = _coerce_limits(limits)
+        self._budget = budget or _LoadBudget(self._limits)
         # Accept bytes, mmap, memoryview, or file-like. Avoid a full-stream
         # read() when the source is mmap-able (real file) or BytesIO (buffer view).
         if isinstance(data, mmap.mmap):
@@ -393,17 +458,17 @@ class PdfCosParser:
                 self._data = mm
             elif isinstance(data, io.BytesIO):
                 pos = data.tell()
-                whole = data.getvalue()
-                # Use the underlying buffer (not read()) so we don't allocate a
-                # second full copy; honour the current stream position like read().
-                self._data = whole[pos:] if pos else whole
+                view = data.getbuffer()[pos:]
+                try:
+                    self._budget.check_input(len(view))
+                    self._data = bytes(view)
+                finally:
+                    view.release()
             else:
-                raw = data.read()
-                if not isinstance(raw, (bytes, bytearray)):
-                    raise TypeError("file read() must return bytes")
-                self._data = bytes(raw) if isinstance(raw, bytearray) else raw
+                self._data = _read_limited(data, self._budget)
         else:
             self._data = data
+        self._budget.check_input(len(self._data))
         self._objects: Dict[int, Any] = {}
         self._compressed_objects: Dict[
             int, Tuple[int, int]
@@ -424,13 +489,31 @@ class PdfCosParser:
             all_xref: Dict[int, int] = {}
             current_offset = xref_offset
             trailer_dict = None
+            seen_xref_offsets: set[int] = set()
+            xref_sections = 0
 
             while current_offset is not None:
+                if current_offset in seen_xref_offsets:
+                    raise PdfResourceLimitException(
+                        f"Cycle detected in xref /Prev chain at offset {current_offset}"
+                    )
+                if current_offset < 0 or current_offset >= len(self._data):
+                    raise PdfParseException(
+                        f"xref offset {current_offset} is outside the PDF input"
+                    )
+                seen_xref_offsets.add(current_offset)
+                xref_sections += 1
+                self._budget.check(
+                    xref_sections, "max_xref_sections", "xref sections"
+                )
                 xref_table, trailer = self._parse_xref_section(current_offset)
                 # Earlier entries take precedence over later (newer updates first)
                 for obj_num, off in xref_table.items():
                     if obj_num not in all_xref:
                         all_xref[obj_num] = off
+                self._budget.check_objects(
+                    len(all_xref) + len(self._compressed_objects)
+                )
                 if trailer_dict is None:
                     trailer_dict = trailer
                 # Check for /Prev
@@ -455,6 +538,7 @@ class PdfCosParser:
             self.trailer = trailer_dict
 
         xref_used = {num: off for num, off in all_xref.items() if off > 0}
+        self._budget.check_objects(len(xref_used) + len(self._compressed_objects))
         lazy_map = LazyPdfObjectStore(self, xref_used, dict(self._compressed_objects))
         doc.objects = lazy_map
         self._objects = lazy_map
@@ -493,9 +577,11 @@ class PdfCosParser:
         obj_regex = re.compile(rb"(\d+)\s+(\d+)\s+obj")
         for match in obj_regex.finditer(self._data):
             obj_num = int(match.group(1))
+            self._budget.check_object_id(obj_num)
             offset = match.start()
             # In a multi-update PDF, later objects override earlier ones
             xref_table[obj_num] = offset
+            self._budget.check_objects(len(xref_table))
 
         # Scan for "trailer" to find Root/Info (balanced dict — nested << >> safe)
         kw = b"trailer"
@@ -507,12 +593,16 @@ class PdfCosParser:
             j = idx + len(kw)
             while j < len(self._data) and self._data[j] in b" \t\r\n":
                 j += 1
-            dict_bytes = _cos_dictionary_bytes_at(self._data, j)
+            dict_bytes = _cos_dictionary_bytes_at(
+                self._data, j, self._limits.max_nesting_depth
+            )
             if dict_bytes is not None:
                 try:
                     t = self._parse_dictionary(dict_bytes)
                     for k, v in t.mapping.items():
                         trailer[k] = v
+                except PdfResourceLimitException:
+                    raise
                 except Exception:
                     pass
             pos = idx + 1
@@ -531,6 +621,7 @@ class PdfCosParser:
         n = int(n_obj.value)
         if n <= 0:
             return []
+        self._budget.check_objects(n)
 
         filter_obj = objstm.mapping.get(PdfName("Filter"))
         filter_name = None
@@ -541,21 +632,33 @@ class PdfCosParser:
         content = objstm.content
         if filter_name:
             try:
-                content = StreamDecoder.decode(content, filter_name, decode_parms)
+                content = StreamDecoder.decode(
+                    content,
+                    filter_name,
+                    decode_parms,
+                    limits=self._limits,
+                )
+            except PdfResourceLimitException:
+                raise
             except Exception:
                 return []
+        self._budget.reserve_decoded(
+            len(content),
+            "object stream",
+        )
 
         try:
             text = content.decode("latin-1")
         except Exception:
             return []
 
-        tokenizer = _Tokenizer(text)
+        tokenizer = _Tokenizer(text, self._limits)
         nums: List[int] = []
         try:
             for _ in range(n):
                 tokenizer._consume_whitespace()
                 obj_num = int(tokenizer._read_number().value)
+                self._budget.check_object_id(obj_num)
                 tokenizer._consume_whitespace()
                 tokenizer._read_number()
                 nums.append(obj_num)
@@ -636,15 +739,46 @@ class PdfCosParser:
         size = int(size_obj.value)
         if size < 1:
             raise PdfParseException("XRef Stream /Size must be at least 1")
+        self._budget.check_objects(size)
 
         # Get /Index (optional, default [0, Size])
         index_obj = stream_obj.mapping.get(PdfName("Index"))
         if isinstance(index_obj, PdfArray):
-            index_data = [
-                int(x.value) if isinstance(x, PdfNumber) else 0 for x in index_obj.items
-            ]
+            if len(index_obj.items) % 2:
+                raise PdfParseException(
+                    "XRef Stream /Index must contain start/count pairs"
+                )
+            index_data = []
+            for item in index_obj.items:
+                if not isinstance(item, PdfNumber):
+                    raise PdfParseException(
+                        "XRef Stream /Index entries must be numbers"
+                    )
+                index_data.append(int(item.value))
         else:
             index_data = [0, size]
+        requested_entries = 0
+        for i in range(0, len(index_data), 2):
+            if i + 1 >= len(index_data):
+                break
+            count = index_data[i + 1]
+            if count < 0:
+                raise PdfParseException("XRef Stream /Index count must be non-negative")
+            requested_entries += count
+            start = index_data[i]
+            if start < 0 or start + count > size:
+                raise PdfParseException(
+                    "XRef Stream /Index range must fit within /Size"
+                )
+            if count:
+                self._budget.check_object_id(start + count - 1)
+        self._budget.check_objects(requested_entries)
+        expected_content_bytes = requested_entries * entry_size
+        self._budget.check(
+            expected_content_bytes,
+            "max_decoded_stream_bytes",
+            "xref stream bytes",
+        )
 
         # Decode stream content
         filter_obj = stream_obj.mapping.get(PdfName("Filter"))
@@ -655,7 +789,18 @@ class PdfCosParser:
 
         content = stream_obj.content
         if filter_name:
-            content = StreamDecoder.decode(content, filter_name, decode_parms)
+            content = StreamDecoder.decode(
+                content,
+                filter_name,
+                decode_parms,
+                limits=self._limits,
+                max_output_bytes=expected_content_bytes,
+            )
+        self._budget.reserve_decoded(len(content), "xref stream")
+        if len(content) < expected_content_bytes:
+            raise PdfParseException(
+                "XRef Stream ends before all declared entries are present"
+            )
 
         # Parse entries
         xref_table: Dict[int, int] = {}
@@ -668,6 +813,7 @@ class PdfCosParser:
 
             for j in range(count):
                 obj_num = start_obj + j
+                self._budget.check_object_id(obj_num)
                 if pos + entry_size > len(content):
                     break
 
@@ -689,6 +835,7 @@ class PdfCosParser:
                     xref_table[obj_num] = field2
                 elif field1 == 2:
                     # Compressed object: field2 = ObjStm number, field3 = index
+                    self._budget.check_object_id(field2)
                     self._compressed_objects[obj_num] = (field2, field3)
 
         return xref_table, trailer
@@ -719,6 +866,9 @@ class PdfCosParser:
 
         n = int(n_obj.value)
         first = int(first_obj.value)
+        if n < 0 or first < 0:
+            raise PdfParseException("Object stream /N and /First must be non-negative")
+        self._budget.check_objects(n)
 
         # Decode stream
         filter_obj = objstm.mapping.get(PdfName("Filter"))
@@ -729,23 +879,41 @@ class PdfCosParser:
 
         content = objstm.content
         if filter_name:
-            content = StreamDecoder.decode(content, filter_name, decode_parms)
+            content = StreamDecoder.decode(
+                content,
+                filter_name,
+                decode_parms,
+                limits=self._limits,
+            )
+        self._budget.reserve_decoded(
+            len(content),
+            "object stream",
+        )
 
         text = content.decode("latin-1")
+        if first > len(text):
+            raise PdfParseException(
+                "Object stream /First points past the decoded stream"
+            )
 
         # Parse header: N pairs of "obj_num offset"
-        tokenizer = _Tokenizer(text)
+        tokenizer = _Tokenizer(text, self._limits, end=first)
         pairs = []
         for _ in range(n):
             tokenizer._consume_whitespace()
             obj_num = int(tokenizer._read_number().value)
+            self._budget.check_object_id(obj_num)
             tokenizer._consume_whitespace()
             obj_offset = int(tokenizer._read_number().value)
+            if obj_offset < 0:
+                raise PdfParseException(
+                    "Object stream object offsets must be non-negative"
+                )
             pairs.append((obj_num, obj_offset))
 
         # Parse objects; do not drop per-object tokenizer failures silently.
         result: Dict[int, Any] = {}
-        for obj_num, obj_offset in pairs:
+        for index, (obj_num, obj_offset) in enumerate(pairs):
             abs_offset = first + obj_offset
             if abs_offset < 0 or abs_offset > len(text):
                 raise PdfParseException(
@@ -753,8 +921,32 @@ class PdfCosParser:
                     f"(first={first}, relative={obj_offset}, abs={abs_offset}, "
                     f"decoded_length={len(text)})"
                 )
+            if index + 1 < len(pairs):
+                next_offset = pairs[index + 1][1]
+                if next_offset < obj_offset:
+                    raise PdfParseException(
+                        "Object stream body offsets must be non-decreasing"
+                    )
+                body_end = first + next_offset
+            else:
+                body_end = len(text)
+            if body_end > len(text):
+                raise PdfParseException(
+                    f"Object stream: object {obj_num} body extends past the "
+                    "decoded stream"
+                )
+            self._budget.check(
+                body_end - abs_offset,
+                "max_object_bytes",
+                f"object stream member {obj_num} bytes",
+            )
             try:
-                obj_tokenizer = _Tokenizer(text[abs_offset:])
+                obj_tokenizer = _Tokenizer(
+                    text,
+                    self._limits,
+                    start=abs_offset,
+                    end=body_end,
+                )
                 obj = obj_tokenizer.read()
                 result[obj_num] = obj
             except (ValueError, IndexError) as e:
@@ -821,12 +1013,15 @@ class PdfCosParser:
             if pos + 7 <= len(self._data) and self._data[pos : pos + 7] == b"trailer":
                 break
             # Read "start count"
-            m = re.match(rb"(\d+)\s+(\d+)", self._data[pos:])
+            m = _XREF_SUBSECTION_RE.match(self._data, pos)
             if not m:
                 raise PdfParseException("Invalid xref subsection header")
             start_obj = int(m.group(1))
             count = int(m.group(2))
-            pos += m.end()
+            if count:
+                self._budget.check_object_id(start_obj + count - 1)
+            self._budget.check_objects(len(xref_table) + count)
+            pos = m.end()
             # Skip newline after header
             while pos < len(self._data) and self._data[pos] in b"\r\n":
                 pos += 1
@@ -844,7 +1039,9 @@ class PdfCosParser:
             pos += 1
         # Extract the dictionary text (it starts with << and ends with >>)
         dict_start = pos
-        dict_bytes = _cos_dictionary_bytes_at(self._data, dict_start)
+        dict_bytes = _cos_dictionary_bytes_at(
+            self._data, dict_start, self._limits.max_nesting_depth
+        )
         if dict_bytes is None:
             raise PdfParseException("Unable to parse trailer dictionary")
         trailer_dict = self._parse_dictionary(dict_bytes)
@@ -871,25 +1068,29 @@ class PdfCosParser:
 
     def _parse_dictionary(self, data: bytes) -> PdfDictionary:
         text = data.decode("latin-1")
-        tokenizer = _Tokenizer(text)
+        tokenizer = _Tokenizer(text, self._limits)
         return tokenizer._read_dictionary()
 
     def _parse_object_at(self, offset: int) -> Any:
         # Find the "obj" keyword after the object number and generation
-        obj_header_match = re.match(rb"(\d+)\s+(\d+)\s+obj", self._data[offset:])
+        obj_header_match = _OBJECT_HEADER_RE.match(self._data, offset)
         if not obj_header_match:
             raise PdfParseException(f"Object header not found at offset {offset}")
-        header_len = obj_header_match.end()
-        content_start = offset + header_len
+        content_start = obj_header_match.end()
         # Find the position of "endobj"
-        end_match = re.search(rb"endobj", self._data[content_start:])
+        end_match = _ENDOBJ_RE.search(self._data, content_start)
         if not end_match:
             raise PdfParseException("endobj not found for object")
-        content_end = content_start + end_match.start()
+        content_end = end_match.start()
+        self._budget.check(
+            content_end - content_start,
+            "max_object_bytes",
+            "indirect object bytes",
+        )
         raw_content = self._data[content_start:content_end]
         # Decode for tokenizing – use latin-1 to keep raw bytes intact
         text = raw_content.decode("latin-1")
-        tokenizer = _Tokenizer(text)
+        tokenizer = _Tokenizer(text, self._limits)
         obj = tokenizer.read()
         # If the object is a dictionary followed by a stream, handle it
         tokenizer._consume_whitespace()

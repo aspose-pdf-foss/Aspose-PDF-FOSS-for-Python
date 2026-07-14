@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Optional
 
 from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 _WHITESPACE = b" \t\n\r\x0c"
 _DELIMITERS = b"()<>[]{}/%"
@@ -44,6 +45,42 @@ _NEUTRAL_OPS = frozenset(
         "<<", ">>",
     }
 )
+
+
+def _resolve_load_budget(
+    limits: PdfLoadLimits | None,
+    budget: _LoadBudget | None,
+) -> _LoadBudget:
+    """Return a validated budget for one content-processing operation."""
+    if budget is None:
+        return _LoadBudget(_coerce_limits(limits))
+    if not isinstance(budget, _LoadBudget):
+        raise TypeError("budget must be a _LoadBudget instance or None")
+    if limits is not None and limits != budget.limits:
+        raise ValueError("limits must match budget.limits")
+    return budget
+
+
+def _check_container_append(
+    collection: list,
+    budget: _LoadBudget,
+    context: str,
+) -> None:
+    budget.check(
+        len(collection) + 1,
+        "max_container_items",
+        context,
+    )
+
+
+def _append_checked(
+    collection: list,
+    value: Any,
+    budget: _LoadBudget,
+    context: str,
+) -> None:
+    _check_container_append(collection, budget, context)
+    collection.append(value)
 
 
 @dataclass(frozen=True)
@@ -88,7 +125,12 @@ class CidTextCodec:
                 self._reverse[text] = code
                 self._max_reverse_len = max(self._max_reverse_len, len(text))
 
-    def decode_units(self, raw: bytes) -> list[tuple[int, int, str]]:
+    def decode_units(
+        self,
+        raw: bytes,
+        *,
+        budget: _LoadBudget | None = None,
+    ) -> list[tuple[int, int, str]]:
         """Split *raw* into ``(offset, length, text)`` units, one per code.
 
         An unmapped code decodes to U+FFFD (it can never match a search
@@ -104,7 +146,16 @@ class CidTextCodec:
             step = self._code_lengths[0]
             while i < n:
                 take = min(step, n - i)
-                units.append((i, take, self.code_to_text.get(raw[i : i + take], "�")))
+                unit = (i, take, self.code_to_text.get(raw[i : i + take], "�"))
+                if budget is None:
+                    units.append(unit)
+                else:
+                    _append_checked(
+                        units,
+                        unit,
+                        budget,
+                        "text edit decoded CID units",
+                    )
                 i += take
             return units
         # Mixed-length codespace: greedily match the longest known code at each
@@ -116,12 +167,30 @@ class CidTextCodec:
                 if i + length <= n:
                     text = self.code_to_text.get(raw[i : i + length])
                     if text is not None:
-                        units.append((i, length, text))
+                        unit = (i, length, text)
+                        if budget is None:
+                            units.append(unit)
+                        else:
+                            _append_checked(
+                                units,
+                                unit,
+                                budget,
+                                "text edit decoded CID units",
+                            )
                         i += length
                         break
             else:
                 take = min(self._min_len, n - i)
-                units.append((i, take, "�"))
+                unit = (i, take, "�")
+                if budget is None:
+                    units.append(unit)
+                else:
+                    _append_checked(
+                        units,
+                        unit,
+                        budget,
+                        "text edit decoded CID units",
+                    )
                 i += take
         return units
 
@@ -227,6 +296,8 @@ def _string_advance(
     char_spacing: float,
     word_spacing: float,
     h_scale: float,
+    *,
+    budget: _LoadBudget | None = None,
 ) -> Optional[float]:
     """Advance of a show string along the font's writing axis, or None.
 
@@ -241,7 +312,7 @@ def _string_advance(
     total = 0.0
     if codec is not None:
         vertical = bool(getattr(metric, "vertical", False))
-        for off, length, _text in codec.decode_units(raw):
+        for off, length, _text in codec.decode_units(raw, budget=budget):
             if vertical:
                 total += size + char_spacing  # uniform one-em stack
                 continue
@@ -268,6 +339,8 @@ def _walk_show_runs(
     codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
     metric_for_name: Optional[Callable[[str], Any]] = None,
     base_ctm: tuple = _ID_MATRIX,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ) -> list[_Run]:
     """Walk a content stream and group show operands into logical runs.
 
@@ -285,6 +358,12 @@ def _walk_show_runs(
     metric's ``code_to_text`` map, keeping editor and locator matching
     identical by construction.
     """
+    active_budget = _resolve_load_budget(limits, budget)
+    active_budget.check(
+        len(tokens),
+        "max_container_items",
+        "text edit input tokens",
+    )
     runs: list[_Run] = []
 
     ctm = base_ctm
@@ -309,7 +388,12 @@ def _walk_show_runs(
     def close_run() -> None:
         nonlocal cur
         if cur:
-            runs.append(_Run(cur, origin_trm, geom_ok))
+            _append_checked(
+                runs,
+                _Run(cur, origin_trm, geom_ok),
+                active_budget,
+                "text edit show runs",
+            )
             cur = []
 
     def start_run() -> None:
@@ -331,14 +415,24 @@ def _walk_show_runs(
         )
         if pen is None:
             geom_ok = False
-        cur.append(
+        _append_checked(
+            cur,
             _RunSegment(
                 tok, codec, metric, size, char_spacing, word_spacing,
                 h_scale, rise, pen,
-            )
+            ),
+            active_budget,
+            "text edit run segments",
         )
         advance = _string_advance(
-            tok.value, codec, metric, size, char_spacing, word_spacing, h_scale
+            tok.value,
+            codec,
+            metric,
+            size,
+            char_spacing,
+            word_spacing,
+            h_scale,
+            budget=active_budget,
         )
         if advance is None:
             geom_ok = False
@@ -378,12 +472,15 @@ def _walk_show_runs(
                 ):
                     joined = True
                     if gap >= _JOIN_SPACE_GAP * size:
-                        cur.append(
+                        _append_checked(
+                            cur,
                             _RunSegment(
                                 None, codec, metric, size, char_spacing,
                                 word_spacing, h_scale, rise, pen_end,
                                 gap_text=" ", gap_width=gap,
-                            )
+                            ),
+                            active_budget,
+                            "text edit run segments",
                         )
         tm, tlm = new_tm, new_tlm
         tm_valid = True
@@ -406,11 +503,21 @@ def _walk_show_runs(
         tok = tokens[i]
         kind = tok.kind
         if kind == "string":
-            operands.append(("str", tok))
+            _append_checked(
+                operands,
+                ("str", tok),
+                active_budget,
+                "text edit operator operands",
+            )
             i += 1
             continue
         if kind == "name":
-            operands.append(("name", tok.value.lstrip("/")))
+            _append_checked(
+                operands,
+                ("name", tok.value.lstrip("/")),
+                active_budget,
+                "text edit operator operands",
+            )
             i += 1
             continue
         if kind == "array_start":
@@ -419,12 +526,27 @@ def _walk_show_runs(
             while i < n and tokens[i].kind != "array_end":
                 inner = tokens[i]
                 if inner.kind == "string":
-                    arr.append(inner)
+                    _append_checked(
+                        arr,
+                        inner,
+                        active_budget,
+                        "text edit TJ array items",
+                    )
                 elif inner.kind == "word" and _is_number_word(inner.value):
-                    arr.append(float(inner.value))
+                    _append_checked(
+                        arr,
+                        float(inner.value),
+                        active_budget,
+                        "text edit TJ array items",
+                    )
                 i += 1
             i += 1  # skip array_end
-            operands.append(("arr", arr))
+            _append_checked(
+                operands,
+                ("arr", arr),
+                active_budget,
+                "text edit operator operands",
+            )
             continue
         if kind == "array_end":
             i += 1
@@ -435,7 +557,12 @@ def _walk_show_runs(
 
         value = tok.value
         if _is_number_word(value):
-            operands.append(("num", float(value)))
+            _append_checked(
+                operands,
+                ("num", float(value)),
+                active_budget,
+                "text edit operator operands",
+            )
             i += 1
             continue
 
@@ -514,11 +641,20 @@ def _walk_show_runs(
         elif value == "ET":
             broke = True
         elif value == "q":
-            gstack.append(
+            stack_size = len(gstack) + 1
+            active_budget.check(
+                stack_size,
+                "max_nesting_depth",
+                "text edit graphics state depth",
+            )
+            _append_checked(
+                gstack,
                 (
                     ctm, metric, codec, size, char_spacing, word_spacing,
                     h_scale, leading, rise,
-                )
+                ),
+                active_budget,
+                "text edit graphics state stack items",
             )
             broke = True
         elif value == "Q":
@@ -566,6 +702,8 @@ def replace_text_in_content(
     max_count: int = 0,
     codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
     metric_for_name: Optional[Callable[[str], Any]] = None,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ) -> tuple[bytes, int]:
     """Replace text inside PDF text-showing operands.
 
@@ -594,9 +732,13 @@ def replace_text_in_content(
     use the default Latin-1/UTF-16BE operand decoding.
     """
     _validate_edit_args(search, max_count)
-    tokens = _lex(content)
+    active_budget = _resolve_load_budget(limits, budget)
+    tokens = _lex(content, budget=active_budget)
     runs = _walk_show_runs(
-        tokens, codec_for_name=codec_for_name, metric_for_name=metric_for_name
+        tokens,
+        codec_for_name=codec_for_name,
+        metric_for_name=metric_for_name,
+        budget=active_budget,
     )
     replacements: list[tuple[int, int, bytes]] = []
     total = 0
@@ -611,14 +753,20 @@ def replace_text_in_content(
             replacement,
             case_sensitive=case_sensitive,
             max_count=remaining,
+            budget=active_budget,
         )
         if count:
+            active_budget.check(
+                len(replacements) + len(edits),
+                "max_container_items",
+                "text edit replacements",
+            )
             replacements.extend(edits)
             total += count
 
     if not replacements:
         return content, 0
-    return _apply_replacements(content, replacements), total
+    return _apply_replacements(content, replacements, budget=active_budget), total
 
 
 def _is_number_word(value: str) -> bool:
@@ -629,18 +777,35 @@ def _is_number_word(value: str) -> bool:
         return False
 
 
-def _group_show_runs(tokens: list[_Token]) -> list[list[_Token]]:
+def _group_show_runs(
+    tokens: list[_Token],
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> list[list[_Token]]:
     """Group consecutive text-showing operators into logical-string runs.
 
     Compatibility view over :func:`_walk_show_runs` (no metrics, so
     positioning operators break runs): each returned list holds the run's
     string-operand tokens in order.
     """
-    return [
-        [seg.token for seg in run.segments if seg.token is not None]
-        for run in _walk_show_runs(tokens)
-        if any(seg.token is not None for seg in run.segments)
-    ]
+    active_budget = _resolve_load_budget(limits, budget)
+    grouped: list[list[_Token]] = []
+    for run in _walk_show_runs(tokens, budget=active_budget):
+        group = [seg.token for seg in run.segments if seg.token is not None]
+        active_budget.check(
+            len(group),
+            "max_container_items",
+            "text edit compatibility run segments",
+        )
+        if group:
+            _append_checked(
+                grouped,
+                group,
+                active_budget,
+                "text edit compatibility runs",
+            )
+    return grouped
 
 
 def redact_text_in_content(
@@ -651,6 +816,8 @@ def redact_text_in_content(
     max_count: int = 0,
     codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
     metric_for_name: Optional[Callable[[str], Any]] = None,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ) -> tuple[bytes, int]:
     """Remove text from simple text-showing operands."""
     return replace_text_in_content(
@@ -661,6 +828,8 @@ def redact_text_in_content(
         max_count=max_count,
         codec_for_name=codec_for_name,
         metric_for_name=metric_for_name,
+        limits=limits,
+        budget=budget,
     )
 
 
@@ -674,7 +843,12 @@ def _validate_edit_args(search: str, max_count: int) -> None:
 
 
 def _find_matches(
-    full: str, search: str, case_sensitive: bool, max_count: int
+    full: str,
+    search: str,
+    case_sensitive: bool,
+    max_count: int,
+    *,
+    budget: _LoadBudget | None = None,
 ) -> list[tuple[int, int]]:
     """Return non-overlapping ``(start, end)`` match spans in *full*."""
     spans: list[tuple[int, int]] = []
@@ -685,19 +859,42 @@ def _find_matches(
             j = full.find(search, pos)
             if j < 0:
                 break
-            spans.append((j, j + step))
+            span = (j, j + step)
+            if budget is None:
+                spans.append(span)
+            else:
+                _append_checked(
+                    spans,
+                    span,
+                    budget,
+                    "text edit match spans",
+                )
             pos = j + step
             if max_count and len(spans) >= max_count:
                 break
     else:
         for m in re.finditer(re.escape(search), full, re.IGNORECASE):
-            spans.append((m.start(), m.end()))
+            span = (m.start(), m.end())
+            if budget is None:
+                spans.append(span)
+            else:
+                _append_checked(
+                    spans,
+                    span,
+                    budget,
+                    "text edit match spans",
+                )
             if max_count and len(spans) >= max_count:
                 break
     return spans
 
 
-def _run_char_data(run: _Run):
+def _run_char_data(
+    run: _Run,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+):
     """Decode a run into its logical string plus per-char metadata.
 
     Returns ``(infos, full, entries, seg_starts)``. ``infos[i]`` is
@@ -710,34 +907,66 @@ def _run_char_data(run: _Run):
     otherwise. ``seg_starts[i]`` is the global index of segment *i*'s first
     char.
     """
+    active_budget = _resolve_load_budget(limits, budget)
     infos: list[tuple[str, str, Optional[list]]] = []
     for seg in run.segments:
         if seg.token is None:
-            infos.append(("virtual", seg.gap_text, None))
+            info = ("virtual", seg.gap_text, None)
         elif seg.codec is not None:
-            units = seg.codec.decode_units(seg.token.value)
-            infos.append(("cid", "".join(u[2] for u in units), units))
+            units = seg.codec.decode_units(seg.token.value, budget=active_budget)
+            info = ("cid", "".join(u[2] for u in units), units)
         else:
             text, encoding = _decode_operand(seg.token.value)
-            infos.append((encoding, text, None))
+            info = (encoding, text, None)
+        _append_checked(
+            infos,
+            info,
+            active_budget,
+            "text edit decoded run segments",
+        )
 
     full_parts: list[str] = []
     entries: list[tuple[int, int, bool, bool, bool]] = []
     seg_starts: list[int] = []
     pos = 0
     for si, (kind, text, units) in enumerate(infos):
-        seg_starts.append(pos)
+        _append_checked(
+            seg_starts,
+            pos,
+            active_budget,
+            "text edit segment offsets",
+        )
         if kind == "cid":
             for ui, (_off, _length, unit_text) in enumerate(units):
                 m = len(unit_text)
                 for ci in range(m):
-                    entries.append((si, ui, ci == 0, ci == m - 1, False))
+                    _append_checked(
+                        entries,
+                        (si, ui, ci == 0, ci == m - 1, False),
+                        active_budget,
+                        "text edit decoded characters",
+                    )
         else:
             virtual = kind == "virtual"
             for ci in range(len(text)):
-                entries.append((si, ci, True, True, virtual))
-        full_parts.append(text)
+                _append_checked(
+                    entries,
+                    (si, ci, True, True, virtual),
+                    active_budget,
+                    "text edit decoded characters",
+                )
+        _append_checked(
+            full_parts,
+            text,
+            active_budget,
+            "text edit logical string parts",
+        )
         pos += len(text)
+        active_budget.check(
+            pos,
+            "max_container_items",
+            "text edit logical characters",
+        )
     return infos, "".join(full_parts), entries, seg_starts
 
 
@@ -747,6 +976,9 @@ def _aligned_spans(
     search: str,
     case_sensitive: bool,
     max_count: int,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ) -> list[tuple[int, int]]:
     """Match spans that cover whole code units and at least one real char.
 
@@ -754,13 +986,25 @@ def _aligned_spans(
     spliced code-exactly and is skipped; a span covering only synthesized gap
     chars has nothing to edit.
     """
+    active_budget = _resolve_load_budget(limits, budget)
     kept: list[tuple[int, int]] = []
-    for s, e in _find_matches(full, search, case_sensitive, 0):
+    for s, e in _find_matches(
+        full,
+        search,
+        case_sensitive,
+        0,
+        budget=active_budget,
+    ):
         if not entries[s][2] or not entries[e - 1][3]:
             continue
         if all(entries[i][4] for i in range(s, e)):
             continue
-        kept.append((s, e))
+        _append_checked(
+            kept,
+            (s, e),
+            active_budget,
+            "text edit aligned match spans",
+        )
         if max_count and len(kept) >= max_count:
             break
     return kept
@@ -773,6 +1017,7 @@ def _edit_run(
     *,
     case_sensitive: bool,
     max_count: int,
+    budget: _LoadBudget,
 ) -> tuple[list[tuple[int, int, bytes]], int]:
     """Match *search* across the run's logical string and rewrite operands.
 
@@ -785,13 +1030,25 @@ def _edit_run(
     are left byte-for-byte intact; synthesized gaps have no bytes to edit.
     """
     segs = run.segments
-    infos, full, entries, seg_starts = _run_char_data(run)
+    infos, full, entries, seg_starts = _run_char_data(run, budget=budget)
     if not full:
         return [], 0
-    spans = _aligned_spans(full, entries, search, case_sensitive, max_count)
+    spans = _aligned_spans(
+        full,
+        entries,
+        search,
+        case_sensitive,
+        max_count,
+        budget=budget,
+    )
     if not spans:
         return [], 0
 
+    budget.check(
+        len(full),
+        "max_container_items",
+        "text edit coverage flags",
+    )
     covered = [False] * len(full)
     inject: dict[int, dict[int, Any]] = {}  # seg -> unit/char index -> payload
     for s, e in spans:
@@ -811,7 +1068,21 @@ def _edit_run(
                 payload = encoded
         else:
             payload = replacement
-        inject.setdefault(t_seg, {})[t_unit] = payload
+        if t_seg not in inject:
+            budget.check(
+                len(inject) + 1,
+                "max_container_items",
+                "text edit replacement segment map",
+            )
+            inject[t_seg] = {}
+        segment_inject = inject[t_seg]
+        if t_unit not in segment_inject:
+            budget.check(
+                len(segment_inject) + 1,
+                "max_container_items",
+                "text edit replacement unit map",
+            )
+        segment_inject[t_unit] = payload
 
     edits: list[tuple[int, int, bytes]] = []
     for si, seg in enumerate(segs):
@@ -837,25 +1108,41 @@ def _edit_run(
                 if not unit_covered:
                     out += raw[off : off + length]
                 local += len(unit_text)
-            edits.append(
-                (token.start, token.end, _format_operand(bytes(out), token.style))
+            _append_checked(
+                edits,
+                (token.start, token.end, _format_operand(bytes(out), token.style)),
+                budget,
+                "text edit run replacements",
             )
         else:
             parts: list[str] = []
             for j, ch in enumerate(text):
                 if j in seg_inject:
-                    parts.append(seg_inject[j])
+                    _append_checked(
+                        parts,
+                        seg_inject[j],
+                        budget,
+                        "text edit replacement string parts",
+                    )
                 if not covered[g0 + j]:
-                    parts.append(ch)
+                    _append_checked(
+                        parts,
+                        ch,
+                        budget,
+                        "text edit replacement string parts",
+                    )
             new_text = "".join(parts)
             if new_text == text:
                 continue
-            edits.append(
+            _append_checked(
+                edits,
                 (
                     token.start,
                     token.end,
                     _format_operand(_encode_operand(new_text, kind), token.style),
-                )
+                ),
+                budget,
+                "text edit run replacements",
             )
     return edits, len(spans)
 
@@ -908,16 +1195,76 @@ def _literal_string(raw: bytes) -> bytes:
 
 
 def _apply_replacements(
-    content: bytes, replacements: Iterable[tuple[int, int, bytes]]
+    content: bytes,
+    replacements: Iterable[tuple[int, int, bytes]],
+    *,
+    budget: _LoadBudget | None = None,
 ) -> bytes:
     out = bytearray(content)
-    for start, end, value in sorted(replacements, key=lambda item: item[0], reverse=True):
+    ordered = sorted(replacements, key=lambda item: item[0], reverse=True)
+    if budget is not None:
+        budget.check(
+            len(ordered),
+            "max_container_items",
+            "text edit ordered replacements",
+        )
+    for start, end, value in ordered:
         out[start:end] = value
     return bytes(out)
 
 
-def _lex(data: bytes) -> list[_Token]:
+def _append_token(
+    tokens: list[_Token],
+    token: _Token,
+    budget: _LoadBudget,
+) -> None:
+    count = len(tokens) + 1
+    budget.check(
+        count,
+        "max_content_tokens",
+        "text edit content tokens",
+    )
+    budget.check(
+        count,
+        "max_container_items",
+        "text edit token list items",
+    )
+    tokens.append(token)
+
+
+def _lex(
+    data: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> list[_Token]:
+    active_budget = _resolve_load_budget(limits, budget)
+    active_budget.check(
+        len(data),
+        "max_content_stream_bytes",
+        "text edit content stream bytes",
+    )
     tokens: list[_Token] = []
+    nesting: list[str] = []
+
+    def push_nesting(kind: str) -> None:
+        depth = len(nesting) + 1
+        active_budget.check(
+            depth,
+            "max_nesting_depth",
+            "text edit content structure depth",
+        )
+        _append_checked(
+            nesting,
+            kind,
+            active_budget,
+            "text edit content structure stack items",
+        )
+
+    def pop_nesting(kind: str) -> None:
+        if nesting and nesting[-1] == kind:
+            nesting.pop()
+
     i = 0
     n = len(data)
     while i < n:
@@ -929,38 +1276,69 @@ def _lex(data: bytes) -> list[_Token]:
             i = _skip_comment(data, i)
             continue
         if byte == 0x28:
-            token, i = _read_literal(data, i)
-            tokens.append(token)
+            token, i = _read_literal(
+                data,
+                i,
+                budget=active_budget,
+                outer_depth=len(nesting),
+            )
+            _append_token(tokens, token, active_budget)
             continue
         if byte == 0x3C:
             if i + 1 < n and data[i + 1] == 0x3C:
-                tokens.append(_Token("word", "<<", i, i + 2))
+                push_nesting("dict")
+                _append_token(
+                    tokens,
+                    _Token("word", "<<", i, i + 2),
+                    active_budget,
+                )
                 i += 2
                 continue
             token, i = _read_hex(data, i)
-            tokens.append(token)
+            _append_token(tokens, token, active_budget)
             continue
         if byte == 0x3E:
             if i + 1 < n and data[i + 1] == 0x3E:
-                tokens.append(_Token("word", ">>", i, i + 2))
+                _append_token(
+                    tokens,
+                    _Token("word", ">>", i, i + 2),
+                    active_budget,
+                )
+                pop_nesting("dict")
                 i += 2
             else:
                 i += 1
             continue
         if byte == 0x5B:
-            tokens.append(_Token("array_start", "[", i, i + 1))
+            push_nesting("array")
+            _append_token(
+                tokens,
+                _Token("array_start", "[", i, i + 1),
+                active_budget,
+            )
             i += 1
             continue
         if byte == 0x5D:
-            tokens.append(_Token("array_end", "]", i, i + 1))
+            _append_token(
+                tokens,
+                _Token("array_end", "]", i, i + 1),
+                active_budget,
+            )
+            pop_nesting("array")
             i += 1
             continue
         if byte == 0x2F:
             token, i = _read_name(data, i)
-            tokens.append(token)
+            _append_token(tokens, token, active_budget)
             continue
+        start = i
         token, i = _read_word(data, i)
-        tokens.append(token)
+        if i == start:
+            # Consume unsupported or unmatched delimiters so malformed input
+            # cannot make the lexer spin without advancing.
+            i += 1
+            continue
+        _append_token(tokens, token, active_budget)
     return tokens
 
 
@@ -971,10 +1349,21 @@ def _skip_comment(data: bytes, i: int) -> int:
     return i
 
 
-def _read_literal(data: bytes, i: int) -> tuple[_Token, int]:
+def _read_literal(
+    data: bytes,
+    i: int,
+    *,
+    budget: _LoadBudget,
+    outer_depth: int,
+) -> tuple[_Token, int]:
     start = i
     i += 1
     depth = 1
+    budget.check(
+        outer_depth + depth,
+        "max_nesting_depth",
+        "text edit literal string nesting",
+    )
     out = bytearray()
     n = len(data)
     while i < n and depth > 0:
@@ -1012,6 +1401,11 @@ def _read_literal(data: bytes, i: int) -> tuple[_Token, int]:
                 out.append(esc)
         elif byte == 0x28:
             depth += 1
+            budget.check(
+                outer_depth + depth,
+                "max_nesting_depth",
+                "text edit literal string nesting",
+            )
             out.append(byte)
         elif byte == 0x29:
             depth -= 1

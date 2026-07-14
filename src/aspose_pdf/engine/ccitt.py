@@ -5,7 +5,10 @@ This module provides a pure Python decoder for CCITT Group 4 compressed image da
 
 from __future__ import annotations
 
-from aspose_pdf.exceptions import PdfParseException
+from itertools import repeat
+
+from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 # Import the standard Huffman tables
 try:
@@ -150,7 +153,7 @@ class Decoder:
 
                 b1_pos = Decoder._find_b1(ref_line, len(cur_line), current_color)
                 run_len = b1_pos - len(cur_line)
-                Decoder._append_run(cur_line, run_len, current_color)
+                Decoder._append_run(cur_line, run_len, current_color, cols)
 
                 # After V0, we have handled a run of `current_color`.
                 # Next run will be `opposite`.
@@ -169,14 +172,14 @@ class Decoder:
                     # a1 = b1 + 1
                     b1 = Decoder._find_b1(ref_line, len(cur_line), current_color)
                     len_run = (b1 + 1) - len(cur_line)
-                    Decoder._append_run(cur_line, len_run, current_color)
+                    Decoder._append_run(cur_line, len_run, current_color, cols)
                     current_color = 1 - current_color
                 else:
                     # 010 -> VL1
                     # a1 = b1 - 1
                     b1 = Decoder._find_b1(ref_line, len(cur_line), current_color)
                     len_run = (b1 - 1) - len(cur_line)
-                    Decoder._append_run(cur_line, len_run, current_color)
+                    Decoder._append_run(cur_line, len_run, current_color, cols)
                     current_color = 1 - current_color
                 continue
 
@@ -187,12 +190,12 @@ class Decoder:
                 # "Run length a0a1... Run length a1a2".
                 # First run is `current_color`.
                 len1 = Decoder._read_run_length(reader, current_color)
-                Decoder._append_run(cur_line, len1, current_color)
+                Decoder._append_run(cur_line, len1, current_color, cols)
                 current_color = 1 - current_color
 
                 # Second run is `new_current_color` (which is 1-old).
                 len2 = Decoder._read_run_length(reader, current_color)
-                Decoder._append_run(cur_line, len2, current_color)
+                Decoder._append_run(cur_line, len2, current_color, cols)
                 current_color = 1 - current_color
                 continue
 
@@ -206,7 +209,7 @@ class Decoder:
                 b2 = Decoder._find_b2(ref_line, len(cur_line), current_color)
 
                 len_run = b2 - len(cur_line)
-                Decoder._append_run(cur_line, len_run, current_color)
+                Decoder._append_run(cur_line, len_run, current_color, cols)
 
                 # Pass mode does NOT switch color!
                 # "Start new coding ... with a0 set at b2".
@@ -220,40 +223,93 @@ class Decoder:
             raise PdfParseException("Unsupported extension")
 
     @staticmethod
-    def _append_run(line, length, color):
+    def _append_run(line, length, color, max_length=None):
+        if length < 0:
+            raise PdfParseException("Invalid negative CCITT run length")
+        if max_length is not None and len(line) + length > max_length:
+            raise PdfParseException("CCITT run exceeds the declared row width")
         if length > 0:
-            line.extend([color] * length)
+            line.extend(repeat(color, length))
 
     @staticmethod
-    def decode(data, params):
+    def decode(
+        data: bytes,
+        params,
+        *,
+        limits: PdfLoadLimits | None = None,
+    ) -> bytes:
         Decoder._init_lookups()
+        limits = _coerce_limits(limits)
+        budget = _LoadBudget(limits)
         cols = int(params.get("Columns", 1728))
         rows = int(params.get("Rows", 0))
         k = int(params.get("K", 0))
         black_is_1 = bool(params.get("BlackIs1", False))
 
+        if cols <= 0:
+            raise PdfResourceLimitException(
+                f"Invalid CCITT Columns value: {cols}; expected a positive integer"
+            )
+        if rows < 0:
+            raise PdfResourceLimitException(
+                f"Invalid CCITT Rows value: {rows}; expected a non-negative integer"
+            )
+
+        # Even when Rows is omitted, one reference row is allocated immediately.
+        budget.check_image_pixels(cols, max(rows, 1), "CCITT image")
+        bytes_per_row = (cols + 7) // 8
+        declared_output_size = bytes_per_row * max(rows, 1)
+        budget.check(
+            declared_output_size,
+            "max_decoded_stream_bytes",
+            "CCITT decoded bitmap bytes",
+        )
+        budget.check(
+            (2 * cols) + declared_output_size,
+            "max_codec_work_bytes",
+            "CCITT decoder working set",
+        )
+
         if k >= 0:
+            budget.check(
+                len(data),
+                "max_decoded_stream_bytes",
+                "CCITT pass-through bytes",
+            )
             return data
 
         reader = _BitReader(data)
-        ref_line = [0] * cols
-        output_rows = []
+        ref_line = bytearray(cols)
+        output = bytearray()
 
         curr_idx = 0
         while (rows == 0 or curr_idx < rows) and reader.byte_pos < len(data):
-            cur_line = []
+            next_row_count = curr_idx + 1
+            budget.check_image_pixels(cols, next_row_count, "CCITT image")
+            budget.check(
+                bytes_per_row * next_row_count,
+                "max_decoded_stream_bytes",
+                "CCITT decoded bitmap bytes",
+            )
+            budget.check(
+                (2 * cols) + (bytes_per_row * next_row_count),
+                "max_codec_work_bytes",
+                "CCITT decoder working set",
+            )
+
+            cur_line = bytearray()
             Decoder._full_decode_row(reader, cur_line, ref_line, cols)
             # Pad/Truncate
             if len(cur_line) > cols:
                 cur_line = cur_line[:cols]
             elif len(cur_line) < cols:
-                cur_line.extend([0] * (cols - len(cur_line)))
+                cur_line.extend(repeat(0, cols - len(cur_line)))
 
-            output_rows.append(cur_line)
+            output.extend(Decoder._pack_row(cur_line, cols, black_is_1))
             ref_line = cur_line
             curr_idx += 1
 
-        return Decoder._pack_rows(output_rows, cols, black_is_1)
+        return bytes(output)
 
     @staticmethod
     def _find_b1(ref_line, a0, color):
@@ -284,39 +340,31 @@ class Decoder:
         # So we need to invert if black_is_1 is False.
         # Invert: pixel = 1 - pixel.
 
-        bytes_per_row = (cols + 7) // 8
-
         for row in rows:
-            # Pad row to byte boundary if short (or just cols)
-            # Row length should be `cols`.
-            # If short, pad with White? (0).
-            if len(row) < cols:
-                row.extend([0] * (cols - len(row)))
-
-            r_bytes = bytearray(bytes_per_row)
-            for i, pixel in enumerate(row):
-                if i >= len(row):
-                    break  # Should not happen
-
-                # Internal: 1=Black, 0=White.
-                # Target:
-                # If BlackIs1=True: 1=Black (match).
-                # If BlackIs1=False: 0=Black (invert).
-
-                val = pixel if black_is_1 else (1 - pixel)
-
-                if val:
-                    byte_idx = i // 8
-                    bit_shift = 7 - (i % 8)
-                    r_bytes[byte_idx] |= 1 << bit_shift
-
-            res.extend(r_bytes)
+            res.extend(Decoder._pack_row(row, cols, black_is_1))
 
         return bytes(res)
 
+    @staticmethod
+    def _pack_row(row, cols, black_is_1):
+        bytes_per_row = (cols + 7) // 8
+        packed = bytearray(bytes_per_row)
+        row_length = len(row)
+        for i in range(cols):
+            pixel = row[i] if i < row_length else 0
+            val = pixel if black_is_1 else (1 - pixel)
+            if val:
+                packed[i // 8] |= 1 << (7 - (i % 8))
+        return packed
+
 
 def decode_group4(
-    data: bytes, width: int, height: int, *, black_is_1: bool = False
+    data: bytes,
+    width: int,
+    height: int,
+    *,
+    black_is_1: bool = False,
+    limits: PdfLoadLimits | None = None,
 ) -> bytes:
     """Decode CCITT Group‑4 (T.6) compressed image data.
 
@@ -330,6 +378,7 @@ def decode_group4(
         width:  Number of pixels per row.
         height: Number of rows.
         black_is_1: If ``True`` the output uses ``1`` for black pixels.
+        limits: Optional resource limits for untrusted image data.
 
     Returns:
         A ``bytes`` object containing the decoded 1‑bit bitmap.
@@ -340,4 +389,4 @@ def decode_group4(
         "K": -1,
         "BlackIs1": black_is_1,
     }
-    return Decoder.decode(data, params)
+    return Decoder.decode(data, params, limits=limits)
