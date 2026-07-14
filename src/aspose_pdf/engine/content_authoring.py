@@ -156,6 +156,32 @@ def build_text_stream(
     return (" ".join(parts) + "\n").encode("latin-1")
 
 
+def build_cid_text_stream(
+    encoded_text: bytes,
+    x: float,
+    y: float,
+    font_resource: str,
+    font_size: float,
+    color: Sequence[float],
+) -> bytes:
+    """Build a text fragment whose show string contains two-byte CID codes."""
+
+    raw = bytes(encoded_text)
+    if len(raw) % 2:
+        raise PdfValidationException("CID text must contain complete two-byte codes.")
+    parts = [
+        "q",
+        color_operator(color, stroking=False),
+        f"1 0 0 1 {format_number(x)} {format_number(y)} cm",
+        "BT",
+        f"/{font_resource} {format_number(font_size)} Tf",
+        f"<{raw.hex().upper()}> Tj",
+        "ET",
+        "Q",
+    ]
+    return (" ".join(parts) + "\n").encode("ascii")
+
+
 def build_image_stream(
     image_resource: str,
     x: float,

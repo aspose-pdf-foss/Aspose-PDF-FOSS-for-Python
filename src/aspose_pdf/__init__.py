@@ -57,7 +57,7 @@ from .validation import (
     ValidationResult,
     ValidationStatus,
 )
-from .exceptions import PdfResourceLimitException
+from .exceptions import FontEmbeddingException, PdfResourceLimitException
 from .visualization import RasterizedPage
 from .xmp import (
     NamespaceProvider,
@@ -85,6 +85,7 @@ __all__ = [
     "FileSpecification",
     "FolderFontSource",
     "FontDescriptor",
+    "FontEmbeddingException",
     "FontRepository",
     "FontSource",
     "Form",

@@ -14,7 +14,8 @@ stable release.
 ## Features
 
 - Create, load, save, merge, split, and inspect PDF documents
-- Add text, images, lines, rectangles, annotations, attachments, and form data
+- Add Standard-14 or embedded Unicode text, images, lines, rectangles,
+  annotations, attachments, and form data
 - Extract text, images, attachments, metadata, and bookmarks
 - Render pages to PNG or TIFF
 - Replace or redact text in supported content streams
@@ -75,6 +76,26 @@ with Document() as document:
     )
     document.save("hello.pdf")
 ```
+
+For Unicode outside the Standard-14 encodings, provide an embeddable
+TrueType/OpenType font as bytes, a path, or a `FontDescriptor`:
+
+```python
+with Document() as document:
+    page = document.pages.add()
+    page.add_text(
+        "Latin Č · Кириллица · Ελληνικά · 漢字",
+        x=72,
+        y=720,
+        font="NotoSans-Regular.ttf",
+    )
+    document.save("unicode.pdf")
+```
+
+The writer creates a subset Type0/CID font, two-byte character codes,
+`/ToUnicode`, widths, and the required CID-to-glyph mapping. A character that
+the supplied font cannot represent raises `FontEmbeddingException` instead of
+silently writing `.notdef`.
 
 ### Read a document
 

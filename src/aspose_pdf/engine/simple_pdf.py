@@ -64,6 +64,7 @@ from .content_stream_parser import (
 from .text_edit import redact_text_in_content, replace_text_in_content
 from .content_authoring import (
     AuthoredImage,
+    build_cid_text_stream,
     build_image_stream,
     build_line_stream,
     build_rectangle_stream,
@@ -78,6 +79,7 @@ from .incremental_update import IncrementalUpdate
 from ..exceptions import (
     AsposePdfException,
     CONTENT_PARSER_RECOVERABLE,
+    FontEmbeddingException,
     PDF_OPERATION_ERRORS,
     PDF_STREAM_DECODE_ERRORS,
     PdfParseException,
@@ -91,9 +93,24 @@ from ..signature import PdfSignature
 if TYPE_CHECKING:
     import datetime
 
+    from ..font_registry import FontDescriptor
     from ..optimization import OptimizationOptions
 
 logger = logging.getLogger("aspose_pdf")
+
+
+@dataclass
+class _AuthoredFontResource:
+    """Mutable COS objects associated with one authored font on one page."""
+
+    authored_font: Any
+    resource_name: str
+    type0_font: PdfDictionary
+    cid_font: PdfDictionary
+    descriptor: PdfDictionary
+    font_stream: PdfStream
+    to_unicode_stream: PdfStream
+    cid_to_gid_stream: Optional[PdfStream]
 
 
 def _trim_der_padding(data: bytes) -> bytes:
@@ -973,6 +990,9 @@ class SimplePdf:
     _load_budget: _LoadBudget = field(
         default_factory=_LoadBudget, init=False, repr=False
     )
+    _authored_font_cache: Dict[Tuple[int, str, str], _AuthoredFontResource] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     MIN_MMAP_SIZE = 50 * 1024 * 1024  # 50MB
 
@@ -1253,22 +1273,66 @@ class SimplePdf:
         _depth: int = 0,
         _active: Optional[Set[int]] = None,
         _item_count: Optional[List[int]] = None,
+        _include_stream_content: bool = False,
     ) -> Any:
         """Convert COS objects to standard Python types recursively."""
         from .cos import (
             PdfName,
             PdfDictionary,
             PdfArray,
+            PdfIndirectReference,
             PdfStream,
             PdfString,
             PdfNumber,
             PdfBoolean,
         )
 
+        source_ref = obj if isinstance(obj, PdfIndirectReference) else None
         obj = self._resolve(obj)
         active = _active if _active is not None else set()
         item_count = _item_count if _item_count is not None else [0]
-        if isinstance(obj, PdfDictionary):
+        if isinstance(obj, PdfStream):
+            depth = _depth + 1
+            self._load_budget.check(
+                depth,
+                "max_nesting_depth",
+                "COS resource conversion depth",
+            )
+            self._load_budget.check(
+                len(obj.mapping),
+                "max_container_items",
+                "COS resource stream dictionary items",
+            )
+            obj_id = id(obj)
+            if obj_id in active:
+                raise PdfParseException("COS resource graph contains a cycle")
+            active.add(obj_id)
+            try:
+                result: Dict[str, Any] = {}
+                for key, value in obj.mapping.items():
+                    item_count[0] += 1
+                    self._load_budget.check(
+                        item_count[0],
+                        "max_container_items",
+                        "converted COS resource items",
+                    )
+                    result[key.name.lstrip("/")] = self._convert_cos_to_dict(
+                        value,
+                        _depth=depth,
+                        _active=active,
+                        _item_count=item_count,
+                    )
+                if _include_stream_content:
+                    try:
+                        result["content"] = self._decode_cos_stream(obj, source_ref)
+                    except PdfResourceLimitException:
+                        raise
+                    except PDF_OPERATION_ERRORS:
+                        result["content"] = bytes(obj.content)
+                return result
+            finally:
+                active.remove(obj_id)
+        elif isinstance(obj, PdfDictionary):
             depth = _depth + 1
             self._load_budget.check(
                 depth,
@@ -1293,11 +1357,13 @@ class SimplePdf:
                         "max_container_items",
                         "converted COS resource items",
                     )
-                    result[key.name.lstrip("/")] = self._convert_cos_to_dict(
+                    key_name = key.name.lstrip("/")
+                    result[key_name] = self._convert_cos_to_dict(
                         value,
                         _depth=depth,
                         _active=active,
                         _item_count=item_count,
+                        _include_stream_content=key_name == "ToUnicode",
                     )
                 return result
             finally:
@@ -1338,17 +1404,6 @@ class SimplePdf:
                 return result_list
             finally:
                 active.remove(obj_id)
-        elif isinstance(obj, PdfStream):
-            # For resources, we usually want the stream dictionary
-            res = self._convert_cos_to_dict(obj.mapping)
-            # If it's a ToUnicode CMap, we might need the actual data
-            # ContentStreamParser._prepare_font_maps handles PdfStream objects too,
-            # but let's make it easy by adding 'content' if it's a stream
-            if hasattr(obj, "content"):
-                res["content"] = obj.content
-            elif hasattr(obj, "decode"):  # For StreamDecoder results
-                res["content"] = obj.decode()
-            return res
         elif isinstance(obj, PdfName):
             return obj.name.lstrip("/")
         elif isinstance(obj, PdfString):
@@ -2577,6 +2632,7 @@ class SimplePdf:
         self.page_contents.clear()
         self.images.clear()
         self.metadata.clear()
+        self._authored_font_cache.clear()
         self._disposed = True
         logger.info("Document resources released.")
 
@@ -3151,6 +3207,7 @@ class SimplePdf:
             b"" if not current or current.endswith((b"\n", b"\r", b" ")) else b"\n"
         )
         self.page_contents[page_index] = current + separator + content
+        self._extracted_text = None
 
         self._append_content_to_cos_page(page_index, content)
 
@@ -4324,6 +4381,226 @@ class SimplePdf:
         self.fonts[resource_name] = self._convert_cos_to_dict(font_dict)
         return resource_name
 
+    @staticmethod
+    def _authored_font_cos_value(value: Any) -> Any:
+        """Convert authored-font metadata into the corresponding COS value."""
+
+        if isinstance(
+            value,
+            (
+                PdfArray,
+                PdfDictionary,
+                PdfName,
+                PdfNumber,
+                PdfString,
+                PdfBoolean,
+                PdfStream,
+                PdfIndirectReference,
+            ),
+        ):
+            return value
+        if isinstance(value, bool):
+            return PdfBoolean(value)
+        if isinstance(value, (int, float)):
+            return PdfNumber(value)
+        if isinstance(value, (list, tuple)):
+            return PdfArray(
+                [SimplePdf._authored_font_cos_value(item) for item in value]
+            )
+        if isinstance(value, (bytes, bytearray)):
+            return PdfString(bytes(value))
+        if isinstance(value, str):
+            return PdfName(value)
+        raise PdfValidationException("Unsupported authored font metadata value.")
+
+    @classmethod
+    def _authored_cid_widths(cls, widths: Any) -> PdfArray:
+        """Return a PDF ``/W`` array from authored CID width metadata."""
+
+        if isinstance(widths, PdfArray):
+            return widths
+        if isinstance(widths, dict):
+            items: List[Any] = []
+            for cid, width in sorted(widths.items(), key=lambda item: int(item[0])):
+                items.extend(
+                    [
+                        PdfNumber(int(cid)),
+                        PdfArray([PdfNumber(float(width))]),
+                    ]
+                )
+            return PdfArray(items)
+        if isinstance(widths, (list, tuple)):
+            if all(
+                isinstance(item, (list, tuple)) and len(item) == 2
+                for item in widths
+            ):
+                items = []
+                for cid, width in widths:
+                    items.extend(
+                        [
+                            PdfNumber(int(cid)),
+                            PdfArray([PdfNumber(float(width))]),
+                        ]
+                    )
+                return PdfArray(items)
+            return PdfArray([cls._authored_font_cos_value(item) for item in widths])
+        raise PdfValidationException("Authored font CID widths are invalid.")
+
+    def _refresh_authored_font_resource(
+        self, resource: _AuthoredFontResource
+    ) -> None:
+        """Refresh mutable streams and metrics after the font gains glyphs."""
+
+        authored = resource.authored_font
+        base_name = str(authored.base_name).lstrip("/")
+        program = bytes(authored.embedded_program())
+        resource.font_stream.content = program
+        resource.font_stream.mapping.pop(PdfName("Filter"), None)
+        resource.font_stream.mapping.pop(PdfName("DecodeParms"), None)
+        resource.font_stream.mapping[PdfName("Length")] = PdfNumber(len(program))
+        if str(authored.font_file_key).lstrip("/") in ("FontFile", "FontFile2"):
+            resource.font_stream.mapping[PdfName("Length1")] = PdfNumber(len(program))
+
+        cmap = bytes(authored.to_unicode_cmap())
+        resource.to_unicode_stream.content = cmap
+        resource.to_unicode_stream.mapping.pop(PdfName("Filter"), None)
+        resource.to_unicode_stream.mapping.pop(PdfName("DecodeParms"), None)
+        resource.to_unicode_stream.mapping[PdfName("Length")] = PdfNumber(len(cmap))
+
+        resource.type0_font.mapping[PdfName("BaseFont")] = PdfName(base_name)
+        resource.cid_font.mapping[PdfName("BaseFont")] = PdfName(base_name)
+        resource.cid_font.mapping[PdfName("W")] = self._authored_cid_widths(
+            authored.cid_widths()
+        )
+        resource.descriptor.mapping[PdfName("FontName")] = PdfName(base_name)
+
+        cid_to_gid = authored.cid_to_gid_bytes()
+        if cid_to_gid is None:
+            if str(authored.cid_font_subtype).lstrip("/") == "CIDFontType2":
+                resource.cid_font.mapping[PdfName("CIDToGIDMap")] = PdfName(
+                    "Identity"
+                )
+            else:
+                resource.cid_font.mapping.pop(PdfName("CIDToGIDMap"), None)
+            resource.cid_to_gid_stream = None
+        else:
+            mapping = bytes(cid_to_gid)
+            if resource.cid_to_gid_stream is None:
+                resource.cid_to_gid_stream = PdfStream(content=mapping, mapping={})
+                ref = self._cos_doc.register_object(resource.cid_to_gid_stream)
+                resource.cid_font.mapping[PdfName("CIDToGIDMap")] = ref
+            else:
+                resource.cid_to_gid_stream.content = mapping
+            resource.cid_to_gid_stream.mapping.pop(PdfName("Filter"), None)
+            resource.cid_to_gid_stream.mapping.pop(PdfName("DecodeParms"), None)
+            resource.cid_to_gid_stream.mapping[PdfName("Length")] = PdfNumber(
+                len(mapping)
+            )
+
+    def _register_authored_font_resource(
+        self, page_index: int, authored: Any
+    ) -> _AuthoredFontResource:
+        """Create and register an embedded Type0 font graph for one page."""
+
+        self._ensure_cos()
+        fonts = self._ensure_resource_subdict(page_index, "Font")
+        resource_name = self._unique_resource_name(fonts, "F", "F1")
+        base_name = str(authored.base_name).lstrip("/")
+        program = bytes(authored.embedded_program())
+
+        font_stream_mapping: Dict[PdfName, Any] = {
+            PdfName("Length"): PdfNumber(len(program))
+        }
+        font_file_key = str(authored.font_file_key).lstrip("/")
+        if font_file_key in ("FontFile", "FontFile2"):
+            font_stream_mapping[PdfName("Length1")] = PdfNumber(len(program))
+        font_file_subtype = getattr(authored, "font_file_subtype", None)
+        if font_file_subtype:
+            font_stream_mapping[PdfName("Subtype")] = PdfName(
+                str(font_file_subtype).lstrip("/")
+            )
+        font_stream = PdfStream(content=program, mapping=font_stream_mapping)
+        font_stream_ref = self._cos_doc.register_object(font_stream)
+
+        descriptor_mapping: Dict[PdfName, Any] = {
+            PdfName("Type"): PdfName("FontDescriptor"),
+            PdfName("FontName"): PdfName(base_name),
+            PdfName(font_file_key): font_stream_ref,
+        }
+        for key, value in dict(authored.descriptor_metrics).items():
+            descriptor_mapping[PdfName(str(key).lstrip("/"))] = (
+                self._authored_font_cos_value(value)
+            )
+        descriptor = PdfDictionary(descriptor_mapping)
+        descriptor_ref = self._cos_doc.register_object(descriptor)
+
+        cid_to_gid_data = authored.cid_to_gid_bytes()
+        cid_to_gid_stream: Optional[PdfStream] = None
+        cid_to_gid_value: Any = None
+        if cid_to_gid_data is not None:
+            mapping = bytes(cid_to_gid_data)
+            cid_to_gid_stream = PdfStream(
+                content=mapping,
+                mapping={PdfName("Length"): PdfNumber(len(mapping))},
+            )
+            cid_to_gid_value = self._cos_doc.register_object(cid_to_gid_stream)
+
+        cid_font_mapping: Dict[PdfName, Any] = {
+            PdfName("Type"): PdfName("Font"),
+            PdfName("Subtype"): PdfName(
+                str(authored.cid_font_subtype).lstrip("/")
+            ),
+            PdfName("BaseFont"): PdfName(base_name),
+            PdfName("CIDSystemInfo"): PdfDictionary(
+                {
+                    PdfName("Registry"): PdfString("Adobe"),
+                    PdfName("Ordering"): PdfString("Identity"),
+                    PdfName("Supplement"): PdfNumber(0),
+                }
+            ),
+            PdfName("FontDescriptor"): descriptor_ref,
+            PdfName("DW"): PdfNumber(1000),
+            PdfName("W"): self._authored_cid_widths(authored.cid_widths()),
+        }
+        if cid_to_gid_value is not None:
+            cid_font_mapping[PdfName("CIDToGIDMap")] = cid_to_gid_value
+        elif str(authored.cid_font_subtype).lstrip("/") == "CIDFontType2":
+            cid_font_mapping[PdfName("CIDToGIDMap")] = PdfName("Identity")
+        cid_font = PdfDictionary(cid_font_mapping)
+        cid_font_ref = self._cos_doc.register_object(cid_font)
+
+        cmap = bytes(authored.to_unicode_cmap())
+        to_unicode_stream = PdfStream(
+            content=cmap,
+            mapping={PdfName("Length"): PdfNumber(len(cmap))},
+        )
+        to_unicode_ref = self._cos_doc.register_object(to_unicode_stream)
+        type0_font = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Font"),
+                PdfName("Subtype"): PdfName("Type0"),
+                PdfName("BaseFont"): PdfName(base_name),
+                PdfName("Encoding"): PdfName("Identity-H"),
+                PdfName("DescendantFonts"): PdfArray([cid_font_ref]),
+                PdfName("ToUnicode"): to_unicode_ref,
+            }
+        )
+        type0_ref = self._cos_doc.register_object(type0_font)
+        fonts.mapping[PdfName(resource_name)] = type0_ref
+
+        resource = _AuthoredFontResource(
+            authored_font=authored,
+            resource_name=resource_name,
+            type0_font=type0_font,
+            cid_font=cid_font,
+            descriptor=descriptor,
+            font_stream=font_stream,
+            to_unicode_stream=to_unicode_stream,
+            cid_to_gid_stream=cid_to_gid_stream,
+        )
+        self.fonts[resource_name] = type0_font
+        return resource
+
     def _register_page_image(
         self,
         page_index: int,
@@ -4360,7 +4637,8 @@ class SimplePdf:
         y: float,
         *,
         font_size: float = 12.0,
-        font_name: str = "Helvetica",
+        font_name: Optional[str] = None,
+        font: Union["FontDescriptor", bytes, bytearray, str, Path, None] = None,
         color: Sequence[float] = (0.0, 0.0, 0.0),
         tag: Optional[str] = None,
         actual_text: Optional[str] = None,
@@ -4374,8 +4652,36 @@ class SimplePdf:
             raise PdfValidationException("font_size must be a positive number.")
         if size <= 0:
             raise PdfValidationException("font_size must be a positive number.")
-        resource = self._register_standard_font_resource(page_index, font_name)
-        content = build_text_stream(text, x, y, resource, size, color)
+        if font is None:
+            resource = self._register_standard_font_resource(
+                page_index, font_name or "Helvetica"
+            )
+            content = build_text_stream(text, x, y, resource, size, color)
+        else:
+            from .font_authoring import prepare_authored_font
+
+            try:
+                prepared = prepare_authored_font(font, font_name=font_name)
+            except FontEmbeddingException as exc:
+                raise FontEmbeddingException(
+                    f"Font preparation failed: {exc}"
+                ) from exc
+            key = (page_index, prepared.fingerprint, prepared.base_name)
+            authored_resource = self._authored_font_cache.get(key)
+            if authored_resource is None:
+                authored = prepared
+            else:
+                authored = authored_resource.authored_font
+            encoded = authored.encode(str(text))
+            if authored_resource is None:
+                authored_resource = self._register_authored_font_resource(
+                    page_index, authored
+                )
+                self._authored_font_cache[key] = authored_resource
+            else:
+                self._refresh_authored_font_resource(authored_resource)
+            resource = authored_resource.resource_name
+            content = build_cid_text_stream(encoded, x, y, resource, size, color)
         mark = self._register_marked_content(
             page_index,
             tag or ("P" if actual_text is not None else None),
@@ -4783,6 +5089,7 @@ class SimplePdf:
             self._delete_cos_page(index)
 
         self._page_cache_valid = False
+        self._authored_font_cache.clear()
 
         # Re-map images (Shift indices)
         new_image_map = {}
@@ -4879,6 +5186,7 @@ class SimplePdf:
         self._page_image_map = new_image_map
 
         self._page_cache_valid = False
+        self._authored_font_cache.clear()
         if self._cos_doc:
             self._create_cos_page(index, media_box, content)
 
@@ -5926,6 +6234,7 @@ class SimplePdf:
             self._use_object_streams = (
                 bool(options.use_object_streams) and compress_streams
             )
+        self._authored_font_cache.clear()
 
     def _dedup_images(self) -> None:
         """Collapse byte-identical images, rewriting page-content references."""
@@ -7120,6 +7429,7 @@ class SimplePdf:
                 obj.content = compressed
                 obj[filter_key] = PdfName("FlateDecode")
                 obj[length_key] = len(obj.content)
+        self._authored_font_cache.clear()
 
     def optimize_resources(
         self, options: "OptimizationOptions | None" = None

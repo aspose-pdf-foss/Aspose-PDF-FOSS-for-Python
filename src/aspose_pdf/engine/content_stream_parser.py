@@ -890,6 +890,10 @@ class ContentStreamParser:
             cmap_bytes = b""
             if isinstance(to_unicode, bytes):
                 cmap_bytes = to_unicode
+            elif isinstance(to_unicode, dict):
+                content = to_unicode.get("content")
+                if isinstance(content, (bytes, bytearray)):
+                    cmap_bytes = bytes(content)
             elif hasattr(to_unicode, "content"):
                 cmap_bytes = to_unicode.content
 

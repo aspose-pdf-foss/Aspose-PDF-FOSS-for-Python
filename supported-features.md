@@ -236,9 +236,12 @@ Supported:
 - Read and set the page crop box through `Page.crop_box` (falls back to the
   media box when unset).
 - Read decoded page content bytes through `Page.content`.
-- Append simple authored content to a page: positioned Standard-14 text with
-  `Page.add_text()`, raw/JPEG/PNG image XObjects with `Page.add_image()`,
-  rectangles with `Page.draw_rectangle()`, and lines with `Page.draw_line()`.
+- Append simple authored content to a page: positioned Standard-14 text or
+  embedded Unicode text with `Page.add_text()`, raw/JPEG/PNG image XObjects
+  with `Page.add_image()`, rectangles with `Page.draw_rectangle()`, and lines
+  with `Page.draw_line()`. Pass `font=` as a `FontDescriptor`, bytes,
+  bytearray, string/path to author Unicode through a subset Type0/CID font;
+  the writer emits two-byte codes, `/ToUnicode`, `/W`, and a CID-to-glyph map.
   Authored segments can opt into tagged PDF structure with `tag=...`,
   `alt=...`, and `actual_text=...`; the writer emits `BDC`/`EMC` marked
   content and maintains `/StructTreeRoot`, page `/StructParents`, and the
@@ -430,6 +433,19 @@ Boundaries:
 Supported:
 
 - Use the Standard 14 fonts and read embedded TrueType font programs.
+- Author Unicode text with `Page.add_text(..., font=...)`. Font inputs may be
+  a `FontDescriptor`, bytes/bytearray, or a string/`Path`. TrueType outlines
+  are embedded as `/FontFile2` + `CIDFontType2`; OpenType CFF 1 outlines are
+  embedded as `/FontFile3` + `CIDFontType0`. Used glyphs are subset without
+  renumbering, descriptor metrics and CID widths come from the SFNT tables,
+  and missing glyphs fail with `FontEmbeddingException` before page content is
+  appended.
+- Assign independent two-byte CIDs to TrueType Unicode scalars and emit an
+  explicit `/CIDToGIDMap`. This preserves exact `/ToUnicode` extraction even
+  when distinct scalars such as space and non-breaking space share a glyph.
+- Extend and reuse an authored font resource across repeated `add_text()`
+  calls on the same page. The embedded subset, `/ToUnicode`, widths, and
+  CID-to-glyph stream are refreshed together.
 - Decode `ToUnicode` / CMap mappings for accurate text extraction.
 - Discover fonts through `FontRepository` and the `FontSource` hierarchy:
   `FolderFontSource` (optionally recursive), `FileFontSource`,
@@ -450,11 +466,20 @@ Supported:
   `FontRepository.open_font()` or `FontDescriptor.get_font_bytes()` (WOFF
   programs are unwrapped to a directly embeddable SFNT).
 - Register custom sources with priorities through `FontRepository.add_source()`.
+- Select a TTC face through `FontDescriptor.face_index`; direct TTC bytes or a
+  TTC path use face zero. Unicode cmap formats 0, 4, 6, 12, and 13 are read,
+  including supplementary-plane characters.
 
 Boundaries:
 
 - WOFF2 decoding needs the optional `brotli` dependency; WOFF2 font
   *collections* (`ttcf` flavour) are not reconstructed.
+- Unicode authoring does not perform bidi reordering, script shaping,
+  GSUB/GPOS substitutions, ligatures, kerning, fallback across multiple fonts,
+  or paragraph layout. Callers must supply text in paint order and a font with
+  a direct cmap entry for every scalar. OpenType CFF2 authoring is rejected;
+  CFF 1 mappings that alias different Unicode scalars to one native CID are
+  rejected because they cannot provide an exact `/ToUnicode` round trip.
 - Embedded glyph outlines are rasterized by the page renderer (see
   [Pages](#pages)) for all three program formats: TrueType (`glyf`), CFF
   (`/FontFile3`, name-keyed and CID-keyed), and Type 1 (`/FontFile`, including

@@ -575,6 +575,25 @@ def test_read_unicode_cmap():
     assert read_unicode_cmap(_latin_font()) == {0x41: 1, 0x42: 2, 0x43: 3}
 
 
+def test_read_unicode_cmap_rejects_excessive_overlapping_format4_ranges():
+    # Sixteen overlapping BMP ranges would require 1,048,560 mapping visits.
+    ranges = [(0x0000, 0xFFFE, 1)] * 16
+    cmap = _cmap_format4_unicode(ranges)
+    font = _build_ttf([b"", _simple_glyph(10)], extra_tables={"cmap": cmap})
+
+    assert read_unicode_cmap(font) == {}
+
+
+def test_read_unicode_cmap_rejects_records_overlapping_first_subtable():
+    font = bytearray(_latin_font())
+    cmap_offset, _cmap_length = _parse_tables(font)["cmap"]
+    assert struct.unpack_from(">H", font, cmap_offset + 2)[0] == 1
+    assert struct.unpack_from(">I", font, cmap_offset + 8)[0] == 12
+    struct.pack_into(">H", font, cmap_offset + 2, 2)
+
+    assert read_unicode_cmap(bytes(font)) == {}
+
+
 def test_simple_truetype_subset_via_winansi_encoding():
     from aspose_pdf.engine.cos import PdfName
 

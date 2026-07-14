@@ -12,6 +12,7 @@ from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 if TYPE_CHECKING:
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
+    from aspose_pdf.font_registry import FontDescriptor
 
 
 class Page:
@@ -123,12 +124,18 @@ class Page:
         y: float,
         *,
         font_size: float = 12.0,
-        font_name: str = "Helvetica",
+        font_name: Optional[str] = None,
+        font: Union["FontDescriptor", bytes, bytearray, str, Path, None] = None,
         color: Sequence[float] = (0.0, 0.0, 0.0),
         tag: Optional[str] = None,
         actual_text: Optional[str] = None,
     ) -> "Page":
-        """Append positioned text to this page."""
+        """Append positioned text to this page.
+
+        ``font_name`` selects the Standard-14 path. Pass ``font`` as a
+        :class:`FontDescriptor`, bytes, bytearray, or filesystem path to embed
+        and subset a Unicode Type0/CID font.
+        """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is None:
@@ -140,6 +147,7 @@ class Page:
             y,
             font_size=font_size,
             font_name=font_name,
+            font=font,
             color=color,
             tag=tag,
             actual_text=actual_text,

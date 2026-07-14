@@ -32,6 +32,9 @@ _WE_HAVE_A_TWO_BY_TWO = 0x0080
 
 # Magic constant used when deriving ``head.checkSumAdjustment``.
 _CHECKSUM_MAGIC = 0xB1B0AFBA
+_MAX_CMAP_MAPPINGS = 1_000_000
+_MAX_CMAP_SUBTABLES = 256
+_MAX_SFNT_TABLES = 4096
 
 
 def subset_truetype(font_bytes: bytes, keep_gids: set[int]) -> bytes | None:
@@ -271,8 +274,8 @@ def read_symbol_code_to_gid(font_bytes: bytes) -> dict[int, int]:
 
 
 def _read_symbol_code_to_gid(font_bytes: bytes) -> dict[int, int]:
-    chosen = None  # (priority, subtable_offset)
-    for plat, enc, off in _cmap_subtables(font_bytes):
+    chosen = None  # (priority, subtable_offset, cmap_end)
+    for plat, enc, off, cmap_end in _cmap_subtables(font_bytes):
         if plat == 3 and enc == 0:
             priority = 0
         elif plat == 1 and enc == 0:
@@ -280,76 +283,128 @@ def _read_symbol_code_to_gid(font_bytes: bytes) -> dict[int, int]:
         else:
             continue
         if chosen is None or priority < chosen[0]:
-            chosen = (priority, off)
+            chosen = (priority, off, cmap_end)
     if chosen is None:
         return {}
-    return _read_cmap_subtable(font_bytes, chosen[1])
+    return _read_cmap_subtable(font_bytes, chosen[1], table_end=chosen[2])
 
 
 def read_unicode_cmap(font_bytes: bytes) -> dict[int, int]:
     """Return a ``unicode codepoint -> glyph id`` map from a Unicode ``cmap``.
 
-    Prefers the ``(3, 1)`` Windows BMP subtable, then any ``(0, *)`` Unicode
-    subtable.  Used to subset a simple ``/TrueType`` font whose code -> glyph
-    mapping is resolved through the PDF ``/Encoding`` (code -> unicode) and then
-    this map (unicode -> glyph id).  Returns ``{}`` when none is usable.
+    Prefers full-repertoire Windows/Unicode subtables (normally format 12),
+    then the Windows BMP subtable. Compatible subtables are merged in priority
+    order so a BMP-only fallback can fill gaps without replacing mappings from
+    a full-repertoire table. Used to subset a simple ``/TrueType`` font whose
+    code -> glyph mapping is resolved through the PDF ``/Encoding`` (code ->
+    unicode) and then this map (unicode -> glyph id). Returns ``{}`` when none
+    is usable.
     """
     try:
-        chosen = None
-        for plat, enc, off in _cmap_subtables(font_bytes):
-            if plat == 3 and enc == 1:
+        candidates: list[tuple[int, int, int]] = []
+        for plat, enc, off, cmap_end in _cmap_subtables(font_bytes):
+            if off + 2 > len(font_bytes):
+                continue
+            fmt = struct.unpack_from(">H", font_bytes, off)[0]
+            if plat == 3 and enc == 10 and fmt in (12, 13):
                 priority = 0
-            elif plat == 0 and enc in (3, 4, 6):
+            elif plat == 0 and fmt in (12, 13):
                 priority = 1
-            elif plat == 0:
+            elif plat == 3 and enc == 1:
                 priority = 2
+            elif plat == 0 and enc in (3, 4, 6):
+                priority = 3
+            elif plat == 0:
+                priority = 4
             else:
                 continue
-            if chosen is None or priority < chosen[0]:
-                chosen = (priority, off)
-        if chosen is None:
-            return {}
-        return _read_cmap_subtable(font_bytes, chosen[1])
+            candidates.append((priority, off, cmap_end))
+        mapping: dict[int, int] = {}
+        work_budget = [_MAX_CMAP_MAPPINGS]
+        for _priority, off, cmap_end in sorted(candidates):
+            subtable = _read_cmap_subtable(
+                font_bytes,
+                off,
+                work_budget,
+                table_end=cmap_end,
+            )
+            for codepoint, gid in subtable.items():
+                mapping.setdefault(codepoint, gid)
+        return mapping
     except (struct.error, IndexError, ValueError):
         return {}
 
 
-def _cmap_subtables(font_bytes: bytes) -> list[tuple[int, int, int]]:
-    """Return ``(platformID, encodingID, absolute_subtable_offset)`` records."""
+def _cmap_subtables(font_bytes: bytes) -> list[tuple[int, int, int, int]]:
+    """Return bounded ``cmap`` encoding records and their table end offset."""
     if len(font_bytes) < 12:
         return []
     num_tables = struct.unpack_from(">H", font_bytes, 4)[0]
+    if (
+        num_tables == 0
+        or num_tables > _MAX_SFNT_TABLES
+        or 12 + num_tables * 16 > len(font_bytes)
+    ):
+        return []
     cmap_off = None
+    cmap_length = None
     record = 12
     for _ in range(num_tables):
-        if record + 16 > len(font_bytes):
-            break
         if font_bytes[record : record + 4] == b"cmap":
-            cmap_off = struct.unpack_from(">I", font_bytes, record + 8)[0]
-            break
+            if cmap_off is not None:
+                return []
+            cmap_off, cmap_length = struct.unpack_from(">II", font_bytes, record + 8)
         record += 16
-    if cmap_off is None or cmap_off + 4 > len(font_bytes):
+    if cmap_off is None or cmap_length is None or cmap_length < 4:
         return []
+    if cmap_off > len(font_bytes) or cmap_length > len(font_bytes) - cmap_off:
+        return []
+    cmap_end = cmap_off + cmap_length
     num_sub = struct.unpack_from(">H", font_bytes, cmap_off + 2)[0]
-    subs: list[tuple[int, int, int]] = []
+    directory_size = 4 + num_sub * 8
+    available_records = (cmap_length - 4) // 8
+    if num_sub > _MAX_CMAP_SUBTABLES or num_sub > available_records:
+        return []
+    subs: list[tuple[int, int, int, int]] = []
     for i in range(num_sub):
         rec = cmap_off + 4 + i * 8
-        if rec + 8 > len(font_bytes):
-            break
         plat, enc, sub_off = struct.unpack_from(">HHI", font_bytes, rec)
-        subs.append((plat, enc, cmap_off + sub_off))
+        absolute_off = cmap_off + sub_off
+        if sub_off < directory_size or absolute_off + 2 > cmap_end:
+            return []
+        subs.append((plat, enc, absolute_off, cmap_end))
     return subs
 
 
-def _read_cmap_subtable(data: bytes, off: int) -> dict[int, int]:
-    """Parse a format 0/4/6 cmap subtable into a ``code -> gid`` map."""
-    if off + 2 > len(data):
+def _read_cmap_subtable(
+    data: bytes,
+    off: int,
+    work_budget: list[int] | None = None,
+    *,
+    table_end: int | None = None,
+) -> dict[int, int]:
+    """Parse a bounded format 0/4/6/12/13 ``cmap`` subtable."""
+    data_end = len(data) if table_end is None else table_end
+    if data_end < 0 or data_end > len(data) or off < 0 or off + 2 > data_end:
         return {}
+    if work_budget is None:
+        work_budget = [_MAX_CMAP_MAPPINGS]
+
+    def reserve_work(count: int) -> bool:
+        if count < 0 or count > work_budget[0]:
+            work_budget[0] = 0
+            return False
+        work_budget[0] -= count
+        return True
+
     fmt = struct.unpack_from(">H", data, off)[0]
     mapping: dict[int, int] = {}
 
     if fmt == 0:  # byte encoding table: 256 glyph ids
-        if off + 6 + 256 > len(data):
+        if off + 6 > data_end:
+            return {}
+        length = struct.unpack_from(">H", data, off + 2)[0]
+        if length < 262 or off + length > data_end or not reserve_work(256):
             return {}
         for code in range(256):
             gid = data[off + 6 + code]
@@ -358,9 +413,17 @@ def _read_cmap_subtable(data: bytes, off: int) -> dict[int, int]:
         return mapping
 
     if fmt == 6:  # trimmed table mapping
+        if off + 10 > data_end:
+            return {}
+        length = struct.unpack_from(">H", data, off + 2)[0]
         first, count = struct.unpack_from(">HH", data, off + 6)
         base = off + 10
-        if base + count * 2 > len(data):
+        if (
+            length < 10 + count * 2
+            or off + length > data_end
+            or first + count > 0x10000
+            or not reserve_work(count)
+        ):
             return {}
         for i in range(count):
             gid = struct.unpack_from(">H", data, base + i * 2)[0]
@@ -368,29 +431,70 @@ def _read_cmap_subtable(data: bytes, off: int) -> dict[int, int]:
                 mapping[first + i] = gid
         return mapping
 
+    if fmt in (12, 13):  # segmented coverage for the full Unicode repertoire
+        if off + 16 > data_end:
+            return {}
+        length = struct.unpack_from(">I", data, off + 4)[0]
+        num_groups = struct.unpack_from(">I", data, off + 12)[0]
+        if length < 16 or off + length > data_end:
+            return {}
+        group_base = off + 16
+        if num_groups > (length - 16) // 12:
+            return {}
+        for index in range(num_groups):
+            start, end, start_gid = struct.unpack_from(
+                ">III", data, group_base + index * 12
+            )
+            if end < start or end > 0x10FFFF or start_gid > 0xFFFF:
+                return {}
+            range_size = end - start + 1
+            if not reserve_work(range_size):
+                return {}
+            if fmt == 12 and start_gid + range_size - 1 > 0xFFFF:
+                return {}
+            for codepoint in range(start, end + 1):
+                gid = start_gid if fmt == 13 else start_gid + codepoint - start
+                if gid:
+                    mapping[codepoint] = gid
+        return mapping
+
     if fmt == 4:  # segment mapping to delta values
+        if off + 14 > data_end:
+            return {}
+        length = struct.unpack_from(">H", data, off + 2)[0]
+        if length < 16 or off + length > data_end:
+            return {}
+        subtable_end = off + length
         seg_x2 = struct.unpack_from(">H", data, off + 6)[0]
+        if seg_x2 == 0 or seg_x2 % 2:
+            return {}
         seg_count = seg_x2 // 2
         end_base = off + 14
         start_base = end_base + seg_x2 + 2  # skip endCodes + reservedPad
         delta_base = start_base + seg_x2
         range_base = delta_base + seg_x2
-        if range_base + seg_x2 > len(data):
+        if range_base + seg_x2 > subtable_end:
             return {}
         for s in range(seg_count):
             end_code = struct.unpack_from(">H", data, end_base + s * 2)[0]
             start_code = struct.unpack_from(">H", data, start_base + s * 2)[0]
             id_delta = struct.unpack_from(">h", data, delta_base + s * 2)[0]
             id_range = struct.unpack_from(">H", data, range_base + s * 2)[0]
+            if end_code < start_code:
+                return {}
+            range_size = end_code - start_code + 1
+            if not reserve_work(range_size):
+                return {}
+            glyph_base = range_base + s * 2 + id_range
+            if id_range and glyph_base + range_size * 2 > subtable_end:
+                return {}
             for code in range(start_code, end_code + 1):
                 if code == 0xFFFF:
                     continue
                 if id_range == 0:
                     gid = (code + id_delta) & 0xFFFF
                 else:
-                    gi_off = range_base + s * 2 + id_range + (code - start_code) * 2
-                    if gi_off + 2 > len(data):
-                        continue
+                    gi_off = glyph_base + (code - start_code) * 2
                     gid = struct.unpack_from(">H", data, gi_off)[0]
                     if gid:
                         gid = (gid + id_delta) & 0xFFFF
@@ -399,4 +503,3 @@ def _read_cmap_subtable(data: bytes, off: int) -> dict[int, int]:
         return mapping
 
     return {}
-
