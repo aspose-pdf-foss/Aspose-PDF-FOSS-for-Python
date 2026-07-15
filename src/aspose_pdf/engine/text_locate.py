@@ -58,15 +58,19 @@ class CompositeFontMetric:
     CIDFontType2 cmap) used to index match positions over the same decoded
     text the redactor edits. ``code_to_cid`` maps a show-string code (of any
     byte length) to its CID; ``None`` means the identity mapping where the code
-    *is* the two-byte CID (Identity-H/V). ``vertical`` selects vertical writing
-    (Identity-V or an embedded CMap with ``WMode 1``), where glyphs stack down
-    a column at a uniform one-em advance.
+    *is* the two-byte CID (Identity-H/V). ``vertical`` selects vertical writing.
+    ``vertical_metrics_of`` returns ``(w1y, v1x, v1y)`` from /W2 or /DW2;
+    ``None`` retains the conservative one-em fallback.
     """
 
     width_of: Callable[[int], float]
     code_to_text: Mapping[bytes, str]
     code_to_cid: Optional[Callable[[bytes], Optional[int]]] = None
     vertical: bool = False
+    vertical_metrics_of: Optional[
+        Callable[[int], tuple[float, float, float]]
+    ] = None
+    codec: Any = None
     ascent: float = 800.0
     descent: float = -200.0
 
@@ -100,8 +104,8 @@ def _char_geometry(
     Each entry is an axis-aligned box plus a grouping key identifying its
     baseline (horizontal writing) or column (vertical writing); chars of a
     multi-char code unit (a ligature) share the unit's whole extent and
-    synthesized gap chars cover the gap. Vertical composite runs stack glyphs
-    down a one-em-wide column at a uniform one-em advance. Returns ``None`` when
+    synthesized gap chars cover the gap. Vertical composite runs use the CID
+    font's /W2 or /DW2 displacement and position vectors. Returns ``None`` when
     any segment cannot be measured (the caller then draws no boxes for the run).
     """
     geometry: List[Tuple[float, float, float, float, float]] = []
@@ -135,27 +139,51 @@ def _char_geometry(
         raw = seg.token.value
         if kind == "cid":
             if vertical:
-                col0, col1 = pen_x - 0.5 * size, pen_x + 0.5 * size
                 key = round(pen_x, 3)
                 yy = y
-                for _off, _length, unit_text in units:
-                    advance = size + seg.char_spacing  # uniform one-em stack
+                for off, length, unit_text, _opaque in units:
+                    cid = _cid_of(metric, raw[off : off + length])
+                    if cid is None:
+                        return None
+                    metric_fn = getattr(metric, "vertical_metrics_of", None)
+                    if metric_fn is None:
+                        w1y, v1x, v1y = -1000.0, 500.0, 880.0
+                    else:
+                        w1y, v1x, v1y = metric_fn(cid)
+                    extra = seg.char_spacing
+                    if length == 1 and raw[off : off + length] == b" ":
+                        extra += seg.word_spacing
+                    advance = -(w1y / 1000.0 * size + extra)
+                    glyph_width = (
+                        metric.width_of(cid) / 1000.0 * size * seg.h_scale
+                    )
+                    origin_x = pen_x - v1x / 1000.0 * size * seg.h_scale
+                    origin_y = yy - v1y / 1000.0 * size
                     for _ch in unit_text:
                         _append_checked(
                             geometry,
-                            (col0, col1, yy - advance, yy, key),
+                            (
+                                origin_x,
+                                origin_x + glyph_width,
+                                origin_y + descent,
+                                origin_y + ascent,
+                                key,
+                            ),
                             budget,
                             "text location character geometry",
                         )
                     yy -= advance
             else:
                 x = pen_x
-                for off, length, unit_text in units:
+                for off, length, unit_text, _opaque in units:
                     cid = _cid_of(metric, raw[off : off + length])
                     if cid is None:
                         return None
                     glyph = metric.width_of(cid) / 1000.0 * size
-                    advance = (glyph + seg.char_spacing) * seg.h_scale
+                    extra = seg.char_spacing
+                    if length == 1 and raw[off : off + length] == b" ":
+                        extra += seg.word_spacing
+                    advance = (glyph + extra) * seg.h_scale
                     for _ch in unit_text:
                         _append_checked(
                             geometry,

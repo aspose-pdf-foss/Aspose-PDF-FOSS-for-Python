@@ -338,6 +338,13 @@ Supported:
 - Decode WinAnsi and other simple encodings used by tested fonts.
 - Decode `ToUnicode` CMaps, including `bfchar`, `bfrange`, comments, multiple
   pairs per line, and Unicode/CJK mappings.
+- Resolve bundled Adobe predefined CJK CMaps without `ToUnicode` for the exact
+  `-H`/`-V` names `UniJIS-UTF16`, `UniKS-UTF16`, `UniGB-UTF16`,
+  `UniCNS-UTF16`, `90ms-RKSJ`, `KSCms-UHC`, `GBK-EUC`, and `ETen-B5`.
+  Resolution validates the descendant font's Adobe Japan1, Korea1, GB1, or
+  CNS1 `CIDSystemInfo`, applies `usecmap` vertical overrides, and uses bundled
+  BSD-3-Clause Adobe code → CID and CID → Unicode data without runtime network
+  access.
 - Apply Identity-H / UTF-16BE fallback for Type0/CID text when no `ToUnicode`
   map is available.
 - Use glyph-name fallbacks such as `uniXXXX` and `uXXXX`.
@@ -369,21 +376,30 @@ Supported:
   `q`/`Q`, off-baseline or distant (> 1 em) jumps, and unmeasurable fonts
   start a new run. Each element keeps its own literal/hex style and
   Latin-1/UTF-16BE encoding. Type0 (composite) fonts with a usable
-  `ToUnicode` CMap are edited as well, regardless of their `Encoding` —
-  Identity-H, a named or embedded CMap, or Identity-V — because `ToUnicode`
-  maps the character codes in show strings straight to Unicode: the code
+  `ToUnicode` CMap are edited for Identity-H/V, named, and embedded CMap
+  encodings because `ToUnicode` maps show-string character codes straight to
+  Unicode. Exact bundled names additionally require a compatible descendant
+  `CIDSystemInfo`; a compact code-to-CID view validates only the bounded
+  `ToUnicode` keys without expanding the complete Adobe map. The code
   strings are matched over their ToUnicode-decoded text, matched codes are
   spliced out of the raw operand byte-for-byte (matches must cover whole codes
   — a match ending inside a multi-character ligature code is skipped), and
   replacement text is encoded through the reverse `ToUnicode` mapping (an
-  unmappable replacement raises). Code length is inferred from the `ToUnicode`
-  keys (a uniform one- or two-byte codespace, or greedy longest-match for a
-  mixed codespace). When `ToUnicode` is absent, an **embedded CIDFontType2
-  (TrueType) under an Identity encoding** is still editable: the code → text
-  map is reconstructed by inverting the font's Unicode `cmap` (code = CID = GID
-  via the `CIDToGIDMap`). Case-insensitive matching and `max_count` are supported (a spanning
-  match counts once); lazy page contents are materialized before editing and
-  the rewritten content persists on save.
+  unmappable replacement raises). Code length is inferred from the font's
+  encoding and `ToUnicode` keys (a uniform fixed-length codespace, or
+  codespace-aware/greedy matching for a mixed codespace). Invalid or unmapped
+  codes are opaque match barriers. When
+  `ToUnicode` is absent, the bundled predefined CMaps above are editable
+  through codespace-aware code → CID mappings: the UTF-16 names preserve the
+  Unicode scalar encoded by the source code, while legacy names use the Adobe
+  CID → Unicode collection tables. Replacement uses only unambiguous reverse
+  mappings. An **embedded
+  CIDFontType2 (TrueType) under an Identity encoding** is also editable by
+  reconstructing code → text from the font's Unicode `cmap` and
+  `CIDToGIDMap`. Unresolved Type0 fonts are opaque and are skipped instead of
+  falling back to bytewise Latin-1 edits. Case-insensitive matching and
+  `max_count` are supported (a spanning match counts once); lazy page contents
+  are materialized before editing and the rewritten content persists on save.
 - Draw a redaction overlay bar with `redact_text(..., overlay=True,
   overlay_color=(r, g, b))`. After removing the matched text, a filled
   rectangle (a DeviceRGB triple of 0..1, default black) is drawn over each
@@ -394,13 +410,11 @@ Supported:
   grouping, so bars follow matches across font changes and same-baseline
   positioning gaps, and a match spanning a line-moving `'`/`"` draws one bar
   per baseline. Composite fonts are tracked for Identity-H/V (the code is the
-  CID) and for embedded Encoding CMaps (parsed for a code → CID mapping of any
-  byte length), with the match text from `ToUnicode` or a reconstructed
-  CIDFontType2 cmap; a vertical font (Identity-V or `WMode 1`) draws a stacked
-  column bar. The bar is cosmetic — the text is already removed from the
-  content — so a run whose position cannot be tracked (an unresolved font, or a
-  predefined non-identity CMap with no code → CID) is left unmarked rather than
-  risking a leak.
+  CID), embedded Encoding CMaps, and the bundled predefined CMaps, with match
+  text from `ToUnicode`, Adobe collection data, or a reconstructed CIDFontType2
+  cmap. Vertical fonts apply CID-specific `/W2` position/displacement metrics
+  and `/DW2` defaults. The bar is cosmetic — the text is already removed from
+  the content — so a run whose position cannot be tracked is left unmarked.
 - Add positioned text to pages with Standard-14 Type1 font resources.
 - Mark newly authored text with a structure tag and optional `/ActualText`.
 
@@ -414,16 +428,15 @@ Boundaries:
   gap thresholds in em units) that requires advance widths, so fonts without
   usable metrics keep positioning operators as run boundaries, and phrases
   split across columns, rise changes, or CTM changes are not matched. Type0
-  editing covers any font with a `ToUnicode` CMap (Identity-H, named/embedded
-  CMaps, and Identity-V), plus embedded CIDFontType2 fonts under an Identity
-  encoding *without* `ToUnicode` (reconstructed from the font's Unicode cmap);
-  CIDFontType0 (CID-keyed CFF) and predefined CJK CMaps without `ToUnicode`
-  still fall back to raw Latin-1 byte matching (effectively unmatched), as they
-  need external Adobe CMap tables. The redaction-overlay position tracker
-  handles single-byte simple fonts and composite fonts under Identity-H/V or an
-  embedded Encoding CMap; a predefined non-identity CMap (no code → CID) and
-  unresolved fonts get no bar (the text is still removed), the vertical-font bar
-  uses a uniform one-em advance (per-glyph `/W2` is not applied), and the bar
+  editing covers any font with a `ToUnicode` CMap, embedded CIDFontType2 fonts
+  under an Identity encoding reconstructed from the font program, and the exact
+  bundled predefined names listed above for CIDFontType0 or CIDFontType2.
+  Without `ToUnicode`, other predefined CMap names remain opaque. A bundled
+  name with missing or mismatched `CIDSystemInfo` is also opaque, including
+  when a `ToUnicode` stream is present; other named encodings can still use an
+  exact `ToUnicode` map, but may lack overlay geometry. Unsupported runs are
+  never extracted heuristically or edited bytewise. Rendering glyphs for named
+  predefined CMaps is not part of this slice. The redaction overlay still
   assumes a balanced content stream (identity CTM at its end). Layout
   analysis, font shaping, rich text, and paragraph layout are not implemented
   as public product features.

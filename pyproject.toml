@@ -65,6 +65,9 @@ version = { attr = "aspose_pdf._version.__release_version__" }
 [tool.setuptools.package-data]
 aspose_pdf = ["py.typed"]
 "aspose_pdf.engine.data" = [
+  "cmaps/*.json.zlib",
+  "cmaps/*.txt",
+  "cmaps/README.md",
   "fonts/*.ttf.zlib",
   "fonts/LICENSE-OFL.txt",
   "fonts/LICENSE-DEJAVU.txt",

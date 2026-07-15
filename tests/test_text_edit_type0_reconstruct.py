@@ -13,6 +13,8 @@ Two gaps are covered here:
 
 from __future__ import annotations
 
+import pytest
+
 from aspose_pdf import Document
 from aspose_pdf.engine.cos import (
     PdfArray,
@@ -148,14 +150,29 @@ end
 """
 
 
-def _embedded_cmap_doc() -> Document:
-    content = b"BT /F1 12 Tf 20 40 Td <0102> Tj ET"  # codes 0x01, 0x02
+def _embedded_cmap_doc(
+    *,
+    vertical: bool = False,
+    shown: bytes = b"\x01\x02",
+    encoding_cmap: bytes = _ENC_CMAP,
+    to_unicode: bytes = _TU_1BYTE,
+) -> Document:
+    content = (
+        b"BT /F1 12 Tf 20 60 Td <"
+        + shown.hex().upper().encode("ascii")
+        + b"> Tj ET"
+    )
     pdf = SimplePdf(pages=[(0.0, 0.0, 300.0, 80.0)], page_contents=[content])
     pdf._ensure_cos()
     cos = pdf._cos_doc
 
-    enc_ref = cos.register_object(PdfStream(content=_ENC_CMAP, mapping={}))
-    tu_ref = cos.register_object(PdfStream(content=_TU_1BYTE, mapping={}))
+    encoding_cmap = (
+        encoding_cmap.replace(b"begincmap", b"begincmap\n/WMode 1 def", 1)
+        if vertical
+        else encoding_cmap
+    )
+    enc_ref = cos.register_object(PdfStream(content=encoding_cmap, mapping={}))
+    tu_ref = cos.register_object(PdfStream(content=to_unicode, mapping={}))
     cid_font = PdfDictionary(
         {
             PdfName("Type"): PdfName("Font"),
@@ -167,6 +184,25 @@ def _embedded_cmap_doc() -> Document:
             ),
         }
     )
+    if vertical:
+        cid_font.mapping[PdfName("DW2")] = PdfArray(
+            [PdfNumber(880), PdfNumber(-1000)]
+        )
+        cid_font.mapping[PdfName("W2")] = PdfArray(
+            [
+                PdfNumber(1),
+                PdfArray(
+                    [
+                        PdfNumber(-500),
+                        PdfNumber(250),
+                        PdfNumber(880),
+                        PdfNumber(-700),
+                        PdfNumber(250),
+                        PdfNumber(880),
+                    ]
+                ),
+            ]
+        )
     type0 = PdfDictionary(
         {
             PdfName("Type"): PdfName("Font"),
@@ -187,10 +223,51 @@ def _embedded_cmap_doc() -> Document:
 
 def test_embedded_cmap_overlay_draws_bar() -> None:
     doc = _embedded_cmap_doc()
+    assert doc._engine_pdf.extract_text() == "Hi"
     assert doc.pages[0].redact_text("Hi", overlay=True) == 1
     content = doc.pages[0].content
     assert b"0102" not in content  # one-byte codes removed
     assert b"h f" in content  # bar drawn from the parsed code -> CID widths
+
+
+def test_embedded_cmap_rejects_invalid_to_unicode_source_code() -> None:
+    encoding_cmap = _ENC_CMAP.replace(
+        b"2 begincidchar\n<01> 1\n<02> 2",
+        b"1 begincidchar\n<01> 1",
+    )
+    to_unicode = _TU_1BYTE.replace(
+        b"2 beginbfchar\n<01> <0048>\n<02> <0069>",
+        b"1 beginbfchar\n<02> <0058>",
+    )
+    doc = _embedded_cmap_doc(
+        shown=b"\x02",
+        encoding_cmap=encoding_cmap,
+        to_unicode=to_unicode,
+    )
+    before = doc.pages[0].content
+
+    assert doc._engine_pdf.extract_text() == "�"
+    assert doc.replace_text("X", "Y") == 0
+    assert doc.pages[0].content == before
+
+
+def test_embedded_cmap_program_wmode_uses_vertical_metrics() -> None:
+    from aspose_pdf.engine.text_locate import locate_matches
+
+    doc = _embedded_cmap_doc(vertical=True)
+    pdf = doc._engine_pdf
+    metric = pdf._build_simple_font_metrics(0)("F1")
+    quads = locate_matches(
+        pdf.page_contents[0],
+        "Hi",
+        pdf._build_simple_font_metrics(0),
+    )
+
+    assert metric is not None and metric.vertical
+    assert metric.vertical_metrics_of(1) == (-500.0, 250.0, 880.0)
+    assert len(quads) == 1
+    (x0, y0), (x1, _y1), (_x2, y2), _ = quads[0]
+    assert abs(y2 - y0) > abs(x1 - x0)
 
 
 # --- #2c: Identity-V vertical overlay ---------------------------------------
@@ -257,3 +334,23 @@ def test_identity_v_overlay_is_vertical_column() -> None:
     width = abs(x1 - x0)
     height = abs(y2 - y0)
     assert height > width
+
+
+def test_vertical_tj_positive_adjustment_moves_following_glyph_down() -> None:
+    from aspose_pdf.engine.text_locate import locate_matches
+
+    doc = _identity_v_doc()
+    pdf = doc._engine_pdf
+    metric_for_name = pdf._build_simple_font_metrics(0)
+    baseline = pdf.page_contents[0].replace(
+        b"<00010002> Tj",
+        b"[<0001> 0 <0002>] TJ",
+    )
+    adjusted = baseline.replace(b" 0 <0002>", b" 200 <0002>")
+
+    baseline_quad = locate_matches(baseline, "Hi", metric_for_name)[0]
+    adjusted_quad = locate_matches(adjusted, "Hi", metric_for_name)[0]
+    baseline_y = [point[1] for point in baseline_quad]
+    adjusted_y = [point[1] for point in adjusted_quad]
+
+    assert min(adjusted_y) == pytest.approx(min(baseline_y) - 2.4)

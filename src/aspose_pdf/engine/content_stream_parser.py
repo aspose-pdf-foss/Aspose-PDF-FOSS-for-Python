@@ -8,6 +8,7 @@ PDF text operators required by the SDK.
 from __future__ import annotations
 
 import codecs
+import math
 import re
 from collections import deque
 from decimal import Decimal
@@ -23,6 +24,14 @@ from .pdf_matrix import (
     identity_affine_decimal,
     multiply_pdf_affine,
     pdf_scalar_to_decimal,
+)
+from .predefined_cmaps import (
+    PredefinedCMap,
+    PredefinedCMapEncoding,
+    character_collection,
+    resolve_predefined_cmap,
+    resolve_predefined_cmap_encoding,
+    supported_cmap_names,
 )
 
 
@@ -194,6 +203,106 @@ def load_cid_widths(
     return out
 
 
+def load_cid_vertical_metrics(
+    w2_obj: Any,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> Dict[int, tuple[float, float, float]]:
+    """Parse a CIDFont /W2 array into CID -> ``(w1y, v1x, v1y)``."""
+    active_budget = _resolve_resource_budget(limits, budget)
+    out: Dict[int, tuple[float, float, float]] = {}
+    if not isinstance(w2_obj, list):
+        return out
+    active_budget.check(1, "max_nesting_depth", "CID vertical width nesting")
+    active_budget.check(
+        len(w2_obj),
+        "max_container_items",
+        "CID vertical width array items",
+    )
+
+    def finite_number(value: Any) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        try:
+            result = float(value)
+        except (OverflowError, ValueError):
+            return None
+        if not math.isfinite(result) or abs(result) > 1_000_000_000:
+            return None
+        return result
+
+    i = 0
+    while i < len(w2_obj):
+        first_value = finite_number(w2_obj[i])
+        if (
+            first_value is None
+            or first_value != int(first_value)
+            or not 0 <= first_value <= 0xFFFF
+        ):
+            i += 1
+            continue
+        first = int(first_value)
+        if i + 1 >= len(w2_obj):
+            break
+        second = w2_obj[i + 1]
+        if isinstance(second, list):
+            active_budget.check(2, "max_nesting_depth", "CID vertical width nesting")
+            active_budget.check(
+                len(second),
+                "max_container_items",
+                "CID vertical width subarray items",
+            )
+            triples = len(second) // 3
+            active_budget.check(
+                triples,
+                "max_container_items",
+                "CID vertical width mappings",
+            )
+            for offset in range(triples):
+                values = tuple(
+                    finite_number(second[offset * 3 + component])
+                    for component in range(3)
+                )
+                if all(value is not None for value in values):
+                    _put_bounded(
+                        out,
+                        first + offset,
+                        values,
+                        active_budget,
+                        "CID vertical width mappings",
+                    )
+            i += 2
+            continue
+        if i + 4 >= len(w2_obj):
+            break
+        last_value = finite_number(second)
+        metrics = tuple(finite_number(w2_obj[i + j]) for j in range(2, 5))
+        if (
+            last_value is not None
+            and last_value == int(last_value)
+            and 0 <= last_value <= 0xFFFF
+            and int(last_value) >= first
+            and all(value is not None for value in metrics)
+        ):
+            last = int(last_value)
+            active_budget.check(
+                last - first + 1,
+                "max_container_items",
+                "CID vertical width range entries",
+            )
+            for cid in range(first, last + 1):
+                _put_bounded(
+                    out,
+                    cid,
+                    metrics,
+                    active_budget,
+                    "CID vertical width mappings",
+                )
+        i += 5
+    return out
+
+
 def parse_to_unicode_cmap(
     cmap_bytes: bytes,
     *,
@@ -337,8 +446,8 @@ def parse_encoding_cmap(
 
     Reads ``codespacerange`` (for the code lengths), ``cidrange`` and
     ``cidchar``; the CID destinations are decimal integers. Predefined imports
-    (``usecmap``) are ignored -- an embedded CMap stream that defines its own
-    ranges is handled, a bare reference to a predefined CJK CMap is not.
+    (``usecmap``) are ignored here. Named predefined CMaps are handled by the
+    separate bundled resolver rather than by this embedded-stream parser.
     """
     active_budget = _resolve_resource_budget(limits, budget)
     _check_cmap_input(cmap_bytes, active_budget, "CID Encoding CMap")
@@ -438,6 +547,74 @@ def parse_encoding_cmap(
     return code_to_cid, sorted(lengths)
 
 
+def parse_encoding_cmap_wmode(
+    cmap_bytes: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> int:
+    """Return an embedded Encoding CMap's bounded ``WMode`` value."""
+    active_budget = _resolve_resource_budget(limits, budget)
+    _check_cmap_input(cmap_bytes, active_budget, "CID Encoding CMap")
+    try:
+        text = cmap_bytes.decode("latin-1", errors="ignore")
+    except UnicodeError:
+        return 0
+    for line in _cmap_lines(text, active_budget, "CID Encoding CMap"):
+        match = re.fullmatch(r"/WMode\s+([01])\s+def", line)
+        if match is not None:
+            return int(match.group(1))
+    return 0
+
+
+def parse_encoding_cmap_codespaces(
+    cmap_bytes: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> tuple[tuple[bytes, bytes], ...]:
+    """Return validated codespace ranges from an embedded Encoding CMap."""
+    active_budget = _resolve_resource_budget(limits, budget)
+    _check_cmap_input(cmap_bytes, active_budget, "CID Encoding CMap")
+    try:
+        text = cmap_bytes.decode("latin-1", errors="ignore")
+    except UnicodeError:
+        return ()
+    ranges: list[tuple[bytes, bytes]] = []
+    in_codespace = False
+    for line in _cmap_lines(text, active_budget, "CID Encoding CMap"):
+        if line.endswith("begincodespacerange"):
+            in_codespace = True
+            continue
+        if line.startswith("endcodespacerange"):
+            in_codespace = False
+            continue
+        if not in_codespace:
+            continue
+        for match in re.finditer(
+            r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+            line,
+        ):
+            low_hex, high_hex = match.groups()
+            if (
+                len(low_hex) != len(high_hex)
+                or not low_hex
+                or len(low_hex) % 2
+            ):
+                continue
+            low = bytes.fromhex(low_hex)
+            high = bytes.fromhex(high_hex)
+            if low > high:
+                continue
+            active_budget.check(
+                len(ranges) + 1,
+                "max_container_items",
+                "CID Encoding CMap codespaces",
+            )
+            ranges.append((low, high))
+    return tuple(ranges)
+
+
 class ContentStreamParser:
     """Parse a PDF content stream and extract plain text.
 
@@ -488,6 +665,12 @@ class ContentStreamParser:
         self._current_font: Dict[str, Any] | None = None
         self._font_encoding_map: Dict[int, str] | None = None
         self._to_unicode_map: Dict[bytes, str] | None = None
+        self._predefined_cmap: PredefinedCMap | None = None
+        self._predefined_encoding: PredefinedCMapEncoding | None = None
+        self._embedded_encoding_map: Dict[bytes, int] | None = None
+        self._embedded_encoding_lengths: tuple[int, ...] = ()
+        self._embedded_encoding_codespaces: tuple[tuple[bytes, bytes], ...] = ()
+        self._opaque_composite = False
         self._buffer: List[str] = []
         self._font_size: float = 12.0
         self._last_glyph_width: int = (
@@ -788,6 +971,12 @@ class ContentStreamParser:
         self._current_font = None
         self._font_encoding_map = None
         self._to_unicode_map = None
+        self._predefined_cmap = None
+        self._predefined_encoding = None
+        self._embedded_encoding_map = None
+        self._embedded_encoding_lengths = ()
+        self._embedded_encoding_codespaces = ()
+        self._opaque_composite = False
         self._widths_by_code = None
         self._default_glyph_width = 1000
         self._is_cid_identity = False
@@ -831,10 +1020,7 @@ class ContentStreamParser:
                     self._default_glyph_width = int(dw)
                 w_entry = cid.get("W")
                 self._widths_by_code = self._load_cid_widths(w_entry)
-                # Show strings are UTF-16BE code units for Identity-* and *UTF16* CMaps (common CJK case).
-                if enc_s in ("Identity-H", "Identity-V") or (
-                    enc_s and "UTF16" in enc_s.upper()
-                ):
+                if enc_s in ("Identity-H", "Identity-V"):
                     self._is_cid_identity = True
             return
 
@@ -849,6 +1035,42 @@ class ContentStreamParser:
         if not isinstance(data, bytes) or not data:
             return
         wtable = self._widths_by_code
+        if self._embedded_encoding_map is not None:
+            for _offset, _length, cid in self._embedded_encoding_units(data):
+                self._last_glyph_width = (
+                    wtable.get(cid, self._default_glyph_width)
+                    if wtable is not None and cid is not None
+                    else self._default_glyph_width
+                )
+            return
+        if self._predefined_encoding is not None:
+            for _offset, _length, cid in self._predefined_encoding.decode_units(
+                data,
+                budget=self._budget,
+            ):
+                if cid is None:
+                    self._last_glyph_width = self._default_glyph_width
+                else:
+                    self._last_glyph_width = (
+                        wtable.get(cid, self._default_glyph_width)
+                        if wtable
+                        else self._default_glyph_width
+                    )
+            return
+        if self._predefined_cmap is not None:
+            for _offset, _length, cid, _text in self._predefined_cmap.decode_units(
+                data,
+                budget=self._budget,
+            ):
+                if cid is None:
+                    self._last_glyph_width = self._default_glyph_width
+                else:
+                    self._last_glyph_width = (
+                        wtable.get(cid, self._default_glyph_width)
+                        if wtable
+                        else self._default_glyph_width
+                    )
+            return
         if self._is_cid_identity:
             i = 0
             while i + 1 < len(data):
@@ -876,11 +1098,90 @@ class ContentStreamParser:
         else:
             self._last_glyph_width = self._default_glyph_width
 
+    def _embedded_encoding_units(
+        self,
+        data: bytes,
+    ) -> list[tuple[int, int, int | None]]:
+        """Tokenize bytes with the current embedded Encoding CMap."""
+        mapping = self._embedded_encoding_map
+        if mapping is None:
+            return []
+        spaces_by_length: dict[int, list[tuple[int, int]]] = {}
+        for low, high in self._embedded_encoding_codespaces:
+            spaces_by_length.setdefault(len(low), []).append(
+                (int.from_bytes(low, "big"), int.from_bytes(high, "big"))
+            )
+        units: list[tuple[int, int, int | None]] = []
+        offset = 0
+        if spaces_by_length:
+            lengths = sorted(spaces_by_length)
+            while offset < len(data):
+                matched: bytes | None = None
+                for length in lengths:
+                    if offset + length > len(data):
+                        continue
+                    candidate = data[offset : offset + length]
+                    value = int.from_bytes(candidate, "big")
+                    if any(
+                        low <= value <= high
+                        for low, high in spaces_by_length[length]
+                    ):
+                        matched = candidate
+                        break
+                take = len(matched) if matched is not None else 1
+                cid = mapping.get(matched) if matched is not None else None
+                self._budget.check(
+                    len(units) + 1,
+                    "max_container_items",
+                    "embedded Encoding CMap decoded units",
+                )
+                units.append((offset, take, cid))
+                offset += take
+            return units
+
+        lengths = sorted(self._embedded_encoding_lengths, reverse=True)
+        minimum_length = lengths[-1] if lengths else 1
+        while offset < len(data):
+            matched: bytes | None = None
+            for length in lengths:
+                if offset + length > len(data):
+                    continue
+                candidate = data[offset : offset + length]
+                if candidate in mapping:
+                    matched = candidate
+                    break
+            take = (
+                len(matched)
+                if matched is not None
+                else min(minimum_length, len(data) - offset)
+            )
+            self._budget.check(
+                len(units) + 1,
+                "max_container_items",
+                "embedded Encoding CMap decoded units",
+            )
+            units.append(
+                (offset, take, mapping.get(matched) if matched is not None else None)
+            )
+            offset += take
+        return units
+
     def _prepare_font_maps(self) -> None:
         if not self._current_font:
             return
 
+        self._font_encoding_map = None
+        self._to_unicode_map = None
+        self._predefined_cmap = None
+        self._predefined_encoding = None
+        self._embedded_encoding_map = None
+        self._embedded_encoding_lengths = ()
+        self._embedded_encoding_codespaces = ()
+        self._opaque_composite = False
         self._apply_metrics_from_font()
+
+        subtype = self._current_font.get("Subtype")
+        encoding = self._current_font.get("Encoding")
 
         # 1. ToUnicode CMap (High Priority)
         to_unicode = self._current_font.get("ToUnicode")
@@ -899,9 +1200,70 @@ class ContentStreamParser:
 
             if cmap_bytes:
                 self._to_unicode_map = self._parse_to_unicode(cmap_bytes)
-                if self._to_unicode_map:
+                if self._to_unicode_map and subtype != "Type0":
                     self._font_encoding_map = None
                     return
+
+        if subtype == "Type0":
+            if isinstance(encoding, str):
+                descendants = self._current_font.get("DescendantFonts")
+                cid_font = (
+                    descendants[0]
+                    if isinstance(descendants, list)
+                    and descendants
+                    and isinstance(descendants[0], dict)
+                    else None
+                )
+                collection = character_collection(
+                    cid_font.get("CIDSystemInfo") if cid_font else None
+                )
+                if self._to_unicode_map:
+                    self._predefined_encoding = resolve_predefined_cmap_encoding(
+                        encoding,
+                        collection,
+                        budget=self._budget,
+                    )
+                    if (
+                        self._predefined_encoding is None
+                        and encoding.lstrip("/") in supported_cmap_names()
+                    ):
+                        self._to_unicode_map = None
+                        self._opaque_composite = True
+                        return
+                else:
+                    self._predefined_cmap = resolve_predefined_cmap(
+                        encoding,
+                        collection,
+                        budget=self._budget,
+                    )
+            elif isinstance(encoding, dict):
+                encoding_content = encoding.get("content")
+                if isinstance(encoding_content, (bytes, bytearray)):
+                    cmap, lengths = parse_encoding_cmap(
+                        bytes(encoding_content),
+                        budget=self._budget,
+                    )
+                    if cmap:
+                        self._embedded_encoding_map = cmap
+                        self._embedded_encoding_lengths = tuple(lengths)
+                        self._embedded_encoding_codespaces = (
+                            parse_encoding_cmap_codespaces(
+                                bytes(encoding_content),
+                                budget=self._budget,
+                            )
+                        )
+                if self._to_unicode_map and self._embedded_encoding_map is None:
+                    self._to_unicode_map = None
+                    self._opaque_composite = True
+                    return
+            if self._to_unicode_map:
+                if self._predefined_encoding is None and not self._is_cid_identity:
+                    self._opaque_composite = True
+                return
+            if self._predefined_cmap is not None or self._is_cid_identity:
+                return
+            self._opaque_composite = True
+            return
 
         # 2. Encoding Registry (Simple / Base Fonts)
         enc = self._current_font.get("Encoding")
@@ -1113,16 +1475,49 @@ class ContentStreamParser:
             return ""
 
         if self._to_unicode_map:
-            out = []
+            if self._embedded_encoding_map is not None:
+                return "".join(
+                    self._to_unicode_map.get(
+                        data[offset : offset + length],
+                        "\ufffd",
+                    )
+                    if cid is not None
+                    else "\ufffd"
+                    for offset, length, cid in self._embedded_encoding_units(data)
+                )
+            if self._predefined_encoding is not None:
+                return "".join(
+                    self._to_unicode_map.get(
+                        data[offset : offset + length],
+                        "\ufffd",
+                    )
+                    if cid is not None
+                    else "\ufffd"
+                    for offset, length, cid in self._predefined_encoding.decode_units(
+                        data,
+                        budget=self._budget,
+                    )
+                )
+            if self._is_cid_identity:
+                return "".join(
+                    self._to_unicode_map.get(data[i : i + 2], "\ufffd")
+                    if len(data[i : i + 2]) == 2
+                    else "\ufffd"
+                    for i in range(0, len(data), 2)
+                )
+
+            out: List[str] = []
             i = 0
-            max_key_len = 4  # Optimized guess
-            if self._to_unicode_map:
-                max_key_len = max(len(k) for k in self._to_unicode_map)
+            lengths = sorted(
+                {len(key) for key in self._to_unicode_map if key},
+                reverse=True,
+            )
+            minimum_length = lengths[-1] if lengths else 1
 
             while i < len(data):
                 matched = None
                 # Greedy match longest key
-                for key_len in range(max_key_len, 0, -1):
+                for key_len in lengths:
                     if i + key_len > len(data):
                         continue
                     chunk = data[i : i + key_len]
@@ -1131,19 +1526,18 @@ class ContentStreamParser:
                         i += key_len
                         break
                 if matched is None:
-                    if self._is_cid_identity and i + 1 < len(data):
-                        code = int.from_bytes(data[i : i + 2], "big")
-                        try:
-                            out.append(chr(code))
-                        except ValueError:
-                            out.append("\ufffd")
-                        i += 2
-                    else:
-                        out.append(bytes([data[i]]).decode("latin1", errors="replace"))
-                        i += 1
+                    out.append("\ufffd")
+                    i += min(minimum_length, len(data) - i)
                 else:
                     out.append(matched)
             return "".join(out)
+
+        if self._predefined_cmap is not None:
+            return "".join(
+                text if text is not None else "\ufffd"
+                for _offset, _length, _cid, text
+                in self._predefined_cmap.decode_units(data, budget=self._budget)
+            )
 
         if self._is_cid_identity and not self._to_unicode_map:
             out: List[str] = []
@@ -1170,6 +1564,9 @@ class ContentStreamParser:
                 else:
                     parts.append(bytes([b]).decode("latin1", errors="replace"))
             return "".join(parts)
+
+        if self._opaque_composite:
+            return "\ufffd" if data else ""
 
         return data.decode("utf-8", errors="ignore")
 

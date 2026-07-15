@@ -69,7 +69,7 @@ endbfrange
 
 
 def test_type0_unijis_utf16_h_without_to_unicode():
-    """Encoding name *UTF16* uses 2-byte big-endian code units like Identity-H."""
+    """A compatible predefined UTF-16 CMap resolves without ToUnicode."""
     resources = {
         "Font": {
             "F1": {
@@ -78,6 +78,11 @@ def test_type0_unijis_utf16_h_without_to_unicode():
                 "DescendantFonts": [
                     {
                         "Subtype": "CIDFontType2",
+                        "CIDSystemInfo": {
+                            "Registry": b"Adobe",
+                            "Ordering": b"Japan1",
+                            "Supplement": 7,
+                        },
                         "DW": 1000,
                     }
                 ],

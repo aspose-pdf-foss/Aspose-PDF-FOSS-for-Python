@@ -4,8 +4,9 @@ Matching a composite font's show strings only needs the font's ToUnicode CMap,
 which maps character codes straight to Unicode -- so editing works for named or
 embedded CMaps, one-byte codespaces and Identity-V too, not just Identity-H.
 Redaction-overlay geometry needs code -> CID: Identity-H/V and embedded Encoding
-CMaps draw a bar, but a *predefined* non-identity CMap (no code -> CID without
-external Adobe tables) still removes the text and draws no bar.
+CMaps draw a bar, as do the exact bundled predefined CMaps with compatible
+CIDSystemInfo. A non-bundled named CMap can still use ToUnicode for exact text
+editing, but without code-to-CID data it draws no overlay bar.
 """
 
 from __future__ import annotations
@@ -137,9 +138,9 @@ def test_redact_identity_v_removes_text() -> None:
     assert b"00010002" not in content
 
 
-def test_predefined_non_identity_edit_draws_no_overlay_bar() -> None:
-    # A predefined CMap has no code -> CID without Adobe tables: text is removed
-    # but no bar is drawn (cosmetic gap, never a leak).
+def test_named_cmap_without_cidsysteminfo_draws_no_overlay_bar() -> None:
+    # The missing CIDSystemInfo makes the named CMap unsafe for geometry, while
+    # ToUnicode still permits exact text removal.
     doc = _type0_doc("UniGB-UCS2-H")
     assert doc.pages[0].redact_text("Hi", overlay=True) == 1
     content = doc.pages[0].content

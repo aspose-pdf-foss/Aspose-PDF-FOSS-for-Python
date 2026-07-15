@@ -1363,7 +1363,7 @@ class SimplePdf:
                         _depth=depth,
                         _active=active,
                         _item_count=item_count,
-                        _include_stream_content=key_name == "ToUnicode",
+                        _include_stream_content=key_name in {"Encoding", "ToUnicode"},
                     )
                 return result
             finally:
@@ -3874,6 +3874,8 @@ class SimplePdf:
             indices = (page_index,)
 
         total = 0
+        metric_cache: Dict[int, Any] = {}
+        codec_cache: Dict[int, Any] = {}
         for index in indices:
             remaining = 0 if max_count == 0 else max_count - total
             if max_count and remaining <= 0:
@@ -3881,14 +3883,23 @@ class SimplePdf:
             content = (
                 self.page_contents[index] if index < len(self.page_contents) else b""
             )
+            metric_for_name = self._build_simple_font_metrics(
+                index,
+                shared_cache=metric_cache,
+            )
+            codec_for_name = self._build_text_codecs(
+                index,
+                metric_for_name=metric_for_name,
+                shared_cache=codec_cache,
+            )
             updated, count = replace_text_in_content(
                 content,
                 search,
                 replacement,
                 case_sensitive=case_sensitive,
                 max_count=remaining,
-                codec_for_name=self._build_text_codecs(index),
-                metric_for_name=self._build_simple_font_metrics(index),
+                codec_for_name=codec_for_name,
+                metric_for_name=metric_for_name,
                 limits=self._load_limits,
                 budget=self._load_budget,
             )
@@ -3916,12 +3927,10 @@ class SimplePdf:
         DeviceRGB triple of 0..1, default black) is drawn over each removed
         run's location -- the classic redaction bar. Simple single-byte fonts
         and composite (Type0) fonts are tracked: Identity-H/V (the code is the
-        CID) and embedded Encoding CMaps (parsed for code -> CID), with the
-        match text from ToUnicode or a reconstructed CIDFontType2 cmap; vertical
-        fonts draw a stacked column bar. The bar is cosmetic: the text is
-        already removed from the content stream, so a run whose position cannot
-        be tracked (an unresolved font, or a predefined non-identity CMap with
-        no code -> CID) is simply left unmarked rather than leaking text.
+        CID), embedded Encoding CMaps, and bundled Adobe predefined CMaps, with
+        match text from ToUnicode, Adobe collection data, or a reconstructed
+        CIDFontType2 cmap. Vertical fonts use /W2 and /DW2. The bar is cosmetic:
+        text is already removed, so an unresolved run is left unmarked.
         """
         self._ensure_not_disposed()
         if not isinstance(search, str):
@@ -3940,12 +3949,23 @@ class SimplePdf:
             indices = (page_index,)
 
         total = 0
+        metric_cache: Dict[int, Any] = {}
+        codec_cache: Dict[int, Any] = {}
         for index in indices:
             remaining = 0 if max_count == 0 else max_count - total
             if max_count and remaining <= 0:
                 break
             content = (
                 self.page_contents[index] if index < len(self.page_contents) else b""
+            )
+            metric_for_name = self._build_simple_font_metrics(
+                index,
+                shared_cache=metric_cache,
+            )
+            codec_for_name = self._build_text_codecs(
+                index,
+                metric_for_name=metric_for_name,
+                shared_cache=codec_cache,
             )
             quads = []
             if overlay:
@@ -3954,7 +3974,7 @@ class SimplePdf:
                 quads = locate_matches(
                     content,
                     search,
-                    self._build_simple_font_metrics(index),
+                    metric_for_name,
                     case_sensitive=case_sensitive,
                     max_count=remaining,
                     limits=self._load_limits,
@@ -3965,8 +3985,8 @@ class SimplePdf:
                 search,
                 case_sensitive=case_sensitive,
                 max_count=remaining,
-                codec_for_name=self._build_text_codecs(index),
-                metric_for_name=self._build_simple_font_metrics(index),
+                codec_for_name=codec_for_name,
+                metric_for_name=metric_for_name,
                 limits=self._load_limits,
                 budget=self._load_budget,
             )
@@ -4011,7 +4031,12 @@ class SimplePdf:
             return float(obj)
         return None
 
-    def _build_simple_font_metrics(self, page_index: int):
+    def _build_simple_font_metrics(
+        self,
+        page_index: int,
+        *,
+        shared_cache: Optional[Dict[int, Any]] = None,
+    ):
         """Return a ``name -> SimpleFontMetric|CompositeFontMetric|None`` resolver."""
         from .cos import PdfDictionary, PdfName
 
@@ -4030,7 +4055,13 @@ class SimplePdf:
             if isinstance(fonts_cos, PdfDictionary):
                 font_dict = self._resolve(fonts_cos.mapping.get(PdfName(name)))
                 if isinstance(font_dict, PdfDictionary):
-                    metric = self._simple_font_metric(font_dict)
+                    font_key = id(font_dict)
+                    if shared_cache is not None and font_key in shared_cache:
+                        metric = shared_cache[font_key]
+                    else:
+                        metric = self._simple_font_metric(font_dict)
+                        if shared_cache is not None:
+                            shared_cache[font_key] = metric
             cache[name] = metric
             return metric
 
@@ -4072,19 +4103,24 @@ class SimplePdf:
         """Build a ``CompositeFontMetric`` for a Type0 font, or None.
 
         Handles Identity-H/V (the code is the two-byte CID) and embedded
-        Encoding CMap streams (parsed for a code -> CID map of any byte length).
-        The match text comes from ToUnicode or, for embedded CIDFontType2
-        without ToUnicode, a reconstructed cmap. A predefined non-identity CJK
-        CMap has no code -> CID mapping without external Adobe tables, so it
-        stays untracked and the overlay degrades safely.
+        Encoding CMap streams (parsed for a code -> CID map of any byte length),
+        plus the exact bundled Adobe predefined CJK CMaps. Match text comes
+        from ToUnicode, the predefined collection mapping, or an embedded
+        CIDFontType2 reconstruction. Vertical metrics honor /W2 and /DW2.
         """
         from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
-        from .content_stream_parser import load_cid_widths, parse_encoding_cmap
+        from .content_stream_parser import (
+            load_cid_vertical_metrics,
+            load_cid_widths,
+            parse_encoding_cmap,
+            parse_encoding_cmap_codespaces,
+            parse_encoding_cmap_wmode,
+        )
+        from .text_edit import CidTextCodec, predefined_cmap_codec
         from .text_locate import CompositeFontMetric
 
-        code_to_text = self._composite_code_to_text(font_dict)
-        if not code_to_text:
-            return None
+        code_to_text = self._font_to_unicode_map(font_dict)
+        has_to_unicode = bool(code_to_text)
         descendants = self._resolve(font_dict.mapping.get(PdfName("DescendantFonts")))
         if not isinstance(descendants, PdfArray) or not descendants.items:
             return None
@@ -4097,8 +4133,14 @@ class SimplePdf:
         enc_name = self._get_name(encoding_ref)
         code_to_cid = None
         vertical = False
+        predefined = None
+        valid_codes = None
+        codespaces = None
         if enc_name in ("Identity-H", "Identity-V", "Identity"):
             vertical = enc_name == "Identity-V"  # code stays the two-byte CID
+            codespaces = ((b"\x00\x00", b"\xff\xff"),)
+            if not code_to_text:
+                code_to_text = self._reconstruct_composite_code_to_text(font_dict)
         elif isinstance(encoding_obj, PdfStream):
             try:
                 data = self._decode_cos_stream(encoding_obj, encoding_ref)
@@ -4112,13 +4154,53 @@ class SimplePdf:
             )
             if not cmap:
                 return None
-            wmode = self._pdf_number(encoding_obj.mapping.get(PdfName("WMode")))
-            vertical = wmode is not None and int(wmode) == 1
+            valid_codes = cmap
+            codespaces = parse_encoding_cmap_codespaces(
+                data,
+                budget=self._load_budget,
+            )
+            stream_wmode = self._pdf_number(
+                encoding_obj.mapping.get(PdfName("WMode"))
+            )
+            vertical = (
+                stream_wmode == 1
+                if stream_wmode is not None
+                else parse_encoding_cmap_wmode(data, budget=self._load_budget) == 1
+            )
 
             def code_to_cid(code: bytes, _m=cmap) -> Optional[int]:
                 return _m.get(code)
         else:
-            return None  # predefined non-identity CMap: no code -> CID
+            if has_to_unicode:
+                encoding = self._predefined_cmap_encoding_for_font(
+                    font_dict,
+                    cid_font,
+                )
+                if encoding is None:
+                    return None
+                vertical = encoding.vertical
+                codespaces = encoding.codespaces
+                valid_codes = frozenset(
+                    code for code in code_to_text if encoding.cid_for(code) is not None
+                )
+                code_to_cid = encoding.cid_for
+            else:
+                predefined = self._predefined_cmap_for_font(font_dict, cid_font)
+                if predefined is None:
+                    return None
+                vertical = predefined.vertical
+                valid_codes = predefined.code_to_cid
+                codespaces = predefined.codespaces
+                code_to_text = predefined.code_to_text
+
+                def code_to_cid(
+                    code: bytes,
+                    _m=predefined.code_to_cid,
+                ) -> Optional[int]:
+                    return _m.get(code)
+
+        if not code_to_text:
+            return None
 
         default_width = self._pdf_number(cid_font.mapping.get(PdfName("DW")))
         if default_width is None:
@@ -4138,25 +4220,155 @@ class SimplePdf:
         def width_of(cid: int, _w=widths, _dw=default_width) -> float:
             return float(_w.get(cid, _dw))
 
+        vertical_metrics_of = None
+        if vertical:
+            default_v1y = 880.0
+            default_w1y = -1000.0
+
+            def finite_vertical_metric(value: Any) -> Optional[float]:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    return None
+                try:
+                    result = float(value)
+                except (OverflowError, ValueError):
+                    return None
+                if not math.isfinite(result) or abs(result) > 1_000_000_000:
+                    return None
+                return result
+
+            dw2 = self._convert_cos_to_dict(
+                cid_font.mapping.get(PdfName("DW2"))
+            )
+            if isinstance(dw2, list) and len(dw2) >= 2:
+                v1y = finite_vertical_metric(dw2[0])
+                w1y = finite_vertical_metric(dw2[1])
+                if v1y is not None:
+                    default_v1y = v1y
+                if w1y is not None:
+                    default_w1y = w1y
+            vertical_metrics = load_cid_vertical_metrics(
+                self._convert_cos_to_dict(cid_font.mapping.get(PdfName("W2"))),
+                budget=self._load_budget,
+            )
+
+            def vertical_metrics_of(
+                cid: int,
+                _metrics=vertical_metrics,
+                _w1y=default_w1y,
+                _v1y=default_v1y,
+                _width_of=width_of,
+            ) -> tuple[float, float, float]:
+                return _metrics.get(cid, (_w1y, _width_of(cid) / 2.0, _v1y))
+
+        if predefined is not None:
+            codec = predefined_cmap_codec(
+                predefined,
+                budget=self._load_budget,
+            )
+        else:
+            codec = CidTextCodec(
+                code_to_text,
+                codespaces=codespaces,
+                valid_codes=valid_codes,
+                opaque_unknown=True,
+                budget=self._load_budget,
+            )
         return CompositeFontMetric(
             width_of=width_of,
             code_to_text=code_to_text,
             code_to_cid=code_to_cid,
             vertical=vertical,
+            vertical_metrics_of=vertical_metrics_of,
+            codec=codec,
             ascent=ascent,
             descent=descent,
         )
 
-    def _composite_code_to_text(self, font_dict: Any) -> Optional[Dict[bytes, str]]:
+    def _predefined_cmap_for_font(self, font_dict: Any, cid_font: Any = None):
+        """Resolve a named CMap against the descendant font's CIDSystemInfo."""
+        from .cos import PdfArray, PdfDictionary, PdfName
+        from .predefined_cmaps import character_collection, resolve_predefined_cmap
+
+        if not isinstance(cid_font, PdfDictionary):
+            descendants = self._resolve(
+                font_dict.mapping.get(PdfName("DescendantFonts"))
+            )
+            if not isinstance(descendants, PdfArray) or not descendants.items:
+                return None
+            cid_font = self._resolve(descendants.items[0])
+        if not isinstance(cid_font, PdfDictionary):
+            return None
+        collection = character_collection(
+            self._convert_cos_to_dict(
+                cid_font.mapping.get(PdfName("CIDSystemInfo"))
+            )
+        )
+        return resolve_predefined_cmap(
+            self._get_name(font_dict.mapping.get(PdfName("Encoding"))),
+            collection,
+            budget=self._load_budget,
+        )
+
+    def _predefined_cmap_encoding_for_font(
+        self,
+        font_dict: Any,
+        cid_font: Any = None,
+    ):
+        """Resolve compact code-to-CID data for a named CMap."""
+        from .cos import PdfArray, PdfDictionary, PdfName
+        from .predefined_cmaps import (
+            character_collection,
+            resolve_predefined_cmap_encoding,
+        )
+
+        if not isinstance(cid_font, PdfDictionary):
+            descendants = self._resolve(
+                font_dict.mapping.get(PdfName("DescendantFonts"))
+            )
+            if not isinstance(descendants, PdfArray) or not descendants.items:
+                return None
+            cid_font = self._resolve(descendants.items[0])
+        if not isinstance(cid_font, PdfDictionary):
+            return None
+        collection = character_collection(
+            self._convert_cos_to_dict(
+                cid_font.mapping.get(PdfName("CIDSystemInfo"))
+            )
+        )
+        return resolve_predefined_cmap_encoding(
+            self._get_name(font_dict.mapping.get(PdfName("Encoding"))),
+            collection,
+            budget=self._load_budget,
+        )
+
+    def _composite_code_to_text(self, font_dict: Any):
         """Return a Type0 font's code-bytes -> text map, or None.
 
         Prefers the ToUnicode CMap (encoding-agnostic); falls back to
-        reconstructing the map from an embedded CIDFontType2 program when
-        ToUnicode is absent.
+        a bundled Adobe predefined CMap, then reconstructing the map from an
+        embedded CIDFontType2 program when ToUnicode is absent.
         """
         to_unicode = self._font_to_unicode_map(font_dict)
         if to_unicode:
+            from .cos import PdfName
+            from .predefined_cmaps import supported_cmap_names
+
+            encoding_name = self._get_name(
+                font_dict.mapping.get(PdfName("Encoding"))
+            )
+            if encoding_name in supported_cmap_names():
+                encoding = self._predefined_cmap_encoding_for_font(font_dict)
+                if encoding is None:
+                    return None
+                return {
+                    code: text
+                    for code, text in to_unicode.items()
+                    if encoding.cid_for(code) is not None
+                }
             return to_unicode
+        predefined = self._predefined_cmap_for_font(font_dict)
+        if predefined is not None:
+            return predefined.code_to_text
         return self._reconstruct_composite_code_to_text(font_dict)
 
     def _reconstruct_composite_code_to_text(
@@ -4167,9 +4379,8 @@ class SimplePdf:
         Only Identity encodings with an embedded ``/FontFile2`` are handled: the
         font's Unicode ``cmap`` is inverted to ``gid -> codepoint`` and re-keyed
         by CID (via the ``CIDToGIDMap``), giving the two-byte code -> text map
-        Identity-H/V show strings use. CIDFontType0 (CID-keyed CFF) and
-        predefined CJK CMaps need external Adobe CMap tables and stay
-        unsupported.
+        Identity-H/V show strings use. Predefined CMaps are resolved separately
+        by :meth:`_composite_code_to_text`; this helper remains Identity-only.
         """
         from .cos import PdfArray, PdfDictionary, PdfName
         from .font_subset import read_unicode_cmap
@@ -4287,18 +4498,30 @@ class SimplePdf:
         )
         return mapping or None
 
-    def _build_text_codecs(self, page_index: int):
+    def _build_text_codecs(
+        self,
+        page_index: int,
+        *,
+        metric_for_name=None,
+        shared_cache: Optional[Dict[int, Any]] = None,
+    ):
         """Return a ``name -> CidTextCodec|None`` resolver for a page.
 
         A codec is produced for any Type0 font whose code -> text map can be
-        built -- from a usable ToUnicode CMap (encoding-agnostic: named or
-        embedded CMaps and Identity-V work, not just Identity-H) or, when
-        ToUnicode is absent, reconstructed from an embedded CIDFontType2 program
-        (see :meth:`_composite_code_to_text`). Every other font resolves to
-        ``None`` and keeps the default Latin-1/UTF-16BE operand matching.
+        built from ToUnicode, a bundled predefined CMap, or an embedded
+        CIDFontType2 program. Every unresolved Type0 font receives an opaque
+        codec so editing can never fall back to bytewise Latin-1 matching.
         """
-        from .cos import PdfDictionary, PdfName
-        from .text_edit import CidTextCodec
+        from .content_stream_parser import (
+            parse_encoding_cmap,
+            parse_encoding_cmap_codespaces,
+        )
+        from .cos import PdfDictionary, PdfName, PdfStream
+        from .text_edit import (
+            CidTextCodec,
+            opaque_composite_codec,
+            predefined_cmap_codec,
+        )
 
         page_dict = self._get_page_dict(page_index)
         fonts_cos = None
@@ -4319,9 +4542,93 @@ class SimplePdf:
                     and self._get_name(font_dict.mapping.get(PdfName("Subtype")))
                     == "Type0"
                 ):
-                    code_to_text = self._composite_code_to_text(font_dict)
+                    font_key = id(font_dict)
+                    if shared_cache is not None and font_key in shared_cache:
+                        codec = shared_cache[font_key]
+                        cache[name] = codec
+                        return codec
+                    metric = metric_for_name(name) if metric_for_name else None
+                    metric_codec = getattr(metric, "codec", None)
+                    if metric_codec is not None:
+                        codec = metric_codec
+                        if shared_cache is not None:
+                            shared_cache[font_key] = codec
+                        cache[name] = codec
+                        return codec
+
+                    code_to_text = self._font_to_unicode_map(font_dict)
+                    codespaces = None
+                    valid_codes = None
+                    predefined = None
                     if code_to_text:
-                        codec = CidTextCodec(code_to_text)
+                        encoding_ref = font_dict.mapping.get(PdfName("Encoding"))
+                        enc_name = self._get_name(encoding_ref)
+                        encoding_obj = self._resolve(encoding_ref)
+                        if enc_name in ("Identity-H", "Identity-V", "Identity"):
+                            codespaces = ((b"\x00\x00", b"\xff\xff"),)
+                        elif isinstance(encoding_obj, PdfStream):
+                            try:
+                                data = self._decode_cos_stream(
+                                    encoding_obj,
+                                    encoding_ref,
+                                )
+                            except PdfResourceLimitException:
+                                raise
+                            except PDF_OPERATION_ERRORS:
+                                data = b""
+                            if data:
+                                valid_codes, _lengths = parse_encoding_cmap(
+                                    data,
+                                    budget=self._load_budget,
+                                )
+                                codespaces = parse_encoding_cmap_codespaces(
+                                    data,
+                                    budget=self._load_budget,
+                                )
+                        else:
+                            encoding = self._predefined_cmap_encoding_for_font(
+                                font_dict
+                            )
+                            if encoding is not None:
+                                codespaces = encoding.codespaces
+                                valid_codes = frozenset(
+                                    code
+                                    for code in code_to_text
+                                    if encoding.cid_for(code) is not None
+                                )
+                            else:
+                                from .predefined_cmaps import supported_cmap_names
+
+                                if enc_name in supported_cmap_names():
+                                    code_to_text = None
+                    else:
+                        predefined = self._predefined_cmap_for_font(font_dict)
+                        if predefined is not None:
+                            code_to_text = predefined.code_to_text
+                            codespaces = predefined.codespaces
+                            valid_codes = predefined.code_to_cid
+                    if not code_to_text:
+                        code_to_text = self._reconstruct_composite_code_to_text(
+                            font_dict
+                        )
+                    if code_to_text:
+                        if predefined is not None:
+                            codec = predefined_cmap_codec(
+                                predefined,
+                                budget=self._load_budget,
+                            )
+                        else:
+                            codec = CidTextCodec(
+                                code_to_text,
+                                codespaces=codespaces,
+                                valid_codes=valid_codes,
+                                opaque_unknown=True,
+                                budget=self._load_budget,
+                            )
+                    else:
+                        codec = opaque_composite_codec()
+                    if shared_cache is not None:
+                        shared_cache[font_key] = codec
             cache[name] = codec
             return codec
 

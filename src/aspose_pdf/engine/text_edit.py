@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Iterable, Mapping, Optional
 
 from aspose_pdf.exceptions import PdfValidationException
@@ -104,49 +105,141 @@ class CidTextCodec:
     (for replacement text) uses the reverse mapping and fails softly when a
     character has no known code.
 
-    Code length is inferred from the ToUnicode keys: a codespace with a single
-    code length (the common case -- Identity-H's two-byte codes, or a one-byte
-    encoding) tokenizes by fixed-size chunks; a mixed-length codespace falls
-    back to greedy longest-code matching. Either way the units partition the
-    operand exactly, so untouched bytes are always re-emitted verbatim.
+    Code length comes from the font's codespaces, valid codes, and text-map
+    keys. A single fixed length tokenizes by chunks; a mixed-length encoding
+    uses codespace-aware or greedy longest-code matching. Either way the units
+    partition the operand exactly, so untouched bytes are re-emitted verbatim.
     """
 
-    def __init__(self, code_to_text: Mapping[bytes, str]) -> None:
-        self.code_to_text = {
-            code: text for code, text in code_to_text.items() if code
-        }
+    def __init__(
+        self,
+        code_to_text: Mapping[bytes, str],
+        *,
+        codespaces: Iterable[tuple[bytes, bytes]] | None = None,
+        valid_codes: Mapping[bytes, Any] | Iterable[bytes] | None = None,
+        opaque_unknown: bool = False,
+        budget: _LoadBudget | None = None,
+    ) -> None:
+        if budget is not None:
+            budget.check(
+                len(code_to_text),
+                "max_container_items",
+                "text edit CID codec mappings",
+            )
+        self.code_to_text = (
+            code_to_text
+            if b"" not in code_to_text
+            else {code: text for code, text in code_to_text.items() if code}
+        )
+        parsed_spaces: list[tuple[bytes, bytes]] = []
+        for low, high in codespaces or ():
+            if low and len(low) == len(high) and low <= high:
+                parsed_spaces.append((bytes(low), bytes(high)))
+        self._codespaces = tuple(parsed_spaces)
+        if valid_codes is None or isinstance(valid_codes, Mapping):
+            self._valid_codes = valid_codes
+        else:
+            self._valid_codes = frozenset(valid_codes)
+        self._opaque_unknown = bool(opaque_unknown)
         lengths = {len(code) for code in self.code_to_text}
+        lengths.update(len(low) for low, _high in self._codespaces)
+        if self._valid_codes is not None:
+            lengths.update(len(code) for code in self._valid_codes)
         self._code_lengths = sorted(lengths, reverse=True) or [2]
         self._min_len = self._code_lengths[-1]
         self._reverse: dict[str, bytes] = {}
+        ambiguous: set[str] = set()
         self._max_reverse_len = 1
         for code, text in self.code_to_text.items():
-            if text and text not in self._reverse:
-                self._reverse[text] = code
-                self._max_reverse_len = max(self._max_reverse_len, len(text))
+            if self._codespaces and not any(
+                len(code) == len(low) and low <= code <= high
+                for low, high in self._codespaces
+            ):
+                continue
+            if self._valid_codes is not None and code not in self._valid_codes:
+                continue
+            if not text or text in ambiguous:
+                continue
+            previous = self._reverse.get(text)
+            if previous is not None and previous != code:
+                del self._reverse[text]
+                ambiguous.add(text)
+                continue
+            self._reverse[text] = code
+            self._max_reverse_len = max(self._max_reverse_len, len(text))
+        if budget is not None:
+            budget.check(
+                len(self._reverse),
+                "max_container_items",
+                "text edit CID reverse mappings",
+            )
 
     def decode_units(
         self,
         raw: bytes,
         *,
         budget: _LoadBudget | None = None,
-    ) -> list[tuple[int, int, str]]:
+    ) -> list[tuple[int, int, str | None]]:
         """Split *raw* into ``(offset, length, text)`` units, one per code.
 
-        An unmapped code decodes to U+FFFD (it can never match a search
-        string but keeps its raw bytes when the operand is rebuilt); a
-        trailing partial code becomes its own unmapped unit.
+        By default an unmapped code decodes to U+FFFD and keeps its bytes when
+        rebuilt. With ``opaque_unknown=True`` it decodes to ``None`` so the
+        editor treats it as an unmatchable barrier. A trailing partial code is
+        always kept as an unmapped unit.
         """
-        units: list[tuple[int, int, str]] = []
+        units: list[tuple[int, int, str | None]] = []
         i = 0
         n = len(raw)
+        unknown = None if self._opaque_unknown else "�"
+
+        def decoded_text(code: bytes | None) -> str | None:
+            if code is None:
+                return unknown
+            if self._valid_codes is not None and code not in self._valid_codes:
+                return unknown
+            return self.code_to_text.get(code, unknown)
+
+        if self._codespaces:
+            spaces_by_length: dict[int, list[tuple[int, int]]] = {}
+            for low, high in self._codespaces:
+                spaces_by_length.setdefault(len(low), []).append(
+                    (int.from_bytes(low, "big"), int.from_bytes(high, "big"))
+                )
+            lengths = sorted(spaces_by_length)
+            while i < n:
+                matched: bytes | None = None
+                for length in lengths:
+                    if i + length > n:
+                        continue
+                    candidate = raw[i : i + length]
+                    value = int.from_bytes(candidate, "big")
+                    if any(
+                        low <= value <= high
+                        for low, high in spaces_by_length[length]
+                    ):
+                        matched = candidate
+                        break
+                take = len(matched) if matched is not None else 1
+                text = decoded_text(matched)
+                unit = (i, take, text)
+                if budget is None:
+                    units.append(unit)
+                else:
+                    _append_checked(
+                        units,
+                        unit,
+                        budget,
+                        "text edit decoded CID units",
+                    )
+                i += take
+            return units
         if len(self._code_lengths) == 1:
             # Uniform code length: fixed-size chunks (e.g. Identity-H's two
             # bytes). A trailing partial code keeps its bytes as one unit.
             step = self._code_lengths[0]
             while i < n:
                 take = min(step, n - i)
-                unit = (i, take, self.code_to_text.get(raw[i : i + take], "�"))
+                unit = (i, take, decoded_text(raw[i : i + take]))
                 if budget is None:
                     units.append(unit)
                 else:
@@ -165,7 +258,10 @@ class CidTextCodec:
         while i < n:
             for length in self._code_lengths:
                 if i + length <= n:
-                    text = self.code_to_text.get(raw[i : i + length])
+                    code = raw[i : i + length]
+                    text = self.code_to_text.get(code)
+                    if self._valid_codes is not None and code not in self._valid_codes:
+                        text = None
                     if text is not None:
                         unit = (i, length, text)
                         if budget is None:
@@ -181,7 +277,7 @@ class CidTextCodec:
                         break
             else:
                 take = min(self._min_len, n - i)
-                unit = (i, take, "�")
+                unit = (i, take, unknown)
                 if budget is None:
                     units.append(unit)
                 else:
@@ -213,6 +309,55 @@ class CidTextCodec:
             else:
                 return None
         return bytes(out)
+
+
+@lru_cache(maxsize=16)
+def _cached_predefined_codec(name: str) -> CidTextCodec:
+    from .predefined_cmaps import _resolve_cached
+
+    predefined = _resolve_cached(name)
+    if predefined is None:
+        raise RuntimeError(f"Unknown bundled predefined CMap: {name}")
+    return CidTextCodec(
+        predefined.code_to_text,
+        codespaces=predefined.codespaces,
+        valid_codes=predefined.code_to_cid,
+        opaque_unknown=True,
+    )
+
+
+def predefined_cmap_codec(
+    predefined: Any,
+    *,
+    budget: _LoadBudget | None = None,
+) -> CidTextCodec:
+    """Return the shared immutable codec for a resolved predefined CMap."""
+    if budget is not None:
+        budget.check(
+            len(predefined.code_to_text),
+            "max_container_items",
+            "text edit predefined CMap mappings",
+        )
+    codec = _cached_predefined_codec(predefined.name)
+    if budget is not None:
+        budget.check(
+            len(codec._reverse),
+            "max_container_items",
+            "text edit predefined CMap reverse mappings",
+        )
+    return codec
+
+
+_OPAQUE_COMPOSITE_CODEC = CidTextCodec(
+    {},
+    codespaces=((b"\x00", b"\xff"),),
+    opaque_unknown=True,
+)
+
+
+def opaque_composite_codec() -> CidTextCodec:
+    """Return the codec used to skip unresolved composite-font operands."""
+    return _OPAQUE_COMPOSITE_CODEC
 
 
 # ---------------------------------------------------------------------------
@@ -302,10 +447,11 @@ def _string_advance(
     """Advance of a show string along the font's writing axis, or None.
 
     For composite fonts the string is tokenized through *codec* (codes may be
-    one or more bytes); each CID's horizontal advance comes from the metric's
-    ``/W``. A vertical composite font stacks glyphs at a uniform one-em advance.
-    The returned scalar is a magnitude along the writing axis; the caller
-    applies it to the correct axis.
+    one or more bytes); each CID's horizontal advance comes from ``/W`` and a
+    vertical font uses its CID-specific ``/W2`` or ``/DW2`` displacement. The
+    returned scalar is the horizontal displacement or the amount subtracted
+    from vertical text-space y, so the sign of an unusual positive ``w1y`` is
+    preserved.
     """
     if metric is None:
         return None
@@ -313,16 +459,24 @@ def _string_advance(
     if codec is not None:
         vertical = bool(getattr(metric, "vertical", False))
         for off, length, _text in codec.decode_units(raw, budget=budget):
-            if vertical:
-                total += size + char_spacing  # uniform one-em stack
-                continue
             cid = _code_to_cid(metric, raw[off : off + length])
             if cid is None:
                 return None
+            if vertical:
+                metric_fn = getattr(metric, "vertical_metrics_of", None)
+                w1y = metric_fn(cid)[0] if metric_fn is not None else -1000.0
+                extra = char_spacing
+                if length == 1 and raw[off : off + length] == b" ":
+                    extra += word_spacing
+                total -= w1y / 1000.0 * size + extra
+                continue
             glyph = metric.width_of(cid) / 1000.0 * size
             # Word spacing applies only to single-byte code 32, never to
             # multi-byte codes (PDF 32000-1, 9.3.3).
-            total += (glyph + char_spacing) * h_scale
+            extra = char_spacing
+            if length == 1 and raw[off : off + length] == b" ":
+                extra += word_spacing
+            total += (glyph + extra) * h_scale
         return total
     if raw.startswith(b"\xfe\xff"):
         return None  # UTF-16BE operand -> byte codes are not glyph codes
@@ -445,9 +599,9 @@ def _walk_show_runs(
     def add_kern(value: float) -> None:
         nonlocal tm
         if bool(getattr(metric, "vertical", False)):
-            # Vertical writing: the adjustment is subtracted from the (downward)
-            # vertical advance, so a positive number moves the pen back up.
-            tm = _mat_mul((1.0, 0.0, 0.0, 1.0, 0.0, value / 1000.0 * size), tm)
+            # TJ numbers are subtracted from the vertical text coordinate, so a
+            # positive value moves the following glyph farther down the column.
+            tm = _mat_mul((1.0, 0.0, 0.0, 1.0, 0.0, -value / 1000.0 * size), tm)
         else:
             tm = _mat_mul(
                 (1.0, 0.0, 0.0, 1.0, -value / 1000.0 * size * h_scale, 0.0), tm
@@ -491,6 +645,8 @@ def _walk_show_runs(
         nonlocal metric, codec
         metric = metric_for_name(name) if metric_for_name and name else None
         codec = codec_for_name(name) if codec_for_name else None
+        if codec is None and metric is not None:
+            codec = getattr(metric, "codec", None)
         if codec is None and metric is not None:
             code_to_text = getattr(metric, "code_to_text", None)
             if code_to_text:
@@ -728,8 +884,8 @@ def replace_text_in_content(
 
     ``codec_for_name`` maps the segment's font resource name to a
     :class:`CidTextCodec` for composite (Type0) fonts, enabling matching over
-    the ToUnicode-decoded text of two-byte show strings. Fonts without a codec
-    use the default Latin-1/UTF-16BE operand decoding.
+    exactly decoded variable-length show strings. Fonts without a codec use
+    the default Latin-1/UTF-16BE operand decoding.
     """
     _validate_edit_args(search, max_count)
     active_budget = _resolve_load_budget(limits, budget)
@@ -898,14 +1054,13 @@ def _run_char_data(
     """Decode a run into its logical string plus per-char metadata.
 
     Returns ``(infos, full, entries, seg_starts)``. ``infos[i]`` is
-    ``(kind, text, units)`` per segment, where *kind* is ``"cid"`` (two-byte
-    codes decoded through the segment codec, *units* from
-    :meth:`CidTextCodec.decode_units`), ``"virtual"`` (a synthesized gap), or
-    the operand encoding (``"latin-1"``/``"utf-16-be-bom"``). ``entries[g]``
-    is ``(seg, unit, first, last, virtual)`` for the char at global index
-    *g* -- *unit* is the code-unit index for CID segments and the char index
-    otherwise. ``seg_starts[i]`` is the global index of segment *i*'s first
-    char.
+    ``(kind, text, units)`` per segment, where *kind* is ``"cid"`` (codes
+    decoded through the segment codec), ``"virtual"`` (a synthesized gap), or
+    the operand encoding (``"latin-1"``/``"utf-16-be-bom"``). CID units are
+    ``(offset, length, text, opaque)``. ``entries[g]`` is
+    ``(seg, unit, first, last, virtual, opaque)`` for the char at global index
+    *g*. Opaque characters are barriers that can never belong to an editable
+    match. ``seg_starts[i]`` is the global index of segment *i*'s first char.
     """
     active_budget = _resolve_load_budget(limits, budget)
     infos: list[tuple[str, str, Optional[list]]] = []
@@ -913,8 +1068,12 @@ def _run_char_data(
         if seg.token is None:
             info = ("virtual", seg.gap_text, None)
         elif seg.codec is not None:
-            units = seg.codec.decode_units(seg.token.value, budget=active_budget)
-            info = ("cid", "".join(u[2] for u in units), units)
+            decoded = seg.codec.decode_units(seg.token.value, budget=active_budget)
+            units = [
+                (offset, length, "\ufffc" if text is None else text, text is None)
+                for offset, length, text in decoded
+            ]
+            info = ("cid", "".join(unit[2] for unit in units), units)
         else:
             text, encoding = _decode_operand(seg.token.value)
             info = (encoding, text, None)
@@ -937,12 +1096,12 @@ def _run_char_data(
             "text edit segment offsets",
         )
         if kind == "cid":
-            for ui, (_off, _length, unit_text) in enumerate(units):
+            for ui, (_off, _length, unit_text, opaque) in enumerate(units):
                 m = len(unit_text)
                 for ci in range(m):
                     _append_checked(
                         entries,
-                        (si, ui, ci == 0, ci == m - 1, False),
+                        (si, ui, ci == 0, ci == m - 1, False, opaque),
                         active_budget,
                         "text edit decoded characters",
                     )
@@ -951,7 +1110,7 @@ def _run_char_data(
             for ci in range(len(text)):
                 _append_checked(
                     entries,
-                    (si, ci, True, True, virtual),
+                    (si, ci, True, True, virtual, False),
                     active_budget,
                     "text edit decoded characters",
                 )
@@ -972,7 +1131,7 @@ def _run_char_data(
 
 def _aligned_spans(
     full: str,
-    entries: list[tuple[int, int, bool, bool, bool]],
+    entries: list[tuple[int, int, bool, bool, bool, bool]],
     search: str,
     case_sensitive: bool,
     max_count: int,
@@ -998,6 +1157,8 @@ def _aligned_spans(
         if not entries[s][2] or not entries[e - 1][3]:
             continue
         if all(entries[i][4] for i in range(s, e)):
+            continue
+        if any(entries[i][5] for i in range(s, e)):
             continue
         _append_checked(
             kept,
@@ -1025,8 +1186,8 @@ def _edit_run(
     replacement is injected into the element holding the first real matched
     char. Simple-font elements are re-encoded with their own literal/hex
     style and Latin-1/UTF-16BE encoding; composite-font elements are spliced
-    byte-for-byte per two-byte code and the replacement is encoded through
-    the reverse ToUnicode map (raising when unmappable). Untouched elements
+    byte-for-byte per complete character code and the replacement is encoded
+    through the codec's exact unambiguous reverse mapping. Untouched elements
     are left byte-for-byte intact; synthesized gaps have no bytes to edit.
     """
     segs = run.segments
@@ -1063,7 +1224,7 @@ def _edit_run(
                 if encoded is None:
                     raise PdfValidationException(
                         "Replacement text cannot be encoded with this font's "
-                        "ToUnicode CMap."
+                        "composite encoding."
                     )
                 payload = encoded
         else:
@@ -1100,7 +1261,7 @@ def _edit_run(
             raw = token.value
             out = bytearray()
             local = 0
-            for ui, (off, length, unit_text) in enumerate(units):
+            for ui, (off, length, unit_text, _opaque) in enumerate(units):
                 payload = seg_inject.get(ui)
                 if payload is not None:
                     out += payload
