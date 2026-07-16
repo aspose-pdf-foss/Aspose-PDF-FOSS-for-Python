@@ -1,9 +1,9 @@
 """Dependency-free PDF page rasterization helpers.
 
 The renderer is intentionally small and conservative. It handles the common
-graphics/image/text operators used by simple generated PDFs and leaves the
-heavier PDF imaging features (transparency groups, overprint, mesh shadings)
-for later engine layers.
+graphics/image/text operators used by generated PDFs, including mesh shadings
+and transparency groups. Overprint and complete PDF 2.0 imaging semantics are
+left for later engine layers.
 """
 
 from __future__ import annotations
@@ -67,6 +67,10 @@ _BLEND_MODES = {
     "softlight": "SoftLight",
     "difference": "Difference",
     "exclusion": "Exclusion",
+    "hue": "Hue",
+    "saturation": "Saturation",
+    "color": "Color",
+    "luminosity": "Luminosity",
 }
 
 
@@ -201,6 +205,14 @@ class _Canvas:
         # offscreen canvases used to build Alpha soft masks and to composite
         # transparency groups as a unit. None on the main page canvas.
         self.coverage: Optional[bytearray] = None
+        # Straight-alpha storage is enabled for isolated offscreen groups. The
+        # page canvas and non-isolated groups have an opaque backdrop and avoid
+        # this extra allocation.
+        self.alpha: Optional[bytearray] = None
+        # Knockout groups composite each element against their initial backdrop.
+        self.knockout = False
+        self.initial_pixels: Optional[bytes] = None
+        self.initial_alpha: Optional[bytes] = None
 
     def set_pixel(
         self,
@@ -220,23 +232,45 @@ class _Canvas:
         if alpha <= 0.0:
             return
         if self.coverage is not None:
-            cov = self.coverage[idx]
-            self.coverage[idx] = _byte(alpha * 255.0 + cov * (1.0 - alpha))
-        backdrop = (
-            self.pixels[off],
-            self.pixels[off + 1],
-            self.pixels[off + 2],
+            if self.knockout:
+                self.coverage[idx] = _byte(alpha * 255.0)
+            else:
+                cov = self.coverage[idx]
+                self.coverage[idx] = _byte(alpha * 255.0 + cov * (1.0 - alpha))
+        backdrop_pixels = (
+            self.initial_pixels
+            if self.knockout and self.initial_pixels is not None
+            else self.pixels
         )
+        backdrop = (
+            backdrop_pixels[off],
+            backdrop_pixels[off + 1],
+            backdrop_pixels[off + 2],
+        )
+        if self.knockout and self.initial_alpha is not None:
+            backdrop_alpha = self.initial_alpha[idx] / 255.0
+        elif self.knockout:
+            backdrop_alpha = 1.0
+        elif self.alpha is not None:
+            backdrop_alpha = self.alpha[idx] / 255.0
+        else:
+            backdrop_alpha = 1.0
         blended = _blend_color(color, backdrop, blend_mode)
-        if alpha >= 1.0:
-            self.pixels[off] = blended[0]
-            self.pixels[off + 1] = blended[1]
-            self.pixels[off + 2] = blended[2]
+        output_alpha = alpha + backdrop_alpha * (1.0 - alpha)
+        if output_alpha <= 0.0:
             return
-        inv = max(0.0, 1.0 - alpha)
-        self.pixels[off] = _byte(blended[0] * alpha + backdrop[0] * inv)
-        self.pixels[off + 1] = _byte(blended[1] * alpha + backdrop[1] * inv)
-        self.pixels[off + 2] = _byte(blended[2] * alpha + backdrop[2] * inv)
+        for channel in range(3):
+            premultiplied = (
+                (1.0 - alpha) * backdrop_alpha * backdrop[channel]
+                + alpha
+                * (
+                    (1.0 - backdrop_alpha) * color[channel]
+                    + backdrop_alpha * blended[channel]
+                )
+            )
+            self.pixels[off + channel] = _byte(premultiplied / output_alpha)
+        if self.alpha is not None:
+            self.alpha[idx] = _byte(output_alpha * 255.0)
 
 
 @dataclass
@@ -392,6 +426,7 @@ class _PageRasterizer:
         self._pattern_depth = 0
         # Guards against a soft-mask group that itself sets a soft mask.
         self._in_soft_mask = False
+        self._offscreen_work_bytes = 0
 
     def render(self) -> RasterizedPage:
         content = self._page_content()
@@ -1973,7 +2008,11 @@ class _PageRasterizer:
         self._in_soft_mask = True
         try:
             off = self._render_form_offscreen(
-                group, g_ref, backdrop, track_coverage=not luminosity
+                group,
+                g_ref,
+                backdrop,
+                track_coverage=not luminosity,
+                isolated=not luminosity,
             )
         finally:
             self._in_soft_mask = False
@@ -2044,6 +2083,9 @@ class _PageRasterizer:
         background: Color,
         track_coverage: bool,
         seed_pixels: Optional[bytes] = None,
+        *,
+        isolated: bool = False,
+        knockout: bool = False,
     ) -> "_Canvas":
         """Render a form XObject into a fresh canvas at the current CTM.
 
@@ -2053,26 +2095,59 @@ class _PageRasterizer:
         *seed_pixels* is given the canvas starts from that backdrop copy (for
         group compositing) instead of the solid *background*.
         """
-        off = _Canvas(self.width, self.height, background)
+        pixel_count = self.width * self.height
+        bytes_per_pixel = 4
         if seed_pixels is not None:
-            off.pixels = bytearray(seed_pixels)
+            bytes_per_pixel += 3
+        if isolated:
+            bytes_per_pixel += 1
         if track_coverage:
-            off.coverage = bytearray(self.width * self.height)
-        saved_canvas = self.canvas
-        saved_state = self.state
-        saved_stack = self.state_stack
-        self.canvas = off
-        self.state = _GraphicsState(ctm=saved_state.ctm)
-        self.state_stack = []
+            bytes_per_pixel += 1
+        if knockout:
+            bytes_per_pixel += 4 if isolated else 3
+        work_bytes = pixel_count * bytes_per_pixel
+        self._load_budget.check(
+            self._offscreen_work_bytes + work_bytes,
+            "max_codec_work_bytes",
+            "transparency group offscreen working set",
+        )
+        self._offscreen_work_bytes += work_bytes
         try:
-            self._paint_form(
-                group, ref, self.resources_cos, self.resources_plain, depth=0
-            )
+            off = _Canvas(self.width, self.height, background)
+            if seed_pixels is not None:
+                off.pixels = bytearray(seed_pixels)
+            if isolated:
+                off.alpha = bytearray(pixel_count)
+            if track_coverage:
+                off.coverage = bytearray(pixel_count)
+            if knockout:
+                off.knockout = True
+                off.initial_pixels = bytes(off.pixels)
+                off.initial_alpha = (
+                    bytes(off.alpha) if off.alpha is not None else None
+                )
+            saved_canvas = self.canvas
+            saved_state = self.state
+            saved_stack = self.state_stack
+            self.canvas = off
+            self.state = _GraphicsState(ctm=saved_state.ctm)
+            self.state_stack = []
+            try:
+                self._paint_form(
+                    group,
+                    ref,
+                    self.resources_cos,
+                    self.resources_plain,
+                    depth=0,
+                    as_group_content=True,
+                )
+            finally:
+                self.canvas = saved_canvas
+                self.state = saved_state
+                self.state_stack = saved_stack
+            return off
         finally:
-            self.canvas = saved_canvas
-            self.state = saved_state
-            self.state_stack = saved_stack
-        return off
+            self._offscreen_work_bytes -= work_bytes
 
     def _paint_form(
         self,
@@ -2081,18 +2156,18 @@ class _PageRasterizer:
         parent_resources_cos: Optional[PdfDictionary],
         parent_resources_plain: dict,
         depth: int,
+        *,
+        as_group_content: bool = False,
     ) -> None:
         matrix = (
             _cos_matrix(self._resolve(stream.mapping.get(PdfName("Matrix"))))
             or IDENTITY
         )
-        # A transparency group drawn under a constant alpha < 1 must be
-        # composited as a unit, otherwise overlapping elements inside it
-        # double-darken. (Per-element soft mask / blend already compose
-        # correctly through _composite_pixel, so only group alpha needs this.)
+        # Transparency groups are always rendered as a unit so their isolated
+        # and knockout attributes affect internal blend and backdrop semantics.
         if (
-            not self._in_soft_mask
-            and self.state.fill_alpha < 1.0
+            not as_group_content
+            and not self._in_soft_mask
             and self._is_transparency_group(stream)
         ):
             region = self._form_device_bbox(stream, matrix)
@@ -2154,20 +2229,28 @@ class _PageRasterizer:
     ) -> None:
         """Render a transparency group offscreen and composite it as a unit.
 
-        The group is rendered at full opacity over a copy of the current
-        backdrop, then composited back within *region* at the group's constant
-        alpha (further modulated by any active soft mask). Treated as an
-        isolated group; knockout is not modelled.
+        Non-isolated groups begin with the current backdrop, isolated groups
+        begin transparent, and knockout elements use the group's initial
+        backdrop instead of previously painted elements.
         """
         group_alpha = self.state.fill_alpha
         blend = self.state.blend_mode
         sm = self.state.soft_mask
+        group = self._resolve(stream.mapping.get(PdfName("Group")))
+        isolated = False
+        knockout = False
+        if isinstance(group, PdfDictionary):
+            isolated = self._cos_bool(group.mapping.get(PdfName("I")), False)
+            knockout = self._cos_bool(group.mapping.get(PdfName("K")), False)
+        backdrop = self.canvas.pixels
         off = self._render_form_offscreen(
             stream,
             ref,
-            self.background,
+            (0, 0, 0) if isolated else self.background,
             track_coverage=True,
-            seed_pixels=bytes(self.canvas.pixels),
+            seed_pixels=None if isolated else backdrop,
+            isolated=isolated,
+            knockout=knockout,
         )
         cov = off.coverage or b""
         px = off.pixels
@@ -2188,7 +2271,15 @@ class _PageRasterizer:
                 if alpha <= 0.0:
                     continue
                 o = idx * 3
-                main.set_pixel(x, y, (px[o], px[o + 1], px[o + 2]), alpha, blend)
+                if isolated:
+                    source = (px[o], px[o + 1], px[o + 2])
+                else:
+                    inverse = 1.0 - c * inv255
+                    source = tuple(
+                        _byte((px[o + channel] - inverse * backdrop[o + channel]) / (c * inv255))
+                        for channel in range(3)
+                    )
+                main.set_pixel(x, y, source, alpha, blend)
 
     def _paint_image_pixels(
         self,
@@ -2349,6 +2440,14 @@ class _PageRasterizer:
         if isinstance(obj, str):
             return obj.lstrip("/")
         return None
+
+    def _cos_bool(self, obj: Any, default: bool = False) -> bool:
+        obj = self._resolve(obj)
+        if isinstance(obj, PdfBoolean):
+            return bool(obj.value)
+        if isinstance(obj, bool):
+            return obj
+        return default
 
     def _transform(self, x: float, y: float) -> Point:
         return _transform_point(self.state.ctm, x, y)
@@ -2516,6 +2615,22 @@ def _normalize_blend_mode(name: str) -> Optional[str]:
 def _blend_color(source: Color, backdrop: Color, mode: str) -> Color:
     if mode == "Normal":
         return source
+    if mode in ("Hue", "Saturation", "Color", "Luminosity"):
+        source_f = tuple(component / 255.0 for component in source)
+        backdrop_f = tuple(component / 255.0 for component in backdrop)
+        if mode == "Hue":
+            result = _set_lum(
+                _set_sat(source_f, _saturation(backdrop_f)), _luminosity(backdrop_f)
+            )
+        elif mode == "Saturation":
+            result = _set_lum(
+                _set_sat(backdrop_f, _saturation(source_f)), _luminosity(backdrop_f)
+            )
+        elif mode == "Color":
+            result = _set_lum(source_f, _luminosity(backdrop_f))
+        else:
+            result = _set_lum(backdrop_f, _luminosity(source_f))
+        return tuple(_byte(component * 255.0) for component in result)
     return (
         _blend_channel(source[0], backdrop[0], mode),
         _blend_channel(source[1], backdrop[1], mode),
@@ -2558,6 +2673,55 @@ def _blend_channel(source: int, backdrop: int, mode: str) -> int:
     else:
         out = cs
     return _byte(out * 255.0)
+
+
+def _luminosity(color: Sequence[float]) -> float:
+    return 0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2]
+
+
+def _saturation(color: Sequence[float]) -> float:
+    return max(color) - min(color)
+
+
+def _clip_color(color: Sequence[float]) -> Tuple[float, float, float]:
+    result = [float(component) for component in color]
+    lum = _luminosity(result)
+    minimum = min(result)
+    maximum = max(result)
+    if minimum < 0.0 and lum != minimum:
+        result = [lum + (component - lum) * lum / (lum - minimum) for component in result]
+    maximum = max(result)
+    if maximum > 1.0 and maximum != lum:
+        result = [
+            lum + (component - lum) * (1.0 - lum) / (maximum - lum)
+            for component in result
+        ]
+    return result[0], result[1], result[2]
+
+
+def _set_lum(
+    color: Sequence[float], luminosity: float
+) -> Tuple[float, float, float]:
+    delta = luminosity - _luminosity(color)
+    return _clip_color(tuple(component + delta for component in color))
+
+
+def _set_sat(
+    color: Sequence[float], saturation: float
+) -> Tuple[float, float, float]:
+    order = sorted(range(3), key=lambda index: color[index])
+    low, middle, high = order
+    result = [float(component) for component in color]
+    if color[high] > color[low]:
+        result[middle] = (
+            (color[middle] - color[low]) * saturation / (color[high] - color[low])
+        )
+        result[high] = saturation
+    else:
+        result[middle] = 0.0
+        result[high] = 0.0
+    result[low] = 0.0
+    return result[0], result[1], result[2]
 
 
 def _rgb(r: float, g: float, b: float) -> Color:

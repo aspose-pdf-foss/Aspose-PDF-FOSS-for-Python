@@ -1,21 +1,17 @@
-"""Dependency-free axial/radial PDF shadings (gradients) for rasterization.
+"""Dependency-free PDF functions and shadings used by the page rasterizer.
 
-Implements the two common shading types -- **axial** (``ShadingType 2``, linear
-gradients) and **radial** (``ShadingType 3``, between two circles) -- backed by
-PDF function types 2 (exponential), 3 (stitching) and 0 (sampled).  A shading is
-built into a 256-entry RGB colour lookup table once, so per-pixel evaluation is
-a cheap projection plus a table lookup.
-
-Used by the page renderer for the ``sh`` operator and for shading-pattern fills
-(``PatternType 2``).  Mesh shadings (types 4-7), function-based shadings
-(type 1) and PostScript-calculator functions (type 4) are not handled -- the
-caller leaves such paints unpainted (best effort).
+The module evaluates sampled, exponential, stitching, and bounded PostScript
+calculator functions. It paints axial/radial gradients and Gouraud, Coons, and
+tensor-product mesh shadings. Function-based shadings (``ShadingType 1``) remain
+outside the best-effort renderer.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Set, Tuple
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
 from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
@@ -25,6 +21,7 @@ from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
 __all__ = ["build_shading", "Shading"]
 
 Color = Tuple[int, int, int]
+Point = Tuple[float, float]
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +131,31 @@ def _color_converter(pdf: Any, cs_obj: Any):
     return lambda comps: _components_to_rgb(comps)
 
 
+def _color_component_count(pdf: Any, cs_obj: Any) -> int:
+    cs = pdf._resolve(cs_obj)
+    if isinstance(cs, PdfName):
+        name = cs.name.lstrip("/")
+    elif isinstance(cs, PdfArray) and cs.items:
+        head = pdf._resolve(cs.items[0])
+        name = head.name.lstrip("/") if isinstance(head, PdfName) else ""
+        if name == "ICCBased" and len(cs.items) >= 2:
+            stream = pdf._resolve(cs.items[1])
+            if isinstance(stream, PdfStream):
+                count = _num(pdf, stream.mapping.get(PdfName("N")))
+                return max(1, int(count or 3))
+        if name == "Indexed":
+            return 1
+    else:
+        name = ""
+    return {
+        "DeviceGray": 1,
+        "CalGray": 1,
+        "G": 1,
+        "DeviceCMYK": 4,
+        "CMYK": 4,
+    }.get(name, 3)
+
+
 # ---------------------------------------------------------------------------
 # PDF functions
 # ---------------------------------------------------------------------------
@@ -182,7 +204,7 @@ def build_function(
     limits: Optional[PdfLoadLimits] = None,
     budget: Optional[_LoadBudget] = None,
 ):
-    """Build an evaluable function (types 0/2/3, or an array of them)."""
+    """Build an evaluable function (types 0/2/3/4, or an array of them)."""
     state = _FunctionBuildState(_resolve_budget(pdf, limits, budget))
     return _build_function(pdf, obj, state, depth=1, allow_partial_array=True)
 
@@ -327,7 +349,10 @@ def _build_function_object(
     if ftype == 0 and isinstance(obj, PdfStream):
         sampled = _SampledFunction(pdf, obj, domain, state)
         return sampled if sampled.ok else None
-    return None  # type 4 (PostScript calculator) is unsupported.
+    if ftype == 4 and isinstance(obj, PdfStream):
+        calculator = _CalculatorFunction(pdf, obj, domain, state)
+        return calculator if calculator.ok else None
+    return None
 
 
 class _ExpFunction:
@@ -488,6 +513,462 @@ class _SampledFunction:
         return out
 
 
+_CALCULATOR_NUMBER = re.compile(
+    r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$"
+)
+_CALCULATOR_OPERATORS = {
+    "abs",
+    "add",
+    "and",
+    "atan",
+    "bitshift",
+    "ceiling",
+    "copy",
+    "cos",
+    "cvi",
+    "cvr",
+    "div",
+    "dup",
+    "eq",
+    "exch",
+    "exp",
+    "false",
+    "floor",
+    "ge",
+    "gt",
+    "idiv",
+    "if",
+    "ifelse",
+    "index",
+    "le",
+    "ln",
+    "log",
+    "lt",
+    "mod",
+    "mul",
+    "ne",
+    "neg",
+    "not",
+    "or",
+    "pop",
+    "roll",
+    "round",
+    "sin",
+    "sqrt",
+    "sub",
+    "true",
+    "truncate",
+    "xor",
+}
+
+
+class _CalculatorFunction:
+    """Bounded interpreter for the PDF type 4 calculator language."""
+
+    _MAX_STACK = 100
+
+    def __init__(self, pdf, stream, domain, state: _FunctionBuildState):
+        self.domain = domain
+        self.range = _num_array(
+            pdf,
+            stream.mapping.get(PdfName("Range")),
+            budget=state.budget,
+            state=state,
+            context="calculator function Range items",
+        ) or []
+        self.ok = bool(
+            self.domain
+            and len(self.domain) % 2 == 0
+            and self.range
+            and len(self.range) % 2 == 0
+        )
+        if not self.ok:
+            self.code: List[Any] = []
+            return
+        try:
+            data = pdf._decode_cos_stream(stream, None)
+        except PdfResourceLimitException:
+            raise
+        except Exception as exc:
+            raise PdfParseException(
+                "Unable to decode calculator function stream"
+            ) from exc
+        state.budget.check(
+            len(data),
+            "max_decoded_stream_bytes",
+            "calculator function bytes",
+        )
+        try:
+            source = data.decode("latin-1")
+        except UnicodeDecodeError as exc:  # pragma: no cover - latin-1 is total
+            raise PdfParseException("Invalid calculator function source") from exc
+        tokens = self._tokenize(source, state)
+        self.code = self._parse(tokens, state)
+
+    @staticmethod
+    def _tokenize(source: str, state: _FunctionBuildState) -> List[str]:
+        tokens: List[str] = []
+        i = 0
+        length = len(source)
+        while i < length:
+            char = source[i]
+            if char.isspace():
+                i += 1
+                continue
+            if char == "%":
+                while i < length and source[i] not in "\r\n":
+                    i += 1
+                continue
+            if char in "{}":
+                tokens.append(char)
+                i += 1
+            else:
+                start = i
+                while (
+                    i < length
+                    and not source[i].isspace()
+                    and source[i] not in "{}%"
+                ):
+                    i += 1
+                if start == i:
+                    raise PdfParseException("Invalid calculator function token")
+                tokens.append(source[start:i])
+            state.budget.check(
+                len(tokens),
+                "max_content_tokens",
+                "calculator function tokens",
+            )
+            state.budget.check(
+                len(tokens),
+                "max_container_items",
+                "calculator function tokens",
+            )
+            state.budget.check(
+                len(source) + len(tokens) * 64,
+                "max_codec_work_bytes",
+                "calculator function working set",
+            )
+        return tokens
+
+    @classmethod
+    def _parse(
+        cls, tokens: List[str], state: _FunctionBuildState
+    ) -> List[Any]:
+        if not tokens or tokens[0] != "{":
+            raise PdfParseException("Calculator function must be enclosed in braces")
+
+        def parse_proc(index: int, depth: int) -> Tuple[List[Any], int]:
+            state.budget.check(
+                depth,
+                "max_nesting_depth",
+                "calculator function procedure depth",
+            )
+            out: List[Any] = []
+            while index < len(tokens):
+                token = tokens[index]
+                index += 1
+                if token == "}":
+                    return out, index
+                if token == "{":
+                    proc, index = parse_proc(index, depth + 1)
+                    out.append(proc)
+                    continue
+                if _CALCULATOR_NUMBER.fullmatch(token):
+                    try:
+                        value: Any = (
+                            float(token)
+                            if any(char in token for char in ".eE")
+                            else int(token)
+                        )
+                        if isinstance(value, int) and not (
+                            -(1 << 31) <= value < (1 << 31)
+                        ):
+                            value = float(token)
+                        if isinstance(value, float) and not math.isfinite(value):
+                            raise ValueError
+                    except (ValueError, OverflowError) as exc:
+                        raise PdfParseException(
+                            "Invalid calculator function number"
+                        ) from exc
+                    out.append(value)
+                    continue
+                if token not in _CALCULATOR_OPERATORS:
+                    raise PdfParseException(
+                        f"Unsupported calculator function operator: {token}"
+                    )
+                out.append(token)
+            raise PdfParseException("Unterminated calculator function procedure")
+
+        code, index = parse_proc(1, 1)
+        if index != len(tokens):
+            raise PdfParseException("Trailing calculator function tokens")
+        return code
+
+    def eval(self, value: float | Sequence[float]) -> List[float]:
+        if not self.ok:
+            return []
+        values = (
+            list(value)
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+            else [value]
+        )
+        expected = len(self.domain) // 2
+        if len(values) != expected:
+            raise PdfParseException(
+                f"Calculator function expects {expected} input values"
+            )
+        stack: List[Any] = []
+        for index, item in enumerate(values):
+            number = self._number(item)
+            lo = self.domain[index * 2]
+            hi = self.domain[index * 2 + 1]
+            stack.append(min(max(number, min(lo, hi)), max(lo, hi)))
+        self._execute(self.code, stack)
+        output_count = len(self.range) // 2
+        if len(stack) != output_count or any(
+            isinstance(item, (bool, list)) or not isinstance(item, (int, float))
+            for item in stack
+        ):
+            raise PdfParseException(
+                "Calculator function produced an invalid output stack"
+            )
+        out: List[float] = []
+        for index, item in enumerate(stack):
+            number = float(item)
+            lo = self.range[index * 2]
+            hi = self.range[index * 2 + 1]
+            out.append(min(max(number, min(lo, hi)), max(lo, hi)))
+        return out
+
+    def _execute(self, code: List[Any], stack: List[Any]) -> None:
+        for item in code:
+            if isinstance(item, list):
+                self._push(stack, item)
+            elif isinstance(item, (int, float)):
+                self._push(stack, item)
+            else:
+                self._operator(item, stack)
+
+    def _operator(self, op: str, stack: List[Any]) -> None:
+        if op in ("true", "false"):
+            self._push(stack, op == "true")
+            return
+        if op == "dup":
+            self._require(stack, 1)
+            self._push(stack, stack[-1])
+            return
+        if op == "exch":
+            self._require(stack, 2)
+            stack[-1], stack[-2] = stack[-2], stack[-1]
+            return
+        if op == "pop":
+            self._pop(stack)
+            return
+        if op == "copy":
+            count = self._integer(self._pop(stack))
+            if count < 0 or count > len(stack):
+                raise PdfParseException("Calculator function copy range error")
+            for item in stack[-count:] if count else []:
+                self._push(stack, item)
+            return
+        if op == "index":
+            index = self._integer(self._pop(stack))
+            if index < 0 or index >= len(stack):
+                raise PdfParseException("Calculator function index range error")
+            self._push(stack, stack[-index - 1])
+            return
+        if op == "roll":
+            shift = self._integer(self._pop(stack))
+            count = self._integer(self._pop(stack))
+            if count < 0 or count > len(stack):
+                raise PdfParseException("Calculator function roll range error")
+            if count:
+                shift %= count
+                stack[-count:] = stack[-shift:] + stack[-count:-shift]
+            return
+        if op in ("if", "ifelse"):
+            if op == "if":
+                proc = self._procedure(self._pop(stack))
+                condition = self._boolean(self._pop(stack))
+                if condition:
+                    self._execute(proc, stack)
+            else:
+                false_proc = self._procedure(self._pop(stack))
+                true_proc = self._procedure(self._pop(stack))
+                condition = self._boolean(self._pop(stack))
+                self._execute(true_proc if condition else false_proc, stack)
+            return
+        if op in ("abs", "ceiling", "cos", "cvi", "cvr", "floor", "ln", "log", "neg", "round", "sin", "sqrt", "truncate"):
+            self._unary_numeric(op, stack)
+            return
+        if op in ("add", "atan", "div", "exp", "idiv", "mod", "mul", "sub"):
+            self._binary_numeric(op, stack)
+            return
+        if op in ("eq", "ne"):
+            right = self._pop(stack)
+            left = self._pop(stack)
+            self._push(stack, (left == right) if op == "eq" else (left != right))
+            return
+        if op in ("ge", "gt", "le", "lt"):
+            right = self._number(self._pop(stack))
+            left = self._number(self._pop(stack))
+            result = {
+                "ge": left >= right,
+                "gt": left > right,
+                "le": left <= right,
+                "lt": left < right,
+            }[op]
+            self._push(stack, result)
+            return
+        if op in ("and", "or", "xor"):
+            right = self._pop(stack)
+            left = self._pop(stack)
+            if isinstance(left, bool) and isinstance(right, bool):
+                result = {
+                    "and": left and right,
+                    "or": left or right,
+                    "xor": left != right,
+                }[op]
+            else:
+                a = self._integer(left)
+                b = self._integer(right)
+                result = {"and": a & b, "or": a | b, "xor": a ^ b}[op]
+            self._push(stack, result)
+            return
+        if op == "not":
+            value = self._pop(stack)
+            if isinstance(value, bool):
+                self._push(stack, not value)
+            else:
+                self._push(stack, ~self._integer(value))
+            return
+        if op == "bitshift":
+            shift = self._integer(self._pop(stack))
+            value = self._integer(self._pop(stack))
+            if abs(shift) >= 32:
+                result = 0
+            elif shift >= 0:
+                result = (value & 0xFFFFFFFF) << shift
+            else:
+                result = value >> -shift
+            result &= 0xFFFFFFFF
+            if result & 0x80000000:
+                result -= 0x100000000
+            self._push(stack, result)
+            return
+        raise PdfParseException(f"Unsupported calculator function operator: {op}")
+
+    def _unary_numeric(self, op: str, stack: List[Any]) -> None:
+        value = self._number(self._pop(stack))
+        if op == "abs":
+            result: Any = abs(value)
+        elif op == "ceiling":
+            result = math.ceil(value)
+        elif op == "cos":
+            result = math.cos(math.radians(value))
+        elif op == "cvi":
+            result = math.trunc(value)
+        elif op == "cvr":
+            result = float(value)
+        elif op == "floor":
+            result = math.floor(value)
+        elif op == "ln":
+            if value <= 0:
+                raise PdfParseException("Calculator function ln range error")
+            result = math.log(value)
+        elif op == "log":
+            if value <= 0:
+                raise PdfParseException("Calculator function log range error")
+            result = math.log10(value)
+        elif op == "neg":
+            result = -value
+        elif op == "round":
+            result = math.floor(value + 0.5) if value >= 0 else math.ceil(value - 0.5)
+        elif op == "sin":
+            result = math.sin(math.radians(value))
+        elif op == "sqrt":
+            if value < 0:
+                raise PdfParseException("Calculator function sqrt range error")
+            result = math.sqrt(value)
+        else:
+            result = math.trunc(value)
+        self._push(stack, result)
+
+    def _binary_numeric(self, op: str, stack: List[Any]) -> None:
+        right = self._number(self._pop(stack))
+        left = self._number(self._pop(stack))
+        try:
+            if op == "add":
+                result: Any = left + right
+            elif op == "atan":
+                result = math.degrees(math.atan2(left, right)) % 360.0
+            elif op == "div":
+                result = left / right
+            elif op == "exp":
+                result = left**right
+            elif op == "idiv":
+                result = math.trunc(left / right)
+            elif op == "mod":
+                result = left - math.trunc(left / right) * right
+            elif op == "mul":
+                result = left * right
+            else:
+                result = left - right
+            if isinstance(result, int) and not (
+                -(1 << 31) <= result < (1 << 31)
+            ):
+                result = float(result)
+        except (ArithmeticError, OverflowError, ValueError) as exc:
+            raise PdfParseException(
+                f"Calculator function {op} numeric error"
+            ) from exc
+        if isinstance(result, float) and not math.isfinite(result):
+            raise PdfParseException(f"Calculator function {op} produced non-finite value")
+        self._push(stack, result)
+
+    @classmethod
+    def _push(cls, stack: List[Any], value: Any) -> None:
+        if len(stack) >= cls._MAX_STACK:
+            raise PdfParseException("Calculator function stack overflow")
+        stack.append(value)
+
+    @staticmethod
+    def _require(stack: List[Any], count: int) -> None:
+        if len(stack) < count:
+            raise PdfParseException("Calculator function stack underflow")
+
+    @classmethod
+    def _pop(cls, stack: List[Any]) -> Any:
+        cls._require(stack, 1)
+        return stack.pop()
+
+    @staticmethod
+    def _number(value: Any) -> int | float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise PdfParseException("Calculator function numeric type error")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise PdfParseException("Calculator function non-finite number")
+        return value
+
+    @staticmethod
+    def _integer(value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise PdfParseException("Calculator function integer type error")
+        return value
+
+    @staticmethod
+    def _boolean(value: Any) -> bool:
+        if not isinstance(value, bool):
+            raise PdfParseException("Calculator function boolean type error")
+        return value
+
+    @staticmethod
+    def _procedure(value: Any) -> List[Any]:
+        if not isinstance(value, list):
+            raise PdfParseException("Calculator function procedure type error")
+        return value
+
+
 # ---------------------------------------------------------------------------
 # Shadings
 # ---------------------------------------------------------------------------
@@ -570,6 +1051,604 @@ class _RadialShading(Shading):
         return best
 
 
+@dataclass(frozen=True)
+class _MeshVertex:
+    x: float
+    y: float
+    components: Tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class _MeshTriangle:
+    a: _MeshVertex
+    b: _MeshVertex
+    c: _MeshVertex
+
+    @property
+    def bbox(self) -> Tuple[float, float, float, float]:
+        return (
+            min(self.a.x, self.b.x, self.c.x),
+            min(self.a.y, self.b.y, self.c.y),
+            max(self.a.x, self.b.x, self.c.x),
+            max(self.a.y, self.b.y, self.c.y),
+        )
+
+
+class _MeshShading(Shading):
+    """Triangle mesh with a bounded uniform spatial index."""
+
+    def __init__(self, triangles, convert, function):
+        super().__init__([(0, 0, 0)], [False, False])
+        self.triangles: List[_MeshTriangle] = triangles
+        self.convert = convert
+        self.function = function
+        boxes = [triangle.bbox for triangle in triangles]
+        self.boxes = boxes
+        self._cells: Dict[Tuple[int, int], List[int]] = {}
+        self._wide: List[int] = []
+        if not boxes:
+            self._bounds = (0.0, 0.0, 0.0, 0.0)
+            self._grid = 1
+            return
+        self._bounds = (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
+        self._grid = min(32, max(1, int(math.sqrt(len(boxes)))))
+        for index, box in enumerate(boxes):
+            x0, y0 = self._cell(box[0], box[1])
+            x1, y1 = self._cell(box[2], box[3])
+            cell_count = (x1 - x0 + 1) * (y1 - y0 + 1)
+            if cell_count > 64:
+                self._wide.append(index)
+                continue
+            for gy in range(y0, y1 + 1):
+                for gx in range(x0, x1 + 1):
+                    self._cells.setdefault((gx, gy), []).append(index)
+
+    def _cell(self, x: float, y: float) -> Tuple[int, int]:
+        x0, y0, x1, y1 = self._bounds
+        gx = 0 if x1 == x0 else int((x - x0) * self._grid / (x1 - x0))
+        gy = 0 if y1 == y0 else int((y - y0) * self._grid / (y1 - y0))
+        return (
+            min(self._grid - 1, max(0, gx)),
+            min(self._grid - 1, max(0, gy)),
+        )
+
+    def color_at(self, x: float, y: float) -> Optional[Color]:
+        x0, y0, x1, y1 = self._bounds
+        if x < x0 or x > x1 or y < y0 or y > y1:
+            return None
+        cell = self._cells.get(self._cell(x, y), [])
+        left = len(cell) - 1
+        right = len(self._wide) - 1
+        while left >= 0 or right >= 0:
+            cell_index = cell[left] if left >= 0 else -1
+            wide_index = self._wide[right] if right >= 0 else -1
+            if cell_index >= wide_index:
+                index = cell_index
+                left -= 1
+            else:
+                index = wide_index
+                right -= 1
+            weights = self._weights(self.triangles[index], x, y)
+            if weights is None:
+                continue
+            wa, wb, wc = weights
+            triangle = self.triangles[index]
+            count = len(triangle.a.components)
+            components = [
+                wa * triangle.a.components[item]
+                + wb * triangle.b.components[item]
+                + wc * triangle.c.components[item]
+                for item in range(count)
+            ]
+            if self.function is not None:
+                components = self.function.eval(components[0])
+            return self.convert(components)
+        return None
+
+    @staticmethod
+    def _weights(
+        triangle: _MeshTriangle, x: float, y: float
+    ) -> Optional[Tuple[float, float, float]]:
+        ax, ay = triangle.a.x, triangle.a.y
+        bx, by = triangle.b.x, triangle.b.y
+        cx, cy = triangle.c.x, triangle.c.y
+        denominator = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+        if abs(denominator) < 1e-14:
+            return None
+        wa = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / denominator
+        wb = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / denominator
+        wc = 1.0 - wa - wb
+        epsilon = -1e-9
+        if wa < epsilon or wb < epsilon or wc < epsilon:
+            return None
+        return wa, wb, wc
+
+
+class _BitReader:
+    def __init__(self, data: bytes):
+        self.data = data
+        self.bit = 0
+
+    @property
+    def remaining(self) -> int:
+        return len(self.data) * 8 - self.bit
+
+    def read(self, count: int) -> Optional[int]:
+        if count < 0 or self.remaining < count:
+            return None
+        value = 0
+        for _ in range(count):
+            byte = self.data[self.bit >> 3]
+            value = (value << 1) | ((byte >> (7 - (self.bit & 7))) & 1)
+            self.bit += 1
+        return value
+
+    def align(self) -> None:
+        self.bit = min(len(self.data) * 8, (self.bit + 7) & ~7)
+
+
+def _decode_mesh_value(raw: int, bits: int, lo: float, hi: float) -> float:
+    maximum = (1 << bits) - 1
+    return lo if maximum == 0 else lo + raw * (hi - lo) / maximum
+
+
+def _read_mesh_vertex(
+    reader: _BitReader,
+    *,
+    coordinate_bits: int,
+    component_bits: int,
+    component_count: int,
+    decode: List[float],
+    flag_bits: int = 0,
+) -> Optional[Tuple[int, _MeshVertex]]:
+    flag = reader.read(flag_bits) if flag_bits else 0
+    x = reader.read(coordinate_bits)
+    y = reader.read(coordinate_bits)
+    raw_components = [reader.read(component_bits) for _ in range(component_count)]
+    if flag is None or x is None or y is None or any(
+        item is None for item in raw_components
+    ):
+        return None
+    components = tuple(
+        _decode_mesh_value(
+            int(value),
+            component_bits,
+            decode[4 + index * 2],
+            decode[5 + index * 2],
+        )
+        for index, value in enumerate(raw_components)
+    )
+    vertex = _MeshVertex(
+        _decode_mesh_value(x, coordinate_bits, decode[0], decode[1]),
+        _decode_mesh_value(y, coordinate_bits, decode[2], decode[3]),
+        components,
+    )
+    reader.align()
+    return int(flag), vertex
+
+
+def _decode_mesh_stream(pdf: Any, stream: PdfStream) -> bytes:
+    try:
+        return pdf._decode_cos_stream(stream, None)
+    except PdfResourceLimitException:
+        raise
+    except Exception as exc:
+        raise PdfParseException("Unable to decode mesh shading stream") from exc
+
+
+def _mesh_parameters(pdf, stream, budget):
+    mapping = stream.mapping
+    coordinate_bits = int(_num(pdf, mapping.get(PdfName("BitsPerCoordinate"))) or 0)
+    component_bits = int(_num(pdf, mapping.get(PdfName("BitsPerComponent"))) or 0)
+    if coordinate_bits not in (1, 2, 4, 8, 12, 16, 24, 32):
+        return None
+    if component_bits not in (1, 2, 4, 8, 12, 16):
+        return None
+    function_obj = mapping.get(PdfName("Function"))
+    function = (
+        build_function(pdf, function_obj, limits=budget.limits, budget=budget)
+        if function_obj is not None
+        else None
+    )
+    if function_obj is not None and function is None:
+        return None
+    component_count = (
+        1
+        if function is not None
+        else _color_component_count(pdf, mapping.get(PdfName("ColorSpace")))
+    )
+    decode = _num_array(
+        pdf,
+        mapping.get(PdfName("Decode")),
+        budget=budget,
+        context="mesh shading Decode items",
+    )
+    if decode is None or len(decode) < 4 + component_count * 2:
+        return None
+    data = _decode_mesh_stream(pdf, stream)
+    budget.check(
+        len(data), "max_decoded_stream_bytes", "mesh shading decoded bytes"
+    )
+    budget.check(
+        len(data) * 16,
+        "max_codec_work_bytes",
+        "mesh shading decode working set",
+    )
+    return coordinate_bits, component_bits, component_count, decode, function, data
+
+
+def _build_triangle_mesh(pdf, stream, shading_type, budget):
+    params = _mesh_parameters(pdf, stream, budget)
+    if params is None:
+        return None
+    coordinate_bits, component_bits, component_count, decode, function, data = params
+    reader = _BitReader(data)
+    vertices: List[_MeshVertex] = []
+    flags: List[int] = []
+    flag_bits = 0
+    if shading_type == 4:
+        flag_bits = int(
+            _num(pdf, stream.mapping.get(PdfName("BitsPerFlag"))) or 0
+        )
+        if flag_bits not in (2, 4, 8):
+            return None
+    record_bits = flag_bits + coordinate_bits * 2 + component_bits * component_count
+    record_bytes = (record_bits + 7) // 8
+    if record_bytes == 0 or len(data) % record_bytes:
+        return None
+    count = len(data) // record_bytes
+    budget.check(count, "max_container_items", "mesh shading vertices")
+    budget.check(
+        count * 160,
+        "max_codec_work_bytes",
+        "mesh shading vertex working set",
+    )
+    for _ in range(count):
+        result = _read_mesh_vertex(
+            reader,
+            coordinate_bits=coordinate_bits,
+            component_bits=component_bits,
+            component_count=component_count,
+            decode=decode,
+            flag_bits=flag_bits,
+        )
+        if result is None:
+            return None
+        flag, vertex = result
+        flags.append(flag & 3)
+        vertices.append(vertex)
+    triangles: List[_MeshTriangle] = []
+    if shading_type == 4:
+        index = 0
+        previous: Optional[Tuple[_MeshVertex, _MeshVertex, _MeshVertex]] = None
+        while index < len(vertices):
+            flag = flags[index]
+            if flag == 0:
+                if index + 2 >= len(vertices):
+                    return None
+                current = (vertices[index], vertices[index + 1], vertices[index + 2])
+                index += 3
+            elif flag in (1, 2) and previous is not None:
+                new = vertices[index]
+                current = (
+                    (previous[1], previous[2], new)
+                    if flag == 1
+                    else (previous[0], previous[2], new)
+                )
+                index += 1
+            else:
+                return None
+            triangles.append(_MeshTriangle(*current))
+            previous = current
+    else:
+        per_row = int(_num(pdf, stream.mapping.get(PdfName("VerticesPerRow"))) or 0)
+        if per_row < 2 or len(vertices) < per_row * 2 or len(vertices) % per_row:
+            return None
+        rows = len(vertices) // per_row
+        for row in range(rows - 1):
+            start = row * per_row
+            next_start = start + per_row
+            for column in range(per_row - 1):
+                top_left = vertices[start + column]
+                top_right = vertices[start + column + 1]
+                bottom_left = vertices[next_start + column]
+                bottom_right = vertices[next_start + column + 1]
+                triangles.append(_MeshTriangle(top_left, top_right, bottom_left))
+                triangles.append(_MeshTriangle(top_right, bottom_left, bottom_right))
+    budget.check(len(triangles), "max_container_items", "mesh shading triangles")
+    budget.check(
+        len(triangles) * 1024,
+        "max_codec_work_bytes",
+        "mesh shading spatial index working set",
+    )
+    return _MeshShading(
+        triangles,
+        _color_converter(pdf, stream.mapping.get(PdfName("ColorSpace"))),
+        function,
+    )
+
+
+def _read_patch_values(
+    reader: _BitReader,
+    count: int,
+    bits: int,
+    decode: List[float],
+    offset: int,
+) -> Optional[List[Tuple[float, float]]]:
+    points: List[Tuple[float, float]] = []
+    for _ in range(count):
+        raw_x = reader.read(bits)
+        raw_y = reader.read(bits)
+        if raw_x is None or raw_y is None:
+            return None
+        points.append(
+            (
+                _decode_mesh_value(raw_x, bits, decode[offset], decode[offset + 1]),
+                _decode_mesh_value(
+                    raw_y, bits, decode[offset + 2], decode[offset + 3]
+                ),
+            )
+        )
+    return points
+
+
+def _read_patch_colors(
+    reader: _BitReader,
+    count: int,
+    bits: int,
+    component_count: int,
+    decode: List[float],
+) -> Optional[List[Tuple[float, ...]]]:
+    colors: List[Tuple[float, ...]] = []
+    for _ in range(count):
+        color: List[float] = []
+        for component in range(component_count):
+            raw = reader.read(bits)
+            if raw is None:
+                return None
+            color.append(
+                _decode_mesh_value(
+                    raw,
+                    bits,
+                    decode[4 + component * 2],
+                    decode[5 + component * 2],
+                )
+            )
+        colors.append(tuple(color))
+    return colors
+
+
+def _shared_patch_edge(previous_points, previous_colors, flag):
+    point_indices = {
+        1: (3, 4, 5, 6),
+        2: (6, 7, 8, 9),
+        3: (9, 10, 11, 0),
+    }[flag]
+    color_indices = {1: (1, 2), 2: (2, 3), 3: (3, 0)}[flag]
+    return (
+        [previous_points[index] for index in point_indices],
+        [previous_colors[index] for index in color_indices],
+    )
+
+
+def _coons_tensor(points: List[Tuple[float, float]]) -> List[List[Point]]:
+    p00, p01, p02, p03, p13, p23, p33, p32, p31, p30, p20, p10 = points
+    grid: List[List[Point]] = [
+        [p00, p01, p02, p03],
+        [p10, (0.0, 0.0), (0.0, 0.0), p13],
+        [p20, (0.0, 0.0), (0.0, 0.0), p23],
+        [p30, p31, p32, p33],
+    ]
+
+    def combine(terms: Sequence[Tuple[float, Point]]) -> Point:
+        return (
+            sum(weight * point[0] for weight, point in terms) / 9.0,
+            sum(weight * point[1] for weight, point in terms) / 9.0,
+        )
+
+    grid[1][1] = combine(
+        [
+            (-4, p00),
+            (6, p01),
+            (6, p10),
+            (-2, p03),
+            (-2, p30),
+            (3, p31),
+            (3, p13),
+            (-1, p33),
+        ]
+    )
+    grid[1][2] = combine(
+        [
+            (-4, p03),
+            (6, p02),
+            (6, p13),
+            (-2, p00),
+            (-2, p33),
+            (3, p32),
+            (3, p10),
+            (-1, p30),
+        ]
+    )
+    grid[2][1] = combine(
+        [
+            (-4, p30),
+            (6, p31),
+            (6, p20),
+            (-2, p33),
+            (-2, p00),
+            (3, p01),
+            (3, p23),
+            (-1, p03),
+        ]
+    )
+    grid[2][2] = combine(
+        [
+            (-4, p33),
+            (6, p32),
+            (6, p23),
+            (-2, p30),
+            (-2, p03),
+            (3, p02),
+            (3, p20),
+            (-1, p00),
+        ]
+    )
+    return grid
+
+
+def _tensor_grid(points: List[Tuple[float, float]]) -> List[List[Point]]:
+    (
+        p00,
+        p01,
+        p02,
+        p03,
+        p13,
+        p23,
+        p33,
+        p32,
+        p31,
+        p30,
+        p20,
+        p10,
+        p11,
+        p12,
+        p22,
+        p21,
+    ) = points
+    return [
+        [p00, p01, p02, p03],
+        [p10, p11, p12, p13],
+        [p20, p21, p22, p23],
+        [p30, p31, p32, p33],
+    ]
+
+
+def _bernstein(t: float) -> Tuple[float, float, float, float]:
+    inverse = 1.0 - t
+    return (
+        inverse**3,
+        3.0 * t * inverse * inverse,
+        3.0 * t * t * inverse,
+        t**3,
+    )
+
+
+def _tensor_point(grid: List[List[Point]], u: float, v: float) -> Point:
+    bu = _bernstein(u)
+    bv = _bernstein(v)
+    return (
+        sum(grid[i][j][0] * bu[i] * bv[j] for i in range(4) for j in range(4)),
+        sum(grid[i][j][1] * bu[i] * bv[j] for i in range(4) for j in range(4)),
+    )
+
+
+def _patch_components(colors, u: float, v: float) -> Tuple[float, ...]:
+    c00, c03, c33, c30 = colors
+    return tuple(
+        (1.0 - u) * (1.0 - v) * c00[index]
+        + (1.0 - u) * v * c03[index]
+        + u * v * c33[index]
+        + u * (1.0 - v) * c30[index]
+        for index in range(len(c00))
+    )
+
+
+def _tessellate_patch(points, colors, shading_type):
+    grid = _coons_tensor(points) if shading_type == 6 else _tensor_grid(points)
+    steps = 12
+    vertices: List[List[_MeshVertex]] = []
+    for row in range(steps + 1):
+        v = row / steps
+        vertex_row: List[_MeshVertex] = []
+        for column in range(steps + 1):
+            u = column / steps
+            x, y = _tensor_point(grid, u, v)
+            vertex_row.append(_MeshVertex(x, y, _patch_components(colors, u, v)))
+        vertices.append(vertex_row)
+    triangles: List[_MeshTriangle] = []
+    for row in range(steps):
+        for column in range(steps):
+            a = vertices[row][column]
+            b = vertices[row][column + 1]
+            c = vertices[row + 1][column]
+            d = vertices[row + 1][column + 1]
+            triangles.append(_MeshTriangle(a, b, c))
+            triangles.append(_MeshTriangle(b, c, d))
+    return triangles
+
+
+def _build_patch_mesh(pdf, stream, shading_type, budget):
+    params = _mesh_parameters(pdf, stream, budget)
+    if params is None:
+        return None
+    coordinate_bits, component_bits, component_count, decode, function, data = params
+    flag_bits = int(_num(pdf, stream.mapping.get(PdfName("BitsPerFlag"))) or 0)
+    if flag_bits not in (2, 4, 8):
+        return None
+    reader = _BitReader(data)
+    triangles: List[_MeshTriangle] = []
+    previous_points = None
+    previous_colors = None
+    patch_count = 0
+    full_point_count = 12 if shading_type == 6 else 16
+    while reader.remaining >= flag_bits:
+        flag = reader.read(flag_bits)
+        if flag is None:
+            return None
+        flag &= 3
+        if flag == 0:
+            points = _read_patch_values(
+                reader, full_point_count, coordinate_bits, decode, 0
+            )
+            colors = _read_patch_colors(
+                reader, 4, component_bits, component_count, decode
+            )
+        elif previous_points is not None and previous_colors is not None:
+            points, colors = _shared_patch_edge(
+                previous_points, previous_colors, flag
+            )
+            new_points = _read_patch_values(
+                reader, full_point_count - 4, coordinate_bits, decode, 0
+            )
+            new_colors = _read_patch_colors(
+                reader, 2, component_bits, component_count, decode
+            )
+            if new_points is None or new_colors is None:
+                return None
+            points.extend(new_points)
+            colors.extend(new_colors)
+        else:
+            return None
+        if points is None or colors is None:
+            return None
+        reader.align()
+        patch_count += 1
+        budget.check(patch_count, "max_container_items", "mesh shading patches")
+        next_count = len(triangles) + 12 * 12 * 2
+        budget.check(next_count, "max_container_items", "mesh shading triangles")
+        budget.check(
+            next_count * 1024,
+            "max_codec_work_bytes",
+            "mesh shading tessellation working set",
+        )
+        triangles.extend(_tessellate_patch(points, colors, shading_type))
+        previous_points = points
+        previous_colors = colors
+    if patch_count == 0:
+        return None
+    return _MeshShading(
+        triangles,
+        _color_converter(pdf, stream.mapping.get(PdfName("ColorSpace"))),
+        function,
+    )
+
+
 def build_shading(
     pdf: Any,
     obj: Any,
@@ -578,14 +1657,23 @@ def build_shading(
     limits: Optional[PdfLoadLimits] = None,
     budget: Optional[_LoadBudget] = None,
 ) -> Optional[Shading]:
-    """Build an axial/radial :class:`Shading` from a COS shading dict, or ``None``."""
+    """Build a supported :class:`Shading` from a COS dictionary or stream."""
     load_budget = _resolve_budget(pdf, limits, budget)
     obj = pdf._resolve(obj)
     if not isinstance(obj, (PdfDictionary, PdfStream)):
         return None
     mapping = obj.mapping
     stype = _num(pdf, mapping.get(PdfName("ShadingType")))
-    if stype is None or int(stype) not in (2, 3):
+    if stype is None:
+        return None
+    shading_type = int(stype)
+    if shading_type in (4, 5, 6, 7):
+        if not isinstance(obj, PdfStream):
+            return None
+        if shading_type in (4, 5):
+            return _build_triangle_mesh(pdf, obj, shading_type, load_budget)
+        return _build_patch_mesh(pdf, obj, shading_type, load_budget)
+    if shading_type not in (2, 3):
         return None
     coords = _num_array(
         pdf,
@@ -593,7 +1681,7 @@ def build_shading(
         budget=load_budget,
         context="shading Coords items",
     )
-    needed = 4 if int(stype) == 2 else 6
+    needed = 4 if shading_type == 2 else 6
     if not coords or len(coords) < needed:
         return None
     func = build_function(
@@ -625,8 +1713,8 @@ def build_shading(
         t = d_lo + span * (i / (lut_size - 1))
         try:
             lut.append(convert(func.eval(t)))
-        except (ValueError, IndexError, ZeroDivisionError):
+        except (PdfParseException, ValueError, IndexError, ZeroDivisionError):
             lut.append((0, 0, 0))
-    if int(stype) == 2:
+    if shading_type == 2:
         return _AxialShading(coords, lut, extend)
     return _RadialShading(coords, lut, extend)

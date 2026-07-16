@@ -8,15 +8,25 @@ drawn under a constant alpha (so overlaps do not double-darken).
 
 from __future__ import annotations
 
-from aspose_pdf import Document
+from dataclasses import replace
+
+import pytest
+
+from aspose_pdf import (
+    Document,
+    PdfLoadLimits,
+    PdfResourceLimitException,
+)
 from aspose_pdf.engine.cos import (
     PdfArray,
+    PdfBoolean,
     PdfDictionary,
     PdfName,
     PdfNumber,
     PdfStream,
 )
 from aspose_pdf.engine.simple_pdf import SimplePdf
+from aspose_pdf.load_limits import _LoadBudget
 
 
 def _arr(*xs):
@@ -52,9 +62,12 @@ def _group(content, bbox=(0, 0, 4, 4)):
     )
 
 
-def _render(page_box, content, resources_builder, antialias=False):
+def _render(page_box, content, resources_builder, antialias=False, limits=None):
     pdf = SimplePdf(pages=[page_box], page_contents=[content])
     pdf._ensure_cos()
+    if limits is not None:
+        pdf._load_limits = limits
+        pdf._load_budget = _LoadBudget(limits)
     resources = resources_builder(pdf)
     pdf._get_page_dict(0).mapping[PdfName("Resources")] = resources
     doc = Document()
@@ -253,3 +266,99 @@ def test_transparency_group_composites_as_unit():
     overlap = raster.get_pixel(3, 2)  # both rects
     assert abs(non_overlap[0] - overlap[0]) <= 2  # uniform, not doubled
     assert 120 <= overlap[0] <= 136  # ~128: black at 0.5 over white
+
+
+def test_isolated_group_blend_does_not_see_page_backdrop():
+    def render_group(isolated):
+        def build(pdf):
+            group = _group(b"/Blend gs 0 0 1 rg 0 0 4 4 re f")
+            group.mapping[PdfName("Group")].mapping[PdfName("I")] = PdfBoolean(
+                isolated
+            )
+            group.mapping[PdfName("Resources")] = PdfDictionary(
+                {
+                    PdfName("ExtGState"): PdfDictionary(
+                        {
+                            PdfName("Blend"): PdfDictionary(
+                                {PdfName("BM"): PdfName("Multiply")}
+                            )
+                        }
+                    )
+                }
+            )
+            return PdfDictionary(
+                {
+                    PdfName("XObject"): PdfDictionary(
+                        {PdfName("Fm0"): pdf._cos_doc.register_object(group)}
+                    )
+                }
+            )
+
+        return _render(
+            (0, 0, 4, 4),
+            b"1 0 0 rg 0 0 4 4 re f /Fm0 Do",
+            build,
+        )
+
+    assert render_group(False).get_pixel(2, 2) == (0, 0, 0)
+    assert render_group(True).get_pixel(2, 2) == (0, 0, 255)
+
+
+def test_knockout_group_uses_initial_backdrop_for_each_element():
+    def render_group(knockout):
+        def build(pdf):
+            group = _group(
+                b"/Half gs 1 0 0 rg 0 0 4 4 re f "
+                b"0 0 1 rg 2 0 4 4 re f",
+                bbox=(0, 0, 6, 4),
+            )
+            attributes = group.mapping[PdfName("Group")]
+            attributes.mapping[PdfName("I")] = PdfBoolean(True)
+            attributes.mapping[PdfName("K")] = PdfBoolean(knockout)
+            group.mapping[PdfName("Resources")] = PdfDictionary(
+                {
+                    PdfName("ExtGState"): PdfDictionary(
+                        {
+                            PdfName("Half"): PdfDictionary(
+                                {PdfName("ca"): PdfNumber(0.5)}
+                            )
+                        }
+                    )
+                }
+            )
+            return PdfDictionary(
+                {
+                    PdfName("XObject"): PdfDictionary(
+                        {PdfName("Fm0"): pdf._cos_doc.register_object(group)}
+                    )
+                }
+            )
+
+        return _render((0, 0, 6, 4), b"/Fm0 Do", build)
+
+    regular = render_group(False)
+    knockout = render_group(True)
+
+    assert knockout.get_pixel(3, 2) == knockout.get_pixel(5, 2)
+    assert knockout.get_pixel(3, 2) == (127, 127, 255)
+    assert regular.get_pixel(3, 2) != regular.get_pixel(5, 2)
+
+
+def test_transparency_group_honors_offscreen_working_set_limit():
+    def build(pdf):
+        group = _group(b"1 0 0 rg 0 0 10 10 re f", bbox=(0, 0, 10, 10))
+        return PdfDictionary(
+            {
+                PdfName("XObject"): PdfDictionary(
+                    {PdfName("Fm0"): pdf._cos_doc.register_object(group)}
+                )
+            }
+        )
+
+    limits = replace(PdfLoadLimits.unlimited(), max_codec_work_bytes=500)
+
+    with pytest.raises(
+        PdfResourceLimitException,
+        match="transparency group offscreen working set",
+    ):
+        _render((0, 0, 10, 10), b"/Fm0 Do", build, limits=limits)

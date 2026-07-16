@@ -276,7 +276,8 @@ Supported:
   fill/stroke constant alpha (`ca`/`CA`), and standard separable blend modes
   (`Normal`, `Multiply`, `Screen`, `Overlay`, `Darken`, `Lighten`,
   `ColorDodge`, `ColorBurn`, `HardLight`, `SoftLight`, `Difference`,
-  `Exclusion`) for fills, strokes, shadings, images, and pattern-painted
+  `Exclusion`) plus the non-separable `Hue`, `Saturation`, `Color`, and
+  `Luminosity` modes for fills, strokes, shadings, images, and pattern-painted
   content. Unsupported blend modes fall back to `Normal`.
 - Apply soft masks. An image XObject's `/SMask` supplies per-pixel alpha, so
   transparent (PNG-style) images composite over the page. An ExtGState
@@ -286,13 +287,22 @@ Supported:
   `/S /Alpha` -- with an optional `/TR` transfer function. The mask modulates
   every subsequent paint (fills, strokes, glyphs, shadings, patterns, images)
   until cleared by `/SMask /None`, and is saved/restored by `q`/`Q`.
-- Composite a transparency group (`/Group /S /Transparency`) drawn under a
-  constant alpha < 1 as a single unit, so overlapping elements inside it do not
-  double-darken.
+- Composite transparency groups (`/Group /S /Transparency`) as units. The
+  renderer honors isolated (`/I`) and knockout (`/K`) group backdrops, including
+  internal blend modes and partial alpha, and bounds nested offscreen buffers by
+  `PdfLoadLimits.max_codec_work_bytes`.
 - Paint axial (`ShadingType 2`) and radial (`ShadingType 3`) gradients through
   the `sh` operator and shading-pattern fills (`PatternType 2`). PDF function
-  types 0 (sampled), 2 (exponential), and 3 (stitching) are evaluated over
-  DeviceGray/RGB/CMYK and ICCBased colour spaces, with `/Extend` honoured.
+  types 0 (sampled), 2 (exponential), 3 (stitching), and 4 (bounded PostScript
+  calculator) are evaluated over DeviceGray/RGB/CMYK and ICCBased colour
+  spaces, with `/Extend` honoured. Calculator source, procedure nesting,
+  operand-stack size, and execution data are bounded by the document load
+  limits.
+- Paint free-form and lattice Gouraud triangle meshes (`ShadingType 4` and `5`)
+  and Coons and tensor-product patch meshes (`ShadingType 6` and `7`). The mesh
+  bitstream decoder supports the ISO coordinate/component/flag widths, shared
+  edges, optional color functions, and bounded materialization. Curved patches
+  use deterministic 12-by-12 tessellation per patch.
 - Fill with tiling patterns (`PatternType 1`): the pattern cell is repeated on
   its `/XStep`/`/YStep` lattice, clipped to the path being filled. Both coloured
   (`PaintType 1`) and uncoloured (`PaintType 2`, taking the colour from `scn`)
@@ -303,13 +313,11 @@ Supported:
 Boundaries:
 
 - Page rendering is a best-effort rasterizer, not a certification-grade visual
-  engine. It does not yet implement mesh/function-based shadings (types 1 and
-  4-7), PostScript-calculator functions (type 4), non-separable blend modes
-  (`Hue`, `Saturation`, `Color`, `Luminosity`), overprint, or complete PDF 2.0
-  imaging semantics. Soft masks and constant-alpha group compositing are
-  supported (above), but transparency groups are treated as isolated (knockout
-  and non-isolated backdrops are not modelled) and the `/Alpha` soft-mask
-  subtype approximates alpha with painted coverage.
+  engine. It does not yet implement function-based shadings (`ShadingType 1`),
+  overprint, device-N/spot-color blending, or complete PDF 2.0 imaging
+  semantics. Curved mesh patches are tessellated rather than analytically
+  inverted, knockout handling uses the renderer's supersampled pixel shape,
+  and the `/Alpha` soft-mask subtype approximates alpha with painted coverage.
 - Glyph outline rasterization covers all three embedded program formats --
   TrueType (`glyf`), CFF (`/FontFile3`), and Type 1 (`/FontFile`, including
   `seac` accent composites). Fonts with no embedded program are filled from

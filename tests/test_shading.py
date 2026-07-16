@@ -98,6 +98,58 @@ def test_sampled_function():
     assert func.eval(1.0) == [0.0, 0.0, 1.0]
 
 
+def test_calculator_function_arithmetic_and_conditionals():
+    pdf = SimplePdf()
+    stream = PdfStream(
+        b"{ dup 0.5 gt { dup mul } { 2 mul } ifelse }",
+        {
+            PdfName("FunctionType"): _n(4),
+            PdfName("Domain"): _arr(0, 1),
+            PdfName("Range"): _arr(0, 1),
+        },
+    )
+
+    func = build_function(pdf, stream)
+
+    assert func is not None
+    assert func.eval(0.25) == [0.5]
+    assert abs(func.eval(0.75)[0] - 0.5625) < 1e-9
+
+
+def test_calculator_function_multiple_inputs_and_stack_operators():
+    pdf = SimplePdf()
+    stream = PdfStream(
+        b"{ 2 copy mul 3 1 roll add exch }",
+        {
+            PdfName("FunctionType"): _n(4),
+            PdfName("Domain"): _arr(0, 1, 0, 1),
+            PdfName("Range"): _arr(0, 2, 0, 1),
+        },
+    )
+
+    func = build_function(pdf, stream)
+
+    assert func is not None
+    assert func.eval([0.25, 0.5]) == [0.75, 0.125]
+
+
+def test_calculator_function_preserves_integer_bitwise_semantics():
+    pdf = SimplePdf()
+    stream = PdfStream(
+        b"{ pop 1 2 add 1 bitshift }",
+        {
+            PdfName("FunctionType"): _n(4),
+            PdfName("Domain"): _arr(0, 1),
+            PdfName("Range"): _arr(0, 10),
+        },
+    )
+
+    func = build_function(pdf, stream)
+
+    assert func is not None
+    assert func.eval(0.5) == [6.0]
+
+
 # ---------------------------------------------------------------------------
 # Shading unit tests
 # ---------------------------------------------------------------------------
@@ -146,12 +198,109 @@ def test_radial_shading():
     assert edge is not None and edge[2] == 255  # outer circle, radius 10
 
 
-def test_unsupported_shading_type_returns_none():
+def test_malformed_mesh_shading_returns_none():
     pdf = SimplePdf()
     mesh = PdfDictionary(
         {PdfName("ShadingType"): _n(4), PdfName("ColorSpace"): PdfName("DeviceRGB")}
     )
     assert build_shading(pdf, mesh) is None
+
+
+def _mesh_stream(shading_type, data, *, decode=None, extra=None):
+    mapping = {
+        PdfName("ShadingType"): _n(shading_type),
+        PdfName("ColorSpace"): PdfName("DeviceRGB"),
+        PdfName("BitsPerCoordinate"): _n(8),
+        PdfName("BitsPerComponent"): _n(8),
+        PdfName("Decode"): _arr(*(decode or (0, 10, 0, 10, 0, 1, 0, 1, 0, 1))),
+    }
+    if extra:
+        mapping.update(extra)
+    return PdfStream(bytes(data), mapping)
+
+
+def test_type4_free_form_mesh_interpolates_vertex_colors():
+    stream = _mesh_stream(
+        4,
+        [
+            0, 0, 0, 255, 0, 0,
+            0, 255, 0, 0, 255, 0,
+            0, 0, 255, 0, 0, 255,
+        ],
+        extra={PdfName("BitsPerFlag"): _n(8)},
+    )
+
+    shading = build_shading(SimplePdf(), stream)
+
+    assert shading is not None
+    center = shading.color_at(10 / 3, 10 / 3)
+    assert center is not None
+    assert all(75 <= component <= 95 for component in center)
+    assert shading.color_at(9, 9) is None
+
+
+def test_type5_lattice_mesh_builds_both_cell_triangles():
+    stream = _mesh_stream(
+        5,
+        [
+            0, 255, 255, 0, 0,
+            255, 255, 0, 255, 0,
+            0, 0, 0, 0, 255,
+            255, 0, 255, 255, 255,
+        ],
+        extra={PdfName("VerticesPerRow"): _n(2)},
+    )
+
+    shading = build_shading(SimplePdf(), stream)
+
+    assert shading is not None
+    assert shading.color_at(2, 8) is not None
+    assert shading.color_at(8, 2) is not None
+
+
+def _patch_points(shading_type):
+    boundary = [
+        (0, 0),
+        (0, 85),
+        (0, 170),
+        (0, 255),
+        (85, 255),
+        (170, 255),
+        (255, 255),
+        (255, 170),
+        (255, 85),
+        (255, 0),
+        (170, 0),
+        (85, 0),
+    ]
+    if shading_type == 7:
+        boundary.extend([(85, 85), (85, 170), (170, 170), (170, 85)])
+    return [component for point in boundary for component in point]
+
+
+def test_type6_and_type7_patch_meshes_are_tessellated():
+    for shading_type in (6, 7):
+        data = [0, *_patch_points(shading_type)]
+        data.extend(
+            [
+                255, 0, 0,
+                0, 255, 0,
+                0, 0, 255,
+                255, 255, 255,
+            ]
+        )
+        stream = _mesh_stream(
+            shading_type,
+            data,
+            extra={PdfName("BitsPerFlag"): _n(8)},
+        )
+
+        shading = build_shading(SimplePdf(), stream)
+
+        assert shading is not None
+        center = shading.color_at(5, 5)
+        assert center is not None
+        assert all(50 <= component <= 205 for component in center)
 
 
 # ---------------------------------------------------------------------------
@@ -211,3 +360,32 @@ def test_render_sh_operator_respects_clip():
     assert painted != (255, 255, 255)  # inside the clip: gradient painted
     # Gradient direction holds inside the clipped band.
     assert raster.get_pixel(6, 10)[0] > raster.get_pixel(14, 10)[0]
+
+
+def test_render_free_form_mesh_sh_operator():
+    pdf = SimplePdf(
+        pages=[(0, 0, 20, 20)],
+        page_contents=[b"/Sh0 sh"],
+    )
+    pdf._ensure_cos()
+    stream = _mesh_stream(
+        4,
+        [
+            0, 0, 0, 255, 0, 0,
+            0, 255, 0, 0, 255, 0,
+            0, 0, 255, 0, 0, 255,
+        ],
+        decode=(0, 20, 0, 20, 0, 1, 0, 1, 0, 1),
+        extra={PdfName("BitsPerFlag"): _n(8)},
+    )
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {PdfName("Shading"): PdfDictionary({PdfName("Sh0"): stream})}
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    mixed = raster.get_pixel(5, 14)
+    assert all(35 <= component <= 165 for component in mixed)
+    assert raster.get_pixel(17, 2) == (255, 255, 255)

@@ -173,7 +173,7 @@ def test_extgstate_blend_mode_array_uses_first_supported_cos_name() -> None:
 
     raster = doc.render_page(0, antialias=False)
 
-    assert raster.get_pixel(5, 5) == (255, 0, 255)
+    assert raster.get_pixel(5, 5) == (54, 54, 255)
 
 
 def test_extgstate_unsupported_single_blend_mode_falls_back_to_normal() -> None:
@@ -187,13 +187,42 @@ def test_extgstate_unsupported_single_blend_mode_falls_back_to_normal() -> None:
         ],
         extgstates={
             "Multiply": {"BM": "Multiply"},
-            "Unsupported": {"BM": "Hue"},
+            "Unsupported": {"BM": "NotARealBlend"},
         },
     )
 
     raster = doc.render_page(0, antialias=False)
 
     assert raster.get_pixel(5, 5) == (0, 255, 0)
+
+
+@pytest.mark.parametrize(
+    ("mode", "source", "expected"),
+    [
+        ("Hue", "0 0 1", (54, 54, 255)),
+        ("Saturation", "0.5 0.5 0.5", (76, 76, 76)),
+        ("Color", "0 0 1", (54, 54, 255)),
+        ("Luminosity", "0 0 1", (94, 0, 0)),
+    ],
+)
+def test_extgstate_nonseparable_blend_modes(
+    mode: str, source: str, expected: tuple[int, int, int]
+) -> None:
+    doc = Document()
+    doc._engine_pdf = SimplePdf(
+        pages=[(0.0, 0.0, 4.0, 4.0)],
+        page_contents=[
+            (
+                "1 0 0 rg 0 0 4 4 re f "
+                f"/Blend gs {source} rg 0 0 4 4 re f"
+            ).encode("ascii")
+        ],
+        extgstates={"Blend": {"BM": mode}},
+    )
+
+    raster = doc.render_page(0, antialias=False)
+
+    assert raster.get_pixel(2, 2) == expected
 
 
 def test_page_render_paints_raw_rgb_image_xobject() -> None:

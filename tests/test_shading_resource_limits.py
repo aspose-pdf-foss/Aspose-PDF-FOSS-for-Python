@@ -14,7 +14,7 @@ from aspose_pdf.engine.cos import (
     PdfNumber,
     PdfStream,
 )
-from aspose_pdf.engine.shading import build_function
+from aspose_pdf.engine.shading import build_function, build_shading
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import PdfParseException
 from aspose_pdf.load_limits import _LoadBudget
@@ -152,3 +152,76 @@ def test_rasterizer_uses_document_budget_for_sampled_shading() -> None:
 
     with pytest.raises(PdfResourceLimitException, match="sampled function entries"):
         document.pages[0].render(antialias=False)
+
+
+def test_calculator_function_honors_token_limit() -> None:
+    calculator = PdfStream(
+        b"{ dup dup dup pop pop }",
+        {
+            PdfName("FunctionType"): PdfNumber(4),
+            PdfName("Domain"): _numbers(0, 1),
+            PdfName("Range"): _numbers(0, 1),
+        },
+    )
+
+    with pytest.raises(PdfResourceLimitException, match="calculator function tokens"):
+        build_function(
+            SimplePdf(),
+            calculator,
+            limits=_limits(max_content_tokens=5),
+        )
+
+
+def test_calculator_function_honors_procedure_nesting_limit() -> None:
+    calculator = PdfStream(
+        b"{ true { true { 1 } if } if }",
+        {
+            PdfName("FunctionType"): PdfNumber(4),
+            PdfName("Domain"): _numbers(0, 1),
+            PdfName("Range"): _numbers(0, 1),
+        },
+    )
+
+    with pytest.raises(
+        PdfResourceLimitException, match="calculator function procedure depth"
+    ):
+        build_function(
+            SimplePdf(),
+            calculator,
+            limits=_limits(max_nesting_depth=2),
+        )
+
+
+def _type4_mesh(records: int) -> PdfStream:
+    vertex = bytes([0, 0, 0, 255, 0, 0])
+    return PdfStream(
+        vertex * records,
+        {
+            PdfName("ShadingType"): PdfNumber(4),
+            PdfName("ColorSpace"): PdfName("DeviceRGB"),
+            PdfName("BitsPerCoordinate"): PdfNumber(8),
+            PdfName("BitsPerComponent"): PdfNumber(8),
+            PdfName("BitsPerFlag"): PdfNumber(8),
+            PdfName("Decode"): _numbers(0, 10, 0, 10, 0, 1, 0, 1, 0, 1),
+        },
+    )
+
+
+def test_mesh_shading_honors_vertex_limit_before_materializing() -> None:
+    with pytest.raises(PdfResourceLimitException, match="mesh shading vertices"):
+        build_shading(
+            SimplePdf(),
+            _type4_mesh(12),
+            limits=_limits(max_container_items=10),
+        )
+
+
+def test_mesh_shading_honors_decode_working_set_limit() -> None:
+    with pytest.raises(
+        PdfResourceLimitException, match="mesh shading decode working set"
+    ):
+        build_shading(
+            SimplePdf(),
+            _type4_mesh(3),
+            limits=_limits(max_codec_work_bytes=100),
+        )
