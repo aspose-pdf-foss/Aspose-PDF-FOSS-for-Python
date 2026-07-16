@@ -21,7 +21,14 @@ from .font_repository import (
     MemoryFontSource,
     SystemFontSource,
 )
-from .forms import Field, Form, UnsignedContent, UnsignedContentAbsorber
+from .forms import (
+    Field,
+    FieldType,
+    Form,
+    FormType,
+    UnsignedContent,
+    UnsignedContentAbsorber,
+)
 from .lowcode import (
     ByteArrayDataSource,
     DataSource,
@@ -80,6 +87,7 @@ __all__ = [
     "DataSource",
     "Document",
     "Field",
+    "FieldType",
     "FileDataSource",
     "FileFontSource",
     "FileSpecification",
@@ -89,6 +97,7 @@ __all__ = [
     "FontRepository",
     "FontSource",
     "Form",
+    "FormType",
     "LinkAnnotation",
     "MarkupAnnotation",
     "MemoryFontSource",

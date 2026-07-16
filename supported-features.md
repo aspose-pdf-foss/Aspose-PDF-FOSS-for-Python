@@ -594,8 +594,18 @@ Supported:
 
 - Read AcroForm fields through `Document.form`.
 - Iterate form fields and access fields by name.
-- Extract text, checkbox, radio, listbox, and combobox values.
+- Extract text, checkbox, radio, listbox, combobox, and push-button fields.
 - Set a field value by name through the `Field.value` setter.
+- Create and remove AcroForm fields entirely through the public API:
+  `Form.add_text_field()`, `add_checkbox()`, `add_radio_group()`,
+  `add_list_box()`, `add_combo_box()`, `add_push_button()`, and
+  `remove_field()` (also available as `Field.remove()`). Pages may be supplied
+  as a `Page` or zero-based page index; dotted names create non-terminal field
+  parents. The writer emits indirect terminal fields and widget annotations,
+  widget `/Parent` and page `/P` links, page `/Annots`, AcroForm `/Fields`,
+  `/DR` and `/DA`, common/type-specific flags, choice `/Opt` and multiselect
+  `/I`, `/DV`, and generated appearances. Choice options may be strings or
+  `(export_value, display_value)` pairs.
 - Regenerate field appearance streams from their values via
   `Document.generate_field_appearances()` or `Form.generate_appearances()`:
   text and choice fields are drawn from their `/V` and default appearance
@@ -606,12 +616,16 @@ Supported:
   Helvetica when absent). Wrap points and centre/right quadding use real
   glyph-metric advance widths — from the field font's `/Widths` or the bundled
   metric-compatible substitute (Liberation) — falling back to a flat estimate
-  only when neither resolves. Check box / radio widgets that already carry an
+  only when neither resolves. Authored text and choice widgets draw their `/MK`
+  background and `/BS` border; list boxes draw visible `/Opt` rows and highlight
+  the selected values. Check box / radio widgets that already carry an
   on-state appearance have their `/AS` pointed at the value; a widget with *no*
   appearance streams gets a synthesised `/AP /N` Off/On pair — the `/MK`
   background (`/BG`) and border (`/BC`) plus a check mark (a ZapfDingbats `/CA`
   caption glyph, default `4`) for a check box or a filled vector dot for a
   radio — with the on-state name taken from `/AS`/`/V` (defaulting to `On`). The
+  normal appearance of a caption-only push button is also synthesised from its
+  `/MK` caption, background, and border. The
   AcroForm `/NeedAppearances` flag is cleared so the generated
   appearance is honoured. `flatten()` runs this automatically.
 - Flatten form fields and annotations into static page content (generating
@@ -628,8 +642,9 @@ Boundaries:
   variable-text value is single-font and measured per byte code (single-byte
   simple fonts — composite/Type0 field fonts fall back to a flat width
   estimate). Check box / radio appearances are synthesised (a ZapfDingbats check
-  or a vector dot); push-button face appearances (caption/icon) are not
-  synthesised — an existing `/AP` is reused.
+  or a vector dot). Public push-button authoring currently supports a static
+  caption face only; icons, rollover/down faces, actions, submit/reset behavior,
+  signature-field authoring, and XFA authoring are not implemented.
 
 ## Annotations
 

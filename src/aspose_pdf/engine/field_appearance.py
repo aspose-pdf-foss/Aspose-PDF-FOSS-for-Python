@@ -18,7 +18,7 @@ estimate is used.
 
 from __future__ import annotations
 
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 # code (single-byte, cp1252 domain) -> advance width in 1000-unit glyph space.
 WidthFn = Callable[[int], float]
@@ -227,4 +227,60 @@ def build_text_appearance(
         ly -= leading
 
     body += ["ET", "Q", "EMC"]
+    return ("\n".join(body) + "\n").encode("latin-1", "replace")
+
+
+def build_list_box_appearance(
+    options: Sequence[Tuple[str, str]],
+    selected_values: Sequence[str],
+    width: float,
+    height: float,
+    *,
+    font_name: str,
+    font_size: float,
+    color_op: str = "0 g",
+    quadding: int = 0,
+    top_index: int = 0,
+    padding: float = 2.0,
+    width_fn: Optional[WidthFn] = None,
+) -> bytes:
+    """Build a scrollable list-box appearance with selected-row highlighting."""
+    fs = font_size if font_size > 0 else 10.0
+    leading = fs * 1.2
+    selected = set(selected_values)
+    first = max(0, min(int(top_index), max(0, len(options) - 1)))
+    max_rows = max(1, int(max(0.0, height - 2.0 * padding) // leading))
+    visible = options[first : first + max_rows]
+
+    body = [
+        "/Tx BMC",
+        "q",
+        f"{_fmt(padding)} {_fmt(padding)} "
+        f"{_fmt(max(0.0, width - 2.0 * padding))} "
+        f"{_fmt(max(0.0, height - 2.0 * padding))} re",
+        "W",
+        "n",
+    ]
+    y = height - padding - fs
+    for export_value, display_value in visible:
+        is_selected = export_value in selected
+        if is_selected:
+            body += [
+                "0.153 0.447 0.816 rg",
+                f"{_fmt(padding)} {_fmt(y - fs * 0.2)} "
+                f"{_fmt(max(0.0, width - 2.0 * padding))} {_fmt(leading)} re",
+                "f",
+            ]
+        text_color = "1 g" if is_selected else color_op
+        tx = _quad_x(display_value, width, fs, quadding, padding, width_fn)
+        body += [
+            "BT",
+            f"/{font_name} {_fmt(fs)} Tf",
+            text_color,
+            f"1 0 0 1 {_fmt(tx)} {_fmt(y)} Tm",
+            f"{_pdf_literal(display_value)} Tj",
+            "ET",
+        ]
+        y -= leading
+    body += ["Q", "EMC"]
     return ("\n".join(body) + "\n").encode("latin-1", "replace")

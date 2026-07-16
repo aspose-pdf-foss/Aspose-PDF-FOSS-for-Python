@@ -360,7 +360,7 @@ def test_choice_field_renders_selected_value():
             PdfName("Subtype"): PdfName("Widget"),
             PdfName("FT"): PdfName("Ch"),
             PdfName("T"): PdfString(b"choice"),
-            PdfName("Ff"): PdfNumber(1 << 18),  # combo
+            PdfName("Ff"): PdfNumber(1 << 17),  # combo
             PdfName("Rect"): PdfArray(
                 [PdfNumber(0), PdfNumber(0), PdfNumber(120), PdfNumber(18)]
             ),

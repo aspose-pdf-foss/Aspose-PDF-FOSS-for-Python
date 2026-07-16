@@ -337,6 +337,15 @@ def decode_pdf_text_string(s: PdfString) -> str:
         return octets.decode("latin-1", errors="replace")
 
 
+def _pdf_text_string(value: Any) -> PdfString:
+    """Encode a Python value as a PDF text string."""
+    text = str(value)
+    try:
+        return PdfString(text.encode("ascii"))
+    except UnicodeEncodeError:
+        return PdfString(b"\xfe\xff" + text.encode("utf-16-be"))
+
+
 # RC4 implementation replaced by cryptography library
 
 # ---------------------------------------------------------------------------
@@ -5737,8 +5746,9 @@ class SimplePdf:
                 ap = self._resolve(annot_dict.mapping.get(PdfName("AP")))
                 if isinstance(ap, PdfDictionary):
                     n = self._resolve(ap.get(PdfName("N")))
-                    if isinstance(n, PdfStream):
+                    if isinstance(n, PdfDictionary):
                         entry["has_AP"] = True
+                    if isinstance(n, PdfStream):
                         entry["AP_N"] = n.content
                 entry["Properties"] = self._extract_annotation_properties(annot_dict)
                 results.append(entry)
@@ -5753,7 +5763,16 @@ class SimplePdf:
     # every other entry of an annotation dictionary travels through the generic
     # property channel so all subtypes preserve their defining attributes.
     _RESERVED_ANNOT_KEYS = frozenset(
-        {"/Type", "/Subtype", "/Rect", "/Contents", "/T", "/AP", "/P"}
+        {
+            "/Type",
+            "/Subtype",
+            "/Rect",
+            "/Contents",
+            "/T",
+            "/AP",
+            "/P",
+            "/Parent",
+        }
     )
 
     def _annotation_cos_to_value(
@@ -7846,9 +7865,25 @@ class SimplePdf:
                 if not isinstance(ap, PdfDictionary):
                     continue
 
-                n = self._resolve(ap.get(PdfName("N")))
-                if not isinstance(n, PdfStream):
+                normal_raw = ap.get(PdfName("N"))
+                normal = self._resolve(normal_raw)
+                if isinstance(normal, PdfStream):
+                    n = normal
+                    n_resource = normal_raw
+                elif isinstance(normal, PdfDictionary):
+                    state = self._resolve(annot.get(PdfName("AS")))
+                    state_name = state if isinstance(state, PdfName) else PdfName("Off")
+                    n_resource = normal.mapping.get(state_name)
+                    n = self._resolve(n_resource)
+                    if not isinstance(n, PdfStream):
+                        n_resource = normal.mapping.get(PdfName("Off"))
+                        n = self._resolve(n_resource)
+                    if not isinstance(n, PdfStream):
+                        continue
+                else:
                     continue
+                if not isinstance(n_resource, PdfIndirectReference):
+                    n_resource = self._cos_doc.register_object(n)
 
                 # Get annotation rectangle [llx lly urx ury]
                 rect = self._resolve(annot.get(PdfName("Rect")))
@@ -7867,7 +7902,7 @@ class SimplePdf:
                 obj_name = PdfName(f"FlatAnnot{xi}")
 
                 # Add to XObjects
-                xobjects[obj_name] = n
+                xobjects[obj_name] = n_resource
 
                 # Position the XObject: map its (matrix-transformed) /BBox onto
                 # the annotation /Rect per ISO 32000-1 12.5.5.
@@ -7876,11 +7911,11 @@ class SimplePdf:
                 # 'q' (save), 'cm' (concat matrix), 'Do' (draw), 'Q' (restore)
                 op = (
                     f"\nq\n{a:g} {b:g} {c:g} {d:g} {e:g} {f:g} cm\n"
-                    f"/{obj_name.name} Do\nQ\n"
+                    f"{obj_name.name} Do\nQ\n"
                 )
                 new_content.extend(op.encode("ascii"))
 
-            self.page_contents[i] = bytes(new_content)
+            self._set_page_content(i, bytes(new_content))
 
             # Remove annotations after flattening
             page_dict[PdfName("Annots")] = PdfArray([])
@@ -7907,6 +7942,427 @@ class SimplePdf:
             budget=self._load_budget,
         )
         return extractor.extract_form_fields()
+
+    @staticmethod
+    def _form_field_name_parts(name: str) -> List[str]:
+        """Validate and split a fully qualified AcroForm field name."""
+        if not isinstance(name, str):
+            raise TypeError("Field name must be a string")
+        if not name or "\x00" in name:
+            raise PdfValidationException("Field name must be a non-empty text string")
+        parts = name.split(".")
+        if any(not part for part in parts):
+            raise PdfValidationException(
+                "Field name must not contain empty hierarchy components"
+            )
+        return parts
+
+    @staticmethod
+    def _form_state_name(value: Any, *, label: str) -> str:
+        """Validate a value that will be serialized as a PDF appearance-state name."""
+        name = str(value)
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name == "Off":
+            raise PdfValidationException(
+                f"{label} must be a simple PDF name other than 'Off'"
+            )
+        return name
+
+    def _ensure_acroform_for_authoring(self) -> Tuple[PdfDictionary, PdfArray]:
+        """Return a writable AcroForm dictionary and its root /Fields array."""
+        self._ensure_cos()
+        if self._cos_doc is None:
+            raise AsposePdfException("COS document required for form authoring")
+        root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(root, PdfDictionary):
+            raise PdfValidationException("Document catalog is missing")
+
+        acro = self._resolve(root.mapping.get(PdfName("AcroForm")))
+        if not isinstance(acro, PdfDictionary):
+            acro = PdfDictionary({PdfName("Fields"): PdfArray([])})
+            root.mapping[PdfName("AcroForm")] = self._cos_doc.register_object(acro)
+
+        fields = self._resolve(acro.mapping.get(PdfName("Fields")))
+        if not isinstance(fields, PdfArray):
+            fields = PdfArray([])
+            acro.mapping[PdfName("Fields")] = fields
+
+        if not isinstance(self._resolve(acro.mapping.get(PdfName("DA"))), PdfString):
+            acro.mapping[PdfName("DA")] = PdfString(b"/Helv 12 Tf 0 g")
+        self._resolve_field_font("Helv", acro)
+        acro.mapping[PdfName("NeedAppearances")] = PdfBoolean(False)
+        return acro, fields
+
+    def _field_partial_name(self, field: PdfDictionary) -> Optional[str]:
+        value = self._resolve(field.mapping.get(PdfName("T")))
+        return decode_pdf_text_string(value) if isinstance(value, PdfString) else None
+
+    def _find_named_field(
+        self, fields: PdfArray, partial_name: str
+    ) -> Optional[Tuple[Any, PdfDictionary]]:
+        for field_ref in fields.items:
+            field = self._resolve(field_ref)
+            if (
+                isinstance(field, PdfDictionary)
+                and self._field_partial_name(field) == partial_name
+            ):
+                return field_ref, field
+        return None
+
+    def _ensure_form_parent_path(
+        self, root_fields: PdfArray, parts: Sequence[str]
+    ) -> Tuple[Optional[PdfIndirectReference], PdfArray]:
+        """Create non-terminal parent fields for the requested name path."""
+        if self._cos_doc is None:
+            raise AsposePdfException("COS document required for form authoring")
+        siblings = root_fields
+        parent_ref: Optional[PdfIndirectReference] = None
+        for part in parts:
+            found = self._find_named_field(siblings, part)
+            if found is not None:
+                found_ref, parent = found
+                if PdfName("FT") in parent.mapping or PdfName("Rect") in parent.mapping:
+                    raise PdfValidationException(
+                        f"Field hierarchy conflicts with existing field '{part}'"
+                    )
+                kids = self._resolve(parent.mapping.get(PdfName("Kids")))
+                if not isinstance(kids, PdfArray):
+                    kids = PdfArray([])
+                    parent.mapping[PdfName("Kids")] = kids
+                if not isinstance(found_ref, PdfIndirectReference):
+                    found_ref = self._cos_doc.register_object(parent)
+                parent_ref = found_ref
+                siblings = kids
+                continue
+
+            parent = PdfDictionary(
+                {
+                    PdfName("T"): _pdf_text_string(part),
+                    PdfName("Kids"): PdfArray([]),
+                }
+            )
+            if parent_ref is not None:
+                parent.mapping[PdfName("Parent")] = parent_ref
+            parent_ref = self._cos_doc.register_object(parent)
+            siblings.items.append(parent_ref)
+            siblings = parent.mapping[PdfName("Kids")]
+        return parent_ref, siblings
+
+    def _form_widget_page(
+        self, page_index: Any, rect: Any
+    ) -> Tuple[PdfDictionary, PdfIndirectReference, Tuple[float, float, float, float]]:
+        if isinstance(page_index, bool) or not isinstance(page_index, int):
+            raise TypeError("Page index must be an integer")
+        self._validate_page_index(page_index)
+        if (
+            not isinstance(rect, (list, tuple))
+            or len(rect) != 4
+            or any(isinstance(value, bool) for value in rect)
+        ):
+            raise PdfValidationException("Field rectangle must contain four numbers")
+        try:
+            coords = tuple(float(value) for value in rect)
+        except (TypeError, ValueError) as exc:
+            raise PdfValidationException(
+                "Field rectangle must contain four numbers"
+            ) from exc
+        if not all(math.isfinite(value) for value in coords):
+            raise PdfValidationException("Field rectangle values must be finite")
+        if coords[2] <= coords[0] or coords[3] <= coords[1]:
+            raise PdfValidationException("Field rectangle must have positive dimensions")
+
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page dictionary is missing")
+        self._ensure_page_cache()
+        page_ref = PdfIndirectReference(self._page_refs[page_index], 0)
+        return page, page_ref, coords
+
+    @staticmethod
+    def _choice_option_to_cos(option: Any) -> Any:
+        if isinstance(option, str):
+            return _pdf_text_string(option)
+        if (
+            isinstance(option, (list, tuple))
+            and len(option) == 2
+            and all(isinstance(value, str) for value in option)
+        ):
+            return PdfArray([_pdf_text_string(option[0]), _pdf_text_string(option[1])])
+        raise PdfValidationException(
+            "Choice options must be strings or (export_value, display_value) pairs"
+        )
+
+    def create_form_field(
+        self,
+        name: str,
+        field_type: str,
+        widgets: Sequence[Dict[str, Any]],
+        *,
+        value: Any = None,
+        flags: int = 0,
+        options: Optional[Sequence[Any]] = None,
+        default_appearance: Optional[str] = None,
+        alignment: int = 0,
+        caption: str = "",
+        on_value: str = "Yes",
+    ) -> None:
+        """Create a terminal AcroForm field and its widget annotations."""
+        self._ensure_not_disposed()
+        supported = {"text", "checkbox", "radio", "listbox", "combobox", "pushbutton"}
+        if field_type not in supported:
+            raise PdfValidationException(f"Unsupported form field type: {field_type}")
+        parts = self._form_field_name_parts(name)
+        if not widgets:
+            raise PdfValidationException("At least one field widget is required")
+        if alignment not in (0, 1, 2):
+            raise PdfValidationException("Field alignment must be 0, 1, or 2")
+        if isinstance(flags, bool) or not isinstance(flags, int) or flags < 0:
+            raise PdfValidationException("Field flags must be a non-negative integer")
+
+        prepared_widgets = []
+        for spec in widgets:
+            if not isinstance(spec, dict):
+                raise TypeError("Widget specifications must be dictionaries")
+            page, page_ref, rect = self._form_widget_page(
+                spec.get("page_index"), spec.get("rect")
+            )
+            prepared_widgets.append((spec, page, page_ref, rect))
+
+        radio_states: List[str] = []
+        if field_type == "radio":
+            for spec, _page, _page_ref, _rect in prepared_widgets:
+                radio_states.append(
+                    self._form_state_name(spec.get("export_value"), label="Radio value")
+                )
+            if len(set(radio_states)) != len(radio_states):
+                raise PdfValidationException("Radio values must be unique")
+            if value is not None and str(value) not in radio_states:
+                raise PdfValidationException("Selected radio value is not one of the options")
+        if field_type == "checkbox":
+            on_value = self._form_state_name(on_value, label="Checkbox on_value")
+
+        choice_options = list(options or [])
+        option_cos = [self._choice_option_to_cos(item) for item in choice_options]
+        if field_type in ("listbox", "combobox") and not option_cos:
+            raise PdfValidationException("Choice fields require at least one option")
+
+        existing = self.get_form_fields()
+        if name in existing:
+            raise PdfValidationException(f"Form field '{name}' already exists")
+        acro, root_fields = self._ensure_acroform_for_authoring()
+        if self._cos_doc is None:
+            raise AsposePdfException("COS document required for form authoring")
+        parent_ref, siblings = self._ensure_form_parent_path(root_fields, parts[:-1])
+        if self._find_named_field(siblings, parts[-1]) is not None:
+            raise PdfValidationException(f"Form field '{name}' already exists")
+
+        ft_name = "Btn" if field_type in ("checkbox", "radio", "pushbutton") else (
+            "Ch" if field_type in ("listbox", "combobox") else "Tx"
+        )
+        field_map: Dict[PdfName, Any] = {
+            PdfName("FT"): PdfName(ft_name),
+            PdfName("T"): _pdf_text_string(parts[-1]),
+            PdfName("Ff"): PdfNumber(flags),
+        }
+        if parent_ref is not None:
+            field_map[PdfName("Parent")] = parent_ref
+        if field_type in ("text", "listbox", "combobox"):
+            da = default_appearance or "/Helv 12 Tf 0 g"
+            field_map[PdfName("DA")] = PdfString(da.encode("ascii"))
+            field_map[PdfName("Q")] = PdfNumber(alignment)
+        if option_cos:
+            field_map[PdfName("Opt")] = PdfArray(option_cos)
+            if field_type == "listbox" and isinstance(value, (list, tuple)):
+                export_values = [
+                    item if isinstance(item, str) else item[0]
+                    for item in choice_options
+                ]
+                selected_indices = sorted(
+                    export_values.index(str(item))
+                    for item in value
+                    if str(item) in export_values
+                )
+                field_map[PdfName("I")] = PdfArray(
+                    [PdfNumber(index) for index in selected_indices]
+                )
+
+        if field_type == "checkbox":
+            state = on_value if bool(value) else "Off"
+            field_map[PdfName("V")] = PdfName(state)
+            field_map[PdfName("DV")] = PdfName(state)
+        elif field_type == "radio":
+            state = str(value) if value is not None else "Off"
+            field_map[PdfName("V")] = PdfName(state)
+            field_map[PdfName("DV")] = PdfName(state)
+        elif field_type != "pushbutton" and not (
+            field_type in ("listbox", "combobox") and value is None
+        ):
+            if isinstance(value, (list, tuple)):
+                pdf_value = PdfArray([_pdf_text_string(item) for item in value])
+            else:
+                pdf_value = _pdf_text_string("" if value is None else value)
+            field_map[PdfName("V")] = pdf_value
+            field_map[PdfName("DV")] = pdf_value
+
+        field = PdfDictionary(field_map)
+        field_ref = self._cos_doc.register_object(field)
+        siblings.items.append(field_ref)
+
+        kid_refs = []
+        for index, (spec, page, page_ref, rect) in enumerate(prepared_widgets):
+            mk_map: Dict[PdfName, Any] = {
+                PdfName("BC"): PdfArray([PdfNumber(0)]),
+                PdfName("BG"): PdfArray(
+                    [
+                        PdfNumber(
+                            0.95
+                            if field_type in ("checkbox", "radio", "pushbutton")
+                            else 1
+                        )
+                    ]
+                ),
+            }
+            widget_map: Dict[PdfName, Any] = {
+                PdfName("Type"): PdfName("Annot"),
+                PdfName("Subtype"): PdfName("Widget"),
+                PdfName("Rect"): PdfArray([PdfNumber(coord) for coord in rect]),
+                PdfName("P"): page_ref,
+                PdfName("Parent"): field_ref,
+                PdfName("F"): PdfNumber(4),
+                PdfName("BS"): PdfDictionary(
+                    {PdfName("W"): PdfNumber(1), PdfName("S"): PdfName("S")}
+                ),
+            }
+            if field_type == "checkbox":
+                widget_map[PdfName("AS")] = PdfName(on_value)
+                mk_map[PdfName("CA")] = PdfString(b"4")
+            elif field_type == "radio":
+                widget_map[PdfName("AS")] = PdfName(radio_states[index])
+            elif field_type == "pushbutton":
+                mk_map[PdfName("CA")] = _pdf_text_string(caption)
+                widget_map[PdfName("H")] = PdfName("P")
+            widget_map[PdfName("MK")] = PdfDictionary(mk_map)
+
+            widget_ref = self._cos_doc.register_object(PdfDictionary(widget_map))
+            kid_refs.append(widget_ref)
+            annots = self._resolve(page.mapping.get(PdfName("Annots")))
+            if not isinstance(annots, PdfArray):
+                annots = PdfArray([])
+                page.mapping[PdfName("Annots")] = annots
+            annots.items.append(widget_ref)
+        field.mapping[PdfName("Kids")] = PdfArray(kid_refs)
+
+        inherited = {
+            "da": self._get_cos_string(acro.mapping.get(PdfName("DA"))) or None,
+            "q": None,
+            "ft": None,
+            "ff": 0,
+            "v": None,
+            "opt": None,
+        }
+        self._gen_field_appearance_rec(field_ref, inherited, acro)
+        acro.mapping[PdfName("NeedAppearances")] = PdfBoolean(False)
+
+    def remove_form_field(self, name: str) -> bool:
+        """Remove one terminal field and its widget annotations."""
+        self._ensure_not_disposed()
+        parts = self._form_field_name_parts(name)
+        if name not in self.get_form_fields():
+            return False
+        if self._cos_doc is None:
+            return False
+        root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(root, PdfDictionary):
+            return False
+        acro = self._resolve(root.mapping.get(PdfName("AcroForm")))
+        if not isinstance(acro, PdfDictionary):
+            return False
+        fields = self._resolve(acro.mapping.get(PdfName("Fields")))
+        if not isinstance(fields, PdfArray):
+            return False
+
+        widget_numbers: Set[int] = set()
+        widget_objects: Set[int] = set()
+        removed = self._remove_form_field_rec(
+            fields, parts, widget_numbers, widget_objects
+        )
+        if not removed:
+            return False
+
+        for page_index in range(len(self.pages)):
+            page = self._get_page_dict(page_index)
+            if not isinstance(page, PdfDictionary):
+                continue
+            annots = self._resolve(page.mapping.get(PdfName("Annots")))
+            if not isinstance(annots, PdfArray):
+                continue
+            kept = []
+            for annot_ref in annots.items:
+                annot = self._resolve(annot_ref)
+                obj_num = (
+                    annot_ref.object_number
+                    if isinstance(annot_ref, PdfIndirectReference)
+                    else None
+                )
+                if obj_num in widget_numbers or id(annot) in widget_objects:
+                    continue
+                kept.append(annot_ref)
+            annots.items[:] = kept
+
+        if not fields.items:
+            root.mapping.pop(PdfName("AcroForm"), None)
+        return True
+
+    def _remove_form_field_rec(
+        self,
+        fields: PdfArray,
+        parts: Sequence[str],
+        widget_numbers: Set[int],
+        widget_objects: Set[int],
+    ) -> bool:
+        for index, field_ref in enumerate(list(fields.items)):
+            field = self._resolve(field_ref)
+            if not isinstance(field, PdfDictionary):
+                continue
+            if self._field_partial_name(field) != parts[0]:
+                continue
+            if len(parts) == 1:
+                self._collect_form_widgets(
+                    field_ref, field, widget_numbers, widget_objects
+                )
+                fields.items.pop(index)
+                return True
+            kids = self._resolve(field.mapping.get(PdfName("Kids")))
+            if not isinstance(kids, PdfArray):
+                return False
+            removed = self._remove_form_field_rec(
+                kids, parts[1:], widget_numbers, widget_objects
+            )
+            if removed and not kids.items and PdfName("FT") not in field.mapping:
+                fields.items.pop(index)
+            return removed
+        return False
+
+    def _collect_form_widgets(
+        self,
+        field_ref: Any,
+        field: PdfDictionary,
+        widget_numbers: Set[int],
+        widget_objects: Set[int],
+    ) -> None:
+        if PdfName("Rect") in field.mapping:
+            if isinstance(field_ref, PdfIndirectReference):
+                widget_numbers.add(field_ref.object_number)
+            widget_objects.add(id(field))
+        kids = self._resolve(field.mapping.get(PdfName("Kids")))
+        if not isinstance(kids, PdfArray):
+            return
+        for kid_ref in kids.items:
+            kid = self._resolve(kid_ref)
+            if not isinstance(kid, PdfDictionary):
+                continue
+            if isinstance(kid_ref, PdfIndirectReference):
+                widget_numbers.add(kid_ref.object_number)
+            widget_objects.add(id(kid))
 
     def set_field_value(self, name: str, value: Any) -> None:
         """Set the value of a form field by name."""
@@ -7953,6 +8409,7 @@ class SimplePdf:
                 pdf_val = self._value_to_pdf(field_obj, value)
                 if pdf_val is not None:
                     field_obj.mapping[PdfName("V")] = pdf_val
+                    self._update_choice_indices(field_obj, value)
                 return True
 
             kids = field_obj.mapping.get(PdfName("Kids"))
@@ -7968,19 +8425,77 @@ class SimplePdf:
         ff = self._resolve(field_obj.mapping.get(PdfName("Ff")))
         ff_val = int(ff.value) if isinstance(ff, PdfNumber) else 0
         is_radio = bool(ff_val & (1 << 15))
-        is_checkbox = isinstance(ft, PdfName) and ft.name == "/Btn" and not is_radio
+        is_pushbutton = bool(ff_val & (1 << 16))
+        is_checkbox = (
+            isinstance(ft, PdfName)
+            and ft.name == "/Btn"
+            and not is_radio
+            and not is_pushbutton
+        )
         is_choice = isinstance(ft, PdfName) and ft.name == "/Ch"
 
+        if is_pushbutton:
+            return None
         if is_checkbox:
-            checked = value in (True, "Yes", "1", "On", "yes", "true")
-            return PdfName("Yes" if checked else "Off")
+            on_name = self._checkbox_on_name(field_obj)
+            checked = value in (True, "Yes", "1", "On", "yes", "true", on_name)
+            return PdfName(on_name if checked else "Off")
         if is_radio:
-            return PdfName(str(value))
+            if value is None or str(value) == "Off":
+                return PdfName("Off")
+            return PdfName(self._form_state_name(value, label="Radio value"))
         if is_choice:
             if isinstance(value, (list, tuple)):
-                return PdfArray([PdfString(str(v).encode()) for v in value])
-            return PdfString(str(value).encode())
-        return PdfString(str(value).encode())
+                return PdfArray([_pdf_text_string(v) for v in value])
+            return _pdf_text_string(value)
+        return _pdf_text_string(value)
+
+    def _update_choice_indices(self, field_obj: PdfDictionary, value: Any) -> None:
+        """Keep a multiselect choice field's /I array aligned with /V."""
+        ft = self._resolve(field_obj.mapping.get(PdfName("FT")))
+        if not (isinstance(ft, PdfName) and ft.name == "/Ch"):
+            return
+        if not isinstance(value, (list, tuple)):
+            field_obj.mapping.pop(PdfName("I"), None)
+            return
+        options = self._resolve(field_obj.mapping.get(PdfName("Opt")))
+        if not isinstance(options, PdfArray):
+            return
+        exports: List[str] = []
+        for option in options.items:
+            option = self._resolve(option)
+            if isinstance(option, PdfString):
+                exports.append(decode_pdf_text_string(option))
+            elif isinstance(option, PdfArray) and option.items:
+                export = self._resolve(option.items[0])
+                if isinstance(export, PdfString):
+                    exports.append(decode_pdf_text_string(export))
+        indices = sorted(
+            exports.index(str(item)) for item in value if str(item) in exports
+        )
+        field_obj.mapping[PdfName("I")] = PdfArray(
+            [PdfNumber(index) for index in indices]
+        )
+
+    def _checkbox_on_name(self, field_obj: PdfDictionary) -> str:
+        """Return the on-state name declared by a checkbox widget."""
+        kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
+        candidates = kids.items if isinstance(kids, PdfArray) else [field_obj]
+        for candidate in candidates:
+            widget = self._resolve(candidate)
+            if not isinstance(widget, PdfDictionary):
+                continue
+            ap = self._resolve(widget.mapping.get(PdfName("AP")))
+            if isinstance(ap, PdfDictionary):
+                normal = self._resolve(ap.mapping.get(PdfName("N")))
+                if isinstance(normal, PdfDictionary) and not isinstance(normal, PdfStream):
+                    for key in normal.mapping:
+                        if isinstance(key, PdfName) and key.name != "/Off":
+                            return key.name.lstrip("/")
+            state = self._resolve(widget.mapping.get(PdfName("AS")))
+            if isinstance(state, PdfName) and state.name != "/Off":
+                return state.name.lstrip("/")
+        return "Yes"
 
     def generate_field_appearances(self, *, drop_need_appearances: bool = True) -> int:
         """Regenerate ``/AP`` appearance streams for AcroForm fields from their values.
@@ -8014,6 +8529,7 @@ class SimplePdf:
             "ft": None,
             "ff": 0,
             "v": None,
+            "opt": None,
         }
         updated = 0
         for field_ref in fields.items:
@@ -8040,8 +8556,10 @@ class SimplePdf:
         ff = int(ff_obj.value) if isinstance(ff_obj, PdfNumber) else inherited["ff"]
         v_raw = field.mapping.get(PdfName("V"))
         v = v_raw if v_raw is not None else inherited["v"]
+        opt_raw = field.mapping.get(PdfName("Opt"))
+        opt = opt_raw if opt_raw is not None else inherited.get("opt")
 
-        child = {"da": da, "q": q, "ft": ft, "ff": ff, "v": v}
+        child = {"da": da, "q": q, "ft": ft, "ff": ff, "v": v, "opt": opt}
 
         count = 0
         kids = self._resolve(field.mapping.get(PdfName("Kids")))
@@ -8051,7 +8569,9 @@ class SimplePdf:
         elif PdfName("Rect") in field.mapping:
             # Terminal (merged field + widget) annotation.
             try:
-                if self._set_widget_appearance(field, ft, ff or 0, q or 0, v, da, acro):
+                if self._set_widget_appearance(
+                    field, ft, ff or 0, q or 0, v, da, acro, opt
+                ):
                     count += 1
             except PdfResourceLimitException:
                 raise
@@ -8068,6 +8588,7 @@ class SimplePdf:
         v: Any,
         da: Optional[str],
         acro: PdfDictionary,
+        opt: Any = None,
     ) -> bool:
         rect = self._get_cos_rect(widget.mapping.get(PdfName("Rect")))
         llx, urx = min(rect[0], rect[2]), max(rect[0], rect[2])
@@ -8079,15 +8600,15 @@ class SimplePdf:
 
         is_radio = bool(ff & (1 << 15))
         if ft == "Btn":
-            if ff & (1 << 16):  # push button: keep its own appearance
-                return False
+            if ff & (1 << 16):
+                return self._ensure_push_button_appearance(widget, rect_n, w, h)
             # Synthesise check/radio glyph appearances when the widget has none,
             # then point /AS at the state matching /V.
             self._ensure_button_appearance_streams(widget, is_radio, v)
             return self._set_button_widget_state(widget, v, is_radio)
         if ft in ("Tx", "Ch"):
             return self._set_text_widget_appearance(
-                widget, ft, ff, q, v, da, acro, rect_n, w, h
+                widget, ft, ff, q, v, da, acro, rect_n, w, h, opt
             )
         return False
 
@@ -8103,20 +8624,26 @@ class SimplePdf:
         rect: Tuple[float, float, float, float],
         w: float,
         h: float,
+        opt: Any = None,
     ) -> bool:
-        from .field_appearance import build_text_appearance, parse_default_appearance
+        from .field_appearance import (
+            build_list_box_appearance,
+            build_text_appearance,
+            parse_default_appearance,
+        )
 
-        text = self._field_value_to_text(v)
+        text = self._choice_value_to_text(v, opt) if ft == "Ch" else self._field_value_to_text(v)
         font_name, size, color = parse_default_appearance(da or "/Helv 0 Tf 0 g")
         font_name = font_name or "Helv"
         multiline = ft == "Tx" and bool(ff & (1 << 12))
+        box_content = self._field_widget_box_content(widget, w, h)
         # Rich-text fields (Ff bit 26) render their /RV styled markup.
         if ft == "Tx" and (ff & (1 << 25)):
             rich = self._rich_text_widget_appearance(widget, size, color, q, w, h)
             if rich is not None:
                 content, resources = rich
                 widget.mapping[PdfName("AP")] = self._register_annotation_appearance(
-                    rect, {"N": content}, resources
+                    rect, {"N": box_content + content}, resources
                 )
                 return True
         font_ref, used_name = self._resolve_field_font(font_name, acro)
@@ -8128,17 +8655,33 @@ class SimplePdf:
             metric = self._simple_font_metric(font_obj)
             if metric is not None:
                 width_fn = metric.width_of
-        content = build_text_appearance(
-            text,
-            w,
-            h,
-            font_name=used_name,
-            font_size=size,
-            color_op=color,
-            quadding=q if q in (0, 1, 2) else 0,
-            multiline=multiline,
-            width_fn=width_fn,
-        )
+        option_pairs = self._choice_options_for_appearance(opt)
+        if ft == "Ch" and not (ff & (1 << 17)) and option_pairs:
+            selected = self._field_value_strings(v)
+            content = build_list_box_appearance(
+                option_pairs,
+                selected,
+                w,
+                h,
+                font_name=used_name,
+                font_size=size,
+                color_op=color,
+                quadding=q if q in (0, 1, 2) else 0,
+                width_fn=width_fn,
+            )
+        else:
+            content = build_text_appearance(
+                text,
+                w,
+                h,
+                font_name=used_name,
+                font_size=size,
+                color_op=color,
+                quadding=q if q in (0, 1, 2) else 0,
+                multiline=multiline,
+                width_fn=width_fn,
+            )
+        content = box_content + content
         resources = PdfDictionary(
             {PdfName("Font"): PdfDictionary({PdfName(used_name): font_ref})}
         )
@@ -8194,6 +8737,103 @@ class SimplePdf:
             return "\n".join(parts)
         return ""
 
+    def _field_value_strings(self, value: Any) -> List[str]:
+        value = self._resolve(value)
+        if isinstance(value, PdfArray):
+            result = []
+            for item in value.items:
+                item = self._resolve(item)
+                if isinstance(item, PdfString):
+                    result.append(decode_pdf_text_string(item))
+                elif isinstance(item, PdfName):
+                    result.append(item.name.lstrip("/"))
+            return result
+        text = self._field_value_to_text(value)
+        return [text] if text else []
+
+    def _choice_options_for_appearance(self, options: Any) -> List[Tuple[str, str]]:
+        option_array = self._resolve(options)
+        if not isinstance(option_array, PdfArray):
+            return []
+        result: List[Tuple[str, str]] = []
+        for option in option_array.items:
+            option = self._resolve(option)
+            if isinstance(option, PdfString):
+                text = decode_pdf_text_string(option)
+                result.append((text, text))
+            elif isinstance(option, PdfArray) and len(option.items) >= 2:
+                export = self._resolve(option.items[0])
+                display = self._resolve(option.items[1])
+                if isinstance(export, PdfString) and isinstance(display, PdfString):
+                    result.append(
+                        (
+                            decode_pdf_text_string(export),
+                            decode_pdf_text_string(display),
+                        )
+                    )
+        return result
+
+    def _choice_value_to_text(self, value: Any, options: Any) -> str:
+        """Map choice export values to their display strings for appearances."""
+        selected = self._field_value_to_text(value).split("\n")
+        option_array = self._resolve(options)
+        if not isinstance(option_array, PdfArray):
+            return "\n".join(selected)
+
+        displays: Dict[str, str] = {}
+        for option in option_array.items:
+            option = self._resolve(option)
+            if isinstance(option, PdfString):
+                text = decode_pdf_text_string(option)
+                displays[text] = text
+            elif isinstance(option, PdfArray) and len(option.items) >= 2:
+                export = self._resolve(option.items[0])
+                display = self._resolve(option.items[1])
+                if isinstance(export, PdfString) and isinstance(display, PdfString):
+                    displays[decode_pdf_text_string(export)] = decode_pdf_text_string(
+                        display
+                    )
+        return "\n".join(displays.get(item, item) for item in selected)
+
+    @staticmethod
+    def _field_color_operator(components: Optional[list], *, stroke: bool) -> str:
+        if not components:
+            return ""
+        values = " ".join(f"{float(value):g}" for value in components)
+        operators = {1: ("G", "g"), 3: ("RG", "rg"), 4: ("K", "k")}
+        pair = operators.get(len(components))
+        return f"{values} {pair[0 if stroke else 1]}" if pair else ""
+
+    def _field_widget_box_content(
+        self, widget: PdfDictionary, w: float, h: float
+    ) -> bytes:
+        """Draw a widget's /MK background and /BS border into its appearance."""
+        mk = self._resolve(widget.mapping.get(PdfName("MK")))
+        if not isinstance(mk, PdfDictionary):
+            return b""
+        background = self._field_color_operator(
+            self._cos_number_list(mk.mapping.get(PdfName("BG"))), stroke=False
+        )
+        border = self._field_color_operator(
+            self._cos_number_list(mk.mapping.get(PdfName("BC"))), stroke=True
+        )
+        width = self._button_border_width(widget)
+        lines = ["q"]
+        if background:
+            lines += [background, f"0 0 {w:g} {h:g} re", "f"]
+        if border and width > 0:
+            inset = width / 2.0
+            rw, rh = w - width, h - width
+            if rw > 0 and rh > 0:
+                lines += [
+                    border,
+                    f"{width:g} w",
+                    f"{inset:g} {inset:g} {rw:g} {rh:g} re",
+                    "S",
+                ]
+        lines.append("Q")
+        return ("\n".join(lines) + "\n").encode("ascii")
+
     def _resolve_field_font(
         self, font_name: str, acro: PdfDictionary
     ) -> Tuple[Any, str]:
@@ -8238,6 +8878,48 @@ class SimplePdf:
             dr.mapping[PdfName("Font")] = fonts
         fonts.mapping[PdfName(font_name)] = font_ref
         return font_ref, font_name
+
+    def _ensure_push_button_appearance(
+        self,
+        widget: PdfDictionary,
+        rect: Tuple[float, float, float, float],
+        w: float,
+        h: float,
+    ) -> bool:
+        """Create a caption-only normal appearance for a push button when absent."""
+        ap = self._resolve(widget.mapping.get(PdfName("AP")))
+        if isinstance(ap, PdfDictionary):
+            normal = self._resolve(ap.mapping.get(PdfName("N")))
+            if isinstance(normal, PdfStream):
+                return True
+
+        caption = ""
+        border_color = background = None
+        mk = self._resolve(widget.mapping.get(PdfName("MK")))
+        if isinstance(mk, PdfDictionary):
+            ca = self._resolve(mk.mapping.get(PdfName("CA")))
+            if isinstance(ca, PdfString):
+                caption = decode_pdf_text_string(ca)
+            border_color = self._cos_number_list(mk.mapping.get(PdfName("BC")))
+            background = self._cos_number_list(mk.mapping.get(PdfName("BG")))
+
+        from .appearance import build_push_button_appearance
+
+        generated = build_push_button_appearance(
+            w,
+            h,
+            caption=caption,
+            border_color=border_color,
+            bg_color=background,
+            border_width=self._button_border_width(widget),
+        )
+        resources = self._build_appearance_resources(
+            generated.ext_gstates, generated.fonts
+        )
+        widget.mapping[PdfName("AP")] = self._register_annotation_appearance(
+            rect, {"N": generated.content}, resources
+        )
+        return True
 
     def _cos_number_list(self, obj: Any) -> Optional[list]:
         """Coerce a COS array of numbers to a ``list[float]`` (or ``None``)."""
@@ -10231,7 +10913,8 @@ class CosExtractor:
         -------
         dict
             Mapping of field name to
-            {"value": ..., "type": "text"|"checkbox"|"radio"|"choice"}.
+            {"value": ..., "type": "text"|"checkbox"|"radio"|"listbox"|
+            "combobox"|"pushbutton"}.
         """
         from .cos import PdfName, PdfDictionary, PdfArray
 
@@ -10266,6 +10949,8 @@ class CosExtractor:
         field_ref: Any,
         fields: Dict[str, Dict[str, Any]],
         prefix: str = "",
+        inherited_ft: Optional[PdfName] = None,
+        inherited_ff: int = 0,
         *,
         _depth: int = 1,
         _visited: Optional[Set[Tuple[str, int]]] = None,
@@ -10297,29 +10982,45 @@ class CosExtractor:
             "form field tree items",
         )
 
-        t = field_obj.mapping.get(PdfName("T"))
-        t = self._resolve(t)
+        t = self._resolve(field_obj.mapping.get(PdfName("T")))
         if not isinstance(t, PdfString):
             return
 
-        name = (
-            t.value.decode("utf-8", errors="ignore")
-            if isinstance(t.value, bytes)
-            else str(t.value)
-        )
+        name = decode_pdf_text_string(t)
         full_name = f"{prefix}.{name}" if prefix else name
 
         from .cos import PdfNumber
 
-        ft = self._resolve(field_obj.mapping.get(PdfName("FT")))
+        ft_obj = self._resolve(field_obj.mapping.get(PdfName("FT")))
+        ft = ft_obj if isinstance(ft_obj, PdfName) else inherited_ft
         ff = self._resolve(field_obj.mapping.get(PdfName("Ff")))
-        ff_val = int(ff.value) if isinstance(ff, PdfNumber) else 0
+        ff_val = int(ff.value) if isinstance(ff, PdfNumber) else inherited_ff
         is_radio = bool(ff_val & (1 << 15))  # Ff bit 16 = Radio
-        is_checkbox = isinstance(ft, PdfName) and ft.name == "/Btn" and not is_radio
+        is_pushbutton = bool(ff_val & (1 << 16))  # Ff bit 17 = Pushbutton
+        is_checkbox = (
+            isinstance(ft, PdfName)
+            and ft.name == "/Btn"
+            and not is_radio
+            and not is_pushbutton
+        )
         is_choice = isinstance(ft, PdfName) and ft.name == "/Ch"
-        combo = is_choice and bool(ff_val & (1 << 18))  # Ff bit 19 = Combo
+        combo = is_choice and bool(ff_val & (1 << 17))  # Ff bit 18 = Combo
 
-        if is_checkbox:
+        kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
+        named_field_child = False
+        if isinstance(kids, PdfArray):
+            for kid_ref in kids.items:
+                kid = self._resolve(kid_ref)
+                if isinstance(kid, PdfDictionary) and isinstance(
+                    self._resolve(kid.mapping.get(PdfName("T"))), PdfString
+                ):
+                    named_field_child = True
+                    break
+        is_terminal = isinstance(ft, PdfName) and not named_field_child
+
+        if is_pushbutton:
+            field_type = "pushbutton"
+        elif is_checkbox:
             field_type = "checkbox"
         elif is_radio:
             field_type = "radio"
@@ -10328,23 +11029,22 @@ class CosExtractor:
         else:
             field_type = "text"
 
-        v = field_obj.mapping.get(PdfName("V"))
-        v = self._resolve(v)
-        if v is not None:
+        v = self._resolve(field_obj.mapping.get(PdfName("V")))
+        if is_terminal and v is not None:
             if isinstance(v, PdfString):
-                val_str = (
-                    v.value.decode("utf-8", errors="ignore")
-                    if isinstance(v.value, bytes)
-                    else str(v.value)
-                )
+                val_str = decode_pdf_text_string(v)
                 if is_checkbox:
-                    val = val_str in ("Yes", "1", "On", "true")
+                    val = val_str not in ("", "Off", "0", "false", "No")
+                elif is_radio and val_str == "Off":
+                    val = None
                 else:
                     val = val_str
             elif isinstance(v, PdfName):
                 name_val = v.name.lstrip("/")
                 if is_checkbox:
-                    val = name_val in ("Yes", "1", "On", "true")
+                    val = name_val not in ("", "Off", "0", "false", "No")
+                elif is_radio and name_val == "Off":
+                    val = None
                 else:
                     val = name_val
             elif isinstance(v, PdfArray):
@@ -10357,12 +11057,7 @@ class CosExtractor:
                 for item in v.items:
                     item = self._resolve(item)
                     if isinstance(item, PdfString):
-                        s = (
-                            item.value.decode("utf-8", errors="ignore")
-                            if isinstance(item.value, bytes)
-                            else str(item.value)
-                        )
-                        items.append(s)
+                        items.append(decode_pdf_text_string(item))
                     elif isinstance(item, PdfName):
                         items.append(item.name.lstrip("/"))
                 val = items if len(items) > 1 else (items[0] if items else None)
@@ -10371,15 +11066,14 @@ class CosExtractor:
         else:
             val = False if is_checkbox else None
 
-        fields[full_name] = {"value": val, "type": field_type}
-        self._budget.check(
-            len(fields),
-            "max_container_items",
-            "extracted form fields",
-        )
+        if is_terminal:
+            fields[full_name] = {"value": val, "type": field_type}
+            self._budget.check(
+                len(fields),
+                "max_container_items",
+                "extracted form fields",
+            )
 
-        kids = field_obj.mapping.get(PdfName("Kids"))
-        kids = self._resolve(kids)
         if isinstance(kids, PdfArray):
             self._budget.check(
                 len(kids.items),
@@ -10391,6 +11085,8 @@ class CosExtractor:
                     kid_ref,
                     fields,
                     full_name,
+                    ft,
+                    ff_val,
                     _depth=_depth + 1,
                     _visited=visited,
                     _node_count=node_count,

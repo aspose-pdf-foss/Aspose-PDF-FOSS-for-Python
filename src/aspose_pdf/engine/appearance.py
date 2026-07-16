@@ -982,6 +982,65 @@ def build_button_appearance(
     )
 
 
+def build_push_button_appearance(
+    w: float,
+    h: float,
+    *,
+    caption: str = "",
+    border_color: Optional[Any] = None,
+    bg_color: Optional[Any] = None,
+    text_color: Optional[Any] = None,
+    border_width: float = 1.0,
+) -> GeneratedAppearance:
+    """Build a normal appearance for a caption-only push-button widget."""
+    if w <= 0 or h <= 0:
+        return GeneratedAppearance(b"")
+
+    bw = max(float(border_width), 0.0)
+    lines = ["q"]
+    background = _color_op(bg_color, stroke=False) or "0.9 g"
+    lines += [background, f"0 0 {_fmt(w)} {_fmt(h)} re", "f"]
+
+    border = _color_op(border_color, stroke=True) or "0 G"
+    if bw > 0:
+        inset = bw / 2.0
+        rw, rh = w - bw, h - bw
+        if rw > 0 and rh > 0:
+            lines += [
+                border,
+                f"{_fmt(bw)} w",
+                f"{_fmt(inset)} {_fmt(inset)} {_fmt(rw)} {_fmt(rh)} re",
+                "S",
+            ]
+
+    fonts: Dict[str, Dict[str, Any]] = {}
+    label = str(caption or "")
+    if label:
+        pad = max(3.0, bw + 2.0)
+        width_fn = _annot_width_fn()
+        unit_width = _text_width(label, 1.0, width_fn)
+        size_for_width = max(1.0, w - 2.0 * pad) / max(unit_width, 1e-6)
+        font_size = max(4.0, min(h * 0.55, size_for_width))
+        text_width = _text_width(label, font_size, width_fn)
+        tx = max(pad, (w - text_width) / 2.0)
+        ty = (h - font_size) / 2.0 + font_size * 0.2
+        fill = _color_op(text_color, stroke=False) or "0 g"
+        lines += [
+            "BT",
+            f"/{_ANNOT_FONT_NAME} {_fmt(font_size)} Tf",
+            fill,
+            f"1 0 0 1 {_fmt(tx)} {_fmt(ty)} Tm",
+            f"{_pdf_literal(label)} Tj",
+            "ET",
+        ]
+        fonts = {_ANNOT_FONT_NAME: dict(_ANNOT_FONT_SPEC)}
+
+    lines.append("Q")
+    return GeneratedAppearance(
+        ("\n".join(lines) + "\n").encode("latin-1", "replace"), fonts=fonts
+    )
+
+
 def _build_caret(
     props: Dict[str, Any], llx: float, lly: float, w: float, h: float
 ) -> Optional[GeneratedAppearance]:

@@ -1070,6 +1070,8 @@ class Document:
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
         self._engine_pdf.flatten()
+        if self._form is not None:
+            self._form._fields.clear()
         return self
 
     def generate_appearances(self, *, force: bool = False) -> int:
@@ -1092,8 +1094,9 @@ class Document:
         Builds the variable-text appearance (``/AP /N``) of each text and choice
         field from its value and default appearance (``/DA``) so the value renders
         without relying on ``/NeedAppearances``, and points each check box / radio
-        widget's ``/AS`` at the state matching its value. Returns the number of
-        widgets updated. Call after setting field values; :meth:`flatten` does this
+        widget's ``/AS`` at the state matching its value. Missing caption-only
+        push-button appearances are also generated. Returns the number of widgets
+        updated. Call after setting field values; :meth:`flatten` does this
         automatically.
         """
         self._ensure_not_disposed()

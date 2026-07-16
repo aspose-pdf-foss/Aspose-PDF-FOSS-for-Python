@@ -94,6 +94,17 @@ class TestFormFieldTypesExtraction(unittest.TestCase):
         self.assertEqual(result["r1"]["value"], "OptionB")
         self.assertEqual(result["r1"]["type"], "radio")
 
+    def test_radio_off_has_no_selected_value(self):
+        doc = _make_cos_doc_with_acroform(
+            [
+                ("r2", "Btn", 1 << 15, PdfName("Off")),
+            ]
+        )
+        ext = CosExtractor(doc, b"")
+        result = ext.extract_form_fields()
+        self.assertIsNone(result["r2"]["value"])
+        self.assertEqual(result["r2"]["type"], "radio")
+
     def test_choice_single(self):
         doc = _make_cos_doc_with_acroform(
             [
@@ -119,7 +130,7 @@ class TestFormFieldTypesExtraction(unittest.TestCase):
     def test_combobox(self):
         doc = _make_cos_doc_with_acroform(
             [
-                ("combo1", "Ch", 1 << 18, PdfString(b"Selected")),
+                ("combo1", "Ch", 1 << 17, PdfString(b"Selected")),
             ]
         )
         ext = CosExtractor(doc, b"")
