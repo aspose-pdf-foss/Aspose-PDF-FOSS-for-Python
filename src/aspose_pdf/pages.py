@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
+    from aspose_pdf.text_layout import TextLayoutOptions
 
 
 class Page:
@@ -129,12 +130,15 @@ class Page:
         color: Sequence[float] = (0.0, 0.0, 0.0),
         tag: Optional[str] = None,
         actual_text: Optional[str] = None,
+        layout: Optional["TextLayoutOptions"] = None,
     ) -> "Page":
         """Append positioned text to this page.
 
         ``font_name`` selects the Standard-14 path. Pass ``font`` as a
         :class:`FontDescriptor`, bytes, bytearray, or filesystem path to embed
-        and subset a Unicode Type0/CID font.
+        and subset a Unicode Type0/CID font. Pass ``layout`` to enable
+        OpenType shaping, bidirectional text, font fallback, wrapping, and
+        alignment through :class:`~aspose_pdf.text_layout.TextLayoutOptions`.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -151,6 +155,7 @@ class Page:
             color=color,
             tag=tag,
             actual_text=actual_text,
+            layout=layout,
         )
         return self
 

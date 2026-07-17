@@ -43,6 +43,11 @@ images = [
 woff2 = [
   "Brotli>=1.0",
 ]
+text-layout = [
+  "uharfbuzz>=0.37",
+  "python-bidi>=0.6",
+  "fonttools>=4.40",
+]
 fuzz = [
   "atheris>=2.3",
 ]
@@ -56,6 +61,8 @@ dev = [
   "Brotli>=1.0",
   "fonttools>=4.40",
   "Pillow>=10",
+  "uharfbuzz>=0.37",
+  "python-bidi>=0.6",
 ]
 
 [tool.setuptools]

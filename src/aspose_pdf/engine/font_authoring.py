@@ -90,7 +90,8 @@ class AuthoredFont:
         self._gid_to_native_cid = gid_to_native_cid
 
         self._unicode_to_cid: dict[int, int] = {}
-        self._cid_to_unicode: dict[int, int] = {}
+        self._glyph_text_to_cid: dict[tuple[int, str], int] = {}
+        self._cid_to_unicode: dict[int, str] = {}
         self._cid_to_gid: dict[int, int] = {}
         self._used_gids: set[int] = {0}
 
@@ -125,6 +126,18 @@ class AuthoredFont:
         """Return PDF FontDescriptor metrics using PDF dictionary key names."""
         return dict(self._descriptor_metrics)
 
+    @property
+    def shaping_program(self) -> bytes:
+        """Return the complete SFNT program used by the shaping engine."""
+        return self._sfnt_program
+
+    def glyph_id(self, character: str) -> int | None:
+        """Return the cmap glyph ID for one Unicode character, if available."""
+        if not isinstance(character, str) or len(character) != 1:
+            raise TypeError("character must contain exactly one Unicode scalar")
+        gid = self._unicode_to_gid.get(ord(character))
+        return gid if gid is not None and 0 < gid < len(self._advances) else None
+
     def encode(self, text: str) -> bytes:
         """Encode *text* as two-byte CIDs and extend the current font mapping.
 
@@ -138,8 +151,8 @@ class AuthoredFont:
 
         planned: list[tuple[int, int, int]] = []
         new_by_codepoint: dict[int, tuple[int, int]] = {}
-        new_by_cid: dict[int, int] = {}
-        next_truetype_cid = len(self._unicode_to_cid) + 1
+        new_by_cid: dict[int, str] = {}
+        next_truetype_cid = max(self._cid_to_gid, default=0) + 1
         for character in text:
             codepoint = ord(character)
             if 0xD800 <= codepoint <= 0xDFFF:
@@ -167,7 +180,7 @@ class AuthoredFont:
                             "distinct CIDs."
                         )
                     new_by_codepoint[codepoint] = (cid, gid)
-                    new_by_cid[cid] = codepoint
+                    new_by_cid[cid] = character
                 else:
                     cid = (
                         self._gid_to_native_cid.get(gid)
@@ -181,19 +194,20 @@ class AuthoredFont:
                     previous = self._cid_to_unicode.get(cid)
                     if previous is None:
                         previous = new_by_cid.get(cid)
-                    if previous is not None and previous != codepoint:
+                    if previous is not None and previous != character:
                         raise FontEmbeddingException(
                             "The CFF font cmap maps multiple Unicode characters "
                             f"to CID {cid}; exact ToUnicode round-trip is not "
                             "possible."
                         )
                     new_by_codepoint[codepoint] = (cid, gid)
-                    new_by_cid[cid] = codepoint
+                    new_by_cid[cid] = character
             planned.append((codepoint, cid, gid))
 
         for codepoint, (cid, gid) in new_by_codepoint.items():
             self._unicode_to_cid[codepoint] = cid
-            self._cid_to_unicode[cid] = codepoint
+            self._cid_to_unicode[cid] = chr(codepoint)
+            self._glyph_text_to_cid[(gid, chr(codepoint))] = cid
             self._cid_to_gid[cid] = gid
         self._used_gids.update(gid for _codepoint, _cid, gid in planned)
         if new_by_codepoint:
@@ -204,6 +218,58 @@ class AuthoredFont:
             encoded.extend(cid.to_bytes(2, "big"))
         return bytes(encoded)
 
+    def encode_glyph(self, gid: int, unicode_text: str) -> bytes:
+        """Assign a CID to one shaped glyph and its logical Unicode cluster."""
+        if isinstance(gid, bool) or not isinstance(gid, int):
+            raise TypeError("gid must be an integer")
+        if gid <= 0 or gid >= len(self._advances):
+            raise FontEmbeddingException(
+                f"The shaped font glyph ID {gid} is outside the font glyph range."
+            )
+        if not isinstance(unicode_text, str) or not unicode_text:
+            raise TypeError("unicode_text must be a non-empty string")
+        if any(0xD800 <= ord(character) <= 0xDFFF for character in unicode_text):
+            raise FontEmbeddingException(
+                "The shaped Unicode cluster contains an isolated surrogate."
+            )
+
+        key = (gid, unicode_text)
+        cid = self._glyph_text_to_cid.get(key)
+        if cid is not None:
+            return cid.to_bytes(2, "big")
+
+        if self._kind == "truetype":
+            cid = max(self._cid_to_gid, default=0) + 1
+            if cid > 0xFFFF:
+                raise FontEmbeddingException(
+                    "A Type 0 font cannot encode more than 65,535 distinct CIDs."
+                )
+        else:
+            cid = (
+                self._gid_to_native_cid.get(gid)
+                if self._gid_to_native_cid is not None
+                else gid
+            )
+            if cid is None or not 0 < cid <= 0xFFFF:
+                raise FontEmbeddingException(
+                    f"The CFF font glyph {gid} has no encodable native CID."
+                )
+            previous = self._cid_to_unicode.get(cid)
+            if previous is not None and previous != unicode_text:
+                raise FontEmbeddingException(
+                    "The CFF shaped glyph maps to multiple Unicode clusters; "
+                    "exact ToUnicode round-trip is not possible."
+                )
+
+        self._glyph_text_to_cid[key] = cid
+        self._cid_to_unicode[cid] = unicode_text
+        self._cid_to_gid[cid] = gid
+        if len(unicode_text) == 1 and self._unicode_to_gid.get(ord(unicode_text)) == gid:
+            self._unicode_to_cid.setdefault(ord(unicode_text), cid)
+        self._used_gids.add(gid)
+        self._state_version += 1
+        return cid.to_bytes(2, "big")
+
     def embedded_program(self) -> bytes:
         """Return the current embedded program, subset when it becomes smaller."""
         self._refresh_embedded_program()
@@ -212,8 +278,8 @@ class AuthoredFont:
     def to_unicode_cmap(self) -> bytes:
         """Build a ToUnicode CMap for the current two-byte CID assignments."""
         rows = [
-            (f"<{cid:04X}> <{chr(codepoint).encode('utf-16-be').hex().upper()}>")
-            for cid, codepoint in sorted(self._cid_to_unicode.items())
+            (f"<{cid:04X}> <{text.encode('utf-16-be').hex().upper()}>")
+            for cid, text in sorted(self._cid_to_unicode.items())
         ]
         lines = [
             "/CIDInit /ProcSet findresource begin",

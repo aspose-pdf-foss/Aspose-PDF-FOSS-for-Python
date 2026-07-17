@@ -55,6 +55,7 @@ from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from .pdfua import PdfUaValidateOptions, PdfUaValidationResult, PdfUaValidator
 from .signature import PdfSignature
 from .tagged import StructureElement, TaggedContent
+from .text_layout import TextLayoutOptions
 from .validation import (
     CertificationLevel,
     RevocationStatus,
@@ -122,6 +123,7 @@ __all__ = [
     "TaggedContent",
     "TextExtractor",
     "TextExtractorOptions",
+    "TextLayoutOptions",
     "Page",
     "PageCollection",
     "PdfAValidateOptions",

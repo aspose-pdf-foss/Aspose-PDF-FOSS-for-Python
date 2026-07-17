@@ -68,6 +68,7 @@ from .content_authoring import (
     build_cid_text_stream,
     build_image_stream,
     build_line_stream,
+    build_positioned_cid_text_stream,
     build_rectangle_stream,
     build_text_stream,
     prepare_image,
@@ -96,6 +97,7 @@ if TYPE_CHECKING:
 
     from ..font_registry import FontDescriptor
     from ..optimization import OptimizationOptions
+    from ..text_layout import TextLayoutOptions
 
 logger = logging.getLogger("aspose_pdf")
 
@@ -5428,6 +5430,18 @@ class SimplePdf:
         self.fonts[resource_name] = type0_font
         return resource
 
+    def _register_actual_text_property(self, page_index: int, text: str) -> str:
+        """Register a named marked-content property list carrying ActualText."""
+        properties = self._ensure_resource_subdict(page_index, "Properties")
+        property_name = self._unique_resource_name(properties, "AT")
+        property_list = PdfDictionary(
+            {PdfName("ActualText"): _pdf_text_string(text)}
+        )
+        properties.mapping[PdfName(property_name)] = self._cos_doc.register_object(
+            property_list
+        )
+        return property_name
+
     def _register_page_image(
         self,
         page_index: int,
@@ -5469,6 +5483,7 @@ class SimplePdf:
         color: Sequence[float] = (0.0, 0.0, 0.0),
         tag: Optional[str] = None,
         actual_text: Optional[str] = None,
+        layout: Optional["TextLayoutOptions"] = None,
     ) -> None:
         """Append positioned text to a page content stream."""
         self._ensure_not_disposed()
@@ -5479,7 +5494,27 @@ class SimplePdf:
             raise PdfValidationException("font_size must be a positive number.")
         if size <= 0:
             raise PdfValidationException("font_size must be a positive number.")
-        if font is None:
+        if layout is not None:
+            from aspose_pdf.text_layout import TextLayoutOptions
+
+            if not isinstance(layout, TextLayoutOptions):
+                raise TypeError("layout must be a TextLayoutOptions instance or None")
+            if font is None:
+                raise PdfValidationException(
+                    "Complex text layout requires an embedded primary font."
+                )
+            content = self._build_laid_out_text_content(
+                page_index,
+                str(text),
+                float(x),
+                float(y),
+                size,
+                font_name,
+                font,
+                color,
+                layout,
+            )
+        elif font is None:
             resource = self._register_standard_font_resource(
                 page_index, font_name or "Helvetica"
             )
@@ -5515,12 +5550,124 @@ class SimplePdf:
             content = build_cid_text_stream(encoded, x, y, resource, size, color)
         mark = self._register_marked_content(
             page_index,
-            tag or ("P" if actual_text is not None else None),
-            actual_text=actual_text,
+            tag or ("P" if actual_text is not None or layout is not None else None),
+            actual_text=(actual_text if actual_text is not None else str(text))
+            if layout is not None
+            else actual_text,
         )
         if mark is not None:
             content = wrap_marked_content(content, mark[0], mark[1])
         self._append_content_to_page(page_index, content)
+
+    def _build_laid_out_text_content(
+        self,
+        page_index: int,
+        text: str,
+        x: float,
+        y: float,
+        font_size: float,
+        font_name: Optional[str],
+        primary_font: Union["FontDescriptor", bytes, bytearray, str, Path],
+        color: Sequence[float],
+        layout: "TextLayoutOptions",
+    ) -> bytes:
+        from .font_authoring import prepare_authored_font
+        from .text_layout import layout_text
+
+        sources = (primary_font, *layout.fallback_fonts)
+        authored_fonts: List[Any] = []
+        cache_keys: List[Tuple[int, str, str]] = []
+        resources: List[Optional[_AuthoredFontResource]] = []
+        for index, source in enumerate(sources):
+            try:
+                prepared = prepare_authored_font(
+                    source,
+                    font_name=font_name if index == 0 else None,
+                    limits=self._load_limits,
+                )
+            except FontEmbeddingException as exc:
+                label = "primary" if index == 0 else f"fallback {index}"
+                raise FontEmbeddingException(
+                    f"The {label} layout font could not be prepared: {exc}"
+                ) from exc
+            key = (page_index, prepared.fingerprint, prepared.base_name)
+            cached = self._authored_font_cache.get(key)
+            authored_fonts.append(
+                prepared if cached is None else cached.authored_font
+            )
+            cache_keys.append(key)
+            resources.append(cached)
+
+        result = layout_text(text, authored_fonts, layout, font_size=font_size)
+        encoded_lines: List[
+            Tuple[str, List[Tuple[bytes, int, float, float]]]
+        ] = []
+        used_fonts: Set[int] = set()
+        line_height = layout.line_height or font_size * 1.2
+        for line_index, line in enumerate(result.lines):
+            available = max(
+                0.0,
+                (layout.max_width or line.width * font_size)
+                - line.width * font_size,
+            )
+            alignment = layout.alignment
+            if alignment == "start":
+                alignment = "right" if line.base_direction == "rtl" else "left"
+            elif alignment == "end":
+                alignment = "left" if line.base_direction == "rtl" else "right"
+            if alignment == "center":
+                line_offset = available / 2.0
+            elif alignment == "right":
+                line_offset = available
+            else:
+                line_offset = 0.0
+            baseline = y - line_index * line_height
+            glyphs: List[Tuple[bytes, int, float, float]] = []
+            for glyph in line.glyphs:
+                encoded = authored_fonts[glyph.font_index].encode_glyph(
+                    glyph.gid, glyph.unicode_text
+                )
+                used_fonts.add(glyph.font_index)
+                glyphs.append(
+                    (
+                        encoded,
+                        glyph.font_index,
+                        x + line_offset + glyph.x * font_size,
+                        baseline + glyph.y * font_size,
+                    )
+                )
+            property_name = self._register_actual_text_property(
+                page_index, line.actual_text
+            )
+            encoded_lines.append((property_name, glyphs))
+
+        resource_names: Dict[int, str] = {}
+        for font_index in sorted(used_fonts):
+            resource = resources[font_index]
+            if resource is None:
+                resource = self._register_authored_font_resource(
+                    page_index, authored_fonts[font_index]
+                )
+                self._authored_font_cache[cache_keys[font_index]] = resource
+                resources[font_index] = resource
+            else:
+                self._refresh_authored_font_resource(resource)
+            resource_names[font_index] = resource.resource_name
+
+        stream_lines: List[
+            Tuple[str, List[Tuple[bytes, str, float, float]]]
+        ] = []
+        for property_name, glyphs in encoded_lines:
+            stream_lines.append(
+                (
+                    property_name,
+                    [
+                        (encoded, resource_names[index], glyph_x, glyph_y)
+                        for encoded, index, glyph_x, glyph_y in glyphs
+                    ],
+                )
+            )
+        return build_positioned_cid_text_stream(stream_lines, font_size, color)
 
     def add_image_to_page(
         self,

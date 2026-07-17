@@ -455,9 +455,9 @@ Boundaries:
   exact `ToUnicode` map, but may lack overlay geometry. Unsupported runs are
   never extracted heuristically or edited bytewise. Rendering glyphs for named
   predefined CMaps is not part of this slice. The redaction overlay still
-  assumes a balanced content stream (identity CTM at its end). Layout
-  analysis, font shaping, rich text, and paragraph layout are not implemented
-  as public product features.
+  assumes a balanced content stream (identity CTM at its end). Existing text
+  editing does not invoke the complex-text authoring layout path, and rich-text
+  or general paragraph analysis is not implemented.
 
 ## Fonts
 
@@ -471,6 +471,19 @@ Supported:
   renumbering, descriptor metrics and CID widths come from the SFNT tables,
   and missing glyphs fail with `FontEmbeddingException` before page content is
   appended.
+- Enable complex-text authoring with
+  `Page.add_text(..., layout=TextLayoutOptions(...))` and the optional
+  `text-layout` extra. The layout path uses HarfBuzz for script-aware
+  GSUB/GPOS shaping, ligatures, kerning, and glyph positioning, plus the
+  Unicode bidi algorithm for mixed left-to-right and right-to-left runs. Runs
+  with the same direction are itemized by Unicode script before shaping.
+- Select fallback fonts in order per combining/ZWJ text cluster, switch PDF
+  font resources within a shaped line, and fail before appending page content
+  when no supplied font covers a visible character.
+- Wrap text to `max_width`, honor explicit newlines, configure line height,
+  and align lines using physical (`left`, `center`, `right`) or bidi-aware
+  (`start`, `end`) alignment. Logical text is preserved through `/ActualText`
+  while positioned glyph CIDs retain their shaped visual order.
 - Assign independent two-byte CIDs to TrueType Unicode scalars and emit an
   explicit `/CIDToGIDMap`. This preserves exact `/ToUnicode` extraction even
   when distinct scalars such as space and non-breaking space share a glyph.
@@ -508,12 +521,17 @@ Boundaries:
 
 - WOFF2 decoding needs the optional `brotli` dependency; WOFF2 font
   *collections* (`ttcf` flavour) are not reconstructed.
-- Unicode authoring does not perform bidi reordering, script shaping,
-  GSUB/GPOS substitutions, ligatures, kerning, fallback across multiple fonts,
-  or paragraph layout. Callers must supply text in paint order and a font with
-  a direct cmap entry for every scalar. OpenType CFF2 authoring is rejected;
-  CFF 1 mappings that alias different Unicode scalars to one native CID are
-  rejected because they cannot provide an exact `/ToUnicode` round trip.
+- Complex-text authoring requires the optional `uharfbuzz`, `python-bidi`, and
+  `fonttools` dependencies
+  (`pip install aspose-pdf-foss-for-python[text-layout]`) and an embedded
+  primary font; Standard-14 fonts cannot be shaped. Line breaking is greedy at
+  whitespace or text-cluster boundaries and does not implement hyphenation,
+  justification, rich-text spans, vertical writing, bidi isolate controls, or
+  general paragraph layout. Without `TextLayoutOptions`, callers still supply
+  a font with a direct cmap entry for every scalar. OpenType CFF2 authoring is
+  rejected; CFF 1 mappings that alias different Unicode scalars to one native
+  CID are rejected because they cannot provide an exact `/ToUnicode` round
+  trip.
 - Embedded glyph outlines are rasterized by the page renderer (see
   [Pages](#pages)) for all three program formats: TrueType (`glyf`), CFF
   (`/FontFile3`, name-keyed and CID-keyed), and Type 1 (`/FontFile`, including
@@ -521,7 +539,8 @@ Boundaries:
   rendered from bundled open substitutes: metric-compatible Liberation faces
   (SIL OFL 1.1, Latin subset) for the text families, and DejaVu Sans shape
   subsets (Bitstream Vera license) for Symbol and ZapfDingbats via their
-  built-in encodings. Text shaping (ligatures, GSUB/GPOS) is not implemented.
+  built-in encodings. Rendering paints shaped authored glyphs at their stored
+  positions but does not reshape text from existing PDF content streams.
   (Embedded TrueType and CFF — including CID-keyed CFF — glyph subsetting is
   available through `OptimizationOptions.subset_fonts`; see
   [Optimization](#optimization).)

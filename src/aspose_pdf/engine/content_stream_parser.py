@@ -672,6 +672,7 @@ class ContentStreamParser:
         self._embedded_encoding_codespaces: tuple[tuple[bytes, bytes], ...] = ()
         self._opaque_composite = False
         self._buffer: List[str] = []
+        self._marked_actual_text: List[str | None] = []
         self._font_size: float = 12.0
         self._last_glyph_width: int = (
             500  # thousandths of text space unit (em fraction)
@@ -762,6 +763,7 @@ class ContentStreamParser:
         """Extract and return the textual content of the stream."""
         self._buffer = []
         self._in_text = False
+        self._marked_actual_text = []
         self._gs_stack = [{"nonstroking_cs": None, "stroking_cs": None}]
         stack: List[Any] = []
 
@@ -796,6 +798,8 @@ class ContentStreamParser:
                     self._set_colorspace_name(operands[0], nonstroking=True)
                 elif token == "CS" and operands:
                     self._set_colorspace_name(operands[0], nonstroking=False)
+                elif token in {"BMC", "BDC", "EMC"}:
+                    self._handle_marked_content(token, operands)
                 elif token in {
                     "BT",
                     "ET",
@@ -827,6 +831,46 @@ class ContentStreamParser:
             stack.append(token)
 
         return "".join(self._buffer).strip()
+
+    @staticmethod
+    def _decode_actual_text(value: Any) -> str | None:
+        if isinstance(value, str):
+            return value
+        if not isinstance(value, (bytes, bytearray)):
+            return None
+        raw = bytes(value)
+        if raw.startswith(b"\xfe\xff"):
+            return raw[2:].decode("utf-16-be", errors="replace")
+        if raw.startswith(b"\xff\xfe"):
+            return raw[2:].decode("utf-16-le", errors="replace")
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return raw.decode("latin-1", errors="replace")
+
+    def _handle_marked_content(self, op: str, operands: List[Any]) -> None:
+        if op == "EMC":
+            if not self._marked_actual_text:
+                return
+            actual_text = self._marked_actual_text.pop()
+            if actual_text is not None and not any(
+                item is not None for item in self._marked_actual_text
+            ):
+                self._buffer.append(actual_text)
+            return
+        actual_text = None
+        if op == "BDC" and len(operands) >= 2:
+            property_name = operands[-1]
+            if isinstance(property_name, str):
+                properties = self._resources.get("Properties")
+                if isinstance(properties, dict):
+                    value = properties.get(property_name.lstrip("/"))
+                    if isinstance(value, dict):
+                        actual_text = self._decode_actual_text(value.get("ActualText"))
+        self._marked_actual_text.append(actual_text)
+
+    def _inside_actual_text(self) -> bool:
+        return any(item is not None for item in self._marked_actual_text)
 
     def _top_gs(self) -> Dict[str, str | None]:
         return self._gs_stack[-1]
@@ -917,7 +961,8 @@ class ContentStreamParser:
             return
 
         if op in {"Td", "TD", "Tm", "T*"}:
-            self._buffer.append(" ")
+            if not self._inside_actual_text():
+                self._buffer.append(" ")
             return
 
         if op == "Tj":
@@ -926,7 +971,8 @@ class ContentStreamParser:
                 return
             raw = ops[0]
             self._note_glyph_widths_from_bytes(raw)
-            self._buffer.append(self._decode_bytes(raw))
+            if not self._inside_actual_text():
+                self._buffer.append(self._decode_bytes(raw))
             return
 
         if op == "TJ":
@@ -940,28 +986,34 @@ class ContentStreamParser:
             for element in array:
                 if isinstance(element, bytes):
                     self._note_glyph_widths_from_bytes(element)
-                    self._buffer.append(self._decode_bytes(element))
+                    if not self._inside_actual_text():
+                        self._buffer.append(self._decode_bytes(element))
                 elif isinstance(element, (int, float)):
                     # TJ numbers: thousandths of a text space unit; large negative
                     # gaps often separate words — compare to last glyph width.
                     adj = float(element)
                     if adj < 0:
                         lw = max(self._last_glyph_width, 1)
-                        if -adj > max(100.0, 0.3 * float(lw)):
+                        if (
+                            not self._inside_actual_text()
+                            and -adj > max(100.0, 0.3 * float(lw))
+                        ):
                             self._buffer.append(" ")
             return
 
         if op == "'":
-            self._buffer.append("\n")
-            if len(ops) >= 1:
+            if not self._inside_actual_text():
+                self._buffer.append("\n")
+            if len(ops) >= 1 and not self._inside_actual_text():
                 self._buffer.append(
                     self._decode_bytes(ops[-1])
                 )  # Last operand is string
             return
 
         if op == '"':
-            self._buffer.append("\n")
-            if len(ops) >= 1:
+            if not self._inside_actual_text():
+                self._buffer.append("\n")
+            if len(ops) >= 1 and not self._inside_actual_text():
                 self._buffer.append(
                     self._decode_bytes(ops[-1])
                 )  # Last operand is string

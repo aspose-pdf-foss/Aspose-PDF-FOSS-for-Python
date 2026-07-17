@@ -14,8 +14,8 @@ stable release.
 ## Features
 
 - Create, load, save, merge, split, and inspect PDF documents
-- Add Standard-14 or embedded Unicode text, images, lines, rectangles,
-  annotations, attachments, and form data
+- Add Standard-14 or embedded Unicode text, including shaped bidirectional
+  text, plus images, lines, rectangles, annotations, attachments, and form data
 - Extract text, images, attachments, metadata, and bookmarks
 - Render pages to PNG or TIFF
 - Replace or redact text in supported content streams
@@ -35,10 +35,11 @@ detailed capability matrix and known limitations.
 - `cryptography`
 - `asn1crypto`
 
-Optional extras add Pillow-based image support and Brotli-based WOFF2 decoding:
+Optional extras add Pillow-based image support, Brotli-based WOFF2 decoding,
+and HarfBuzz/bidi complex-text layout:
 
 ```bash
-python -m pip install 'aspose-pdf-foss-for-python[images,woff2]'
+python -m pip install 'aspose-pdf-foss-for-python[images,woff2,text-layout]'
 ```
 
 ## Installation
@@ -96,6 +97,34 @@ The writer creates a subset Type0/CID font, two-byte character codes,
 `/ToUnicode`, widths, and the required CID-to-glyph mapping. A character that
 the supplied font cannot represent raises `FontEmbeddingException` instead of
 silently writing `.notdef`.
+
+Install the `text-layout` extra and pass `TextLayoutOptions` for OpenType
+shaping, bidirectional runs, ordered font fallback, and width-constrained line
+layout:
+
+```python
+from aspose_pdf import Document, TextLayoutOptions
+
+with Document() as document:
+    page = document.pages.add()
+    page.add_text(
+        "English العربية 123",
+        x=72,
+        y=720,
+        font_size=16,
+        font="NotoSansArabic-Regular.ttf",
+        layout=TextLayoutOptions(
+            fallback_fonts=["NotoSans-Regular.ttf"],
+            max_width=300,
+            alignment="start",
+            language="ar",
+        ),
+    )
+    document.save("complex-text.pdf")
+```
+
+Logical text is retained for extraction while glyphs are painted in their
+shaped visual order.
 
 ### Read a document
 

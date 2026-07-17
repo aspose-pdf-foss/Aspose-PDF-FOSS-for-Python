@@ -185,6 +185,45 @@ def build_cid_text_stream(
     return (" ".join(parts) + "\n").encode("ascii")
 
 
+def build_positioned_cid_text_stream(
+    lines: Sequence[
+        tuple[str, Sequence[tuple[bytes, str, float, float]]]
+    ],
+    font_size: float,
+    color: Sequence[float],
+) -> bytes:
+    """Build shaped lines from absolute glyph positions and named ActualText."""
+    parts = ["q", color_operator(color, stroking=False)]
+    for property_name, glyphs in lines:
+        if safe_resource_name(property_name, "AT") != property_name:
+            raise PdfValidationException("ActualText property name is invalid.")
+        parts.extend([f"/Span /{property_name} BDC", "BT"])
+        current_font: str | None = None
+        for encoded, font_resource, glyph_x, glyph_y in glyphs:
+            raw = bytes(encoded)
+            if len(raw) != 2:
+                raise PdfValidationException(
+                    "Each positioned CID glyph must contain one two-byte code."
+                )
+            if safe_resource_name(font_resource, "F") != font_resource:
+                raise PdfValidationException("Font resource name is invalid.")
+            if font_resource != current_font:
+                parts.append(f"/{font_resource} {format_number(font_size)} Tf")
+                current_font = font_resource
+            parts.extend(
+                [
+                    (
+                        "1 0 0 1 "
+                        f"{format_number(glyph_x)} {format_number(glyph_y)} Tm"
+                    ),
+                    f"<{raw.hex().upper()}> Tj",
+                ]
+            )
+        parts.extend(["ET", "EMC"])
+    parts.append("Q")
+    return (" ".join(parts) + "\n").encode("ascii")
+
+
 def build_image_stream(
     image_resource: str,
     x: float,
