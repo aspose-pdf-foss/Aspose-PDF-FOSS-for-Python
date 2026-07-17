@@ -821,17 +821,63 @@ def _parent_tree_map(pdf: Any, struct_root: PdfDictionary) -> dict:
     parent_tree = _get_dict(pdf, struct_root.get(PdfName("ParentTree")))
     if parent_tree is None:
         return {}
-    nums = pdf._resolve(parent_tree.get(PdfName("Nums")))
-    if not isinstance(nums, PdfArray):
-        return {}
     mapping: dict = {}
-    items = nums.items
-    for i in range(0, len(items) - 1, 2):
-        key = pdf._resolve(items[i])
-        arr = pdf._resolve(items[i + 1])
-        if isinstance(key, PdfNumber) and isinstance(arr, PdfArray):
-            mapping[int(key.value)] = arr
+    stack = [(parent_tree, 0)]
+    visited: Set[int] = set()
+    while stack:
+        node, depth = stack.pop()
+        if depth > _MAX_STRUCT_DEPTH or id(node) in visited:
+            continue
+        visited.add(id(node))
+        nums = pdf._resolve(node.get(PdfName("Nums")))
+        if isinstance(nums, PdfArray):
+            for index in range(0, len(nums.items) - 1, 2):
+                key = pdf._resolve(nums.items[index])
+                array = pdf._resolve(nums.items[index + 1])
+                if isinstance(key, PdfNumber) and isinstance(array, PdfArray):
+                    mapping[int(key.value)] = array
+        kids = pdf._resolve(node.get(PdfName("Kids")))
+        if isinstance(kids, PdfArray):
+            for raw_child in reversed(kids.items):
+                child = _get_dict(pdf, raw_child)
+                if child is not None:
+                    stack.append((child, depth + 1))
     return mapping
+
+
+def _named_property_mcids(pdf: Any, page: PdfDictionary) -> dict[str, int]:
+    """Resolve page ``/Properties`` resource names to marked-content IDs."""
+    resources = None
+    resource_resolver = getattr(pdf, "_resolve_resources_cos", None)
+    if callable(resource_resolver):
+        resources = resource_resolver(page)
+    if not isinstance(resources, PdfDictionary):
+        current: Any = page
+        visited: Set[int] = set()
+        for _depth in range(_MAX_RESOURCE_DEPTH):
+            if not isinstance(current, PdfDictionary) or id(current) in visited:
+                break
+            visited.add(id(current))
+            resources = _get_dict(pdf, current.get(PdfName("Resources")))
+            if resources is not None:
+                break
+            current = pdf._resolve(current.get(PdfName("Parent")))
+    if not isinstance(resources, PdfDictionary):
+        return {}
+    properties = _get_dict(pdf, resources.get(PdfName("Properties")))
+    if properties is None:
+        return {}
+    result: dict[str, int] = {}
+    for name, raw_property in properties.mapping.items():
+        if not isinstance(name, PdfName):
+            continue
+        property_list = _get_dict(pdf, raw_property)
+        if property_list is None:
+            continue
+        mcid = pdf._resolve(property_list.get(PdfName("MCID")))
+        if isinstance(mcid, PdfNumber) and mcid.value >= 0:
+            result[name.name.lstrip("/")] = int(mcid.value)
+    return result
 
 
 def pdfua_mcid_coverage(pdf: Any) -> Tuple[List[str], List[str]]:
@@ -876,6 +922,7 @@ def pdfua_mcid_coverage(pdf: Any) -> Tuple[List[str], List[str]]:
             try:
                 used = find_mcids(
                     pdf.get_page_content(i),
+                    named_properties=_named_property_mcids(pdf, page),
                     limits=pdf._load_limits,
                     budget=pdf._load_budget,
                 )

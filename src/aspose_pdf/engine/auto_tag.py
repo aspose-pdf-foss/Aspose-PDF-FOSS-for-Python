@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterator, List, Optional, Set, Tuple
+from typing import Iterator, List, Mapping, Optional, Set, Tuple
 
 from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
@@ -655,29 +655,40 @@ def find_image_placements(
 def find_mcids(
     content: bytes,
     *,
+    named_properties: Mapping[str, int] | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
 ) -> Set[int]:
     """Return the set of marked-content ``/MCID`` integers declared in *content*.
 
     Scans the inline property dictionary of each ``BDC``/``DP`` operator for an
-    ``/MCID`` integer.  The tokenizer skips strings, comments and inline-image
+    ``/MCID`` integer. The tokenizer skips strings, comments and inline-image
     data, so operators that merely *look* like marked content inside those are
-    ignored.  Named property lists (``/Tag /P1 BDC``) are not resolved, so their
-    MCIDs -- rare in generated content -- are not reported.
+    ignored. ``named_properties`` maps resource names from a page's
+    ``/Properties`` dictionary to their resolved MCIDs, allowing forms such as
+    ``/Tag /P1 BDC`` to be included as well.
     """
     active_budget = _resolve_scan_budget(limits, budget)
     mcids: Set[int] = set()
     depth = 0
     current: Optional[int] = None
     expect_value = False
+    previous_name: Optional[str] = None
+    last_name: Optional[str] = None
+    inline_properties = False
     for token, _tok_start, _tok_end in _tokens(content, budget=active_budget):
         if token is None:
+            if depth == 0:
+                previous_name = None
+                last_name = None
+                inline_properties = False
             continue
         if token == "<<":
             depth += 1
             if depth == 1:
                 current = None  # a fresh top-level BDC/DP property dict
+                expect_value = False
+                inline_properties = True
             continue
         if token == ">>":
             if depth > 0:
@@ -693,15 +704,37 @@ def find_mcids(
                 expect_value = True
             continue
         if token in ("BDC", "DP"):
-            if current is not None:
-                if current not in mcids:
+            resolved = current
+            if (
+                resolved is None
+                and not inline_properties
+                and previous_name is not None
+                and last_name is not None
+                and named_properties
+            ):
+                resolved = named_properties.get(last_name)
+                if resolved is None:
+                    resolved = named_properties.get(f"/{last_name}")
+            if resolved is not None:
+                if resolved not in mcids:
                     active_budget.check(
                         len(mcids) + 1,
                         "max_container_items",
                         "marked-content ID results",
                     )
-                mcids.add(current)
+                mcids.add(int(resolved))
             current = None
+            previous_name = None
+            last_name = None
+            inline_properties = False
+        elif token.startswith("/"):
+            inline_properties = False
+            previous_name = last_name
+            last_name = token.lstrip("/")
+        else:
+            inline_properties = False
+            previous_name = None
+            last_name = None
     return mcids
 
 

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from aspose_pdf.forms import Form
     from aspose_pdf.optimization import OptimizationOptions
     from aspose_pdf.pages import Page, PageCollection
+    from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.xmp import XmpPacket
 
 
@@ -76,6 +77,7 @@ class Document:
         self._pages: Optional[Any] = None
         self._form: Optional[Any] = None
         self._outlines: Optional[OutlineCollection] = None
+        self._tagged_content: Optional[Any] = None
         self._password: Optional[str] = None
         self._encrypted: bool = False
         self.file_name: Optional[str] = None
@@ -117,6 +119,16 @@ class Document:
 
             self._form = Form(self)
         return self._form
+
+    @property
+    def tagged_content(self) -> "TaggedContent":
+        """Get an editable view of the document's tagged structure tree."""
+        self._ensure_not_disposed()
+        if self._tagged_content is None:
+            from aspose_pdf.tagged import TaggedContent
+
+            self._tagged_content = TaggedContent(self)
+        return self._tagged_content
 
     @property
     def attachments(self):
@@ -903,9 +915,9 @@ class Document:
             inferred.
 
         Returns the number of structure elements created. This is a heuristic
-        aid (no fine reading order or paragraph grouping), not certified
-        accessibility; pair it with :meth:`convert_to_pdfua` for the catalog
-        prerequisites.
+        aid, not certified accessibility; review and refine its reading order,
+        hierarchy, and alternate descriptions through :attr:`tagged_content`,
+        and pair it with :meth:`convert_to_pdfua` for catalog prerequisites.
 
         Raises
         ------
@@ -968,6 +980,7 @@ class Document:
         self._pages = None
         self._form = None
         self._outlines = None
+        self._tagged_content = None
         self.file_name = None
 
     def close(self) -> None:

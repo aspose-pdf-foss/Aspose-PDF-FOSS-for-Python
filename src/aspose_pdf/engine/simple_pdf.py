@@ -43,6 +43,7 @@ from .cos import (
     PdfNumber,
     PdfStream,
     PdfBoolean,
+    PdfNull,
     AnnotationName,
     annotation_value_to_cos,
 )
@@ -3354,7 +3355,11 @@ class SimplePdf:
         if not isinstance(parent_tree, PdfDictionary):
             parent_tree = PdfDictionary({PdfName("Nums"): PdfArray([])})
             struct_root.mapping[PdfName("ParentTree")] = parent_tree
-        elif not isinstance(self._resolve(parent_tree.get(PdfName("Nums"))), PdfArray):
+        elif not isinstance(
+            self._resolve(parent_tree.get(PdfName("Nums"))), PdfArray
+        ) and not isinstance(
+            self._resolve(parent_tree.get(PdfName("Kids"))), PdfArray
+        ):
             parent_tree.mapping[PdfName("Nums")] = PdfArray([])
 
         mark_info = self._resolve(root.mapping.get(PdfName("MarkInfo")))
@@ -3377,8 +3382,13 @@ class SimplePdf:
             struct_root.mapping[PdfName("ParentTree")] = parent_tree
         nums = self._resolve(parent_tree.mapping.get(PdfName("Nums")))
         if not isinstance(nums, PdfArray):
-            nums = PdfArray([])
+            pairs = self._tagged_number_tree_pairs(parent_tree)
+            nums = PdfArray(
+                [item for key, array in pairs for item in (PdfNumber(key), array)]
+            )
             parent_tree.mapping[PdfName("Nums")] = nums
+            parent_tree.mapping.pop(PdfName("Kids"), None)
+            parent_tree.mapping.pop(PdfName("Limits"), None)
 
         key_obj = self._resolve(page.mapping.get(PdfName("StructParents")))
         if isinstance(key_obj, PdfNumber):
@@ -3431,6 +3441,507 @@ class SimplePdf:
             struct_root.mapping[PdfName("K")] = PdfArray([elem_ref])
         else:
             struct_root.mapping[PdfName("K")] = PdfArray([kids, elem_ref])
+
+    def _tagged_struct_tree_root(
+        self, *, create: bool = False
+    ) -> Optional[Tuple[PdfDictionary, PdfIndirectReference]]:
+        if create:
+            return self._ensure_struct_tree_root()
+        self._ensure_cos()
+        catalog = self._resolve(self._cos_doc.trailer.get(PdfName("Root")))
+        if not isinstance(catalog, PdfDictionary):
+            return None
+        root_entry = catalog.mapping.get(PdfName("StructTreeRoot"))
+        struct_root = self._resolve(root_entry)
+        if not isinstance(struct_root, PdfDictionary):
+            return None
+        if isinstance(root_entry, PdfIndirectReference):
+            root_ref = root_entry
+        else:
+            root_ref = self._cos_doc.register_object(struct_root)
+            catalog.mapping[PdfName("StructTreeRoot")] = root_ref
+        return struct_root, root_ref
+
+    def _tagged_is_struct_element(self, value: Any) -> bool:
+        element = self._resolve(value)
+        return isinstance(element, PdfDictionary) and isinstance(
+            self._resolve(element.mapping.get(PdfName("S"))), PdfName
+        )
+
+    def _tagged_kid_entries(
+        self, parent: PdfDictionary
+    ) -> List[Tuple[Any, PdfDictionary, Optional[int]]]:
+        raw_kids = parent.mapping.get(PdfName("K"))
+        kids = self._resolve(raw_kids)
+        entries: List[Tuple[Any, PdfDictionary, Optional[int]]] = []
+        if isinstance(kids, PdfArray):
+            for index, raw in enumerate(kids.items):
+                child = self._resolve(raw)
+                if self._tagged_is_struct_element(child):
+                    entries.append((raw, child, index))
+        elif self._tagged_is_struct_element(kids):
+            entries.append((raw_kids, kids, None))
+        return entries
+
+    def _tagged_find_location(
+        self, target: PdfDictionary
+    ) -> Optional[Tuple[PdfDictionary, Any, Optional[int]]]:
+        root_data = self._tagged_struct_tree_root()
+        if root_data is None:
+            return None
+        struct_root, _root_ref = root_data
+        stack = [struct_root]
+        visited: Set[int] = set()
+        while stack:
+            parent = stack.pop()
+            parent_id = id(parent)
+            if parent_id in visited:
+                continue
+            visited.add(parent_id)
+            for raw, child, index in self._tagged_kid_entries(parent):
+                if child is target:
+                    return parent, raw, index
+                stack.append(child)
+        return None
+
+    def _tagged_require_attached(self, element: PdfDictionary) -> None:
+        if self._tagged_find_location(element) is None:
+            raise PdfValidationException(
+                "Structure element is no longer attached to this document."
+            )
+
+    def _tagged_element_ref(
+        self, element: PdfDictionary
+    ) -> PdfIndirectReference:
+        object_number = getattr(element, "_obj_number", None)
+        if object_number is not None:
+            return PdfIndirectReference(object_number, 0)
+        element_ref = self._cos_doc.register_object(element)
+        location = self._tagged_find_location(element)
+        if location is not None:
+            parent, _raw, index = location
+            if index is None:
+                parent.mapping[PdfName("K")] = element_ref
+            else:
+                kids = self._resolve(parent.mapping.get(PdfName("K")))
+                if isinstance(kids, PdfArray):
+                    kids.items[index] = element_ref
+        return element_ref
+
+    def _tagged_insert_child(
+        self,
+        parent: PdfDictionary,
+        child_ref: PdfIndirectReference,
+        index: Optional[int],
+    ) -> None:
+        raw_kids = parent.mapping.get(PdfName("K"))
+        kids = self._resolve(raw_kids)
+        if isinstance(kids, PdfArray):
+            array = kids
+        elif raw_kids is None:
+            array = PdfArray([])
+            parent.mapping[PdfName("K")] = array
+        else:
+            array = PdfArray([raw_kids])
+            parent.mapping[PdfName("K")] = array
+
+        structural_positions = [
+            offset
+            for offset, item in enumerate(array.items)
+            if self._tagged_is_struct_element(item)
+        ]
+        child_count = len(structural_positions)
+        if index is None:
+            index = child_count
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError("index must be an integer or None")
+        if index < 0 or index > child_count:
+            raise IndexError("structure element index is out of range")
+        if index < child_count:
+            insert_at = structural_positions[index]
+        elif structural_positions:
+            insert_at = structural_positions[-1] + 1
+        else:
+            insert_at = len(array.items)
+        array.items.insert(insert_at, child_ref)
+
+    def _tagged_remove_child(
+        self, parent: PdfDictionary, index: Optional[int]
+    ) -> None:
+        if index is None:
+            parent.mapping.pop(PdfName("K"), None)
+            return
+        kids = self._resolve(parent.mapping.get(PdfName("K")))
+        if isinstance(kids, PdfArray) and 0 <= index < len(kids.items):
+            del kids.items[index]
+
+    def _tagged_parent_tree_arrays(self) -> List[PdfArray]:
+        root_data = self._tagged_struct_tree_root()
+        if root_data is None:
+            return []
+        struct_root, _root_ref = root_data
+        parent_tree = self._resolve(struct_root.mapping.get(PdfName("ParentTree")))
+        if not isinstance(parent_tree, PdfDictionary):
+            return []
+        return [array for _key, array in self._tagged_number_tree_pairs(parent_tree)]
+
+    def _tagged_number_tree_pairs(
+        self, root: PdfDictionary
+    ) -> List[Tuple[int, PdfArray]]:
+        pairs: Dict[int, PdfArray] = {}
+        stack: List[Tuple[PdfDictionary, int]] = [(root, 0)]
+        visited: Set[int] = set()
+        while stack:
+            node, depth = stack.pop()
+            self._load_budget.check(
+                depth + 1,
+                "max_nesting_depth",
+                "ParentTree number-tree depth",
+            )
+            node_id = id(node)
+            if node_id in visited:
+                raise PdfParseException("ParentTree number tree contains a cycle")
+            visited.add(node_id)
+            nums = self._resolve(node.mapping.get(PdfName("Nums")))
+            if isinstance(nums, PdfArray):
+                self._load_budget.check(
+                    len(nums.items),
+                    "max_container_items",
+                    "ParentTree number-tree items",
+                )
+                for offset in range(0, len(nums.items) - 1, 2):
+                    key = self._resolve(nums.items[offset])
+                    array = self._resolve(nums.items[offset + 1])
+                    if isinstance(key, PdfNumber) and isinstance(array, PdfArray):
+                        pairs[int(key.value)] = array
+            kids = self._resolve(node.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray):
+                self._load_budget.check(
+                    len(kids.items),
+                    "max_container_items",
+                    "ParentTree number-tree children",
+                )
+                for raw_child in reversed(kids.items):
+                    child = self._resolve(raw_child)
+                    if isinstance(child, PdfDictionary):
+                        stack.append((child, depth + 1))
+        return sorted(pairs.items())
+
+    def _tagged_existing_parent_array(
+        self, page: PdfDictionary
+    ) -> Optional[PdfArray]:
+        key_obj = self._resolve(page.mapping.get(PdfName("StructParents")))
+        if not isinstance(key_obj, PdfNumber):
+            return None
+        root_data = self._tagged_struct_tree_root()
+        if root_data is None:
+            return None
+        struct_root, _root_ref = root_data
+        parent_tree = self._resolve(struct_root.mapping.get(PdfName("ParentTree")))
+        if not isinstance(parent_tree, PdfDictionary):
+            return None
+        key = int(key_obj.value)
+        for candidate, array in self._tagged_number_tree_pairs(parent_tree):
+            if candidate == key:
+                return array
+        return None
+
+    def _tagged_clear_parent_mappings(self, elements: Set[int]) -> None:
+        for array in self._tagged_parent_tree_arrays():
+            for index, item in enumerate(array.items):
+                mapped = self._resolve(item)
+                if isinstance(mapped, PdfDictionary) and id(mapped) in elements:
+                    array.items[index] = PdfNull()
+
+    def _tagged_root_elements(self) -> List[PdfDictionary]:
+        root_data = self._tagged_struct_tree_root()
+        if root_data is None:
+            return []
+        return [child for _raw, child, _index in self._tagged_kid_entries(root_data[0])]
+
+    def _tagged_children(self, element: PdfDictionary) -> List[PdfDictionary]:
+        self._tagged_require_attached(element)
+        return [child for _raw, child, _index in self._tagged_kid_entries(element)]
+
+    def _tagged_parent(self, element: PdfDictionary) -> Optional[PdfDictionary]:
+        location = self._tagged_find_location(element)
+        if location is None:
+            self._tagged_require_attached(element)
+        parent = location[0]
+        root_data = self._tagged_struct_tree_root()
+        return None if root_data is not None and parent is root_data[0] else parent
+
+    def _tagged_add_element(
+        self,
+        structure_type: str,
+        *,
+        parent: Optional[PdfDictionary] = None,
+        index: Optional[int] = None,
+        page_number: Optional[int] = None,
+        mcids: Sequence[int] = (),
+        alt_text: Optional[str] = None,
+        actual_text: Optional[str] = None,
+    ) -> PdfDictionary:
+        tag_name = self._coerce_structure_type(structure_type)
+        if tag_name is None:
+            raise PdfValidationException("Structure type must not be empty.")
+        root_data = self._tagged_struct_tree_root(create=True)
+        if root_data is None:
+            raise PdfValidationException("Structure tree root is unavailable.")
+        struct_root, root_ref = root_data
+        target_parent = struct_root if parent is None else parent
+        if parent is not None:
+            self._tagged_require_attached(parent)
+        child_count = len(self._tagged_kid_entries(target_parent))
+        if index is not None:
+            if isinstance(index, bool) or not isinstance(index, int):
+                raise TypeError("index must be an integer or None")
+            if index < 0 or index > child_count:
+                raise IndexError("structure element index is out of range")
+
+        normalized_mcids: List[int] = []
+        for mcid in mcids:
+            if isinstance(mcid, bool) or not isinstance(mcid, int) or mcid < 0:
+                raise PdfValidationException("MCIDs must be non-negative integers.")
+            if mcid in normalized_mcids:
+                raise PdfValidationException("MCIDs must not contain duplicates.")
+            normalized_mcids.append(mcid)
+        if normalized_mcids and page_number is None:
+            raise PdfValidationException("page_number is required when MCIDs are set.")
+
+        page: Optional[PdfDictionary] = None
+        parent_array: Optional[PdfArray] = None
+        page_ref: Optional[PdfIndirectReference] = None
+        if page_number is not None:
+            if isinstance(page_number, bool) or not isinstance(page_number, int):
+                raise TypeError("page_number must be an integer or None")
+            page = self._get_page_dict(page_number - 1)
+            if not isinstance(page, PdfDictionary):
+                raise IndexError("page_number is out of range")
+            page_ref = self._page_ref_for_structure(page_number - 1)
+            parent_array = self._parent_tree_array_for_page(struct_root, page)
+            for mcid in normalized_mcids:
+                if mcid < len(parent_array.items) and isinstance(
+                    self._resolve(parent_array.items[mcid]), PdfDictionary
+                ):
+                    raise PdfValidationException(
+                        f"MCID {mcid} on page {page_number} is already mapped."
+                    )
+
+        parent_ref = (
+            root_ref if target_parent is struct_root else self._tagged_element_ref(target_parent)
+        )
+        element = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("StructElem"),
+                PdfName("S"): PdfName(tag_name),
+                PdfName("P"): parent_ref,
+            }
+        )
+        if page_ref is not None:
+            element.mapping[PdfName("Pg")] = page_ref
+        if len(normalized_mcids) == 1:
+            element.mapping[PdfName("K")] = PdfNumber(normalized_mcids[0])
+        elif normalized_mcids:
+            element.mapping[PdfName("K")] = PdfArray(
+                [PdfNumber(mcid) for mcid in normalized_mcids]
+            )
+        if alt_text is not None:
+            element.mapping[PdfName("Alt")] = _pdf_text_string(alt_text)
+        if actual_text is not None:
+            element.mapping[PdfName("ActualText")] = _pdf_text_string(actual_text)
+        element_ref = self._cos_doc.register_object(element)
+        self._tagged_insert_child(target_parent, element_ref, index)
+
+        if parent_array is not None:
+            for mcid in normalized_mcids:
+                while len(parent_array.items) <= mcid:
+                    parent_array.items.append(PdfNull())
+                parent_array.items[mcid] = element_ref
+        return element
+
+    def _tagged_move_element(
+        self,
+        element: PdfDictionary,
+        *,
+        parent: Optional[PdfDictionary],
+        index: Optional[int],
+    ) -> None:
+        root_data = self._tagged_struct_tree_root()
+        if root_data is None:
+            self._tagged_require_attached(element)
+        struct_root, root_ref = root_data
+        self._tagged_require_attached(element)
+        target_parent = struct_root if parent is None else parent
+        if parent is not None:
+            self._tagged_require_attached(parent)
+        if target_parent is element:
+            raise PdfValidationException("A structure element cannot contain itself.")
+
+        stack = [element]
+        visited: Set[int] = set()
+        while stack:
+            current = stack.pop()
+            if id(current) in visited:
+                continue
+            visited.add(id(current))
+            if current is target_parent:
+                raise PdfValidationException(
+                    "A structure element cannot be moved below its descendant."
+                )
+            stack.extend(child for _raw, child, _index in self._tagged_kid_entries(current))
+
+        location = self._tagged_find_location(element)
+        if location is None:
+            self._tagged_require_attached(element)
+        old_parent, _raw, old_index = location
+        target_child_count = len(self._tagged_kid_entries(target_parent))
+        if old_parent is target_parent:
+            target_child_count -= 1
+        if index is not None:
+            if isinstance(index, bool) or not isinstance(index, int):
+                raise TypeError("index must be an integer or None")
+            if index < 0 or index > target_child_count:
+                raise IndexError("structure element index is out of range")
+
+        element_ref = self._tagged_element_ref(element)
+        parent_ref = (
+            root_ref if target_parent is struct_root else self._tagged_element_ref(target_parent)
+        )
+        location = self._tagged_find_location(element)
+        if location is None:
+            self._tagged_require_attached(element)
+        old_parent, _raw, old_index = location
+        self._tagged_remove_child(old_parent, old_index)
+        self._tagged_insert_child(target_parent, element_ref, index)
+        element.mapping[PdfName("P")] = parent_ref
+
+    def _tagged_set_reading_order(
+        self,
+        elements: Sequence[PdfDictionary],
+        *,
+        parent: Optional[PdfDictionary],
+    ) -> None:
+        root_data = self._tagged_struct_tree_root()
+        if root_data is None:
+            if elements:
+                raise PdfValidationException("Structure tree is unavailable.")
+            return
+        struct_root, _root_ref = root_data
+        target_parent = struct_root if parent is None else parent
+        if parent is not None:
+            self._tagged_require_attached(parent)
+        entries = self._tagged_kid_entries(target_parent)
+        existing = [child for _raw, child, _index in entries]
+        if len(elements) != len(existing) or {id(item) for item in elements} != {
+            id(item) for item in existing
+        }:
+            raise PdfValidationException(
+                "Reading order must contain every direct child exactly once."
+            )
+        raw_by_id = {id(child): raw for raw, child, _index in entries}
+        kids = self._resolve(target_parent.mapping.get(PdfName("K")))
+        if isinstance(kids, PdfArray):
+            positions = [index for _raw, _child, index in entries if index is not None]
+            for position, element in zip(positions, elements):
+                kids.items[position] = raw_by_id[id(element)]
+        elif len(elements) == 1:
+            target_parent.mapping[PdfName("K")] = raw_by_id[id(elements[0])]
+
+    def _tagged_remove_element(self, element: PdfDictionary) -> None:
+        location = self._tagged_find_location(element)
+        if location is None:
+            self._tagged_require_attached(element)
+        removed: Set[int] = set()
+        stack = [element]
+        while stack:
+            current = stack.pop()
+            if id(current) in removed:
+                continue
+            removed.add(id(current))
+            stack.extend(child for _raw, child, _index in self._tagged_kid_entries(current))
+        parent, _raw, index = location
+        self._tagged_remove_child(parent, index)
+        self._tagged_clear_parent_mappings(removed)
+
+    def _tagged_element_for_mcid(
+        self, page_number: int, mcid: int
+    ) -> Optional[PdfDictionary]:
+        if isinstance(page_number, bool) or not isinstance(page_number, int):
+            raise TypeError("page_number must be an integer")
+        if isinstance(mcid, bool) or not isinstance(mcid, int) or mcid < 0:
+            raise PdfValidationException("mcid must be a non-negative integer")
+        page = self._get_page_dict(page_number - 1)
+        if not isinstance(page, PdfDictionary):
+            raise IndexError("page_number is out of range")
+        parent_array = self._tagged_existing_parent_array(page)
+        if parent_array is None or mcid >= len(parent_array.items):
+            return None
+        element = self._resolve(parent_array.items[mcid])
+        if not self._tagged_is_struct_element(element):
+            return None
+        return element
+
+    def _tagged_element_page_number(self, element: PdfDictionary) -> Optional[int]:
+        self._tagged_require_attached(element)
+        page = self._resolve(element.mapping.get(PdfName("Pg")))
+        if not isinstance(page, PdfDictionary):
+            return None
+        for index in range(len(self.pages)):
+            if self._get_page_dict(index) is page:
+                return index + 1
+        return None
+
+    def _tagged_element_mcids(self, element: PdfDictionary) -> Tuple[int, ...]:
+        self._tagged_require_attached(element)
+        kids = self._resolve(element.mapping.get(PdfName("K")))
+        items = kids.items if isinstance(kids, PdfArray) else [kids]
+        result: List[int] = []
+        for item in items:
+            resolved = self._resolve(item)
+            if isinstance(resolved, PdfNumber):
+                value = int(resolved.value)
+            elif isinstance(resolved, PdfDictionary):
+                mcid = self._resolve(resolved.mapping.get(PdfName("MCID")))
+                if not isinstance(mcid, PdfNumber):
+                    continue
+                value = int(mcid.value)
+            else:
+                continue
+            if value not in result:
+                result.append(value)
+        return tuple(result)
+
+    def _tagged_element_type(self, element: PdfDictionary) -> str:
+        self._tagged_require_attached(element)
+        return self._get_name(element.mapping.get(PdfName("S"))) or ""
+
+    def _tagged_set_element_type(
+        self, element: PdfDictionary, structure_type: str
+    ) -> None:
+        self._tagged_require_attached(element)
+        tag_name = self._coerce_structure_type(structure_type)
+        if tag_name is None:
+            raise PdfValidationException("Structure type must not be empty.")
+        element.mapping[PdfName("S")] = PdfName(tag_name)
+
+    def _tagged_element_text(
+        self, element: PdfDictionary, key: str
+    ) -> Optional[str]:
+        self._tagged_require_attached(element)
+        value = self._resolve(element.mapping.get(PdfName(key)))
+        return decode_pdf_text_string(value) if isinstance(value, PdfString) else None
+
+    def _tagged_set_element_text(
+        self, element: PdfDictionary, key: str, value: Optional[str]
+    ) -> None:
+        self._tagged_require_attached(element)
+        if value is None:
+            element.mapping.pop(PdfName(key), None)
+        elif not isinstance(value, str):
+            raise TypeError(f"{key} text must be a string or None")
+        else:
+            element.mapping[PdfName(key)] = _pdf_text_string(value)
 
     def _register_marked_content(
         self,

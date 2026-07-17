@@ -884,6 +884,14 @@ Supported:
   byte-level splice (originals preserved, inline images skipped) and linked by
   MCID through `/StructParents` and the `/ParentTree`. Pages already carrying
   marked content are left untouched.
+- Inspect and remediate existing tag trees through `Document.tagged_content`.
+  `TaggedContent.root_elements` and `StructureElement.children` expose logical
+  reading order; elements can be added with page/MCID bindings, moved between
+  parents, reordered, or removed with matching `/ParentTree` cleanup. Structure
+  types, `/Alt`, and `/ActualText` are editable and persist across save/load.
+  `element_for_mcid(page_number, mcid)` resolves the inverse mapping. PDF/UA
+  MCID coverage also resolves named marked-content property lists such as
+  `/Tag /P1 BDC` through inherited page `/Resources /Properties` dictionaries.
 - Resolve XMP namespace prefixes and URIs with `NamespaceProvider` (public) /
   `XmpNamespaceProvider` (engine), preloaded with the standard XMP namespaces
   (Dublin Core, Adobe XMP, PDF, PDF/A, EXIF, TIFF, ...) and extensible with
@@ -929,9 +937,9 @@ Boundaries:
   dedicated validator such as veraPDF for formal compliance.
 - The PDF/UA structure-tree checks validate a tag tree that already exists.
   Marked-content (MCID) coverage is cross-checked against the `/ParentTree`
-  (advisory warnings), but named marked-content property lists (`/Tag /P1 BDC`,
-  which reference `/Properties` rather than an inline `/MCID`) are not resolved.
-  `auto_tag()` infers a real but **coarse** tree: reading order is geometric
+  (advisory warnings), including named property lists that resolve to an MCID
+  through the page's inherited `/Resources /Properties`. `auto_tag()` infers a
+  real but **coarse** tree: reading order is geometric
   (columns split at whitespace gutters, then top-to-bottom, left-to-right),
   paragraphs are grouped by proximity, headings are inferred from font size
   only (levels `/H1`–`/H3` by size tier), lists are recognised from leading
@@ -942,8 +950,8 @@ Boundaries:
   or image-bulleted list is not recognised, and nesting is flat), and table
   detection needs a regular grid whose columns are closer than the
   column-split gutter (a wide-gutter table reads as columns, and merged/empty
-  cells break the grid). It is a starting point a human refines, not certified
-  accessibility.
+  cells break the grid). It is a starting point a human refines through
+  `Document.tagged_content`, not certified accessibility.
   Content authored through the page APIs carries caller-supplied semantic tags
   and alt text.
 - XMP covers the full data model: simple values, structured values, arrays

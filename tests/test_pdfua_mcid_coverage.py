@@ -23,9 +23,15 @@ def test_find_mcids_extracts_and_skips_strings():
     assert find_mcids(content) == {0, 2}
 
 
-def test_find_mcids_ignores_named_property_lists():
-    # /Tag /P1 BDC has no inline /MCID dict, so nothing is reported.
+def test_find_mcids_resolves_named_property_lists_when_supplied():
     assert find_mcids(b"/Span /P1 BDC (x) Tj EMC") == set()
+    assert find_mcids(
+        b"/Span /P1 BDC (x) Tj EMC", named_properties={"P1": 4}
+    ) == {4}
+    assert find_mcids(b"/P1 BDC", named_properties={"P1": 4}) == set()
+    assert find_mcids(
+        b"/Span <</Lang (en)>> BDC", named_properties={"Span": 4}
+    ) == set()
 
 
 def _elem():
@@ -108,3 +114,39 @@ def test_no_struct_parents_is_skipped():
     )
     errors, warnings = pdfua_mcid_coverage(pdf)
     assert errors == [] and warnings == []
+
+
+def test_named_property_list_mcid_is_included_in_coverage():
+    pdf = _doc(b"/Span /P1 BDC (a) Tj EMC", [True])
+    page = pdf._get_page_dict(0)
+    pages_parent = pdf._resolve(page.mapping.get(PdfName("Parent")))
+    property_list = pdf._cos_doc.register_object(
+        PdfDictionary({PdfName("MCID"): PdfNumber(0)})
+    )
+    pages_parent.mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("Properties"): PdfDictionary(
+                {PdfName("P1"): property_list}
+            )
+        }
+    )
+
+    errors, warnings = pdfua_mcid_coverage(pdf)
+
+    assert errors == []
+    assert warnings == []
+
+
+def test_coverage_reads_parent_tree_number_tree_kids():
+    pdf = _doc(_TWO_MARKS, [True, True])
+    catalog = pdf._resolve(pdf._cos_doc.trailer.get(PdfName("Root")))
+    struct_root = pdf._resolve(catalog.mapping.get(PdfName("StructTreeRoot")))
+    parent_tree = pdf._resolve(struct_root.mapping.get(PdfName("ParentTree")))
+    nums = parent_tree.mapping.pop(PdfName("Nums"))
+    leaf = pdf._cos_doc.register_object(PdfDictionary({PdfName("Nums"): nums}))
+    parent_tree.mapping[PdfName("Kids")] = PdfArray([leaf])
+
+    errors, warnings = pdfua_mcid_coverage(pdf)
+
+    assert errors == []
+    assert warnings == []

@@ -54,6 +54,7 @@ from .pages import Page, PageCollection
 from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from .pdfua import PdfUaValidateOptions, PdfUaValidationResult, PdfUaValidator
 from .signature import PdfSignature
+from .tagged import StructureElement, TaggedContent
 from .validation import (
     CertificationLevel,
     RevocationStatus,
@@ -116,7 +117,9 @@ __all__ = [
     "Splitter",
     "SplitOptions",
     "StreamDataSource",
+    "StructureElement",
     "SystemFontSource",
+    "TaggedContent",
     "TextExtractor",
     "TextExtractorOptions",
     "Page",
