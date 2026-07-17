@@ -43,6 +43,29 @@ def test_page_collection_supports_indexing(page_collection):
         page_collection.item(10)
 
 
+def test_page_accept_dispatches_to_visitor(document):
+    page = document.pages.add()
+
+    class Visitor:
+        def __init__(self):
+            self.page = None
+
+        def visit(self, visited_page):
+            self.page = visited_page
+
+    visitor = Visitor()
+    page.accept(visitor)
+
+    assert visitor.page is page
+
+
+def test_page_accept_rejects_invalid_visitor(document):
+    page = document.pages.add()
+
+    with pytest.raises(TypeError, match=r"callable visit\(page\)"):
+        page.accept(object())
+
+
 def test_insert_at_0(document):
     """Insert a page at the beginning of a non-empty collection."""
     pages = document.pages

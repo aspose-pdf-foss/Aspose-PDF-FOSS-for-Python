@@ -375,6 +375,36 @@ class TestGeneratedSecurityReexports:
         assert VMeth is ValidationMethod
         assert VS is ValidationStatus
 
+    def test_compromise_detector_imports_from_generated(self):
+        from aspose_pdf.generated.security import (
+            CompromiseCheckResult as GeneratedResult,
+            SignaturesCompromiseDetector as GeneratedDetector,
+        )
+        from aspose_pdf.security import (
+            CompromiseCheckResult,
+            SignaturesCompromiseDetector,
+        )
+
+        assert GeneratedDetector is SignaturesCompromiseDetector
+        assert GeneratedResult is CompromiseCheckResult
+
+    def test_generated_compromise_detector_checks_incremental_tail(self):
+        from aspose_pdf.generated.security import SignaturesCompromiseDetector
+
+        class Signature:
+            valid = True
+            byte_range = [0, 2, 4, 2]
+            reference_data = b"abcdef\nxref\n0 0\n"
+
+        class SignedDocument:
+            signatures = [Signature()]
+
+        result = SignaturesCompromiseDetector(SignedDocument()).check()
+
+        assert result.has_compromised_signatures is True
+        assert result.signatures_coverage == 1
+        assert "unsigned incremental PDF bytes" in " ".join(result.reasons)
+
     def test_generated_validation_options_is_functional(self):
         from aspose_pdf.generated.security import ValidationOptions as VO
 

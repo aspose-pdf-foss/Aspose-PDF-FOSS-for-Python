@@ -269,14 +269,18 @@ class Page:
         return f"Page({self._index})"
 
     def accept(self, visitor: Any) -> None:
-        """Accept a visitor for page processing.
+        """Dispatch this page to an object implementing ``visit(page)``.
 
         Args:
             visitor: The visitor object to accept.
+
+        Raises:
+            TypeError: If ``visitor`` does not provide a callable ``visit`` method.
         """
-        # Default implementation - do nothing
-        # This method should be overridden by subclasses or used with visitors
-        pass
+        visit = getattr(visitor, "visit", None)
+        if not callable(visit):
+            raise TypeError("Page visitor must provide a callable visit(page) method.")
+        visit(self)
 
     def render(
         self,
