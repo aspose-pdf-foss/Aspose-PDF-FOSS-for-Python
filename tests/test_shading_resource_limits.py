@@ -225,3 +225,31 @@ def test_mesh_shading_honors_decode_working_set_limit() -> None:
             _type4_mesh(3),
             limits=_limits(max_codec_work_bytes=100),
         )
+
+
+def test_adaptive_patch_checks_triangle_limit_before_materializing() -> None:
+    boundary = [
+        0, 0, 0, 85, 0, 170, 0, 255,
+        85, 255, 170, 255, 255, 255, 255, 170,
+        255, 85, 255, 0, 170, 0, 85, 0,
+    ]
+    curved_interior = [255, 255, 0, 255, 0, 0, 255, 0]
+    stream = PdfStream(
+        bytes([0, *boundary, *curved_interior, *([255, 0, 0] * 4)]),
+        {
+            PdfName("ShadingType"): PdfNumber(7),
+            PdfName("ColorSpace"): PdfName("DeviceRGB"),
+            PdfName("BitsPerCoordinate"): PdfNumber(8),
+            PdfName("BitsPerComponent"): PdfNumber(8),
+            PdfName("BitsPerFlag"): PdfNumber(8),
+            PdfName("Decode"): _numbers(0, 10, 0, 10, 0, 1, 0, 1, 0, 1),
+        },
+    )
+
+    with pytest.raises(PdfResourceLimitException, match="mesh shading triangles"):
+        build_shading(
+            SimplePdf(),
+            stream,
+            limits=_limits(max_container_items=10),
+            device_scale=20.0,
+        )

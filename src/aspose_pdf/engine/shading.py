@@ -1,9 +1,8 @@
 """Dependency-free PDF functions and shadings used by the page rasterizer.
 
 The module evaluates sampled, exponential, stitching, and bounded PostScript
-calculator functions. It paints axial/radial gradients and Gouraud, Coons, and
-tensor-product mesh shadings. Function-based shadings (``ShadingType 1``) remain
-outside the best-effort renderer.
+calculator functions. It paints function-based and axial/radial gradients plus
+Gouraud, Coons, and tensor-product mesh shadings.
 """
 
 from __future__ import annotations
@@ -18,10 +17,11 @@ from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
 
-__all__ = ["build_shading", "Shading"]
+__all__ = ["build_color_converter", "build_shading", "Shading"]
 
 Color = Tuple[int, int, int]
 Point = Tuple[float, float]
+Matrix = Tuple[float, float, float, float, float, float]
 
 
 # ---------------------------------------------------------------------------
@@ -96,9 +96,20 @@ def _components_to_rgb(comps: List[float]) -> Color:
     return (0, 0, 0)
 
 
-def _color_converter(pdf: Any, cs_obj: Any):
+def _color_converter(
+    pdf: Any,
+    cs_obj: Any,
+    *,
+    limits: Optional[PdfLoadLimits] = None,
+    budget: Optional[_LoadBudget] = None,
+    seen: Optional[Set[int]] = None,
+):
     """Return a ``components -> Color`` converter for a shading colour space."""
     cs = pdf._resolve(cs_obj)
+    visited = set() if seen is None else seen
+    if id(cs) in visited:
+        return lambda comps: (0, 0, 0)
+    nested_seen = visited | {id(cs)}
     name = None
     if isinstance(cs, PdfName):
         name = cs.name.lstrip("/")
@@ -114,6 +125,60 @@ def _color_converter(pdf: Any, cs_obj: Any):
             return lambda comps, _c=count: _components_to_rgb(
                 comps[:_c] if len(comps) >= _c else comps
             )
+        if head_name == "Separation" and len(cs.items) >= 4:
+            alternate = _color_converter(
+                pdf,
+                cs.items[2],
+                limits=limits,
+                budget=budget,
+                seen=nested_seen,
+            )
+            tint = build_function(
+                pdf,
+                cs.items[3],
+                limits=limits,
+                budget=budget,
+            )
+            if tint is None:
+                return lambda comps: (0, 0, 0)
+
+            def convert_separation(comps):
+                try:
+                    value = comps[0] if comps else 0.0
+                    return alternate(tint.eval(value))
+                except (PdfParseException, ValueError, IndexError, ZeroDivisionError):
+                    return (0, 0, 0)
+
+            return convert_separation
+        if head_name in ("DeviceN", "NChannel") and len(cs.items) >= 4:
+            names = pdf._resolve(cs.items[1])
+            component_count = len(names.items) if isinstance(names, PdfArray) else 0
+            alternate = _color_converter(
+                pdf,
+                cs.items[2],
+                limits=limits,
+                budget=budget,
+                seen=nested_seen,
+            )
+            tint = build_function(
+                pdf,
+                cs.items[3],
+                limits=limits,
+                budget=budget,
+            )
+            if tint is None or component_count <= 0:
+                return lambda comps: (0, 0, 0)
+
+            def convert_device_n(comps):
+                try:
+                    values = list(comps[:component_count])
+                    values.extend([0.0] * (component_count - len(values)))
+                    inputs: Any = values[0] if component_count == 1 else values
+                    return alternate(tint.eval(inputs))
+                except (PdfParseException, ValueError, IndexError, ZeroDivisionError):
+                    return (0, 0, 0)
+
+            return convert_device_n
         name = head_name
     table = {
         "DeviceGray": 1,
@@ -131,6 +196,17 @@ def _color_converter(pdf: Any, cs_obj: Any):
     return lambda comps: _components_to_rgb(comps)
 
 
+def build_color_converter(
+    pdf: Any,
+    cs_obj: Any,
+    *,
+    limits: Optional[PdfLoadLimits] = None,
+    budget: Optional[_LoadBudget] = None,
+):
+    """Build a bounded converter from PDF colour components to device RGB."""
+    return _color_converter(pdf, cs_obj, limits=limits, budget=budget)
+
+
 def _color_component_count(pdf: Any, cs_obj: Any) -> int:
     cs = pdf._resolve(cs_obj)
     if isinstance(cs, PdfName):
@@ -145,6 +221,12 @@ def _color_component_count(pdf: Any, cs_obj: Any) -> int:
                 return max(1, int(count or 3))
         if name == "Indexed":
             return 1
+        if name == "Separation":
+            return 1
+        if name in ("DeviceN", "NChannel") and len(cs.items) >= 2:
+            names = pdf._resolve(cs.items[1])
+            if isinstance(names, PdfArray):
+                return max(1, len(names.items))
     else:
         name = ""
     return {
@@ -154,6 +236,51 @@ def _color_component_count(pdf: Any, cs_obj: Any) -> int:
         "DeviceCMYK": 4,
         "CMYK": 4,
     }.get(name, 3)
+
+
+def _color_space_kind(pdf: Any, cs_obj: Any) -> str:
+    cs = pdf._resolve(cs_obj)
+    if isinstance(cs, PdfName):
+        return {
+            "DeviceGray": "gray",
+            "G": "gray",
+            "DeviceRGB": "rgb",
+            "RGB": "rgb",
+            "DeviceCMYK": "cmyk",
+            "CMYK": "cmyk",
+        }.get(cs.name.lstrip("/"), "other")
+    if isinstance(cs, PdfArray) and cs.items:
+        head = pdf._resolve(cs.items[0])
+        name = head.name.lstrip("/") if isinstance(head, PdfName) else ""
+        if name == "Separation":
+            return "spot"
+        if name in ("DeviceN", "NChannel"):
+            return "device_n"
+        if name in ("DeviceCMYK", "CMYK"):
+            return "cmyk"
+    return "other"
+
+
+def _transform_point(matrix: Matrix, x: float, y: float) -> Point:
+    return (
+        matrix[0] * x + matrix[2] * y + matrix[4],
+        matrix[1] * x + matrix[3] * y + matrix[5],
+    )
+
+
+def _invert_matrix(matrix: Matrix) -> Optional[Matrix]:
+    a, b, c, d, e, f = matrix
+    determinant = a * d - b * c
+    if abs(determinant) < 1e-12:
+        return None
+    return (
+        d / determinant,
+        -b / determinant,
+        -c / determinant,
+        a / determinant,
+        (c * f - d * e) / determinant,
+        (b * e - a * f) / determinant,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -410,15 +537,25 @@ class _SampledFunction:
         mapping = stream.mapping
         budget = state.budget
         self.domain = domain
-        size = _num_array(
+        dimensions = len(domain) // 2 if len(domain) % 2 == 0 else 0
+        size_values = _num_array(
             pdf,
             mapping.get(PdfName("Size")),
             budget=budget,
             state=state,
             context="sampled function Size items",
-        ) or [2.0]
-        self.size = max(2, int(size[0]))
-        self.bps = int(_num(pdf, mapping.get(PdfName("BitsPerSample"))) or 8)
+        ) or []
+        self.size = (
+            [int(value) for value in size_values]
+            if all(math.isfinite(value) for value in size_values)
+            else []
+        )
+        bps_value = _num(pdf, mapping.get(PdfName("BitsPerSample")))
+        self.bps = (
+            int(bps_value)
+            if bps_value is not None and math.isfinite(bps_value)
+            else 8 if bps_value is None else 0
+        )
         self.range = _num_array(
             pdf,
             mapping.get(PdfName("Range")),
@@ -427,14 +564,36 @@ class _SampledFunction:
             context="sampled function Range items",
         ) or [0.0, 1.0]
         self.n_out = max(1, len(self.range) // 2)
-        total = self.size * self.n_out
+        self.ok = bool(
+            dimensions
+            and all(math.isfinite(value) for value in domain)
+            and len(self.size) == dimensions
+            and all(side > 0 for side in self.size)
+            and len(self.range) % 2 == 0
+            and all(math.isfinite(value) for value in self.range)
+            and self.bps in (1, 2, 4, 8, 12, 16, 24, 32)
+        )
+        if not self.ok:
+            self.encode = []
+            self.decode = []
+            self.samples = None
+            return
+        sample_count = 1
+        for side in self.size:
+            sample_count *= side
+        total = sample_count * self.n_out
         budget.check(
             total,
             "max_container_items",
             "sampled function entries",
         )
-        bytes_per_sample = 2 if self.bps == 16 else 1
-        required_bytes = total * bytes_per_sample
+        interpolation_corners = 1 << sum(side > 1 for side in self.size)
+        budget.check(
+            interpolation_corners,
+            "max_container_items",
+            "sampled function interpolation corners",
+        )
+        required_bytes = (total * self.bps + 7) // 8
         budget.check(
             required_bytes,
             "max_decoded_stream_bytes",
@@ -452,8 +611,9 @@ class _SampledFunction:
             state=state,
             context="sampled function Encode items",
         ) or [
-            0.0,
-            float(self.size - 1),
+            value
+            for side in self.size
+            for value in (0.0, float(side - 1))
         ]
         self.decode = _num_array(
             pdf,
@@ -462,6 +622,16 @@ class _SampledFunction:
             state=state,
             context="sampled function Decode items",
         ) or list(self.range)
+        if (
+            len(self.encode) < dimensions * 2
+            or len(self.decode) < self.n_out * 2
+            or not all(
+                math.isfinite(value) for value in self.encode + self.decode
+            )
+        ):
+            self.samples = None
+            self.ok = False
+            return
         try:
             data = pdf._decode_cos_stream(stream, None)
         except PdfResourceLimitException:
@@ -473,43 +643,89 @@ class _SampledFunction:
             "max_codec_work_bytes",
             "sampled function working set",
         )
-        self.samples = self._read_samples(data)
+        self.samples = self._read_samples(data, total)
         self.ok = self.samples is not None
 
-    def _read_samples(self, data: bytes) -> Optional[List[float]]:
-        total = self.size * self.n_out
-        if self.bps == 8:
-            if len(data) < total:
+    def _read_samples(self, data: bytes, total: int) -> Optional[List[float]]:
+        reader = _BitReader(data)
+        maximum = (1 << self.bps) - 1
+        samples: List[float] = []
+        for _ in range(total):
+            value = reader.read(self.bps)
+            if value is None:
                 return None
-            return [data[i] / 255.0 for i in range(total)]
-        if self.bps == 16:
-            if len(data) < total * 2:
-                return None
-            return [
-                ((data[2 * i] << 8) | data[2 * i + 1]) / 65535.0
-                for i in range(total)
-            ]
-        return None  # 1/2/4/32-bit samples unsupported.
+            samples.append(value / maximum)
+        return samples
 
-    def eval(self, t: float) -> List[float]:
+    def eval(self, value: float | Sequence[float]) -> List[float]:
         if not self.ok:
             return [0.0] * self.n_out
-        lo, hi = self.domain[0], self.domain[1]
-        t = min(max(t, min(lo, hi)), max(lo, hi))
-        e_lo, e_hi = self.encode[0], self.encode[1]
-        x = e_lo if hi == lo else e_lo + (t - lo) * (e_hi - e_lo) / (hi - lo)
-        x = min(max(x, 0.0), float(self.size - 1))
-        i0 = int(math.floor(x))
-        i1 = min(i0 + 1, self.size - 1)
-        frac = x - i0
-        out: List[float] = []
-        for j in range(self.n_out):
-            s0 = self.samples[i0 * self.n_out + j]
-            s1 = self.samples[i1 * self.n_out + j]
-            sv = s0 + frac * (s1 - s0)
-            d_lo = self.decode[2 * j] if 2 * j < len(self.decode) else 0.0
-            d_hi = self.decode[2 * j + 1] if 2 * j + 1 < len(self.decode) else 1.0
-            out.append(d_lo + sv * (d_hi - d_lo))
+        values = (
+            list(value)
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+            else [value]
+        )
+        if len(values) != len(self.size):
+            raise PdfParseException(
+                f"Sampled function expects {len(self.size)} input values"
+            )
+        bounds: List[Tuple[int, int, float]] = []
+        for index, item in enumerate(values):
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise PdfParseException("Sampled function numeric type error")
+            if not math.isfinite(float(item)):
+                raise PdfParseException("Sampled function non-finite input")
+            lo, hi = self.domain[index * 2 : index * 2 + 2]
+            clipped = min(max(float(item), min(lo, hi)), max(lo, hi))
+            e_lo = self.encode[index * 2] if index * 2 < len(self.encode) else 0.0
+            e_hi = (
+                self.encode[index * 2 + 1]
+                if index * 2 + 1 < len(self.encode)
+                else float(self.size[index] - 1)
+            )
+            encoded = (
+                e_lo
+                if hi == lo
+                else e_lo + (clipped - lo) * (e_hi - e_lo) / (hi - lo)
+            )
+            encoded = min(max(encoded, 0.0), float(self.size[index] - 1))
+            lower = int(math.floor(encoded))
+            upper = min(lower + 1, self.size[index] - 1)
+            bounds.append((lower, upper, encoded - lower))
+
+        out = [0.0] * self.n_out
+        varying = [index for index, (lo, hi, _) in enumerate(bounds) if lo != hi]
+        for corner in range(1 << len(varying)):
+            coordinates = [bound[0] for bound in bounds]
+            weight = 1.0
+            for bit, dimension in enumerate(varying):
+                lower, upper, fraction = bounds[dimension]
+                if corner & (1 << bit):
+                    coordinates[dimension] = upper
+                    weight *= fraction
+                else:
+                    coordinates[dimension] = lower
+                    weight *= 1.0 - fraction
+            sample_index = 0
+            stride = 1
+            for coordinate, side in zip(coordinates, self.size):
+                sample_index += coordinate * stride
+                stride *= side
+            base = sample_index * self.n_out
+            for output in range(self.n_out):
+                out[output] += weight * self.samples[base + output]
+
+        for index, sample in enumerate(out):
+            d_lo = self.decode[2 * index] if 2 * index < len(self.decode) else 0.0
+            d_hi = (
+                self.decode[2 * index + 1]
+                if 2 * index + 1 < len(self.decode)
+                else 1.0
+            )
+            decoded = d_lo + sample * (d_hi - d_lo)
+            r_lo = self.range[2 * index]
+            r_hi = self.range[2 * index + 1]
+            out[index] = min(max(decoded, min(r_lo, r_hi)), max(r_lo, r_hi))
         return out
 
 
@@ -975,7 +1191,7 @@ class _CalculatorFunction:
 
 
 class Shading:
-    """Base class: holds an RGB lookup table over the parametric range."""
+    """Base class for bounded RGB sampling in a shading's target space."""
 
     def __init__(self, lut: List[Color], extend: List[bool]):
         self.lut = lut
@@ -983,13 +1199,68 @@ class Shading:
             bool(extend[0]) if len(extend) > 0 else False,
             bool(extend[1]) if len(extend) > 1 else False,
         )
+        self.bbox: Optional[Tuple[float, float, float, float]] = None
+        self.background: Optional[Color] = None
+        self.color_kind = "other"
+
+    def configure(
+        self,
+        *,
+        bbox: Optional[Tuple[float, float, float, float]],
+        background: Optional[Color],
+        color_kind: str,
+    ) -> "Shading":
+        self.bbox = bbox
+        self.background = background
+        self.color_kind = color_kind
+        return self
 
     def _lookup(self, s: float) -> Color:
         s = 0.0 if s < 0.0 else 1.0 if s > 1.0 else s
         return self.lut[int(s * (len(self.lut) - 1))]
 
-    def color_at(self, x: float, y: float) -> Optional[Color]:  # pragma: no cover
+    def _inside_bbox(self, x: float, y: float) -> bool:
+        if not math.isfinite(x) or not math.isfinite(y):
+            return False
+        if self.bbox is None:
+            return True
+        x0, y0, x1, y1 = self.bbox
+        return x0 <= x <= x1 and y0 <= y <= y1
+
+    def color_at(self, x: float, y: float) -> Optional[Color]:
+        if not self._inside_bbox(x, y):
+            return None
+        return self._color_at(x, y)
+
+    def pattern_color_at(self, x: float, y: float) -> Optional[Color]:
+        """Sample a shading pattern, applying its optional background colour."""
+        if not self._inside_bbox(x, y):
+            return None
+        return self._color_at(x, y) or self.background
+
+    def _color_at(self, x: float, y: float) -> Optional[Color]:  # pragma: no cover
         raise NotImplementedError
+
+
+class _FunctionShading(Shading):
+    def __init__(self, function, convert, domain, inverse_matrix):
+        super().__init__([(0, 0, 0)], [False, False])
+        self.function = function
+        self.convert = convert
+        self.x0, self.x1, self.y0, self.y1 = domain[:4]
+        self.inverse_matrix: Matrix = inverse_matrix
+
+    def _color_at(self, x: float, y: float) -> Optional[Color]:
+        domain_x, domain_y = _transform_point(self.inverse_matrix, x, y)
+        if not (
+            min(self.x0, self.x1) <= domain_x <= max(self.x0, self.x1)
+            and min(self.y0, self.y1) <= domain_y <= max(self.y0, self.y1)
+        ):
+            return None
+        try:
+            return self.convert(self.function.eval([domain_x, domain_y]))
+        except (PdfParseException, ValueError, IndexError, ZeroDivisionError):
+            return None
 
 
 class _AxialShading(Shading):
@@ -1000,7 +1271,7 @@ class _AxialShading(Shading):
         self._dx, self._dy = dx, dy
         self._dd = dx * dx + dy * dy
 
-    def color_at(self, x: float, y: float) -> Optional[Color]:
+    def _color_at(self, x: float, y: float) -> Optional[Color]:
         if self._dd == 0:
             s = 0.0
         else:
@@ -1019,7 +1290,7 @@ class _RadialShading(Shading):
         super().__init__(lut, extend)
         self.x0, self.y0, self.r0, self.x1, self.y1, self.r1 = coords[:6]
 
-    def color_at(self, x: float, y: float) -> Optional[Color]:
+    def _color_at(self, x: float, y: float) -> Optional[Color]:
         dx, dy, dr = self.x1 - self.x0, self.y1 - self.y0, self.r1 - self.r0
         px, py = x - self.x0, y - self.y0
         a = dx * dx + dy * dy - dr * dr
@@ -1117,7 +1388,7 @@ class _MeshShading(Shading):
             min(self._grid - 1, max(0, gy)),
         )
 
-    def color_at(self, x: float, y: float) -> Optional[Color]:
+    def _color_at(self, x: float, y: float) -> Optional[Color]:
         x0, y0, x1, y1 = self._bounds
         if x < x0 or x > x1 or y < y0 or y > y1:
             return None
@@ -1282,7 +1553,7 @@ def _mesh_parameters(pdf, stream, budget):
     return coordinate_bits, component_bits, component_count, decode, function, data
 
 
-def _build_triangle_mesh(pdf, stream, shading_type, budget):
+def _build_triangle_mesh(pdf, stream, shading_type, budget, convert):
     params = _mesh_parameters(pdf, stream, budget)
     if params is None:
         return None
@@ -1366,11 +1637,7 @@ def _build_triangle_mesh(pdf, stream, shading_type, budget):
         "max_codec_work_bytes",
         "mesh shading spatial index working set",
     )
-    return _MeshShading(
-        triangles,
-        _color_converter(pdf, stream.mapping.get(PdfName("ColorSpace"))),
-        function,
-    )
+    return _MeshShading(triangles, convert, function)
 
 
 def _read_patch_values(
@@ -1559,9 +1826,97 @@ def _patch_components(colors, u: float, v: float) -> Tuple[float, ...]:
     )
 
 
-def _tessellate_patch(points, colors, shading_type):
-    grid = _coons_tensor(points) if shading_type == 6 else _tensor_grid(points)
-    steps = 12
+def _triangle_interpolation(corners, u: float, v: float) -> Tuple[float, ...]:
+    a, b, c, d = corners
+    if u + v <= 1.0:
+        weights = (1.0 - u - v, u, v, 0.0)
+    else:
+        weights = (0.0, 1.0 - v, 1.0 - u, u + v - 1.0)
+    return tuple(
+        sum(weight * corner[index] for weight, corner in zip(weights, corners))
+        for index in range(len(a))
+    )
+
+
+def _adaptive_patch_steps(
+    grid,
+    colors,
+    device_scale: float,
+    budget: _LoadBudget,
+    existing_triangles: int,
+) -> int:
+    scale = abs(float(device_scale))
+    if not math.isfinite(scale):
+        scale = 1.0
+    scale = max(1e-6, min(scale, 1e9))
+    samples = (0.25, 0.5, 0.75)
+    for depth in range(7):
+        steps = 1 << depth
+        triangle_count = existing_triangles + steps * steps * 2
+        budget.check(
+            triangle_count,
+            "max_container_items",
+            "mesh shading triangles",
+        )
+        budget.check(
+            triangle_count * 1024,
+            "max_codec_work_bytes",
+            "mesh shading tessellation working set",
+        )
+        refine = False
+        for row in range(steps):
+            v0, v1 = row / steps, (row + 1) / steps
+            for column in range(steps):
+                u0, u1 = column / steps, (column + 1) / steps
+                point_corners = (
+                    _tensor_point(grid, u0, v0),
+                    _tensor_point(grid, u1, v0),
+                    _tensor_point(grid, u0, v1),
+                    _tensor_point(grid, u1, v1),
+                )
+                color_corners = (
+                    _patch_components(colors, u0, v0),
+                    _patch_components(colors, u1, v0),
+                    _patch_components(colors, u0, v1),
+                    _patch_components(colors, u1, v1),
+                )
+                for local_v in samples:
+                    v = v0 + (v1 - v0) * local_v
+                    for local_u in samples:
+                        u = u0 + (u1 - u0) * local_u
+                        expected_point = _triangle_interpolation(
+                            point_corners, local_u, local_v
+                        )
+                        actual_point = _tensor_point(grid, u, v)
+                        point_error = math.hypot(
+                            actual_point[0] - expected_point[0],
+                            actual_point[1] - expected_point[1],
+                        )
+                        expected_color = _triangle_interpolation(
+                            color_corners, local_u, local_v
+                        )
+                        actual_color = _patch_components(colors, u, v)
+                        color_error = max(
+                            abs(actual - expected)
+                            for actual, expected in zip(
+                                actual_color, expected_color
+                            )
+                        )
+                        if point_error * scale > 0.35 or color_error > 2 / 255:
+                            refine = True
+                            break
+                    if refine:
+                        break
+                if refine:
+                    break
+            if refine:
+                break
+        if not refine or depth == 6:
+            return steps
+    return 64  # pragma: no cover - the bounded loop always returns
+
+
+def _tessellate_patch(grid, colors, steps):
     vertices: List[List[_MeshVertex]] = []
     for row in range(steps + 1):
         v = row / steps
@@ -1583,7 +1938,7 @@ def _tessellate_patch(points, colors, shading_type):
     return triangles
 
 
-def _build_patch_mesh(pdf, stream, shading_type, budget):
+def _build_patch_mesh(pdf, stream, shading_type, budget, device_scale, convert):
     params = _mesh_parameters(pdf, stream, budget)
     if params is None:
         return None
@@ -1630,22 +1985,55 @@ def _build_patch_mesh(pdf, stream, shading_type, budget):
         reader.align()
         patch_count += 1
         budget.check(patch_count, "max_container_items", "mesh shading patches")
-        next_count = len(triangles) + 12 * 12 * 2
-        budget.check(next_count, "max_container_items", "mesh shading triangles")
-        budget.check(
-            next_count * 1024,
-            "max_codec_work_bytes",
-            "mesh shading tessellation working set",
+        grid = _coons_tensor(points) if shading_type == 6 else _tensor_grid(points)
+        steps = _adaptive_patch_steps(
+            grid,
+            colors,
+            device_scale,
+            budget,
+            len(triangles),
         )
-        triangles.extend(_tessellate_patch(points, colors, shading_type))
+        triangles.extend(_tessellate_patch(grid, colors, steps))
         previous_points = points
         previous_colors = colors
     if patch_count == 0:
         return None
-    return _MeshShading(
-        triangles,
-        _color_converter(pdf, stream.mapping.get(PdfName("ColorSpace"))),
-        function,
+    return _MeshShading(triangles, convert, function)
+
+
+def _configure_shading(
+    pdf: Any,
+    mapping: Dict[Any, Any],
+    shading: Optional[Shading],
+    convert,
+    budget: _LoadBudget,
+) -> Optional[Shading]:
+    if shading is None:
+        return None
+    bbox_values = _num_array(
+        pdf,
+        mapping.get(PdfName("BBox")),
+        budget=budget,
+        context="shading BBox items",
+    )
+    bbox = None
+    if bbox_values is not None and len(bbox_values) >= 4:
+        x0, y0, x1, y1 = bbox_values[:4]
+        if all(math.isfinite(value) for value in (x0, y0, x1, y1)):
+            bbox = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    background_values = _num_array(
+        pdf,
+        mapping.get(PdfName("Background")),
+        budget=budget,
+        context="shading Background items",
+    )
+    background = None
+    if background_values and all(math.isfinite(value) for value in background_values):
+        background = convert(background_values)
+    return shading.configure(
+        bbox=bbox,
+        background=background,
+        color_kind=_color_space_kind(pdf, mapping.get(PdfName("ColorSpace"))),
     )
 
 
@@ -1656,6 +2044,7 @@ def build_shading(
     *,
     limits: Optional[PdfLoadLimits] = None,
     budget: Optional[_LoadBudget] = None,
+    device_scale: float = 1.0,
 ) -> Optional[Shading]:
     """Build a supported :class:`Shading` from a COS dictionary or stream."""
     load_budget = _resolve_budget(pdf, limits, budget)
@@ -1667,12 +2056,83 @@ def build_shading(
     if stype is None:
         return None
     shading_type = int(stype)
+    convert = _color_converter(
+        pdf,
+        mapping.get(PdfName("ColorSpace")),
+        limits=load_budget.limits,
+        budget=load_budget,
+    )
+
+    if shading_type == 1:
+        domain_obj = mapping.get(PdfName("Domain"))
+        if domain_obj is None:
+            domain = [0.0, 1.0, 0.0, 1.0]
+        else:
+            domain = _num_array(
+                pdf,
+                domain_obj,
+                budget=load_budget,
+                context="function shading Domain items",
+            )
+            if domain is None or len(domain) < 4:
+                return None
+        if not all(math.isfinite(value) for value in domain[:4]):
+            return None
+        matrix_obj = mapping.get(PdfName("Matrix"))
+        if matrix_obj is None:
+            matrix: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        else:
+            matrix_values = _num_array(
+                pdf,
+                matrix_obj,
+                budget=load_budget,
+                context="function shading Matrix items",
+            )
+            if matrix_values is None or len(matrix_values) < 6:
+                return None
+            matrix = tuple(matrix_values[:6])  # type: ignore[assignment]
+        if not all(math.isfinite(value) for value in matrix):
+            return None
+        inverse_matrix = _invert_matrix(matrix)
+        if inverse_matrix is None:
+            return None
+        function = build_function(
+            pdf,
+            mapping.get(PdfName("Function")),
+            limits=load_budget.limits,
+            budget=load_budget,
+        )
+        if function is None:
+            return None
+        return _configure_shading(
+            pdf,
+            mapping,
+            _FunctionShading(function, convert, domain, inverse_matrix),
+            convert,
+            load_budget,
+        )
+
     if shading_type in (4, 5, 6, 7):
         if not isinstance(obj, PdfStream):
             return None
         if shading_type in (4, 5):
-            return _build_triangle_mesh(pdf, obj, shading_type, load_budget)
-        return _build_patch_mesh(pdf, obj, shading_type, load_budget)
+            shading = _build_triangle_mesh(
+                pdf,
+                obj,
+                shading_type,
+                load_budget,
+                convert,
+            )
+        else:
+            shading = _build_patch_mesh(
+                pdf,
+                obj,
+                shading_type,
+                load_budget,
+                device_scale,
+                convert,
+            )
+        return _configure_shading(pdf, mapping, shading, convert, load_budget)
     if shading_type not in (2, 3):
         return None
     coords = _num_array(
@@ -1692,7 +2152,6 @@ def build_shading(
     )
     if func is None:
         return None
-    convert = _color_converter(pdf, mapping.get(PdfName("ColorSpace")))
     domain = _num_array(
         pdf,
         mapping.get(PdfName("Domain")),
@@ -1716,5 +2175,7 @@ def build_shading(
         except (PdfParseException, ValueError, IndexError, ZeroDivisionError):
             lut.append((0, 0, 0))
     if shading_type == 2:
-        return _AxialShading(coords, lut, extend)
-    return _RadialShading(coords, lut, extend)
+        shading = _AxialShading(coords, lut, extend)
+    else:
+        shading = _RadialShading(coords, lut, extend)
+    return _configure_shading(pdf, mapping, shading, convert, load_budget)

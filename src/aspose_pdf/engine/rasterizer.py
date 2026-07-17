@@ -2,8 +2,9 @@
 
 The renderer is intentionally small and conservative. It handles the common
 graphics/image/text operators used by generated PDFs, including mesh shadings
-and transparency groups. Overprint and complete PDF 2.0 imaging semantics are
-left for later engine layers.
+and transparency groups. It provides composite overprint preview for common
+CMYK and spot-colour cases; plate-accurate and complete PDF 2.0 imaging
+semantics remain outside this renderer.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 from .cff_outlines import CffOutlines
 from .content_stream_parser import ContentStreamParser
 from .glyph_outlines import TrueTypeOutlines
-from .shading import Shading, build_function, build_shading
+from .shading import Shading, build_color_converter, build_function, build_shading
 from .std_font_data import load_substitute_sfnt, resolve_substitute_key
 from .type1_outlines import Type1Outlines
 from .cos import (
@@ -137,6 +138,13 @@ class _GraphicsState:
     ctm: Matrix = IDENTITY
     stroke_color: Color = (0, 0, 0)
     fill_color: Color = (0, 0, 0)
+    stroke_color_space: Any = None
+    fill_color_space: Any = None
+    stroke_color_kind: str = "gray"
+    fill_color_kind: str = "gray"
+    stroke_overprint: bool = False
+    fill_overprint: bool = False
+    overprint_mode: int = 0
     line_width: float = 1.0
     stroke_alpha: float = 1.0
     fill_alpha: float = 1.0
@@ -221,6 +229,7 @@ class _Canvas:
         color: Color,
         alpha: float = 1.0,
         blend_mode: str = "Normal",
+        overprint: bool = False,
     ) -> None:
         if x < 0 or y < 0 or x >= self.width or y >= self.height:
             return
@@ -255,7 +264,15 @@ class _Canvas:
             backdrop_alpha = self.alpha[idx] / 255.0
         else:
             backdrop_alpha = 1.0
-        blended = _blend_color(color, backdrop, blend_mode)
+        if overprint:
+            overprinted = _blend_color(color, backdrop, "Multiply")
+            blended = (
+                overprinted
+                if blend_mode == "Normal"
+                else _blend_color(overprinted, backdrop, blend_mode)
+            )
+        else:
+            blended = _blend_color(color, backdrop, blend_mode)
         output_alpha = alpha + backdrop_alpha * (1.0 - alpha)
         if output_alpha <= 0.0:
             return
@@ -423,6 +440,7 @@ class _PageRasterizer:
         self.resources_cos = self._page_resources_cos()
         self.resources_plain = self._page_resources_plain()
         self._font_cache: dict[str, Optional[_GlyphFont]] = {}
+        self._color_converter_cache: dict[int, Callable[[List[float]], Color]] = {}
         self._pattern_depth = 0
         # Guards against a soft-mask group that itself sets a soft mask.
         self._in_soft_mask = False
@@ -591,7 +609,8 @@ class _PageRasterizer:
         if op in ("sc", "scn", "SC", "SCN"):
             self._set_current_space_color(op, operands, resources_cos)
             return
-        if op in ("cs", "CS"):
+        if op in ("cs", "CS") and operands:
+            self._set_color_space(op, operands[-1], resources_cos)
             return
         if op == "sh" and operands:
             self._paint_sh(str(operands[-1]).lstrip("/"), resources_cos)
@@ -646,10 +665,112 @@ class _PageRasterizer:
             return
         if op.isupper():
             self.state.stroke_color = color
+            self.state.stroke_color_space = {
+                "G": PdfName("DeviceGray"),
+                "RG": PdfName("DeviceRGB"),
+                "K": PdfName("DeviceCMYK"),
+            }[op]
+            self.state.stroke_color_kind = {
+                "G": "gray",
+                "RG": "rgb",
+                "K": "cmyk",
+            }[op]
         else:
             self.state.fill_color = color
+            self.state.fill_color_space = {
+                "g": PdfName("DeviceGray"),
+                "rg": PdfName("DeviceRGB"),
+                "k": PdfName("DeviceCMYK"),
+            }[op]
+            self.state.fill_color_kind = {
+                "g": "gray",
+                "rg": "rgb",
+                "k": "cmyk",
+            }[op]
             self.state.fill_shading = None
             self.state.fill_tiling = None
+
+    def _set_color_space(
+        self,
+        op: str,
+        operand: Any,
+        resources_cos: Optional[PdfDictionary],
+    ) -> None:
+        name = str(operand).lstrip("/")
+        color_space: Any = PdfName(name)
+        if resources_cos is not None:
+            spaces = self._resource_dict(resources_cos, "ColorSpace")
+            if spaces is not None and PdfName(name) in spaces.mapping:
+                color_space = spaces.mapping[PdfName(name)]
+        if op == "CS":
+            self.state.stroke_color_space = color_space
+            self.state.stroke_color_kind = self._color_space_kind(color_space)
+        else:
+            self.state.fill_color_space = color_space
+            self.state.fill_color_kind = self._color_space_kind(color_space)
+
+    def _color_space_kind(self, color_space: Any, *, pattern_base: bool = False) -> str:
+        resolved = self._resolve(color_space)
+        if isinstance(resolved, PdfName):
+            return {
+                "DeviceGray": "gray",
+                "G": "gray",
+                "DeviceRGB": "rgb",
+                "RGB": "rgb",
+                "DeviceCMYK": "cmyk",
+                "CMYK": "cmyk",
+                "Pattern": "pattern",
+            }.get(resolved.name.lstrip("/"), "other")
+        if isinstance(resolved, PdfArray) and resolved.items:
+            head = self._cos_name(resolved.items[0]) or ""
+            if head == "Pattern" and pattern_base and len(resolved.items) >= 2:
+                return self._color_space_kind(resolved.items[1])
+            if head == "Separation":
+                return "spot"
+            if head in ("DeviceN", "NChannel"):
+                return "device_n"
+            if head in ("DeviceCMYK", "CMYK"):
+                return "cmyk"
+            if head == "Pattern":
+                return "pattern"
+        return "other"
+
+    def _convert_current_color(
+        self,
+        components: List[float],
+        *,
+        is_fill: bool,
+        pattern_base: bool = False,
+    ) -> Color:
+        color_space = (
+            self.state.fill_color_space if is_fill else self.state.stroke_color_space
+        )
+        resolved = self._resolve(color_space)
+        if pattern_base and isinstance(resolved, PdfArray) and resolved.items:
+            if self._cos_name(resolved.items[0]) == "Pattern":
+                resolved = resolved.items[1] if len(resolved.items) >= 2 else None
+        if resolved is not None and not (
+            isinstance(resolved, PdfName)
+            and resolved.name.lstrip("/") == "Pattern"
+        ):
+            key = id(resolved)
+            converter = self._color_converter_cache.get(key)
+            if converter is None:
+                converter = build_color_converter(
+                    self.pdf,
+                    resolved,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
+                )
+                self._color_converter_cache[key] = converter
+            return converter(components)
+        if len(components) >= 4:
+            return _cmyk(*components[-4:])
+        if len(components) >= 3:
+            return _rgb(*components[-3:])
+        if components:
+            return _gray(components[-1])
+        return (0, 0, 0)
 
     def _set_current_space_color(
         self, op: str, operands: List[Any], resources_cos: Optional[PdfDictionary]
@@ -667,14 +788,9 @@ class _PageRasterizer:
                 )
             return
         nums = [_number(v) for v in operands if _number(v) is not None]
-        if len(nums) >= 4:
-            color = _cmyk(nums[-4], nums[-3], nums[-2], nums[-1])
-        elif len(nums) >= 3:
-            color = _rgb(nums[-3], nums[-2], nums[-1])
-        elif nums:
-            color = _gray(nums[-1])
-        else:
+        if not nums:
             return
+        color = self._convert_current_color(nums, is_fill=is_fill)
         if is_fill:
             self.state.fill_color = color
             self.state.fill_shading = None
@@ -709,6 +825,7 @@ class _PageRasterizer:
                 pattern.mapping.get(PdfName("Shading")),
                 limits=self._load_limits,
                 budget=self._load_budget,
+                device_scale=self._device_scale(matrix),
             )
             if shading is not None:
                 self.state.fill_shading = (shading, matrix)
@@ -722,12 +839,15 @@ class _PageRasterizer:
             paint_color = self.state.fill_color
             nums = [n for n in color_nums if n is not None]
             if paint_type == 2 and nums:  # uncoloured pattern carries its colour
-                if len(nums) >= 4:
-                    paint_color = _cmyk(nums[-4], nums[-3], nums[-2], nums[-1])
-                elif len(nums) >= 3:
-                    paint_color = _rgb(nums[-3], nums[-2], nums[-1])
-                else:
-                    paint_color = _gray(nums[-1])
+                paint_color = self._convert_current_color(
+                    nums,
+                    is_fill=True,
+                    pattern_base=True,
+                )
+                self.state.fill_color_kind = self._color_space_kind(
+                    self.state.fill_color_space,
+                    pattern_base=True,
+                )
             self.state.fill_tiling = (pattern, matrix, paint_type, paint_color)
             return
         self.state.fill_color = (128, 128, 128)
@@ -759,6 +879,18 @@ class _PageRasterizer:
             blend_mode = self._blend_mode(entry.mapping.get(PdfName("BM")))
             if blend_mode is not None:
                 self.state.blend_mode = blend_mode
+            if PdfName("OP") in entry.mapping:
+                overprint = self._cos_bool(entry.mapping.get(PdfName("OP")))
+                self.state.stroke_overprint = overprint
+                if PdfName("op") not in entry.mapping:
+                    self.state.fill_overprint = overprint
+            if PdfName("op") in entry.mapping:
+                self.state.fill_overprint = self._cos_bool(
+                    entry.mapping.get(PdfName("op"))
+                )
+            overprint_mode = self._cos_number(entry.mapping.get(PdfName("OPM")))
+            if overprint_mode is not None and int(overprint_mode) in (0, 1):
+                self.state.overprint_mode = int(overprint_mode)
             if PdfName("SMask") in entry.mapping:
                 self.state.soft_mask = self._build_soft_mask(
                     self._resolve(entry.mapping.get(PdfName("SMask"))),
@@ -775,6 +907,17 @@ class _PageRasterizer:
             blend_mode = self._blend_mode(entry.get("BM"))
             if blend_mode is not None:
                 self.state.blend_mode = blend_mode
+            if "OP" in entry:
+                overprint = bool(entry["OP"])
+                self.state.stroke_overprint = overprint
+                if "op" not in entry:
+                    self.state.fill_overprint = overprint
+            if "op" in entry:
+                self.state.fill_overprint = bool(entry["op"])
+            if isinstance(entry.get("OPM"), (int, float)):
+                overprint_mode = int(entry["OPM"])
+                if overprint_mode in (0, 1):
+                    self.state.overprint_mode = overprint_mode
 
     def _blend_mode(self, obj: Any) -> Optional[str]:
         names = self._blend_mode_names(obj)
@@ -1052,7 +1195,15 @@ class _PageRasterizer:
             for i in range(0, len(nodes) - 1, 2):
                 x_start = max(0, int(math.floor(nodes[i])))
                 x_end = min(self.width - 1, int(math.ceil(nodes[i + 1])))
-                self._shade_span(y, x_start, x_end, shading, to_shading, alpha)
+                self._shade_span(
+                    y,
+                    x_start,
+                    x_end,
+                    shading,
+                    to_shading,
+                    alpha,
+                    use_background=True,
+                )
 
     def _paint_sh(self, name: str, resources_cos: Optional[PdfDictionary]) -> None:
         """Paint a shading (the ``sh`` operator) over the current clip region."""
@@ -1066,6 +1217,7 @@ class _PageRasterizer:
             shadings.mapping.get(PdfName(name)),
             limits=self._load_limits,
             budget=self._load_budget,
+            device_scale=self._device_scale(self.state.ctm),
         )
         if shading is None:
             return
@@ -1096,16 +1248,35 @@ class _PageRasterizer:
         shading: "Shading",
         to_shading: Matrix,
         alpha: float,
+        *,
+        use_background: bool = False,
     ) -> None:
         for x in range(x_start, x_end + 1):
             ux, uy = self._pixel_to_user(x, y)
             sx, sy = _transform_point(to_shading, ux, uy)
-            color = shading.color_at(sx, sy)
+            color = (
+                shading.pattern_color_at(sx, sy)
+                if use_background
+                else shading.color_at(sx, sy)
+            )
             if color is not None:
-                self._composite_pixel(x, y, color, alpha)
+                self._composite_pixel(
+                    x,
+                    y,
+                    color,
+                    alpha,
+                    color_kind=shading.color_kind,
+                )
 
     def _composite_pixel(
-        self, x: int, y: int, color: Color, alpha: float
+        self,
+        x: int,
+        y: int,
+        color: Color,
+        alpha: float,
+        *,
+        stroke: bool = False,
+        color_kind: Optional[str] = None,
     ) -> None:
         """Composite one pixel, modulating alpha by the active soft mask.
 
@@ -1119,7 +1290,24 @@ class _PageRasterizer:
                 alpha *= mask[y * self.width + x] * (1.0 / 255.0)
             else:
                 return
-        self.canvas.set_pixel(x, y, color, alpha, blend_mode=self.state.blend_mode)
+        kind = color_kind or (
+            self.state.stroke_color_kind if stroke else self.state.fill_color_kind
+        )
+        enabled = (
+            self.state.stroke_overprint if stroke else self.state.fill_overprint
+        )
+        simulate_overprint = enabled and (
+            kind in ("spot", "device_n")
+            or (kind == "cmyk" and self.state.overprint_mode == 1)
+        )
+        self.canvas.set_pixel(
+            x,
+            y,
+            color,
+            alpha,
+            blend_mode=self.state.blend_mode,
+            overprint=simulate_overprint,
+        )
 
     def _stroke_subpaths(
         self, subpaths: Iterable[List[Point]], color: Color, alpha: float
@@ -1185,7 +1373,7 @@ class _PageRasterizer:
                 cx = x0 + t * dx
                 cy = y0 + t * dy
                 if (px - cx) * (px - cx) + (py - cy) * (py - cy) <= rr:
-                    self._composite_pixel(x, y, color, alpha)
+                    self._composite_pixel(x, y, color, alpha, stroke=True)
 
     def _apply_clip(self, subpaths: List[List[Point]]) -> None:
         if not subpaths:
@@ -2276,7 +2464,10 @@ class _PageRasterizer:
                 else:
                     inverse = 1.0 - c * inv255
                     source = tuple(
-                        _byte((px[o + channel] - inverse * backdrop[o + channel]) / (c * inv255))
+                        _byte(
+                            (px[o + channel] - inverse * backdrop[o + channel])
+                            / (c * inv255)
+                        )
                         for channel in range(3)
                     )
                 main.set_pixel(x, y, source, alpha, blend)
@@ -2292,6 +2483,7 @@ class _PageRasterizer:
         if image is None:
             return
         width, height, pixels = image
+        color_kind = str(meta.get("cs_kind") or "other")
         inv = _invert_matrix(matrix)
         if inv is None:
             return
@@ -2327,7 +2519,13 @@ class _PageRasterizer:
                     ax = min(sw - 1, max(0, int(ix_f * sw)))
                     ay = min(sh - 1, max(0, int((1.0 - iy_f) * sh)))
                     alpha *= salpha[ay * sw + ax] * (1.0 / 255.0)
-                self._composite_pixel(px, py, color, alpha)
+                self._composite_pixel(
+                    px,
+                    py,
+                    color,
+                    alpha,
+                    color_kind=color_kind,
+                )
 
     def _image_meta_from_stream(self, stream: PdfStream) -> dict:
         meta: dict = {}
@@ -2457,6 +2655,15 @@ class _PageRasterizer:
         return (
             dx * self.point_scale,
             (self.page_height_pts - dy) * self.point_scale,
+        )
+
+    def _device_scale(self, matrix: Matrix) -> float:
+        origin = self._user_to_pixel(*_transform_point(matrix, 0.0, 0.0))
+        unit_x = self._user_to_pixel(*_transform_point(matrix, 1.0, 0.0))
+        unit_y = self._user_to_pixel(*_transform_point(matrix, 0.0, 1.0))
+        return max(
+            math.hypot(unit_x[0] - origin[0], unit_x[1] - origin[1]),
+            math.hypot(unit_y[0] - origin[0], unit_y[1] - origin[1]),
         )
 
     def _user_to_display(self, x: float, y: float) -> Point:

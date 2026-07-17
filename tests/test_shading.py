@@ -1,4 +1,4 @@
-"""Tests for axial/radial PDF shadings (gradients) and their rendering."""
+"""Tests for PDF functions, shadings, and their page rendering."""
 
 from aspose_pdf import Document
 from aspose_pdf.engine.cos import (
@@ -43,6 +43,28 @@ def _axial_dict(coords, function, *, extend=(False, False), cs="DeviceRGB"):
             PdfName("Extend"): PdfArray([PdfBoolean(extend[0]), PdfBoolean(extend[1])]),
         }
     )
+
+
+def _function_shading_dict(*, background=None, bbox=None, matrix=None):
+    calculator = PdfStream(
+        b"{ 0 }",
+        {
+            PdfName("FunctionType"): _n(4),
+            PdfName("Domain"): _arr(0, 1, 0, 1),
+            PdfName("Range"): _arr(0, 1, 0, 1, 0, 1),
+        },
+    )
+    mapping = {
+        PdfName("ShadingType"): _n(1),
+        PdfName("ColorSpace"): PdfName("DeviceRGB"),
+        PdfName("Function"): calculator,
+        PdfName("Matrix"): _arr(*(matrix or (10, 0, 0, 10, 5, 5))),
+    }
+    if background is not None:
+        mapping[PdfName("Background")] = _arr(*background)
+    if bbox is not None:
+        mapping[PdfName("BBox")] = _arr(*bbox)
+    return PdfDictionary(mapping)
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +118,29 @@ def test_sampled_function():
     assert func is not None
     assert func.eval(0.0) == [1.0, 0.0, 0.0]
     assert func.eval(1.0) == [0.0, 0.0, 1.0]
+
+
+def test_multidimensional_sampled_function_interpolates_packed_samples():
+    pdf = SimplePdf()
+    stream = PdfStream(
+        bytes([0x0F, 0xF0]),
+        {
+            PdfName("FunctionType"): _n(0),
+            PdfName("Domain"): _arr(0, 1, 0, 1),
+            PdfName("Size"): _arr(2, 2),
+            PdfName("BitsPerSample"): _n(4),
+            PdfName("Range"): _arr(0, 1),
+        },
+    )
+
+    func = build_function(pdf, stream)
+
+    assert func is not None
+    assert func.eval([0, 0]) == [0.0]
+    assert func.eval([1, 0]) == [1.0]
+    assert func.eval([0, 1]) == [1.0]
+    assert func.eval([1, 1]) == [0.0]
+    assert abs(func.eval([0.5, 0.5])[0] - 0.5) < 1e-9
 
 
 def test_calculator_function_arithmetic_and_conditionals():
@@ -196,6 +241,111 @@ def test_radial_shading():
     assert shading.color_at(0, 0) == (255, 0, 0)  # centre, radius 0
     edge = shading.color_at(10, 0)
     assert edge is not None and edge[2] == 255  # outer circle, radius 10
+
+
+def test_function_shading_applies_domain_matrix_and_bbox():
+    shading = build_shading(
+        SimplePdf(),
+        _function_shading_dict(bbox=(6, 6, 14, 14)),
+    )
+
+    assert shading is not None
+    assert shading.color_at(10, 10) == (128, 128, 0)
+    assert shading.color_at(5, 10) is None  # inside Domain, outside BBox
+    assert shading.color_at(15, 10) is None  # outside BBox and Domain
+
+
+def test_function_shading_rejects_singular_matrix():
+    shading = build_shading(
+        SimplePdf(),
+        _function_shading_dict(matrix=(1, 2, 2, 4, 0, 0)),
+    )
+
+    assert shading is None
+
+
+def test_function_shading_background_is_pattern_only():
+    shading = build_shading(
+        SimplePdf(),
+        _function_shading_dict(background=(0, 1, 0), bbox=(0, 0, 20, 20)),
+    )
+
+    assert shading is not None
+    assert shading.color_at(2, 10) is None
+    assert shading.pattern_color_at(2, 10) == (0, 255, 0)
+
+
+def test_function_shading_converts_separation_through_alternate_space():
+    shading_function = PdfStream(
+        b"{ pop }",
+        {
+            PdfName("FunctionType"): _n(4),
+            PdfName("Domain"): _arr(0, 1, 0, 1),
+            PdfName("Range"): _arr(0, 1),
+        },
+    )
+    color_space = PdfArray(
+        [
+            PdfName("Separation"),
+            PdfName("BrandInk"),
+            PdfName("DeviceRGB"),
+            _exp_function([1, 1, 1], [1, 0, 0]),
+        ]
+    )
+    shading = build_shading(
+        SimplePdf(),
+        PdfDictionary(
+            {
+                PdfName("ShadingType"): _n(1),
+                PdfName("ColorSpace"): color_space,
+                PdfName("Function"): shading_function,
+            }
+        ),
+    )
+
+    assert shading is not None
+    assert shading.color_at(0, 0.5) == (255, 255, 255)
+    assert shading.color_at(1, 0.5) == (255, 0, 0)
+
+
+def test_function_shading_converts_device_n_tints():
+    shading_function = PdfStream(
+        b"{ }",
+        {
+            PdfName("FunctionType"): _n(4),
+            PdfName("Domain"): _arr(0, 1, 0, 1),
+            PdfName("Range"): _arr(0, 1, 0, 1),
+        },
+    )
+    tint_transform = PdfStream(
+        b"{ 0 }",
+        {
+            PdfName("FunctionType"): _n(4),
+            PdfName("Domain"): _arr(0, 1, 0, 1),
+            PdfName("Range"): _arr(0, 1, 0, 1, 0, 1),
+        },
+    )
+    color_space = PdfArray(
+        [
+            PdfName("DeviceN"),
+            PdfArray([PdfName("InkA"), PdfName("InkB")]),
+            PdfName("DeviceRGB"),
+            tint_transform,
+        ]
+    )
+    shading = build_shading(
+        SimplePdf(),
+        PdfDictionary(
+            {
+                PdfName("ShadingType"): _n(1),
+                PdfName("ColorSpace"): color_space,
+                PdfName("Function"): shading_function,
+            }
+        ),
+    )
+
+    assert shading is not None
+    assert shading.color_at(0.25, 0.75) == (64, 191, 0)
 
 
 def test_malformed_mesh_shading_returns_none():
@@ -303,6 +453,26 @@ def test_type6_and_type7_patch_meshes_are_tessellated():
         assert all(50 <= component <= 205 for component in center)
 
 
+def test_patch_mesh_subdivision_tracks_device_scale():
+    points = _patch_points(7)
+    points[-8:] = [255, 255, 0, 255, 0, 0, 255, 0]
+    data = [0, *points]
+    data.extend([255, 0, 0] * 4)
+    stream = _mesh_stream(
+        7,
+        data,
+        extra={PdfName("BitsPerFlag"): _n(8)},
+    )
+
+    thumbnail = build_shading(SimplePdf(), stream, device_scale=0.01)
+    enlarged = build_shading(SimplePdf(), stream, device_scale=20.0)
+
+    assert thumbnail is not None
+    assert enlarged is not None
+    assert len(thumbnail.triangles) == 2
+    assert 2 < len(enlarged.triangles) <= 8192
+
+
 # ---------------------------------------------------------------------------
 # End-to-end rendering
 # ---------------------------------------------------------------------------
@@ -360,6 +530,264 @@ def test_render_sh_operator_respects_clip():
     assert painted != (255, 255, 255)  # inside the clip: gradient painted
     # Gradient direction holds inside the clipped band.
     assert raster.get_pixel(6, 10)[0] > raster.get_pixel(14, 10)[0]
+
+
+def test_render_function_shading_pattern_applies_background():
+    pdf = SimplePdf(
+        pages=[(0, 0, 20, 20)],
+        page_contents=[b"/Pattern cs /P0 scn 0 0 20 20 re f"],
+    )
+    pdf._ensure_cos()
+    pattern = pdf._cos_doc.register_object(
+        PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Pattern"),
+                PdfName("PatternType"): _n(2),
+                PdfName("Shading"): _function_shading_dict(
+                    background=(0, 1, 0), bbox=(0, 0, 20, 20)
+                ),
+            }
+        )
+    )
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {PdfName("Pattern"): PdfDictionary({PdfName("P0"): pattern})}
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(2, 10) == (0, 255, 0)
+    center = raster.get_pixel(10, 10)
+    assert 105 <= center[0] <= 145
+    assert 105 <= center[1] <= 145
+    assert center[2] == 0
+
+
+def test_render_function_shading_operator_ignores_background():
+    pdf = SimplePdf(
+        pages=[(0, 0, 20, 20)],
+        page_contents=[b"/Sh0 sh"],
+    )
+    pdf._ensure_cos()
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("Shading"): PdfDictionary(
+                {
+                    PdfName("Sh0"): _function_shading_dict(
+                        background=(0, 1, 0), bbox=(0, 0, 20, 20)
+                    )
+                }
+            )
+        }
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(2, 10) == (255, 255, 255)
+    assert raster.get_pixel(10, 10) != (255, 255, 255)
+
+
+def test_render_separation_fill_uses_tint_transform():
+    pdf = SimplePdf(
+        pages=[(0, 0, 10, 10)],
+        page_contents=[b"/Spot cs 0.5 scn 0 0 10 10 re f"],
+    )
+    pdf._ensure_cos()
+    color_space = PdfArray(
+        [
+            PdfName("Separation"),
+            PdfName("BrandInk"),
+            PdfName("DeviceRGB"),
+            _exp_function([1, 1, 1], [1, 0, 0]),
+        ]
+    )
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("ColorSpace"): PdfDictionary(
+                {PdfName("Spot"): color_space}
+            )
+        }
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(5, 5) == (255, 128, 128)
+
+
+def test_render_device_n_fill_uses_alternate_space():
+    tint_transform = PdfStream(
+        b"{ 0 }",
+        {
+            PdfName("FunctionType"): _n(4),
+            PdfName("Domain"): _arr(0, 1, 0, 1),
+            PdfName("Range"): _arr(0, 1, 0, 1, 0, 1),
+        },
+    )
+    color_space = PdfArray(
+        [
+            PdfName("DeviceN"),
+            PdfArray([PdfName("InkA"), PdfName("InkB")]),
+            PdfName("DeviceRGB"),
+            tint_transform,
+        ]
+    )
+    pdf = SimplePdf(
+        pages=[(0, 0, 10, 10)],
+        page_contents=[b"/Duotone cs 0.25 0.75 scn 0 0 10 10 re f"],
+    )
+    pdf._ensure_cos()
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("ColorSpace"): PdfDictionary(
+                {PdfName("Duotone"): color_space}
+            )
+        }
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(5, 5) == (64, 191, 0)
+
+
+def test_render_spot_overprint_preserves_backdrop_inks():
+    color_space = PdfArray(
+        [
+            PdfName("Separation"),
+            PdfName("BrandInk"),
+            PdfName("DeviceRGB"),
+            _exp_function([1, 1, 1], [1, 0, 0]),
+        ]
+    )
+    pdf = SimplePdf(
+        pages=[(0, 0, 20, 10)],
+        page_contents=[
+            b"0 1 1 rg 0 0 20 10 re f "
+            b"q /Normal gs /Spot cs 1 scn 0 0 10 10 re f Q "
+            b"q /Overprint gs /Spot cs 1 scn 10 0 10 10 re f Q"
+        ],
+    )
+    pdf._ensure_cos()
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("ColorSpace"): PdfDictionary(
+                {PdfName("Spot"): color_space}
+            ),
+            PdfName("ExtGState"): PdfDictionary(
+                {
+                    PdfName("Normal"): PdfDictionary(
+                        {PdfName("OP"): PdfBoolean(False)}
+                    ),
+                    PdfName("Overprint"): PdfDictionary(
+                        {PdfName("OP"): PdfBoolean(True)}
+                    ),
+                }
+            ),
+        }
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(5, 5) == (255, 0, 0)
+    assert raster.get_pixel(15, 5) == (0, 0, 0)
+
+
+def test_render_cmyk_overprint_mode_one_preserves_zero_components():
+    pdf = SimplePdf(
+        pages=[(0, 0, 20, 10)],
+        page_contents=[
+            b"1 0 0 0 k 0 0 20 10 re f "
+            b"q /Mode0 gs 0 0 1 0 k 0 0 10 10 re f Q "
+            b"q /Mode1 gs 0 0 1 0 k 10 0 10 10 re f Q"
+        ],
+    )
+    pdf._ensure_cos()
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("ExtGState"): PdfDictionary(
+                {
+                    PdfName("Mode0"): PdfDictionary(
+                        {
+                            PdfName("op"): PdfBoolean(True),
+                            PdfName("OPM"): _n(0),
+                        }
+                    ),
+                    PdfName("Mode1"): PdfDictionary(
+                        {
+                            PdfName("op"): PdfBoolean(True),
+                            PdfName("OPM"): _n(1),
+                        }
+                    ),
+                }
+            )
+        }
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(5, 5) == (255, 255, 0)
+    assert raster.get_pixel(15, 5) == (0, 255, 0)
+
+
+def test_image_overprint_uses_image_color_space_not_current_fill_space():
+    spot = PdfArray(
+        [
+            PdfName("Separation"),
+            PdfName("BrandInk"),
+            PdfName("DeviceRGB"),
+            _exp_function([1, 1, 1], [1, 0, 0]),
+        ]
+    )
+    image = PdfStream(
+        bytes([255, 0, 0]),
+        {
+            PdfName("Type"): PdfName("XObject"),
+            PdfName("Subtype"): PdfName("Image"),
+            PdfName("Width"): _n(1),
+            PdfName("Height"): _n(1),
+            PdfName("BitsPerComponent"): _n(8),
+            PdfName("ColorSpace"): PdfName("DeviceRGB"),
+        },
+    )
+    pdf = SimplePdf(
+        pages=[(0, 0, 10, 10)],
+        page_contents=[
+            b"0 1 1 rg 0 0 10 10 re f /Overprint gs /Spot cs 1 scn "
+            b"q 10 0 0 10 0 0 cm /Im0 Do Q"
+        ],
+    )
+    pdf._ensure_cos()
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("ColorSpace"): PdfDictionary({PdfName("Spot"): spot}),
+            PdfName("ExtGState"): PdfDictionary(
+                {
+                    PdfName("Overprint"): PdfDictionary(
+                        {PdfName("OP"): PdfBoolean(True)}
+                    )
+                }
+            ),
+            PdfName("XObject"): PdfDictionary(
+                {PdfName("Im0"): pdf._cos_doc.register_object(image)}
+            ),
+        }
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(5, 5) == (255, 0, 0)
 
 
 def test_render_free_form_mesh_sh_operator():

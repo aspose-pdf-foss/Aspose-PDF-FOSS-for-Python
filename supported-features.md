@@ -291,18 +291,27 @@ Supported:
   renderer honors isolated (`/I`) and knockout (`/K`) group backdrops, including
   internal blend modes and partial alpha, and bounds nested offscreen buffers by
   `PdfLoadLimits.max_codec_work_bytes`.
-- Paint axial (`ShadingType 2`) and radial (`ShadingType 3`) gradients through
-  the `sh` operator and shading-pattern fills (`PatternType 2`). PDF function
-  types 0 (sampled), 2 (exponential), 3 (stitching), and 4 (bounded PostScript
-  calculator) are evaluated over DeviceGray/RGB/CMYK and ICCBased colour
-  spaces, with `/Extend` honoured. Calculator source, procedure nesting,
-  operand-stack size, and execution data are bounded by the document load
+- Paint function-based (`ShadingType 1`), axial (`ShadingType 2`), and radial
+  (`ShadingType 3`) gradients through the `sh` operator and shading-pattern
+  fills (`PatternType 2`). Type 1 honours `/Domain`, `/Matrix`, `/BBox`, and the
+  pattern-only `/Background` semantics. PDF function types 0 (sampled), 2
+  (exponential), 3 (stitching), and 4 (bounded PostScript calculator) are
+  evaluated over DeviceGray/RGB/CMYK, ICCBased, Separation, DeviceN, and
+  NChannel colour spaces; special colours use their alternate space and tint
+  transform. Sampled functions support multiple inputs and 1/2/4/8/12/16/24/32
+  bits per sample. Calculator source, procedure nesting, operand-stack size,
+  sampled interpolation, and execution data are bounded by the document load
   limits.
 - Paint free-form and lattice Gouraud triangle meshes (`ShadingType 4` and `5`)
   and Coons and tensor-product patch meshes (`ShadingType 6` and `7`). The mesh
   bitstream decoder supports the ISO coordinate/component/flag widths, shared
   edges, optional color functions, and bounded materialization. Curved patches
-  use deterministic 12-by-12 tessellation per patch.
+  use device-scale-adaptive subdivision up to 64-by-64 cells, with geometry and
+  component-error thresholds checked before bounded triangle materialization.
+- Resolve Separation, DeviceN, and NChannel colours through their tint
+  transforms for path fills and shadings. `/OP`, `/op`, and `/OPM` drive a
+  composite overprint preview for spot/DeviceN paints and DeviceCMYK mode 1;
+  this uses multiplicative ink approximation on the RGB backdrop.
 - Fill with tiling patterns (`PatternType 1`): the pattern cell is repeated on
   its `/XStep`/`/YStep` lattice, clipped to the path being filled. Both coloured
   (`PaintType 1`) and uncoloured (`PaintType 2`, taking the colour from `scn`)
@@ -313,11 +322,12 @@ Supported:
 Boundaries:
 
 - Page rendering is a best-effort rasterizer, not a certification-grade visual
-  engine. It does not yet implement function-based shadings (`ShadingType 1`),
-  overprint, device-N/spot-color blending, or complete PDF 2.0 imaging
-  semantics. Curved mesh patches are tessellated rather than analytically
-  inverted, knockout handling uses the renderer's supersampled pixel shape,
-  and the `/Alpha` soft-mask subtype approximates alpha with painted coverage.
+  engine. Its overprint support is a composite RGB preview, not a plate-accurate
+  separation or process/spot ink model, and complete PDF 2.0 imaging semantics
+  are not implemented. Curved mesh patches use bounded adaptive tessellation
+  rather than analytical inversion, knockout handling uses the renderer's
+  supersampled pixel shape, and the `/Alpha` soft-mask subtype approximates
+  alpha with painted coverage.
 - Glyph outline rasterization covers all three embedded program formats --
   TrueType (`glyf`), CFF (`/FontFile3`), and Type 1 (`/FontFile`, including
   `seac` accent composites). Fonts with no embedded program are filled from
