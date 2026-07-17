@@ -556,9 +556,9 @@ Supported:
   CMYK/YCCK (4-component, with Adobe de-inversion), any chroma subsampling, and
   restart intervals. Image export uses it to produce a real PNG from such JPEGs
   even when Pillow is absent. Only JPX/JPEG 2000 still needs the optional
-  `images` extra (`pip install aspose-pdf-foss[images]`, Pillow); without Pillow
-  a JPX image keeps its original encoded bytes (`.jp2`). Arithmetic-coded JPEG is
-  also Pillow-only.
+  `images` extra (`pip install aspose-pdf-foss-for-python[images]`, Pillow);
+  without Pillow a JPX image keeps its original encoded bytes (`.jp2`).
+  Arithmetic-coded JPEG is also Pillow-only.
 - Read reconstruction metadata from an `ImagePlacement`: `width`, `height`,
   `bits_per_component`, and `color_space`.
 - Replace or hide an `ImagePlacement` payload in memory.

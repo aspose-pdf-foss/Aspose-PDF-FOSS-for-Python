@@ -31,10 +31,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/aspose-pdf/aspose-pdf-foss-for-python"
-Repository = "https://github.com/aspose-pdf/aspose-pdf-foss-for-python"
-Issues = "https://github.com/aspose-pdf/aspose-pdf-foss-for-python/issues"
-Changelog = "https://github.com/aspose-pdf/aspose-pdf-foss-for-python/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/aspose-pdf-foss/Aspose-PDF-FOSS-for-Python"
+Repository = "https://github.com/aspose-pdf-foss/Aspose-PDF-FOSS-for-Python"
+Issues = "https://github.com/aspose-pdf-foss/Aspose-PDF-FOSS-for-Python/issues"
+Changelog = "https://github.com/aspose-pdf-foss/Aspose-PDF-FOSS-for-Python/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 images = [
