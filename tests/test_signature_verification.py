@@ -2,14 +2,13 @@
 
 These tests focus on the internal integrity verification of ``PdfSignature``
 and on the integration helpers ``SimplePdf`` and ``SignaturesCompromiseDetector``.
-External PDF parsing is deliberately skipped because the library under test
-provides its own PDF handling which is out of scope for these unit tests.
+The integration test constructs a signed PDF through the writer and parses it
+back through the COS extractor, keeping the fixture compact and redistributable.
 """
-
-import pytest
 
 from aspose_pdf.signature import PdfSignature
 from aspose_pdf.engine.simple_pdf import SimplePdf
+from aspose_pdf.engine.signing import SigningUtils
 from aspose_pdf.security import SignaturesCompromiseDetector
 
 
@@ -88,13 +87,29 @@ def test_signatures_compromise_detector(monkeypatch):
     assert result.signatures_coverage == 1
 
 
-@pytest.mark.skip(
-    reason="Full PDF extraction requires complex binary setup not covered in unit tests."
-)
 def test_cos_extractor_extracts_signature():
-    """Placeholder for COS extractor test – skipped in CI.
+    """A writer-produced signature field is recovered by the COS extractor."""
+    certificate, private_key = SigningUtils.create_self_signed_cert()
+    pdf = SimplePdf(
+        pages=[(0.0, 0.0, 200.0, 200.0)],
+        page_contents=[b"BT (Signature extraction) Tj ET"],
+    )
+    pdf.signing_creds = (certificate, private_key)
+    pdf.signature = {
+        "Name": "ExtractionSignature",
+        "Reason": "Regression test",
+        "Location": "Test suite",
+    }
 
-    The real implementation would construct a minimal PDF binary containing a
-    signature field and verify that ``SimplePdf.from_bytes`` extracts it.
-    """
-    pass
+    data = pdf.to_bytes()
+    extracted = SimplePdf.from_bytes(data).signatures
+
+    assert len(extracted) == 1
+    signature = extracted[0]
+    assert signature.name == "ExtractionSignature"
+    assert signature.reason == "Regression test"
+    assert signature.location == "Test suite"
+    assert signature.byte_range[0] == 0
+    assert signature.reference_data == data
+    assert signature.contents
+    assert signature.valid is True

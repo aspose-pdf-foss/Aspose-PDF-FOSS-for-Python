@@ -43,6 +43,9 @@ images = [
 woff2 = [
   "Brotli>=1.0",
 ]
+fuzz = [
+  "atheris>=2.3",
+]
 dev = [
   "build>=1.2",
   "pytest>=8",

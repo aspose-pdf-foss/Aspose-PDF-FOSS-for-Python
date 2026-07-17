@@ -82,7 +82,7 @@ class Document:
 
     @property
     def load_limits(self) -> PdfLoadLimits:
-        """Return the resource limits used for PDF loading and lazy processing."""
+        """Return limits used for loading, lazy processing, and authored assets."""
         return self._load_limits
 
     def _ensure_not_disposed(self) -> None:

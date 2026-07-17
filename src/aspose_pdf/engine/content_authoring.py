@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+
+from .filters import StreamDecoder
 
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -272,22 +275,37 @@ def prepare_image(
     pixel_height: Optional[int] = None,
     color_space: str = "DeviceRGB",
     bits_per_component: int = 8,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ) -> AuthoredImage:
     """Prepare raw/JPEG/PNG bytes for a PDF image XObject."""
 
+    resolved_limits = _coerce_limits(limits)
+    if budget is None:
+        active_budget = _LoadBudget(resolved_limits)
+    else:
+        if not isinstance(budget, _LoadBudget):
+            raise TypeError("budget must be a _LoadBudget instance or None")
+        if limits is not None and limits != budget.limits:
+            raise ValueError("limits must match budget.limits")
+        active_budget = budget
     payload = bytes(data)
+    active_budget.check(
+        len(payload), "max_input_bytes", "authored image input bytes"
+    )
     if not payload:
         raise PdfValidationException("Image data cannot be empty.")
     if payload.startswith(_JPEG_MAGIC):
-        return _prepare_jpeg(payload)
+        return _prepare_jpeg(payload, active_budget)
     if payload.startswith(_PNG_MAGIC):
-        return _prepare_png(payload)
+        return _prepare_png(payload, active_budget)
     return _prepare_raw(
         payload,
         pixel_width=pixel_width,
         pixel_height=pixel_height,
         color_space=color_space,
         bits_per_component=bits_per_component,
+        budget=active_budget,
     )
 
 
@@ -298,6 +316,7 @@ def _prepare_raw(
     pixel_height: Optional[int],
     color_space: str,
     bits_per_component: int,
+    budget: _LoadBudget,
 ) -> AuthoredImage:
     if pixel_width is None or pixel_height is None:
         raise PdfValidationException(
@@ -310,6 +329,8 @@ def _prepare_raw(
     cs = _normalize_color_space(color_space)
     components = {"DeviceGray": 1, "DeviceRGB": 3, "DeviceCMYK": 4}[cs]
     expected = width * height * components
+    budget.check_image_pixels(width, height, "authored raw image")
+    budget.check(expected, "max_codec_work_bytes", "authored raw image samples")
     if len(data) != expected:
         raise PdfValidationException(
             f"Raw image data length must be {expected} bytes for this geometry."
@@ -325,8 +346,9 @@ def _prepare_raw(
     )
 
 
-def _prepare_jpeg(data: bytes) -> AuthoredImage:
+def _prepare_jpeg(data: bytes, budget: _LoadBudget) -> AuthoredImage:
     width, height, components, precision = _jpeg_geometry(data)
+    budget.check_image_pixels(width, height, "authored JPEG image")
     cs = {1: "DeviceGray", 3: "DeviceRGB", 4: "DeviceCMYK"}.get(
         components, "DeviceRGB"
     )
@@ -342,8 +364,8 @@ def _prepare_jpeg(data: bytes) -> AuthoredImage:
     )
 
 
-def _prepare_png(data: bytes) -> AuthoredImage:
-    width, height, bit_depth, color_type, pixels = _decode_png(data)
+def _prepare_png(data: bytes, budget: _LoadBudget) -> AuthoredImage:
+    width, height, bit_depth, color_type, pixels = _decode_png(data, budget)
     if bit_depth != 8:
         raise PdfValidationException("Only 8-bit PNG images are supported.")
     if color_type == 0:
@@ -457,7 +479,7 @@ def _jpeg_geometry(data: bytes) -> Tuple[int, int, int, int]:
     raise PdfValidationException("Could not read JPEG dimensions.")
 
 
-def _decode_png(data: bytes):
+def _decode_png(data: bytes, budget: _LoadBudget):
     pos = len(_PNG_MAGIC)
     width = height = bit_depth = color_type = None
     interlace = 0
@@ -503,10 +525,28 @@ def _decode_png(data: bytes):
         raise PdfValidationException(f"Unsupported PNG color type: {color_type}.")
     if bit_depth != 8:
         raise PdfValidationException("Only 8-bit PNG images are supported.")
+    budget.check_image_pixels(width, height, "authored PNG image")
     row_len = width * channels
     bpp = max(1, channels)
+    filtered_size = height * (row_len + 1)
+    output_components = {0: 1, 2: 3, 3: 3, 4: 1, 6: 3}[color_type]
+    output_size = width * height * output_components
+    work_size = len(data) + filtered_size + row_len * height + output_size * 2
+    budget.check(
+        filtered_size,
+        "max_decoded_stream_bytes",
+        "authored PNG filtered samples",
+    )
+    budget.check(work_size, "max_codec_work_bytes", "authored PNG working set")
+    budget.reserve_decoded(output_size, "authored PNG decoded samples")
     try:
-        raw = zlib.decompress(bytes(idat))
+        raw = StreamDecoder.decode(
+            bytes(idat),
+            "FlateDecode",
+            None,
+            limits=budget.limits,
+            max_output_bytes=filtered_size,
+        )
     except zlib.error as exc:
         raise PdfValidationException("PNG image data cannot be decompressed.") from exc
     pixels = _png_unfilter(raw, width, height, row_len, bpp)

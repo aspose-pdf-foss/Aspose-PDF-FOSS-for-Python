@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aspose_pdf.engine.woff import decode as decode_woff
 from aspose_pdf.exceptions import FontEmbeddingException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 
 class FontDescriptor:
@@ -49,21 +50,31 @@ class FontDescriptor:
         """Return ``True`` if a font program can be produced for embedding."""
         return self._data is not None or self.path is not None
 
-    def get_font_bytes(self) -> bytes:
+    def get_font_bytes(self, *, limits: PdfLoadLimits | None = None) -> bytes:
         """Return the embeddable font program bytes for this descriptor.
 
-        WOFF 1.0 programs are transparently unwrapped to their underlying SFNT
-        so the returned bytes are always a directly embeddable TrueType /
-        OpenType program.
+        WOFF/WOFF2 programs are transparently unwrapped to their underlying
+        SFNT so the returned bytes are always a directly embeddable TrueType /
+        OpenType program. ``limits`` bounds wrapper input and decompression.
 
         Raises:
             FontEmbeddingException: if the descriptor is not backed by data or
                 a readable file.
         """
+        resolved_limits = _coerce_limits(limits)
+        raw = self._read_raw_bytes(resolved_limits)
+        decoded = decode_woff(raw, limits=resolved_limits)
+        return decoded if decoded is not None else raw
+
+    def _read_raw_bytes(self, limits: PdfLoadLimits) -> bytes:
+        """Read the original backing bytes without decoding font wrappers."""
+        budget = _LoadBudget(limits)
         if self._data is not None:
             raw = self._data
         elif self.path is not None:
             try:
+                size = Path(self.path).stat().st_size
+                budget.check(size, "max_input_bytes", "font input bytes")
                 raw = Path(self.path).read_bytes()
             except OSError as exc:
                 raise FontEmbeddingException(
@@ -73,8 +84,8 @@ class FontDescriptor:
             raise FontEmbeddingException(
                 f"Font {self.name!r} has no backing file or in-memory data"
             )
-        decoded = decode_woff(raw)
-        return decoded if decoded is not None else raw
+        budget.check(len(raw), "max_input_bytes", "font input bytes")
+        return raw
 
     def matches(self, query: str) -> bool:
         """Return ``True`` if *query* matches any known name (case-insensitive)."""

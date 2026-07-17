@@ -23,6 +23,9 @@ from __future__ import annotations
 import struct
 import zlib
 
+from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+
 __all__ = ["decode", "is_woff", "is_woff2", "build_sfnt"]
 
 _WOFF1_SIGNATURE = b"wOFF"
@@ -46,7 +49,11 @@ def is_woff2(data: bytes) -> bool:
     return len(data) >= 4 and data[:4] == _WOFF2_SIGNATURE
 
 
-def decode(data: bytes) -> bytes | None:
+def decode(
+    data: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+) -> bytes | None:
     """Reconstruct the SFNT font wrapped in WOFF *data*.
 
     WOFF 1.0 is decoded here (dependency-free); WOFF2 is delegated to
@@ -54,9 +61,13 @@ def decode(data: bytes) -> bytes | None:
     Returns the decoded TrueType / OpenType byte stream, or ``None`` when *data*
     is not a WOFF wrapper or cannot be decoded.
     """
+    resolved_limits = _coerce_limits(limits)
+    _LoadBudget(resolved_limits).check(
+        len(data), "max_input_bytes", "WOFF input bytes"
+    )
     if is_woff(data):
         try:
-            return _decode_woff1(data)
+            return _decode_woff1(data, resolved_limits)
         except (struct.error, IndexError, ValueError, zlib.error):
             return None
     if is_woff2(data):
@@ -64,21 +75,31 @@ def decode(data: bytes) -> bytes | None:
         # build_sfnt from this module).
         from aspose_pdf.engine import woff2
 
-        return woff2.decode(data)
+        return woff2.decode(data, limits=resolved_limits)
     return None
 
 
-def _decode_woff1(data: bytes) -> bytes | None:
+def _decode_woff1(data: bytes, limits: PdfLoadLimits) -> bytes | None:
     if len(data) < _HEADER_SIZE:
         return None
 
     flavor = struct.unpack_from(">I", data, 4)[0]
     num_tables = struct.unpack_from(">H", data, 12)[0]
+    total_sfnt_size = struct.unpack_from(">I", data, 16)[0]
     if num_tables == 0:
         return None
+    budget = _LoadBudget(limits)
+    budget.check(num_tables, "max_container_items", "WOFF table entries")
+    _check_decode_limits(
+        len(data),
+        total_sfnt_size,
+        limits,
+        context="WOFF decoded font",
+    )
 
-    tables: list[tuple[str, bytes]] = []
+    entries: list[tuple[bytes, int, int, int]] = []
     record = _HEADER_SIZE
+    expected_sfnt_size = 12 + num_tables * 16
     for _ in range(num_tables):
         if record + _DIR_ENTRY_SIZE > len(data):
             return None
@@ -89,16 +110,65 @@ def _decode_woff1(data: bytes) -> bytes | None:
 
         if offset + comp_len > len(data) or comp_len > orig_len:
             return None
+        expected_sfnt_size += _aligned4(orig_len)
+        entries.append((tag, offset, comp_len, orig_len))
+    if expected_sfnt_size != total_sfnt_size:
+        return None
+
+    tables: list[tuple[str, bytes]] = []
+    for tag, offset, comp_len, orig_len in entries:
         raw = data[offset : offset + comp_len]
         if comp_len == orig_len:
             table = raw  # stored uncompressed
         else:
-            table = zlib.decompress(raw)
+            table = _decompress_zlib_limited(raw, orig_len)
             if len(table) != orig_len:
                 return None
         tables.append((tag.decode("latin-1"), table))
 
-    return build_sfnt(flavor, tables)
+    result = build_sfnt(flavor, tables)
+    return result if len(result) == total_sfnt_size else None
+
+
+def _check_decode_limits(
+    input_size: int,
+    output_size: int,
+    limits: PdfLoadLimits,
+    *,
+    context: str,
+    additional_work_bytes: int = 0,
+) -> None:
+    budget = _LoadBudget(limits)
+    budget.reserve_decoded(output_size, f"{context} bytes")
+    budget.check(
+        input_size + output_size + additional_work_bytes,
+        "max_codec_work_bytes",
+        f"{context} working set",
+    )
+    ratio = limits.max_compression_ratio
+    if ratio is not None and input_size > 0 and output_size > input_size * ratio:
+        raise PdfResourceLimitException(
+            f"Resource limit exceeded for {context} compression ratio: "
+            f"{output_size} decoded bytes from {input_size} encoded bytes exceeds "
+            f"max_compression_ratio={ratio}"
+        )
+
+
+def _decompress_zlib_limited(data: bytes, output_size: int) -> bytes:
+    decoder = zlib.decompressobj()
+    result = decoder.decompress(data, output_size + 1)
+    if len(result) > output_size or decoder.unconsumed_tail:
+        raise PdfResourceLimitException(
+            "WOFF table expands beyond its declared uncompressed size"
+        )
+    result += decoder.flush(output_size + 1 - len(result))
+    if len(result) > output_size:
+        raise PdfResourceLimitException(
+            "WOFF table expands beyond its declared uncompressed size"
+        )
+    if not decoder.eof:
+        raise zlib.error("incomplete or truncated WOFF table stream")
+    return result
 
 
 def build_sfnt(flavor: int, tables: list[tuple[str, bytes]]) -> bytes:

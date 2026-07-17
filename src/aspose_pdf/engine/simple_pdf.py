@@ -1007,7 +1007,7 @@ class SimplePdf:
 
     @property
     def load_limits(self) -> PdfLoadLimits:
-        """Return the resource limits used for this document."""
+        """Return the loading, processing, and authoring limits for this document."""
         return self._load_limits
 
     def __enter__(self) -> "SimplePdf":
@@ -4977,7 +4977,11 @@ class SimplePdf:
             from .font_authoring import prepare_authored_font
 
             try:
-                prepared = prepare_authored_font(font, font_name=font_name)
+                prepared = prepare_authored_font(
+                    font,
+                    font_name=font_name,
+                    limits=self._load_limits,
+                )
             except FontEmbeddingException as exc:
                 raise FontEmbeddingException(
                     f"Font preparation failed: {exc}"
@@ -5034,6 +5038,8 @@ class SimplePdf:
             pixel_height=pixel_height,
             color_space=color_space,
             bits_per_component=bits_per_component,
+            limits=self._load_limits,
+            budget=self._load_budget,
         )
         resource_name = self._register_page_image(page_index, image, name)
         placement_width = image.width if width is None else width

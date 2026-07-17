@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import struct
 
-from aspose_pdf.engine.woff import build_sfnt
+from aspose_pdf.engine.woff import build_sfnt, _check_decode_limits
+from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 __all__ = ["decode"]
 
@@ -62,20 +64,35 @@ _OVERLAP_SIMPLE = 0x40
 _OVERLAP_SIMPLE_BITMAP = 0x0001  # glyf-transform optionFlags bit 0.
 
 
-def decode(data: bytes) -> bytes | None:
+def decode(
+    data: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+) -> bytes | None:
     """Reconstruct the SFNT font wrapped in WOFF2 *data*.
 
     Returns the decoded TrueType / OpenType byte stream, or ``None`` when
     *data* is not WOFF2, is malformed, wraps a font collection, or when the
     optional ``brotli`` dependency is not installed.
     """
+    resolved_limits = _coerce_limits(limits)
+    _LoadBudget(resolved_limits).check(
+        len(data), "max_input_bytes", "WOFF2 input bytes"
+    )
     if len(data) < _HEADER_SIZE or data[:4] != _WOFF2_SIGNATURE:
         return None
+    total_sfnt_size = struct.unpack_from(">I", data, 16)[0]
+    _check_decode_limits(
+        len(data),
+        total_sfnt_size,
+        resolved_limits,
+        context="WOFF2 decoded font",
+    )
     brotli = _import_brotli()
     if brotli is None:
         return None
     try:
-        return _decode(data, brotli)
+        return _decode(data, brotli, resolved_limits)
     except (struct.error, IndexError, ValueError, KeyError):
         return None
 
@@ -91,7 +108,11 @@ def _import_brotli():
     return brotli
 
 
-def _decode(data: bytes, brotli) -> bytes | None:
+def _decode(
+    data: bytes,
+    brotli,
+    limits: PdfLoadLimits,
+) -> bytes | None:
     flavor = struct.unpack_from(">I", data, 4)[0]
     if flavor == _TTCF_FLAVOR:
         return None  # WOFF2 font collections are not supported.
@@ -99,16 +120,32 @@ def _decode(data: bytes, brotli) -> bytes | None:
     total_compressed = struct.unpack_from(">I", data, 20)[0]
     if num_tables == 0:
         return None
+    _LoadBudget(limits).check(
+        num_tables, "max_container_items", "WOFF2 table entries"
+    )
 
     entries, pos = _read_directory(data, num_tables)
+    transformed_size = sum(entry[2] for entry in entries)
+    total_sfnt_size = struct.unpack_from(">I", data, 16)[0]
+    _check_decode_limits(
+        total_compressed,
+        max(total_sfnt_size, transformed_size),
+        limits,
+        context="WOFF2 Brotli output",
+        additional_work_bytes=total_sfnt_size,
+    )
 
-    block = data[pos : pos + total_compressed]
-    try:
-        decompressed = brotli.decompress(block)
-    except Exception as exc:
-        # brotli and brotlicffi raise different error types; normalise so the
-        # caller's defensive handler turns any failure into a clean None.
-        raise ValueError("brotli decompression failed") from exc
+    block_end = pos + total_compressed
+    if block_end > len(data):
+        return None
+    block = data[pos:block_end]
+    decompressed = _decompress_brotli_limited(
+        block,
+        brotli,
+        transformed_size,
+    )
+    if len(decompressed) != transformed_size:
+        return None
 
     # Slice each table out of the decompressed stream, in directory order.
     cursor = 0
@@ -134,7 +171,44 @@ def _decode(data: bytes, brotli) -> bytes | None:
         if "head" in tables:
             tables["head"] = _force_long_loca(tables["head"])
 
-    return build_sfnt(flavor, [(tag, tables[tag]) for tag in order])
+    result = build_sfnt(flavor, [(tag, tables[tag]) for tag in order])
+    _check_decode_limits(
+        len(data),
+        len(result),
+        limits,
+        context="WOFF2 reconstructed font",
+        additional_work_bytes=len(decompressed),
+    )
+    return result
+
+
+def _decompress_brotli_limited(
+    data: bytes,
+    brotli,
+    output_size: int,
+) -> bytes:
+    decompressor_type = getattr(brotli, "Decompressor", None)
+    if decompressor_type is None:
+        raise ValueError("Brotli implementation lacks streaming decompression")
+    try:
+        decoder = decompressor_type()
+        output = bytearray()
+        for pos in range(0, len(data), 16 * 1024):
+            chunk = decoder.process(data[pos : pos + 16 * 1024])
+            if chunk:
+                output.extend(chunk)
+            if len(output) > output_size:
+                raise PdfResourceLimitException(
+                    "WOFF2 Brotli output exceeds its declared size"
+                )
+        is_finished = getattr(decoder, "is_finished", None)
+        if callable(is_finished) and not is_finished():
+            raise ValueError("incomplete WOFF2 Brotli stream")
+        return bytes(output)
+    except PdfResourceLimitException:
+        raise
+    except Exception as exc:
+        raise ValueError("brotli decompression failed") from exc
 
 
 def _read_directory(

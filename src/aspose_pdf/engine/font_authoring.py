@@ -22,6 +22,7 @@ from typing import Any
 
 from aspose_pdf.exceptions import FontEmbeddingException
 from aspose_pdf.font_registry import FontDescriptor
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
 
 from .cff_outlines import CffOutlines
 from .font_subset import read_unicode_cmap, subset_truetype
@@ -283,6 +284,7 @@ def prepare_authored_font(
     source: FontDescriptor | bytes | bytearray | str | Path,
     *,
     font_name: str | None = None,
+    limits: PdfLoadLimits | None = None,
 ) -> AuthoredFont:
     """Normalize *source* and prepare a Type 0 font for Unicode authoring.
 
@@ -293,8 +295,11 @@ def prepare_authored_font(
     Supported outlines are TrueType ``glyf`` and OpenType CFF 1. CFF2 and
     malformed or incomplete fonts raise :class:`FontEmbeddingException`.
     """
-    raw, face_index, suggested_name = _read_source(source)
-    normalized = _normalize_wrapper(raw)
+    resolved_limits = _coerce_limits(limits)
+    budget = _LoadBudget(resolved_limits)
+    raw, face_index, suggested_name = _read_source(source, resolved_limits)
+    budget.check(len(raw), "max_input_bytes", "authored font input bytes")
+    normalized = _normalize_wrapper(raw, resolved_limits)
     sfnt = _select_sfnt_face(normalized, face_index)
     _flavor, tables = _read_sfnt_tables(sfnt, 0)
 
@@ -357,10 +362,11 @@ def prepare_authored_font(
 
 def _read_source(
     source: FontDescriptor | bytes | bytearray | str | Path,
+    limits: PdfLoadLimits,
 ) -> tuple[bytes, int, str | None]:
     if isinstance(source, FontDescriptor):
         try:
-            raw = source.get_font_bytes()
+            raw = source._read_raw_bytes(limits)
         except FontEmbeddingException as exc:
             raise FontEmbeddingException(f"Could not read the font source: {exc}") from exc
         name = source.postscript_name or source.full_name or source.name
@@ -370,6 +376,10 @@ def _read_source(
     if isinstance(source, (str, Path)):
         path = Path(source)
         try:
+            size = path.stat().st_size
+            _LoadBudget(limits).check(
+                size, "max_input_bytes", "authored font input bytes"
+            )
             return path.read_bytes(), 0, path.stem
         except OSError as exc:
             raise FontEmbeddingException(
@@ -380,9 +390,9 @@ def _read_source(
     )
 
 
-def _normalize_wrapper(data: bytes) -> bytes:
+def _normalize_wrapper(data: bytes, limits: PdfLoadLimits) -> bytes:
     if is_woff(data) or is_woff2(data):
-        decoded = decode_woff(data)
+        decoded = decode_woff(data, limits=limits)
         if decoded is None:
             if is_woff2(data):
                 raise FontEmbeddingException(

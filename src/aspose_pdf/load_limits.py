@@ -1,4 +1,4 @@
-"""Resource limits applied while loading and processing untrusted PDF data."""
+"""Resource limits for untrusted PDF data and externally authored assets."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ __all__ = ["PdfLoadLimits"]
 
 @dataclass(frozen=True, slots=True)
 class PdfLoadLimits:
-    """Immutable safety limits for untrusted PDF input.
+    """Immutable safety limits for untrusted PDF input and authored assets.
 
     Every field accepts a positive integer or ``None``. ``None`` disables that
     individual limit. The defaults are intentionally generous enough for normal

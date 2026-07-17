@@ -177,7 +177,13 @@ class Page:
         if eng is None:
             raise AsposePdfException("No document loaded")
         if isinstance(image, (str, Path)):
-            data = Path(image).read_bytes()
+            path = Path(image)
+            eng._load_budget.check(
+                path.stat().st_size,
+                "max_input_bytes",
+                "authored image input bytes",
+            )
+            data = path.read_bytes()
         elif isinstance(image, (bytes, bytearray)):
             data = bytes(image)
         else:

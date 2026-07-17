@@ -115,10 +115,10 @@ Boundaries:
   and CCITT/JBIG2 bitmap geometry are checked before their large allocations.
   The limits reduce known memory/CPU amplification risks; they are not a proof
   that every possible PDF denial-of-service technique is bounded.
-- Decompression paths outside PDF loading are not all instrumented by this
-  policy. In particular, authored PNG input and WOFF/WOFF2 font decoding need
-  separate limits; third-party codecs can also have dependency-specific
-  behavior.
+- Authored PNG input and WOFF/WOFF2 font decoding use the same image, decoded
+  stream, compression-ratio, codec-working-set, and input-byte limits. Codec
+  implementations supplied by optional third-party dependencies can still have
+  dependency-specific behavior.
 - Run highly hostile documents in an isolated worker with operating-system
   resource limits even when `PdfLoadLimits` is enabled.
 
@@ -482,6 +482,9 @@ Supported:
   (`pip install aspose-pdf-foss-for-python[woff2]`). The reconstructed SFNT is a
   first-class font just like a decoded `.woff`. Without `brotli`, WOFF2 falls
   back to file-name metadata, so the default install stays dependency-free.
+- Bound WOFF/WOFF2 input, declared/reconstructed SFNT output, compression ratio,
+  table count, and codec working memory through `PdfLoadLimits`; Brotli output
+  is consumed incrementally and rejected when it exceeds the declared size.
 - Resolve a font by family / full / PostScript name (case-insensitive), falling
   back to the standard-font registry, and obtain embeddable font bytes through
   `FontRepository.open_font()` or `FontDescriptor.get_font_bytes()` (WOFF
@@ -583,13 +586,14 @@ Supported:
 
 Boundaries:
 
-- High-level image insertion/placement into pages is not a public feature in this
-  prerelease. The JPEG encoder has optimized Huffman tables and baseline or
-  progressive output; baseline RGB uses fixed 4:2:0 subsampling while progressive
-  and CMYK are full-resolution (progressive is spectral-selection only, without
-  successive approximation); resampling is box-average downscaling (no
-  upscaling), with an optional DPI target driven by on-page placement size (see
-  Optimization).
+- `Page.add_image()` accepts raw samples, JPEG, and non-interlaced 8-bit PNG.
+  PNG input bytes, dimensions, filtered output, compression ratio, and working
+  memory are bounded before large decode allocations. The JPEG encoder has
+  optimized Huffman tables and baseline or progressive output; baseline RGB
+  uses fixed 4:2:0 subsampling while progressive and CMYK are full-resolution
+  (progressive is spectral-selection only, without successive approximation);
+  resampling is box-average downscaling (no upscaling), with an optional DPI
+  target driven by on-page placement size (see Optimization).
 - JPX/JPEG 2000 page-render painting still depends on optional Pillow decode
   availability; arithmetic-coded JPEG remains unsupported by the pure-Python
   raster path.
