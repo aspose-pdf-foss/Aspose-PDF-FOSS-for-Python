@@ -27,7 +27,10 @@ available as `scripts/check.sh` and `scripts/build.sh`.
 Supported:
 
 - Create empty PDF documents.
-- Load PDFs from a path, raw bytes, `bytearray`, or binary stream.
+- Load PDFs from a path, raw bytes, `bytearray`, or binary stream, either
+  through `Document(source, password=..., limits=...)` or through
+  `Document().load_from(...)`. Both raise on a missing file, non-PDF data, or a
+  missing password instead of yielding an empty document.
 - Save PDFs to a path or writable binary stream, with overwrite protection for
   existing path targets.
 - Use `Document` as a context manager and release resources with `dispose()` or
@@ -1017,5 +1020,36 @@ Boundaries:
   hosted services or billing.
 
 ## Known Unsupported Compatibility Surfaces
+
+The package keeps a few names from the wider Aspose.PDF API so that ported code
+still imports. They carry **no implementation**. Constructing one is allowed —
+it is an inert value object — but handing it to a real operation raises
+`UnsupportedFeatureException` (exported from `aspose_pdf`, and a subclass of
+both `AsposePdfException` and `NotImplementedError`) rather than silently doing
+nothing or writing a PDF under a foreign extension:
+
+```python
+from aspose_pdf import Document, UnsupportedFeatureException
+from aspose_pdf.save_format import SaveFormat
+
+with Document("input.pdf") as document:
+    try:
+        document.save("output.pptx", SaveFormat.PPTX)
+    except UnsupportedFeatureException as error:
+        print(error)  # PPTX export is not implemented; ...
+```
+
+| Surface | Names | Behaviour |
+| --- | --- | --- |
+| Non-PDF import | `CdrLoadOptions`, `CgmLoadOptions`, `HtmlLoadOptions`, `OfdLoadOptions`, `SvgLoadOptions` (both `aspose_pdf.load_options` and `aspose_pdf.svg`) | Rejected as the `source` or `options` argument of `Document(...)` and `Document.load_from(...)`. |
+| Non-PDF export | `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`/`SVG`, `HtmlSaveOptions`, `MarkdownSaveOptions` | Rejected by `Document.save(destination, save_format)` before anything is written to the path or stream. |
+| Printing | `Duplex`, `PrintRange`, `PrinterSettings` | No print operation exists; `PrinterSettings` is rejected by `Document.save`. |
+| LaTeX | `LatexFragment` | Rejected as a load source; no LaTeX authoring or import path exists. |
+| Presentation drawing model | `FillMode`, `IMatrix`, `IPath` in `aspose_pdf.presentation` | Inert value objects. They accumulate path data that nothing consumes and are not connected to page authoring or rendering. |
+| Instrumentation | `PerformanceLogger`, `VirtualizationPerformance` in `aspose_pdf.visualization` | Working stopwatch helpers, but nothing in the package feeds them and they do not virtualise or accelerate rendering. (`RasterizedPage`, re-exported from the same module, is the real render result.) |
+
+`Document.save` accepts `None` (the default), `SaveFormat.PDF`, or
+`DocFormat.PDF`. `aspose_pdf.clustering` is a self-contained hierarchical
+clustering utility, not a PDF feature.
 
 - Runtime package code does not use LLM services, API keys, or `.env` secrets.

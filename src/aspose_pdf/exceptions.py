@@ -18,6 +18,7 @@ __all__ = (
     "FontEmbeddingException",
     "PdfIOException",
     "DeprecatedFeatureException",
+    "UnsupportedFeatureException",
     "PDF_OPERATION_ERRORS",
     "CONTENT_PARSER_RECOVERABLE",
     "PDF_STREAM_DECODE_ERRORS",
@@ -98,6 +99,20 @@ class PdfIOException(PdfException):
 
 class DeprecatedFeatureException(AsposePdfException):
     """Raised when a deprecated PDF feature is used that is not allowed in newer PDF versions."""
+
+    pass
+
+
+class UnsupportedFeatureException(AsposePdfException, NotImplementedError):
+    """Raised when a compatibility surface names a feature this package lacks.
+
+    The package exposes option and enumeration objects for formats it does not
+    implement (HTML/SVG/CGM/OFD/CDR/Markdown/LaTeX conversion, PPTX export,
+    printing). Passing one of them to a real operation raises this exception
+    instead of silently doing nothing. It derives from both
+    :class:`AsposePdfException` and :class:`NotImplementedError` so either
+    handler catches it.
+    """
 
     pass
 

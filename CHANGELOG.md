@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `Document(...)` no longer discards its arguments. It now loads the supplied
+  source with the same semantics and errors as `Document.load_from(...)`, and
+  rejects unknown arguments, so `Document("input.pdf")` can no longer return an
+  empty document. `aspose_pdf.generated.document.Document` gained the same
+  signature.
+- Compatibility placeholders for unimplemented formats now fail explicitly
+  through the new `UnsupportedFeatureException` (also a `NotImplementedError`):
+  load options such as `SvgLoadOptions` are rejected by the constructor and
+  `load_from()`, and `Document.save(destination, save_format)` rejects
+  `SaveFormat.PPTX`, non-PDF `DocFormat` members, `HtmlSaveOptions`,
+  `MarkdownSaveOptions`, and `PrinterSettings` before writing anything.
+- Documented the full inventory of unimplemented compatibility surfaces in
+  `supported-features.md`.
 - Added function-based PDF shadings with multidimensional sampled functions,
   shading matrix/domain/bounds/background handling, and Separation/DeviceN
   alternate-colour conversion.

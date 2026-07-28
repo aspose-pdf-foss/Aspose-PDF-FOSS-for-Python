@@ -9,6 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, BinaryIO, List, Optional, Union
 
+from aspose_pdf._compat_surface import (
+    describe as _describe_unsupported,
+    reject_load_options,
+    require_pdf_save_format,
+)
 from aspose_pdf.engine.simple_pdf import SimplePdf, _effective_encryption_password
 from aspose_pdf.exceptions import AsposePdfException, PdfSecurityException
 from aspose_pdf.load_limits import (
@@ -28,19 +33,21 @@ class Document:
     # ---------------------------------------------------------------------
     # Construction & internal state
     # ---------------------------------------------------------------------
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(
+        self,
+        source: Union[str, Path, bytes, bytearray, BinaryIO, None] = None,
+        options: Any = None,
+        *,
+        password: Optional[str] = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> None:
         """Create a new :class:`Document` instance.
 
-        Stores the constructor arguments for possible later inspection and
-        initializes a minimal in‑memory representation of a PDF document.
-
-        If the first positional argument is a load source (path-like or
-        bytes-like), :meth:`load_from` is called and **errors propagate** (no
-        silent fallback to an empty document).
+        When *source* is supplied, :meth:`load_from` is called and **errors
+        propagate** (no silent fallback to an empty document). Load options are
+        rejected explicitly, matching :class:`aspose_pdf.document.Document`.
         """
-        self._init_args = args
-        self._init_kwargs = kwargs
-        self._load_limits = _coerce_limits(kwargs.get("limits"))
+        self._load_limits = _coerce_limits(limits)
         self._disposed: bool = False
         self._engine_doc: Optional[SimplePdf] = SimplePdf()
         self._engine_doc._load_limits = self._load_limits
@@ -72,9 +79,16 @@ class Document:
         self.is_pdfa_compliant: Any = None  # maps_from=IsPdfaCompliant
         self.is_pdfua_compliant: Any = None  # maps_from=IsPdfUaCompliant
 
-        if args and args[0]:
-            pwd = kwargs.get("password")
-            self.load_from(args[0], password=pwd, limits=self._load_limits)
+        if options is not None:
+            reject_load_options(options)
+        if source is None:
+            if password is not None:
+                raise TypeError(
+                    "password requires a load source; open an existing PDF with "
+                    "Document(path, password=...) or Document().load_from(...)"
+                )
+            return
+        self.load_from(source, password=password, limits=self._load_limits)
 
     @property
     def load_limits(self) -> PdfLoadLimits:
@@ -129,6 +143,8 @@ class Document:
                 _budget=budget,
             )
             self.file_name = getattr(source, "name", None)
+        elif _describe_unsupported(source) is not None:
+            reject_load_options(source)
         else:
             raise TypeError(
                 "source must be str, Path, bytes, or a readable binary stream"
@@ -143,10 +159,18 @@ class Document:
         self.is_encrypted = self._encrypted
         return self
 
-    def save(self, destination: Any, *, overwrite: bool = False) -> "Document":
-        """Save the document to *destination* using native engine."""
+    def save(
+        self, destination: Any, save_format: Any = None, *, overwrite: bool = False
+    ) -> "Document":
+        """Save the document to *destination* using native engine.
+
+        Only PDF output is implemented; *save_format* accepts ``None``,
+        ``SaveFormat.PDF``, or ``DocFormat.PDF`` and rejects export
+        placeholders before anything is written.
+        """
         if self._disposed:
             raise AsposePdfException("Cannot save a disposed document")
+        require_pdf_save_format(save_format)
 
         if self._engine_doc is None:
             raise AsposePdfException("No document loaded")

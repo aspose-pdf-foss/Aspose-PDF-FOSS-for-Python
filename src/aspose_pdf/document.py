@@ -20,6 +20,11 @@ from typing import (
     Union,
 )
 
+from aspose_pdf._compat_surface import (
+    describe as _describe_unsupported,
+    reject_load_options as _reject_load_options,
+    require_pdf_save_format as _require_pdf_save_format,
+)
 from aspose_pdf.attachments import FileSpecification
 from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
@@ -67,9 +72,40 @@ def _coerce_date(value: Any) -> "Optional[_datetime.datetime]":
 class Document:
     """Pythonic wrapper for PDF document lifecycle and core operations."""
 
-    def __init__(self, *args, **kwargs) -> None:
-        """Create a new Document instance."""
-        self._load_limits = _coerce_limits(kwargs.pop("limits", None))
+    def __init__(
+        self,
+        source: Union[str, Path, bytes, bytearray, BinaryIO, None] = None,
+        options: Any = None,
+        *,
+        password: Optional[str] = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> None:
+        """Create an empty document, or load *source* when one is supplied.
+
+        Parameters
+        ----------
+        source : str, Path, bytes, bytearray, or BinaryIO, optional
+            PDF to load, with the same semantics (and the same errors) as
+            :meth:`load_from`. When omitted, a new empty document is created.
+        options : Any
+            Present only for API compatibility: no load options are
+            implemented, so any non-``None`` value raises. Format-specific
+            containers such as ``SvgLoadOptions`` raise
+            :exc:`~aspose_pdf.exceptions.UnsupportedFeatureException`.
+        password : str, optional
+            Password for an encrypted *source*.
+        limits : PdfLoadLimits, optional
+            Resource policy for this document. Defaults to the standard policy.
+
+        Raises
+        ------
+        FileNotFoundError
+            If *source* is a path that does not exist.
+        UnsupportedFeatureException
+            If *source* or *options* is a compatibility placeholder for a
+            format this package does not implement.
+        """
+        self._load_limits = _coerce_limits(limits)
         self._engine_pdf: SimplePdf = SimplePdf()  # Start with empty PDF
         self._engine_pdf._load_limits = self._load_limits
         self._engine_pdf._load_budget = _LoadBudget(self._load_limits)
@@ -81,6 +117,17 @@ class Document:
         self._password: Optional[str] = None
         self._encrypted: bool = False
         self.file_name: Optional[str] = None
+
+        if options is not None:
+            _reject_load_options(options)
+        if source is None:
+            if password is not None:
+                raise TypeError(
+                    "password requires a load source; open an existing PDF with "
+                    "Document(path, password=...) or Document().load_from(...)"
+                )
+            return
+        self.load_from(source, password=password)
 
     @property
     def load_limits(self) -> PdfLoadLimits:
@@ -660,6 +707,8 @@ class Document:
                 _budget=budget,
             )
             self.file_name = None
+        elif _describe_unsupported(source) is not None:
+            _reject_load_options(source)
         else:
             raise TypeError(
                 "source must be str, Path, bytes, or a readable binary stream"
@@ -931,7 +980,11 @@ class Document:
         return self._engine_pdf.auto_tag(image_alt)
 
     def save(
-        self, destination: Union[str, Path, BinaryIO], *, overwrite: bool = False
+        self,
+        destination: Union[str, Path, BinaryIO],
+        save_format: Any = None,
+        *,
+        overwrite: bool = False,
     ) -> "Document":
         """Save the document to a file path or a binary stream.
 
@@ -940,6 +993,11 @@ class Document:
         destination : str, Path, or BinaryIO
             File system path *or* any writable binary stream (e.g. ``BytesIO``,
             an open file handle in binary mode, an HTTP response body, …).
+        save_format : SaveFormat, DocFormat, or None
+            Only PDF output is implemented, so this accepts ``None`` (the
+            default), ``SaveFormat.PDF``, or ``DocFormat.PDF``. Export
+            placeholders such as ``SaveFormat.PPTX`` or ``HtmlSaveOptions``
+            raise instead of writing a mislabelled PDF.
         overwrite : bool
             Only relevant when *destination* is a path.  When ``False`` (the
             default) an existing file raises :exc:`FileExistsError`.
@@ -948,8 +1006,15 @@ class Document:
         -------
         Document
             Self for method chaining.
+
+        Raises
+        ------
+        UnsupportedFeatureException
+            If *save_format* names an export this package does not implement.
+            Nothing is written to *destination* in that case.
         """
         self._ensure_not_disposed()
+        _require_pdf_save_format(save_format)
 
         # Sync the in-memory outline collection back to the engine before writing
         if self._outlines is not None and self._engine_pdf is not None:

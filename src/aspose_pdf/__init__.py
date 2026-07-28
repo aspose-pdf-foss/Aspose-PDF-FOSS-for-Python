@@ -66,7 +66,11 @@ from .validation import (
     ValidationResult,
     ValidationStatus,
 )
-from .exceptions import FontEmbeddingException, PdfResourceLimitException
+from .exceptions import (
+    FontEmbeddingException,
+    PdfResourceLimitException,
+    UnsupportedFeatureException,
+)
 from .visualization import RasterizedPage
 from .xmp import (
     NamespaceProvider,
@@ -136,6 +140,7 @@ __all__ = [
     "PdfUaValidationResult",
     "PdfUaValidator",
     "RasterizedPage",
+    "UnsupportedFeatureException",
     "UnsignedContent",
     "UnsignedContentAbsorber",
     "CertificationLevel",

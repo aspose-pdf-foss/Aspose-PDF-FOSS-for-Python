@@ -131,13 +131,16 @@ shaped visual order.
 ```python
 from aspose_pdf import Document
 
-with Document() as document:
-    document.load_from("input.pdf")
-
+with Document("input.pdf") as document:
     print(f"Pages: {document.page_count}")
     print(f"PDF version: {document.version}")
     print(document.info)
 ```
+
+`Document(source, password=..., limits=...)` accepts a path, raw bytes, or a
+binary stream and is equivalent to `Document().load_from(source, ...)`. A
+missing file, non-PDF data, or a missing password raises; neither form ever
+hands back a silently empty document.
 
 ### Extract text
 
