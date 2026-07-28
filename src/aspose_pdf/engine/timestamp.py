@@ -14,8 +14,7 @@ Covers three things:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from asn1crypto import cms as asn1_cms
 from asn1crypto import tsp
@@ -36,8 +35,8 @@ class TimestampInfo:
     """Result of verifying an RFC 3161 timestamp token."""
 
     verified: bool
-    gen_time: Optional[datetime] = None
-    tsa: Optional[str] = None
+    gen_time: datetime | None = None
+    tsa: str | None = None
     imprint_ok: bool = False
     signature_ok: bool = False
     reason: str = ""
@@ -114,7 +113,7 @@ def make_timestamp_token(
     tsa_cert,
     tsa_key,
     *,
-    gen_time: Optional[datetime] = None,
+    gen_time: datetime | None = None,
     serial: int = 1,
 ) -> bytes:
     """Build an RFC 3161 timestamp token signed by a local TSA.
@@ -123,7 +122,7 @@ def make_timestamp_token(
     timestamped.  Returns the DER of the token (a CMS ``ContentInfo``).
     """
     if gen_time is None:
-        gen_time = datetime.now(timezone.utc)
+        gen_time = datetime.now(UTC)
 
     tst_info = tsp.TSTInfo(
         {

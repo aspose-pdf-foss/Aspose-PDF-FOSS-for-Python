@@ -18,8 +18,9 @@ missing cosmetic mark, never leaked text.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
+from typing import Any
 
 from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
 
@@ -32,9 +33,9 @@ from .text_edit import (
     _walk_show_runs,
 )
 
-Matrix = Tuple[float, float, float, float, float, float]
-Point = Tuple[float, float]
-Quad = Tuple[Point, Point, Point, Point]
+Matrix = tuple[float, float, float, float, float, float]
+Point = tuple[float, float]
+Quad = tuple[Point, Point, Point, Point]
 
 _IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
@@ -65,20 +66,18 @@ class CompositeFontMetric:
 
     width_of: Callable[[int], float]
     code_to_text: Mapping[bytes, str]
-    code_to_cid: Optional[Callable[[bytes], Optional[int]]] = None
+    code_to_cid: Callable[[bytes], int | None] | None = None
     vertical: bool = False
-    vertical_metrics_of: Optional[
-        Callable[[int], tuple[float, float, float]]
-    ] = None
+    vertical_metrics_of: Callable[[int], tuple[float, float, float]] | None = None
     codec: Any = None
     ascent: float = 800.0
     descent: float = -200.0
 
 
-FontMetric = Union[SimpleFontMetric, CompositeFontMetric]
+FontMetric = SimpleFontMetric | CompositeFontMetric
 
 
-def _cid_of(metric: Any, code: bytes) -> Optional[int]:
+def _cid_of(metric: Any, code: bytes) -> int | None:
     """Resolve a composite show-string code to its CID."""
     fn = getattr(metric, "code_to_cid", None)
     if fn is not None:
@@ -98,7 +97,7 @@ def _char_geometry(
     infos,
     *,
     budget: _LoadBudget,
-) -> Optional[List[Tuple[float, float, float, float, float]]]:
+) -> list[tuple[float, float, float, float, float]] | None:
     """Per-char ``(bx0, bx1, by0, by1, line_key)`` boxes in the run's text space.
 
     Each entry is an axis-aligned box plus a grouping key identifying its
@@ -108,7 +107,7 @@ def _char_geometry(
     font's /W2 or /DW2 displacement and position vectors. Returns ``None`` when
     any segment cannot be measured (the caller then draws no boxes for the run).
     """
-    geometry: List[Tuple[float, float, float, float, float]] = []
+    geometry: list[tuple[float, float, float, float, float]] = []
     for seg, (kind, text, units) in zip(run.segments, infos):
         if seg.pen is None:
             return None
@@ -215,14 +214,14 @@ def _char_geometry(
 
 def _span_quads(
     trm: Matrix,
-    geometry: List[Tuple[float, float, float, float, float]],
+    geometry: list[tuple[float, float, float, float, float]],
     start: int,
     end: int,
     *,
     budget: _LoadBudget,
-) -> List[Quad]:
+) -> list[Quad]:
     """One quad per baseline/column covered by the matched char range."""
-    quads: List[Quad] = []
+    quads: list[Quad] = []
     i = start
     while i < end:
         bx0, bx1, by0, by1, key = geometry[i]
@@ -252,14 +251,14 @@ def _span_quads(
 def locate_matches(
     content: bytes,
     search: str,
-    font_for_name: Callable[[str], Optional[FontMetric]],
+    font_for_name: Callable[[str], FontMetric | None],
     *,
     case_sensitive: bool = True,
     max_count: int = 0,
     base_ctm: Matrix = _IDENTITY,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> List[Quad]:
+) -> list[Quad]:
     """Return user-space quads covering each match of *search* in *content*.
 
     Runs, decoding and match filtering mirror the redactor exactly (the same
@@ -275,7 +274,7 @@ def locate_matches(
         base_ctm=base_ctm,
         budget=active_budget,
     )
-    quads: List[Quad] = []
+    quads: list[Quad] = []
     matches = 0
     for run in runs:
         if max_count and matches >= max_count:

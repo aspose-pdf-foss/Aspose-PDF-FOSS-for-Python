@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import io
-from typing import Any, Dict
+from typing import Any
 
 from aspose_pdf.exceptions import (
     PDF_STREAM_DECODE_ERRORS,
@@ -80,7 +80,7 @@ class Decoder:
     @staticmethod
     def decode(
         data: bytes,
-        parms: Dict[str, Any] | None = None,
+        parms: dict[str, Any] | None = None,
         *,
         limits: PdfLoadLimits | None = None,
     ) -> bytes:

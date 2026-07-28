@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import struct
 
-__all__ = ["subset_truetype", "read_symbol_code_to_gid", "read_unicode_cmap"]
+__all__ = ["read_symbol_code_to_gid", "read_unicode_cmap", "subset_truetype"]
 
 # Composite-glyph component flags (see the OpenType ``glyf`` table spec).
 _ARG_1_AND_2_ARE_WORDS = 0x0001
@@ -74,7 +74,7 @@ def _subset_truetype(font_bytes: bytes, keep_gids: set[int]) -> bytes | None:
     if not {"glyf", "loca", "head", "maxp"} <= tables.keys():
         return None
 
-    head_off, head_len = tables["head"]
+    head_off, _head_len = tables["head"]
     maxp_off, _maxp_len = tables["maxp"]
     if head_off + 54 > len(font_bytes) or maxp_off + 6 > len(font_bytes):
         return None

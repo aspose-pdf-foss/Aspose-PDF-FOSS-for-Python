@@ -24,7 +24,7 @@ warnings)`` tuples.  None of them mutate the document.
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional, Set, Tuple
+from typing import Any
 
 from ..exceptions import PDF_OPERATION_ERRORS, PdfResourceLimitException
 from .cos import (
@@ -105,12 +105,12 @@ _HEADING_LEVELS = {"H1": 1, "H2": 2, "H3": 3, "H4": 4, "H5": 5, "H6": 6}
 # ---------------------------------------------------------------------------
 # Small COS helpers (operate through the engine's resolver)
 # ---------------------------------------------------------------------------
-def _get_dict(pdf: Any, obj: Any) -> Optional[PdfDictionary]:
+def _get_dict(pdf: Any, obj: Any) -> PdfDictionary | None:
     obj = pdf._resolve(obj)
     return obj if isinstance(obj, PdfDictionary) else None
 
 
-def catalog(pdf: Any) -> Optional[PdfDictionary]:
+def catalog(pdf: Any) -> PdfDictionary | None:
     """Return the document catalog (``/Root``) dictionary, or ``None``."""
     if pdf._cos_doc is None:
         return None
@@ -126,7 +126,7 @@ def _is_part1(level_short: str) -> bool:
     return level_short[:1] == "1"
 
 
-def _parse_pdf_version(value: str) -> Optional[float]:
+def _parse_pdf_version(value: str) -> float | None:
     m = re.match(r"\s*(\d+)\.(\d+)", value or "")
     if not m:
         return None
@@ -136,13 +136,13 @@ def _parse_pdf_version(value: str) -> Optional[float]:
 # ---------------------------------------------------------------------------
 # PDF/A
 # ---------------------------------------------------------------------------
-def pdfa_extended(pdf: Any, level_short: str) -> Tuple[List[str], List[str]]:
+def pdfa_extended(pdf: Any, level_short: str) -> tuple[list[str], list[str]]:
     """Return ``(errors, warnings)`` for the extended PDF/A structural checks.
 
     ``level_short`` is the normalised level (e.g. ``"1b"``, ``"2a"``).
     """
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
     if pdf._cos_doc is None:
         return errors, warnings
 
@@ -171,13 +171,13 @@ def pdfa_extended(pdf: Any, level_short: str) -> Tuple[List[str], List[str]]:
     return errors, warnings
 
 
-def _check_trailer_id(pdf: Any, errors: List[str]) -> None:
+def _check_trailer_id(pdf: Any, errors: list[str]) -> None:
     id_obj = pdf._resolve(pdf._cos_doc.trailer.get(PdfName("ID")))
     if not isinstance(id_obj, PdfArray) or len(id_obj.items) < 1:
         errors.append("PDF/A requires a file identifier (/ID) in the trailer.")
 
 
-def _check_pdf_version(pdf: Any, level_short: str, errors: List[str]) -> None:
+def _check_pdf_version(pdf: Any, level_short: str, errors: list[str]) -> None:
     version = _parse_pdf_version(getattr(pdf, "pdf_version", "") or "")
     if version is None:
         return
@@ -194,7 +194,7 @@ def _check_pdf_version(pdf: Any, level_short: str, errors: List[str]) -> None:
         )
 
 
-def _check_catalog_rules(pdf: Any, part1: bool, errors: List[str]) -> None:
+def _check_catalog_rules(pdf: Any, part1: bool, errors: list[str]) -> None:
     root = catalog(pdf)
     if root is None:
         return
@@ -206,7 +206,7 @@ def _check_catalog_rules(pdf: Any, part1: bool, errors: List[str]) -> None:
         errors.append("PDF/A prohibits the catalog /Requirements entry.")
 
 
-def _check_acroform(pdf: Any, errors: List[str]) -> None:
+def _check_acroform(pdf: Any, errors: list[str]) -> None:
     root = catalog(pdf)
     if root is None:
         return
@@ -220,7 +220,7 @@ def _check_acroform(pdf: Any, errors: List[str]) -> None:
         errors.append("PDF/A prohibits dynamic XFA forms (AcroForm /XFA).")
 
 
-def _check_metadata_unfiltered(pdf: Any, errors: List[str]) -> None:
+def _check_metadata_unfiltered(pdf: Any, errors: list[str]) -> None:
     """PDF/A requires the document XMP ``/Metadata`` stream to be unfiltered.
 
     The packet must be readable by processors that do not decode PDF streams, so
@@ -242,8 +242,8 @@ def _check_pages(
     pdf: Any,
     part1: bool,
     is_a3: bool,
-    errors: List[str],
-    warnings: List[str],
+    errors: list[str],
+    warnings: list[str],
 ) -> None:
     for i in range(len(pdf.pages)):
         page = pdf._get_page_dict(i)
@@ -266,7 +266,7 @@ def _check_pages(
             _check_resources(pdf, resources, i, part1, errors, set(), 0)
 
 
-def _name(pdf: Any, d: PdfDictionary, key: str) -> Optional[str]:
+def _name(pdf: Any, d: PdfDictionary, key: str) -> str | None:
     return pdf._get_name(d.get(PdfName(key)))
 
 
@@ -276,8 +276,8 @@ def _check_annotations(
     i: int,
     part1: bool,
     is_a3: bool,
-    errors: List[str],
-    warnings: List[str],
+    errors: list[str],
+    warnings: list[str],
 ) -> None:
     annots = pdf._resolve(page.get(PdfName("Annots")))
     if not isinstance(annots, PdfArray):
@@ -331,10 +331,10 @@ def _check_annotations(
                 _check_action(pdf, value, i, errors)
 
 
-def _check_action(pdf: Any, action_ref: Any, i: int, errors: List[str]) -> None:
+def _check_action(pdf: Any, action_ref: Any, i: int, errors: list[str]) -> None:
     """Flag prohibited action ``/S`` types, following a one-level ``/Next``."""
     queue = [pdf._resolve(action_ref)]
-    seen: Set[int] = set()
+    seen: set[int] = set()
     while queue:
         action = queue.pop()
         if not isinstance(action, PdfDictionary) or id(action) in seen:
@@ -355,8 +355,8 @@ def _check_resources(
     resources: PdfDictionary,
     i: int,
     part1: bool,
-    errors: List[str],
-    visited: Set[int],
+    errors: list[str],
+    visited: set[int],
     depth: int,
 ) -> None:
     if depth > _MAX_RESOURCE_DEPTH or id(resources) in visited:
@@ -412,7 +412,7 @@ def _check_resources(
 
 
 def _check_extgstate(
-    pdf: Any, gs: PdfDictionary, i: int, part1: bool, errors: List[str]
+    pdf: Any, gs: PdfDictionary, i: int, part1: bool, errors: list[str]
 ) -> None:
     for key, allowed in (("TR", {"Identity"}), ("TR2", {"Identity", "Default"})):
         if PdfName(key) not in gs:
@@ -451,7 +451,7 @@ def _check_extgstate(
 
 
 def _check_tagging_for_level_a(
-    pdf: Any, errors: List[str], warnings: List[str]
+    pdf: Any, errors: list[str], warnings: list[str]
 ) -> None:
     root = catalog(pdf)
     if root is None:
@@ -477,7 +477,7 @@ def _check_tagging_for_level_a(
     warnings.extend(s_warn)
 
 
-def _check_embedded_files(pdf: Any, errors: List[str]) -> None:
+def _check_embedded_files(pdf: Any, errors: list[str]) -> None:
     """Flag PDF/A-3 embedded file specifications lacking ``/AFRelationship``."""
     root = catalog(pdf)
     if root is None:
@@ -506,7 +506,7 @@ def _check_embedded_files(pdf: Any, errors: List[str]) -> None:
         )
 
 
-def _iter_name_tree_values(pdf: Any, node: PdfDictionary, visited: Set[int], depth: int):
+def _iter_name_tree_values(pdf: Any, node: PdfDictionary, visited: set[int], depth: int):
     """Yield the value objects of a PDF name tree (``/Names`` and ``/Kids``)."""
     if depth > _MAX_RESOURCE_DEPTH or id(node) in visited:
         return
@@ -543,7 +543,7 @@ def _build_role_map(pdf: Any, struct_root: PdfDictionary) -> dict:
 
 def _resolved_struct_type(s: str, role_map: dict) -> str:
     """Resolve a structure type name through ``/RoleMap`` (following chains)."""
-    seen: Set[str] = set()
+    seen: set[str] = set()
     while s in role_map and s not in seen:
         seen.add(s)
         s = role_map[s]
@@ -564,9 +564,9 @@ def _check_struct_element(
     s: str,
     role_map: dict,
     ctx: dict,
-    parent_type: Optional[str],
-    errors: List[str],
-    warnings: List[str],
+    parent_type: str | None,
+    errors: list[str],
+    warnings: list[str],
 ) -> None:
     label = ctx["label"]
     full = ctx["full"]
@@ -620,11 +620,11 @@ def _walk_struct_kids(
     k: Any,
     role_map: dict,
     ctx: dict,
-    parent_type: Optional[str],
-    visited: Set[int],
+    parent_type: str | None,
+    visited: set[int],
     depth: int,
-    errors: List[str],
-    warnings: List[str],
+    errors: list[str],
+    warnings: list[str],
 ) -> None:
     if depth > _MAX_STRUCT_DEPTH:
         return
@@ -658,15 +658,15 @@ def _walk_struct_kids(
 
 def _walk_struct_for(
     pdf: Any, label: str, full: bool
-) -> Tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Walk the structure tree, returning ``(errors, warnings)``.
 
     ``full`` enables the PDF/UA-only advisory checks (heading order, list/table
     containment, ParentTree).  The error-level checks (non-standard types,
     Figure/Formula alt text, Note /ID) apply to both PDF/UA and PDF/A level A.
     """
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
     root = catalog(pdf)
     if root is None:
         return errors, warnings
@@ -718,7 +718,7 @@ def _font_is_embedded(pdf: Any, font: PdfDictionary) -> bool:
     )
 
 
-def _check_fonts_embedded(pdf: Any, errors: List[str]) -> None:
+def _check_fonts_embedded(pdf: Any, errors: list[str]) -> None:
     """PDF/UA requires every font (including the standard 14) to be embedded."""
     for i in range(len(pdf.pages)):
         page = pdf._get_page_dict(i)
@@ -742,7 +742,7 @@ def _check_fonts_embedded(pdf: Any, errors: List[str]) -> None:
                 )
 
 
-def pdfua_structure(pdf: Any) -> Tuple[List[str], List[str]]:
+def pdfua_structure(pdf: Any) -> tuple[list[str], list[str]]:
     """Return ``(errors, warnings)`` for the PDF/UA structure-tree checks."""
     return _walk_struct_for(pdf, "PDF/UA", full=True)
 
@@ -757,10 +757,10 @@ _MARKUP_ANNOT_SUBTYPES = frozenset(
 )
 
 
-def pdfua_pages(pdf: Any) -> Tuple[List[str], List[str]]:
+def pdfua_pages(pdf: Any) -> tuple[list[str], list[str]]:
     """Return ``(errors, warnings)`` for the PDF/UA page/annotation checks."""
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
     root = catalog(pdf)
     if root is None:
         return errors, warnings
@@ -823,7 +823,7 @@ def _parent_tree_map(pdf: Any, struct_root: PdfDictionary) -> dict:
         return {}
     mapping: dict = {}
     stack = [(parent_tree, 0)]
-    visited: Set[int] = set()
+    visited: set[int] = set()
     while stack:
         node, depth = stack.pop()
         if depth > _MAX_STRUCT_DEPTH or id(node) in visited:
@@ -853,7 +853,7 @@ def _named_property_mcids(pdf: Any, page: PdfDictionary) -> dict[str, int]:
         resources = resource_resolver(page)
     if not isinstance(resources, PdfDictionary):
         current: Any = page
-        visited: Set[int] = set()
+        visited: set[int] = set()
         for _depth in range(_MAX_RESOURCE_DEPTH):
             if not isinstance(current, PdfDictionary) or id(current) in visited:
                 break
@@ -880,7 +880,7 @@ def _named_property_mcids(pdf: Any, page: PdfDictionary) -> dict[str, int]:
     return result
 
 
-def pdfua_mcid_coverage(pdf: Any) -> Tuple[List[str], List[str]]:
+def pdfua_mcid_coverage(pdf: Any) -> tuple[list[str], list[str]]:
     """Advisory MCID coverage checks between page content and the structure tree.
 
     For every page carrying a ``/StructParents`` key, each marked-content
@@ -892,8 +892,8 @@ def pdfua_mcid_coverage(pdf: Any) -> Tuple[List[str], List[str]]:
     """
     from .auto_tag import find_mcids
 
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
     root = catalog(pdf)
     if root is None:
         return errors, warnings
@@ -956,10 +956,10 @@ def pdfua_mcid_coverage(pdf: Any) -> Tuple[List[str], List[str]]:
 # ---------------------------------------------------------------------------
 # PDF/UA — catalog
 # ---------------------------------------------------------------------------
-def pdfua_extended(pdf: Any) -> Tuple[List[str], List[str]]:
+def pdfua_extended(pdf: Any) -> tuple[list[str], list[str]]:
     """Return ``(errors, warnings)`` for the extended PDF/UA catalog checks."""
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
     root = catalog(pdf)
     if root is None:
         return errors, warnings

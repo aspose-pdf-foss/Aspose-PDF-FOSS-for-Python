@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import Any
 
-from aspose_pdf.exceptions import AsposePdfException, PDF_OPERATION_ERRORS
+from aspose_pdf.exceptions import PDF_OPERATION_ERRORS, AsposePdfException
 from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
 
 logger = logging.getLogger(__name__)
@@ -23,20 +23,20 @@ class PdfExtractor:
     """
 
     def __init__(self) -> None:
-        self._page_texts: List[str] = []
+        self._page_texts: list[str] = []
         self._current_index: int = 0
         self._disposed: bool = False
         self._attachments: dict = {}
-        self._images: List[Any] = []
+        self._images: list[Any] = []
         self._image_index: int = 0
         self._bound_pdf = None
-        self._password: Optional[str] = None
+        self._password: str | None = None
 
     def close(self) -> None:
         """Close the extractor and release resources."""
         self.dispose()
 
-    def __enter__(self) -> "PdfExtractor":
+    def __enter__(self) -> PdfExtractor:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -60,18 +60,18 @@ class PdfExtractor:
             raise AsposePdfException("Object has been disposed")
 
     @property
-    def password(self) -> Optional[str]:
+    def password(self) -> str | None:
         """Optional owner/user password used when binding encrypted PDFs (maps .NET ``Password``)."""
         return self._password
 
     @password.setter
-    def password(self, value: Optional[str]) -> None:
+    def password(self, value: str | None) -> None:
         self._password = value
 
     def bind_pdf(
         self,
-        source: Union[str, Path, bytes],
-        password: Optional[str] = None,
+        source: str | Path | bytes,
+        password: str | None = None,
         *,
         limits: PdfLoadLimits | None = None,
     ) -> None:
@@ -196,7 +196,7 @@ class PdfExtractor:
             raise AsposePdfException(f"Attachment '{name}' not found")
         return self._attachments[name]
 
-    def get_attach_names(self) -> List[str]:
+    def get_attach_names(self) -> list[str]:
         """Return list of attachment names."""
         self._ensure_not_disposed()
         return list(self._attachments.keys())
@@ -207,11 +207,11 @@ class PdfFileEditor:
 
     def __init__(self) -> None:
         self._disposed: bool = False
-        self._pages: List[Any] = []
-        self._last_exception: Optional[BaseException] = None
+        self._pages: list[Any] = []
+        self._last_exception: BaseException | None = None
 
     @property
-    def last_exception(self) -> Optional[BaseException]:
+    def last_exception(self) -> BaseException | None:
         """Exception from the last failed operation, or ``None`` if none."""
         return self._last_exception
 
@@ -232,7 +232,7 @@ class PdfFileEditor:
         """Close the editor and release resources."""
         self.dispose()
 
-    def __enter__(self) -> "PdfFileEditor":
+    def __enter__(self) -> PdfFileEditor:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -250,7 +250,7 @@ class PdfFileEditor:
         if self._disposed:
             raise AsposePdfException("Object has been disposed")
 
-    def concatenate(self, inputs: List[str], output: str) -> bool:
+    def concatenate(self, inputs: list[str], output: str) -> bool:
         """Concatenate multiple PDF files into one.
 
         Args:
@@ -262,7 +262,7 @@ class PdfFileEditor:
         """
         self._ensure_not_disposed()
         self._operation_start()
-        docs: List[Any] = []
+        docs: list[Any] = []
         result: Any = None
         try:
             from aspose_pdf.engine.simple_pdf import SimplePdf
@@ -297,8 +297,8 @@ class PdfFileEditor:
         self,
         source: str,
         destination: str,
-        page_from: Optional[int] = None,
-        page_to: Optional[int] = None,
+        page_from: int | None = None,
+        page_to: int | None = None,
     ) -> bool:
         """Extract pages from source to destination.
 
@@ -330,7 +330,7 @@ class PdfFileEditor:
             if start < 1 or end > len(doc.pages) or start > end:
                 return self._operation_fail(
                     AsposePdfException(
-                        f"Invalid page range: pages {start}–{end} "
+                        f"Invalid page range: pages {start}-{end} "
                         f"(document has {len(doc.pages)} page(s))"
                     )
                 )
@@ -417,8 +417,8 @@ class PdfFileEditor:
         source: str,
         destination: str,
         pages_to_delete: Any = None,
-        page_to: Optional[int] = None,
-        page_from: Optional[int] = None,
+        page_to: int | None = None,
+        page_from: int | None = None,
     ) -> bool:
         """Delete specified pages from a PDF.
 

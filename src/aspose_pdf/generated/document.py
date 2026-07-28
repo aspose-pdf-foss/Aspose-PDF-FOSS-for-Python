@@ -7,10 +7,12 @@ Load/save error semantics are aligned with :mod:`aspose_pdf.document`
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, BinaryIO, List, Optional, Union
+from typing import Any, BinaryIO
 
 from aspose_pdf._compat_surface import (
     describe as _describe_unsupported,
+)
+from aspose_pdf._compat_surface import (
     reject_load_options,
     require_pdf_save_format,
 )
@@ -18,8 +20,8 @@ from aspose_pdf.engine.simple_pdf import SimplePdf, _effective_encryption_passwo
 from aspose_pdf.exceptions import AsposePdfException, PdfSecurityException
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
-    _LoadBudget,
     _coerce_limits,
+    _LoadBudget,
     _read_limited,
 )
 
@@ -35,10 +37,10 @@ class Document:
     # ---------------------------------------------------------------------
     def __init__(
         self,
-        source: Union[str, Path, bytes, bytearray, BinaryIO, None] = None,
+        source: str | Path | bytes | bytearray | BinaryIO | None = None,
         options: Any = None,
         *,
-        password: Optional[str] = None,
+        password: str | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> None:
         """Create a new :class:`Document` instance.
@@ -49,18 +51,18 @@ class Document:
         """
         self._load_limits = _coerce_limits(limits)
         self._disposed: bool = False
-        self._engine_doc: Optional[SimplePdf] = SimplePdf()
+        self._engine_doc: SimplePdf | None = SimplePdf()
         self._engine_doc._load_limits = self._load_limits
         self._engine_doc._load_budget = _LoadBudget(self._load_limits)
 
         # Initialize defaults
-        self._pages: List[Any] = (
+        self._pages: list[Any] = (
             self._engine_doc.pages if self._engine_doc is not None else []
         )
         self._encrypted: bool = False
-        self._password: Optional[str] = None
+        self._password: str | None = None
         self._metadata: dict = {}
-        self._optimizations: List[str] = []
+        self._optimizations: list[str] = []
 
         # Public attributes mirroring the Aspose.PDF API surface. Defaults are
         # assigned before any load so that loading populates them rather than
@@ -100,11 +102,11 @@ class Document:
     # ---------------------------------------------------------------------
     def load_from(
         self,
-        source: Union[str, bytes, bytearray, Path, BinaryIO],
+        source: str | bytes | bytearray | Path | BinaryIO,
         *,
-        password: Optional[str] = None,
+        password: str | None = None,
         limits: PdfLoadLimits | None = None,
-    ) -> "Document":
+    ) -> Document:
         """Load a document from *source* using native engine."""
         if limits is not None:
             self._load_limits = _coerce_limits(limits)
@@ -161,7 +163,7 @@ class Document:
 
     def save(
         self, destination: Any, save_format: Any = None, *, overwrite: bool = False
-    ) -> "Document":
+    ) -> Document:
         """Save the document to *destination* using native engine.
 
         Only PDF output is implemented; *save_format* accepts ``None``,
@@ -208,7 +210,7 @@ class Document:
         self._metadata.clear()
         self._optimizations.clear()
 
-    def merge(self, *documents: "Document") -> "Document":
+    def merge(self, *documents: Document) -> Document:
         """Merge the supplied *documents* into the current one.
 
         Pages from each provided document are appended to ``self._pages``.
@@ -220,7 +222,7 @@ class Document:
             self._pages.extend(doc._pages)
         return self
 
-    def optimize(self, *, compress_images: bool = True) -> "Document":
+    def optimize(self, *, compress_images: bool = True) -> Document:
         """Perform generic optimizations on the document.
 
         Delegates to the underlying engine and records the request for
@@ -234,7 +236,7 @@ class Document:
         self._optimizations.append("optimize:compress_images=" + str(compress_images))
         return self
 
-    def optimize_resources(self, *, remove_unused: bool = True) -> "Document":
+    def optimize_resources(self, *, remove_unused: bool = True) -> Document:
         """Optimize shared resources such as fonts and images."""
         if self._disposed:
             raise AsposePdfException("Cannot optimize a disposed document")
@@ -246,7 +248,7 @@ class Document:
         )
         return self
 
-    def repair(self) -> "Document":
+    def repair(self) -> Document:
         """Attempt to repair the document's structure via the engine."""
         if self._disposed:
             raise AsposePdfException("Cannot repair a disposed document")
@@ -256,7 +258,7 @@ class Document:
         self._metadata["repaired"] = True
         return self
 
-    def flatten(self) -> "Document":
+    def flatten(self) -> Document:
         """Flatten form fields and annotations via the engine."""
         if self._disposed:
             raise AsposePdfException("Cannot flatten a disposed document")
@@ -272,7 +274,7 @@ class Document:
         self._pages = []
         self._optimizations = []
 
-    def encrypt(self, password: str) -> "Document":
+    def encrypt(self, password: str) -> Document:
         """Encrypt the document with the given *password*."""
         if self._engine_doc is None:
             raise AsposePdfException("No document loaded")
@@ -281,7 +283,7 @@ class Document:
         self._engine_doc.encrypt(password)
         return self
 
-    def decrypt(self, password: str) -> "Document":
+    def decrypt(self, password: str) -> Document:
         """Decrypt the document if *password* matches the stored one."""
         if not self._encrypted:
             return self
@@ -293,7 +295,7 @@ class Document:
             self._engine_doc.decrypt(password)
         return self
 
-    def change_passwords(self, old_password: str, new_password: str) -> "Document":
+    def change_passwords(self, old_password: str, new_password: str) -> Document:
         """Change the document's password from *old_password* to *new_password*."""
         if not self._encrypted:
             raise PdfSecurityException("Document is not encrypted")

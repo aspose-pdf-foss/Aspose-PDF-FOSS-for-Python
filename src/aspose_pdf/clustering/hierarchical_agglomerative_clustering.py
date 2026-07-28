@@ -1,13 +1,14 @@
 """Hierarchical agglomerative clustering functionality for Aspose.PDF Python SDK."""
 
 from __future__ import annotations
-from typing import Any, List, Optional
+
+from typing import Any
 
 
 class DataPoint:
     """Represents a data point in clustering operations."""
     
-    def __init__(self, name: str, value: List[float]):
+    def __init__(self, name: str, value: list[float]):
         """Initialize a data point.
         
         Args:
@@ -18,7 +19,7 @@ class DataPoint:
         self.value = value
     
     @staticmethod
-    def get_centroid(cluster: "Cluster") -> "DataPoint":
+    def get_centroid(cluster: Cluster) -> DataPoint:
         """Calculate the centroid of a cluster.
         
         Args:
@@ -62,21 +63,21 @@ class DataPoint:
 class Cluster:
     """Represents a cluster of data points."""
     
-    _empty_instance: Optional["Cluster"] = None
+    _empty_instance: Cluster | None = None
     
-    def __init__(self, items: Optional[List[Any]] = None):
+    def __init__(self, items: list[Any] | None = None):
         """Initialize a cluster.
         
         Args:
             items: Optional list of items to initialize the cluster with
         """
-        self._items: List[Any] = []
+        self._items: list[Any] = []
         if items is not None:
             for item in items:
                 self._items.append(item)
     
     @classmethod
-    def empty(cls) -> "Cluster":
+    def empty(cls) -> Cluster:
         """Get the singleton empty cluster instance.
         
         Returns:
@@ -102,7 +103,7 @@ class Cluster:
         """
         return item in self._items
     
-    def clone(self) -> "Cluster":
+    def clone(self) -> Cluster:
         """Create a copy of this cluster.
         
         Returns:
@@ -134,13 +135,13 @@ class Cluster:
 class ClusterCollection:
     """A collection of clusters."""
     
-    def __init__(self, clusters: Optional[List[Cluster]] = None):
+    def __init__(self, clusters: list[Cluster] | None = None):
         """Initialize a cluster collection.
         
         Args:
             clusters: Optional list of clusters to initialize with
         """
-        self._clusters: List[Cluster] = []
+        self._clusters: list[Cluster] = []
         if clusters is not None:
             for cluster in clusters:
                 self._clusters.append(cluster)

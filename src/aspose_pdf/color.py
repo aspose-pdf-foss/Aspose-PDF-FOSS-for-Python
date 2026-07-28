@@ -1,8 +1,8 @@
 """Color and gradient support for PDF documents."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -24,10 +24,10 @@ class GradientAxialShading:
     
     def __init__(
         self,
-        start_color: "Color",
-        end_color: "Color",
-        start: Optional[Point] = None,
-        end: Optional[Point] = None,
+        start_color: Color,
+        end_color: Color,
+        start: Point | None = None,
+        end: Point | None = None,
     ) -> None:
         """Initialize axial gradient shading.
         
@@ -43,12 +43,12 @@ class GradientAxialShading:
         self._end = end if end is not None else Point(1, 1)
     
     @property
-    def start_color(self) -> "Color":
+    def start_color(self) -> Color:
         """Get the start color."""
         return self._start_color
     
     @property
-    def end_color(self) -> "Color":
+    def end_color(self) -> Color:
         """Get the end color."""
         return self._end_color
     
@@ -71,7 +71,7 @@ class Color:
     
     def __init__(
         self,
-        pattern_color_space: Optional[GradientAxialShading] = None,
+        pattern_color_space: GradientAxialShading | None = None,
         r: float = 0.0,
         g: float = 0.0,
         b: float = 0.0,
@@ -90,7 +90,7 @@ class Color:
         self._b = b
     
     @property
-    def pattern_color_space(self) -> Optional[GradientAxialShading]:
+    def pattern_color_space(self) -> GradientAxialShading | None:
         """Get the pattern color space (gradient)."""
         return self._pattern_color_space
     

@@ -9,19 +9,20 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any
 
 from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
 
-__all__ = ["build_color_converter", "build_shading", "Shading"]
+__all__ = ["Shading", "build_color_converter", "build_shading"]
 
-Color = Tuple[int, int, int]
-Point = Tuple[float, float]
-Matrix = Tuple[float, float, float, float, float, float]
+Color = tuple[int, int, int]
+Point = tuple[float, float]
+Matrix = tuple[float, float, float, float, float, float]
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ Matrix = Tuple[float, float, float, float, float, float]
 # ---------------------------------------------------------------------------
 
 
-def _num(pdf: Any, obj: Any) -> Optional[float]:
+def _num(pdf: Any, obj: Any) -> float | None:
     obj = pdf._resolve(obj)
     if isinstance(obj, PdfNumber):
         return float(obj.value)
@@ -42,10 +43,10 @@ def _num_array(
     pdf: Any,
     obj: Any,
     *,
-    budget: Optional[_LoadBudget] = None,
-    state: Optional["_FunctionBuildState"] = None,
+    budget: _LoadBudget | None = None,
+    state: _FunctionBuildState | None = None,
     context: str = "shading numeric array items",
-) -> Optional[List[float]]:
+) -> list[float] | None:
     obj = pdf._resolve(obj)
     if not isinstance(obj, PdfArray):
         return None
@@ -53,7 +54,7 @@ def _num_array(
         budget.check(len(obj.items), "max_container_items", context)
     if state is not None:
         state.charge_items(len(obj.items))
-    out: List[float] = []
+    out: list[float] = []
     for item in obj.items:
         value = _num(pdf, item)
         out.append(value if value is not None else 0.0)
@@ -64,9 +65,9 @@ def _bool_array(
     pdf: Any,
     obj: Any,
     *,
-    budget: Optional[_LoadBudget] = None,
+    budget: _LoadBudget | None = None,
     context: str = "shading boolean array items",
-) -> Optional[List[bool]]:
+) -> list[bool] | None:
     obj = pdf._resolve(obj)
     if not isinstance(obj, PdfArray):
         return None
@@ -79,7 +80,7 @@ def _byte(value: float) -> int:
     return 0 if value < 0 else 255 if value > 255 else int(value + 0.5)
 
 
-def _components_to_rgb(comps: List[float]) -> Color:
+def _components_to_rgb(comps: list[float]) -> Color:
     """Convert a colour by component count (gray/RGB/CMYK)."""
     if len(comps) == 1:
         v = _byte(comps[0] * 255)
@@ -100,9 +101,9 @@ def _color_converter(
     pdf: Any,
     cs_obj: Any,
     *,
-    limits: Optional[PdfLoadLimits] = None,
-    budget: Optional[_LoadBudget] = None,
-    seen: Optional[Set[int]] = None,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+    seen: set[int] | None = None,
 ):
     """Return a ``components -> Color`` converter for a shading colour space."""
     cs = pdf._resolve(cs_obj)
@@ -200,8 +201,8 @@ def build_color_converter(
     pdf: Any,
     cs_obj: Any,
     *,
-    limits: Optional[PdfLoadLimits] = None,
-    budget: Optional[_LoadBudget] = None,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ):
     """Build a bounded converter from PDF colour components to device RGB."""
     return _color_converter(pdf, cs_obj, limits=limits, budget=budget)
@@ -268,7 +269,7 @@ def _transform_point(matrix: Matrix, x: float, y: float) -> Point:
     )
 
 
-def _invert_matrix(matrix: Matrix) -> Optional[Matrix]:
+def _invert_matrix(matrix: Matrix) -> Matrix | None:
     a, b, c, d, e, f = matrix
     determinant = a * d - b * c
     if abs(determinant) < 1e-12:
@@ -293,8 +294,8 @@ class _FunctionBuildState:
 
     def __init__(self, budget: _LoadBudget) -> None:
         self.budget = budget
-        self.active: Set[int] = set()
-        self.memo: Dict[Tuple[int, bool], Any] = {}
+        self.active: set[int] = set()
+        self.memo: dict[tuple[int, bool], Any] = {}
         self.node_count = 0
         self.item_count = 0
 
@@ -309,8 +310,8 @@ class _FunctionBuildState:
 
 def _resolve_budget(
     pdf: Any,
-    limits: Optional[PdfLoadLimits],
-    budget: Optional[_LoadBudget],
+    limits: PdfLoadLimits | None,
+    budget: _LoadBudget | None,
 ) -> _LoadBudget:
     if budget is not None:
         if not isinstance(budget, _LoadBudget):
@@ -328,8 +329,8 @@ def build_function(
     pdf: Any,
     obj: Any,
     *,
-    limits: Optional[PdfLoadLimits] = None,
-    budget: Optional[_LoadBudget] = None,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
 ):
     """Build an evaluable function (types 0/2/3/4, or an array of them)."""
     state = _FunctionBuildState(_resolve_budget(pdf, limits, budget))
@@ -489,7 +490,7 @@ class _ExpFunction:
         self.c1 = c1
         self.n = n
 
-    def eval(self, t: float) -> List[float]:
+    def eval(self, t: float) -> list[float]:
         lo, hi = self.domain[0], self.domain[1]
         t = min(max(t, min(lo, hi)), max(lo, hi))
         tn = t**self.n if self.n != 1.0 else t
@@ -503,7 +504,7 @@ class _StitchFunction:
         self.bounds = bounds
         self.encode = encode
 
-    def eval(self, t: float) -> List[float]:
+    def eval(self, t: float) -> list[float]:
         lo, hi = self.domain[0], self.domain[1]
         t = min(max(t, lo), hi)
         k = 0
@@ -525,8 +526,8 @@ class _ArrayFunction:
     def __init__(self, funcs):
         self.funcs = funcs
 
-    def eval(self, t: float) -> List[float]:
-        out: List[float] = []
+    def eval(self, t: float) -> list[float]:
+        out: list[float] = []
         for func in self.funcs:
             out.extend(func.eval(t))
         return out
@@ -646,10 +647,10 @@ class _SampledFunction:
         self.samples = self._read_samples(data, total)
         self.ok = self.samples is not None
 
-    def _read_samples(self, data: bytes, total: int) -> Optional[List[float]]:
+    def _read_samples(self, data: bytes, total: int) -> list[float] | None:
         reader = _BitReader(data)
         maximum = (1 << self.bps) - 1
-        samples: List[float] = []
+        samples: list[float] = []
         for _ in range(total):
             value = reader.read(self.bps)
             if value is None:
@@ -657,7 +658,7 @@ class _SampledFunction:
             samples.append(value / maximum)
         return samples
 
-    def eval(self, value: float | Sequence[float]) -> List[float]:
+    def eval(self, value: float | Sequence[float]) -> list[float]:
         if not self.ok:
             return [0.0] * self.n_out
         values = (
@@ -669,7 +670,7 @@ class _SampledFunction:
             raise PdfParseException(
                 f"Sampled function expects {len(self.size)} input values"
             )
-        bounds: List[Tuple[int, int, float]] = []
+        bounds: list[tuple[int, int, float]] = []
         for index, item in enumerate(values):
             if isinstance(item, bool) or not isinstance(item, (int, float)):
                 raise PdfParseException("Sampled function numeric type error")
@@ -689,7 +690,7 @@ class _SampledFunction:
                 else e_lo + (clipped - lo) * (e_hi - e_lo) / (hi - lo)
             )
             encoded = min(max(encoded, 0.0), float(self.size[index] - 1))
-            lower = int(math.floor(encoded))
+            lower = math.floor(encoded)
             upper = min(lower + 1, self.size[index] - 1)
             bounds.append((lower, upper, encoded - lower))
 
@@ -799,7 +800,7 @@ class _CalculatorFunction:
             and len(self.range) % 2 == 0
         )
         if not self.ok:
-            self.code: List[Any] = []
+            self.code: list[Any] = []
             return
         try:
             data = pdf._decode_cos_stream(stream, None)
@@ -822,8 +823,8 @@ class _CalculatorFunction:
         self.code = self._parse(tokens, state)
 
     @staticmethod
-    def _tokenize(source: str, state: _FunctionBuildState) -> List[str]:
-        tokens: List[str] = []
+    def _tokenize(source: str, state: _FunctionBuildState) -> list[str]:
+        tokens: list[str] = []
         i = 0
         length = len(source)
         while i < length:
@@ -868,18 +869,18 @@ class _CalculatorFunction:
 
     @classmethod
     def _parse(
-        cls, tokens: List[str], state: _FunctionBuildState
-    ) -> List[Any]:
+        cls, tokens: list[str], state: _FunctionBuildState
+    ) -> list[Any]:
         if not tokens or tokens[0] != "{":
             raise PdfParseException("Calculator function must be enclosed in braces")
 
-        def parse_proc(index: int, depth: int) -> Tuple[List[Any], int]:
+        def parse_proc(index: int, depth: int) -> tuple[list[Any], int]:
             state.budget.check(
                 depth,
                 "max_nesting_depth",
                 "calculator function procedure depth",
             )
-            out: List[Any] = []
+            out: list[Any] = []
             while index < len(tokens):
                 token = tokens[index]
                 index += 1
@@ -920,7 +921,7 @@ class _CalculatorFunction:
             raise PdfParseException("Trailing calculator function tokens")
         return code
 
-    def eval(self, value: float | Sequence[float]) -> List[float]:
+    def eval(self, value: float | Sequence[float]) -> list[float]:
         if not self.ok:
             return []
         values = (
@@ -933,7 +934,7 @@ class _CalculatorFunction:
             raise PdfParseException(
                 f"Calculator function expects {expected} input values"
             )
-        stack: List[Any] = []
+        stack: list[Any] = []
         for index, item in enumerate(values):
             number = self._number(item)
             lo = self.domain[index * 2]
@@ -948,7 +949,7 @@ class _CalculatorFunction:
             raise PdfParseException(
                 "Calculator function produced an invalid output stack"
             )
-        out: List[float] = []
+        out: list[float] = []
         for index, item in enumerate(stack):
             number = float(item)
             lo = self.range[index * 2]
@@ -956,7 +957,7 @@ class _CalculatorFunction:
             out.append(min(max(number, min(lo, hi)), max(lo, hi)))
         return out
 
-    def _execute(self, code: List[Any], stack: List[Any]) -> None:
+    def _execute(self, code: list[Any], stack: list[Any]) -> None:
         for item in code:
             if isinstance(item, list):
                 self._push(stack, item)
@@ -965,7 +966,7 @@ class _CalculatorFunction:
             else:
                 self._operator(item, stack)
 
-    def _operator(self, op: str, stack: List[Any]) -> None:
+    def _operator(self, op: str, stack: list[Any]) -> None:
         if op in ("true", "false"):
             self._push(stack, op == "true")
             return
@@ -1074,7 +1075,7 @@ class _CalculatorFunction:
             return
         raise PdfParseException(f"Unsupported calculator function operator: {op}")
 
-    def _unary_numeric(self, op: str, stack: List[Any]) -> None:
+    def _unary_numeric(self, op: str, stack: list[Any]) -> None:
         value = self._number(self._pop(stack))
         if op == "abs":
             result: Any = abs(value)
@@ -1110,7 +1111,7 @@ class _CalculatorFunction:
             result = math.trunc(value)
         self._push(stack, result)
 
-    def _binary_numeric(self, op: str, stack: List[Any]) -> None:
+    def _binary_numeric(self, op: str, stack: list[Any]) -> None:
         right = self._number(self._pop(stack))
         left = self._number(self._pop(stack))
         try:
@@ -1143,18 +1144,18 @@ class _CalculatorFunction:
         self._push(stack, result)
 
     @classmethod
-    def _push(cls, stack: List[Any], value: Any) -> None:
+    def _push(cls, stack: list[Any], value: Any) -> None:
         if len(stack) >= cls._MAX_STACK:
             raise PdfParseException("Calculator function stack overflow")
         stack.append(value)
 
     @staticmethod
-    def _require(stack: List[Any], count: int) -> None:
+    def _require(stack: list[Any], count: int) -> None:
         if len(stack) < count:
             raise PdfParseException("Calculator function stack underflow")
 
     @classmethod
-    def _pop(cls, stack: List[Any]) -> Any:
+    def _pop(cls, stack: list[Any]) -> Any:
         cls._require(stack, 1)
         return stack.pop()
 
@@ -1179,7 +1180,7 @@ class _CalculatorFunction:
         return value
 
     @staticmethod
-    def _procedure(value: Any) -> List[Any]:
+    def _procedure(value: Any) -> list[Any]:
         if not isinstance(value, list):
             raise PdfParseException("Calculator function procedure type error")
         return value
@@ -1193,23 +1194,23 @@ class _CalculatorFunction:
 class Shading:
     """Base class for bounded RGB sampling in a shading's target space."""
 
-    def __init__(self, lut: List[Color], extend: List[bool]):
+    def __init__(self, lut: list[Color], extend: list[bool]):
         self.lut = lut
         self.extend = (
             bool(extend[0]) if len(extend) > 0 else False,
             bool(extend[1]) if len(extend) > 1 else False,
         )
-        self.bbox: Optional[Tuple[float, float, float, float]] = None
-        self.background: Optional[Color] = None
+        self.bbox: tuple[float, float, float, float] | None = None
+        self.background: Color | None = None
         self.color_kind = "other"
 
     def configure(
         self,
         *,
-        bbox: Optional[Tuple[float, float, float, float]],
-        background: Optional[Color],
+        bbox: tuple[float, float, float, float] | None,
+        background: Color | None,
         color_kind: str,
-    ) -> "Shading":
+    ) -> Shading:
         self.bbox = bbox
         self.background = background
         self.color_kind = color_kind
@@ -1227,18 +1228,18 @@ class Shading:
         x0, y0, x1, y1 = self.bbox
         return x0 <= x <= x1 and y0 <= y <= y1
 
-    def color_at(self, x: float, y: float) -> Optional[Color]:
+    def color_at(self, x: float, y: float) -> Color | None:
         if not self._inside_bbox(x, y):
             return None
         return self._color_at(x, y)
 
-    def pattern_color_at(self, x: float, y: float) -> Optional[Color]:
+    def pattern_color_at(self, x: float, y: float) -> Color | None:
         """Sample a shading pattern, applying its optional background colour."""
         if not self._inside_bbox(x, y):
             return None
         return self._color_at(x, y) or self.background
 
-    def _color_at(self, x: float, y: float) -> Optional[Color]:  # pragma: no cover
+    def _color_at(self, x: float, y: float) -> Color | None:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -1250,7 +1251,7 @@ class _FunctionShading(Shading):
         self.x0, self.x1, self.y0, self.y1 = domain[:4]
         self.inverse_matrix: Matrix = inverse_matrix
 
-    def _color_at(self, x: float, y: float) -> Optional[Color]:
+    def _color_at(self, x: float, y: float) -> Color | None:
         domain_x, domain_y = _transform_point(self.inverse_matrix, x, y)
         if not (
             min(self.x0, self.x1) <= domain_x <= max(self.x0, self.x1)
@@ -1271,7 +1272,7 @@ class _AxialShading(Shading):
         self._dx, self._dy = dx, dy
         self._dd = dx * dx + dy * dy
 
-    def _color_at(self, x: float, y: float) -> Optional[Color]:
+    def _color_at(self, x: float, y: float) -> Color | None:
         if self._dd == 0:
             s = 0.0
         else:
@@ -1290,13 +1291,13 @@ class _RadialShading(Shading):
         super().__init__(lut, extend)
         self.x0, self.y0, self.r0, self.x1, self.y1, self.r1 = coords[:6]
 
-    def _color_at(self, x: float, y: float) -> Optional[Color]:
+    def _color_at(self, x: float, y: float) -> Color | None:
         dx, dy, dr = self.x1 - self.x0, self.y1 - self.y0, self.r1 - self.r0
         px, py = x - self.x0, y - self.y0
         a = dx * dx + dy * dy - dr * dr
         b = -2.0 * (px * dx + py * dy + self.r0 * dr)
         c = px * px + py * py - self.r0 * self.r0
-        best: Optional[float] = None
+        best: float | None = None
         if abs(a) < 1e-9:
             if abs(b) > 1e-12:
                 best = self._accept(-c / b, dr, best)
@@ -1310,7 +1311,7 @@ class _RadialShading(Shading):
             return None
         return self._lookup(best)
 
-    def _accept(self, s: float, dr: float, best: Optional[float]) -> Optional[float]:
+    def _accept(self, s: float, dr: float, best: float | None) -> float | None:
         if self.r0 + s * dr < 0.0:
             return best  # the interpolated radius must be non-negative
         if s < 0.0 and not self.extend[0]:
@@ -1326,7 +1327,7 @@ class _RadialShading(Shading):
 class _MeshVertex:
     x: float
     y: float
-    components: Tuple[float, ...]
+    components: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -1336,7 +1337,7 @@ class _MeshTriangle:
     c: _MeshVertex
 
     @property
-    def bbox(self) -> Tuple[float, float, float, float]:
+    def bbox(self) -> tuple[float, float, float, float]:
         return (
             min(self.a.x, self.b.x, self.c.x),
             min(self.a.y, self.b.y, self.c.y),
@@ -1350,13 +1351,13 @@ class _MeshShading(Shading):
 
     def __init__(self, triangles, convert, function):
         super().__init__([(0, 0, 0)], [False, False])
-        self.triangles: List[_MeshTriangle] = triangles
+        self.triangles: list[_MeshTriangle] = triangles
         self.convert = convert
         self.function = function
         boxes = [triangle.bbox for triangle in triangles]
         self.boxes = boxes
-        self._cells: Dict[Tuple[int, int], List[int]] = {}
-        self._wide: List[int] = []
+        self._cells: dict[tuple[int, int], list[int]] = {}
+        self._wide: list[int] = []
         if not boxes:
             self._bounds = (0.0, 0.0, 0.0, 0.0)
             self._grid = 1
@@ -1379,7 +1380,7 @@ class _MeshShading(Shading):
                 for gx in range(x0, x1 + 1):
                     self._cells.setdefault((gx, gy), []).append(index)
 
-    def _cell(self, x: float, y: float) -> Tuple[int, int]:
+    def _cell(self, x: float, y: float) -> tuple[int, int]:
         x0, y0, x1, y1 = self._bounds
         gx = 0 if x1 == x0 else int((x - x0) * self._grid / (x1 - x0))
         gy = 0 if y1 == y0 else int((y - y0) * self._grid / (y1 - y0))
@@ -1388,7 +1389,7 @@ class _MeshShading(Shading):
             min(self._grid - 1, max(0, gy)),
         )
 
-    def _color_at(self, x: float, y: float) -> Optional[Color]:
+    def _color_at(self, x: float, y: float) -> Color | None:
         x0, y0, x1, y1 = self._bounds
         if x < x0 or x > x1 or y < y0 or y > y1:
             return None
@@ -1424,7 +1425,7 @@ class _MeshShading(Shading):
     @staticmethod
     def _weights(
         triangle: _MeshTriangle, x: float, y: float
-    ) -> Optional[Tuple[float, float, float]]:
+    ) -> tuple[float, float, float] | None:
         ax, ay = triangle.a.x, triangle.a.y
         bx, by = triangle.b.x, triangle.b.y
         cx, cy = triangle.c.x, triangle.c.y
@@ -1449,7 +1450,7 @@ class _BitReader:
     def remaining(self) -> int:
         return len(self.data) * 8 - self.bit
 
-    def read(self, count: int) -> Optional[int]:
+    def read(self, count: int) -> int | None:
         if count < 0 or self.remaining < count:
             return None
         value = 0
@@ -1474,9 +1475,9 @@ def _read_mesh_vertex(
     coordinate_bits: int,
     component_bits: int,
     component_count: int,
-    decode: List[float],
+    decode: list[float],
     flag_bits: int = 0,
-) -> Optional[Tuple[int, _MeshVertex]]:
+) -> tuple[int, _MeshVertex] | None:
     flag = reader.read(flag_bits) if flag_bits else 0
     x = reader.read(coordinate_bits)
     y = reader.read(coordinate_bits)
@@ -1559,8 +1560,8 @@ def _build_triangle_mesh(pdf, stream, shading_type, budget, convert):
         return None
     coordinate_bits, component_bits, component_count, decode, function, data = params
     reader = _BitReader(data)
-    vertices: List[_MeshVertex] = []
-    flags: List[int] = []
+    vertices: list[_MeshVertex] = []
+    flags: list[int] = []
     flag_bits = 0
     if shading_type == 4:
         flag_bits = int(
@@ -1593,10 +1594,10 @@ def _build_triangle_mesh(pdf, stream, shading_type, budget, convert):
         flag, vertex = result
         flags.append(flag & 3)
         vertices.append(vertex)
-    triangles: List[_MeshTriangle] = []
+    triangles: list[_MeshTriangle] = []
     if shading_type == 4:
         index = 0
-        previous: Optional[Tuple[_MeshVertex, _MeshVertex, _MeshVertex]] = None
+        previous: tuple[_MeshVertex, _MeshVertex, _MeshVertex] | None = None
         while index < len(vertices):
             flag = flags[index]
             if flag == 0:
@@ -1644,10 +1645,10 @@ def _read_patch_values(
     reader: _BitReader,
     count: int,
     bits: int,
-    decode: List[float],
+    decode: list[float],
     offset: int,
-) -> Optional[List[Tuple[float, float]]]:
-    points: List[Tuple[float, float]] = []
+) -> list[tuple[float, float]] | None:
+    points: list[tuple[float, float]] = []
     for _ in range(count):
         raw_x = reader.read(bits)
         raw_y = reader.read(bits)
@@ -1669,11 +1670,11 @@ def _read_patch_colors(
     count: int,
     bits: int,
     component_count: int,
-    decode: List[float],
-) -> Optional[List[Tuple[float, ...]]]:
-    colors: List[Tuple[float, ...]] = []
+    decode: list[float],
+) -> list[tuple[float, ...]] | None:
+    colors: list[tuple[float, ...]] = []
     for _ in range(count):
-        color: List[float] = []
+        color: list[float] = []
         for component in range(component_count):
             raw = reader.read(bits)
             if raw is None:
@@ -1703,16 +1704,16 @@ def _shared_patch_edge(previous_points, previous_colors, flag):
     )
 
 
-def _coons_tensor(points: List[Tuple[float, float]]) -> List[List[Point]]:
+def _coons_tensor(points: list[tuple[float, float]]) -> list[list[Point]]:
     p00, p01, p02, p03, p13, p23, p33, p32, p31, p30, p20, p10 = points
-    grid: List[List[Point]] = [
+    grid: list[list[Point]] = [
         [p00, p01, p02, p03],
         [p10, (0.0, 0.0), (0.0, 0.0), p13],
         [p20, (0.0, 0.0), (0.0, 0.0), p23],
         [p30, p31, p32, p33],
     ]
 
-    def combine(terms: Sequence[Tuple[float, Point]]) -> Point:
+    def combine(terms: Sequence[tuple[float, Point]]) -> Point:
         return (
             sum(weight * point[0] for weight, point in terms) / 9.0,
             sum(weight * point[1] for weight, point in terms) / 9.0,
@@ -1769,7 +1770,7 @@ def _coons_tensor(points: List[Tuple[float, float]]) -> List[List[Point]]:
     return grid
 
 
-def _tensor_grid(points: List[Tuple[float, float]]) -> List[List[Point]]:
+def _tensor_grid(points: list[tuple[float, float]]) -> list[list[Point]]:
     (
         p00,
         p01,
@@ -1796,7 +1797,7 @@ def _tensor_grid(points: List[Tuple[float, float]]) -> List[List[Point]]:
     ]
 
 
-def _bernstein(t: float) -> Tuple[float, float, float, float]:
+def _bernstein(t: float) -> tuple[float, float, float, float]:
     inverse = 1.0 - t
     return (
         inverse**3,
@@ -1806,7 +1807,7 @@ def _bernstein(t: float) -> Tuple[float, float, float, float]:
     )
 
 
-def _tensor_point(grid: List[List[Point]], u: float, v: float) -> Point:
+def _tensor_point(grid: list[list[Point]], u: float, v: float) -> Point:
     bu = _bernstein(u)
     bv = _bernstein(v)
     return (
@@ -1815,7 +1816,7 @@ def _tensor_point(grid: List[List[Point]], u: float, v: float) -> Point:
     )
 
 
-def _patch_components(colors, u: float, v: float) -> Tuple[float, ...]:
+def _patch_components(colors, u: float, v: float) -> tuple[float, ...]:
     c00, c03, c33, c30 = colors
     return tuple(
         (1.0 - u) * (1.0 - v) * c00[index]
@@ -1826,8 +1827,8 @@ def _patch_components(colors, u: float, v: float) -> Tuple[float, ...]:
     )
 
 
-def _triangle_interpolation(corners, u: float, v: float) -> Tuple[float, ...]:
-    a, b, c, d = corners
+def _triangle_interpolation(corners, u: float, v: float) -> tuple[float, ...]:
+    a, _b, _c, _d = corners
     if u + v <= 1.0:
         weights = (1.0 - u - v, u, v, 0.0)
     else:
@@ -1917,16 +1918,16 @@ def _adaptive_patch_steps(
 
 
 def _tessellate_patch(grid, colors, steps):
-    vertices: List[List[_MeshVertex]] = []
+    vertices: list[list[_MeshVertex]] = []
     for row in range(steps + 1):
         v = row / steps
-        vertex_row: List[_MeshVertex] = []
+        vertex_row: list[_MeshVertex] = []
         for column in range(steps + 1):
             u = column / steps
             x, y = _tensor_point(grid, u, v)
             vertex_row.append(_MeshVertex(x, y, _patch_components(colors, u, v)))
         vertices.append(vertex_row)
-    triangles: List[_MeshTriangle] = []
+    triangles: list[_MeshTriangle] = []
     for row in range(steps):
         for column in range(steps):
             a = vertices[row][column]
@@ -1947,7 +1948,7 @@ def _build_patch_mesh(pdf, stream, shading_type, budget, device_scale, convert):
     if flag_bits not in (2, 4, 8):
         return None
     reader = _BitReader(data)
-    triangles: List[_MeshTriangle] = []
+    triangles: list[_MeshTriangle] = []
     previous_points = None
     previous_colors = None
     patch_count = 0
@@ -2003,11 +2004,11 @@ def _build_patch_mesh(pdf, stream, shading_type, budget, device_scale, convert):
 
 def _configure_shading(
     pdf: Any,
-    mapping: Dict[Any, Any],
-    shading: Optional[Shading],
+    mapping: dict[Any, Any],
+    shading: Shading | None,
     convert,
     budget: _LoadBudget,
-) -> Optional[Shading]:
+) -> Shading | None:
     if shading is None:
         return None
     bbox_values = _num_array(
@@ -2042,10 +2043,10 @@ def build_shading(
     obj: Any,
     lut_size: int = 256,
     *,
-    limits: Optional[PdfLoadLimits] = None,
-    budget: Optional[_LoadBudget] = None,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
     device_scale: float = 1.0,
-) -> Optional[Shading]:
+) -> Shading | None:
     """Build a supported :class:`Shading` from a COS dictionary or stream."""
     load_budget = _resolve_budget(pdf, limits, budget)
     obj = pdf._resolve(obj)
@@ -2165,7 +2166,7 @@ def build_shading(
         context="shading Extend items",
     ) or [False, False]
 
-    lut: List[Color] = []
+    lut: list[Color] = []
     d_lo, d_hi = domain[0], domain[1]
     span = d_hi - d_lo
     for i in range(lut_size):

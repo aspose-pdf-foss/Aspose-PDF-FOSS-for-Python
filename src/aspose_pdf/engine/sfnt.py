@@ -28,8 +28,8 @@ from aspose_pdf.engine.woff import decode as decode_woff
 
 __all__ = [
     "SfntFace",
-    "parse_faces",
     "is_sfnt",
+    "parse_faces",
 ]
 
 # sfnt version magic numbers.
@@ -178,7 +178,7 @@ def _parse_name_table(
         return {}
     table_offset, _length = location
     try:
-        fmt, count, string_offset = struct.unpack_from(">HHH", data, table_offset)
+        _fmt, count, string_offset = struct.unpack_from(">HHH", data, table_offset)
     except struct.error:
         return {}
 

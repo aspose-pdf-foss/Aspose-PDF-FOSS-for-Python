@@ -5,12 +5,12 @@ digital signature and offers a lightweight verification routine. The goal is to
 verify the integrity of the signed document using the ``ByteRange`` array and to
 ensure that the provided PKCS#7 blob is at least syntactically valid.
 
-The verification does **not** perform full PKCS#7 certificate chain checking –
+The verification does **not** perform full PKCS#7 certificate chain checking -
 that would require a full CMS implementation which is beyond the scope of the
 project and would introduce heavy dependencies. Instead, the method checks:
 
 1. The ``ByteRange`` array has exactly four integers.
-2. The ranges describe two non‑overlapping slices that together cover the signed
+2. The ranges describe two non-overlapping slices that together cover the signed
    revision (from byte 0 through ``start2 + len2``) except for the signature
    placeholder. Trailing bytes (e.g. further incremental updates after signing)
    are ignored for hashing; ``reference_data`` may be longer than that revision.
@@ -28,21 +28,21 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List, Optional, Tuple, Type
+from typing import TYPE_CHECKING
 
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.serialization import pkcs7
 
 from aspose_pdf.exceptions import PdfResourceLimitException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 # Narrow catches for PKCS#7/DER work; unexpected failures propagate.
-_PKCS7_LOAD_ERRORS: Tuple[Type[BaseException], ...] = (
+_PKCS7_LOAD_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,
     TypeError,
     UnsupportedAlgorithm,
 )
-_PKCS7_DIGEST_WALK_ERRORS: Tuple[Type[BaseException], ...] = (
+_PKCS7_DIGEST_WALK_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,
     TypeError,
     AttributeError,
@@ -75,16 +75,16 @@ class PdfSignature:
 
     name: str
     contents: bytes  # The PKCS#7 blob (DER encoded)
-    byte_range: List[int]  # [start1, len1, start2, len2]
+    byte_range: list[int]  # [start1, len1, start2, len2]
     reference_data: bytes  # Full PDF document bytes
 
     # Optional metadata fields
-    date: Optional[str] = None
-    reason: Optional[str] = None
-    location: Optional[str] = None
-    contact_info: Optional[str] = None
-    sub_filter: Optional[str] = None  # e.g. adbe.pkcs7.detached
-    docmdp_level: Optional[int] = None  # DocMDP /P (1/2/3) for certification sigs
+    date: str | None = None
+    reason: str | None = None
+    location: str | None = None
+    contact_info: str | None = None
+    sub_filter: str | None = None  # e.g. adbe.pkcs7.detached
+    docmdp_level: int | None = None  # DocMDP /P (1/2/3) for certification sigs
     load_limits: PdfLoadLimits | None = field(default=None, repr=False, compare=False)
     _load_budget: _LoadBudget | None = field(default=None, repr=False, compare=False)
 
@@ -120,8 +120,8 @@ class PdfSignature:
             return False
 
     def validate(
-        self, options: Optional["ValidationOptions"] = None
-    ) -> "ValidationResult":
+        self, options: ValidationOptions | None = None
+    ) -> ValidationResult:
         """Validate the signature with configurable options.
 
         This method provides a richer alternative to the simple :attr:`valid`
@@ -145,7 +145,11 @@ class PdfSignature:
         """
         from aspose_pdf.validation import (
             ValidationOptions as _ValidationOptions,
+        )
+        from aspose_pdf.validation import (
             ValidationResult as _ValidationResult,
+        )
+        from aspose_pdf.validation import (
             ValidationStatus,
         )
 
@@ -154,7 +158,7 @@ class PdfSignature:
 
         self._load_budget.check_input(len(self.reference_data))
 
-        errors: List[str] = []
+        errors: list[str] = []
 
         # --- Stage 1: ByteRange structural validation ---
         if len(self.byte_range) != 4:
@@ -214,11 +218,10 @@ class PdfSignature:
         # DocMDP certification.  Delegated to the engine so this module stays a
         # thin public dataclass.
         try:
-            from aspose_pdf.engine.signature_validator import validate_cms
-
             # Harvest long-term validation material from the document security
             # store so chain building and revocation can use it offline (LTV).
             from aspose_pdf.engine import dss as _dss
+            from aspose_pdf.engine.signature_validator import validate_cms
 
             dss_material = _dss.read_dss(
                 self.reference_data,
@@ -253,14 +256,15 @@ class PdfSignature:
 
     def _validate_document_timestamp(
         self, signed_bytes: bytes
-    ) -> "ValidationResult":
+    ) -> ValidationResult:
         """Validate a DocTimeStamp signature (PAdES-LTA archive timestamp)."""
+        from aspose_pdf.engine import timestamp as _timestamp
         from aspose_pdf.validation import (
             ValidationResult as _ValidationResult,
+        )
+        from aspose_pdf.validation import (
             ValidationStatus,
         )
-
-        from aspose_pdf.engine import timestamp as _timestamp
 
         ts_info = _timestamp.verify_timestamp_token(self.contents, signed_bytes)
         if ts_info.verified:
@@ -289,12 +293,12 @@ class PdfSignature:
 
         The method follows three stages:
         1. Validate the ``byte_range`` layout.
-        2. Extract the signed byte slices and compute their SHA‑256 digest.
+        2. Extract the signed byte slices and compute their SHA-256 digest.
         3. Attempt to load the PKCS#7 blob using ``cryptography`` and compare the
            embedded ``MessageDigest`` attribute (if present) with the computed
            digest.
         """
-        # Stage 1 – ByteRange validation
+        # Stage 1 - ByteRange validation
         if len(self.byte_range) != 4:
             return False
         start1, len1, start2, len2 = self.byte_range
@@ -306,7 +310,7 @@ class PdfSignature:
         signed_len = start2 + len2
         if start1 + len1 > data_len or signed_len > data_len:
             return False
-        # Ensure non‑overlapping and proper ordering
+        # Ensure non-overlapping and proper ordering
         if start2 < start1 + len1:
             return False
         # First range starts at 0; second range ends at the signed revision length
@@ -329,10 +333,10 @@ class PdfSignature:
                 self.contents, signed_data
             ).verified
 
-        # Stage 2 – Compute hash of the covered data (SHA‑256 is the most common)
+        # Stage 2 - Compute hash of the covered data (SHA-256 is the most common)
         digest = hashlib.sha256(signed_data).digest()
 
-        # Stage 3 – Verify PKCS#7 structure and optional MessageDigest
+        # Stage 3 - Verify PKCS#7 structure and optional MessageDigest
         try:
             # ``pkcs7.load_der_pkcs7_certificates`` returns a list of certificates.
             # It raises if the DER data is not a PKCS#7 container.
@@ -342,7 +346,7 @@ class PdfSignature:
             return False
 
         # Attempt to extract the MessageDigest attribute using cryptography's
-        # internal APIs. The library does not expose a high‑level verifier for
+        # internal APIs. The library does not expose a high-level verifier for
         # detached signatures, but we can inspect the signed attributes.
         try:
             # ``pkcs7.PKCS7SignatureBuilder`` cannot load, so we fall back to
@@ -355,7 +359,7 @@ class PdfSignature:
                 # ByteRange check sufficient.
                 return True
             pkcs7_obj = load_func(self.contents)
-            # ``pkcs7_obj`` provides ``signers`` – each has ``signed_attributes``.
+            # ``pkcs7_obj`` provides ``signers`` - each has ``signed_attributes``.
             for signer in pkcs7_obj.signers:
                 attrs = signer.signed_attributes
                 # Look for the MessageDigest OID (1.2.840.113549.1.9.4)
@@ -371,5 +375,5 @@ class PdfSignature:
             # If none match, verification fails.
             return False
         except _PKCS7_DIGEST_WALK_ERRORS:
-            # Parsing issue during MessageDigest walk – ByteRange + PKCS#7 shell OK.
+            # Parsing issue during MessageDigest walk - ByteRange + PKCS#7 shell OK.
             return True

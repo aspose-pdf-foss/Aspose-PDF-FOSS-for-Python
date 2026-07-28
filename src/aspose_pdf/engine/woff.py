@@ -24,9 +24,9 @@ import struct
 import zlib
 
 from aspose_pdf.exceptions import PdfResourceLimitException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
-__all__ = ["decode", "is_woff", "is_woff2", "build_sfnt"]
+__all__ = ["build_sfnt", "decode", "is_woff", "is_woff2"]
 
 _WOFF1_SIGNATURE = b"wOFF"
 _WOFF2_SIGNATURE = b"wOF2"

@@ -11,6 +11,11 @@ from .annotations import (
 )
 from .attachments import FileSpecification
 from .document import Document
+from .exceptions import (
+    FontEmbeddingException,
+    PdfResourceLimitException,
+    UnsupportedFeatureException,
+)
 from .facades import PdfExtractor, PdfFileEditor
 from .font_registry import FontDescriptor
 from .font_repository import (
@@ -29,26 +34,26 @@ from .forms import (
     UnsignedContent,
     UnsignedContentAbsorber,
 )
+from .load_limits import PdfLoadLimits
 from .lowcode import (
     ByteArrayDataSource,
     DataSource,
     FileDataSource,
-    Merger,
     MergeOptions,
+    Merger,
     OperationResult,
-    Optimizer,
     OptimizeOptions,
+    Optimizer,
     PdfPlugin,
     Plugin,
     PluginOptions,
     ResultContainer,
-    Splitter,
     SplitOptions,
+    Splitter,
     StreamDataSource,
     TextExtractor,
     TextExtractorOptions,
 )
-from .load_limits import PdfLoadLimits
 from .optimization import OptimizationOptions
 from .pages import Page, PageCollection
 from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
@@ -66,11 +71,6 @@ from .validation import (
     ValidationResult,
     ValidationStatus,
 )
-from .exceptions import (
-    FontEmbeddingException,
-    PdfResourceLimitException,
-    UnsupportedFeatureException,
-)
 from .visualization import RasterizedPage
 from .xmp import (
     NamespaceProvider,
@@ -79,17 +79,21 @@ from .xmp import (
     XmpPacket,
     XmpProperty,
     XmpStruct,
+)
+from .xmp import (
     parse as parse_xmp,
+)
+from .xmp import (
     serialize as serialize_xmp,
 )
 
 __all__ = [
-    "__version__",
     "Annotation",
     "AnnotationCollection",
     "AnnotationFlags",
     "AnnotationType",
     "ByteArrayDataSource",
+    "CertificationLevel",
     "DataSource",
     "Document",
     "Field",
@@ -107,27 +111,13 @@ __all__ = [
     "LinkAnnotation",
     "MarkupAnnotation",
     "MemoryFontSource",
-    "Merger",
     "MergeOptions",
+    "Merger",
+    "NamespaceProvider",
     "OperationResult",
     "OptimizationOptions",
-    "Optimizer",
     "OptimizeOptions",
-    "PdfPlugin",
-    "PdfLoadLimits",
-    "PdfResourceLimitException",
-    "Plugin",
-    "PluginOptions",
-    "ResultContainer",
-    "Splitter",
-    "SplitOptions",
-    "StreamDataSource",
-    "StructureElement",
-    "SystemFontSource",
-    "TaggedContent",
-    "TextExtractor",
-    "TextExtractorOptions",
-    "TextLayoutOptions",
+    "Optimizer",
     "Page",
     "PageCollection",
     "PdfAValidateOptions",
@@ -135,28 +125,42 @@ __all__ = [
     "PdfAValidator",
     "PdfExtractor",
     "PdfFileEditor",
+    "PdfLoadLimits",
+    "PdfPlugin",
+    "PdfResourceLimitException",
     "PdfSignature",
     "PdfUaValidateOptions",
     "PdfUaValidationResult",
     "PdfUaValidator",
+    "Plugin",
+    "PluginOptions",
     "RasterizedPage",
-    "UnsupportedFeatureException",
+    "ResultContainer",
+    "RevocationStatus",
+    "SplitOptions",
+    "Splitter",
+    "StreamDataSource",
+    "StructureElement",
+    "SystemFontSource",
+    "TaggedContent",
+    "TextExtractor",
+    "TextExtractorOptions",
+    "TextLayoutOptions",
+    "TrustStatus",
     "UnsignedContent",
     "UnsignedContentAbsorber",
-    "CertificationLevel",
-    "RevocationStatus",
-    "TrustStatus",
+    "UnsupportedFeatureException",
     "ValidationMethod",
     "ValidationMode",
     "ValidationOptions",
     "ValidationResult",
     "ValidationStatus",
-    "NamespaceProvider",
     "XmpArray",
     "XmpField",
     "XmpPacket",
     "XmpProperty",
     "XmpStruct",
+    "__version__",
     "parse_xmp",
     "serialize_xmp",
 ]

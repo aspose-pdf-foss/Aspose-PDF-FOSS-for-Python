@@ -6,7 +6,7 @@ to a tuple ``(code, bit_length)`` where ``code`` is the integer value of the
 binary Huffman code and ``bit_length`` is the number of bits in that code.
 """
 
-# White terminating codes (run lengths 0‑63)
+# White terminating codes (run lengths 0-63)
 WHITE_TERM = {
     0: (0x35, 8),
     1: (0x07, 6),
@@ -74,7 +74,7 @@ WHITE_TERM = {
     63: (0x91, 8),
 }
 
-# White makeup codes (run lengths 64‑1728, multiples of 64)
+# White makeup codes (run lengths 64-1728, multiples of 64)
 WHITE_MAKEUP = {
     64: (0x1B, 5),
     128: (0x12, 5),
@@ -104,7 +104,7 @@ WHITE_MAKEUP = {
     1728: (0xC9, 9),
 }
 
-# Black terminating codes (run lengths 0‑63)
+# Black terminating codes (run lengths 0-63)
 BLACK_TERM = {
     0: (0x37, 10),
     1: (0x02, 3),
@@ -172,7 +172,7 @@ BLACK_TERM = {
     63: (0x4F, 7),
 }
 
-# Black makeup codes (run lengths 64‑1728, multiples of 64)
+# Black makeup codes (run lengths 64-1728, multiples of 64)
 BLACK_MAKEUP = {
     64: (0x1B, 5),
     128: (0x12, 5),

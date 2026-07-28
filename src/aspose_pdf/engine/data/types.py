@@ -46,93 +46,93 @@ class Color:
     
     # Predefined colors
     @staticmethod
-    def aqua() -> "Color":
+    def aqua() -> Color:
         """Get the aqua color (0.0, 1.0, 1.0)."""
         return Color(0.0, 1.0, 1.0)
     
     @staticmethod
-    def blue() -> "Color":
+    def blue() -> Color:
         """Get the blue color (0.0, 0.0, 1.0)."""
         return Color(0.0, 0.0, 1.0)
     
     @staticmethod
-    def azure() -> "Color":
+    def azure() -> Color:
         """Get the azure color (0.94, 0.97, 1.0)."""
         return Color(0.94, 0.97, 1.0)
     
     @staticmethod
-    def red() -> "Color":
+    def red() -> Color:
         """Get the red color (1.0, 0.0, 0.0)."""
         return Color(1.0, 0.0, 0.0)
     
     @staticmethod
-    def green() -> "Color":
+    def green() -> Color:
         """Get the green color (0.0, 1.0, 0.0)."""
         return Color(0.0, 1.0, 0.0)
     
     @staticmethod
-    def yellow() -> "Color":
+    def yellow() -> Color:
         """Get the yellow color (1.0, 1.0, 0.0)."""
         return Color(1.0, 1.0, 0.0)
     
     @staticmethod
-    def black() -> "Color":
+    def black() -> Color:
         """Get the black color (0.0, 0.0, 0.0)."""
         return Color(0.0, 0.0, 0.0)
     
     @staticmethod
-    def white() -> "Color":
+    def white() -> Color:
         """Get the white color (1.0, 1.0, 1.0)."""
         return Color(1.0, 1.0, 1.0)
     
     @staticmethod
-    def gray() -> "Color":
+    def gray() -> Color:
         """Get the gray color (0.5, 0.5, 0.5)."""
         return Color(0.5, 0.5, 0.5)
     
     # Aliases for the test
     @staticmethod
-    def Aqua() -> "Color":
+    def Aqua() -> Color:
         """Get the aqua color (alias for aqua)."""
         return Color.aqua()
     
     @staticmethod
-    def Blue() -> "Color":
+    def Blue() -> Color:
         """Get the blue color (alias for blue)."""
         return Color.blue()
     
     @staticmethod
-    def Azure() -> "Color":
+    def Azure() -> Color:
         """Get the azure color (alias for azure)."""
         return Color.azure()
     
     @staticmethod
-    def Red() -> "Color":
+    def Red() -> Color:
         """Get the red color (alias for red)."""
         return Color.red()
     
     @staticmethod
-    def Green() -> "Color":
+    def Green() -> Color:
         """Get the green color (alias for green)."""
         return Color.green()
     
     @staticmethod
-    def Yellow() -> "Color":
+    def Yellow() -> Color:
         """Get the yellow color (alias for yellow)."""
         return Color.yellow()
     
     @staticmethod
-    def Black() -> "Color":
+    def Black() -> Color:
         """Get the black color (alias for black)."""
         return Color.black()
     
     @staticmethod
-    def White() -> "Color":
+    def White() -> Color:
         """Get the white color (alias for white)."""
         return Color.white()
     
     @staticmethod
-    def Gray() -> "Color":
+    def Gray() -> Color:
         """Get the gray color (alias for gray)."""
         return Color.gray()
 

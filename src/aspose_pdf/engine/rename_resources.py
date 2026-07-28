@@ -2,9 +2,9 @@
 Utility for safely renaming PDF resource names in content streams.
 """
 
-from typing import Dict
 
-def safe_rename_names(content: bytes, name_map: Dict[str, str]) -> bytes:
+
+def safe_rename_names(content: bytes, name_map: dict[str, str]) -> bytes:
     """
     Safely rename PDF name objects in a content stream while skipping
     comments, literal strings, and hex strings.

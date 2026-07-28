@@ -8,14 +8,14 @@ from enum import Enum
 __all__ = ["Duplex", "PrintRange", "PrinterSettings"]
 
 
-class Duplex(str, Enum):
+class Duplex(str, Enum):  # noqa: UP042
     NONE = "None"
     SIMPLEX = "Simplex"
     DUPLEX = "Duplex"
     TUMBLE = "Tumble"
 
 
-class PrintRange(str, Enum):
+class PrintRange(str, Enum):  # noqa: UP042
     ALL_PAGES = "AllPages"
     SOME_PAGES = "SomePages"
     SELECTION = "Selection"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 """Compatibility helpers for unsigned-content extraction (Aspose.PDF subset)."""
 
@@ -59,9 +59,9 @@ class UnsignedContent:
         """Initialize UnsignedContent with optional collections.
         Instance attributes are set to provided lists or default to empty lists.
         """
-        self.pages: List[Any] = kwargs.get("pages", [])
-        self.form_fields: List[Any] = kwargs.get("form_fields", [])
-        self.annotations: List[Any] = kwargs.get("annotations", [])
+        self.pages: list[Any] = kwargs.get("pages", [])
+        self.form_fields: list[Any] = kwargs.get("form_fields", [])
+        self.annotations: list[Any] = kwargs.get("annotations", [])
         self._extra = kwargs
         # The methods below provide mutable operations on the stored collections.
 

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from enum import Enum, IntFlag
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
 
 from aspose_pdf.engine.cos import AnnotationName as Name
 
@@ -36,7 +37,7 @@ class AnnotationFlags(IntFlag):
     TOGGLE_NO_VIEW = 256
 
 
-class AnnotationType(str, Enum):
+class AnnotationType(str, Enum):  # noqa: UP042
     """Known annotation subtype names (PDF 32000-1:2008, Table 169)."""
 
     TEXT = "Text"
@@ -76,7 +77,7 @@ def _subtype_value(subtype: Any) -> str:
 class Annotation:
     """Live view over a single annotation on a page."""
 
-    def __init__(self, page: "Page", index: int, data: dict[str, Any]) -> None:
+    def __init__(self, page: Page, index: int, data: dict[str, Any]) -> None:
         self._page = page
         self._index = index
         self._data = dict(data)
@@ -187,7 +188,7 @@ class Annotation:
         return ()
 
     @color.setter
-    def color(self, value: "tuple[float, ...] | list[float] | None") -> None:
+    def color(self, value: tuple[float, ...] | list[float] | None) -> None:
         if value is None:
             self.set_property("C", None)
         else:
@@ -244,7 +245,7 @@ _ANNOTATION_CLASSES: dict[str, type[Annotation]] = {
 class AnnotationCollection:
     """Mutable sequence-like wrapper over page annotations."""
 
-    def __init__(self, page: "Page") -> None:
+    def __init__(self, page: Page) -> None:
         self._page = page
 
     def _items(self) -> list[dict[str, Any]]:

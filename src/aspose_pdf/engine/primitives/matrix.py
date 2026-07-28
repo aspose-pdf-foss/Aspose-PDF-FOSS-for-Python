@@ -20,7 +20,7 @@ class Matrix:
         self.e += float(x)
         self.f += float(y)
 
-    def multiply(self, other: "Matrix") -> "Matrix":
+    def multiply(self, other: Matrix) -> Matrix:
         return Matrix(
             a=self.a * other.a + self.b * other.c,
             b=self.a * other.b + self.b * other.d,

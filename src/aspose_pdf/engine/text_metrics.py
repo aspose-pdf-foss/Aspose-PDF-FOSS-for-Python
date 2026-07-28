@@ -15,23 +15,23 @@ return ``None`` so callers degrade to their flat estimate.
 from __future__ import annotations
 
 import struct
-from typing import Callable, Dict, Optional
+from collections.abc import Callable
 
 __all__ = ["WidthFn", "substitute_width_fn"]
 
 # code (single-byte, cp1252 domain) -> advance width in 1000-unit glyph space.
 WidthFn = Callable[[int], float]
 
-_width_fn_cache: Dict[str, Optional[WidthFn]] = {}
+_width_fn_cache: dict[str, WidthFn | None] = {}
 
 
 def substitute_width_fn(
-    base_font: Optional[str] = "Helvetica",
+    base_font: str | None = "Helvetica",
     *,
     flags: int = 0,
     italic_angle: float = 0.0,
-    font_weight: Optional[float] = None,
-) -> Optional[WidthFn]:
+    font_weight: float | None = None,
+) -> WidthFn | None:
     """Return a ``code -> advance`` function for *base_font*, or ``None``.
 
     The font name (plus optional FontDescriptor signals) is mapped to a bundled
@@ -56,7 +56,7 @@ def substitute_width_fn(
     if key in _width_fn_cache:
         return _width_fn_cache[key]
 
-    fn: Optional[WidthFn] = None
+    fn: WidthFn | None = None
     sfnt = load_substitute_sfnt(key)
     if sfnt is not None:
         try:

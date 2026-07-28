@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 from .field_appearance import (
     WidthFn,
@@ -65,7 +66,7 @@ _ANNOT_FONT_SPEC = {
 }
 
 
-def _annot_width_fn() -> Optional[WidthFn]:
+def _annot_width_fn() -> WidthFn | None:
     """Glyph metrics for the synthesised Helvetica (cached by ``text_metrics``)."""
     from .text_metrics import substitute_width_fn
 
@@ -87,8 +88,8 @@ class GeneratedAppearance:
     """
 
     content: bytes
-    ext_gstates: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    fonts: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    ext_gstates: dict[str, dict[str, Any]] = field(default_factory=dict)
+    fonts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _fmt(value: float) -> str:
@@ -97,11 +98,11 @@ def _fmt(value: float) -> str:
     return text if text and text != "-0" else "0"
 
 
-def _as_floats(value: Any) -> Optional[List[float]]:
+def _as_floats(value: Any) -> list[float] | None:
     """Coerce a sequence of numbers to a ``list[float]`` (or ``None``)."""
     if not isinstance(value, (list, tuple)) or not value:
         return None
-    out: List[float] = []
+    out: list[float] = []
     for item in value:
         if isinstance(item, bool) or not isinstance(item, (int, float)):
             return None
@@ -109,7 +110,7 @@ def _as_floats(value: Any) -> Optional[List[float]]:
     return out
 
 
-def _color_op(components: Any, *, stroke: bool) -> Optional[str]:
+def _color_op(components: Any, *, stroke: bool) -> str | None:
     """Return a colour-setting operator for 1/3/4-component colours, else ``None``."""
     comps = _as_floats(components)
     if not comps:
@@ -126,7 +127,7 @@ def _color_op(components: Any, *, stroke: bool) -> Optional[str]:
     return f"{vals} {op}"
 
 
-def _border_width(properties: Dict[str, Any]) -> float:
+def _border_width(properties: dict[str, Any]) -> float:
     """Resolve the border width from ``/BS /W`` or the legacy ``/Border`` array."""
     bs = properties.get("BS")
     if isinstance(bs, dict):
@@ -142,15 +143,15 @@ def _border_width(properties: Dict[str, Any]) -> float:
 
 def _local_points(
     flat: Sequence[float], llx: float, lly: float
-) -> List[Tuple[float, float]]:
+) -> list[tuple[float, float]]:
     """Convert a flat ``[x1 y1 x2 y2 …]`` list to local ``(x, y)`` tuples."""
-    pts: List[Tuple[float, float]] = []
+    pts: list[tuple[float, float]] = []
     for i in range(0, len(flat) - 1, 2):
         pts.append((flat[i] - llx, flat[i + 1] - lly))
     return pts
 
 
-def _paint_op(has_fill: bool, has_stroke: bool) -> Optional[str]:
+def _paint_op(has_fill: bool, has_stroke: bool) -> str | None:
     if has_fill and has_stroke:
         return "B"
     if has_fill:
@@ -160,7 +161,7 @@ def _paint_op(has_fill: bool, has_stroke: bool) -> Optional[str]:
     return None
 
 
-def _polyline_path(points: Sequence[Tuple[float, float]]) -> str:
+def _polyline_path(points: Sequence[tuple[float, float]]) -> str:
     """Emit ``m``/``l`` operators tracing *points* (no paint operator)."""
     if not points:
         return ""
@@ -180,7 +181,7 @@ def _name(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _dash_array(props: Dict[str, Any]) -> Optional[List[float]]:
+def _dash_array(props: dict[str, Any]) -> list[float] | None:
     """Resolve a dash pattern from ``/BS`` (style ``D``) or a legacy ``/Border``."""
     bs = props.get("BS")
     if isinstance(bs, dict) and _name(bs.get("S")) == "D":
@@ -196,7 +197,7 @@ def _dash_array(props: Dict[str, Any]) -> Optional[List[float]]:
     return None
 
 
-def _dash_op(props: Dict[str, Any]) -> Optional[str]:
+def _dash_op(props: dict[str, Any]) -> str | None:
     """Return a ``d`` dash operator for the annotation's border, or ``None``."""
     dash = _dash_array(props)
     if not dash:
@@ -205,8 +206,8 @@ def _dash_op(props: Dict[str, Any]) -> Optional[str]:
 
 
 def _stroke_setup(
-    stroke: str, bw: float, props: Dict[str, Any]
-) -> List[str]:
+    stroke: str, bw: float, props: dict[str, Any]
+) -> list[str]:
     """Stroke colour, width and (optional) dash operators, in order."""
     ops = [stroke, f"{_fmt(bw)} w"]
     dash = _dash_op(props)
@@ -215,14 +216,14 @@ def _stroke_setup(
     return ops
 
 
-def _unit(dx: float, dy: float) -> Optional[Tuple[float, float]]:
+def _unit(dx: float, dy: float) -> tuple[float, float] | None:
     length = math.hypot(dx, dy)
     if length < 1e-9:
         return None
     return (dx / length, dy / length)
 
 
-def _rot(v: Tuple[float, float], angle: float) -> Tuple[float, float]:
+def _rot(v: tuple[float, float], angle: float) -> tuple[float, float]:
     ca, sa = math.cos(angle), math.sin(angle)
     return (v[0] * ca - v[1] * sa, v[0] * sa + v[1] * ca)
 
@@ -236,7 +237,7 @@ _LINE_ENDINGS = frozenset(
 )
 
 
-def _line_ending_styles(props: Dict[str, Any]) -> Tuple[str, str]:
+def _line_ending_styles(props: dict[str, Any]) -> tuple[str, str]:
     """Return ``(start, end)`` line-ending style names from ``/LE``."""
     le = props.get("LE")
     if isinstance(le, (list, tuple)) and le:
@@ -249,12 +250,12 @@ def _line_ending_styles(props: Dict[str, Any]) -> Tuple[str, str]:
 
 
 def _ending_ops(
-    end: Tuple[float, float],
-    outward: Tuple[float, float],
+    end: tuple[float, float],
+    outward: tuple[float, float],
     style: str,
     size: float,
     fill_op: str,
-) -> List[str]:
+) -> list[str]:
     """Draw a *style* line ending at *end*, opening along *outward* (unit)."""
     if style not in _LINE_ENDINGS or size <= 0:
         return []
@@ -321,11 +322,11 @@ def _line_ending_size(bw: float, span: float) -> float:
 
 
 def _draw_endings(
-    pts: Sequence[Tuple[float, float]],
-    styles: Tuple[str, str],
+    pts: Sequence[tuple[float, float]],
+    styles: tuple[str, str],
     bw: float,
     fill_op: str,
-) -> List[str]:
+) -> list[str]:
     """Ops for the start/end line endings of a (poly)line, oriented outward.
 
     The start ending points back along the first edge and the end ending along
@@ -335,7 +336,7 @@ def _draw_endings(
     if len(pts) < 2:
         return []
     start_style, end_style = styles
-    ops: List[str] = []
+    ops: list[str] = []
     if start_style != "None":
         first_len = math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1])
         out = _unit(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1])
@@ -353,7 +354,7 @@ def _draw_endings(
     return ops
 
 
-def _cloud_intensity(props: Dict[str, Any]) -> float:
+def _cloud_intensity(props: dict[str, Any]) -> float:
     """Return the ``/BE`` cloud intensity (``>0`` enables a cloudy border)."""
     be = props.get("BE")
     if not isinstance(be, dict) or _name(be.get("S")) != "C":
@@ -368,7 +369,7 @@ def _cloud_bulge(intensity: float) -> float:
     return (8.0 + 6.0 * max(1.0, min(intensity, 2.0))) / 2.0
 
 
-def _cloud_path(points: Sequence[Tuple[float, float]], intensity: float) -> Optional[str]:
+def _cloud_path(points: Sequence[tuple[float, float]], intensity: float) -> str | None:
     """Trace a closed cloud (outward convex scallops) around *points*."""
     if len(points) < 3:
         return None
@@ -376,7 +377,7 @@ def _cloud_path(points: Sequence[Tuple[float, float]], intensity: float) -> Opti
     diameter = bulge * 2.0
     cx = sum(p[0] for p in points) / len(points)
     cy = sum(p[1] for p in points) / len(points)
-    segs: List[str] = []
+    segs: list[str] = []
     started = False
     n = len(points)
     for i in range(n):
@@ -414,9 +415,9 @@ def _cloud_path(points: Sequence[Tuple[float, float]], intensity: float) -> Opti
 
 def build_appearance(
     subtype: str,
-    rect: Tuple[float, float, float, float],
-    properties: Dict[str, Any],
-) -> Optional[GeneratedAppearance]:
+    rect: tuple[float, float, float, float],
+    properties: dict[str, Any],
+) -> GeneratedAppearance | None:
     """Build a normal appearance for *subtype*, or ``None`` when not synthesisable.
 
     ``None`` is returned for subtypes outside :data:`SUPPORTED_SUBTYPES`, for a
@@ -443,8 +444,8 @@ def build_appearance(
 
 
 def _build_square(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     bw = _border_width(props)
     stroke = _color_op(props.get("C"), stroke=True)
     fill = _color_op(props.get("IC"), stroke=False)
@@ -493,8 +494,8 @@ def _build_square(
 
 
 def _build_circle(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     bw = _border_width(props)
     stroke = _color_op(props.get("C"), stroke=True)
     fill = _color_op(props.get("IC"), stroke=False)
@@ -541,8 +542,8 @@ def _build_circle(
 
 
 def _build_line(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     coords = _as_floats(props.get("L"))
     if not coords or len(coords) < 4:
         return None
@@ -562,20 +563,20 @@ def _build_line(
 
 
 def _build_polygon(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     return _build_poly(props, llx, lly, closed=True)
 
 
 def _build_polyline(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     return _build_poly(props, llx, lly, closed=False)
 
 
 def _build_poly(
-    props: Dict[str, Any], llx: float, lly: float, *, closed: bool
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, *, closed: bool
+) -> GeneratedAppearance | None:
     verts = _as_floats(props.get("Vertices"))
     if not verts or len(verts) < 4:
         return None
@@ -609,8 +610,8 @@ def _build_poly(
 
 
 def _build_ink(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     ink_list = props.get("InkList")
     if not isinstance(ink_list, (list, tuple)) or not ink_list:
         return None
@@ -633,21 +634,21 @@ def _build_ink(
 
 
 def _quads(
-    props: Dict[str, Any], llx: float, lly: float
-) -> List[List[Tuple[float, float]]]:
+    props: dict[str, Any], llx: float, lly: float
+) -> list[list[tuple[float, float]]]:
     """Split ``QuadPoints`` into a list of 4-corner quads (local coordinates)."""
     flat = _as_floats(props.get("QuadPoints"))
     if not flat or len(flat) < 8:
         return []
-    quads: List[List[Tuple[float, float]]] = []
+    quads: list[list[tuple[float, float]]] = []
     for i in range(0, len(flat) - 7, 8):
         quads.append(_local_points(flat[i : i + 8], llx, lly))
     return quads
 
 
 def _build_text_markup(
-    props: Dict[str, Any], llx: float, lly: float, kind: str
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, kind: str
+) -> GeneratedAppearance | None:
     quads = _quads(props, llx, lly)
     if not quads:
         return None
@@ -697,8 +698,8 @@ def _squiggle_path(x0: float, x1: float, y: float, amp: float) -> str:
 
 
 def _build_highlight(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     quads = _quads(props, llx, lly)
     if not quads:
         return None
@@ -748,7 +749,7 @@ def _text_block(
     color_op: str,
     quadding: int,
     padding: float,
-) -> List[str]:
+) -> list[str]:
     """Emit a ``BT``…``ET`` word-wrapped text block filling ``(w, h)`` from the top."""
     fs = font_size if font_size > 0 else auto_font_size(h, multiline=True)
     leading = fs * 1.15
@@ -766,8 +767,8 @@ def _text_block(
 
 
 def _build_freetext(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     text = _str_prop(props.get("Contents"))
     da = props.get("DA")
     _fn, size, color = parse_default_appearance(da if isinstance(da, str) else None)
@@ -790,7 +791,7 @@ def _build_freetext(
             lines += _stroke_setup("0 G", bw, props)
             lines.append(f"{_fmt(inset)} {_fmt(inset)} {_fmt(rw)} {_fmt(rh)} re")
             lines.append("S")
-    fonts: Dict[str, Dict[str, Any]] = {}
+    fonts: dict[str, dict[str, Any]] = {}
     pad = max(2.0, bw + 1.0)
     # Prefer the /RC rich text (styled spans) when present; fall back to the
     # plain /Contents rendered in the /DA font.
@@ -817,7 +818,7 @@ def _rich_text_block(
     color: str,
     quadding: int,
     padding: float,
-) -> Optional[Tuple[List[str], Dict[str, Dict[str, Any]]]]:
+) -> tuple[list[str], dict[str, dict[str, Any]]] | None:
     """Lay out ``/RC``/``/RV`` rich text, or ``None`` when absent/empty."""
     if not isinstance(rc, str) or not rc.strip():
         return None
@@ -829,7 +830,7 @@ def _rich_text_block(
     )
 
 
-def _stamp_label(props: Dict[str, Any]) -> str:
+def _stamp_label(props: dict[str, Any]) -> str:
     """Derive a stamp caption from ``/Name`` (camel-split) or ``/Contents``."""
     name = props.get("Name")
     text = _str_prop(name).strip()
@@ -844,8 +845,8 @@ def _stamp_label(props: Dict[str, Any]) -> str:
 
 
 def _build_stamp(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     label = _stamp_label(props)
     comps = _as_floats(props.get("C"))
     stroke = _color_op(comps, stroke=True) or "1 0 0 RG"  # rubber-stamp red
@@ -894,7 +895,7 @@ _ZAPF_FONT_SPEC = {"Subtype": "Type1", "BaseFont": "ZapfDingbats"}
 _DEFAULT_CHECK = "4"
 
 
-def _ellipse_path(cx: float, cy: float, rx: float, ry: float) -> List[str]:
+def _ellipse_path(cx: float, cy: float, rx: float, ry: float) -> list[str]:
     """Four cubic Béziers tracing an ellipse centred at ``(cx, cy)``."""
     kx, ky = rx * _KAPPA, ry * _KAPPA
     return [
@@ -912,9 +913,9 @@ def build_button_appearance(
     *,
     on: bool,
     radio: bool,
-    caption: Optional[str] = None,
-    border_color: Optional[Any] = None,
-    bg_color: Optional[Any] = None,
+    caption: str | None = None,
+    border_color: Any | None = None,
+    bg_color: Any | None = None,
     border_width: float = 1.0,
 ) -> GeneratedAppearance:
     """Build one check box / radio widget state (``/AP /N`` Off or On).
@@ -929,7 +930,7 @@ def build_button_appearance(
         return GeneratedAppearance(b"")
     bw = max(float(border_width), 0.0)
     lines = ["q"]
-    fonts: Dict[str, Dict[str, Any]] = {}
+    fonts: dict[str, dict[str, Any]] = {}
 
     bg = _color_op(bg_color, stroke=False)
     if bg:
@@ -987,9 +988,9 @@ def build_push_button_appearance(
     h: float,
     *,
     caption: str = "",
-    border_color: Optional[Any] = None,
-    bg_color: Optional[Any] = None,
-    text_color: Optional[Any] = None,
+    border_color: Any | None = None,
+    bg_color: Any | None = None,
+    text_color: Any | None = None,
     border_width: float = 1.0,
 ) -> GeneratedAppearance:
     """Build a normal appearance for a caption-only push-button widget."""
@@ -1013,7 +1014,7 @@ def build_push_button_appearance(
                 "S",
             ]
 
-    fonts: Dict[str, Dict[str, Any]] = {}
+    fonts: dict[str, dict[str, Any]] = {}
     label = str(caption or "")
     if label:
         pad = max(3.0, bw + 2.0)
@@ -1042,8 +1043,8 @@ def build_push_button_appearance(
 
 
 def _build_caret(
-    props: Dict[str, Any], llx: float, lly: float, w: float, h: float
-) -> Optional[GeneratedAppearance]:
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
     fill = _color_op(props.get("C"), stroke=False) or "0 g"
     # An upward-pointing filled triangle marks the insertion point.
     ix, iy = w * 0.15, h * 0.10

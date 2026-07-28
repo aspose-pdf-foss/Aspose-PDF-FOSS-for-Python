@@ -1,7 +1,8 @@
 """Utility functions for Aspose.PDF Python SDK."""
 
 from __future__ import annotations
-from typing import Any, Optional
+
+from typing import Any
 
 
 def _object_to_dict(obj: Any) -> dict:
@@ -32,7 +33,7 @@ def _object_to_dict(obj: Any) -> dict:
         return str(obj)
 
 
-def are_objects_json_equal(obj1: Any, obj2: Any, message: Optional[str] = None) -> None:
+def are_objects_json_equal(obj1: Any, obj2: Any, message: str | None = None) -> None:
     """Compare two objects by their JSON representation.
     
     Args:

@@ -2,22 +2,21 @@
 
 The original placeholder only stripped a static header.  This version parses
 the JBIG2 file structure, extracts **Immediate Generic Region** segments and,
-when required, delegates MMR (Group‑4) bitmap decoding to the ``ccitt``
+when required, delegates MMR (Group-4) bitmap decoding to the ``ccitt``
 module.  The public API remains compatible: a ``Decoder`` class exposing a
 static ``decode`` method.
 """
 
 import struct
 import warnings
-from typing import Dict, Optional
 
 from aspose_pdf.exceptions import PdfResourceLimitException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
-# The CCITT Group‑4 decoder is optional – the library can work without it.
+# The CCITT Group-4 decoder is optional - the library can work without it.
 try:
     from .ccitt import decode_group4
-except Exception:  # pragma: no cover – fallback when the module is missing.
+except Exception:  # pragma: no cover - fallback when the module is missing.
     decode_group4 = None
 
 
@@ -25,26 +24,26 @@ class Decoder:
     """JBIG2 decoder that parses segment structure and extracts bitmap data.
 
     The decoder focuses on **Immediate Generic Region** (segment type ``0x08``)
-    which commonly contains a raw bitmap that may be compressed with MMR (Group‑4
+    which commonly contains a raw bitmap that may be compressed with MMR (Group-4
     CCITT).  For other segment types the implementation currently returns an
     empty ``bytes`` object.
     """
 
     @staticmethod
     def _read_uint32(data: bytes, offset: int) -> int:
-        """Read a big‑endian unsigned 32‑bit integer from *data* at *offset*."""
+        """Read a big-endian unsigned 32-bit integer from *data* at *offset*."""
         return struct.unpack(">I", data[offset : offset + 4])[0]
 
     @staticmethod
     def _parse_segments(data: bytes):
         """Yield ``(seg_type, seg_data)`` tuples for each JBIG2 segment.
 
-        The parser skips the optional 8‑byte file header and then reads each
+        The parser skips the optional 8-byte file header and then reads each
         segment consisting of:
-        * 4‑byte segment number (ignored)
-        * 1‑byte flags
-        * 1‑byte segment type
-        * 4‑byte data length
+        * 4-byte segment number (ignored)
+        * 1-byte flags
+        * 1-byte segment type
+        * 4-byte data length
         * *data length* bytes of payload
         """
         offset = 0
@@ -52,7 +51,7 @@ class Decoder:
         if data.startswith(header):
             offset = len(header)
         while offset + 6 <= len(data):
-            # Segment number (4 bytes) – not used for decoding.
+            # Segment number (4 bytes) - not used for decoding.
             _ = Decoder._read_uint32(data, offset)
             offset += 4
             _ = data[offset]  # seg_flags
@@ -76,8 +75,8 @@ class Decoder:
     ) -> bytes:
         """Decode an Immediate Generic Region (type ``0x08``) segment.
 
-        The first 13 bytes contain region information.  The least‑significant
-        bit of the first byte signals MMR (Group‑4) compression.  When compression
+        The first 13 bytes contain region information.  The least-significant
+        bit of the first byte signals MMR (Group-4) compression.  When compression
         is indicated and the optional ``decode_group4`` function is available we
         decode the bitmap payload; otherwise the raw payload is returned.
         """
@@ -90,7 +89,7 @@ class Decoder:
 
         # Compression flag is the LSB of the first byte.
         mmr_flag = seg_data[0] & 0x01
-        # The bitmap data follows the 13‑byte header.
+        # The bitmap data follows the 13-byte header.
         bitmap_payload = seg_data[13:]
         # Width and height are stored as big-endian unsigned 32-bit values at
         # offsets 5-8 and 9-12 respectively.
@@ -133,14 +132,14 @@ class Decoder:
             except PdfResourceLimitException:
                 raise
             except Exception as exc:  # pragma: no cover
-                warnings.warn(f"CCITT Group‑4 decode failed: {exc}", RuntimeWarning)
+                warnings.warn(f"CCITT Group-4 decode failed: {exc}", RuntimeWarning)
                 return bitmap_payload
         return bitmap_payload
 
     @staticmethod
     def decode(
         data: bytes,
-        params: Optional[Dict] = None,
+        params: dict | None = None,
         *,
         limits: PdfLoadLimits | None = None,
     ) -> bytes:

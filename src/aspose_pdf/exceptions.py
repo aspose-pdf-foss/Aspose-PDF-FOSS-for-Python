@@ -2,26 +2,25 @@ from __future__ import annotations
 
 import struct
 import zlib
-from typing import Tuple, Type
 
 __all__ = (
+    "CONTENT_PARSER_RECOVERABLE",
+    "PDF_OPERATION_ERRORS",
+    "PDF_STREAM_DECODE_ERRORS",
     "AsposePdfException",
-    "PdfException",
-    "PdfParseException",
-    "InvalidPdfFileFormatException",
-    "PdfValidationException",
-    "PdfResourceLimitException",
-    "PdfSecurityException",
+    "DeprecatedFeatureException",
+    "FontEmbeddingException",
     "IncorrectCMapUsageException",
     "InvalidPasswordException",
+    "InvalidPdfFileFormatException",
     "InvalidValueFormatException",
-    "FontEmbeddingException",
+    "PdfException",
     "PdfIOException",
-    "DeprecatedFeatureException",
+    "PdfParseException",
+    "PdfResourceLimitException",
+    "PdfSecurityException",
+    "PdfValidationException",
     "UnsupportedFeatureException",
-    "PDF_OPERATION_ERRORS",
-    "CONTENT_PARSER_RECOVERABLE",
-    "PDF_STREAM_DECODE_ERRORS",
 )
 
 
@@ -122,7 +121,7 @@ class UnsupportedFeatureException(AsposePdfException, NotImplementedError):
 # bugs and unexpected failures propagate while I/O and parse errors are handled.
 # ---------------------------------------------------------------------------
 
-PDF_OPERATION_ERRORS: Tuple[Type[BaseException], ...] = (
+PDF_OPERATION_ERRORS: tuple[type[BaseException], ...] = (
     OSError,
     EOFError,
     MemoryError,
@@ -138,7 +137,7 @@ PDF_OPERATION_ERRORS: Tuple[Type[BaseException], ...] = (
     FontEmbeddingException,
 )
 
-CONTENT_PARSER_RECOVERABLE: Tuple[Type[BaseException], ...] = (
+CONTENT_PARSER_RECOVERABLE: tuple[type[BaseException], ...] = (
     ValueError,
     TypeError,
     KeyError,
@@ -146,6 +145,4 @@ CONTENT_PARSER_RECOVERABLE: Tuple[Type[BaseException], ...] = (
     AsposePdfException,
 )
 
-PDF_STREAM_DECODE_ERRORS: Tuple[Type[BaseException], ...] = PDF_OPERATION_ERRORS + (
-    RuntimeError,
-)
+PDF_STREAM_DECODE_ERRORS: tuple[type[BaseException], ...] = (*PDF_OPERATION_ERRORS, RuntimeError)

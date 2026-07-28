@@ -1,6 +1,6 @@
 # PDF Stream Filters
 import zlib
-from typing import Any, Dict, List, Union
+from typing import Any
 
 from aspose_pdf.exceptions import (
     PDF_STREAM_DECODE_ERRORS,
@@ -8,7 +8,6 @@ from aspose_pdf.exceptions import (
     PdfValidationException,
 )
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits
-
 
 try:
     from aspose_pdf.engine.ccitt import Decoder as CCITTDecoder
@@ -106,11 +105,11 @@ class StreamDecoder:
     @staticmethod
     def _apply_predictor(
         data: bytes,
-        parms: Union[Dict[str, Any], None],
+        parms: dict[str, Any] | None,
         max_output_bytes: int | None = None,
     ) -> bytes:
-        """Apply predictor post‑Flate decompression.
-        Supports TIFF (Predictor 2) and PNG (Predictor 10‑15) predictors.
+        """Apply predictor post-Flate decompression.
+        Supports TIFF (Predictor 2) and PNG (Predictor 10-15) predictors.
         """
         if not parms:
             return data
@@ -305,7 +304,7 @@ class StreamDecoder:
 
     @staticmethod
     def _decode_dct(data: bytes) -> bytes:
-        """Pass‑through for DCTDecode at the stream-filter level.
+        """Pass-through for DCTDecode at the stream-filter level.
 
         The DCT (JPEG) bytes are the canonical stored form of the image and are
         kept verbatim here so callers can re-emit them losslessly (e.g. export a
@@ -318,7 +317,7 @@ class StreamDecoder:
     @staticmethod
     def _decode_lzw(
         data: bytes,
-        parms: Union[Dict[str, Any], None] = None,
+        parms: dict[str, Any] | None = None,
         max_output_bytes: int | None = None,
     ) -> bytes:
         """Decode LZW compressed data per PDF specification.
@@ -434,7 +433,7 @@ class StreamDecoder:
     @staticmethod
     def _decode_ccitt(
         data: bytes,
-        parms: Union[Dict[str, Any], None] = None,
+        parms: dict[str, Any] | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> bytes:
         """Decode CCITTFaxDecode (Group 3/4 fax) encoded data.
@@ -477,7 +476,7 @@ class StreamDecoder:
     @staticmethod
     def _decode_jbig2(
         data: bytes,
-        parms: Union[Dict[str, Any], None] = None,
+        parms: dict[str, Any] | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> bytes:
         """Decode JBIG2 encoded data.
@@ -584,7 +583,7 @@ class StreamDecoder:
     @staticmethod
     def _decode_jpx(
         data: bytes,
-        parms: Union[Dict[str, Any], None] = None,
+        parms: dict[str, Any] | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> bytes:
         """Decode JPXDecode (JPEG 2000) stream bytes to raw pixels.
@@ -637,7 +636,7 @@ class StreamDecoder:
             return data
 
         if isinstance(filters, (bytes, str)):
-            filter_list: List[Any] = [filters]
+            filter_list: list[Any] = [filters]
         else:
             filter_list = list(filters)
 
@@ -802,7 +801,7 @@ class StreamEncoder:
 
     @staticmethod
     def _encode_lzw(
-        data: bytes, parms: Union[Dict[str, Any], None] = None
+        data: bytes, parms: dict[str, Any] | None = None
     ) -> bytes:
         """Compress with LZWDecode (variable 9-12 bit codes, MSB-first).
 
@@ -880,7 +879,7 @@ class StreamEncoder:
             return data
 
         if isinstance(filters, (bytes, str)):
-            filter_list: List[Any] = [filters]
+            filter_list: list[Any] = [filters]
         else:
             filter_list = list(filters)
 

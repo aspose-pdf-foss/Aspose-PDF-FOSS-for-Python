@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import zlib
-from typing import Dict, List
 
 from .cos import (
     PdfArray,
@@ -13,11 +12,11 @@ from .cos import (
     PdfDocument,
     PdfIndirectReference,
     PdfName,
-    PdfNumber,
     PdfNull,
+    PdfNumber,
     PdfObject,
-    PdfString,
     PdfStream,
+    PdfString,
 )
 
 
@@ -27,7 +26,7 @@ class PdfCosWriter:
     The implementation follows the basic PDF 1.7 structure:
     * Header ``%PDF-x.y``
     * Sequential indirect objects with offsets recorded
-    * Cross‑reference table (xref)
+    * Cross-reference table (xref)
     * Trailer dictionary containing at least ``/Size`` and optionally ``/Root``
     * ``startxref`` pointer and ``%%EOF`` marker
     """
@@ -66,18 +65,18 @@ class PdfCosWriter:
 
         The method tracks object offsets, builds the xref table and constructs
         the trailer. It does **not** attempt any compression or object stream
-        optimisation – the goal is a clear and correct PDF representation.
+        optimisation - the goal is a clear and correct PDF representation.
         """
         buffer = bytearray()
         # Header
         buffer.extend(f"%PDF-{self.pdf_version}\n".encode("ascii"))
 
         # Serialize objects and record byte offsets
-        offsets: Dict[int, int] = {}
+        offsets: dict[int, int] = {}
         for obj_number in sorted(self.doc.objects.keys()):
             obj = self.doc.objects[obj_number]
             offsets[obj_number] = len(buffer)
-            buffer.extend(f"{obj_number} 0 obj\n".encode("utf-8"))
+            buffer.extend(f"{obj_number} 0 obj\n".encode())
             if isinstance(obj, PdfStream):
                 # Stream content is binary: emit the raw bytes verbatim so the
                 # written length matches /Length. (Decoding to latin1 and then
@@ -94,19 +93,19 @@ class PdfCosWriter:
         xref_offset = len(buffer)
         # Size is highest object number + 1 (object 0 is the free object)
         size = max(self.doc.objects.keys(), default=0) + 1
-        buffer.extend(f"xref\n0 {size}\n".encode("utf-8"))
+        buffer.extend(f"xref\n0 {size}\n".encode())
         # Entry for object 0 (free entry)
         buffer.extend(b"0000000000 65535 f \n")
         for i in range(1, size):
             off = offsets.get(i, 0)
-            buffer.extend(f"{off:010d} 00000 n \n".encode("utf-8"))
+            buffer.extend(f"{off:010d} 00000 n \n".encode())
 
         # Trailer
         buffer.extend(b"trailer\n")
         trailer_dict = self._prepare_trailer_dict(size)
         buffer.extend(self._serialize_dictionary(trailer_dict).encode("utf-8"))
         buffer.extend(b"\n")
-        buffer.extend(f"startxref\n{xref_offset}\n%%EOF".encode("utf-8"))
+        buffer.extend(f"startxref\n{xref_offset}\n%%EOF".encode())
         return bytes(buffer)
 
     # ---------------------------------------------------------------------
@@ -152,7 +151,7 @@ class PdfCosWriter:
             (num, self.serialize_object(obj).encode("latin-1"))
             for num, obj in packable
         ]
-        header_parts: List[str] = []
+        header_parts: list[str] = []
         running = 0
         for num, data in bodies:
             header_parts.append(f"{num} {running} ")
@@ -185,7 +184,7 @@ class PdfCosWriter:
         buffer = bytearray()
         buffer.extend(f"%PDF-{version}\n".encode("ascii"))
 
-        offsets: Dict[int, int] = {}
+        offsets: dict[int, int] = {}
         unpacked_nums = [
             num
             for num in sorted(objects.keys())
@@ -193,7 +192,7 @@ class PdfCosWriter:
         ]
         for num in unpacked_nums:
             offsets[num] = len(buffer)
-            buffer.extend(f"{num} 0 obj\n".encode("utf-8"))
+            buffer.extend(f"{num} 0 obj\n".encode())
             obj = objects[num]
             if isinstance(obj, PdfStream):
                 self._extend_stream_bytes(buffer, obj)
@@ -204,7 +203,7 @@ class PdfCosWriter:
             buffer.extend(b"endobj\n")
 
         offsets[objstm_num] = len(buffer)
-        buffer.extend(f"{objstm_num} 0 obj\n".encode("utf-8"))
+        buffer.extend(f"{objstm_num} 0 obj\n".encode())
         self._extend_stream_bytes(buffer, objstm)
         buffer.extend(b"\nendobj\n")
 
@@ -214,7 +213,7 @@ class PdfCosWriter:
         size = xref_num + 1
         packed_index = {num: i for i, (num, _data) in enumerate(bodies)}
 
-        entries: List[tuple] = []
+        entries: list[tuple] = []
         for n in range(size):
             if n == 0:
                 entries.append((0, 0, 65535))
@@ -253,10 +252,10 @@ class PdfCosWriter:
                 xref_map[PdfName(key_name)] = val
         xref_stream = PdfStream(content=xref_content, mapping=xref_map)
 
-        buffer.extend(f"{xref_num} 0 obj\n".encode("utf-8"))
+        buffer.extend(f"{xref_num} 0 obj\n".encode())
         self._extend_stream_bytes(buffer, xref_stream)
         buffer.extend(b"\nendobj\n")
-        buffer.extend(f"startxref\n{xref_offset}\n%%EOF".encode("utf-8"))
+        buffer.extend(f"startxref\n{xref_offset}\n%%EOF".encode())
         return bytes(buffer)
 
     # ---------------------------------------------------------------------
@@ -299,7 +298,7 @@ class PdfCosWriter:
             return self._serialize_dictionary(obj)
         if isinstance(obj, PdfIndirectReference):
             return f"{obj.object_number} {obj.gen_number} R"
-        # Fallback – use repr (unlikely to be called)
+        # Fallback - use repr (unlikely to be called)
         return repr(obj)
 
     def _serialize_string(self, s: PdfString) -> str:
@@ -318,7 +317,7 @@ class PdfCosWriter:
         return f"[ {items} ]"
 
     def _serialize_dictionary(self, d: PdfDictionary) -> str:
-        parts: List[str] = []
+        parts: list[str] = []
         # Sort keys for deterministic output
         for key in sorted(d.mapping.keys(), key=lambda k: k.name):
             value = d.mapping[key]
@@ -327,7 +326,7 @@ class PdfCosWriter:
         return f"<< {inner} >>"
 
     def _serialize_stream(self, stream: PdfStream) -> str:
-        # Ensure Length entry is present – required for PDF readers.
+        # Ensure Length entry is present - required for PDF readers.
         length_key = PdfName("Length")
         if length_key not in stream.mapping:
             stream.mapping[length_key] = PdfNumber(len(stream.content))

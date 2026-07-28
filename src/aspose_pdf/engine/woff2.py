@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import struct
 
-from aspose_pdf.engine.woff import build_sfnt, _check_decode_limits
+from aspose_pdf.engine.woff import _check_decode_limits, build_sfnt
 from aspose_pdf.exceptions import PdfResourceLimitException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 __all__ = ["decode"]
 

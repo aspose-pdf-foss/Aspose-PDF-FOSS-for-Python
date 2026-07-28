@@ -10,25 +10,23 @@ semantics remain outside this renderer.
 from __future__ import annotations
 
 import copy
+import itertools
 import math
 import struct
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
+from typing import Any
 
 from aspose_pdf.exceptions import (
     AsposePdfException,
     PdfResourceLimitException,
     PdfValidationException,
 )
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 from .cff_outlines import CffOutlines
 from .content_stream_parser import ContentStreamParser
-from .glyph_outlines import TrueTypeOutlines
-from .shading import Shading, build_color_converter, build_function, build_shading
-from .std_font_data import load_substitute_sfnt, resolve_substitute_key
-from .type1_outlines import Type1Outlines
 from .cos import (
     PdfArray,
     PdfBoolean,
@@ -39,6 +37,7 @@ from .cos import (
     PdfStream,
     PdfString,
 )
+from .glyph_outlines import TrueTypeOutlines
 from .image_export import (
     cmyk_to_rgb,
     ext_from_magic,
@@ -47,10 +46,13 @@ from .image_export import (
     to_8bpc_bytes,
     write_png,
 )
+from .shading import Shading, build_color_converter, build_function, build_shading
+from .std_font_data import load_substitute_sfnt, resolve_substitute_key
+from .type1_outlines import Type1Outlines
 
-Matrix = Tuple[float, float, float, float, float, float]
-Point = Tuple[float, float]
-Color = Tuple[int, int, int]
+Matrix = tuple[float, float, float, float, float, float]
+Point = tuple[float, float]
+Color = tuple[int, int, int]
 
 IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
@@ -121,7 +123,7 @@ class RasterizedPage:
 @dataclass
 class _TextState:
     in_text: bool = False
-    font_name: Optional[str] = None
+    font_name: str | None = None
     font_size: float = 12.0
     leading: float = 0.0
     char_spacing: float = 0.0
@@ -153,19 +155,19 @@ class _GraphicsState:
     # per-pixel alpha map (one byte 0-255 per canvas pixel) that further
     # modulates every paint, or None. Stored as immutable ``bytes`` so the
     # per-``q`` ``deepcopy`` of the state is O(1).
-    soft_mask: Optional[bytes] = None
+    soft_mask: bytes | None = None
     # When set, paths are filled with a shading pattern: (shading, pattern matrix).
-    fill_shading: Optional[Tuple["Shading", Matrix]] = None
+    fill_shading: tuple[Shading, Matrix] | None = None
     # When set, paths are filled with a tiling pattern:
     # (pattern stream, pattern matrix, paint type, uncoloured paint colour).
-    fill_tiling: Optional[Tuple[Any, Matrix, int, Color]] = None
+    fill_tiling: tuple[Any, Matrix, int, Color] | None = None
     text: _TextState = field(default_factory=_TextState)
 
 
 @dataclass
 class _Path:
-    subpaths: List[List[Point]] = field(default_factory=list)
-    current: Optional[List[Point]] = None
+    subpaths: list[list[Point]] = field(default_factory=list)
+    current: list[Point] | None = None
 
     def move_to(self, point: Point) -> None:
         self.current = [point]
@@ -185,7 +187,7 @@ class _Path:
         self.subpaths.clear()
         self.current = None
 
-    def clone_subpaths(self) -> List[List[Point]]:
+    def clone_subpaths(self) -> list[list[Point]]:
         return [[tuple(p) for p in subpath] for subpath in self.subpaths]
 
 
@@ -212,15 +214,15 @@ class _Canvas:
         # Optional accumulated-alpha channel (0-255), allocated only for the
         # offscreen canvases used to build Alpha soft masks and to composite
         # transparency groups as a unit. None on the main page canvas.
-        self.coverage: Optional[bytearray] = None
+        self.coverage: bytearray | None = None
         # Straight-alpha storage is enabled for isolated offscreen groups. The
         # page canvas and non-isolated groups have an opaque backdrop and avoid
         # this extra allocation.
-        self.alpha: Optional[bytearray] = None
+        self.alpha: bytearray | None = None
         # Knockout groups composite each element against their initial backdrop.
         self.knockout = False
-        self.initial_pixels: Optional[bytes] = None
-        self.initial_alpha: Optional[bytes] = None
+        self.initial_pixels: bytes | None = None
+        self.initial_alpha: bytes | None = None
 
     def set_pixel(
         self,
@@ -301,7 +303,7 @@ class _GlyphFont:
     """
 
     outlines: Any  # TrueTypeOutlines | CffOutlines (duck-typed outline source)
-    code_to_gid: Callable[[int], Optional[int]]
+    code_to_gid: Callable[[int], int | None]
     width_1000: Callable[[int], float]
     bytes_per_code: int
 
@@ -335,7 +337,7 @@ def render_page(
     dpi: float = 72.0,
     scale: float = 1.0,
     background: Sequence[int] = (255, 255, 255),
-    antialias: "bool | int" = True,
+    antialias: bool | int = True,
 ) -> RasterizedPage:
     """Render ``page_index`` from a ``SimplePdf`` into an RGB raster.
 
@@ -367,7 +369,7 @@ class _PageRasterizer:
         dpi: float,
         scale: float,
         background: Sequence[int],
-        antialias: "bool | int" = True,
+        antialias: bool | int = True,
     ):
         try:
             dpi_value = float(dpi)
@@ -420,8 +422,8 @@ class _PageRasterizer:
             or scaled_height <= 0
         ):
             raise PdfValidationException("page dimensions produce invalid raster geometry")
-        self.target_width = max(1, int(math.ceil(scaled_width)))
-        self.target_height = max(1, int(math.ceil(scaled_height)))
+        self.target_width = max(1, math.ceil(scaled_width))
+        self.target_height = max(1, math.ceil(scaled_height))
         self.width = self.target_width * self._ss
         self.height = self.target_height * self._ss
         self._load_budget.check_raster_pixels(
@@ -434,13 +436,13 @@ class _PageRasterizer:
         self.background = _coerce_rgb(background)
         self.canvas = _Canvas(self.width, self.height, self.background)
         self.state = _GraphicsState()
-        self.state_stack: List[_GraphicsState] = []
+        self.state_stack: list[_GraphicsState] = []
         self.path = _Path()
-        self.pending_clip: Optional[List[List[Point]]] = None
+        self.pending_clip: list[list[Point]] | None = None
         self.resources_cos = self._page_resources_cos()
         self.resources_plain = self._page_resources_plain()
-        self._font_cache: dict[str, Optional[_GlyphFont]] = {}
-        self._color_converter_cache: dict[int, Callable[[List[float]], Color]] = {}
+        self._font_cache: dict[str, _GlyphFont | None] = {}
+        self._color_converter_cache: dict[int, Callable[[list[float]], Color]] = {}
         self._pattern_depth = 0
         # Guards against a soft-mask group that itself sets a soft mask.
         self._in_soft_mask = False
@@ -488,7 +490,7 @@ class _PageRasterizer:
                 o += 3
         return bytes(out)
 
-    def _normalize_box(self, box: Any) -> Tuple[float, float, float, float]:
+    def _normalize_box(self, box: Any) -> tuple[float, float, float, float]:
         if box is None:
             return (0.0, 0.0, 612.0, 792.0)
         if not isinstance(box, (list, tuple)) or len(box) < 4:
@@ -516,7 +518,7 @@ class _PageRasterizer:
             return contents[self.page_index]
         return b""
 
-    def _page_resources_cos(self) -> Optional[PdfDictionary]:
+    def _page_resources_cos(self) -> PdfDictionary | None:
         if not hasattr(self.pdf, "_get_page_dict") or not hasattr(
             self.pdf, "_resolve_resources_cos"
         ):
@@ -545,7 +547,7 @@ class _PageRasterizer:
     def _interpret(
         self,
         content: bytes,
-        resources_cos: Optional[PdfDictionary],
+        resources_cos: PdfDictionary | None,
         resources_plain: dict,
         *,
         depth: int,
@@ -566,7 +568,7 @@ class _PageRasterizer:
         except Exception:
             return
 
-        operands: List[Any] = []
+        operands: list[Any] = []
         for token in tokens:
             if not _is_operator(token):
                 operands.append(token)
@@ -581,8 +583,8 @@ class _PageRasterizer:
     def _handle_operator(
         self,
         op: str,
-        operands: List[Any],
-        resources_cos: Optional[PdfDictionary],
+        operands: list[Any],
+        resources_cos: PdfDictionary | None,
         resources_plain: dict,
         depth: int,
     ) -> None:
@@ -652,7 +654,7 @@ class _PageRasterizer:
             name = str(operands[-1]).lstrip("/")
             self._paint_xobject(name, resources_cos, resources_plain, depth)
 
-    def _set_color(self, op: str, operands: List[Any]) -> None:
+    def _set_color(self, op: str, operands: list[Any]) -> None:
         vals = [_number(v) for v in operands]
         nums = [v for v in vals if v is not None]
         if op in ("g", "G") and nums:
@@ -694,7 +696,7 @@ class _PageRasterizer:
         self,
         op: str,
         operand: Any,
-        resources_cos: Optional[PdfDictionary],
+        resources_cos: PdfDictionary | None,
     ) -> None:
         name = str(operand).lstrip("/")
         color_space: Any = PdfName(name)
@@ -737,7 +739,7 @@ class _PageRasterizer:
 
     def _convert_current_color(
         self,
-        components: List[float],
+        components: list[float],
         *,
         is_fill: bool,
         pattern_base: bool = False,
@@ -773,7 +775,7 @@ class _PageRasterizer:
         return (0, 0, 0)
 
     def _set_current_space_color(
-        self, op: str, operands: List[Any], resources_cos: Optional[PdfDictionary]
+        self, op: str, operands: list[Any], resources_cos: PdfDictionary | None
     ) -> None:
         is_fill = op in ("sc", "scn")
         # A trailing name operand selects a pattern: "/P0 scn" (an uncoloured
@@ -801,8 +803,8 @@ class _PageRasterizer:
     def _set_fill_pattern(
         self,
         name: str,
-        resources_cos: Optional[PdfDictionary],
-        color_nums: List[Optional[float]],
+        resources_cos: PdfDictionary | None,
+        color_nums: list[float | None],
     ) -> None:
         self.state.fill_shading = None
         self.state.fill_tiling = None
@@ -855,7 +857,7 @@ class _PageRasterizer:
     def _apply_extgstate(
         self,
         operand: Any,
-        resources_cos: Optional[PdfDictionary],
+        resources_cos: PdfDictionary | None,
         resources_plain: dict,
     ) -> None:
         name = str(operand).lstrip("/")
@@ -919,7 +921,7 @@ class _PageRasterizer:
                 if overprint_mode in (0, 1):
                     self.state.overprint_mode = overprint_mode
 
-    def _blend_mode(self, obj: Any) -> Optional[str]:
+    def _blend_mode(self, obj: Any) -> str | None:
         names = self._blend_mode_names(obj)
         if not names:
             return None
@@ -929,10 +931,10 @@ class _PageRasterizer:
                 return mode
         return "Normal"
 
-    def _blend_mode_names(self, obj: Any) -> List[str]:
+    def _blend_mode_names(self, obj: Any) -> list[str]:
         obj = self._resolve(obj)
         if isinstance(obj, PdfArray):
-            names: List[str] = []
+            names: list[str] = []
             for item in obj.items:
                 names.extend(self._blend_mode_names(item))
             return names
@@ -944,7 +946,7 @@ class _PageRasterizer:
         name = self._cos_name(obj)
         return [name] if name is not None else []
 
-    def _append_path(self, op: str, operands: List[Any]) -> None:
+    def _append_path(self, op: str, operands: list[Any]) -> None:
         if op == "m":
             vals = _last_numbers(operands, 2)
             if vals:
@@ -976,7 +978,7 @@ class _PageRasterizer:
         if op in ("c", "v", "y"):
             self._append_curve(op, operands)
 
-    def _append_curve(self, op: str, operands: List[Any]) -> None:
+    def _append_curve(self, op: str, operands: list[Any]) -> None:
         if self.path.current is None or not self.path.current:
             return
         p0 = self.path.current[-1]
@@ -1029,7 +1031,7 @@ class _PageRasterizer:
         self.path.clear()
 
     def _fill_subpaths(
-        self, subpaths: Iterable[List[Point]], color: Color, alpha: float
+        self, subpaths: Iterable[list[Point]], color: Color, alpha: float
     ) -> None:
         for subpath in subpaths:
             polygon = [self._user_to_pixel(x, y) for x, y in subpath]
@@ -1037,8 +1039,8 @@ class _PageRasterizer:
 
     def _fill_tiling(
         self,
-        subpaths: List[List[Point]],
-        fill_tiling: Tuple[Any, Matrix, int, Color],
+        subpaths: list[list[Point]],
+        fill_tiling: tuple[Any, Matrix, int, Color],
         depth: int,
     ) -> None:
         if self._pattern_depth >= 4 or depth > 6:
@@ -1111,12 +1113,12 @@ class _PageRasterizer:
 
     def _tile_lattice(
         self,
-        polys: List[List[Point]],
+        polys: list[list[Point]],
         inv: Matrix,
-        bbox: Tuple[float, float, float, float],
+        bbox: tuple[float, float, float, float],
         xstep: float,
         ystep: float,
-    ) -> Optional[Tuple[int, int, int, int]]:
+    ) -> tuple[int, int, int, int] | None:
         """Return the inclusive ``(i_lo, i_hi, j_lo, j_hi)`` tile range to draw."""
         xs = [p[0] for poly in polys for p in poly]
         ys = [p[1] for poly in polys for p in poly]
@@ -1126,8 +1128,8 @@ class _PageRasterizer:
             (max(xs), max(ys)),
             (min(xs), max(ys)),
         )
-        pat_xs: List[float] = []
-        pat_ys: List[float] = []
+        pat_xs: list[float] = []
+        pat_ys: list[float] = []
         for dx, dy in dev:
             ux, uy = self._pixel_to_user(dx, dy)
             sx, sy = _transform_point(inv, ux, uy)
@@ -1138,15 +1140,15 @@ class _PageRasterizer:
         i1 = (max(pat_xs) - bx0) / xstep
         j0 = (min(pat_ys) - by1) / ystep
         j1 = (max(pat_ys) - by0) / ystep
-        i_lo, i_hi = int(math.floor(min(i0, i1))), int(math.ceil(max(i0, i1)))
-        j_lo, j_hi = int(math.floor(min(j0, j1))), int(math.ceil(max(j0, j1)))
+        i_lo, i_hi = math.floor(min(i0, i1)), math.ceil(max(i0, i1))
+        j_lo, j_hi = math.floor(min(j0, j1)), math.ceil(max(j0, j1))
         if (i_hi - i_lo + 1) * (j_hi - j_lo + 1) > 4096:
             return None  # too many tiles; skip rather than stall
         return i_lo, i_hi, j_lo, j_hi
 
     def _cos_rect(
         self, obj: Any
-    ) -> Optional[Tuple[float, float, float, float]]:
+    ) -> tuple[float, float, float, float] | None:
         obj = self._resolve(obj)
         if not isinstance(obj, PdfArray) or len(obj.items) < 4:
             return None
@@ -1158,8 +1160,8 @@ class _PageRasterizer:
 
     def _fill_subpaths_shading(
         self,
-        subpaths: Iterable[List[Point]],
-        fill_shading: Tuple["Shading", Matrix],
+        subpaths: Iterable[list[Point]],
+        fill_shading: tuple[Shading, Matrix],
         alpha: float,
     ) -> None:
         shading, matrix = fill_shading
@@ -1172,19 +1174,19 @@ class _PageRasterizer:
 
     def _fill_polygon_shading(
         self,
-        polygon: List[Point],
-        shading: "Shading",
+        polygon: list[Point],
+        shading: Shading,
         to_shading: Matrix,
         alpha: float,
     ) -> None:
         if len(polygon) < 3:
             return
         ys = [p[1] for p in polygon]
-        min_y = max(0, int(math.floor(min(ys))))
-        max_y = min(self.height - 1, int(math.ceil(max(ys))))
+        min_y = max(0, math.floor(min(ys)))
+        max_y = min(self.height - 1, math.ceil(max(ys)))
         for y in range(min_y, max_y + 1):
             scan_y = y + 0.5
-            nodes: List[float] = []
+            nodes: list[float] = []
             for p0, p1 in zip(polygon, polygon[1:] + polygon[:1]):
                 x0, y0 = p0
                 x1, y1 = p1
@@ -1193,8 +1195,8 @@ class _PageRasterizer:
                         nodes.append(x0 + (scan_y - y0) * (x1 - x0) / (y1 - y0))
             nodes.sort()
             for i in range(0, len(nodes) - 1, 2):
-                x_start = max(0, int(math.floor(nodes[i])))
-                x_end = min(self.width - 1, int(math.ceil(nodes[i + 1])))
+                x_start = max(0, math.floor(nodes[i]))
+                x_end = min(self.width - 1, math.ceil(nodes[i + 1]))
                 self._shade_span(
                     y,
                     x_start,
@@ -1205,7 +1207,7 @@ class _PageRasterizer:
                     use_background=True,
                 )
 
-    def _paint_sh(self, name: str, resources_cos: Optional[PdfDictionary]) -> None:
+    def _paint_sh(self, name: str, resources_cos: PdfDictionary | None) -> None:
         """Paint a shading (the ``sh`` operator) over the current clip region."""
         if resources_cos is None:
             return
@@ -1229,7 +1231,7 @@ class _PageRasterizer:
         alpha = self.state.fill_alpha
         for y in range(self.height):
             row = y * width
-            start: Optional[int] = None
+            start: int | None = None
             for x in range(width):
                 if clip[row + x]:
                     if start is None:
@@ -1245,7 +1247,7 @@ class _PageRasterizer:
         y: int,
         x_start: int,
         x_end: int,
-        shading: "Shading",
+        shading: Shading,
         to_shading: Matrix,
         alpha: float,
         *,
@@ -1276,7 +1278,7 @@ class _PageRasterizer:
         alpha: float,
         *,
         stroke: bool = False,
-        color_kind: Optional[str] = None,
+        color_kind: str | None = None,
     ) -> None:
         """Composite one pixel, modulating alpha by the active soft mask.
 
@@ -1310,7 +1312,7 @@ class _PageRasterizer:
         )
 
     def _stroke_subpaths(
-        self, subpaths: Iterable[List[Point]], color: Color, alpha: float
+        self, subpaths: Iterable[list[Point]], color: Color, alpha: float
     ) -> None:
         px_width = max(1.0, self.state.line_width * self.point_scale)
         radius = max(0.5, px_width / 2.0)
@@ -1318,22 +1320,22 @@ class _PageRasterizer:
             if len(subpath) < 2:
                 continue
             pts = [self._user_to_pixel(x, y) for x, y in subpath]
-            for p0, p1 in zip(pts, pts[1:]):
+            for p0, p1 in itertools.pairwise(pts):
                 self._stroke_segment_pixels(p0, p1, radius, color, alpha)
 
     def _fill_polygon_pixels(
-        self, polygon: List[Point], color: Color, alpha: float
+        self, polygon: list[Point], color: Color, alpha: float
     ) -> None:
         if len(polygon) < 3:
             return
         ys = [p[1] for p in polygon]
-        min_y = max(0, int(math.floor(min(ys))))
-        max_y = min(self.height - 1, int(math.ceil(max(ys))))
+        min_y = max(0, math.floor(min(ys)))
+        max_y = min(self.height - 1, math.ceil(max(ys)))
         if min_y > max_y:
             return
         for y in range(min_y, max_y + 1):
             scan_y = y + 0.5
-            nodes: List[float] = []
+            nodes: list[float] = []
             for p0, p1 in zip(polygon, polygon[1:] + polygon[:1]):
                 x0, y0 = p0
                 x1, y1 = p1
@@ -1342,8 +1344,8 @@ class _PageRasterizer:
                         nodes.append(x0 + (scan_y - y0) * (x1 - x0) / (y1 - y0))
             nodes.sort()
             for i in range(0, len(nodes) - 1, 2):
-                x_start = max(0, int(math.floor(nodes[i])))
-                x_end = min(self.width - 1, int(math.ceil(nodes[i + 1])))
+                x_start = max(0, math.floor(nodes[i]))
+                x_end = min(self.width - 1, math.ceil(nodes[i + 1]))
                 for x in range(x_start, x_end + 1):
                     self._composite_pixel(x, y, color, alpha)
 
@@ -1352,10 +1354,10 @@ class _PageRasterizer:
     ) -> None:
         x0, y0 = p0
         x1, y1 = p1
-        min_x = max(0, int(math.floor(min(x0, x1) - radius)))
-        max_x = min(self.width - 1, int(math.ceil(max(x0, x1) + radius)))
-        min_y = max(0, int(math.floor(min(y0, y1) - radius)))
-        max_y = min(self.height - 1, int(math.ceil(max(y0, y1) + radius)))
+        min_x = max(0, math.floor(min(x0, x1) - radius))
+        max_x = min(self.width - 1, math.ceil(max(x0, x1) + radius))
+        min_y = max(0, math.floor(min(y0, y1) - radius))
+        max_y = min(self.height - 1, math.ceil(max(y0, y1) + radius))
         if min_x > max_x or min_y > max_y:
             return
         dx = x1 - x0
@@ -1375,7 +1377,7 @@ class _PageRasterizer:
                 if (px - cx) * (px - cx) + (py - cy) * (py - cy) <= rr:
                     self._composite_pixel(x, y, color, alpha, stroke=True)
 
-    def _apply_clip(self, subpaths: List[List[Point]]) -> None:
+    def _apply_clip(self, subpaths: list[list[Point]]) -> None:
         if not subpaths:
             return
         next_clip = bytearray(b"\x00" * (self.width * self.height))
@@ -1385,15 +1387,15 @@ class _PageRasterizer:
         for i, val in enumerate(next_clip):
             self.canvas.clip[i] = 1 if self.canvas.clip[i] and val else 0
 
-    def _rasterize_clip_polygon(self, polygon: List[Point], mask: bytearray) -> None:
+    def _rasterize_clip_polygon(self, polygon: list[Point], mask: bytearray) -> None:
         if len(polygon) < 3:
             return
         ys = [p[1] for p in polygon]
-        min_y = max(0, int(math.floor(min(ys))))
-        max_y = min(self.height - 1, int(math.ceil(max(ys))))
+        min_y = max(0, math.floor(min(ys)))
+        max_y = min(self.height - 1, math.ceil(max(ys)))
         for y in range(min_y, max_y + 1):
             scan_y = y + 0.5
-            nodes: List[float] = []
+            nodes: list[float] = []
             for p0, p1 in zip(polygon, polygon[1:] + polygon[:1]):
                 x0, y0 = p0
                 x1, y1 = p1
@@ -1402,8 +1404,8 @@ class _PageRasterizer:
                         nodes.append(x0 + (scan_y - y0) * (x1 - x0) / (y1 - y0))
             nodes.sort()
             for i in range(0, len(nodes) - 1, 2):
-                x_start = max(0, int(math.floor(nodes[i])))
-                x_end = min(self.width - 1, int(math.ceil(nodes[i + 1])))
+                x_start = max(0, math.floor(nodes[i]))
+                x_end = min(self.width - 1, math.ceil(nodes[i + 1]))
                 row = y * self.width
                 for x in range(x_start, x_end + 1):
                     mask[row + x] = 1
@@ -1411,8 +1413,8 @@ class _PageRasterizer:
     def _handle_text(
         self,
         op: str,
-        operands: List[Any],
-        resources_cos: Optional[PdfDictionary],
+        operands: list[Any],
+        resources_cos: PdfDictionary | None,
         resources_plain: dict,
     ) -> None:
         text = self.state.text
@@ -1505,7 +1507,7 @@ class _PageRasterizer:
     def _show_text(
         self,
         raw: Any,
-        resources_cos: Optional[PdfDictionary],
+        resources_cos: PdfDictionary | None,
         resources_plain: dict,
     ) -> None:
         text = self.state.text
@@ -1553,7 +1555,7 @@ class _PageRasterizer:
                 (1.0, 0.0, 0.0, 1.0, advance, 0.0), text.text_matrix
             )
 
-    def _fill_glyph(self, contours: List[List[Point]], units_per_em: int) -> None:
+    def _fill_glyph(self, contours: list[list[Point]], units_per_em: int) -> None:
         """Fill a glyph's font-unit contours through the text/CTM transform."""
         text = self.state.text
         if units_per_em <= 0 or text.font_size == 0:
@@ -1572,7 +1574,7 @@ class _PageRasterizer:
         base = _multiply(
             _multiply(self.state.ctm, text.text_matrix), glyph_to_text
         )
-        pixel_contours: List[List[Point]] = []
+        pixel_contours: list[list[Point]] = []
         for contour in contours:
             polygon = []
             for gx, gy in contour:
@@ -1586,7 +1588,7 @@ class _PageRasterizer:
             )
 
     def _fill_contours_nonzero(
-        self, contours: List[List[Point]], color: Color, alpha: float
+        self, contours: list[list[Point]], color: Color, alpha: float
     ) -> None:
         """Scanline-fill multiple contours together using the nonzero rule.
 
@@ -1597,11 +1599,11 @@ class _PageRasterizer:
         ys = [p[1] for contour in contours for p in contour]
         if not ys:
             return
-        min_y = max(0, int(math.floor(min(ys))))
-        max_y = min(self.height - 1, int(math.ceil(max(ys))))
+        min_y = max(0, math.floor(min(ys)))
+        max_y = min(self.height - 1, math.ceil(max(ys)))
         for y in range(min_y, max_y + 1):
             scan_y = y + 0.5
-            crossings: List[Tuple[float, int]] = []
+            crossings: list[tuple[float, int]] = []
             for contour in contours:
                 n = len(contour)
                 for i in range(n):
@@ -1621,13 +1623,13 @@ class _PageRasterizer:
                 if winding == 0:
                     continue
                 xa, xb = crossings[i][0], crossings[i + 1][0]
-                x_start = int(math.ceil(xa - 0.5))
-                x_end = int(math.floor(xb - 0.5))
+                x_start = math.ceil(xa - 0.5)
+                x_end = math.floor(xb - 0.5)
                 if x_end < x_start:
                     # Sub-pixel span: keep one pixel so thin stems do not drop out.
                     if xb <= xa:
                         continue
-                    x_start = x_end = int(math.floor((xa + xb) / 2.0))
+                    x_start = x_end = math.floor((xa + xb) / 2.0)
                 x_start = max(0, x_start)
                 x_end = min(self.width - 1, x_end)
                 for x in range(x_start, x_end + 1):
@@ -1653,8 +1655,8 @@ class _PageRasterizer:
     # -- embedded TrueType font resolution --------------------------------
 
     def _resolve_glyph_font(
-        self, name: Optional[str], resources_cos: Optional[PdfDictionary]
-    ) -> Optional[_GlyphFont]:
+        self, name: str | None, resources_cos: PdfDictionary | None
+    ) -> _GlyphFont | None:
         if name is None or resources_cos is None:
             return None
         if name in self._font_cache:
@@ -1668,7 +1670,7 @@ class _PageRasterizer:
 
     def _build_glyph_font(
         self, name: str, resources_cos: PdfDictionary
-    ) -> Optional[_GlyphFont]:
+    ) -> _GlyphFont | None:
         fonts = self._resource_dict(resources_cos, "Font")
         if fonts is None:
             return None
@@ -1680,7 +1682,7 @@ class _PageRasterizer:
             return self._build_type0_font(font_dict)
         if subtype not in ("TrueType", "Type1", "MMType1"):
             return None
-        font: Optional[_GlyphFont] = None
+        font: _GlyphFont | None = None
         if subtype == "TrueType":
             font = self._build_simple_truetype_font(font_dict)
         else:  # Type1 / MMType1
@@ -1700,12 +1702,12 @@ class _PageRasterizer:
 
     def _build_substitute_font(
         self, font_dict: PdfDictionary
-    ) -> Optional[_GlyphFont]:
+    ) -> _GlyphFont | None:
         base = self._cos_name(font_dict.mapping.get(PdfName("BaseFont")))
         descriptor = self._resolve(font_dict.mapping.get(PdfName("FontDescriptor")))
         flags = 0
         italic_angle = 0.0
-        font_weight: Optional[float] = None
+        font_weight: float | None = None
         if isinstance(descriptor, PdfDictionary):
             f = self._cos_number(descriptor.mapping.get(PdfName("Flags")))
             if f is not None:
@@ -1731,7 +1733,7 @@ class _PageRasterizer:
 
     def _substitute_code_to_gid(
         self, font_dict: PdfDictionary, outlines: TrueTypeOutlines, key: str
-    ) -> Callable[[int], Optional[int]]:
+    ) -> Callable[[int], int | None]:
         from .font_subset import read_unicode_cmap
         from .std_font_data import substitute_code_to_unicode
 
@@ -1759,7 +1761,7 @@ class _PageRasterizer:
             except Exception:
                 pass
 
-        def resolve(code: int, _uni=uni, _c2u=code_to_unicode) -> Optional[int]:
+        def resolve(code: int, _uni=uni, _c2u=code_to_unicode) -> int | None:
             cp = _c2u.get(code)
             if cp is not None and _uni:
                 gid = _uni.get(cp)
@@ -1773,7 +1775,7 @@ class _PageRasterizer:
 
         return resolve
 
-    def _build_type0_font(self, font_dict: PdfDictionary) -> Optional[_GlyphFont]:
+    def _build_type0_font(self, font_dict: PdfDictionary) -> _GlyphFont | None:
         encoding = self._cos_name(font_dict.mapping.get(PdfName("Encoding")))
         if encoding not in ("Identity-H", "Identity-V", "Identity"):
             return None  # Named CMaps are not decoded yet; fall back to boxes.
@@ -1805,7 +1807,7 @@ class _PageRasterizer:
 
     def _build_simple_cff_font(
         self, font_dict: PdfDictionary
-    ) -> Optional[_GlyphFont]:
+    ) -> _GlyphFont | None:
         descriptor = self._resolve(font_dict.mapping.get(PdfName("FontDescriptor")))
         program = self._load_fontfile3(descriptor)
         if not program:
@@ -1822,7 +1824,7 @@ class _PageRasterizer:
         width_1000 = self._simple_widths(font_dict, outlines, code_to_gid)
         return _GlyphFont(outlines, code_to_gid, width_1000, bytes_per_code=1)
 
-    def _cff_cid_to_gid(self, program: bytes) -> Callable[[int], Optional[int]]:
+    def _cff_cid_to_gid(self, program: bytes) -> Callable[[int], int | None]:
         from .font_subset_cff import cff_charset_cid_to_gid
 
         charset = cff_charset_cid_to_gid(program)
@@ -1832,7 +1834,7 @@ class _PageRasterizer:
 
     def _build_type1_font(
         self, font_dict: PdfDictionary, descriptor: PdfDictionary
-    ) -> Optional[_GlyphFont]:
+    ) -> _GlyphFont | None:
         loaded = self._load_fontfile1(descriptor)
         if loaded is None:
             return None
@@ -1848,7 +1850,7 @@ class _PageRasterizer:
 
     def _load_fontfile1(
         self, descriptor: PdfDictionary
-    ) -> Optional[Tuple[bytes, Optional[int], Optional[int]]]:
+    ) -> tuple[bytes, int | None, int | None] | None:
         ref = descriptor.mapping.get(PdfName("FontFile"))
         stream = self._resolve(ref)
         if not isinstance(stream, PdfStream):
@@ -1871,7 +1873,7 @@ class _PageRasterizer:
 
     def _type1_code_to_gid(
         self, font_dict: PdfDictionary, outlines: Type1Outlines
-    ) -> Callable[[int], Optional[int]]:
+    ) -> Callable[[int], int | None]:
         # Resolve a code to a glyph name through the font's built-in encoding,
         # overlaid by any PDF /Encoding /Differences, then to a synthetic gid.
         code_to_name = dict(outlines.builtin_encoding)
@@ -1889,7 +1891,7 @@ class _PageRasterizer:
                         current += 1
         name_to_gid = outlines.name_to_gid
 
-        def resolve(code: int, _c2n=code_to_name, _n2g=name_to_gid) -> Optional[int]:
+        def resolve(code: int, _c2n=code_to_name, _n2g=name_to_gid) -> int | None:
             name = _c2n.get(code)
             return _n2g.get(name) if name is not None else None
 
@@ -1897,7 +1899,7 @@ class _PageRasterizer:
 
     def _build_simple_truetype_font(
         self, font_dict: PdfDictionary
-    ) -> Optional[_GlyphFont]:
+    ) -> _GlyphFont | None:
         descriptor = self._resolve(font_dict.mapping.get(PdfName("FontDescriptor")))
         outlines = self._load_truetype_outlines(descriptor)
         if outlines is None:
@@ -1908,7 +1910,7 @@ class _PageRasterizer:
 
     def _load_truetype_outlines(
         self, descriptor: Any
-    ) -> Optional[TrueTypeOutlines]:
+    ) -> TrueTypeOutlines | None:
         if not isinstance(descriptor, PdfDictionary):
             return None
         program = self._load_fontfile2(descriptor)
@@ -1917,17 +1919,17 @@ class _PageRasterizer:
         outlines = TrueTypeOutlines(program)
         return outlines if outlines.ok else None
 
-    def _load_fontfile2(self, descriptor: PdfDictionary) -> Optional[bytes]:
+    def _load_fontfile2(self, descriptor: PdfDictionary) -> bytes | None:
         return self._load_font_program(descriptor, "FontFile2")
 
-    def _load_fontfile3(self, descriptor: Any) -> Optional[bytes]:
+    def _load_fontfile3(self, descriptor: Any) -> bytes | None:
         if not isinstance(descriptor, PdfDictionary):
             return None
         return self._load_font_program(descriptor, "FontFile3")
 
     def _load_font_program(
         self, descriptor: PdfDictionary, key: str
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         ref = descriptor.mapping.get(PdfName(key))
         stream = self._resolve(ref)
         if not isinstance(stream, PdfStream):
@@ -1941,7 +1943,7 @@ class _PageRasterizer:
                 pass
         return stream.content
 
-    def _cid_to_gid(self, cidfont: PdfDictionary) -> Callable[[int], Optional[int]]:
+    def _cid_to_gid(self, cidfont: PdfDictionary) -> Callable[[int], int | None]:
         if hasattr(self.pdf, "_build_cid_to_gid"):
             try:
                 return self.pdf._build_cid_to_gid(cidfont)
@@ -2014,7 +2016,7 @@ class _PageRasterizer:
 
     def _simple_code_to_gid(
         self, font_dict: PdfDictionary, outlines: TrueTypeOutlines
-    ) -> Callable[[int], Optional[int]]:
+    ) -> Callable[[int], int | None]:
         from .font_subset import read_symbol_code_to_gid, read_unicode_cmap
 
         program = outlines._data
@@ -2034,7 +2036,7 @@ class _PageRasterizer:
             _sym=symbol,
             _uni=unicode_map,
             _c2u=code_to_unicode,
-        ) -> Optional[int]:
+        ) -> int | None:
             # Prefer the PDF /Encoding (code -> unicode) through the font's
             # Unicode cmap; then a symbol cmap; then the code as a codepoint.
             if _uni and code in _c2u:
@@ -2057,7 +2059,7 @@ class _PageRasterizer:
         self,
         font_dict: PdfDictionary,
         outlines: TrueTypeOutlines,
-        code_to_gid: Callable[[int], Optional[int]],
+        code_to_gid: Callable[[int], int | None],
     ) -> Callable[[int], float]:
         first = self._cos_number(font_dict.mapping.get(PdfName("FirstChar")))
         widths_arr = self._resolve(font_dict.mapping.get(PdfName("Widths")))
@@ -2085,7 +2087,7 @@ class _PageRasterizer:
     def _paint_xobject(
         self,
         name: str,
-        resources_cos: Optional[PdfDictionary],
+        resources_cos: PdfDictionary | None,
         resources_plain: dict,
         depth: int,
     ) -> None:
@@ -2140,7 +2142,7 @@ class _PageRasterizer:
 
     def _decode_image_smask(
         self, stream: PdfStream
-    ) -> Optional[Tuple[int, int, bytes]]:
+    ) -> tuple[int, int, bytes] | None:
         """Decode an image XObject's ``/SMask`` to a ``(w, h, alpha-bytes)`` map.
 
         The soft mask is a DeviceGray image giving per-pixel alpha (0 fully
@@ -2171,9 +2173,9 @@ class _PageRasterizer:
     def _build_soft_mask(
         self,
         smask: Any,
-        resources_cos: Optional[PdfDictionary],
+        resources_cos: PdfDictionary | None,
         resources_plain: dict,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Build a device-space soft mask from an ExtGState ``/SMask`` entry.
 
         ``/SMask /None`` (or anything without a ``/G`` group) clears the mask. A
@@ -2233,7 +2235,7 @@ class _PageRasterizer:
                 return _gray(comps[0])
         return (0, 0, 0)  # default luminosity backdrop is black
 
-    def _build_transfer_lut(self, tr: Any) -> Optional[List[int]]:
+    def _build_transfer_lut(self, tr: Any) -> list[int] | None:
         tr = self._resolve(tr)
         if tr is None or (
             isinstance(tr, PdfName) and tr.name.lstrip("/") in ("Identity", "Default")
@@ -2252,7 +2254,7 @@ class _PageRasterizer:
             fn = None
         if fn is None:
             return None
-        lut: List[int] = []
+        lut: list[int] = []
         for v in range(256):
             try:
                 out = fn.eval(v / 255.0)
@@ -2270,11 +2272,11 @@ class _PageRasterizer:
         ref: Any,
         background: Color,
         track_coverage: bool,
-        seed_pixels: Optional[bytes] = None,
+        seed_pixels: bytes | None = None,
         *,
         isolated: bool = False,
         knockout: bool = False,
-    ) -> "_Canvas":
+    ) -> _Canvas:
         """Render a form XObject into a fresh canvas at the current CTM.
 
         Used for soft-mask groups and unit-composited transparency groups. The
@@ -2341,7 +2343,7 @@ class _PageRasterizer:
         self,
         stream: PdfStream,
         ref: Any,
-        parent_resources_cos: Optional[PdfDictionary],
+        parent_resources_cos: PdfDictionary | None,
         parent_resources_plain: dict,
         depth: int,
         *,
@@ -2394,7 +2396,7 @@ class _PageRasterizer:
 
     def _form_device_bbox(
         self, stream: PdfStream, matrix: Matrix
-    ) -> Optional[Tuple[int, int, int, int]]:
+    ) -> tuple[int, int, int, int] | None:
         bbox = self._resolve(stream.mapping.get(PdfName("BBox")))
         if not isinstance(bbox, PdfArray) or len(bbox.items) < 4:
             return None
@@ -2404,16 +2406,16 @@ class _PageRasterizer:
         dev = [
             self._user_to_pixel(*_transform_point(full, ux, uy)) for ux, uy in corners
         ]
-        min_x = max(0, int(math.floor(min(p[0] for p in dev))))
-        max_x = min(self.width - 1, int(math.ceil(max(p[0] for p in dev))))
-        min_y = max(0, int(math.floor(min(p[1] for p in dev))))
-        max_y = min(self.height - 1, int(math.ceil(max(p[1] for p in dev))))
+        min_x = max(0, math.floor(min(p[0] for p in dev)))
+        max_x = min(self.width - 1, math.ceil(max(p[0] for p in dev)))
+        min_y = max(0, math.floor(min(p[1] for p in dev)))
+        max_y = min(self.height - 1, math.ceil(max(p[1] for p in dev)))
         if min_x > max_x or min_y > max_y:
             return None
         return (min_x, min_y, max_x, max_y)
 
     def _paint_group_composited(
-        self, stream: PdfStream, ref: Any, region: Tuple[int, int, int, int]
+        self, stream: PdfStream, ref: Any, region: tuple[int, int, int, int]
     ) -> None:
         """Render a transparency group offscreen and composite it as a unit.
 
@@ -2477,7 +2479,7 @@ class _PageRasterizer:
         meta: dict,
         data: bytes,
         matrix: Matrix,
-        smask: Optional[Tuple[int, int, bytes]] = None,
+        smask: tuple[int, int, bytes] | None = None,
     ) -> None:
         image = _decode_image_to_rgb(meta, data, limits=self._load_limits)
         if image is None:
@@ -2498,10 +2500,10 @@ class _PageRasterizer:
             _transform_point(matrix, 0.0, 1.0),
         ]
         dev = [self._user_to_pixel(x, y) for x, y in corners]
-        min_x = max(0, int(math.floor(min(p[0] for p in dev))))
-        max_x = min(self.width - 1, int(math.ceil(max(p[0] for p in dev))))
-        min_y = max(0, int(math.floor(min(p[1] for p in dev))))
-        max_y = min(self.height - 1, int(math.ceil(max(p[1] for p in dev))))
+        min_x = max(0, math.floor(min(p[0] for p in dev)))
+        max_x = min(self.width - 1, math.ceil(max(p[0] for p in dev)))
+        min_y = max(0, math.floor(min(p[1] for p in dev)))
+        max_y = min(self.height - 1, math.ceil(max(p[1] for p in dev)))
         if min_x > max_x or min_y > max_y:
             return
         for py in range(min_y, max_y + 1):
@@ -2563,7 +2565,7 @@ class _PageRasterizer:
 
     def _colorspace_meta(
         self, cs: Any
-    ) -> Tuple[str, Optional[int], Optional[bytes], Optional[int]]:
+    ) -> tuple[str, int | None, bytes | None, int | None]:
         cs = self._resolve(cs)
         if isinstance(cs, PdfName):
             name = cs.name.lstrip("/")
@@ -2600,7 +2602,7 @@ class _PageRasterizer:
                     return (kind, n_int or None, None, None)
         return ("rgb", 3, None, None)
 
-    def _terminal_filter(self, filt: Any) -> Optional[str]:
+    def _terminal_filter(self, filt: Any) -> str | None:
         filt = self._resolve(filt)
         if isinstance(filt, PdfName):
             return filt.name.lstrip("/")
@@ -2610,7 +2612,7 @@ class _PageRasterizer:
 
     def _resource_dict(
         self, resources: PdfDictionary, name: str
-    ) -> Optional[PdfDictionary]:
+    ) -> PdfDictionary | None:
         obj = self._resolve(resources.mapping.get(PdfName(name)))
         return obj if isinstance(obj, PdfDictionary) else None
 
@@ -2623,7 +2625,7 @@ class _PageRasterizer:
             return self.pdf._cos_doc.objects.get(obj.object_number)
         return obj
 
-    def _cos_number(self, obj: Any) -> Optional[float]:
+    def _cos_number(self, obj: Any) -> float | None:
         obj = self._resolve(obj)
         if isinstance(obj, PdfNumber):
             return float(obj.value)
@@ -2631,7 +2633,7 @@ class _PageRasterizer:
             return float(obj)
         return None
 
-    def _cos_name(self, obj: Any) -> Optional[str]:
+    def _cos_name(self, obj: Any) -> str | None:
         obj = self._resolve(obj)
         if isinstance(obj, PdfName):
             return obj.name.lstrip("/")
@@ -2701,7 +2703,7 @@ def _decode_image_to_rgb(
     data: bytes,
     *,
     limits: PdfLoadLimits | None = None,
-) -> Optional[Tuple[int, int, bytes]]:
+) -> tuple[int, int, bytes] | None:
     resolved_limits = _coerce_limits(limits)
     budget = _LoadBudget(resolved_limits)
     width = int(meta.get("width") or 0)
@@ -2770,8 +2772,8 @@ def _write_tiff_rgb(width: int, height: int, pixels: bytes, dpi: float) -> bytes
         return off
 
     bits_off = add_extra(struct.pack("<3H", 8, 8, 8))
-    xres_off = add_extra(struct.pack("<II", max(1, int(round(dpi))), 1))
-    yres_off = add_extra(struct.pack("<II", max(1, int(round(dpi))), 1))
+    xres_off = add_extra(struct.pack("<II", max(1, round(dpi)), 1))
+    yres_off = add_extra(struct.pack("<II", max(1, round(dpi)), 1))
     pixel_off = extra_offset + len(data)
     byte_count = len(pixels)
 
@@ -2815,7 +2817,7 @@ def _byte(value: float | int) -> int:
     return int(max(0, min(255, round(float(value)))))
 
 
-def _normalize_blend_mode(name: str) -> Optional[str]:
+def _normalize_blend_mode(name: str) -> str | None:
     return _BLEND_MODES.get(name.lstrip("/").lower())
 
 
@@ -2890,7 +2892,7 @@ def _saturation(color: Sequence[float]) -> float:
     return max(color) - min(color)
 
 
-def _clip_color(color: Sequence[float]) -> Tuple[float, float, float]:
+def _clip_color(color: Sequence[float]) -> tuple[float, float, float]:
     result = [float(component) for component in color]
     lum = _luminosity(result)
     minimum = min(result)
@@ -2908,14 +2910,14 @@ def _clip_color(color: Sequence[float]) -> Tuple[float, float, float]:
 
 def _set_lum(
     color: Sequence[float], luminosity: float
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     delta = luminosity - _luminosity(color)
     return _clip_color(tuple(component + delta for component in color))
 
 
 def _set_sat(
     color: Sequence[float], saturation: float
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     order = sorted(range(3), key=lambda index: color[index])
     low, middle, high = order
     result = [float(component) for component in color]
@@ -2956,13 +2958,13 @@ def _is_operator(token: Any) -> bool:
     )
 
 
-def _number(value: Any) -> Optional[float]:
+def _number(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
 
 
-def _last_numbers(operands: Sequence[Any], count: int) -> Optional[List[float]]:
+def _last_numbers(operands: Sequence[Any], count: int) -> list[float] | None:
     if len(operands) < count:
         return None
     vals = [_number(v) for v in operands[-count:]]
@@ -2986,7 +2988,7 @@ def _transform_point(m: Matrix, x: float, y: float) -> Point:
     return (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
 
 
-def _invert_matrix(m: Matrix) -> Optional[Matrix]:
+def _invert_matrix(m: Matrix) -> Matrix | None:
     a, b, c, d, e, f = m
     det = a * d - b * c
     if abs(det) < 1e-12:
@@ -3014,7 +3016,7 @@ def _bezier(p0: Point, p1: Point, p2: Point, p3: Point, t: float) -> Point:
     )
 
 
-def _cos_matrix(obj: Any) -> Optional[Matrix]:
+def _cos_matrix(obj: Any) -> Matrix | None:
     if isinstance(obj, PdfArray) and len(obj.items) >= 6:
         vals = []
         for item in obj.items[:6]:

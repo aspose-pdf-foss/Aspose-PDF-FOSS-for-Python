@@ -21,17 +21,18 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import ClassVar
 
 from aspose_pdf.engine.sfnt import parse_faces
 from aspose_pdf.exceptions import FontEmbeddingException
 from aspose_pdf.font_registry import FontDescriptor, FontRegistry
 
 __all__ = [
+    "FileFontSource",
+    "FolderFontSource",
     "FontDescriptor",
     "FontRepository",
     "FontSource",
-    "FolderFontSource",
-    "FileFontSource",
     "MemoryFontSource",
     "SystemFontSource",
 ]
@@ -234,8 +235,8 @@ class SystemFontSource(FontSource):
 class FontRepository:
     """Aggregate font sources and resolve fonts by name."""
 
-    _sources: list[FontSource] = [SystemFontSource()]
-    _registry = FontRegistry()
+    _sources: ClassVar[list[FontSource]] = [SystemFontSource()]
+    _registry: ClassVar[FontRegistry] = FontRegistry()
 
     @classmethod
     def add_source(cls, source: FontSource) -> None:

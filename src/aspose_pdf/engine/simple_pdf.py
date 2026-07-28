@@ -4,65 +4,37 @@ Provides parsing, writing, and manipulation of PDF documents.
 """
 
 from __future__ import annotations
-from __future__ import annotations
 
 import hashlib
+import logging
 import math
+import mmap
 import re
 import struct
 import zlib
-import logging
-import mmap
 from collections import namedtuple
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Union,
 )
 
-from .encryption import EncryptionUtils
-from .signing import SigningUtils
-from .filters import StreamDecoder
-from .cos import (
-    PdfDocument,
-    PdfName,
-    PdfDictionary,
-    PdfArray,
-    PdfString,
-    PdfIndirectReference,
-    PdfNumber,
-    PdfStream,
-    PdfBoolean,
-    PdfNull,
-    AnnotationName,
-    annotation_value_to_cos,
+from ..exceptions import (
+    CONTENT_PARSER_RECOVERABLE,
+    PDF_OPERATION_ERRORS,
+    PDF_STREAM_DECODE_ERRORS,
+    AsposePdfException,
+    FontEmbeddingException,
+    PdfParseException,
+    PdfResourceLimitException,
+    PdfSecurityException,
+    PdfValidationException,
 )
-from .data.xmp import (
-    STANDARD_XMP_NAMESPACES,
-    XmpArray,
-    XmpField,
-    XmpPacket,
-    parse_xmp,
-    serialize_xmp,
-)
+from ..load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget, _read_limited
+from ..signature import PdfSignature
 from . import conformance
-from .pdf_parser_cos import PdfCosParser
-from .pdf_writer_cos import PdfCosWriter
-from .content_stream_parser import (
-    ContentStreamParser,
-    parse_image_placements_from_content,
-)
-from .text_edit import redact_text_in_content, replace_text_in_content
 from .content_authoring import (
     AuthoredImage,
     build_cid_text_stream,
@@ -75,22 +47,41 @@ from .content_authoring import (
     safe_resource_name,
     wrap_marked_content,
 )
-from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
-from .rename_resources import safe_rename_names
-from .incremental_update import IncrementalUpdate
-from ..exceptions import (
-    AsposePdfException,
-    CONTENT_PARSER_RECOVERABLE,
-    FontEmbeddingException,
-    PDF_OPERATION_ERRORS,
-    PDF_STREAM_DECODE_ERRORS,
-    PdfParseException,
-    PdfResourceLimitException,
-    PdfValidationException,
-    PdfSecurityException,
+from .content_stream_parser import (
+    ContentStreamParser,
+    parse_image_placements_from_content,
 )
-from ..load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits, _read_limited
-from ..signature import PdfSignature
+from .cos import (
+    AnnotationName,
+    PdfArray,
+    PdfBoolean,
+    PdfDictionary,
+    PdfDocument,
+    PdfIndirectReference,
+    PdfName,
+    PdfNull,
+    PdfNumber,
+    PdfStream,
+    PdfString,
+    annotation_value_to_cos,
+)
+from .data.xmp import (
+    STANDARD_XMP_NAMESPACES,
+    XmpArray,
+    XmpField,
+    XmpPacket,
+    parse_xmp,
+    serialize_xmp,
+)
+from .encryption import EncryptionUtils
+from .filters import StreamDecoder
+from .incremental_update import IncrementalUpdate
+from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
+from .pdf_parser_cos import PdfCosParser
+from .pdf_writer_cos import PdfCosWriter
+from .rename_resources import safe_rename_names
+from .signing import SigningUtils
+from .text_edit import redact_text_in_content, replace_text_in_content
 
 if TYPE_CHECKING:
     import datetime
@@ -113,7 +104,7 @@ class _AuthoredFontResource:
     descriptor: PdfDictionary
     font_stream: PdfStream
     to_unicode_stream: PdfStream
-    cid_to_gid_stream: Optional[PdfStream]
+    cid_to_gid_stream: PdfStream | None
 
 
 def _trim_der_padding(data: bytes) -> bytes:
@@ -133,7 +124,7 @@ def _trim_der_padding(data: bytes) -> bytes:
         total = 2 + num + int.from_bytes(data[2 : 2 + num], "big")
     return data[:total] if 0 < total <= len(data) else data
 
-def _glyph_name_to_unicode(name: str) -> Optional[int]:
+def _glyph_name_to_unicode(name: str) -> int | None:
     """Resolve a glyph name to a unicode codepoint without the full AGL.
 
     Only the algorithmic ``uniXXXX`` (one BMP value) and ``uXXXX[XX]`` forms are
@@ -170,7 +161,7 @@ def _outline_link_absent(link: Any) -> bool:
     return isinstance(link, PdfNull)
 
 
-def _effective_encryption_password(password: Optional[str]) -> Optional[str]:
+def _effective_encryption_password(password: str | None) -> str | None:
     """Return a non-empty stripped password, or None if missing/blank."""
     if password is None:
         return None
@@ -183,7 +174,7 @@ def _effective_encryption_password(password: Optional[str]) -> Optional[str]:
 _NAME_DELIMITERS = set(b"()<>[]{}/%#")
 
 
-def _encode_mime_name(mime: str) -> "PdfName":
+def _encode_mime_name(mime: str) -> PdfName:
     """Encode a MIME media type as a PDF name (``text/plain`` -> ``/text#2Fplain``)."""
     from .cos import PdfName
 
@@ -196,7 +187,7 @@ def _encode_mime_name(mime: str) -> "PdfName":
     return PdfName("".join(out))
 
 
-def _decode_mime_name(name: Any) -> Optional[str]:
+def _decode_mime_name(name: Any) -> str | None:
     """Decode a MIME media type from a PDF name (``/text#2Fplain`` -> ``text/plain``).
 
     The inverse of :func:`_encode_mime_name`: the leading ``/`` is dropped and
@@ -227,7 +218,7 @@ def _decode_mime_name(name: Any) -> Optional[str]:
     return out.decode("ascii", "replace") or None
 
 
-def _format_pdf_date(value: Any) -> Optional[str]:
+def _format_pdf_date(value: Any) -> str | None:
     """Format *value* as a PDF date string (``D:YYYYMMDDHHmmSS`` + optional zone).
 
     Accepts a :class:`datetime.datetime`, an already-formatted string (used as
@@ -261,7 +252,7 @@ _PDF_DATE_RE = re.compile(
 )
 
 
-def _parse_pdf_date(value: Any) -> "Optional[datetime.datetime]":
+def _parse_pdf_date(value: Any) -> datetime.datetime | None:
     """Parse a PDF date string into a :class:`datetime.datetime`.
 
     The inverse of :func:`_format_pdf_date`: accepts an optional ``D:`` prefix,
@@ -290,7 +281,7 @@ def _parse_pdf_date(value: Any) -> "Optional[datetime.datetime]":
         return None
     if tz:
         if tz in ("Z", "z"):
-            result = result.replace(tzinfo=_dt.timezone.utc)
+            result = result.replace(tzinfo=_dt.UTC)
         else:
             digits = tz[1:].replace("'", "")
             offset = _dt.timedelta(
@@ -304,7 +295,7 @@ def _parse_pdf_date(value: Any) -> "Optional[datetime.datetime]":
 def _pdf_string_octets(s: PdfString) -> bytes:
     """Recover PDF string octets from :class:`PdfString`.
 
-    Literal strings are tokenized into Unicode code points U+0000–U+00FF per
+    Literal strings are tokenized into Unicode code points U+0000-U+00FF per
     input byte, then stored in :attr:`PdfString.value` as UTF-8. Hex strings
     store raw octets directly in :attr:`PdfString.value`. Unicode ``PdfString``
     values (constructor from ``str``) keep UTF-8 that may contain code points
@@ -361,9 +352,9 @@ class TextFragmentCollection:
     """Collection of TextFragment objects."""
 
     def __init__(self) -> None:
-        self._fragments: List[TextFragment] = []
+        self._fragments: list[TextFragment] = []
 
-    def add(self, fragment: TextFragment) -> "TextFragmentCollection":
+    def add(self, fragment: TextFragment) -> TextFragmentCollection:
         if fragment is None:
             return self
         self._fragments.append(fragment)
@@ -397,13 +388,13 @@ class TextFragmentAbsorber:
     """Absorber that extracts text fragments from a SimplePdf instance."""
 
     def __init__(self) -> None:
-        self.fragments: List[TextFragment] = []
+        self.fragments: list[TextFragment] = []
 
     def reset(self) -> None:
         """Clear collected fragments."""
         self.fragments.clear()
 
-    def visit(self, pdf: "SimplePdf") -> None:
+    def visit(self, pdf: SimplePdf) -> None:
         """Collect text fragments using the sophisticated ContentStreamParser."""
         self.fragments.clear()
         pdf._page_text_cursor = 0
@@ -421,7 +412,7 @@ class TextFragmentAbsorber:
             except CONTENT_PARSER_RECOVERABLE:
                 continue
 
-    def remove_all_text(self, pdf: "SimplePdf") -> None:
+    def remove_all_text(self, pdf: SimplePdf) -> None:
         """Remove all visible text from PDF by clearing page contents."""
         self.fragments.clear()
         if hasattr(pdf, "page_contents"):
@@ -445,7 +436,7 @@ class ImagePlacement:
         self.data = data
         self._hidden = False
 
-    def save(self, path: Union[str, Path]) -> None:
+    def save(self, path: str | Path) -> None:
         """Save image to file."""
         Path(path).write_bytes(self.data)
 
@@ -462,9 +453,9 @@ class ImagePlacementAbsorber:
     """Absorber that finds image placements in a PDF."""
 
     def __init__(self) -> None:
-        self.image_placements: List[ImagePlacement] = []
+        self.image_placements: list[ImagePlacement] = []
 
-    def visit(self, pdf: "SimplePdf") -> None:
+    def visit(self, pdf: SimplePdf) -> None:
         """Find all image placements in the PDF."""
         self.image_placements.clear()
         images = getattr(pdf, "images", {})
@@ -488,7 +479,7 @@ class LazyImageDict(dict):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._loaders: Dict[str, Any] = {}
+        self._loaders: dict[str, Any] = {}
 
     def add_loader(self, name: str, loader: Any) -> None:
         """Add a lazy loader for an image name."""
@@ -555,7 +546,7 @@ class LazyImageDict(dict):
             return data
         return super().pop(key, *args)
 
-    def copy(self) -> "LazyImageDict":
+    def copy(self) -> LazyImageDict:
         new_dict = LazyImageDict(super().copy())
         new_dict._loaders = dict(self._loaders)
         return new_dict
@@ -603,8 +594,8 @@ def _minimal_srgb_icc_profile() -> bytes:
     tag_table_size = 4 + tag_count * 12
     offset = header_size + tag_table_size
 
-    tag_entries: List[Tuple[bytes, int, int]] = []
-    tag_data_chunks: List[bytes] = []
+    tag_entries: list[tuple[bytes, int, int]] = []
+    tag_data_chunks: list[bytes] = []
     for sig, data in tags:
         padded = data + b"\x00" * ((-len(data)) % 4)
         tag_entries.append((sig, offset, len(data)))
@@ -729,7 +720,7 @@ def _normalize_pdfa_level_short(level: str) -> str:
     return v
 
 
-def _parse_expected_pdfaid(level_short: str) -> Optional[Tuple[str, str]]:
+def _parse_expected_pdfaid(level_short: str) -> tuple[str, str] | None:
     """Return ``(part, conformance_letter_upper)`` e.g. ``('1', 'B')``, or *None*."""
     m = re.match(r"^(\d+)([a-z])$", level_short.strip().lower())
     if not m:
@@ -737,11 +728,11 @@ def _parse_expected_pdfaid(level_short: str) -> Optional[Tuple[str, str]]:
     return m.group(1), m.group(2).upper()
 
 
-def _extract_xmp_pdfaid_fields(xmp_bytes: bytes) -> Tuple[Optional[str], Optional[str]]:
+def _extract_xmp_pdfaid_fields(xmp_bytes: bytes) -> tuple[str | None, str | None]:
     """Extract ``pdfaid:part`` and ``pdfaid:conformance`` from an XMP packet (regex)."""
     text = xmp_bytes.decode("utf-8", errors="replace")
-    part: Optional[str] = None
-    conf: Optional[str] = None
+    part: str | None = None
+    conf: str | None = None
     mp = re.search(r"pdfaid:part\s*>([^<]+)</", text, re.IGNORECASE)
     if mp:
         part = mp.group(1).strip()
@@ -762,7 +753,7 @@ def _extract_xmp_pdfaid_fields(xmp_bytes: bytes) -> Tuple[Optional[str], Optiona
 
 
 def _scan_resources_for_device_colors(
-    obj: Any, rgb: List[bool], cmyk: List[bool]
+    obj: Any, rgb: list[bool], cmyk: list[bool]
 ) -> None:
     """Recursively mark ``DeviceRGB``/``DeviceGray``/``DeviceCMYK`` usage in
     *resources*."""
@@ -780,10 +771,10 @@ def _scan_resources_for_device_colors(
             _scan_resources_for_device_colors(it, rgb, cmyk)
 
 
-def _collect_filter_names(filter_obj: Any, resolve_fn: Any) -> List[str]:
+def _collect_filter_names(filter_obj: Any, resolve_fn: Any) -> list[str]:
     """Return PDF /Filter name strings without leading slash."""
     filter_obj = resolve_fn(filter_obj)
-    names: List[str] = []
+    names: list[str] = []
     if isinstance(filter_obj, PdfName):
         names.append(filter_obj.name.lstrip("/"))
     elif isinstance(filter_obj, PdfArray):
@@ -794,7 +785,7 @@ def _collect_filter_names(filter_obj: Any, resolve_fn: Any) -> List[str]:
     return names
 
 
-def _is_standard14_base_font_name(base: Optional[str]) -> bool:
+def _is_standard14_base_font_name(base: str | None) -> bool:
     if not base:
         return False
     bn = base.split("+")[-1]
@@ -819,7 +810,7 @@ def _is_standard14_base_font_name(base: Optional[str]) -> bool:
 
 
 def _resource_signature(
-    pdf: "SimplePdf", obj: Any, active: Optional[Set[Tuple[str, int]]] = None
+    pdf: SimplePdf, obj: Any, active: set[tuple[str, int]] | None = None
 ) -> Any:
     """Return a stable, hashable representation of a COS resource."""
     if active is None:
@@ -915,85 +906,85 @@ class SimplePdf:
         password: Document password if encrypted
     """
 
-    pages: List[Tuple[float, float, float, float]] = field(default_factory=list)
-    page_contents: List[bytes] = field(default_factory=list)
-    images: Dict[str, bytes] = field(default_factory=LazyImageDict)
-    metadata: Dict[str, str] = field(default_factory=dict)
-    watermark_text: Optional[str] = None
+    pages: list[tuple[float, float, float, float]] = field(default_factory=list)
+    page_contents: list[bytes] = field(default_factory=list)
+    images: dict[str, bytes] = field(default_factory=LazyImageDict)
+    metadata: dict[str, str] = field(default_factory=dict)
+    watermark_text: str | None = None
     encrypted: bool = False
-    password: Optional[str] = None
-    O: Optional[bytes] = None  # noqa: E741  # PDF encryption /O entry
-    U: Optional[bytes] = None
+    password: str | None = None
+    O: bytes | None = None  # noqa: E741  # PDF encryption /O entry
+    U: bytes | None = None
     P: int = -4
-    encryption_key: Optional[bytes] = None
+    encryption_key: bytes | None = None
     encryption_algorithm: str = "RC4"  # RC4, AES-128, AES-256
-    signature: Optional[Dict[str, str]] = None
-    signing_creds: Optional[Tuple[Any, Any]] = None
+    signature: dict[str, str] | None = None
+    signing_creds: tuple[Any, Any] | None = None
     pades: bool = False  # emit a CAdES/PAdES signature (ETSI.CAdES.detached)
-    certify_permissions: Optional[int] = None  # DocMDP /P (1/2/3) -> certifying
-    extra_certs: Optional[List[Any]] = None  # extra certs embedded for the chain
-    timestamp_url: Optional[str] = None  # RFC 3161 TSA URL (online, opt-in)
-    timestamp_tsa: Optional[Tuple[Any, Any]] = None  # local (cert, key) TSA
+    certify_permissions: int | None = None  # DocMDP /P (1/2/3) -> certifying
+    extra_certs: list[Any] | None = None  # extra certs embedded for the chain
+    timestamp_url: str | None = None  # RFC 3161 TSA URL (online, opt-in)
+    timestamp_tsa: tuple[Any, Any] | None = None  # local (cert, key) TSA
     timestamp_timeout: float = 10.0
-    attachments: Dict[str, bytes] = field(default_factory=dict)
+    attachments: dict[str, bytes] = field(default_factory=dict)
     # Optional per-attachment metadata keyed by the same name as ``attachments``:
     # {"mime": str, "description": str, "creation_date": datetime|str,
     #  "mod_date": datetime|str, "compress": bool}. Absent entries use defaults.
-    attachment_meta: Dict[str, dict] = field(default_factory=dict)
+    attachment_meta: dict[str, dict] = field(default_factory=dict)
     # Typed metadata read back from a loaded document's /Filespec + /EmbeddedFile
     # objects, keyed by attachment name: {"mime": str, "description": str,
     # "creation_date": datetime, "mod_date": datetime}. Populated at load; only
     # names that carried metadata appear.
-    attachment_read_meta: Dict[str, dict] = field(default_factory=dict)
-    fonts: Dict[str, Any] = field(default_factory=dict)
-    extgstates: Dict[str, Any] = field(default_factory=dict)
-    signatures: List[PdfSignature] = field(default_factory=list)
+    attachment_read_meta: dict[str, dict] = field(default_factory=dict)
+    fonts: dict[str, Any] = field(default_factory=dict)
+    extgstates: dict[str, Any] = field(default_factory=dict)
+    signatures: list[PdfSignature] = field(default_factory=list)
     pdf_version: str = "1.7"
-    file_id: Optional[List[bytes]] = None
-    _page_obj_ids: List[int] = field(default_factory=list)
-    _content_obj_ids: List[int] = field(default_factory=list)
-    _cos_doc: Optional[PdfDocument] = field(default=None, init=False, repr=False)
+    file_id: list[bytes] | None = None
+    _page_obj_ids: list[int] = field(default_factory=list)
+    _content_obj_ids: list[int] = field(default_factory=list)
+    _cos_doc: PdfDocument | None = field(default=None, init=False, repr=False)
     # When True, a full COS rewrite (``to_bytes``) packs objects into an
     # object stream and emits a cross-reference stream. Set by ``optimize``.
     _use_object_streams: bool = field(default=False, init=False, repr=False)
-    _raw_bytes: Optional[Union[bytes, mmap.mmap]] = field(
+    _raw_bytes: bytes | mmap.mmap | None = field(
         default=None, init=False, repr=False
     )
     _disposed: bool = field(default=False, init=False, repr=False)
-    _hidden_images: Set[str] = field(default_factory=set, init=False, repr=False)
-    _extracted_text: Optional[str] = field(default=None, init=False, repr=False)
-    _image_names: Optional[List[str]] = field(default=None, init=False, repr=False)
+    _hidden_images: set[str] = field(default_factory=set, init=False, repr=False)
+    _extracted_text: str | None = field(default=None, init=False, repr=False)
+    _image_names: list[str] | None = field(default=None, init=False, repr=False)
     _image_cursor: int = field(default=0, init=False, repr=False)
     _page_text_cursor: int = field(default=0, init=False, repr=False)
-    _page_image_map: Dict[int, List[str]] = field(
+    _page_image_map: dict[int, list[str]] = field(
         default_factory=dict, init=False, repr=False
     )
-    _original_page_count: Optional[int] = field(
+    _original_page_count: int | None = field(
         default=None, init=False, repr=False
     )  # Track original state
-    _original_metadata: Optional[Dict[str, str]] = field(
+    _original_metadata: dict[str, str] | None = field(
         default=None, init=False, repr=False
     )  # Track original metadata
-    _original_encrypted: Optional[bool] = field(
+    _original_encrypted: bool | None = field(
         default=None, init=False, repr=False
     )  # Track original encryption state
-    _image_sizes: Dict[str, Tuple[int, int]] = field(
+    _image_sizes: dict[str, tuple[int, int]] = field(
         default_factory=dict, init=False, repr=False
     )  # Map image name -> (width, height)
-    _image_meta: Dict[str, Dict[str, Any]] = field(
+    _image_meta: dict[str, dict[str, Any]] = field(
         default_factory=dict, init=False, repr=False
     )  # Map image name -> reconstruction metadata (cs/bpc/palette/filter/...)
-    _image_matrix_map: Dict[Tuple[int, str], Tuple[float, ...]] = field(
+    _image_matrix_map: dict[tuple[int, str], tuple[float, ...]] = field(
         default_factory=dict, init=False, repr=False
     )  # (page_idx, name) -> matrix
-    _image_rect_map: Dict[Tuple[int, str], Tuple[float, float, float, float]] = field(
+    _image_rect_map: dict[tuple[int, str], tuple[float, float, float, float]] = field(
         default_factory=dict, init=False, repr=False
     )  # (page_idx, name) -> (x,y,w,h)
-    _outlines_data: List[Dict] = field(default_factory=list, init=False, repr=False)
+    _outlines_data: list[dict] = field(default_factory=list, init=False, repr=False)
     _lazy: bool = field(default=False, init=False, repr=False)
-    _page_refs: List[int] = field(default_factory=list, init=False, repr=False)
+    _page_refs: list[int] = field(default_factory=list, init=False, repr=False)
     _page_cache_valid: bool = field(default=False, init=False, repr=False)
-    _xmp_packet: Optional[XmpPacket] = field(default=None, init=False, repr=False)
+    _xmp_packet: XmpPacket | None = field(default=None, init=False, repr=False)
     _xmp_loaded: bool = field(default=False, init=False, repr=False)
     _xmp_dirty: bool = field(default=False, init=False, repr=False)
     _load_limits: PdfLoadLimits = field(
@@ -1002,7 +993,7 @@ class SimplePdf:
     _load_budget: _LoadBudget = field(
         default_factory=_LoadBudget, init=False, repr=False
     )
-    _authored_font_cache: Dict[Tuple[int, str, str], _AuthoredFontResource] = field(
+    _authored_font_cache: dict[tuple[int, str, str], _AuthoredFontResource] = field(
         default_factory=dict, init=False, repr=False
     )
 
@@ -1013,7 +1004,7 @@ class SimplePdf:
         """Return the loading, processing, and authoring limits for this document."""
         return self._load_limits
 
-    def __enter__(self) -> "SimplePdf":
+    def __enter__(self) -> SimplePdf:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -1028,7 +1019,7 @@ class SimplePdf:
         if self._cos_doc is not None:
             return
 
-        from .cos import PdfDocument, PdfDictionary, PdfName, PdfArray, PdfNumber
+        from .cos import PdfArray, PdfDictionary, PdfDocument, PdfName, PdfNumber
 
         self._cos_doc = PdfDocument()
 
@@ -1054,11 +1045,11 @@ class SimplePdf:
             self._create_cos_page(i, rect, content)
 
     def _create_cos_page(
-        self, index: int, rect: Tuple[float, float, float, float], content: bytes
+        self, index: int, rect: tuple[float, float, float, float], content: bytes
     ) -> None:
         if self._cos_doc is None:
             return
-        from .cos import PdfDictionary, PdfName, PdfArray, PdfNumber, PdfStream
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
 
         # Get Pages root
         root_ref = self._cos_doc.trailer.mapping.get(PdfName("Root"))
@@ -1116,7 +1107,7 @@ class SimplePdf:
         if not self._cos_doc:
             self._ensure_cos()
 
-        from .cos import PdfName, PdfDictionary, PdfArray
+        from .cos import PdfArray, PdfDictionary, PdfName
 
         root_ref = self._cos_doc.trailer.mapping.get(PdfName("Root"))
         root = self._resolve(root_ref)
@@ -1147,7 +1138,7 @@ class SimplePdf:
         traverse(pages_ref)
         self._page_cache_valid = True
 
-    def _get_page_dict(self, page_index: int) -> Optional[Any]:
+    def _get_page_dict(self, page_index: int) -> Any | None:
         """Find the page dictionary for the given index, using cache for O(1)
         retrieval."""
         if not self._cos_doc:
@@ -1168,7 +1159,7 @@ class SimplePdf:
         obj_num = self._page_refs[page_index]
         return self._cos_doc.objects.get(obj_num)
 
-    def _get_page_resources(self, page_index: int) -> Dict[str, Any]:
+    def _get_page_resources(self, page_index: int) -> dict[str, Any]:
         """Return the resources dictionary for a specific page."""
         page_dict = self._get_page_dict(page_index)
         if page_dict:
@@ -1184,7 +1175,7 @@ class SimplePdf:
         from .cos import PdfDictionary, PdfName
 
         node = page_dict
-        seen: Set[int] = set()
+        seen: set[int] = set()
         depth = 0
         while isinstance(node, PdfDictionary):
             depth += 1
@@ -1251,10 +1242,10 @@ class SimplePdf:
     def _update_page_count_recursive(self, node_ref: Any, delta: int) -> None:
         """Update /Count in the page tree nodes up to the root (Structural
         Integrity fix)."""
-        from .cos import PdfName, PdfNumber, PdfDictionary
+        from .cos import PdfDictionary, PdfName, PdfNumber
 
         curr_ref = node_ref
-        seen: Set[int] = set()
+        seen: set[int] = set()
         depth = 0
         while curr_ref:
             node = self._resolve(curr_ref)
@@ -1283,20 +1274,20 @@ class SimplePdf:
         obj: Any,
         *,
         _depth: int = 0,
-        _active: Optional[Set[int]] = None,
-        _item_count: Optional[List[int]] = None,
+        _active: set[int] | None = None,
+        _item_count: list[int] | None = None,
         _include_stream_content: bool = False,
     ) -> Any:
         """Convert COS objects to standard Python types recursively."""
         from .cos import (
-            PdfName,
-            PdfDictionary,
             PdfArray,
+            PdfBoolean,
+            PdfDictionary,
             PdfIndirectReference,
+            PdfName,
+            PdfNumber,
             PdfStream,
             PdfString,
-            PdfNumber,
-            PdfBoolean,
         )
 
         source_ref = obj if isinstance(obj, PdfIndirectReference) else None
@@ -1320,7 +1311,7 @@ class SimplePdf:
                 raise PdfParseException("COS resource graph contains a cycle")
             active.add(obj_id)
             try:
-                result: Dict[str, Any] = {}
+                result: dict[str, Any] = {}
                 for key, value in obj.mapping.items():
                     item_count[0] += 1
                     self._load_budget.check(
@@ -1361,7 +1352,7 @@ class SimplePdf:
                 raise PdfParseException("COS resource graph contains a cycle")
             active.add(obj_id)
             try:
-                result: Dict[str, Any] = {}
+                result: dict[str, Any] = {}
                 for key, value in obj.mapping.items():
                     item_count[0] += 1
                     self._load_budget.check(
@@ -1397,7 +1388,7 @@ class SimplePdf:
                 raise PdfParseException("COS resource graph contains a cycle")
             active.add(obj_id)
             try:
-                result_list: List[Any] = []
+                result_list: list[Any] = []
                 for value in obj.items:
                     item_count[0] += 1
                     self._load_budget.check(
@@ -1432,7 +1423,7 @@ class SimplePdf:
             return self._cos_doc.objects.get(obj.object_number)
         return obj
 
-    def _get_name(self, obj: Any) -> Optional[str]:
+    def _get_name(self, obj: Any) -> str | None:
         """Return the string value of a PdfName, or None."""
         from .cos import PdfName
 
@@ -1441,7 +1432,7 @@ class SimplePdf:
             return obj.name.lstrip("/")
         return None
 
-    def _get_number(self, obj: Any) -> Optional[float]:
+    def _get_number(self, obj: Any) -> float | None:
         """Return the numeric value, or None."""
         from .cos import PdfNumber
 
@@ -1456,11 +1447,11 @@ class SimplePdf:
     @classmethod
     def from_file(
         cls,
-        path: Union[str, Path],
-        password: Optional[str] = None,
+        path: str | Path,
+        password: str | None = None,
         *,
         limits: PdfLoadLimits | None = None,
-    ) -> "SimplePdf":
+    ) -> SimplePdf:
         """Load PDF from file path, using memory-mapping for large files."""
         resolved_limits = _coerce_limits(limits)
         budget = _LoadBudget(resolved_limits)
@@ -1503,11 +1494,11 @@ class SimplePdf:
     def from_bytes(
         cls,
         data: bytes | bytearray,
-        password: Optional[str] = None,
+        password: str | None = None,
         *,
         limits: PdfLoadLimits | None = None,
         _budget: _LoadBudget | None = None,
-    ) -> "SimplePdf":
+    ) -> SimplePdf:
         """Parse PDF from raw bytes using PdfCosParser."""
         resolved_limits = _coerce_limits(limits)
         budget = _budget or _LoadBudget(resolved_limits)
@@ -1605,10 +1596,10 @@ class SimplePdf:
     @classmethod
     def load_from(
         cls,
-        source: Union[str, Path, bytes, bytearray],
+        source: str | Path | bytes | bytearray,
         *,
         limits: PdfLoadLimits | None = None,
-    ) -> "SimplePdf":
+    ) -> SimplePdf:
         """Load from file path or bytes."""
         if isinstance(source, (str, Path)):
             return cls.from_file(source, limits=limits)
@@ -1628,11 +1619,11 @@ class SimplePdf:
     @classmethod
     def from_file_lazy(
         cls,
-        path: Union[str, Path],
-        password: Optional[str] = None,
+        path: str | Path,
+        password: str | None = None,
         *,
         limits: PdfLoadLimits | None = None,
-    ) -> "SimplePdf":
+    ) -> SimplePdf:
         """Open a PDF in streaming/lazy mode for memory-efficient page processing.
 
         Unlike :meth:`from_file`, this method does **not** decode page content
@@ -1842,10 +1833,10 @@ class SimplePdf:
     def from_bytes_safe(
         cls,
         data: bytes | bytearray,
-        password: Optional[str] = None,
+        password: str | None = None,
         *,
         limits: PdfLoadLimits | None = None,
-    ) -> "SimplePdf":
+    ) -> SimplePdf:
         """Load PDF with automatic repair on error.
 
         Unlike from_bytes(), this method attempts to repair
@@ -1893,10 +1884,10 @@ class SimplePdf:
     @classmethod
     def load_cos(
         cls,
-        source: Union[str, Path, bytes, bytearray],
+        source: str | Path | bytes | bytearray,
         *,
         limits: PdfLoadLimits | None = None,
-    ) -> "SimplePdf":
+    ) -> SimplePdf:
         """Load PDF using the generic COS parser (preserves all data)."""
         resolved_limits = _coerce_limits(limits)
         budget = _LoadBudget(resolved_limits)
@@ -1925,7 +1916,7 @@ class SimplePdf:
         # Probe the catalog for /Pages so a malformed root surfaces as a warning.
         try:
             root = doc.trailer.get(PdfName("Root"))
-            if isinstance(root, Dict) or hasattr(root, "__getitem__"):
+            if isinstance(root, dict) or hasattr(root, "__getitem__"):
                 _ = root[PdfName("Pages")]
         except PdfResourceLimitException:
             raise
@@ -1943,7 +1934,7 @@ class SimplePdf:
         return pdf
 
     @classmethod
-    def merge(cls, *pdfs: "SimplePdf") -> "SimplePdf":
+    def merge(cls, *pdfs: SimplePdf) -> SimplePdf:
         """Merge multiple PDFs into one, resolving resource name collisions
         and deduplicating."""
         merged = cls()
@@ -2026,7 +2017,7 @@ class SimplePdf:
                 passwords.add(pdf.password)
 
         if passwords:
-            merged.encrypt(list(passwords)[0])
+            merged.encrypt(next(iter(passwords)))
 
         return merged
 
@@ -2047,11 +2038,11 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     # Save / serialize
     # ---------------------------------------------------------------------------
-    def save(self, path: Union[str, Path]) -> None:
+    def save(self, path: str | Path) -> None:
         self._ensure_not_disposed()
         Path(path).write_bytes(self.to_bytes())
 
-    def save_cos(self, path: Union[str, Path]) -> None:
+    def save_cos(self, path: str | Path) -> None:
         """Save PDF using the generic COS writer (preserves all data)."""
         self._ensure_not_disposed()
         if self._cos_doc is None:
@@ -2060,7 +2051,7 @@ class SimplePdf:
         data = writer.write()
         Path(path).write_bytes(data)
 
-    def _inject_outlines_to_cos(self, outline_items: List[Dict]) -> None:
+    def _inject_outlines_to_cos(self, outline_items: list[dict]) -> None:
         """Build outline tree from _outlines_data and add /Outlines to the Catalog."""
         if not outline_items or self._cos_doc is None:
             return
@@ -2079,8 +2070,8 @@ class SimplePdf:
             return PdfIndirectReference(page_obj_ids[idx], 0)
 
         def build_outline_item(
-            item: Dict, parent_ref: PdfIndirectReference
-        ) -> Optional[PdfIndirectReference]:
+            item: dict, parent_ref: PdfIndirectReference
+        ) -> PdfIndirectReference | None:
             page_idx = item.get("page_index", 0)
             page_ref = make_page_ref(page_idx)
             dest = PdfArray([page_ref, PdfName("Fit")])
@@ -2099,7 +2090,7 @@ class SimplePdf:
                 outline_dict.mapping[PdfName("F")] = PdfNumber(flags)
 
             children = item.get("children", [])
-            child_refs: List[PdfIndirectReference] = []
+            child_refs: list[PdfIndirectReference] = []
             for child in children:
                 child_ref = build_outline_item(child, PdfIndirectReference(0, 0))
                 if child_ref is not None:
@@ -2132,7 +2123,7 @@ class SimplePdf:
         )
         outline_root_ref = self._cos_doc.register_object(outline_root)
 
-        item_refs: List[PdfIndirectReference] = []
+        item_refs: list[PdfIndirectReference] = []
         for item in outline_items:
             ref = build_outline_item(item, outline_root_ref)
             if ref is not None:
@@ -2205,7 +2196,7 @@ class SimplePdf:
             return
 
         # Name trees must be ordered by key, so emit names sorted.
-        array_items: List[Any] = []
+        array_items: list[Any] = []
         for name in sorted(self.attachments):
             data = bytes(self.attachments[name])
             meta = self.attachment_meta.get(name) or {}
@@ -2275,7 +2266,7 @@ class SimplePdf:
         return self._xmp_packet  # type: ignore[return-value]
 
     @xmp_packet.setter
-    def xmp_packet(self, value: Optional[XmpPacket]) -> None:
+    def xmp_packet(self, value: XmpPacket | None) -> None:
         self._ensure_not_disposed()
         self._xmp_packet = value if value is not None else XmpPacket()
         self._xmp_loaded = True
@@ -2417,7 +2408,7 @@ class SimplePdf:
         if self._cos_doc is None:
             return set()
 
-        from .cos import PdfDictionary, PdfArray, PdfIndirectReference
+        from .cos import PdfArray, PdfDictionary, PdfIndirectReference
 
         reachable_ids = set()
         visited_literal_ids = set()
@@ -2482,7 +2473,7 @@ class SimplePdf:
 
         return removed_count
 
-    def save_incremental(self, path: Union[str, Path]) -> None:
+    def save_incremental(self, path: str | Path) -> None:
         """Save PDF using incremental update to preserve signatures.
 
         This appends changes to the end of the file rather than rewriting,
@@ -2507,7 +2498,7 @@ class SimplePdf:
         if self._raw_bytes is None:
             return self.to_bytes()
 
-        from .cos import PdfStream, PdfName, PdfNumber
+        from .cos import PdfName, PdfNumber, PdfStream
 
         incr = IncrementalUpdate(
             self._raw_bytes,
@@ -2547,7 +2538,7 @@ class SimplePdf:
             if self.metadata != self._original_metadata:
                 info_ref = self._cos_doc.trailer.mapping.get(PdfName("Info"))
                 if info_ref:
-                    from .cos import PdfIndirectReference, PdfString, PdfDictionary
+                    from .cos import PdfDictionary, PdfIndirectReference, PdfString
 
                     info_id = (
                         info_ref.object_number
@@ -2657,7 +2648,7 @@ class SimplePdf:
         """Close the document, releasing resources."""
         self.dispose()
 
-    def get_next_attachment(self) -> Tuple[str, bytes]:
+    def get_next_attachment(self) -> tuple[str, bytes]:
         """Return the next attachment name and its data, advancing the cursor.
 
         The attachment iterator is lazily initialized on first call. If no more
@@ -2751,7 +2742,7 @@ class SimplePdf:
         self._encryption_revision = revision
         self._encryption_key_length = key_length
 
-    def check_pdfa_compliance(self, level: str = "1b") -> List[str]:
+    def check_pdfa_compliance(self, level: str = "1b") -> list[str]:
         """Return the list of PDF/A compliance **errors** (heuristic).
 
         Thin wrapper over :meth:`check_pdfa_compliance_detailed` that discards
@@ -2768,7 +2759,7 @@ class SimplePdf:
 
     def check_pdfa_compliance_detailed(
         self, level: str = "1b"
-    ) -> Tuple[List[str], List[str]]:
+    ) -> tuple[list[str], list[str]]:
         """Check the document against PDF/A standards (heuristic).
 
         Rule-of-thumb structural checks only — suitable for signals, not
@@ -2792,7 +2783,7 @@ class SimplePdf:
         if self.encrypted:
             problems.append("Encryption is prohibited by PDF/A.")
 
-        # 2. Required: Metadata – only validate when the document has been loaded
+        # 2. Required: Metadata - only validate when the document has been loaded
         # from a file or bytes (i.e., has a live COS structure).  A brand-new
         # in-memory SimplePdf() that hasn't been persisted yet is intentionally
         # skipped here.
@@ -2913,8 +2904,8 @@ class SimplePdf:
         has_rgb = False
         has_cmyk = False
         if self._cos_doc:
-            rgb_flag: List[bool] = [False]
-            cmyk_flag: List[bool] = [False]
+            rgb_flag: list[bool] = [False]
+            cmyk_flag: list[bool] = [False]
             for i in range(len(self.pages)):
                 page_resources = self._get_page_resources(i)
                 if page_resources:
@@ -3052,7 +3043,7 @@ class SimplePdf:
 
         return problems, warnings
 
-    def check_pdfua_compliance(self) -> Tuple[List[str], List[str]]:
+    def check_pdfua_compliance(self) -> tuple[list[str], list[str]]:
         """Inspect catalog-level PDF/UA prerequisites (heuristic only).
 
         Verifies a *tagged-PDF shell*: ``/StructTreeRoot``, ``/MarkInfo`` with
@@ -3062,8 +3053,8 @@ class SimplePdf:
         :class:`~aspose_pdf.pdfua.PdfUaValidationResult`.
         """
         self._ensure_not_disposed()
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
         if self._cos_doc is None:
             errors.append("No document loaded")
             return errors, warnings
@@ -3170,7 +3161,7 @@ class SimplePdf:
         self,
         old_password: str,
         new_user_password: str,
-        new_owner_password: Optional[str] = None,
+        new_owner_password: str | None = None,
     ) -> None:
         """Change document passwords."""
         self._ensure_not_disposed()
@@ -3288,7 +3279,7 @@ class SimplePdf:
         self,
         subdict: PdfDictionary,
         prefix: str,
-        requested_name: Optional[str] = None,
+        requested_name: str | None = None,
     ) -> str:
         requested = safe_resource_name(requested_name, prefix)
         if requested and PdfName(requested) not in subdict.mapping:
@@ -3300,7 +3291,7 @@ class SimplePdf:
                 return candidate
             counter += 1
 
-    def _coerce_structure_type(self, tag: Optional[str]) -> Optional[str]:
+    def _coerce_structure_type(self, tag: str | None) -> str | None:
         if tag is None:
             return None
         name = str(tag).strip().lstrip("/")
@@ -3326,7 +3317,7 @@ class SimplePdf:
             return ref
         raise PdfValidationException("Page dictionary is unavailable.")
 
-    def _ensure_struct_tree_root(self) -> Tuple[PdfDictionary, PdfIndirectReference]:
+    def _ensure_struct_tree_root(self) -> tuple[PdfDictionary, PdfIndirectReference]:
         self._ensure_cos()
         root = self._resolve(self._cos_doc.trailer.get(PdfName("Root")))
         if not isinstance(root, PdfDictionary):
@@ -3396,7 +3387,7 @@ class SimplePdf:
         if isinstance(key_obj, PdfNumber):
             key = int(key_obj.value)
         else:
-            used_keys: List[int] = []
+            used_keys: list[int] = []
             for item in nums.items[0::2]:
                 num = self._resolve(item)
                 if isinstance(num, PdfNumber):
@@ -3446,7 +3437,7 @@ class SimplePdf:
 
     def _tagged_struct_tree_root(
         self, *, create: bool = False
-    ) -> Optional[Tuple[PdfDictionary, PdfIndirectReference]]:
+    ) -> tuple[PdfDictionary, PdfIndirectReference] | None:
         if create:
             return self._ensure_struct_tree_root()
         self._ensure_cos()
@@ -3472,10 +3463,10 @@ class SimplePdf:
 
     def _tagged_kid_entries(
         self, parent: PdfDictionary
-    ) -> List[Tuple[Any, PdfDictionary, Optional[int]]]:
+    ) -> list[tuple[Any, PdfDictionary, int | None]]:
         raw_kids = parent.mapping.get(PdfName("K"))
         kids = self._resolve(raw_kids)
-        entries: List[Tuple[Any, PdfDictionary, Optional[int]]] = []
+        entries: list[tuple[Any, PdfDictionary, int | None]] = []
         if isinstance(kids, PdfArray):
             for index, raw in enumerate(kids.items):
                 child = self._resolve(raw)
@@ -3487,13 +3478,13 @@ class SimplePdf:
 
     def _tagged_find_location(
         self, target: PdfDictionary
-    ) -> Optional[Tuple[PdfDictionary, Any, Optional[int]]]:
+    ) -> tuple[PdfDictionary, Any, int | None] | None:
         root_data = self._tagged_struct_tree_root()
         if root_data is None:
             return None
         struct_root, _root_ref = root_data
         stack = [struct_root]
-        visited: Set[int] = set()
+        visited: set[int] = set()
         while stack:
             parent = stack.pop()
             parent_id = id(parent)
@@ -3534,7 +3525,7 @@ class SimplePdf:
         self,
         parent: PdfDictionary,
         child_ref: PdfIndirectReference,
-        index: Optional[int],
+        index: int | None,
     ) -> None:
         raw_kids = parent.mapping.get(PdfName("K"))
         kids = self._resolve(raw_kids)
@@ -3568,7 +3559,7 @@ class SimplePdf:
         array.items.insert(insert_at, child_ref)
 
     def _tagged_remove_child(
-        self, parent: PdfDictionary, index: Optional[int]
+        self, parent: PdfDictionary, index: int | None
     ) -> None:
         if index is None:
             parent.mapping.pop(PdfName("K"), None)
@@ -3577,7 +3568,7 @@ class SimplePdf:
         if isinstance(kids, PdfArray) and 0 <= index < len(kids.items):
             del kids.items[index]
 
-    def _tagged_parent_tree_arrays(self) -> List[PdfArray]:
+    def _tagged_parent_tree_arrays(self) -> list[PdfArray]:
         root_data = self._tagged_struct_tree_root()
         if root_data is None:
             return []
@@ -3589,10 +3580,10 @@ class SimplePdf:
 
     def _tagged_number_tree_pairs(
         self, root: PdfDictionary
-    ) -> List[Tuple[int, PdfArray]]:
-        pairs: Dict[int, PdfArray] = {}
-        stack: List[Tuple[PdfDictionary, int]] = [(root, 0)]
-        visited: Set[int] = set()
+    ) -> list[tuple[int, PdfArray]]:
+        pairs: dict[int, PdfArray] = {}
+        stack: list[tuple[PdfDictionary, int]] = [(root, 0)]
+        visited: set[int] = set()
         while stack:
             node, depth = stack.pop()
             self._load_budget.check(
@@ -3631,7 +3622,7 @@ class SimplePdf:
 
     def _tagged_existing_parent_array(
         self, page: PdfDictionary
-    ) -> Optional[PdfArray]:
+    ) -> PdfArray | None:
         key_obj = self._resolve(page.mapping.get(PdfName("StructParents")))
         if not isinstance(key_obj, PdfNumber):
             return None
@@ -3648,24 +3639,24 @@ class SimplePdf:
                 return array
         return None
 
-    def _tagged_clear_parent_mappings(self, elements: Set[int]) -> None:
+    def _tagged_clear_parent_mappings(self, elements: set[int]) -> None:
         for array in self._tagged_parent_tree_arrays():
             for index, item in enumerate(array.items):
                 mapped = self._resolve(item)
                 if isinstance(mapped, PdfDictionary) and id(mapped) in elements:
                     array.items[index] = PdfNull()
 
-    def _tagged_root_elements(self) -> List[PdfDictionary]:
+    def _tagged_root_elements(self) -> list[PdfDictionary]:
         root_data = self._tagged_struct_tree_root()
         if root_data is None:
             return []
         return [child for _raw, child, _index in self._tagged_kid_entries(root_data[0])]
 
-    def _tagged_children(self, element: PdfDictionary) -> List[PdfDictionary]:
+    def _tagged_children(self, element: PdfDictionary) -> list[PdfDictionary]:
         self._tagged_require_attached(element)
         return [child for _raw, child, _index in self._tagged_kid_entries(element)]
 
-    def _tagged_parent(self, element: PdfDictionary) -> Optional[PdfDictionary]:
+    def _tagged_parent(self, element: PdfDictionary) -> PdfDictionary | None:
         location = self._tagged_find_location(element)
         if location is None:
             self._tagged_require_attached(element)
@@ -3677,12 +3668,12 @@ class SimplePdf:
         self,
         structure_type: str,
         *,
-        parent: Optional[PdfDictionary] = None,
-        index: Optional[int] = None,
-        page_number: Optional[int] = None,
+        parent: PdfDictionary | None = None,
+        index: int | None = None,
+        page_number: int | None = None,
         mcids: Sequence[int] = (),
-        alt_text: Optional[str] = None,
-        actual_text: Optional[str] = None,
+        alt_text: str | None = None,
+        actual_text: str | None = None,
     ) -> PdfDictionary:
         tag_name = self._coerce_structure_type(structure_type)
         if tag_name is None:
@@ -3701,7 +3692,7 @@ class SimplePdf:
             if index < 0 or index > child_count:
                 raise IndexError("structure element index is out of range")
 
-        normalized_mcids: List[int] = []
+        normalized_mcids: list[int] = []
         for mcid in mcids:
             if isinstance(mcid, bool) or not isinstance(mcid, int) or mcid < 0:
                 raise PdfValidationException("MCIDs must be non-negative integers.")
@@ -3711,9 +3702,9 @@ class SimplePdf:
         if normalized_mcids and page_number is None:
             raise PdfValidationException("page_number is required when MCIDs are set.")
 
-        page: Optional[PdfDictionary] = None
-        parent_array: Optional[PdfArray] = None
-        page_ref: Optional[PdfIndirectReference] = None
+        page: PdfDictionary | None = None
+        parent_array: PdfArray | None = None
+        page_ref: PdfIndirectReference | None = None
         if page_number is not None:
             if isinstance(page_number, bool) or not isinstance(page_number, int):
                 raise TypeError("page_number must be an integer or None")
@@ -3766,8 +3757,8 @@ class SimplePdf:
         self,
         element: PdfDictionary,
         *,
-        parent: Optional[PdfDictionary],
-        index: Optional[int],
+        parent: PdfDictionary | None,
+        index: int | None,
     ) -> None:
         root_data = self._tagged_struct_tree_root()
         if root_data is None:
@@ -3781,7 +3772,7 @@ class SimplePdf:
             raise PdfValidationException("A structure element cannot contain itself.")
 
         stack = [element]
-        visited: Set[int] = set()
+        visited: set[int] = set()
         while stack:
             current = stack.pop()
             if id(current) in visited:
@@ -3822,7 +3813,7 @@ class SimplePdf:
         self,
         elements: Sequence[PdfDictionary],
         *,
-        parent: Optional[PdfDictionary],
+        parent: PdfDictionary | None,
     ) -> None:
         root_data = self._tagged_struct_tree_root()
         if root_data is None:
@@ -3854,7 +3845,7 @@ class SimplePdf:
         location = self._tagged_find_location(element)
         if location is None:
             self._tagged_require_attached(element)
-        removed: Set[int] = set()
+        removed: set[int] = set()
         stack = [element]
         while stack:
             current = stack.pop()
@@ -3868,7 +3859,7 @@ class SimplePdf:
 
     def _tagged_element_for_mcid(
         self, page_number: int, mcid: int
-    ) -> Optional[PdfDictionary]:
+    ) -> PdfDictionary | None:
         if isinstance(page_number, bool) or not isinstance(page_number, int):
             raise TypeError("page_number must be an integer")
         if isinstance(mcid, bool) or not isinstance(mcid, int) or mcid < 0:
@@ -3884,7 +3875,7 @@ class SimplePdf:
             return None
         return element
 
-    def _tagged_element_page_number(self, element: PdfDictionary) -> Optional[int]:
+    def _tagged_element_page_number(self, element: PdfDictionary) -> int | None:
         self._tagged_require_attached(element)
         page = self._resolve(element.mapping.get(PdfName("Pg")))
         if not isinstance(page, PdfDictionary):
@@ -3894,11 +3885,11 @@ class SimplePdf:
                 return index + 1
         return None
 
-    def _tagged_element_mcids(self, element: PdfDictionary) -> Tuple[int, ...]:
+    def _tagged_element_mcids(self, element: PdfDictionary) -> tuple[int, ...]:
         self._tagged_require_attached(element)
         kids = self._resolve(element.mapping.get(PdfName("K")))
         items = kids.items if isinstance(kids, PdfArray) else [kids]
-        result: List[int] = []
+        result: list[int] = []
         for item in items:
             resolved = self._resolve(item)
             if isinstance(resolved, PdfNumber):
@@ -3929,13 +3920,13 @@ class SimplePdf:
 
     def _tagged_element_text(
         self, element: PdfDictionary, key: str
-    ) -> Optional[str]:
+    ) -> str | None:
         self._tagged_require_attached(element)
         value = self._resolve(element.mapping.get(PdfName(key)))
         return decode_pdf_text_string(value) if isinstance(value, PdfString) else None
 
     def _tagged_set_element_text(
-        self, element: PdfDictionary, key: str, value: Optional[str]
+        self, element: PdfDictionary, key: str, value: str | None
     ) -> None:
         self._tagged_require_attached(element)
         if value is None:
@@ -3948,11 +3939,11 @@ class SimplePdf:
     def _register_marked_content(
         self,
         page_index: int,
-        tag: Optional[str],
+        tag: str | None,
         *,
-        alt: Optional[str] = None,
-        actual_text: Optional[str] = None,
-    ) -> Optional[Tuple[str, int]]:
+        alt: str | None = None,
+        actual_text: str | None = None,
+    ) -> tuple[str, int] | None:
         tag_name = self._coerce_structure_type(tag)
         if tag_name is None:
             return None
@@ -3984,12 +3975,12 @@ class SimplePdf:
     def _register_grouped_marked_content(
         self,
         page_index: int,
-        tag: Optional[str],
+        tag: str | None,
         count: int,
         *,
-        alt: Optional[str] = None,
-        actual_text: Optional[str] = None,
-    ) -> Optional[Tuple[str, List[int]]]:
+        alt: str | None = None,
+        actual_text: str | None = None,
+    ) -> tuple[str, list[int]] | None:
         """Create one StructElem spanning *count* marked-content sequences.
 
         Allocates *count* MCIDs on the page and points each at the same element,
@@ -4018,7 +4009,7 @@ class SimplePdf:
         if actual_text is not None:
             elem.mapping[PdfName("ActualText")] = PdfString(str(actual_text))
         elem_ref = self._cos_doc.register_object(elem)
-        mcids: List[int] = []
+        mcids: list[int] = []
         for _ in range(count):
             mcids.append(len(parent_array.items))
             parent_array.items.append(elem_ref)
@@ -4030,8 +4021,8 @@ class SimplePdf:
         return tag_name, mcids
 
     def _register_list_marked_content(
-        self, page_index: int, items: List[List[Any]]
-    ) -> Optional[List[Tuple[int, int, str, int]]]:
+        self, page_index: int, items: list[list[Any]]
+    ) -> list[tuple[int, int, str, int]] | None:
         """Build a nested ``/L`` → ``/LI`` → ``/LBody`` structure for *items*.
 
         Each item (a list of line elements) becomes an ``/LI`` whose ``/LBody``
@@ -4055,8 +4046,8 @@ class SimplePdf:
         )
         l_ref = self._cos_doc.register_object(l_elem)
 
-        li_refs: List[Any] = []
-        marks: List[Tuple[int, int, str, int]] = []
+        li_refs: list[Any] = []
+        marks: list[tuple[int, int, str, int]] = []
         for item in items:
             if not item:
                 continue
@@ -4078,7 +4069,7 @@ class SimplePdf:
                 }
             )
             lbody_ref = self._cos_doc.register_object(lbody_elem)
-            mcids: List[int] = []
+            mcids: list[int] = []
             for line in item:
                 mcid = len(parent_array.items)
                 parent_array.items.append(lbody_ref)
@@ -4099,8 +4090,8 @@ class SimplePdf:
         return marks
 
     def _register_table_marked_content(
-        self, page_index: int, rows: List[List[Any]]
-    ) -> Optional[List[Tuple[int, int, str, int]]]:
+        self, page_index: int, rows: list[list[Any]]
+    ) -> list[tuple[int, int, str, int]] | None:
         """Build a nested ``/Table`` → ``/TR`` → ``/TD`` structure for *rows*.
 
         Each row is a ``/TR`` and each cell (one text element) a ``/TD`` owning
@@ -4114,7 +4105,7 @@ class SimplePdf:
         page_ref = self._page_ref_for_structure(page_index)
         parent_array = self._parent_tree_array_for_page(struct_root, page)
 
-        def struct_elem(tag: str, parent: Any) -> Tuple[PdfDictionary, Any]:
+        def struct_elem(tag: str, parent: Any) -> tuple[PdfDictionary, Any]:
             elem = PdfDictionary(
                 {
                     PdfName("Type"): PdfName("StructElem"),
@@ -4126,13 +4117,13 @@ class SimplePdf:
             return elem, self._cos_doc.register_object(elem)
 
         table_elem, table_ref = struct_elem("Table", struct_ref)
-        tr_refs: List[Any] = []
-        marks: List[Tuple[int, int, str, int]] = []
+        tr_refs: list[Any] = []
+        marks: list[tuple[int, int, str, int]] = []
         for row in rows:
             if not row:
                 continue
             tr_elem, tr_ref = struct_elem("TR", table_ref)
-            td_refs: List[Any] = []
+            td_refs: list[Any] = []
             for cell in row:
                 td_elem, td_ref = struct_elem("TD", tr_ref)
                 mcid = len(parent_array.items)
@@ -4151,7 +4142,7 @@ class SimplePdf:
 
     def auto_tag(
         self,
-        image_alt: Optional[Union[str, Callable[[str], str]]] = "Image",
+        image_alt: str | Callable[[str], str] | None = "Image",
     ) -> int:
         """Heuristically tag existing page content into the structure tree.
 
@@ -4191,7 +4182,7 @@ class SimplePdf:
     def _auto_tag_page(
         self,
         page_index: int,
-        image_alt: Optional[Union[str, Callable[[str], str]]],
+        image_alt: str | Callable[[str], str] | None,
     ) -> int:
         from .auto_tag import (
             TextObject,
@@ -4248,7 +4239,7 @@ class SimplePdf:
         # Split into column bands first so a multi-column page is read
         # column-by-column; within each band, pull out aligned tables and hand
         # the remaining flow to paragraph/list structuring.
-        marks: List[Tuple[int, int, str, int]] = []
+        marks: list[tuple[int, int, str, int]] = []
         created = 0
         for column in detect_columns(tagged):
             for seg_kind, seg_rows in detect_tables(group_rows(column)):
@@ -4270,8 +4261,8 @@ class SimplePdf:
         return created
 
     def _emit_flow_groups(
-        self, page_index: int, flow: List[Any]
-    ) -> Tuple[int, List[Tuple[int, int, str, int]]]:
+        self, page_index: int, flow: list[Any]
+    ) -> tuple[int, list[tuple[int, int, str, int]]]:
         """Structure non-table *flow* elements into paragraphs, headings, lists.
 
         Returns ``(created, marks)``: consecutive list-item paragraphs collapse
@@ -4281,7 +4272,7 @@ class SimplePdf:
         from .auto_tag import group_into_paragraphs, is_list_item
 
         groups = group_into_paragraphs(flow)
-        marks: List[Tuple[int, int, str, int]] = []
+        marks: list[tuple[int, int, str, int]] = []
         created = 0
         i, total = 0, len(groups)
         while i < total:
@@ -4312,7 +4303,7 @@ class SimplePdf:
         return created, marks
 
     def _figure_alt(
-        self, image_alt: Union[str, Callable[[str], str]], name: str
+        self, image_alt: str | Callable[[str], str], name: str
     ) -> str:
         if callable(image_alt):
             try:
@@ -4323,9 +4314,9 @@ class SimplePdf:
                 return "Image"
         return str(image_alt)
 
-    def _image_xobject_names(self, page_index: int) -> Set[str]:
+    def _image_xobject_names(self, page_index: int) -> set[str]:
         """Return the names of image (not form) XObjects in a page's resources."""
-        names: Set[str] = set()
+        names: set[str] = set()
         page = self._get_page_dict(page_index)
         if not isinstance(page, PdfDictionary):
             return names
@@ -4365,7 +4356,7 @@ class SimplePdf:
         search: str,
         replacement: str,
         *,
-        page_index: Optional[int] = None,
+        page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
     ) -> int:
@@ -4396,8 +4387,8 @@ class SimplePdf:
             indices = (page_index,)
 
         total = 0
-        metric_cache: Dict[int, Any] = {}
-        codec_cache: Dict[int, Any] = {}
+        metric_cache: dict[int, Any] = {}
+        codec_cache: dict[int, Any] = {}
         for index in indices:
             remaining = 0 if max_count == 0 else max_count - total
             if max_count and remaining <= 0:
@@ -4437,7 +4428,7 @@ class SimplePdf:
         self,
         search: str,
         *,
-        page_index: Optional[int] = None,
+        page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
         overlay: bool = False,
@@ -4471,8 +4462,8 @@ class SimplePdf:
             indices = (page_index,)
 
         total = 0
-        metric_cache: Dict[int, Any] = {}
-        codec_cache: Dict[int, Any] = {}
+        metric_cache: dict[int, Any] = {}
+        codec_cache: dict[int, Any] = {}
         for index in indices:
             remaining = 0 if max_count == 0 else max_count - total
             if max_count and remaining <= 0:
@@ -4545,7 +4536,7 @@ class SimplePdf:
         parts.append(b"Q\n")
         return b"".join(parts)
 
-    def _pdf_number(self, obj: Any) -> Optional[float]:
+    def _pdf_number(self, obj: Any) -> float | None:
         obj = self._resolve(obj)
         if isinstance(obj, PdfNumber):
             return float(obj.value)
@@ -4557,7 +4548,7 @@ class SimplePdf:
         self,
         page_index: int,
         *,
-        shared_cache: Optional[Dict[int, Any]] = None,
+        shared_cache: dict[int, Any] | None = None,
     ):
         """Return a ``name -> SimpleFontMetric|CompositeFontMetric|None`` resolver."""
         from .cos import PdfDictionary, PdfName
@@ -4568,7 +4559,7 @@ class SimplePdf:
             resources = self._resolve_resources_cos(page_dict)
             if isinstance(resources, PdfDictionary):
                 fonts_cos = self._resolve(resources.mapping.get(PdfName("Font")))
-        cache: Dict[str, Any] = {}
+        cache: dict[str, Any] = {}
 
         def resolver(name: str):
             if name in cache:
@@ -4630,7 +4621,6 @@ class SimplePdf:
         from ToUnicode, the predefined collection mapping, or an embedded
         CIDFontType2 reconstruction. Vertical metrics honor /W2 and /DW2.
         """
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
         from .content_stream_parser import (
             load_cid_vertical_metrics,
             load_cid_widths,
@@ -4638,6 +4628,7 @@ class SimplePdf:
             parse_encoding_cmap_codespaces,
             parse_encoding_cmap_wmode,
         )
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
         from .text_edit import CidTextCodec, predefined_cmap_codec
         from .text_locate import CompositeFontMetric
 
@@ -4690,7 +4681,7 @@ class SimplePdf:
                 else parse_encoding_cmap_wmode(data, budget=self._load_budget) == 1
             )
 
-            def code_to_cid(code: bytes, _m=cmap) -> Optional[int]:
+            def code_to_cid(code: bytes, _m=cmap) -> int | None:
                 return _m.get(code)
         else:
             if has_to_unicode:
@@ -4718,7 +4709,7 @@ class SimplePdf:
                 def code_to_cid(
                     code: bytes,
                     _m=predefined.code_to_cid,
-                ) -> Optional[int]:
+                ) -> int | None:
                     return _m.get(code)
 
         if not code_to_text:
@@ -4747,7 +4738,7 @@ class SimplePdf:
             default_v1y = 880.0
             default_w1y = -1000.0
 
-            def finite_vertical_metric(value: Any) -> Optional[float]:
+            def finite_vertical_metric(value: Any) -> float | None:
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     return None
                 try:
@@ -4895,7 +4886,7 @@ class SimplePdf:
 
     def _reconstruct_composite_code_to_text(
         self, font_dict: Any
-    ) -> Optional[Dict[bytes, str]]:
+    ) -> dict[bytes, str] | None:
         """Reconstruct code -> text for an embedded CIDFontType2 w/o ToUnicode.
 
         Only Identity encodings with an embedded ``/FontFile2`` are handled: the
@@ -4933,12 +4924,12 @@ class SimplePdf:
             return None
         if not uni:
             return None
-        gid_to_cp: Dict[int, int] = {}
+        gid_to_cp: dict[int, int] = {}
         for cp, gid in uni.items():
             if gid not in gid_to_cp or cp < gid_to_cp[gid]:
                 gid_to_cp[gid] = cp  # lowest codepoint wins on collision
         gid_to_cid = self._build_gid_to_cid(cid_font)
-        result: Dict[bytes, str] = {}
+        result: dict[bytes, str] = {}
         for gid, cp in gid_to_cp.items():
             cid = gid_to_cid(gid)
             if cid is None or not 0 <= cid <= 0xFFFF:
@@ -4951,7 +4942,7 @@ class SimplePdf:
 
     def _load_embedded_font_program(
         self, descriptor: Any, key: str
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Return the decoded bytes of a font descriptor's embedded program."""
         from .cos import PdfDictionary, PdfName, PdfStream
 
@@ -4986,7 +4977,7 @@ class SimplePdf:
                 "max_container_items",
                 "CIDToGIDMap entries",
             )
-            inverse: Dict[int, int] = {}
+            inverse: dict[int, int] = {}
             for cid in range(len(data) // 2):
                 gid = (data[2 * cid] << 8) | data[2 * cid + 1]
                 inverse.setdefault(gid, cid)
@@ -4999,10 +4990,10 @@ class SimplePdf:
         # /Identity (or absent) means glyph id equals CID.
         return lambda gid: gid
 
-    def _font_to_unicode_map(self, font_dict: Any) -> Optional[Dict[bytes, str]]:
+    def _font_to_unicode_map(self, font_dict: Any) -> dict[bytes, str] | None:
         """Parse a font's ToUnicode CMap into a two-byte code -> text map."""
-        from .cos import PdfName, PdfStream
         from .content_stream_parser import parse_to_unicode_cmap
+        from .cos import PdfName, PdfStream
 
         ref = font_dict.mapping.get(PdfName("ToUnicode"))
         stream = self._resolve(ref)
@@ -5025,7 +5016,7 @@ class SimplePdf:
         page_index: int,
         *,
         metric_for_name=None,
-        shared_cache: Optional[Dict[int, Any]] = None,
+        shared_cache: dict[int, Any] | None = None,
     ):
         """Return a ``name -> CidTextCodec|None`` resolver for a page.
 
@@ -5051,9 +5042,9 @@ class SimplePdf:
             resources = self._resolve_resources_cos(page_dict)
             if isinstance(resources, PdfDictionary):
                 fonts_cos = self._resolve(resources.mapping.get(PdfName("Font")))
-        cache: Dict[Optional[str], Any] = {}
+        cache: dict[str | None, Any] = {}
 
-        def resolver(name: Optional[str]):
+        def resolver(name: str | None):
             if name in cache:
                 return cache[name]
             codec = None
@@ -5249,7 +5240,7 @@ class SimplePdf:
         if isinstance(widths, PdfArray):
             return widths
         if isinstance(widths, dict):
-            items: List[Any] = []
+            items: list[Any] = []
             for cid, width in sorted(widths.items(), key=lambda item: int(item[0])):
                 items.extend(
                     [
@@ -5337,7 +5328,7 @@ class SimplePdf:
         base_name = str(authored.base_name).lstrip("/")
         program = bytes(authored.embedded_program())
 
-        font_stream_mapping: Dict[PdfName, Any] = {
+        font_stream_mapping: dict[PdfName, Any] = {
             PdfName("Length"): PdfNumber(len(program))
         }
         font_file_key = str(authored.font_file_key).lstrip("/")
@@ -5351,7 +5342,7 @@ class SimplePdf:
         font_stream = PdfStream(content=program, mapping=font_stream_mapping)
         font_stream_ref = self._cos_doc.register_object(font_stream)
 
-        descriptor_mapping: Dict[PdfName, Any] = {
+        descriptor_mapping: dict[PdfName, Any] = {
             PdfName("Type"): PdfName("FontDescriptor"),
             PdfName("FontName"): PdfName(base_name),
             PdfName(font_file_key): font_stream_ref,
@@ -5364,7 +5355,7 @@ class SimplePdf:
         descriptor_ref = self._cos_doc.register_object(descriptor)
 
         cid_to_gid_data = authored.cid_to_gid_bytes()
-        cid_to_gid_stream: Optional[PdfStream] = None
+        cid_to_gid_stream: PdfStream | None = None
         cid_to_gid_value: Any = None
         if cid_to_gid_data is not None:
             mapping = bytes(cid_to_gid_data)
@@ -5374,7 +5365,7 @@ class SimplePdf:
             )
             cid_to_gid_value = self._cos_doc.register_object(cid_to_gid_stream)
 
-        cid_font_mapping: Dict[PdfName, Any] = {
+        cid_font_mapping: dict[PdfName, Any] = {
             PdfName("Type"): PdfName("Font"),
             PdfName("Subtype"): PdfName(
                 str(authored.cid_font_subtype).lstrip("/")
@@ -5446,7 +5437,7 @@ class SimplePdf:
         self,
         page_index: int,
         image: AuthoredImage,
-        requested_name: Optional[str] = None,
+        requested_name: str | None = None,
     ) -> str:
         xobjects = self._ensure_resource_subdict(page_index, "XObject")
         resource_name = self._unique_resource_name(xobjects, "Im", requested_name)
@@ -5478,12 +5469,12 @@ class SimplePdf:
         y: float,
         *,
         font_size: float = 12.0,
-        font_name: Optional[str] = None,
-        font: Union["FontDescriptor", bytes, bytearray, str, Path, None] = None,
+        font_name: str | None = None,
+        font: FontDescriptor | bytes | bytearray | str | Path | None = None,
         color: Sequence[float] = (0.0, 0.0, 0.0),
-        tag: Optional[str] = None,
-        actual_text: Optional[str] = None,
-        layout: Optional["TextLayoutOptions"] = None,
+        tag: str | None = None,
+        actual_text: str | None = None,
+        layout: TextLayoutOptions | None = None,
     ) -> None:
         """Append positioned text to a page content stream."""
         self._ensure_not_disposed()
@@ -5566,18 +5557,18 @@ class SimplePdf:
         x: float,
         y: float,
         font_size: float,
-        font_name: Optional[str],
-        primary_font: Union["FontDescriptor", bytes, bytearray, str, Path],
+        font_name: str | None,
+        primary_font: FontDescriptor | bytes | bytearray | str | Path,
         color: Sequence[float],
-        layout: "TextLayoutOptions",
+        layout: TextLayoutOptions,
     ) -> bytes:
         from .font_authoring import prepare_authored_font
         from .text_layout import layout_text
 
         sources = (primary_font, *layout.fallback_fonts)
-        authored_fonts: List[Any] = []
-        cache_keys: List[Tuple[int, str, str]] = []
-        resources: List[Optional[_AuthoredFontResource]] = []
+        authored_fonts: list[Any] = []
+        cache_keys: list[tuple[int, str, str]] = []
+        resources: list[_AuthoredFontResource | None] = []
         for index, source in enumerate(sources):
             try:
                 prepared = prepare_authored_font(
@@ -5599,10 +5590,10 @@ class SimplePdf:
             resources.append(cached)
 
         result = layout_text(text, authored_fonts, layout, font_size=font_size)
-        encoded_lines: List[
-            Tuple[str, List[Tuple[bytes, int, float, float]]]
+        encoded_lines: list[
+            tuple[str, list[tuple[bytes, int, float, float]]]
         ] = []
-        used_fonts: Set[int] = set()
+        used_fonts: set[int] = set()
         line_height = layout.line_height or font_size * 1.2
         for line_index, line in enumerate(result.lines):
             available = max(
@@ -5622,7 +5613,7 @@ class SimplePdf:
             else:
                 line_offset = 0.0
             baseline = y - line_index * line_height
-            glyphs: List[Tuple[bytes, int, float, float]] = []
+            glyphs: list[tuple[bytes, int, float, float]] = []
             for glyph in line.glyphs:
                 encoded = authored_fonts[glyph.font_index].encode_glyph(
                     glyph.gid, glyph.unicode_text
@@ -5641,7 +5632,7 @@ class SimplePdf:
             )
             encoded_lines.append((property_name, glyphs))
 
-        resource_names: Dict[int, str] = {}
+        resource_names: dict[int, str] = {}
         for font_index in sorted(used_fonts):
             resource = resources[font_index]
             if resource is None:
@@ -5654,8 +5645,8 @@ class SimplePdf:
                 self._refresh_authored_font_resource(resource)
             resource_names[font_index] = resource.resource_name
 
-        stream_lines: List[
-            Tuple[str, List[Tuple[bytes, str, float, float]]]
+        stream_lines: list[
+            tuple[str, list[tuple[bytes, str, float, float]]]
         ] = []
         for property_name, glyphs in encoded_lines:
             stream_lines.append(
@@ -5675,17 +5666,17 @@ class SimplePdf:
         data: bytes,
         x: float,
         y: float,
-        width: Optional[float] = None,
-        height: Optional[float] = None,
+        width: float | None = None,
+        height: float | None = None,
         *,
-        pixel_width: Optional[int] = None,
-        pixel_height: Optional[int] = None,
+        pixel_width: int | None = None,
+        pixel_height: int | None = None,
         color_space: str = "DeviceRGB",
         bits_per_component: int = 8,
-        name: Optional[str] = None,
-        tag: Optional[str] = None,
-        alt: Optional[str] = None,
-        actual_text: Optional[str] = None,
+        name: str | None = None,
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
     ) -> str:
         """Register an image XObject and append a placement operation to a page."""
         self._ensure_not_disposed()
@@ -5738,12 +5729,12 @@ class SimplePdf:
         width: float,
         height: float,
         *,
-        stroke_color: Optional[Sequence[float]] = (0.0, 0.0, 0.0),
-        fill_color: Optional[Sequence[float]] = None,
+        stroke_color: Sequence[float] | None = (0.0, 0.0, 0.0),
+        fill_color: Sequence[float] | None = None,
         line_width: float = 1.0,
-        tag: Optional[str] = None,
-        alt: Optional[str] = None,
-        actual_text: Optional[str] = None,
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
     ) -> None:
         """Append a rectangle path to a page content stream."""
         self._ensure_not_disposed()
@@ -5777,9 +5768,9 @@ class SimplePdf:
         *,
         stroke_color: Sequence[float] = (0.0, 0.0, 0.0),
         line_width: float = 1.0,
-        tag: Optional[str] = None,
-        alt: Optional[str] = None,
-        actual_text: Optional[str] = None,
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
     ) -> None:
         """Append a stroked line segment to a page content stream."""
         self._ensure_not_disposed()
@@ -5822,7 +5813,7 @@ class SimplePdf:
         self.images[name] = data
 
     def save_image(
-        self, name: str, path: Union[str, Path], *, color_space: Optional[str] = None
+        self, name: str, path: str | Path, *, color_space: str | None = None
     ) -> Path:
         """Save an extracted image as a real, openable image file.
 
@@ -5854,7 +5845,7 @@ class SimplePdf:
         out_path.write_bytes(out_bytes)
         return out_path
 
-    def get_attach_names(self) -> List[str]:
+    def get_attach_names(self) -> list[str]:
         """Return list of attachment names."""
         self._ensure_not_disposed()
         return list(self.attachments.keys())
@@ -5880,7 +5871,7 @@ class SimplePdf:
             self._image_cursor = 0
         return self._image_cursor < len(self._image_names)
 
-    def get_next_image(self) -> Tuple[str, bytes]:
+    def get_next_image(self) -> tuple[str, bytes]:
         if self._image_names is None:
             self._image_names = list(self.images.keys())
             self._image_cursor = 0
@@ -5898,7 +5889,7 @@ class SimplePdf:
         """Extract plain text from page contents."""
         if self._extracted_text is not None:
             return self._extracted_text
-        texts: List[str] = []
+        texts: list[str] = []
         # Use empty resources when page resources are unavailable.
         empty_resources = {}
 
@@ -6005,7 +5996,7 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     # Page manipulation
     # ---------------------------------------------------------------------------
-    def extract_pages(self, selection: Union[Iterable[int], slice]) -> "SimplePdf":
+    def extract_pages(self, selection: Iterable[int] | slice) -> SimplePdf:
         """Return new PDF with selected pages."""
         if isinstance(selection, slice):
             indices = list(range(*selection.indices(len(self.pages))))
@@ -6086,7 +6077,7 @@ class SimplePdf:
         if not self._cos_doc:
             return
 
-        from .cos import PdfName, PdfArray, PdfIndirectReference, PdfDictionary
+        from .cos import PdfArray, PdfDictionary, PdfIndirectReference, PdfName
 
         # Use cache to find the specific leaf page object
         self._ensure_page_cache()
@@ -6121,8 +6112,8 @@ class SimplePdf:
     def insert_pages(
         self,
         index: int,
-        new_pages: List[Tuple[float, float, float, float]],
-        new_contents: Optional[List[bytes]] = None,
+        new_pages: list[tuple[float, float, float, float]],
+        new_contents: list[bytes] | None = None,
     ) -> None:
         """Insert multiple pages."""
         self._ensure_not_disposed()
@@ -6181,9 +6172,9 @@ class SimplePdf:
 
     def _register_annotation_appearance(
         self,
-        rect: Tuple[float, float, float, float],
-        ap_spec: Dict[str, Any],
-        resources: Optional[PdfDictionary] = None,
+        rect: tuple[float, float, float, float],
+        ap_spec: dict[str, Any],
+        resources: PdfDictionary | None = None,
     ) -> PdfIndirectReference:
         """Create a registered /AP dictionary with /N form XObject for *ap_spec*.
 
@@ -6247,9 +6238,9 @@ class SimplePdf:
 
     def _build_appearance_resources(
         self,
-        ext_gstates: Dict[str, Dict[str, Any]],
-        fonts: Optional[Dict[str, Dict[str, Any]]] = None,
-    ) -> Optional[PdfDictionary]:
+        ext_gstates: dict[str, dict[str, Any]],
+        fonts: dict[str, dict[str, Any]] | None = None,
+    ) -> PdfDictionary | None:
         """Build a form ``/Resources`` dict for generated ``/ExtGState``/``/Font``."""
         if not ext_gstates and not fonts:
             return None
@@ -6336,7 +6327,7 @@ class SimplePdf:
         return True
 
     def generate_appearances(
-        self, page_index: Optional[int] = None, *, force: bool = False
+        self, page_index: int | None = None, *, force: bool = False
     ) -> int:
         """Generate missing appearances across a page (or all pages).
 
@@ -6361,7 +6352,7 @@ class SimplePdf:
                     created += 1
         return created
 
-    def get_annotations(self, page_index: int) -> List[Dict[str, Any]]:
+    def get_annotations(self, page_index: int) -> list[dict[str, Any]]:
         """Get annotations for a page."""
         self._ensure_not_disposed()
         if self._cos_doc is None:
@@ -6396,7 +6387,7 @@ class SimplePdf:
         for annot_ref in resolved_annots.items:
             annot_dict = self._resolve(annot_ref)
             if isinstance(annot_dict, PdfDictionary):
-                entry: Dict[str, Any] = {
+                entry: dict[str, Any] = {
                     "Subtype": self._get_cos_name(
                         annot_dict.mapping.get(PdfName("Subtype"))
                     ),
@@ -6444,8 +6435,8 @@ class SimplePdf:
         obj: Any,
         *,
         _depth: int = 0,
-        _active: Optional[Set[int]] = None,
-        _item_count: Optional[List[int]] = None,
+        _active: set[int] | None = None,
+        _item_count: list[int] | None = None,
     ) -> Any:
         """Convert a COS annotation property value into a plain Python value."""
         obj = self._resolve(obj)
@@ -6482,7 +6473,7 @@ class SimplePdf:
                 raise PdfParseException("Annotation property graph contains a cycle")
             active.add(obj_id)
             try:
-                result: List[Any] = []
+                result: list[Any] = []
                 for item in obj.items:
                     item_count[0] += 1
                     self._load_budget.check(
@@ -6518,7 +6509,7 @@ class SimplePdf:
                 raise PdfParseException("Annotation property graph contains a cycle")
             active.add(obj_id)
             try:
-                result_dict: Dict[str, Any] = {}
+                result_dict: dict[str, Any] = {}
                 for key, value in obj.mapping.items():
                     item_count[0] += 1
                     self._load_budget.check(
@@ -6542,9 +6533,9 @@ class SimplePdf:
 
     def _extract_annotation_properties(
         self, annot_dict: PdfDictionary
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Collect type-specific annotation entries for the public surface."""
-        props: Dict[str, Any] = {}
+        props: dict[str, Any] = {}
         item_count = [0]
         for key, value in annot_dict.mapping.items():
             if not isinstance(key, PdfName):
@@ -6565,7 +6556,7 @@ class SimplePdf:
         return props
 
     def _apply_annotation_properties(
-        self, annot: PdfDictionary, properties: Dict[str, Any]
+        self, annot: PdfDictionary, properties: dict[str, Any]
     ) -> None:
         """Write type-specific properties onto *annot* (``None`` removes a key)."""
         for name, value in properties.items():
@@ -6582,7 +6573,7 @@ class SimplePdf:
             return val.name.lstrip("/")
         return ""
 
-    def _get_cos_rect(self, val: Any) -> Tuple[float, float, float, float]:
+    def _get_cos_rect(self, val: Any) -> tuple[float, float, float, float]:
         if isinstance(val, PdfArray) and len(val.items) >= 4:
             try:
                 return tuple(float(getattr(i, "value", i)) for i in val.items[:4])
@@ -6598,7 +6589,7 @@ class SimplePdf:
                 return str(val.value)
         return ""
 
-    def add_annotation(self, page_index: int, data: Dict[str, Any]) -> None:
+    def add_annotation(self, page_index: int, data: dict[str, Any]) -> None:
         """Add an annotation to a page."""
         self._ensure_not_disposed()
         self._ensure_cos()
@@ -6657,7 +6648,7 @@ class SimplePdf:
                 annots_array.items.append(annot_ref)
 
     def insert_annotation(
-        self, page_index: int, annot_index: int, data: Dict[str, Any]
+        self, page_index: int, annot_index: int, data: dict[str, Any]
     ) -> None:
         """Insert an annotation at a specific index on a page."""
         self._ensure_not_disposed()
@@ -6741,7 +6732,7 @@ class SimplePdf:
             annots_array.items.clear()
 
     def update_annotation(
-        self, page_index: int, annot_index: int, data: Dict[str, Any]
+        self, page_index: int, annot_index: int, data: dict[str, Any]
     ) -> None:
         """Update an existing annotation."""
         self._ensure_not_disposed()
@@ -6820,7 +6811,7 @@ class SimplePdf:
 
         del annots_array.items[annot_index]
 
-    def append(self, other: "SimplePdf") -> None:
+    def append(self, other: SimplePdf) -> None:
         """Append another PDF's pages (with COS synchronization)."""
         self._ensure_not_disposed()
         for rect, content in zip(other.pages, other.page_contents):
@@ -6886,7 +6877,7 @@ class SimplePdf:
         if self._cos_doc:
             try:
                 # Check root catalog presence
-                from .cos import PdfName, PdfDictionary, PdfArray, PdfIndirectReference
+                from .cos import PdfArray, PdfDictionary, PdfIndirectReference, PdfName
 
                 root_ref = self._cos_doc.trailer.get(PdfName("Root"))
                 if not root_ref:
@@ -6901,10 +6892,10 @@ class SimplePdf:
 
                 # 5. Deep structural validation with an explicit stack so a
                 # hostile graph cannot exhaust Python's recursion limit.
-                active: Set[Tuple[str, int]] = set()
-                complete: Set[Tuple[str, int]] = set()
+                active: set[tuple[str, int]] = set()
+                complete: set[tuple[str, int]] = set()
                 checked_nodes = 0
-                stack: List[Tuple[Any, int, bool]] = [
+                stack: list[tuple[Any, int, bool]] = [
                     (self._cos_doc.trailer, 0, False)
                 ]
                 graph_invalid = False
@@ -7048,7 +7039,7 @@ class SimplePdf:
 
         # 6. Ensure Root and Pages exist in COS doc if it's there
         if self._cos_doc:
-            from .cos import PdfName, PdfDictionary, PdfArray
+            from .cos import PdfArray, PdfDictionary, PdfName
 
             if PdfName("Root") not in self._cos_doc.trailer:
                 # Try to find Catalog or create one
@@ -7081,7 +7072,7 @@ class SimplePdf:
 
     def optimize(
         self,
-        options: "OptimizationOptions | None" = None,
+        options: OptimizationOptions | None = None,
         *,
         compress_streams: bool = True,
     ) -> None:
@@ -7089,19 +7080,19 @@ class SimplePdf:
 
         Honors :class:`~aspose_pdf.optimization.OptimizationOptions`:
 
-        * ``remove_duplicate_images`` – collapse byte-identical images.
-        * ``link_duplicate_streams`` / ``allow_reuse_page_content`` – share a
+        * ``remove_duplicate_images`` - collapse byte-identical images.
+        * ``link_duplicate_streams`` / ``allow_reuse_page_content`` - share a
           single copy of byte-identical content streams.
-        * ``remove_unused_objects`` – garbage-collect unreachable objects;
+        * ``remove_unused_objects`` - garbage-collect unreachable objects;
           ``remove_unused_streams`` prunes only unreachable streams when full GC
           is off.
-        * ``compress_fonts`` – include embedded font programs in Flate
+        * ``compress_fonts`` - include embedded font programs in Flate
           compression.
-        * ``unembed_fonts`` – drop the embedded program of Standard-14 fonts
+        * ``unembed_fonts`` - drop the embedded program of Standard-14 fonts
           (safe; custom fonts are kept). See :meth:`_unembed_fonts`.
-        * ``subset_fonts`` – strip unused glyphs from embedded TrueType programs
+        * ``subset_fonts`` - strip unused glyphs from embedded TrueType programs
           (off by default). See :meth:`_subset_fonts`.
-        * ``use_object_streams`` – record that the next full rewrite should pack
+        * ``use_object_streams`` - record that the next full rewrite should pack
           objects into an object stream + cross-reference stream (the largest
           file-size lever); honored by :meth:`to_bytes` via :class:`PdfCosWriter`.
 
@@ -7371,7 +7362,7 @@ class SimplePdf:
     )
     _JPEG_FILTERS = frozenset({"DCTDecode", "DCT"})
 
-    def _image_display_sizes(self) -> Dict[int, Tuple[float, float]]:
+    def _image_display_sizes(self) -> dict[int, tuple[float, float]]:
         """Map each placed image XObject's object number to its largest on-page
         display size in points (for effective-DPI downsampling).
 
@@ -7382,7 +7373,7 @@ class SimplePdf:
         from .auto_tag import find_image_placements
         from .cos import PdfDictionary, PdfName
 
-        sizes: Dict[int, Tuple[float, float]] = {}
+        sizes: dict[int, tuple[float, float]] = {}
         for i in range(len(self.pages)):
             page = self._get_page_dict(i)
             if not isinstance(page, PdfDictionary):
@@ -7393,7 +7384,7 @@ class SimplePdf:
             xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
             if not isinstance(xobjects, PdfDictionary):
                 continue
-            name_to_obj: Dict[str, int] = {}
+            name_to_obj: dict[str, int] = {}
             for key, value in xobjects.mapping.items():
                 if isinstance(value, PdfIndirectReference):
                     name_to_obj[key.name.lstrip("/")] = value.object_number
@@ -7419,9 +7410,9 @@ class SimplePdf:
 
     def _recompress_images_cos(
         self,
-        quality: Optional[int],
-        max_dim: Optional[int],
-        target_dpi: Optional[int] = None,
+        quality: int | None,
+        max_dim: int | None,
+        target_dpi: int | None = None,
         progressive: bool = False,
     ) -> None:
         """Recompress and/or downscale eligible RGB/grayscale image XObjects.
@@ -7469,10 +7460,10 @@ class SimplePdf:
     def _recompress_one_image(
         self,
         stream: Any,
-        quality: Optional[int],
-        max_dim: Optional[int],
-        target_dpi: Optional[int] = None,
-        display_size: Optional[Tuple[float, float]] = None,
+        quality: int | None,
+        max_dim: int | None,
+        target_dpi: int | None = None,
+        display_size: tuple[float, float] | None = None,
         progressive: bool = False,
     ) -> bool:
         from . import dct, jpeg_encoder
@@ -7587,7 +7578,7 @@ class SimplePdf:
             return [self._get_name(f) or "" for f in filt.items]
         return []
 
-    def _cs_components(self, cs: Any) -> Optional[int]:
+    def _cs_components(self, cs: Any) -> int | None:
         """Return the component count of an image colour space (1/3/4) or None.
 
         Only device/calibrated gray and RGB (and ICCBased with N=1/3) are mapped;
@@ -7821,7 +7812,7 @@ class SimplePdf:
         elif isinstance(enc, PdfDictionary):
             base_name = self._get_name(enc.mapping.get(PdfName("BaseEncoding")))
             differences = self._resolve(enc.mapping.get(PdfName("Differences")))
-        diff_map: Dict[int, str] = {}
+        diff_map: dict[int, str] = {}
         if isinstance(differences, PdfArray):
             current = 0
             for item in differences.items:
@@ -8131,7 +8122,7 @@ class SimplePdf:
         """Resolve a page/XObject ``/Resources`` dict, walking inherited /Parent."""
         from .cos import PdfDictionary, PdfName
 
-        seen: Set[int] = set()
+        seen: set[int] = set()
         current = node
         depth = 0
         while isinstance(current, PdfDictionary):
@@ -8178,7 +8169,7 @@ class SimplePdf:
             return
 
         operands: list = []
-        current_font: Optional[int] = None
+        current_font: int | None = None
         for tok in tokens:
             is_operator = (
                 isinstance(tok, str)
@@ -8216,7 +8207,7 @@ class SimplePdf:
                         )
             operands = []
 
-    def _font_resource_objnum(self, font_dict: Any, name: Optional[str]):
+    def _font_resource_objnum(self, font_dict: Any, name: str | None):
         from .cos import PdfDictionary, PdfIndirectReference, PdfName
 
         if name is None or not isinstance(font_dict, PdfDictionary):
@@ -8422,14 +8413,14 @@ class SimplePdf:
         self._authored_font_cache.clear()
 
     def optimize_resources(
-        self, options: "OptimizationOptions | None" = None
+        self, options: OptimizationOptions | None = None
     ) -> None:
         """Optimize embedded resources (alias of :meth:`optimize`)."""
         self.optimize(options)
 
     def _flatten_appearance_matrix(
-        self, form: Any, coords: List[float]
-    ) -> Tuple[float, float, float, float, float, float]:
+        self, form: Any, coords: list[float]
+    ) -> tuple[float, float, float, float, float, float]:
         """Matrix mapping a form XObject's transformed /BBox onto the annot /Rect.
 
         Implements the appearance-placement step of ISO 32000-1 12.5.5: the form
@@ -8488,7 +8479,7 @@ class SimplePdf:
         if not self._cos_doc:
             return
 
-        from .cos import PdfName, PdfDictionary, PdfArray, PdfStream
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
 
         # Give shape/markup annotations and form fields a renderable appearance
         # before flattening so their content is not silently dropped.
@@ -8593,7 +8584,7 @@ class SimplePdf:
         if PdfName("AcroForm") in self._cos_doc.trailer.mapping:
             del self._cos_doc.trailer.mapping[PdfName("AcroForm")]
 
-    def get_form_fields(self) -> Dict[str, Dict[str, Any]]:
+    def get_form_fields(self) -> dict[str, dict[str, Any]]:
         """Extract all form fields with values and types."""
         self._ensure_not_disposed()
         if not self._cos_doc:
@@ -8608,7 +8599,7 @@ class SimplePdf:
         return extractor.extract_form_fields()
 
     @staticmethod
-    def _form_field_name_parts(name: str) -> List[str]:
+    def _form_field_name_parts(name: str) -> list[str]:
         """Validate and split a fully qualified AcroForm field name."""
         if not isinstance(name, str):
             raise TypeError("Field name must be a string")
@@ -8631,7 +8622,7 @@ class SimplePdf:
             )
         return name
 
-    def _ensure_acroform_for_authoring(self) -> Tuple[PdfDictionary, PdfArray]:
+    def _ensure_acroform_for_authoring(self) -> tuple[PdfDictionary, PdfArray]:
         """Return a writable AcroForm dictionary and its root /Fields array."""
         self._ensure_cos()
         if self._cos_doc is None:
@@ -8656,13 +8647,13 @@ class SimplePdf:
         acro.mapping[PdfName("NeedAppearances")] = PdfBoolean(False)
         return acro, fields
 
-    def _field_partial_name(self, field: PdfDictionary) -> Optional[str]:
+    def _field_partial_name(self, field: PdfDictionary) -> str | None:
         value = self._resolve(field.mapping.get(PdfName("T")))
         return decode_pdf_text_string(value) if isinstance(value, PdfString) else None
 
     def _find_named_field(
         self, fields: PdfArray, partial_name: str
-    ) -> Optional[Tuple[Any, PdfDictionary]]:
+    ) -> tuple[Any, PdfDictionary] | None:
         for field_ref in fields.items:
             field = self._resolve(field_ref)
             if (
@@ -8674,12 +8665,12 @@ class SimplePdf:
 
     def _ensure_form_parent_path(
         self, root_fields: PdfArray, parts: Sequence[str]
-    ) -> Tuple[Optional[PdfIndirectReference], PdfArray]:
+    ) -> tuple[PdfIndirectReference | None, PdfArray]:
         """Create non-terminal parent fields for the requested name path."""
         if self._cos_doc is None:
             raise AsposePdfException("COS document required for form authoring")
         siblings = root_fields
-        parent_ref: Optional[PdfIndirectReference] = None
+        parent_ref: PdfIndirectReference | None = None
         for part in parts:
             found = self._find_named_field(siblings, part)
             if found is not None:
@@ -8713,7 +8704,7 @@ class SimplePdf:
 
     def _form_widget_page(
         self, page_index: Any, rect: Any
-    ) -> Tuple[PdfDictionary, PdfIndirectReference, Tuple[float, float, float, float]]:
+    ) -> tuple[PdfDictionary, PdfIndirectReference, tuple[float, float, float, float]]:
         if isinstance(page_index, bool) or not isinstance(page_index, int):
             raise TypeError("Page index must be an integer")
         self._validate_page_index(page_index)
@@ -8759,12 +8750,12 @@ class SimplePdf:
         self,
         name: str,
         field_type: str,
-        widgets: Sequence[Dict[str, Any]],
+        widgets: Sequence[dict[str, Any]],
         *,
         value: Any = None,
         flags: int = 0,
-        options: Optional[Sequence[Any]] = None,
-        default_appearance: Optional[str] = None,
+        options: Sequence[Any] | None = None,
+        default_appearance: str | None = None,
         alignment: int = 0,
         caption: str = "",
         on_value: str = "Yes",
@@ -8791,7 +8782,7 @@ class SimplePdf:
             )
             prepared_widgets.append((spec, page, page_ref, rect))
 
-        radio_states: List[str] = []
+        radio_states: list[str] = []
         if field_type == "radio":
             for spec, _page, _page_ref, _rect in prepared_widgets:
                 radio_states.append(
@@ -8822,7 +8813,7 @@ class SimplePdf:
         ft_name = "Btn" if field_type in ("checkbox", "radio", "pushbutton") else (
             "Ch" if field_type in ("listbox", "combobox") else "Tx"
         )
-        field_map: Dict[PdfName, Any] = {
+        field_map: dict[PdfName, Any] = {
             PdfName("FT"): PdfName(ft_name),
             PdfName("T"): _pdf_text_string(parts[-1]),
             PdfName("Ff"): PdfNumber(flags),
@@ -8873,7 +8864,7 @@ class SimplePdf:
 
         kid_refs = []
         for index, (spec, page, page_ref, rect) in enumerate(prepared_widgets):
-            mk_map: Dict[PdfName, Any] = {
+            mk_map: dict[PdfName, Any] = {
                 PdfName("BC"): PdfArray([PdfNumber(0)]),
                 PdfName("BG"): PdfArray(
                     [
@@ -8885,7 +8876,7 @@ class SimplePdf:
                     ]
                 ),
             }
-            widget_map: Dict[PdfName, Any] = {
+            widget_map: dict[PdfName, Any] = {
                 PdfName("Type"): PdfName("Annot"),
                 PdfName("Subtype"): PdfName("Widget"),
                 PdfName("Rect"): PdfArray([PdfNumber(coord) for coord in rect]),
@@ -8944,8 +8935,8 @@ class SimplePdf:
         if not isinstance(fields, PdfArray):
             return False
 
-        widget_numbers: Set[int] = set()
-        widget_objects: Set[int] = set()
+        widget_numbers: set[int] = set()
+        widget_objects: set[int] = set()
         removed = self._remove_form_field_rec(
             fields, parts, widget_numbers, widget_objects
         )
@@ -8980,8 +8971,8 @@ class SimplePdf:
         self,
         fields: PdfArray,
         parts: Sequence[str],
-        widget_numbers: Set[int],
-        widget_objects: Set[int],
+        widget_numbers: set[int],
+        widget_objects: set[int],
     ) -> bool:
         for index, field_ref in enumerate(list(fields.items)):
             field = self._resolve(field_ref)
@@ -9010,8 +9001,8 @@ class SimplePdf:
         self,
         field_ref: Any,
         field: PdfDictionary,
-        widget_numbers: Set[int],
-        widget_objects: Set[int],
+        widget_numbers: set[int],
+        widget_objects: set[int],
     ) -> None:
         if PdfName("Rect") in field.mapping:
             if isinstance(field_ref, PdfIndirectReference):
@@ -9083,7 +9074,7 @@ class SimplePdf:
                     return True
         return False
 
-    def _value_to_pdf(self, field_obj: Any, value: Any) -> Optional[Any]:
+    def _value_to_pdf(self, field_obj: Any, value: Any) -> Any | None:
         """Convert Python value to appropriate PDF object for form field /V."""
         ft = self._resolve(field_obj.mapping.get(PdfName("FT")))
         ff = self._resolve(field_obj.mapping.get(PdfName("Ff")))
@@ -9125,7 +9116,7 @@ class SimplePdf:
         options = self._resolve(field_obj.mapping.get(PdfName("Opt")))
         if not isinstance(options, PdfArray):
             return
-        exports: List[str] = []
+        exports: list[str] = []
         for option in options.items:
             option = self._resolve(option)
             if isinstance(option, PdfString):
@@ -9204,7 +9195,7 @@ class SimplePdf:
         return updated
 
     def _gen_field_appearance_rec(
-        self, field_ref: Any, inherited: Dict[str, Any], acro: PdfDictionary
+        self, field_ref: Any, inherited: dict[str, Any], acro: PdfDictionary
     ) -> int:
         field = self._resolve(field_ref)
         if not isinstance(field, PdfDictionary):
@@ -9246,11 +9237,11 @@ class SimplePdf:
     def _set_widget_appearance(
         self,
         widget: PdfDictionary,
-        ft: Optional[str],
+        ft: str | None,
         ff: int,
         q: int,
         v: Any,
-        da: Optional[str],
+        da: str | None,
         acro: PdfDictionary,
         opt: Any = None,
     ) -> bool:
@@ -9283,9 +9274,9 @@ class SimplePdf:
         ff: int,
         q: int,
         v: Any,
-        da: Optional[str],
+        da: str | None,
         acro: PdfDictionary,
-        rect: Tuple[float, float, float, float],
+        rect: tuple[float, float, float, float],
         w: float,
         h: float,
         opt: Any = None,
@@ -9362,7 +9353,7 @@ class SimplePdf:
         quadding: Any,
         w: float,
         h: float,
-    ) -> Optional[Tuple[bytes, Optional[PdfDictionary]]]:
+    ) -> tuple[bytes, PdfDictionary | None] | None:
         """Build a rich-text field appearance from ``/RV``, or ``None``."""
         rv = self._resolve(widget.mapping.get(PdfName("RV")))
         rc = decode_pdf_text_string(rv) if isinstance(rv, PdfString) else None
@@ -9401,7 +9392,7 @@ class SimplePdf:
             return "\n".join(parts)
         return ""
 
-    def _field_value_strings(self, value: Any) -> List[str]:
+    def _field_value_strings(self, value: Any) -> list[str]:
         value = self._resolve(value)
         if isinstance(value, PdfArray):
             result = []
@@ -9415,11 +9406,11 @@ class SimplePdf:
         text = self._field_value_to_text(value)
         return [text] if text else []
 
-    def _choice_options_for_appearance(self, options: Any) -> List[Tuple[str, str]]:
+    def _choice_options_for_appearance(self, options: Any) -> list[tuple[str, str]]:
         option_array = self._resolve(options)
         if not isinstance(option_array, PdfArray):
             return []
-        result: List[Tuple[str, str]] = []
+        result: list[tuple[str, str]] = []
         for option in option_array.items:
             option = self._resolve(option)
             if isinstance(option, PdfString):
@@ -9444,7 +9435,7 @@ class SimplePdf:
         if not isinstance(option_array, PdfArray):
             return "\n".join(selected)
 
-        displays: Dict[str, str] = {}
+        displays: dict[str, str] = {}
         for option in option_array.items:
             option = self._resolve(option)
             if isinstance(option, PdfString):
@@ -9460,7 +9451,7 @@ class SimplePdf:
         return "\n".join(displays.get(item, item) for item in selected)
 
     @staticmethod
-    def _field_color_operator(components: Optional[list], *, stroke: bool) -> str:
+    def _field_color_operator(components: list | None, *, stroke: bool) -> str:
         if not components:
             return ""
         values = " ".join(f"{float(value):g}" for value in components)
@@ -9500,7 +9491,7 @@ class SimplePdf:
 
     def _resolve_field_font(
         self, font_name: str, acro: PdfDictionary
-    ) -> Tuple[Any, str]:
+    ) -> tuple[Any, str]:
         """Resolve a ``/DR`` font by name, synthesising Helvetica as a fallback.
 
         Returns ``(font_reference, resource_name)``; the resource name always
@@ -9546,7 +9537,7 @@ class SimplePdf:
     def _ensure_push_button_appearance(
         self,
         widget: PdfDictionary,
-        rect: Tuple[float, float, float, float],
+        rect: tuple[float, float, float, float],
         w: float,
         h: float,
     ) -> bool:
@@ -9585,7 +9576,7 @@ class SimplePdf:
         )
         return True
 
-    def _cos_number_list(self, obj: Any) -> Optional[list]:
+    def _cos_number_list(self, obj: Any) -> list | None:
         """Coerce a COS array of numbers to a ``list[float]`` (or ``None``)."""
         obj = self._resolve(obj)
         if not isinstance(obj, PdfArray):
@@ -9610,7 +9601,7 @@ class SimplePdf:
         """The on-state name for a synthesised button: ``/AS``, then ``/V``, else On."""
         for src in (widget.mapping.get(PdfName("AS")), v):
             res = self._resolve(src)
-            name: Optional[str] = None
+            name: str | None = None
             if isinstance(res, PdfName):
                 name = res.name.lstrip("/")
             elif isinstance(res, PdfString):
@@ -9681,7 +9672,7 @@ class SimplePdf:
         self, widget: PdfDictionary, v: Any, is_radio: bool
     ) -> bool:
         """Point a check box / radio widget's ``/AS`` at the state matching ``/V``."""
-        on_state: Optional[str] = None
+        on_state: str | None = None
         ap = self._resolve(widget.mapping.get(PdfName("AP")))
         if isinstance(ap, PdfDictionary):
             n = self._resolve(ap.mapping.get(PdfName("N")))
@@ -9692,7 +9683,7 @@ class SimplePdf:
                         break
 
         v_res = self._resolve(v)
-        value_name: Optional[str] = None
+        value_name: str | None = None
         if isinstance(v_res, PdfName):
             value_name = v_res.name.lstrip("/")
         elif isinstance(v_res, PdfString):
@@ -9714,8 +9705,8 @@ class SimplePdf:
         self,
         level: str = "1b",
         *,
-        font_lookup_directory: Optional[Union[str, Path]] = None,
-    ) -> List[str]:
+        font_lookup_directory: str | Path | None = None,
+    ) -> list[str]:
         """Convert this document to PDF/A format in-place.
 
         Modifies the COS object graph to satisfy the most common PDF/A
@@ -9947,9 +9938,9 @@ class SimplePdf:
         self,
         *,
         language: str = "en",
-        title: Optional[str] = None,
+        title: str | None = None,
         auto_tag: bool = False,
-    ) -> List[str]:
+    ) -> list[str]:
         """Add the catalog-level PDF/UA prerequisites to this document in place.
 
         Creates the *structural shell* a PDF/UA-1 document needs at the catalog
@@ -10091,7 +10082,7 @@ class SimplePdf:
         Merges into an existing XMP packet when one is present so a document
         that is already PDF/A keeps its ``pdfaid`` identifier.
         """
-        xmp_bytes: Optional[bytes] = None
+        xmp_bytes: bytes | None = None
         existing = self._resolve(root.mapping.get(PdfName("Metadata")))
         if isinstance(existing, PdfStream):
             try:
@@ -10225,7 +10216,7 @@ class CosExtractor:
         doc: PdfDocument,
         raw_data: bytes,
         *,
-        stream_decrypt_key: Optional[bytes] = None,
+        stream_decrypt_key: bytes | None = None,
         stream_decrypt_algorithm: str = "AES-256",
         limits: PdfLoadLimits | None = None,
         budget: _LoadBudget | None = None,
@@ -10240,11 +10231,11 @@ class CosExtractor:
 
         # cache frequently used names
         self._N = PdfName
-        self._image_sizes: Dict[str, Tuple[int, int]] = {}
-        self._image_meta: Dict[str, Dict[str, Any]] = {}
-        self._page_obj_ids: List[int] = []
-        self._content_obj_ids: List[int] = []
-        self._seen_page_nodes: Set[Tuple[str, int]] = set()
+        self._image_sizes: dict[str, tuple[int, int]] = {}
+        self._image_meta: dict[str, dict[str, Any]] = {}
+        self._page_obj_ids: list[int] = []
+        self._content_obj_ids: list[int] = []
+        self._seen_page_nodes: set[tuple[str, int]] = set()
 
     def attach_stream_decryption(self, password: str) -> None:
         """Configure per-stream decryption after the password is verified."""
@@ -10264,7 +10255,7 @@ class CosExtractor:
             return self._doc.objects.get(obj.object_number)
         return obj
 
-    def _get_name(self, obj: Any) -> Optional[str]:
+    def _get_name(self, obj: Any) -> str | None:
         """Return the string value of a PdfName, or None."""
         from .cos import PdfName
 
@@ -10273,7 +10264,7 @@ class CosExtractor:
             return obj.name.lstrip("/")
         return None
 
-    def _get_number(self, obj: Any) -> Optional[float]:
+    def _get_number(self, obj: Any) -> float | None:
         from .cos import PdfNumber
 
         obj = self._resolve(obj)
@@ -10281,7 +10272,7 @@ class CosExtractor:
             return obj.value
         return None
 
-    def _get_dict(self, obj: Any) -> Optional[Any]:
+    def _get_dict(self, obj: Any) -> Any | None:
         from .cos import PdfDictionary
 
         obj = self._resolve(obj)
@@ -10289,7 +10280,7 @@ class CosExtractor:
             return obj
         return None
 
-    def _get_array(self, obj: Any) -> Optional[Any]:
+    def _get_array(self, obj: Any) -> Any | None:
         from .cos import PdfArray
 
         obj = self._resolve(obj)
@@ -10299,7 +10290,7 @@ class CosExtractor:
 
     def _dict_get(self, d: Any, key: str) -> Any:
         """Lookup *key* in a PdfDictionary (resolving the value reference)."""
-        from .cos import PdfName, PdfDictionary
+        from .cos import PdfDictionary, PdfName
 
         if not isinstance(d, PdfDictionary):
             return None
@@ -10321,7 +10312,7 @@ class CosExtractor:
 
     def _image_dimensions(
         self, stream: Any, image_name: str
-    ) -> Optional[Tuple[int, int]]:
+    ) -> tuple[int, int] | None:
         """Validate declared image geometry before any image codec runs."""
         width_value = self._get_number(stream.mapping.get(PdfName("Width")))
         height_value = self._get_number(stream.mapping.get(PdfName("Height")))
@@ -10356,7 +10347,7 @@ class CosExtractor:
         extgstates_out: dict,
         _depth: int = 1,
     ) -> None:
-        from .cos import PdfDictionary, PdfArray, PdfName, PdfStream
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
 
         node = self._resolve(node_ref)
         if not isinstance(node, PdfDictionary):
@@ -10483,7 +10474,7 @@ class CosExtractor:
 
     def _read_content_stream(self, ref: Any) -> bytes:
         """Read and decode a /Contents entry (may be stream or array of streams)."""
-        from .cos import PdfArray, PdfStream, PdfIndirectReference
+        from .cos import PdfArray, PdfIndirectReference, PdfStream
 
         obj = self._resolve(ref)
         content_limit = self._limits.max_content_stream_bytes
@@ -10501,7 +10492,7 @@ class CosExtractor:
                 "max_container_items",
                 "page content stream entries",
             )
-            parts: List[bytes] = []
+            parts: list[bytes] = []
             total = 0
             for item in obj.items:
                 resolved = self._resolve(item)
@@ -10546,10 +10537,12 @@ class CosExtractor:
         """Decode a PdfStream: Standard security decryption (if configured),
         then filters."""
         from .cos import (
-            PdfName,
-            PdfStream as PdfStreamCls,
             PdfArray,
             PdfIndirectReference,
+            PdfName,
+        )
+        from .cos import (
+            PdfStream as PdfStreamCls,
         )
 
         if not isinstance(stream, PdfStreamCls):
@@ -10643,9 +10636,9 @@ class CosExtractor:
         self._budget.reserve_decoded(len(decoded), context)
         return decoded
 
-    def _cos_dict_to_plain(self, obj: Any) -> Optional[dict]:
+    def _cos_dict_to_plain(self, obj: Any) -> dict | None:
         """Convert PdfDictionary to plain dict with string keys for StreamDecoder."""
-        from .cos import PdfDictionary, PdfNumber, PdfName, PdfBoolean
+        from .cos import PdfBoolean, PdfDictionary, PdfName, PdfNumber
 
         if not isinstance(obj, PdfDictionary):
             return None
@@ -10664,7 +10657,7 @@ class CosExtractor:
         return result
 
     # ----- public API -------------------------------------------------------
-    def extract_pages(self) -> List[Tuple[float, float, float, float]]:
+    def extract_pages(self) -> list[tuple[float, float, float, float]]:
         pages: list = []
         contents: list = []
         images = LazyImageDict()
@@ -10689,7 +10682,7 @@ class CosExtractor:
         self._cached_content_obj_ids = self._content_obj_ids
         return pages
 
-    def extract_page_contents(self) -> List[bytes]:
+    def extract_page_contents(self) -> list[bytes]:
         if hasattr(self, "_cached_contents"):
             return self._cached_contents
         return []
@@ -10713,7 +10706,7 @@ class CosExtractor:
         streams. It records page bounding boxes and COS object numbers, and
         discovers image/font metadata so they are available in lazy mode.
         """
-        from .cos import PdfDictionary, PdfArray, PdfName, PdfStream
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
 
         node = self._resolve(node_ref)
         if not isinstance(node, PdfDictionary):
@@ -10826,7 +10819,7 @@ class CosExtractor:
         page_image_map: dict,
         fonts_out: dict,
         extgstates_out: dict,
-    ) -> List[Tuple[float, float, float, float]]:
+    ) -> list[tuple[float, float, float, float]]:
         """Return page MediaBoxes and discover resources without decoding streams.
 
         Page object IDs are stored in ``self._page_obj_ids`` so that
@@ -10868,34 +10861,34 @@ class CosExtractor:
             return b""
         return self._read_content_stream(contents_ref)
 
-    def extract_fonts(self) -> Dict[str, Any]:
+    def extract_fonts(self) -> dict[str, Any]:
         if hasattr(self, "_cached_fonts"):
             return self._cached_fonts
         return {}
 
-    def extract_extgstates(self) -> Dict[str, Any]:
+    def extract_extgstates(self) -> dict[str, Any]:
         if hasattr(self, "_cached_extgs"):
             return self._cached_extgs
         return {}
 
-    def extract_images(self) -> Dict[str, bytes]:
+    def extract_images(self) -> dict[str, bytes]:
         if hasattr(self, "_cached_images"):
             return self._cached_images
         return {}
 
-    def extract_images_per_page(self) -> Dict[int, List[str]]:
+    def extract_images_per_page(self) -> dict[int, list[str]]:
         if hasattr(self, "_cached_pmap"):
             return self._cached_pmap
         return {}
 
-    def extract_image_sizes(self) -> Dict[str, Tuple[int, int]]:
+    def extract_image_sizes(self) -> dict[str, tuple[int, int]]:
         return dict(self._image_sizes)
 
-    def extract_image_meta(self) -> Dict[str, Dict[str, Any]]:
+    def extract_image_meta(self) -> dict[str, dict[str, Any]]:
         """Return per-image reconstruction metadata gathered during traversal."""
         return dict(self._image_meta)
 
-    def _resolve_image_meta(self, img_obj: Any) -> Dict[str, Any]:
+    def _resolve_image_meta(self, img_obj: Any) -> dict[str, Any]:
         """Resolve reconstruction metadata for an image XObject stream.
 
         Captures geometry, bits-per-component, the terminal stream filter, the
@@ -10906,7 +10899,7 @@ class CosExtractor:
         from .cos import PdfArray, PdfBoolean, PdfName, PdfStream
 
         m = img_obj.mapping
-        meta: Dict[str, Any] = {}
+        meta: dict[str, Any] = {}
         w = self._get_number(m.get(PdfName("Width")))
         h = self._get_number(m.get(PdfName("Height")))
         meta["width"] = int(w) if w is not None else 0
@@ -10922,7 +10915,7 @@ class CosExtractor:
             meta["n_comps"] = 1
 
         filt = self._resolve(m.get(PdfName("Filter")))
-        names: List[str] = []
+        names: list[str] = []
         if isinstance(filt, PdfName):
             names = [filt.name.lstrip("/")]
         elif isinstance(filt, PdfArray):
@@ -10931,7 +10924,7 @@ class CosExtractor:
 
         decode = self._resolve(m.get(PdfName("Decode")))
         if isinstance(decode, PdfArray):
-            vals: List[float] = []
+            vals: list[float] = []
             for it in decode.items:
                 n = self._get_number(it)
                 vals.append(float(n) if n is not None else 0.0)
@@ -11013,17 +11006,17 @@ class CosExtractor:
 
     def extract_image_placements(
         self,
-    ) -> Tuple[
-        Dict[Tuple[int, str], Tuple[float, ...]],
-        Dict[Tuple[int, str], Tuple[float, float, float, float]],
+    ) -> tuple[
+        dict[tuple[int, str], tuple[float, ...]],
+        dict[tuple[int, str], tuple[float, float, float, float]],
     ]:
         """Extract image placement matrix and rect from page content streams.
 
         Returns (matrix_map, rect_map) where keys are (page_idx, image_name).
         matrix is (a,b,c,d,e,f), rect is (x,y,width,height) in PDF points.
         """
-        matrix_map: Dict[Tuple[int, str], Tuple[float, ...]] = {}
-        rect_map: Dict[Tuple[int, str], Tuple[float, float, float, float]] = {}
+        matrix_map: dict[tuple[int, str], tuple[float, ...]] = {}
+        rect_map: dict[tuple[int, str], tuple[float, float, float, float]] = {}
         contents = getattr(self, "_cached_contents", [])
         page_image_map = getattr(self, "_cached_pmap", {})
 
@@ -11046,14 +11039,14 @@ class CosExtractor:
                     rect_map[key] = image_placement_bbox(matrix_dec, w, h)
         return matrix_map, rect_map
 
-    def extract_metadata(self) -> Dict[str, str]:
-        from .cos import PdfName, PdfString, PdfNumber, PdfDictionary
+    def extract_metadata(self) -> dict[str, str]:
+        from .cos import PdfDictionary, PdfName, PdfNumber, PdfString
 
         info_ref = self._doc.trailer.mapping.get(PdfName("Info"))
         info = self._resolve(info_ref) if info_ref else None
         if not isinstance(info, PdfDictionary):
             return {}
-        metadata: Dict[str, str] = {}
+        metadata: dict[str, str] = {}
         for k, v in info.mapping.items():
             key = k.name.lstrip("/")
             v_resolved = self._resolve(v)
@@ -11071,7 +11064,7 @@ class CosExtractor:
 
     def standard_handler_encryption_algorithm(self) -> str:
         """Return ``AES-256``, ``AES-128``, or ``RC4`` for Standard security handler."""
-        from .cos import PdfName, PdfDictionary, PdfNumber
+        from .cos import PdfDictionary, PdfName, PdfNumber
 
         enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
         enc = self._resolve(enc_ref)
@@ -11082,7 +11075,7 @@ class CosExtractor:
             return "AES-256"
         v = self._get_number(enc.mapping.get(PdfName("V")))
         r_obj = self._resolve(enc.mapping.get(PdfName("R")))
-        r: Optional[int] = None
+        r: int | None = None
         if isinstance(r_obj, PdfNumber):
             r = int(r_obj.value)
         if v is not None and v >= 5 and r is not None and r >= 5:
@@ -11091,18 +11084,18 @@ class CosExtractor:
             return "RC4"
         return "AES-128"
 
-    def extract_decryption_key(self, password: str) -> Optional[bytes]:
+    def extract_decryption_key(self, password: str) -> bytes | None:
         """Derive the file encryption key if *password* unlocks Standard encryption."""
         if not self.detect_encryption():
             return None
-        from .cos import PdfName, PdfDictionary, PdfString, PdfNumber, PdfBoolean
+        from .cos import PdfBoolean, PdfDictionary, PdfName, PdfNumber, PdfString
 
         enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
         enc = self._resolve(enc_ref)
         if not isinstance(enc, PdfDictionary):
             return None
 
-        def as_bytes(obj: Any) -> Optional[bytes]:
+        def as_bytes(obj: Any) -> bytes | None:
             o = self._resolve(obj)
             if isinstance(o, PdfString):
                 raw = o.value
@@ -11116,7 +11109,7 @@ class CosExtractor:
 
         v = self._get_number(enc.mapping.get(PdfName("V")))
         r_obj = self._resolve(enc.mapping.get(PdfName("R")))
-        r: Optional[int] = None
+        r: int | None = None
         if isinstance(r_obj, PdfNumber):
             r = int(r_obj.value)
 
@@ -11166,14 +11159,14 @@ class CosExtractor:
         (minimal /Encrypt dict)."""
         if not self.detect_encryption():
             return True
-        from .cos import PdfName, PdfDictionary, PdfString
+        from .cos import PdfDictionary, PdfName, PdfString
 
         enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
         enc = self._resolve(enc_ref)
         if not isinstance(enc, PdfDictionary):
             return True
 
-        def as_bytes(obj: Any) -> Optional[bytes]:
+        def as_bytes(obj: Any) -> bytes | None:
             o = self._resolve(obj)
             if isinstance(o, PdfString):
                 raw = o.value
@@ -11192,15 +11185,15 @@ class CosExtractor:
 
         return PdfName("Encrypt") in self._doc.trailer.mapping
 
-    def extract_file_id(self) -> Optional[List[bytes]]:
+    def extract_file_id(self) -> list[bytes] | None:
         """Return the two-element /ID array from the trailer, or None."""
-        from .cos import PdfName, PdfArray, PdfString
+        from .cos import PdfArray, PdfName, PdfString
 
         id_ref = self._doc.trailer.mapping.get(PdfName("ID"))
         id_obj = self._resolve(id_ref)
         if not isinstance(id_obj, PdfArray) or len(id_obj.items) < 2:
             return None
-        result: List[bytes] = []
+        result: list[bytes] = []
         for item in id_obj.items[:2]:
             item = self._resolve(item)
             if isinstance(item, PdfString):
@@ -11212,7 +11205,7 @@ class CosExtractor:
 
     def extract_permissions(self) -> int:
         """Return the /P integer from the /Encrypt dictionary, or -4."""
-        from .cos import PdfName, PdfDictionary, PdfNumber
+        from .cos import PdfDictionary, PdfName, PdfNumber
 
         enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
         enc = self._resolve(enc_ref)
@@ -11223,9 +11216,9 @@ class CosExtractor:
                 return int(p_val.value)
         return -4
 
-    def extract_outlines(self) -> List[Dict]:
+    def extract_outlines(self) -> list[dict]:
         """Return a list of outline-item dicts from the catalog /Outlines tree."""
-        from .cos import PdfName, PdfDictionary
+        from .cos import PdfDictionary, PdfName
 
         root_ref = self._doc.trailer.mapping.get(PdfName("Root"))
         root = self._resolve(root_ref)
@@ -11249,9 +11242,9 @@ class CosExtractor:
         item_ref: Any,
         depth: int = 0,
         *,
-        _visited: Optional[Set[Tuple[str, int]]] = None,
-        _node_count: Optional[List[int]] = None,
-    ) -> List[Dict]:
+        _visited: set[tuple[str, int]] | None = None,
+        _node_count: list[int] | None = None,
+    ) -> list[dict]:
         """Recursively walk the outline linked list, returning dicts.
 
         Raises
@@ -11261,7 +11254,7 @@ class CosExtractor:
             references a missing object, or nests deeper than
             :data:`OUTLINE_TREE_MAX_DEPTH`.
         """
-        from .cos import PdfName, PdfDictionary, PdfArray, PdfString, PdfNumber
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfString
 
         if depth > OUTLINE_TREE_MAX_DEPTH:
             raise PdfParseException(
@@ -11272,7 +11265,7 @@ class CosExtractor:
             "max_nesting_depth",
             "outline tree depth",
         )
-        items: List[Dict] = []
+        items: list[dict] = []
         visited = _visited if _visited is not None else set()
         node_count = _node_count if _node_count is not None else [0]
         while not _outline_link_absent(item_ref):
@@ -11326,7 +11319,7 @@ class CosExtractor:
                 flags = int(flags_obj.value)
 
             # Children
-            children: List[Dict] = []
+            children: list[dict] = []
             first_child = item.mapping.get(PdfName("First"))
             if not _outline_link_absent(first_child):
                 children = self._collect_outline_items(
@@ -11360,8 +11353,8 @@ class CosExtractor:
                 return cached.index(obj_num)
         return 0
 
-    def extract_signature(self) -> Optional[Dict[str, str]]:
-        from .cos import PdfName, PdfString, PdfDictionary
+    def extract_signature(self) -> dict[str, str] | None:
+        from .cos import PdfDictionary, PdfName, PdfString
 
         sig_ref = self._doc.trailer.mapping.get(PdfName("Sig"))
         if sig_ref is None:
@@ -11384,10 +11377,10 @@ class CosExtractor:
                 )
         return res if res else None
 
-    def extract_signatures(self, data: bytes) -> List[PdfSignature]:
-        from .cos import PdfName, PdfDictionary, PdfArray
+    def extract_signatures(self, data: bytes) -> list[PdfSignature]:
+        from .cos import PdfArray, PdfDictionary, PdfName
 
-        signatures: List[PdfSignature] = []
+        signatures: list[PdfSignature] = []
 
         # 1. Get AcroForm
         root = self._doc.trailer.mapping.get(PdfName("Root"))
@@ -11404,7 +11397,7 @@ class CosExtractor:
                         "max_container_items",
                         "signature field entries",
                     )
-                    visited: Set[Tuple[str, int]] = set()
+                    visited: set[tuple[str, int]] = set()
                     node_count = [0]
                     for field_ref in fields.items:
                         self._collect_signatures_from_field(
@@ -11419,14 +11412,14 @@ class CosExtractor:
     def _collect_signatures_from_field(
         self,
         field_ref: Any,
-        signatures: List[PdfSignature],
+        signatures: list[PdfSignature],
         data: bytes,
         *,
         _depth: int = 1,
-        _visited: Optional[Set[Tuple[str, int]]] = None,
-        _node_count: Optional[List[int]] = None,
+        _visited: set[tuple[str, int]] | None = None,
+        _node_count: list[int] | None = None,
     ) -> None:
-        from .cos import PdfName, PdfDictionary, PdfString, PdfArray
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfString
 
         self._budget.check(
             _depth,
@@ -11548,9 +11541,9 @@ class CosExtractor:
                     _node_count=node_count,
                 )
 
-    def _extract_docmdp_level(self, v_obj: Any) -> Optional[int]:
+    def _extract_docmdp_level(self, v_obj: Any) -> int | None:
         """Return the DocMDP ``/P`` level of a certifying signature, if any."""
-        from .cos import PdfName, PdfDictionary, PdfArray
+        from .cos import PdfArray, PdfDictionary, PdfName
 
         refs = self._resolve(v_obj.mapping.get(PdfName("Reference")))
         if not isinstance(refs, PdfArray):
@@ -11570,7 +11563,7 @@ class CosExtractor:
             return 2  # DocMDP present without explicit /P -> default level 2
         return None
 
-    def extract_form_fields(self) -> Dict[str, Dict[str, Any]]:
+    def extract_form_fields(self) -> dict[str, dict[str, Any]]:
         """Extract all form fields with values and types.
 
         Returns
@@ -11580,9 +11573,9 @@ class CosExtractor:
             {"value": ..., "type": "text"|"checkbox"|"radio"|"listbox"|
             "combobox"|"pushbutton"}.
         """
-        from .cos import PdfName, PdfDictionary, PdfArray
+        from .cos import PdfArray, PdfDictionary, PdfName
 
-        fields: Dict[str, Dict[str, Any]] = {}
+        fields: dict[str, dict[str, Any]] = {}
         root = self._doc.trailer.mapping.get(PdfName("Root"))
         root = self._resolve(root)
         if isinstance(root, PdfDictionary):
@@ -11597,7 +11590,7 @@ class CosExtractor:
                         "max_container_items",
                         "form field entries",
                     )
-                    visited: Set[Tuple[str, int]] = set()
+                    visited: set[tuple[str, int]] = set()
                     node_count = [0]
                     for field_ref in fields_arr.items:
                         self._collect_fields_rec(
@@ -11611,16 +11604,16 @@ class CosExtractor:
     def _collect_fields_rec(
         self,
         field_ref: Any,
-        fields: Dict[str, Dict[str, Any]],
+        fields: dict[str, dict[str, Any]],
         prefix: str = "",
-        inherited_ft: Optional[PdfName] = None,
+        inherited_ft: PdfName | None = None,
         inherited_ff: int = 0,
         *,
         _depth: int = 1,
-        _visited: Optional[Set[Tuple[str, int]]] = None,
-        _node_count: Optional[List[int]] = None,
+        _visited: set[tuple[str, int]] | None = None,
+        _node_count: list[int] | None = None,
     ) -> None:
-        from .cos import PdfName, PdfDictionary, PdfString, PdfArray
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfString
 
         self._budget.check(
             _depth,
@@ -11756,7 +11749,7 @@ class CosExtractor:
                     _node_count=node_count,
                 )
 
-    def extract_attachment_entries(self) -> List[Tuple[str, bytes, dict]]:
+    def extract_attachment_entries(self) -> list[tuple[str, bytes, dict]]:
         """Walk ``/Names /EmbeddedFiles``, one entry per embedded file.
 
         Each entry is ``(name, decoded_bytes, metadata)``. *metadata* mirrors the
@@ -11766,15 +11759,15 @@ class CosExtractor:
         from the embedded file ``/Params``). Absent fields are omitted.
         """
         from .cos import (
-            PdfName,
-            PdfDictionary,
             PdfArray,
-            PdfString,
-            PdfStream,
+            PdfDictionary,
             PdfIndirectReference,
+            PdfName,
+            PdfStream,
+            PdfString,
         )
 
-        entries: List[Tuple[str, bytes, dict]] = []
+        entries: list[tuple[str, bytes, dict]] = []
 
         # 1. Get Catalog
         catalog = self._resolve(self._doc.trailer.mapping.get(PdfName("Root")))
@@ -11856,7 +11849,7 @@ class CosExtractor:
         embedded file stream, the ``/Desc`` on the file specification, and the
         ``/CreationDate`` / ``/ModDate`` in the stream's ``/Params``.
         """
-        from .cos import PdfName, PdfDictionary, PdfString
+        from .cos import PdfDictionary, PdfName, PdfString
 
         meta: dict = {}
 
@@ -11885,7 +11878,7 @@ class CosExtractor:
                         meta[meta_key] = parsed
         return meta
 
-    def extract_attachments(self) -> Dict[str, bytes]:
+    def extract_attachments(self) -> dict[str, bytes]:
         """Return ``{name: bytes}`` for every embedded file.
 
         See :meth:`extract_attachment_entries` for the metadata-aware variant.
@@ -11902,7 +11895,7 @@ class PdfWriterV0:
     def __init__(self, pdf: SimplePdf) -> None:
         self.pdf = pdf
         self.out = bytearray()
-        self.xref: List[int] = []
+        self.xref: list[int] = []
 
     def _write_line(self, data: bytes, newline: bool = True) -> None:
         self.out.extend(data)
@@ -11942,7 +11935,7 @@ class PdfWriterV0:
 
     def _write_outlines(
         self,
-        outline_items: List[Dict],
+        outline_items: list[dict],
         root_id: int,
         first_page_obj_id: int,
         page_count: int,
@@ -11967,10 +11960,10 @@ class PdfWriterV0:
 
         # --- Phase 1: assign object IDs to every node (DFS, level-first) ---
         # nodes list built in place-order; cross-references filled below.
-        nodes: List[Dict] = []
+        nodes: list[dict] = []
         id_counter = [root_id + 1]
 
-        def assign_ids(items: List[Dict], parent_obj_id: int) -> None:
+        def assign_ids(items: list[dict], parent_obj_id: int) -> None:
             # Assign IDs to the whole level first so siblings can reference each other.
             level_ids = []
             for item in items:
@@ -11983,7 +11976,7 @@ class PdfWriterV0:
                 children = item.get("children", [])
                 first_child_id = id_counter[0] if children else 0
 
-                node: Dict = {
+                node: dict = {
                     "id": node_id,
                     "title": item.get("title", ""),
                     "page_index": item.get("page_index", 0),
@@ -12420,11 +12413,11 @@ class PdfWriterV0:
 class PageCollection:
     """Collection wrapper for pages in SimplePdf."""
 
-    def __init__(self, pdf: Optional[SimplePdf] = None) -> None:
+    def __init__(self, pdf: SimplePdf | None = None) -> None:
         self._pdf = pdf
         self._disposed = False
-        self.pages: List[Tuple[float, float, float, float]] = []
-        self.page_contents: List[bytes] = []
+        self.pages: list[tuple[float, float, float, float]] = []
+        self.page_contents: list[bytes] = []
         if pdf:
             self.pages = pdf.pages
             self.page_contents = pdf.page_contents

@@ -7,14 +7,14 @@ import json
 import math
 import zlib
 from bisect import bisect_right
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
-
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 _BUNDLE_NAME = "cmaps/predefined_cmaps.json.zlib"
 _BUNDLE_SHA256 = "c8ee245e6dc2d0f82768acfb45cb4cbc386591291f982787044eaf48210d59a5"

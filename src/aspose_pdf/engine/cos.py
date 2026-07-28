@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Dict, List, Union, Optional
+from typing import Any
 
 
 class PdfObject(abc.ABC):
@@ -32,7 +32,7 @@ class PdfBoolean(PdfObject):
 
 
 class PdfNumber(PdfObject):
-    def __init__(self, value: Union[int, float]) -> None:
+    def __init__(self, value: int | float) -> None:
         if not isinstance(value, (int, float)):
             raise TypeError("PdfNumber value must be int or float")
         self.value = value
@@ -42,7 +42,7 @@ class PdfNumber(PdfObject):
 
 
 class PdfString(PdfObject):
-    def __init__(self, value: Union[bytes, str]) -> None:
+    def __init__(self, value: bytes | str) -> None:
         if isinstance(value, str):
             self.value = value.encode("utf-8")
         elif isinstance(value, (bytes, bytearray)):
@@ -73,8 +73,8 @@ class PdfName(PdfObject):
 
 
 class PdfArray(PdfObject):
-    def __init__(self, items: Optional[List[PdfObject]] = None) -> None:
-        self.items: List[PdfObject] = items[:] if items else []
+    def __init__(self, items: list[PdfObject] | None = None) -> None:
+        self.items: list[PdfObject] = items[:] if items else []
 
     def __repr__(self) -> str:
         return f"PdfArray({self.items})"
@@ -84,8 +84,8 @@ class PdfArray(PdfObject):
 
 
 class PdfDictionary(PdfObject):
-    def __init__(self, mapping: Optional[Dict[PdfName, PdfObject]] = None) -> None:
-        self.mapping: Dict[PdfName, PdfObject] = dict(mapping) if mapping else {}
+    def __init__(self, mapping: dict[PdfName, PdfObject] | None = None) -> None:
+        self.mapping: dict[PdfName, PdfObject] = dict(mapping) if mapping else {}
 
     def __repr__(self) -> str:
         return f"PdfDictionary({self.mapping})"
@@ -112,7 +112,7 @@ class PdfDictionary(PdfObject):
 
 class PdfStream(PdfDictionary):
     def __init__(
-        self, content: bytes = b"", mapping: Optional[Dict[PdfName, PdfObject]] = None
+        self, content: bytes = b"", mapping: dict[PdfName, PdfObject] | None = None
     ) -> None:
         super().__init__(mapping)
         self.content: bytes = content
@@ -134,9 +134,9 @@ class PdfDocument:
     """Container for a PDF's COS object graph."""
 
     def __init__(self) -> None:
-        self.objects: Dict[int, Any] = {}
+        self.objects: dict[int, Any] = {}
         self.trailer: PdfDictionary = PdfDictionary()
-        self.xref_table: Dict[int, int] = {}
+        self.xref_table: dict[int, int] = {}
 
     def get_object(self, ref: PdfIndirectReference) -> Any:
         """Return the object for *ref*, or ``None`` if it cannot be loaded."""

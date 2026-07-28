@@ -20,11 +20,10 @@ from __future__ import annotations
 import re
 import zlib
 from importlib.resources import files
-from typing import Dict, Optional
 
 __all__ = [
-    "resolve_substitute_key",
     "load_substitute_sfnt",
+    "resolve_substitute_key",
     "strip_subset_prefix",
     "substitute_code_to_unicode",
 ]
@@ -55,7 +54,7 @@ def strip_subset_prefix(name: str) -> str:
     return _SUBSET_PREFIX.sub("", name)
 
 
-def _symbolic_standard_key(name: str) -> Optional[str]:
+def _symbolic_standard_key(name: str) -> str | None:
     """Bundled face key for Symbol / ZapfDingbats, or ``None``."""
     if name == "symbol":
         return "symbol"
@@ -64,7 +63,7 @@ def _symbolic_standard_key(name: str) -> Optional[str]:
     return None
 
 
-def _family(name: str, flags: int) -> Optional[str]:
+def _family(name: str, flags: int) -> str | None:
     """Pick ``sans`` / ``serif`` / ``mono`` from the name, then the flags.
 
     Returns ``None`` when neither the name nor the flags give a confident family
@@ -91,12 +90,12 @@ def _family(name: str, flags: int) -> Optional[str]:
 
 
 def resolve_substitute_key(
-    base_font: Optional[str],
+    base_font: str | None,
     *,
     flags: int = 0,
     italic_angle: float = 0.0,
-    font_weight: Optional[float] = None,
-) -> Optional[str]:
+    font_weight: float | None = None,
+) -> str | None:
     """Return a bundled substitute key for *base_font*, or ``None``.
 
     *base_font* is the PDF ``/BaseFont`` name (a subset prefix is stripped).
@@ -141,7 +140,7 @@ def resolve_substitute_key(
     return f"{family}-{style}"
 
 
-def substitute_code_to_unicode(key: Optional[str]) -> Optional[Dict[int, int]]:
+def substitute_code_to_unicode(key: str | None) -> dict[int, int] | None:
     """Built-in ``code -> Unicode`` table for a symbolic face key, or ``None``.
 
     Symbol and ZapfDingbats text is encoded with the fonts' built-in encodings,
@@ -159,10 +158,10 @@ def substitute_code_to_unicode(key: Optional[str]) -> Optional[Dict[int, int]]:
     return None
 
 
-_sfnt_cache: dict[str, Optional[bytes]] = {}
+_sfnt_cache: dict[str, bytes | None] = {}
 
 
-def load_substitute_sfnt(key: Optional[str]) -> Optional[bytes]:
+def load_substitute_sfnt(key: str | None) -> bytes | None:
     """Decompress the bundled SFNT for *key* (e.g. ``"sans-bold"``), or ``None``.
 
     Results are cached. A missing or unknown key returns ``None`` rather than
@@ -172,7 +171,7 @@ def load_substitute_sfnt(key: Optional[str]) -> Optional[bytes]:
         return None
     if key in _sfnt_cache:
         return _sfnt_cache[key]
-    sfnt: Optional[bytes] = None
+    sfnt: bytes | None = None
     try:
         resource = files(__package__).joinpath("data", "fonts", f"{key}.ttf.zlib")
         sfnt = zlib.decompress(resource.read_bytes())

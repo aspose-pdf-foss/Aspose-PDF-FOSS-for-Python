@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import ClassVar
 
 from aspose_pdf.engine.rasterizer import RasterizedPage
 
@@ -18,9 +19,9 @@ class PerformanceLogger:
 
 
 class VirtualizationPerformance:
-    _start_times: dict[str, float] = {}
-    _elapsed_times: dict[str, float] = {}
-    _current_key: str | None = None
+    _start_times: ClassVar[dict[str, float]] = {}
+    _elapsed_times: ClassVar[dict[str, float]] = {}
+    _current_key: ClassVar[str | None] = None
 
     @classmethod
     def start(cls, key: str) -> None:

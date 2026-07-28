@@ -10,7 +10,7 @@ Pixels are 8-bit, interleaved (``components`` per pixel), row-major.
 
 from __future__ import annotations
 
-__all__ = ["fit_within", "downscale"]
+__all__ = ["downscale", "fit_within"]
 
 
 def fit_within(width: int, height: int, max_dim: int) -> tuple[int, int]:

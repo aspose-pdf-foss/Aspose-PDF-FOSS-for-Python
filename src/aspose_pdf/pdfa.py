@@ -8,13 +8,13 @@ PdfAValidator for the full PDF/A validation pipeline.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import BinaryIO, List, Optional, Union
+from typing import BinaryIO
 
 from aspose_pdf.exceptions import PdfIOException, PdfValidationException
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
-    _LoadBudget,
     _coerce_limits,
+    _LoadBudget,
     _read_limited,
 )
 
@@ -50,14 +50,14 @@ class PdfAValidationResult:
 
     def __init__(
         self,
-        errors: List[str] | None = None,
-        warnings: List[str] | None = None,
+        errors: list[str] | None = None,
+        warnings: list[str] | None = None,
         level: str = "",
         *,
         is_heuristic: bool = True,
     ) -> None:
-        self.errors: List[str] = list(errors) if errors else []
-        self.warnings: List[str] = list(warnings) if warnings else []
+        self.errors: list[str] = list(errors) if errors else []
+        self.warnings: list[str] = list(warnings) if warnings else []
         self.level: str = level
         self.is_heuristic: bool = is_heuristic
 
@@ -127,16 +127,16 @@ class PdfAValidateOptions:
     """Container for PDF/A validation settings."""
 
     def __init__(self, limits: PdfLoadLimits | None = None) -> None:
-        self._inputs: List[Union[Path, bytes]] = []
+        self._inputs: list[Path | bytes] = []
         self.limits = _coerce_limits(limits)
         self.pdfa_version: str = "PDF/A-1b"
         self.optimize_file_size: bool = False
         self.is_low_memory_mode: bool = False
-        self.font_lookup_directory: Optional[Path] = None
+        self.font_lookup_directory: Path | None = None
 
     def add_input(
-        self, source: Union[str, Path, bytes, bytearray, BinaryIO]
-    ) -> "PdfAValidateOptions":
+        self, source: str | Path | bytes | bytearray | BinaryIO
+    ) -> PdfAValidateOptions:
         """Add an input file or stream for PDF/A validation.
 
         Parameters
@@ -181,7 +181,7 @@ class PdfAValidateOptions:
         raise PdfValidationException("Unsupported input type for add_input")
 
     @property
-    def inputs(self) -> List[Union[Path, bytes]]:
+    def inputs(self) -> list[Path | bytes]:
         """Return a copy of the stored inputs."""
         return list(self._inputs)
 
@@ -217,7 +217,7 @@ class PdfAValidator:
             v = v[6:]
         return v.lower()
 
-    def process(self, options: "PdfAValidateOptions") -> List[PdfAValidationResult]:
+    def process(self, options: PdfAValidateOptions) -> list[PdfAValidationResult]:
         """Validate every input defined in *options*.
 
         Parameters
@@ -234,7 +234,7 @@ class PdfAValidator:
         from aspose_pdf.document import Document  # local import to avoid circularity
 
         level = self._normalize_level(options.pdfa_version)
-        results: List[PdfAValidationResult] = []
+        results: list[PdfAValidationResult] = []
 
         for inp in options.inputs:
             with Document(limits=options.limits) as doc:
@@ -259,10 +259,10 @@ class PdfAConversionResult:
 
     def __init__(
         self,
-        errors: List[str] | None = None,
+        errors: list[str] | None = None,
         level: str = "",
     ) -> None:
-        self.errors: List[str] = list(errors) if errors else []
+        self.errors: list[str] = list(errors) if errors else []
         self.level: str = level
 
     @property

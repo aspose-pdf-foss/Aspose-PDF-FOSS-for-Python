@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any
 
 __all__ = [
     "STANDARD_XMP_NAMESPACES",

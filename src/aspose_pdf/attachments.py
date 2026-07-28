@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Union
 
 __all__ = ["FileSpecification"]
 
@@ -22,16 +21,16 @@ class FileSpecification:
 
     name: str
     contents: bytes
-    mime_type: Optional[str] = None
-    description: Optional[str] = None
-    creation_date: Optional[datetime] = None
-    mod_date: Optional[datetime] = None
+    mime_type: str | None = None
+    description: str | None = None
+    creation_date: datetime | None = None
+    mod_date: datetime | None = None
 
     @property
     def size(self) -> int:
         """The size of :attr:`contents` in bytes."""
         return len(self.contents)
 
-    def save(self, path: Union[str, Path]) -> None:
+    def save(self, path: str | Path) -> None:
         """Write the decoded attachment bytes to *path*."""
         Path(path).write_bytes(self.contents)

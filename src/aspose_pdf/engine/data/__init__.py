@@ -20,7 +20,7 @@ __all__ = [
 ]
 
 
-class FilterType(str, Enum):
+class FilterType(str, Enum):  # noqa: UP042
     NONE = "None"
     FLATE_DECODE = "FlateDecode"
     LZW_DECODE = "LZWDecode"
@@ -30,7 +30,7 @@ class FilterType(str, Enum):
     JBIG2_DECODE = "JBIG2Decode"
 
 
-class EncodingType(str, Enum):
+class EncodingType(str, Enum):  # noqa: UP042
     WIN_ANSI = "WinAnsiEncoding"
     MAC_ROMAN = "MacRomanEncoding"
     MAC_EXPERT = "MacExpertEncoding"

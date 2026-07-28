@@ -18,8 +18,7 @@ in :mod:`aspose_pdf.engine.signature_validator` decides whether a given
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
@@ -35,9 +34,9 @@ class ChainResult:
     """Result of building and validating a certificate path."""
 
     trust_status: TrustStatus
-    chain: List[x509.Certificate] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    chain: list[x509.Certificate] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 def _fingerprint(cert: x509.Certificate) -> bytes:
@@ -55,7 +54,7 @@ def _is_self_signed(cert: x509.Certificate) -> bool:
 
 
 def _aware(dt: datetime) -> datetime:
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 def _check_validity(cert: x509.Certificate, at_time: datetime, label: str, errors):
@@ -67,7 +66,7 @@ def _check_validity(cert: x509.Certificate, at_time: datetime, label: str, error
         errors.append(f"{label} certificate has expired")
 
 
-def _basic_constraints_ca(cert: x509.Certificate) -> Optional[bool]:
+def _basic_constraints_ca(cert: x509.Certificate) -> bool | None:
     try:
         bc = cert.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
         return bool(bc.value.ca)
@@ -75,7 +74,7 @@ def _basic_constraints_ca(cert: x509.Certificate) -> Optional[bool]:
         return None
 
 
-def _has_key_cert_sign(cert: x509.Certificate) -> Optional[bool]:
+def _has_key_cert_sign(cert: x509.Certificate) -> bool | None:
     try:
         ku = cert.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
         return bool(ku.value.key_cert_sign)
@@ -83,7 +82,7 @@ def _has_key_cert_sign(cert: x509.Certificate) -> Optional[bool]:
         return None
 
 
-def _leaf_can_sign(cert: x509.Certificate) -> Optional[bool]:
+def _leaf_can_sign(cert: x509.Certificate) -> bool | None:
     try:
         ku = cert.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
         return bool(ku.value.digital_signature or ku.value.content_commitment)
@@ -91,11 +90,11 @@ def _leaf_can_sign(cert: x509.Certificate) -> Optional[bool]:
         return None
 
 
-def load_system_trust_roots() -> List[x509.Certificate]:
+def load_system_trust_roots() -> list[x509.Certificate]:
     """Best-effort load of the operating-system CA bundle (no extra deps)."""
     import ssl
 
-    roots: List[x509.Certificate] = []
+    roots: list[x509.Certificate] = []
     paths = ssl.get_default_verify_paths()
     for cafile in (paths.cafile, paths.openssl_cafile):
         if not cafile:
@@ -111,10 +110,10 @@ def load_system_trust_roots() -> List[x509.Certificate]:
 
 def build_and_validate(
     leaf: x509.Certificate,
-    extra_certs: Optional[List[x509.Certificate]] = None,
-    trust_roots: Optional[List[x509.Certificate]] = None,
+    extra_certs: list[x509.Certificate] | None = None,
+    trust_roots: list[x509.Certificate] | None = None,
     *,
-    at_time: Optional[datetime] = None,
+    at_time: datetime | None = None,
     use_system_trust: bool = False,
 ) -> ChainResult:
     """Build the path from *leaf* toward a trust anchor and validate each link."""
@@ -123,16 +122,16 @@ def build_and_validate(
     if use_system_trust:
         trust_roots = trust_roots + load_system_trust_roots()
     if at_time is None:
-        at_time = datetime.now(timezone.utc)
+        at_time = datetime.now(UTC)
     at_time = _aware(at_time)
 
     anchor_prints = {_fingerprint(c) for c in trust_roots}
     # Pool of certs we may use as issuers while building the path.
     pool = extra_certs + trust_roots
 
-    errors: List[str] = []
-    warnings: List[str] = []
-    chain: List[x509.Certificate] = [leaf]
+    errors: list[str] = []
+    warnings: list[str] = []
+    chain: list[x509.Certificate] = [leaf]
 
     # Leaf-level checks.
     _check_validity(leaf, at_time, "signer", errors)

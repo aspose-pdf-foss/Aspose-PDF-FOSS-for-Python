@@ -4,10 +4,10 @@
 
 The parser focuses on the essential PDF structures required for the SDK:
 
-* ``startxref`` – locate the cross‑reference table.
-* Traditional ``xref`` table (not streams) – map object numbers to file offsets.
-* ``trailer`` dictionary – contains the ``Root`` reference.
-* PDF objects – numbers, booleans, null, strings, names, arrays, dictionaries,
+* ``startxref`` - locate the cross-reference table.
+* Traditional ``xref`` table (not streams) - map object numbers to file offsets.
+* ``trailer`` dictionary - contains the ``Root`` reference.
+* PDF objects - numbers, booleans, null, strings, names, arrays, dictionaries,
   streams and indirect references.
 
 Object bodies are loaded **lazily** on first access via ``PdfDocument.objects``
@@ -22,8 +22,16 @@ import logging
 import mmap
 import re
 import zlib
-from collections.abc import MutableMapping
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from collections.abc import Iterator, MutableMapping
+from typing import Any
+
+from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
+from aspose_pdf.load_limits import (
+    PdfLoadLimits,
+    _coerce_limits,
+    _LoadBudget,
+    _read_limited,
+)
 
 from .cos import (
     PdfArray,
@@ -36,13 +44,6 @@ from .cos import (
     PdfNumber,
     PdfStream,
     PdfString,
-)
-from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
-from aspose_pdf.load_limits import (
-    PdfLoadLimits,
-    _LoadBudget,
-    _coerce_limits,
-    _read_limited,
 )
 
 logger = logging.getLogger("aspose_pdf")
@@ -78,7 +79,7 @@ def _cos_buffer_rfind(buf, needle: bytes) -> int:
 
 def _cos_dictionary_bytes_at(
     data: bytes, start: int, max_depth: int | None = None
-) -> Optional[bytes]:
+) -> bytes | None:
     """Return the PDF dictionary bytes starting at *start*, using balanced ``<<``/``>>``.
 
     A DOTALL non-greedy regex such as ``<<.*?>>`` stops at the first ``>>``, which
@@ -170,7 +171,7 @@ def _extract_stream_bytes(
     data,
     stream_start: int,
     content_end: int,
-    declared_length: Optional[int],
+    declared_length: int | None,
 ) -> bytes:
     """Stream payload bytes for ``stream`` … ``endstream`` within one indirect object."""
     if stream_start > content_end:
@@ -202,9 +203,9 @@ def _extract_stream_bytes(
 
 
 class _Tokenizer:
-    """A tiny recursive‑descent tokenizer for PDF syntax.
+    """A tiny recursive-descent tokenizer for PDF syntax.
 
-    The source is a ``str`` decoded with ``latin‑1`` so that each byte maps to a
+    The source is a ``str`` decoded with ``latin-1`` so that each byte maps to a
     Unicode code point preserving raw byte values for hex strings and streams.
     """
 
@@ -321,7 +322,7 @@ class _Tokenizer:
             self._consume()
         num_str = self.s[start : self.pos]
         if "." in num_str:
-            value: Union[int, float] = float(num_str)
+            value: int | float = float(num_str)
         else:
             value = int(num_str)
         return PdfNumber(value)
@@ -338,7 +339,7 @@ class _Tokenizer:
             if self.s.startswith("R", self.pos):
                 self._consume()  # consume 'R'
                 return PdfIndirectReference(int(first.value), int(second.value))
-        # not a reference – restore and return first number
+        # not a reference - restore and return first number
         self.pos = saved
         return self._read_number()
 
@@ -349,7 +350,7 @@ class _Tokenizer:
         while self.pos < self.len and depth > 0:
             ch = self._peek()
             if ch == "\\":
-                # escaped character – keep the next char literally
+                # escaped character - keep the next char literally
                 self._consume(2)
                 continue
             if ch == "(":
@@ -389,7 +390,7 @@ class _Tokenizer:
     def _read_array(self, _depth: int = 1) -> PdfArray:
         self._check_depth(_depth)
         self._consume()  # '['
-        items: List[Any] = []
+        items: list[Any] = []
         while True:
             self._consume_whitespace()
             if not self._peek():
@@ -404,7 +405,7 @@ class _Tokenizer:
     def _read_dictionary(self, _depth: int = 1) -> PdfDictionary:
         self._check_depth(_depth)
         self._consume(2)  # '<<'
-        mapping: Dict[PdfName, Any] = {}
+        mapping: dict[PdfName, Any] = {}
         parsed_pairs = 0
         while True:
             self._consume_whitespace()
@@ -424,7 +425,7 @@ class _Tokenizer:
 class PdfCosParser:
     """Parse a PDF file (bytes) into a :class:`PdfDocument`.
 
-    The implementation supports both classic cross‑reference tables and
+    The implementation supports both classic cross-reference tables and
     PDF 1.5+ XRef Streams and Object Streams. It builds xref metadata up front
     and materializes each object body when first read through ``doc.objects``.
     """
@@ -443,7 +444,7 @@ class PdfCosParser:
         if isinstance(data, mmap.mmap):
             self._data = data
         elif hasattr(data, "read"):
-            mm: Optional[mmap.mmap] = None
+            mm: mmap.mmap | None = None
             if not isinstance(data, io.BytesIO):
                 try:
                     fd = data.fileno()
@@ -469,9 +470,9 @@ class PdfCosParser:
         else:
             self._data = data
         self._budget.check_input(len(self._data))
-        self._objects: Dict[int, Any] = {}
-        self._compressed_objects: Dict[
-            int, Tuple[int, int]
+        self._objects: dict[int, Any] = {}
+        self._compressed_objects: dict[
+            int, tuple[int, int]
         ] = {}  # obj_num -> (objstm_num, index)
         self.trailer: PdfDictionary = PdfDictionary()
 
@@ -486,7 +487,7 @@ class PdfCosParser:
             xref_offset = self._read_int_at(startxref_offset)
 
             # Process xref chain (may include multiple /Prev sections)
-            all_xref: Dict[int, int] = {}
+            all_xref: dict[int, int] = {}
             current_offset = xref_offset
             trailer_dict = None
             seen_xref_offsets: set[int] = set()
@@ -565,12 +566,12 @@ class PdfCosParser:
     # ---------------------------------------------------------------------
     # XRef Section Parsing
     # ---------------------------------------------------------------------
-    def _reconstruct_xref(self) -> Tuple[Dict[int, int], PdfDictionary]:
+    def _reconstruct_xref(self) -> tuple[dict[int, int], PdfDictionary]:
         """Scans the entire file for 'obj' markers to reconstruct a missing/corrupted XRef."""
         logger.warning(
             "XRef table missing or corrupted. Initiating full-file reconstruction scan."
         )
-        xref_table: Dict[int, int] = {}
+        xref_table: dict[int, int] = {}
         trailer = PdfDictionary()
 
         # Scan for "N G obj"
@@ -610,7 +611,7 @@ class PdfCosParser:
         self._rebuild_compressed_objects_from_objstms(xref_table)
         return xref_table, trailer
 
-    def _object_stream_members_in_order(self, objstm: PdfStream) -> List[int]:
+    def _object_stream_members_in_order(self, objstm: PdfStream) -> list[int]:
         """Object numbers stored in *objstm* header (PDF order), or empty if unusable."""
         from .filters import StreamDecoder
 
@@ -653,7 +654,7 @@ class PdfCosParser:
             return []
 
         tokenizer = _Tokenizer(text, self._limits)
-        nums: List[int] = []
+        nums: list[int] = []
         try:
             for _ in range(n):
                 tokenizer._consume_whitespace()
@@ -667,7 +668,7 @@ class PdfCosParser:
         return nums
 
     def _rebuild_compressed_objects_from_objstms(
-        self, xref_table: Dict[int, int]
+        self, xref_table: dict[int, int]
     ) -> None:
         """Register object-stream members when xref metadata was rebuilt by scanning."""
         for stm_obj_num, off in xref_table.items():
@@ -688,7 +689,7 @@ class PdfCosParser:
                     continue
                 self._compressed_objects[member_num] = (stm_obj_num, idx)
 
-    def _parse_xref_section(self, offset: int) -> Tuple[Dict[int, int], PdfDictionary]:
+    def _parse_xref_section(self, offset: int) -> tuple[dict[int, int], PdfDictionary]:
         """Parse an xref section at the given offset.
 
         Detects whether it's a traditional xref table or an XRef Stream.
@@ -699,7 +700,7 @@ class PdfCosParser:
             # XRef Stream (PDF 1.5+)
             return self._parse_xref_stream(offset)
 
-    def _parse_xref_stream(self, offset: int) -> Tuple[Dict[int, int], PdfDictionary]:
+    def _parse_xref_stream(self, offset: int) -> tuple[dict[int, int], PdfDictionary]:
         """Parse an XRef Stream (PDF 1.5+)."""
         from .filters import StreamDecoder
 
@@ -714,7 +715,7 @@ class PdfCosParser:
         w_obj = stream_obj.mapping.get(PdfName("W"))
         if not isinstance(w_obj, PdfArray) or len(w_obj.items) != 3:
             raise PdfParseException("XRef Stream missing or invalid /W array")
-        w: List[int] = []
+        w: list[int] = []
         for x in w_obj.items:
             if not isinstance(x, PdfNumber):
                 raise PdfParseException(
@@ -803,7 +804,7 @@ class PdfCosParser:
             )
 
         # Parse entries
-        xref_table: Dict[int, int] = {}
+        xref_table: dict[int, int] = {}
         pos = 0
 
         # Process subsections from /Index
@@ -853,7 +854,7 @@ class PdfCosParser:
     # ---------------------------------------------------------------------
     # Object Stream Parsing
     # ---------------------------------------------------------------------
-    def _parse_object_stream(self, objstm: PdfStream) -> Dict[int, Any]:
+    def _parse_object_stream(self, objstm: PdfStream) -> dict[int, Any]:
         """Parse an Object Stream and extract all contained objects."""
         from .filters import StreamDecoder
 
@@ -912,7 +913,7 @@ class PdfCosParser:
             pairs.append((obj_num, obj_offset))
 
         # Parse objects; do not drop per-object tokenizer failures silently.
-        result: Dict[int, Any] = {}
+        result: dict[int, Any] = {}
         for index, (obj_num, obj_offset) in enumerate(pairs):
             abs_offset = first + obj_offset
             if abs_offset < 0 or abs_offset > len(text):
@@ -960,7 +961,7 @@ class PdfCosParser:
     # ---------------------------------------------------------------------
     # Traditional XRef Parsing
     # ---------------------------------------------------------------------
-    def _parse_traditional_xref_row(self, pos: int) -> Tuple[int, int, bytes, int]:
+    def _parse_traditional_xref_row(self, pos: int) -> tuple[int, int, bytes, int]:
         """Parse one xref data row, skipping blank lines and '%' comments.
 
         Returns ``(byte_offset, generation, flag_first_byte, new_pos)``.
@@ -999,13 +1000,13 @@ class PdfCosParser:
 
     def _parse_traditional_xref(
         self, offset: int
-    ) -> Tuple[Dict[int, int], PdfDictionary]:
+    ) -> tuple[dict[int, int], PdfDictionary]:
         """Parse a traditional xref table and trailer."""
         pos = offset + 4
         # Skip possible whitespace / newline after 'xref'
         while pos < len(self._data) and self._data[pos] in b" \t\r\n":
             pos += 1
-        xref_table: Dict[int, int] = {}
+        xref_table: dict[int, int] = {}
         # Parse sections: start_obj count
         while True:
             while pos < len(self._data) and self._data[pos] in b" \t\r\n":
@@ -1088,7 +1089,7 @@ class PdfCosParser:
             "indirect object bytes",
         )
         raw_content = self._data[content_start:content_end]
-        # Decode for tokenizing – use latin-1 to keep raw bytes intact
+        # Decode for tokenizing - use latin-1 to keep raw bytes intact
         text = raw_content.decode("latin-1")
         tokenizer = _Tokenizer(text, self._limits)
         obj = tokenizer.read()
@@ -1114,7 +1115,7 @@ class PdfCosParser:
             if isinstance(length_obj, PdfNumber):
                 length = int(length_obj.value)
             else:
-                # Fallback – locate endstream within this object only
+                # Fallback - locate endstream within this object only
                 length = None
             # Extract stream bytes from original data (preserve raw bytes)
             stream_start = content_start + tokenizer.pos
@@ -1137,13 +1138,13 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
     def __init__(
         self,
         parser: PdfCosParser,
-        xref_offsets: Dict[int, int],
-        compressed: Dict[int, Tuple[int, int]],
+        xref_offsets: dict[int, int],
+        compressed: dict[int, tuple[int, int]],
     ) -> None:
         self._parser = parser
         self._xref_offsets = dict(xref_offsets)
         self._compressed = dict(compressed)
-        self._cache: Dict[int, Any] = {}
+        self._cache: dict[int, Any] = {}
 
     @property
     def materialized_count(self) -> int:

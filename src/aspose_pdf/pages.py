@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any
-from typing import Iterator, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aspose_pdf.annotations import AnnotationCollection
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 class Page:
     """A page of a PDF document."""
 
-    def __init__(self, document: "Document", index: int):
+    def __init__(self, document: Document, index: int):
         self._document = document
         self._index = index
 
@@ -50,7 +50,7 @@ class Page:
         return self._annotations
 
     @property
-    def media_box(self) -> Tuple[float, float, float, float]:
+    def media_box(self) -> tuple[float, float, float, float]:
         """Alias for rect."""
         return self.rect
 
@@ -79,7 +79,7 @@ class Page:
         eng.set_page_rotation(self._index, degrees)
 
     @property
-    def crop_box(self) -> Tuple[float, float, float, float]:
+    def crop_box(self) -> tuple[float, float, float, float]:
         """The page CropBox ``(x0, y0, x1, y1)``; falls back to the MediaBox when unset."""
         eng = self._document._engine_pdf
         if eng is not None and hasattr(eng, "get_page_crop_box"):
@@ -89,7 +89,7 @@ class Page:
         return self.rect
 
     @crop_box.setter
-    def crop_box(self, value: Tuple[float, float, float, float]) -> None:
+    def crop_box(self, value: tuple[float, float, float, float]) -> None:
         try:
             rect = tuple(float(v) for v in value)
         except (TypeError, ValueError):
@@ -125,13 +125,13 @@ class Page:
         y: float,
         *,
         font_size: float = 12.0,
-        font_name: Optional[str] = None,
-        font: Union["FontDescriptor", bytes, bytearray, str, Path, None] = None,
+        font_name: str | None = None,
+        font: FontDescriptor | bytes | bytearray | str | Path | None = None,
         color: Sequence[float] = (0.0, 0.0, 0.0),
-        tag: Optional[str] = None,
-        actual_text: Optional[str] = None,
-        layout: Optional["TextLayoutOptions"] = None,
-    ) -> "Page":
+        tag: str | None = None,
+        actual_text: str | None = None,
+        layout: TextLayoutOptions | None = None,
+    ) -> Page:
         """Append positioned text to this page.
 
         ``font_name`` selects the Standard-14 path. Pass ``font`` as a
@@ -161,20 +161,20 @@ class Page:
 
     def add_image(
         self,
-        image: Union[bytes, bytearray, str, Path],
+        image: bytes | bytearray | str | Path,
         x: float,
         y: float,
-        width: Optional[float] = None,
-        height: Optional[float] = None,
+        width: float | None = None,
+        height: float | None = None,
         *,
-        pixel_width: Optional[int] = None,
-        pixel_height: Optional[int] = None,
+        pixel_width: int | None = None,
+        pixel_height: int | None = None,
         color_space: str = "DeviceRGB",
         bits_per_component: int = 8,
-        name: Optional[str] = None,
-        tag: Optional[str] = None,
-        alt: Optional[str] = None,
-        actual_text: Optional[str] = None,
+        name: str | None = None,
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
     ) -> str:
         """Place an image on this page and return its resource name."""
         self._document._ensure_not_disposed()
@@ -217,13 +217,13 @@ class Page:
         width: float,
         height: float,
         *,
-        stroke_color: Optional[Sequence[float]] = (0.0, 0.0, 0.0),
-        fill_color: Optional[Sequence[float]] = None,
+        stroke_color: Sequence[float] | None = (0.0, 0.0, 0.0),
+        fill_color: Sequence[float] | None = None,
         line_width: float = 1.0,
-        tag: Optional[str] = None,
-        alt: Optional[str] = None,
-        actual_text: Optional[str] = None,
-    ) -> "Page":
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
+    ) -> Page:
         """Append a stroked and/or filled rectangle to this page."""
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -253,10 +253,10 @@ class Page:
         *,
         stroke_color: Sequence[float] = (0.0, 0.0, 0.0),
         line_width: float = 1.0,
-        tag: Optional[str] = None,
-        alt: Optional[str] = None,
-        actual_text: Optional[str] = None,
-    ) -> "Page":
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
+    ) -> Page:
         """Append a stroked line segment to this page."""
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -298,9 +298,9 @@ class Page:
         *,
         dpi: float = 72.0,
         scale: float = 1.0,
-        background: Tuple[int, int, int] = (255, 255, 255),
-        antialias: Union[bool, int] = True,
-    ) -> "RasterizedPage":
+        background: tuple[int, int, int] = (255, 255, 255),
+        antialias: bool | int = True,
+    ) -> RasterizedPage:
         """Render this page to an RGB raster image.
 
         The renderer is dependency-free and supports common page content:
@@ -327,12 +327,12 @@ class Page:
 
     def save_as_image(
         self,
-        path: Union[str, Path],
+        path: str | Path,
         *,
         dpi: float = 72.0,
         scale: float = 1.0,
-        background: Tuple[int, int, int] = (255, 255, 255),
-        antialias: Union[bool, int] = True,
+        background: tuple[int, int, int] = (255, 255, 255),
+        antialias: bool | int = True,
     ) -> Path:
         """Render this page and save it as ``.png`` or ``.tif/.tiff``."""
         return self.render(
@@ -398,7 +398,7 @@ class Page:
 class PageCollection:
     """A collection to manage PDF pages within a Document."""
 
-    def __init__(self, document: "Document"):
+    def __init__(self, document: Document):
         """Create a new collection.
 
         Parameters
@@ -422,7 +422,7 @@ class PageCollection:
         for i in range(len(self)):
             yield Page(self._document, i)
 
-    def __getitem__(self, index: Union[int, slice]) -> Union[Page, List[Page]]:
+    def __getitem__(self, index: int | slice) -> Page | list[Page]:
         """Return the page at index or a slice of pages."""
         self._ensure_not_disposed()
         count = len(self)
@@ -441,10 +441,10 @@ class PageCollection:
         return self.__getitem__(index)
 
     def get_enumerator(self) -> Iterator[Page]:
-        """Legacy iterator name – returns an iterator over the pages."""
+        """Legacy iterator name - returns an iterator over the pages."""
         return self.__iter__()
 
-    def add(self, page: Optional[Union[Page, Any]] = None) -> Page:
+    def add(self, page: Page | Any | None = None) -> Page:
         """Append a page to the collection."""
         self._ensure_not_disposed()
         idx = len(self)
@@ -454,7 +454,7 @@ class PageCollection:
             self._document._engine_pdf.add(page)
         return Page(self._document, idx)
 
-    def insert(self, index: int, page: Optional[Union[Page, Any]] = None) -> Page:
+    def insert(self, index: int, page: Page | Any | None = None) -> Page:
         """Insert a page at *index*."""
         self._ensure_not_disposed()
         count = len(self)
@@ -501,7 +501,7 @@ class PageCollection:
         return page._document == self._document and 0 <= page.index < len(self)
 
     def index_of(self, page: Page) -> int:
-        """Return the zero‑based index of *page* in the collection."""
+        """Return the zero-based index of *page* in the collection."""
         self._ensure_not_disposed()
         if not isinstance(page, Page):
             raise TypeError("Argument must be a Page instance.")

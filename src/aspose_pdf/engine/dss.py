@@ -18,8 +18,8 @@ The on-wire structure follows ISO 32000-2 §12.8.4.3 / ETSI EN 319 142.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence
 
 from aspose_pdf.engine.cos import (
     PdfArray,
@@ -33,7 +33,7 @@ from aspose_pdf.engine.incremental_update import IncrementalUpdate
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
 from aspose_pdf.engine.pdf_writer_cos import PdfCosWriter
 from aspose_pdf.exceptions import PdfResourceLimitException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 # Failures while reading a third-party DSS must degrade to "no material",
 # never raise into a validation path that promises not to.
@@ -48,26 +48,26 @@ class DssMaterial:
     CRLs and ``OCSPResponse`` responses respectively.
     """
 
-    certs: List[bytes] = field(default_factory=list)
-    crls: List[bytes] = field(default_factory=list)
-    ocsps: List[bytes] = field(default_factory=list)
+    certs: list[bytes] = field(default_factory=list)
+    crls: list[bytes] = field(default_factory=list)
+    ocsps: list[bytes] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not (self.certs or self.crls or self.ocsps)
 
-    def merge(self, other: "DssMaterial") -> "DssMaterial":
+    def merge(self, other: DssMaterial) -> DssMaterial:
         """Extend this material in place with *other* and return ``self``."""
         self.certs.extend(other.certs)
         self.crls.extend(other.crls)
         self.ocsps.extend(other.ocsps)
         return self
 
-    def deduped(self) -> "DssMaterial":
+    def deduped(self) -> DssMaterial:
         """Return a copy with order-preserving de-duplication of each list."""
 
-        def uniq(items: Sequence[bytes]) -> List[bytes]:
+        def uniq(items: Sequence[bytes]) -> list[bytes]:
             seen: set[bytes] = set()
-            out: List[bytes] = []
+            out: list[bytes] = []
             for item in items:
                 if item and item not in seen:
                     seen.add(item)
@@ -110,7 +110,7 @@ def build_dss(
     original_pdf: bytes,
     material: DssMaterial,
     *,
-    vri_contents: Optional[bytes] = None,
+    vri_contents: bytes | None = None,
 ) -> bytes:
     """Return *original_pdf* with a ``/DSS`` added via an incremental update.
 
@@ -185,7 +185,7 @@ def build_dss(
 
 
 def enable_ltv(
-    signed_pdf: bytes, *, extra: Optional[DssMaterial] = None
+    signed_pdf: bytes, *, extra: DssMaterial | None = None
 ) -> bytes:
     """Add a ``/DSS`` to an already-signed PDF, turning PAdES-T into PAdES-LT.
 
@@ -199,7 +199,7 @@ def enable_ltv(
     from aspose_pdf.engine.simple_pdf import SimplePdf
 
     material = DssMaterial()
-    vri_contents: Optional[bytes] = None
+    vri_contents: bytes | None = None
     for sig in SimplePdf.from_bytes(signed_pdf).signatures:
         material.merge(collect_validation_material(sig.contents))
         if vri_contents is None:
@@ -218,7 +218,7 @@ def enable_ltv(
 _DOCTS_CONTENTS_HEX = 16384
 
 
-def _acroform_update_objects(doc, field_num: int) -> List[tuple]:
+def _acroform_update_objects(doc, field_num: int) -> list[tuple]:
     """Return ``(obj_num, bytes)`` re-emissions that add *field_num* to AcroForm.
 
     Handles an inline AcroForm (re-emit the catalog) and an indirect one
@@ -260,8 +260,8 @@ def _acroform_update_objects(doc, field_num: int) -> List[tuple]:
 def add_document_timestamp(
     pdf_bytes: bytes,
     *,
-    tsa: Optional[tuple] = None,
-    timestamp_url: Optional[str] = None,
+    tsa: tuple | None = None,
+    timestamp_url: str | None = None,
     hash_algo: str = "sha256",
     timeout: float = 10.0,
 ) -> bytes:
@@ -349,7 +349,7 @@ def _decoded_stream_bytes(
     *,
     limits: PdfLoadLimits,
     budget: _LoadBudget,
-) -> Optional[bytes]:
+) -> bytes | None:
     """Return a stream's decoded bytes, applying ``/Filter`` if present."""
     filt = _resolve(doc, stream.get(PdfName("Filter")))
     if filt is None:
@@ -380,7 +380,7 @@ def _read_stream_array(
     *,
     limits: PdfLoadLimits,
     budget: _LoadBudget,
-) -> List[bytes]:
+) -> list[bytes]:
     arr = _resolve(doc, arr)
     if not isinstance(arr, PdfArray):
         return []
@@ -389,7 +389,7 @@ def _read_stream_array(
         "max_container_items",
         "DSS validation material entries",
     )
-    out: List[bytes] = []
+    out: list[bytes] = []
     for item in arr.items:
         stream = _resolve(doc, item)
         if isinstance(stream, PdfStream):

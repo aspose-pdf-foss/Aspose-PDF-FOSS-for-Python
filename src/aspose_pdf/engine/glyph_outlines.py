@@ -19,12 +19,11 @@ empty outline (or an inert source) rather than raising.
 from __future__ import annotations
 
 import struct
-from typing import Dict, List, Optional, Tuple
 
 __all__ = ["TrueTypeOutlines"]
 
-Point = Tuple[float, float]
-Contour = List[Point]
+Point = tuple[float, float]
+Contour = list[Point]
 
 # Simple-glyph point flags (OpenType ``glyf`` table).
 _ON_CURVE = 0x01
@@ -58,13 +57,13 @@ class TrueTypeOutlines:
         self._data = bytes(font_bytes)
         self.units_per_em = 1000
         self.num_glyphs = 0
-        self._loca: Optional[List[int]] = None
+        self._loca: list[int] | None = None
         self._glyf_off = 0
         self._glyf_len = 0
         self._num_h_metrics = 0
         self._hmtx_off = 0
         self._hmtx_len = 0
-        self._cache: Dict[int, List[Contour]] = {}
+        self._cache: dict[int, list[Contour]] = {}
         self._ok = False
         try:
             self._parse_header()
@@ -86,7 +85,7 @@ class TrueTypeOutlines:
         if sfnt_version == 0x4F54544F:  # 'OTTO' -> CFF outlines, no glyf.
             return
 
-        tables: Dict[str, Tuple[int, int]] = {}
+        tables: dict[str, tuple[int, int]] = {}
         record = 12
         for _ in range(num_tables):
             if record + 16 > len(data):
@@ -124,12 +123,12 @@ class TrueTypeOutlines:
         self._ok = True
 
     def _read_loca(
-        self, location: Tuple[int, int], index_to_loc: int
-    ) -> Optional[List[int]]:
+        self, location: tuple[int, int], index_to_loc: int
+    ) -> list[int] | None:
         data = self._data
         off, _ = location
         count = self.num_glyphs + 1
-        offsets: List[int] = []
+        offsets: list[int] = []
         if index_to_loc == 0:  # short format: uint16 entries scaled by 2.
             if off + count * 2 > len(data):
                 return None
@@ -144,7 +143,7 @@ class TrueTypeOutlines:
 
     # -- public outline / metrics access ----------------------------------
 
-    def outline(self, gid: int) -> List[Contour]:
+    def outline(self, gid: int) -> list[Contour]:
         """Return flattened, closed contours for *gid* in font units (y up).
 
         An empty list is returned for blank glyphs (e.g. the space) and for any
@@ -163,7 +162,7 @@ class TrueTypeOutlines:
         self._cache[gid] = contours
         return contours
 
-    def advance_width(self, gid: int) -> Optional[int]:
+    def advance_width(self, gid: int) -> int | None:
         """Return *gid*'s advance width in font units from ``hmtx``, or ``None``.
 
         This is only a fallback: a PDF font's ``/Widths`` (simple) or ``/W``
@@ -179,7 +178,7 @@ class TrueTypeOutlines:
 
     # -- glyph decoding ---------------------------------------------------
 
-    def _decode_glyph(self, gid: int, depth: int) -> List[Contour]:
+    def _decode_glyph(self, gid: int, depth: int) -> list[Contour]:
         if depth > _MAX_COMPONENT_DEPTH or self._loca is None:
             return []
         start, end = self._loca[gid], self._loca[gid + 1]
@@ -194,10 +193,10 @@ class TrueTypeOutlines:
             return self._decode_composite(base + 10, limit, depth)
         return self._decode_simple(base, num_contours)
 
-    def _decode_simple(self, base: int, num_contours: int) -> List[Contour]:
+    def _decode_simple(self, base: int, num_contours: int) -> list[Contour]:
         data = self._data
         pos = base + 10
-        end_pts: List[int] = []
+        end_pts: list[int] = []
         for _ in range(num_contours):
             end_pts.append(struct.unpack_from(">H", data, pos)[0])
             pos += 2
@@ -210,7 +209,7 @@ class TrueTypeOutlines:
         instr_len = struct.unpack_from(">H", data, pos)[0]
         pos += 2 + instr_len
 
-        flags: List[int] = []
+        flags: list[int] = []
         while len(flags) < num_points:
             flag = data[pos]
             pos += 1
@@ -221,7 +220,7 @@ class TrueTypeOutlines:
                 flags.extend([flag] * repeat)
         flags = flags[:num_points]
 
-        xs: List[int] = []
+        xs: list[int] = []
         x = 0
         for flag in flags:
             if flag & _X_SHORT:
@@ -233,7 +232,7 @@ class TrueTypeOutlines:
                 pos += 2
             xs.append(x)
 
-        ys: List[int] = []
+        ys: list[int] = []
         y = 0
         for flag in flags:
             if flag & _Y_SHORT:
@@ -245,7 +244,7 @@ class TrueTypeOutlines:
                 pos += 2
             ys.append(y)
 
-        contours: List[Contour] = []
+        contours: list[Contour] = []
         start_idx = 0
         for end_idx in end_pts:
             raw = [
@@ -258,9 +257,9 @@ class TrueTypeOutlines:
                 contours.append(flat)
         return contours
 
-    def _decode_composite(self, pos: int, end: int, depth: int) -> List[Contour]:
+    def _decode_composite(self, pos: int, end: int, depth: int) -> list[Contour]:
         data = self._data
-        contours: List[Contour] = []
+        contours: list[Contour] = []
         while pos + 4 <= end:
             flags, comp_gid = struct.unpack_from(">HH", data, pos)
             pos += 4
@@ -304,7 +303,7 @@ class TrueTypeOutlines:
         return contours
 
 
-def _flatten_contour(points: List[Tuple[float, float, bool]]) -> Contour:
+def _flatten_contour(points: list[tuple[float, float, bool]]) -> Contour:
     """Flatten a TrueType point sequence into a closed on-curve polygon.
 
     Consecutive off-curve control points imply an on-curve midpoint, and a
@@ -320,7 +319,7 @@ def _flatten_contour(points: List[Tuple[float, float, bool]]) -> Contour:
         return []
 
     # ``normalised`` starts on-curve; append the first point to close the loop.
-    pts = normalised + [normalised[0]]
+    pts = [*normalised, normalised[0]]
     out: Contour = [(pts[0][0], pts[0][1])]
     i = 0
     while i < len(pts) - 1:
@@ -345,8 +344,8 @@ def _flatten_contour(points: List[Tuple[float, float, bool]]) -> Contour:
 
 
 def _normalise_points(
-    points: List[Tuple[float, float, bool]],
-) -> List[Tuple[float, float, bool]]:
+    points: list[tuple[float, float, bool]],
+) -> list[tuple[float, float, bool]]:
     """Rotate to start on-curve and insert implied on-curve midpoints."""
     n = len(points)
     start = next((i for i in range(n) if points[i][2]), None)
@@ -358,11 +357,11 @@ def _normalise_points(
             (points[0][1] + points[-1][1]) / 2.0,
             True,
         )
-        rotated = [mid] + list(points)
+        rotated = [mid, *list(points)]
     else:
         rotated = [points[(start + k) % n] for k in range(n)]
 
-    result: List[Tuple[float, float, bool]] = []
+    result: list[tuple[float, float, bool]] = []
     m = len(rotated)
     for k in range(m):
         cur = rotated[k]

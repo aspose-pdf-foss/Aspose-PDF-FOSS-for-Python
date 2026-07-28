@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from enum import Enum
-from typing import Any, Dict, Iterable, Iterator, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aspose_pdf.exceptions import PdfValidationException
 
@@ -43,7 +43,7 @@ class FormType(Enum):
     """Dynamic XFA form."""
 
     @staticmethod
-    def from_string(value: str) -> "FormType":
+    def from_string(value: str) -> FormType:
         return FormType(value)
 
 
@@ -65,10 +65,10 @@ class Field:
 
     def __init__(
         self,
-        form: "Form",
+        form: Form,
         name: str,
         value: Any = None,
-        field_type: Optional[str] = None,
+        field_type: str | None = None,
     ):
         self._form = form
         self._name = name
@@ -104,7 +104,7 @@ class Field:
         """The field type, such as ``text``, ``checkbox``, or ``combobox``."""
         return self._field_type
 
-    def remove(self) -> "Field":
+    def remove(self) -> Field:
         """Remove this field and all of its widgets from the form."""
         return self._form.remove_field(self._name)
 
@@ -115,9 +115,9 @@ class Field:
 class Form:
     """Represents an interactive form (AcroForm) within a PDF document."""
 
-    def __init__(self, document: "Document"):
+    def __init__(self, document: Document):
         self._document = document
-        self._fields: Dict[str, Field] = {}
+        self._fields: dict[str, Field] = {}
         self._load_fields()
 
     def _load_fields(self):
@@ -148,7 +148,7 @@ class Form:
         return len(self._fields)
 
     @property
-    def fields(self) -> List[Field]:
+    def fields(self) -> list[Field]:
         """A list of all fields in the form."""
         return list(self._fields.values())
 
@@ -271,7 +271,7 @@ class Form:
         options: Mapping[str, Sequence[float]]
         | Sequence[tuple[str, Sequence[float]]],
         *,
-        value: Optional[str] = None,
+        value: str | None = None,
         read_only: bool = False,
         required: bool = False,
     ) -> Field:
@@ -302,8 +302,8 @@ class Form:
         return self._create_field(name, "radio", widgets, value=value, flags=flags)
 
     @staticmethod
-    def _choice_exports(options: Sequence[Any]) -> List[str]:
-        exports: List[str] = []
+    def _choice_exports(options: Sequence[Any]) -> list[str]:
+        exports: list[str] = []
         for option in options:
             if isinstance(option, str):
                 exports.append(option)
@@ -385,7 +385,7 @@ class Form:
         rect: Sequence[float],
         options: Sequence[str | tuple[str, str]],
         *,
-        value: Optional[str] = None,
+        value: str | None = None,
         editable: bool = False,
         font_size: float = 12,
         alignment: str | int = "left",
@@ -480,15 +480,15 @@ class UnsignedContent:
 
     def __init__(
         self,
-        pages: Optional[List[Any]] = None,
-        form_fields: Optional[List[Any]] = None,
-        annotations: Optional[List[Any]] = None,
+        pages: list[Any] | None = None,
+        form_fields: list[Any] | None = None,
+        annotations: list[Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        self.pages: List[Any] = pages or []
-        self.form_fields: List[Any] = form_fields or []
-        self.annotations: List[Any] = annotations or []
-        self._extra: Dict[str, Any] = kwargs
+        self.pages: list[Any] = pages or []
+        self.form_fields: list[Any] = form_fields or []
+        self.annotations: list[Any] = annotations or []
+        self._extra: dict[str, Any] = kwargs
 
     def add_page(self, page: Any) -> None:
         """Add a page to the unsigned content."""
@@ -541,23 +541,23 @@ class UnsignedContentAbsorber:
         The PDF document instance.  The object is expected to expose the
         following iterable attributes:
 
-        * ``form_fields`` – a collection of form field objects.
-        * ``annotations`` – a collection of annotation objects.
+        * ``form_fields`` - a collection of form field objects.
+        * ``annotations`` - a collection of annotation objects.
 
         Individual items may expose either ``is_signed`` or ``signed`` boolean
         attributes.  If neither attribute is present the item is treated as
         *unsigned*.
     """
 
-    def __init__(self, document: "Document"):
+    def __init__(self, document: Document):
         self._document = document
-        self._extracted: Optional[UnsignedContent] = None
+        self._extracted: UnsignedContent | None = None
 
     def reset(self) -> None:
         """Clear the last extracted content."""
         self._extracted = None
 
-    def get_extracted(self) -> Optional[UnsignedContent]:
+    def get_extracted(self) -> UnsignedContent | None:
         """Return the last extracted content, if any."""
         return self._extracted
 
@@ -575,7 +575,7 @@ class UnsignedContentAbsorber:
         return True
 
     @staticmethod
-    def _collect_unsigned(items: Iterable[Any]) -> List[Any]:
+    def _collect_unsigned(items: Iterable[Any]) -> list[Any]:
         """Collect unsigned elements from *items*.
 
         The function materialises the iterator into a list to provide a stable

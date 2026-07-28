@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Union
-
 
 class PdfNumber:
     """Represents a PDF number primitive (integer or real).
@@ -11,7 +9,7 @@ class PdfNumber:
     This class wraps numeric values for PDF document manipulation.
     """
     
-    def __init__(self, value: Union[int, float, str] = 0) -> None:
+    def __init__(self, value: int | float | str = 0) -> None:
         """Initialize a PdfNumber with a numeric value.
         
         Args:
@@ -67,13 +65,13 @@ class PdfNumber:
             return self._value == other
         return NotImplemented
     
-    def __lt__(self, other: 'PdfNumber') -> bool:
+    def __lt__(self, other: PdfNumber) -> bool:
         """Compare less than."""
         if isinstance(other, PdfNumber):
             return self._value < other._value
         return NotImplemented
     
-    def __le__(self, other: 'PdfNumber') -> bool:
+    def __le__(self, other: PdfNumber) -> bool:
         """Compare less than or equal."""
         if isinstance(other, PdfNumber):
             return self._value <= other._value

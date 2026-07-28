@@ -1,11 +1,11 @@
 """PDF parser exception hierarchy and warnings collector.
 
 Provides:
-- :class:`PdfParseError` – base exception with error message, byte offset and recoverability flag.
-- :class:`PdfMalformedError` – recoverable malformed PDF structures.
-- :class:`PdfCorruptedError` – unrecoverable PDF corruption.
-- :class:`PdfParseWarning` – non‑fatal parsing issue.
-- :class:`ParseWarnings` – container for :class:`PdfParseWarning` instances.
+- :class:`PdfParseError` - base exception with error message, byte offset and recoverability flag.
+- :class:`PdfMalformedError` - recoverable malformed PDF structures.
+- :class:`PdfCorruptedError` - unrecoverable PDF corruption.
+- :class:`PdfParseWarning` - non-fatal parsing issue.
+- :class:`ParseWarnings` - container for :class:`PdfParseWarning` instances.
 
 Example
 -------
@@ -23,7 +23,6 @@ True
 1
 """
 
-from typing import List
 
 
 class PdfParseError(Exception):
@@ -99,7 +98,7 @@ class ParseWarnings:
     """Collects warnings during parsing."""
 
     def __init__(self) -> None:
-        self._warnings: List[PdfParseWarning] = []
+        self._warnings: list[PdfParseWarning] = []
 
     def add(self, message: str, offset: int = -1) -> None:
         """Add a new warning.
@@ -115,7 +114,7 @@ class ParseWarnings:
         self._warnings.clear()
 
     @property
-    def warnings(self) -> List[PdfParseWarning]:
+    def warnings(self) -> list[PdfParseWarning]:
         """Return a shallow copy of the warnings list."""
         return list(self._warnings)
 

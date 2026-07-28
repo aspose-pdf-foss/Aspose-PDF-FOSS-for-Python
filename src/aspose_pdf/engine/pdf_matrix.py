@@ -9,7 +9,6 @@ coerce to ``float`` only when filling public tuples.
 from __future__ import annotations
 
 from decimal import Decimal, localcontext
-from typing import Tuple
 
 _PDF_AFFINE_PREC = 80
 
@@ -21,8 +20,8 @@ def pdf_scalar_to_decimal(x: int | float) -> Decimal:
 
 
 def multiply_pdf_affine(
-    a: Tuple[Decimal, ...], b: Tuple[Decimal, ...]
-) -> Tuple[Decimal, ...]:
+    a: tuple[Decimal, ...], b: tuple[Decimal, ...]
+) -> tuple[Decimal, ...]:
     """Multiply PDF affines: ``new_ctm = a * b`` (each is a,b,c,d,e,f)."""
     with localcontext() as ctx:
         ctx.prec = _PDF_AFFINE_PREC
@@ -36,7 +35,7 @@ def multiply_pdf_affine(
         )
 
 
-def identity_affine_decimal() -> Tuple[Decimal, ...]:
+def identity_affine_decimal() -> tuple[Decimal, ...]:
     return (
         Decimal(1),
         Decimal(0),
@@ -47,15 +46,15 @@ def identity_affine_decimal() -> Tuple[Decimal, ...]:
     )
 
 
-def affine_decimal_to_float(m: Tuple[Decimal, ...]) -> Tuple[float, ...]:
+def affine_decimal_to_float(m: tuple[Decimal, ...]) -> tuple[float, ...]:
     return tuple(float(x) for x in m)
 
 
 def image_placement_bbox(
-    m: Tuple[Decimal, ...],
+    m: tuple[Decimal, ...],
     width: int,
     height: int,
-) -> Tuple[float, float, float, float]:
+) -> tuple[float, float, float, float]:
     """Return (llx, lly, width, height) from affine (a,b,c,d,e,f) and raster size."""
     a, b, c, d, e, f = m
     w_d = Decimal(width)

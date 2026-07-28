@@ -1,7 +1,7 @@
 # Incremental Update Module
 """Provides utilities for creating PDF incremental updates.
 
-The incremental update mechanism appends new objects, a cross‑reference
+The incremental update mechanism appends new objects, a cross-reference
 section and a trailer to an existing PDF file without rewriting the
 original content. This is required for digital signatures, audit trails
 and efficient modifications.
@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Any
+from typing import Any
+
 from aspose_pdf.exceptions import PdfParseException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 
 @dataclass
@@ -45,8 +46,8 @@ class IncrementalUpdate:
     budget: _LoadBudget | None = field(default=None, repr=False)
     original_eof_offset: int = field(init=False)
     next_obj_num: int = field(init=False)
-    modified_objects: Dict[int, bytes] = field(default_factory=dict)
-    xref_entries: List[Tuple[int, int, int]] = field(default_factory=list)
+    modified_objects: dict[int, bytes] = field(default_factory=dict)
+    xref_entries: list[tuple[int, int, int]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.budget is None:
@@ -198,7 +199,7 @@ class IncrementalUpdate:
         self.modified_objects[obj_num] = obj_bytes
 
     def add_new_object(self, obj_bytes: bytes) -> int:
-        """Add a brand‑new object and return its assigned number."""
+        """Add a brand-new object and return its assigned number."""
         obj_num = self.get_next_object_number()
         self.add_object(obj_num, obj_bytes)
         return obj_num
@@ -216,7 +217,7 @@ class IncrementalUpdate:
             return b""
 
         sorted_nums = sorted(self.modified_objects.keys())
-        offsets: Dict[int, int] = {}
+        offsets: dict[int, int] = {}
         current = base_offset
         for obj_num in sorted_nums:
             obj_data = self.modified_objects[obj_num]
@@ -268,7 +269,7 @@ class IncrementalUpdate:
     def generate(self) -> bytes:
         """Return the full incremental update bytes.
 
-        The output consists of the new objects, a cross‑reference section and
+        The output consists of the new objects, a cross-reference section and
         a trailer. The caller is responsible for appending this to the
         original PDF data.
         """
@@ -334,7 +335,7 @@ class IncrementalWriter:
         original = getattr(self.pdf_document, "original_data", None)
         if original is None:
             raise AttributeError("pdf_document must have attribute original_data")
-        updates: Dict[int, bytes] = getattr(self.pdf_document, "updates", {})
+        updates: dict[int, bytes] = getattr(self.pdf_document, "updates", {})
 
         incremental = IncrementalUpdate(original)
         for obj_num, obj_bytes in updates.items():
@@ -357,7 +358,7 @@ class IncrementalWriter:
         return placeholder
 
 
-def append_incremental_update(original_pdf: bytes, updates: Dict[int, bytes]) -> bytes:
+def append_incremental_update(original_pdf: bytes, updates: dict[int, bytes]) -> bytes:
     """Convenience function to append *updates* to *original_pdf*.
 
     Parameters

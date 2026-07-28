@@ -10,7 +10,7 @@ from aspose_pdf.markdown import MarkdownSaveOptions
 __all__ = ["DocFormat", "HtmlSaveOptions", "MarkdownSaveOptions"]
 
 
-class DocFormat(str, Enum):
+class DocFormat(str, Enum):  # noqa: UP042
     """Target format for a save operation.
 
     Only :attr:`PDF` is implemented; the other members are API-compatibility

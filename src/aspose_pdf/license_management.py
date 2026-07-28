@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -21,7 +20,7 @@ class StatisticsEntry:
     _start_time: float = field(default_factory=time.time, init=False)
     """Timestamp when the entry was created."""
 
-    _end_time: Optional[float] = field(default=None, init=False)
+    _end_time: float | None = field(default=None, init=False)
     """Timestamp when the entry was stopped."""
 
     def __post_init__(self) -> None:

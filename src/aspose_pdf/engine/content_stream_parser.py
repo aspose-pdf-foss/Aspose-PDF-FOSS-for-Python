@@ -1,6 +1,6 @@
 """Content Stream Parser Module.
 
-Implements a minimal PDF content‑stream parser capable of extracting text
+Implements a minimal PDF content-stream parser capable of extracting text
 from a page's content stream.  The implementation follows the subset of the
 PDF text operators required by the SDK.
 """
@@ -11,14 +11,15 @@ import codecs
 import math
 import re
 from collections import deque
+from collections.abc import Iterator
 from decimal import Decimal
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any
 
 from aspose_pdf.exceptions import (
     CONTENT_PARSER_RECOVERABLE,
     PdfResourceLimitException,
 )
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 from .pdf_matrix import (
     identity_affine_decimal,
@@ -71,9 +72,9 @@ def _cmap_lines(
     text: str,
     budget: _LoadBudget,
     context: str,
-) -> List[str]:
+) -> list[str]:
     """Return bounded, nonempty CMap lines with comments removed."""
-    lines: List[str] = []
+    lines: list[str] = []
     for raw in _iter_cmap_lines(text):
         if "%" in raw:
             raw = raw.split("%", 1)[0]
@@ -102,7 +103,7 @@ def _check_cmap_input(
 
 
 def _put_bounded(
-    target: Dict[Any, Any],
+    target: dict[Any, Any],
     key: Any,
     value: Any,
     budget: _LoadBudget,
@@ -137,10 +138,10 @@ def load_cid_widths(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> Dict[int, int]:
+) -> dict[int, int]:
     """Parse a CIDFont /W array (plain Python lists) into code -> width."""
     active_budget = _resolve_resource_budget(limits, budget)
-    out: Dict[int, int] = {}
+    out: dict[int, int] = {}
     if not isinstance(w_obj, list):
         return out
     active_budget.check(1, "max_nesting_depth", "CID width array nesting")
@@ -208,10 +209,10 @@ def load_cid_vertical_metrics(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> Dict[int, tuple[float, float, float]]:
+) -> dict[int, tuple[float, float, float]]:
     """Parse a CIDFont /W2 array into CID -> ``(w1y, v1x, v1y)``."""
     active_budget = _resolve_resource_budget(limits, budget)
-    out: Dict[int, tuple[float, float, float]] = {}
+    out: dict[int, tuple[float, float, float]] = {}
     if not isinstance(w2_obj, list):
         return out
     active_budget.check(1, "max_nesting_depth", "CID vertical width nesting")
@@ -308,11 +309,11 @@ def parse_to_unicode_cmap(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> Dict[bytes, str]:
+) -> dict[bytes, str]:
     """Parse a ToUnicode CMap stream into a code-bytes -> unicode-text map."""
     active_budget = _resolve_resource_budget(limits, budget)
     _check_cmap_input(cmap_bytes, active_budget, "ToUnicode CMap")
-    mapping: Dict[bytes, str] = {}
+    mapping: dict[bytes, str] = {}
     try:
         text = cmap_bytes.decode("utf-8", errors="ignore")
     except UnicodeError:
@@ -441,7 +442,7 @@ def parse_encoding_cmap(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> Tuple[Dict[bytes, int], List[int]]:
+) -> tuple[dict[bytes, int], list[int]]:
     """Parse a CID Encoding CMap into ``(code-bytes -> CID, sorted code lengths)``.
 
     Reads ``codespacerange`` (for the code lengths), ``cidrange`` and
@@ -451,7 +452,7 @@ def parse_encoding_cmap(
     """
     active_budget = _resolve_resource_budget(limits, budget)
     _check_cmap_input(cmap_bytes, active_budget, "CID Encoding CMap")
-    code_to_cid: Dict[bytes, int] = {}
+    code_to_cid: dict[bytes, int] = {}
     lengths: set[int] = set()
     try:
         text = cmap_bytes.decode("latin-1", errors="ignore")
@@ -633,7 +634,7 @@ class ContentStreamParser:
     def __init__(
         self,
         content_stream: bytes,
-        resources: Dict[str, Any],
+        resources: dict[str, Any],
         *,
         limits: PdfLoadLimits | None = None,
         budget: _LoadBudget | None = None,
@@ -662,32 +663,32 @@ class ContentStreamParser:
 
         self._resources = resources
         self._in_text = False
-        self._current_font: Dict[str, Any] | None = None
-        self._font_encoding_map: Dict[int, str] | None = None
-        self._to_unicode_map: Dict[bytes, str] | None = None
+        self._current_font: dict[str, Any] | None = None
+        self._font_encoding_map: dict[int, str] | None = None
+        self._to_unicode_map: dict[bytes, str] | None = None
         self._predefined_cmap: PredefinedCMap | None = None
         self._predefined_encoding: PredefinedCMapEncoding | None = None
-        self._embedded_encoding_map: Dict[bytes, int] | None = None
+        self._embedded_encoding_map: dict[bytes, int] | None = None
         self._embedded_encoding_lengths: tuple[int, ...] = ()
         self._embedded_encoding_codespaces: tuple[tuple[bytes, bytes], ...] = ()
         self._opaque_composite = False
-        self._buffer: List[str] = []
-        self._marked_actual_text: List[str | None] = []
+        self._buffer: list[str] = []
+        self._marked_actual_text: list[str | None] = []
         self._font_size: float = 12.0
         self._last_glyph_width: int = (
             500  # thousandths of text space unit (em fraction)
         )
-        self._widths_by_code: Dict[int, int] | None = None
+        self._widths_by_code: dict[int, int] | None = None
         self._default_glyph_width: int = 1000
         self._is_cid_identity: bool = False
-        self._gs_stack: List[Dict[str, str | None]] = []
+        self._gs_stack: list[dict[str, str | None]] = []
 
         self.WHITESPACE = " \t\n\r\x0c"
         self.DELIMITERS = "()<>[]{}/%"
 
         # Operand counts for operators that often appear between BT and ET; without these,
         # unknown ops are mistaken for operands and corrupt Tj/TJ stack binding.
-        self._FIXED_OP_ARITY: Dict[str, int] = {
+        self._FIXED_OP_ARITY: dict[str, int] = {
             "BT": 0,
             "ET": 0,
             "Tf": 2,
@@ -765,7 +766,7 @@ class ContentStreamParser:
         self._in_text = False
         self._marked_actual_text = []
         self._gs_stack = [{"nonstroking_cs": None, "stroking_cs": None}]
-        stack: List[Any] = []
+        stack: list[Any] = []
 
         for token in self._tokenize():
             if isinstance(token, str) and token in self._VARIABLE_COLOR_OPS:
@@ -848,7 +849,7 @@ class ContentStreamParser:
         except UnicodeDecodeError:
             return raw.decode("latin-1", errors="replace")
 
-    def _handle_marked_content(self, op: str, operands: List[Any]) -> None:
+    def _handle_marked_content(self, op: str, operands: list[Any]) -> None:
         if op == "EMC":
             if not self._marked_actual_text:
                 return
@@ -872,7 +873,7 @@ class ContentStreamParser:
     def _inside_actual_text(self) -> bool:
         return any(item is not None for item in self._marked_actual_text)
 
-    def _top_gs(self) -> Dict[str, str | None]:
+    def _top_gs(self) -> dict[str, str | None]:
         return self._gs_stack[-1]
 
     def _set_colorspace_name(self, name_obj: Any, *, nonstroking: bool) -> None:
@@ -930,7 +931,7 @@ class ContentStreamParser:
     # ---------------------------------------------------------------------
     # Internal helpers
     # ---------------------------------------------------------------------
-    def _handle_operator(self, op: str, ops: List[Any]) -> None:
+    def _handle_operator(self, op: str, ops: list[Any]) -> None:
         if op == "BT":
             self._reset_text_state()
             self._in_text = True
@@ -1034,12 +1035,12 @@ class ContentStreamParser:
         self._is_cid_identity = False
         self._last_glyph_width = 500
 
-    def _load_cid_widths(self, w_obj: Any) -> Dict[int, int]:
+    def _load_cid_widths(self, w_obj: Any) -> dict[int, int]:
         """Parse a CIDFont /W array into code -> width (thousandths)."""
         return load_cid_widths(w_obj, budget=self._budget)
 
-    def _load_simple_widths(self, font: Dict[str, Any]) -> Dict[int, int]:
-        out: Dict[int, int] = {}
+    def _load_simple_widths(self, font: dict[str, Any]) -> dict[int, int]:
+        out: dict[int, int] = {}
         first = font.get("FirstChar")
         widths = font.get("Widths")
         if not isinstance(widths, list) or not isinstance(first, (int, float)):
@@ -1063,7 +1064,7 @@ class ContentStreamParser:
 
         if st == "Type0":
             desc = self._current_font.get("DescendantFonts")
-            cid: Optional[Dict[str, Any]] = None
+            cid: dict[str, Any] | None = None
             if isinstance(desc, list) and desc and isinstance(desc[0], dict):
                 cid = desc[0]
             if cid:
@@ -1503,21 +1504,21 @@ class ContentStreamParser:
             "daggerdbll": "‡",
             "ellipsis": "…",
             "emdash": "—",
-            "endash": "–",
+            "endash": "\u2013",
             "fi": "fi",
             "fl": "fl",
-            "fraction": "⁄",
+            "fraction": "\u2044",
             "guillemotleft": "«",
             "guillemotright": "»",
-            "guilsinglleft": "‹",
-            "guilsinglright": "›",
-            "minus": "−",
+            "guilsinglleft": "\u2039",
+            "guilsinglright": "\u203a",
+            "minus": "\u2212",
             "quotedblbase": "„",
             "quotedblleft": "“",
             "quotedblright": "”",
-            "quoteleft": "‘",
-            "quoteright": "’",
-            "quotesinglbase": "‚",
+            "quoteleft": "\u2018",
+            "quoteright": "\u2019",
+            "quotesinglbase": "\u201a",
             "trademark": "™",
         }
         return mapping.get(name)
@@ -1558,7 +1559,7 @@ class ContentStreamParser:
                     for i in range(0, len(data), 2)
                 )
 
-            out: List[str] = []
+            out: list[str] = []
             i = 0
             lengths = sorted(
                 {len(key) for key in self._to_unicode_map if key},
@@ -1592,7 +1593,7 @@ class ContentStreamParser:
             )
 
         if self._is_cid_identity and not self._to_unicode_map:
-            out: List[str] = []
+            out: list[str] = []
             j = 0
             while j + 1 < len(data):
                 code = int.from_bytes(data[j : j + 2], "big")
@@ -1608,7 +1609,7 @@ class ContentStreamParser:
             return "".join(out)
 
         if self._font_encoding_map:
-            parts: List[str] = []
+            parts: list[str] = []
             for b in data:
                 ch = self._font_encoding_map.get(b)
                 if ch:
@@ -1622,7 +1623,7 @@ class ContentStreamParser:
 
         return data.decode("utf-8", errors="ignore")
 
-    def _parse_to_unicode(self, cmap_bytes: bytes) -> Dict[bytes, str]:
+    def _parse_to_unicode(self, cmap_bytes: bytes) -> dict[bytes, str]:
         return parse_to_unicode_cmap(cmap_bytes, budget=self._budget)
 
     # ---------------------------------------------------------------------
@@ -1794,7 +1795,7 @@ class ContentStreamParser:
         except ValueError:
             return b""
 
-    def _read_array(self, depth: int) -> List[Any]:
+    def _read_array(self, depth: int) -> list[Any]:
         # Assumes at "["; returns list of tokens inside
         self._check_nesting(depth, "PDF content array nesting")
         self._count_token()
@@ -1873,7 +1874,7 @@ class ContentStreamParser:
         # Let's keep / to be correct token.
         return self._text[start : self._pos]
 
-    def _read_number_or_operator(self) -> Union[int, float, str]:
+    def _read_number_or_operator(self) -> int | float | str:
         start = self._pos
         while (
             self._pos < self._len
@@ -1895,7 +1896,7 @@ def parse_image_placements_from_content(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> List[Tuple[str, Tuple[Decimal, ...]]]:
+) -> list[tuple[str, tuple[Decimal, ...]]]:
     """Parse PDF content stream and extract image placements (Do operator with matrix).
 
     Returns a list of (xobject_name, matrix) for each Do operator, where matrix
@@ -1919,7 +1920,7 @@ def parse_image_placements_from_content(
         "image placement content stream bytes",
     )
 
-    result: List[Tuple[str, Tuple[Decimal, ...]]] = []
+    result: list[tuple[str, tuple[Decimal, ...]]] = []
     IDENTITY = identity_affine_decimal()
     token_count = 0
 
@@ -2045,8 +2046,8 @@ def parse_image_placements_from_content(
             _count_token()
             yield token
 
-    ctm_stack: List[Tuple[Decimal, ...]] = [IDENTITY]
-    ctm: Tuple[Decimal, ...] = IDENTITY
+    ctm_stack: list[tuple[Decimal, ...]] = [IDENTITY]
+    ctm: tuple[Decimal, ...] = IDENTITY
     recent: deque[Any] = deque(maxlen=6)
 
     for t in _tokenize(content):
@@ -2068,7 +2069,7 @@ def parse_image_placements_from_content(
                 ctm = ctm_stack[-1]
         elif t == "cm":
             if len(recent) == 6:
-                vals_d: List[Decimal] = []
+                vals_d: list[Decimal] = []
                 for v in recent:
                     if isinstance(v, (int, float)):
                         vals_d.append(pdf_scalar_to_decimal(v))

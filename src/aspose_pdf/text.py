@@ -19,18 +19,18 @@ Supports three search modes:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, List, Optional
+from typing import Any
 
-    
 __all__ = [
-    "TextFormattingMode",
-    "TextExtractionOptions",
-    "TextFragment",
-    "TextSearchOptions",
     "RegexResult",
-    "TextFragmentAbsorber",
     "TextAbsorber",
+    "TextExtractionOptions",
+    "TextFormattingMode",
+    "TextFragment",
+    "TextFragmentAbsorber",
+    "TextSearchOptions",
 ]
 
 
@@ -236,26 +236,26 @@ class TextFragmentAbsorber:
 
     def __init__(
         self,
-        phrase: Optional[str] = None,
+        phrase: str | None = None,
         *,
-        text_search_options: Optional[TextSearchOptions] = None,
-        text_replace_options: Optional[Any] = None,
+        text_search_options: TextSearchOptions | None = None,
+        text_replace_options: Any | None = None,
     ) -> None:
-        self.phrase: Optional[str] = phrase
+        self.phrase: str | None = phrase
         self.text_search_options: TextSearchOptions = (
             text_search_options
             if text_search_options is not None
             else TextSearchOptions()
         )
-        self.text_replace_options: Optional[Any] = text_replace_options
+        self.text_replace_options: Any | None = text_replace_options
 
-        self._text_fragments: List[TextFragment] = []
-        self._regex_results: List[RegexResult] = []
-        self._errors: List[Any] = []
+        self._text_fragments: list[TextFragment] = []
+        self._regex_results: list[RegexResult] = []
+        self._errors: list[Any] = []
         self.has_errors: bool = False
 
         # Pre-compile regex pattern once if needed.
-        self._compiled_regex: Optional[re.Pattern] = None
+        self._compiled_regex: re.Pattern | None = None
         if phrase is not None and self.text_search_options.is_regular_expression:
             flags = 0 if self.text_search_options.case_sensitive else re.IGNORECASE
             self._compiled_regex = re.compile(phrase, flags)
@@ -265,17 +265,17 @@ class TextFragmentAbsorber:
     # ------------------------------------------------------------------
 
     @property
-    def text_fragments(self) -> List[TextFragment]:
+    def text_fragments(self) -> list[TextFragment]:
         """List of :class:`TextFragment` objects found by the last visit."""
         return self._text_fragments
 
     @property
-    def regex_results(self) -> List[RegexResult]:
+    def regex_results(self) -> list[RegexResult]:
         """List of :class:`RegexResult` objects (populated on regex search)."""
         return self._regex_results
 
     @property
-    def errors(self) -> List[Any]:
+    def errors(self) -> list[Any]:
         """Errors collected during the last visit, if any."""
         return self._errors
 
@@ -323,7 +323,7 @@ class TextFragmentAbsorber:
 
     def apply_for_all_fragments(
         self, action: Callable[[TextFragment], Any]
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Apply *action* to every collected fragment and return the results.
 
         Parameters
@@ -422,10 +422,10 @@ class TextAbsorber:
 
     def __init__(
         self,
-        phrase: Optional[str] = None,
+        phrase: str | None = None,
         *,
-        text_search_options: Optional[TextSearchOptions] = None,
-        text_replace_options: Optional[Any] = None,
+        text_search_options: TextSearchOptions | None = None,
+        text_replace_options: Any | None = None,
     ) -> None:
         """Initialize text absorber.
 
@@ -454,7 +454,7 @@ class TextAbsorber:
         return "\n".join(f.text for f in fragments)
 
     @property
-    def text_fragments(self) -> List[TextFragment]:
+    def text_fragments(self) -> list[TextFragment]:
         """List of text fragments found."""
         return self._absorber.text_fragments
 
@@ -478,7 +478,7 @@ class TextAbsorber:
 
     def apply_for_all_fragments(
         self, action: Callable[[TextFragment], Any]
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Apply action to every collected fragment."""
         return self._absorber.apply_for_all_fragments(action)
 
@@ -498,7 +498,7 @@ class TextFragmentCollection:
     """A mutable ordered collection of :class:`TextFragment` objects."""
 
     def __init__(self) -> None:
-        self._fragments: List[TextFragment] = []
+        self._fragments: list[TextFragment] = []
 
     def add(self, fragment: Any) -> None:
         """Add *fragment* to the collection; ``None`` is silently ignored."""

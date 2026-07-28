@@ -8,13 +8,13 @@ this library inspects.  Results are **heuristic** only.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import BinaryIO, List, Union
+from typing import BinaryIO
 
 from aspose_pdf.exceptions import PdfIOException, PdfValidationException
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
-    _LoadBudget,
     _coerce_limits,
+    _LoadBudget,
     _read_limited,
 )
 
@@ -45,13 +45,13 @@ class PdfUaValidationResult:
 
     def __init__(
         self,
-        errors: List[str] | None = None,
-        warnings: List[str] | None = None,
+        errors: list[str] | None = None,
+        warnings: list[str] | None = None,
         *,
         is_heuristic: bool = True,
     ) -> None:
-        self.errors: List[str] = list(errors) if errors else []
-        self.warnings: List[str] = list(warnings) if warnings else []
+        self.errors: list[str] = list(errors) if errors else []
+        self.warnings: list[str] = list(warnings) if warnings else []
         self.is_heuristic: bool = is_heuristic
 
     @property
@@ -97,12 +97,12 @@ class PdfUaValidateOptions:
     """
 
     def __init__(self, limits: PdfLoadLimits | None = None) -> None:
-        self._inputs: List[Union[Path, bytes]] = []
+        self._inputs: list[Path | bytes] = []
         self.limits = _coerce_limits(limits)
 
     def add_input(
-        self, source: Union[str, Path, bytes, bytearray, BinaryIO]
-    ) -> "PdfUaValidateOptions":
+        self, source: str | Path | bytes | bytearray | BinaryIO
+    ) -> PdfUaValidateOptions:
         """Add an input file or stream for PDF/UA validation.
 
         Parameters
@@ -147,7 +147,7 @@ class PdfUaValidateOptions:
         raise PdfValidationException("Unsupported input type for add_input")
 
     @property
-    def inputs(self) -> List[Union[Path, bytes]]:
+    def inputs(self) -> list[Path | bytes]:
         """Return a copy of the stored inputs."""
         return list(self._inputs)
 
@@ -170,7 +170,7 @@ class PdfUaValidator:
             print(result.is_valid, result.errors)
     """
 
-    def process(self, options: "PdfUaValidateOptions") -> List[PdfUaValidationResult]:
+    def process(self, options: PdfUaValidateOptions) -> list[PdfUaValidationResult]:
         """Validate every input defined in *options*.
 
         Parameters
@@ -186,7 +186,7 @@ class PdfUaValidator:
         """
         from aspose_pdf.document import Document  # local import to avoid circularity
 
-        results: List[PdfUaValidationResult] = []
+        results: list[PdfUaValidationResult] = []
         for inp in options.inputs:
             with Document(limits=options.limits) as doc:
                 doc.load_from(inp, limits=options.limits)

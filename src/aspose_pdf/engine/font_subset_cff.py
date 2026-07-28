@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import struct
 
-__all__ = ["subset_cff", "cff_charset_cid_to_gid"]
+__all__ = ["cff_charset_cid_to_gid", "subset_cff"]
 
 _ENDCHAR = b"\x0e"  # Type 2 (and Type 1) charstring "endchar" operator.
 

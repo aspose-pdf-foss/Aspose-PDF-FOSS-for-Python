@@ -17,7 +17,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
-from typing import Dict, List, Optional, Tuple
 
 from .field_appearance import _fmt, _pdf_literal
 
@@ -61,11 +60,11 @@ class RichRun:
     style: RichStyle
 
 
-def _font_spec(base: str) -> Dict[str, str]:
+def _font_spec(base: str) -> dict[str, str]:
     return {"Subtype": "Type1", "BaseFont": base, "Encoding": "WinAnsiEncoding"}
 
 
-def _parse_color(value: str) -> Optional[str]:
+def _parse_color(value: str) -> str | None:
     """Convert a CSS colour to a nonstroking-colour operator, or ``None``."""
     v = value.strip().lower()
     if v.startswith("#"):
@@ -88,7 +87,7 @@ def _parse_color(value: str) -> Optional[str]:
 
 def _apply_css(style: RichStyle, css: str) -> RichStyle:
     """Apply a CSS ``style`` declaration string to *style*."""
-    changes: Dict[str, object] = {}
+    changes: dict[str, object] = {}
     for decl in css.split(";"):
         if ":" not in decl:
             continue
@@ -112,7 +111,7 @@ def _apply_css(style: RichStyle, css: str) -> RichStyle:
     return replace(style, **changes) if changes else style
 
 
-def _apply_tag(style: RichStyle, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> RichStyle:
+def _apply_tag(style: RichStyle, tag: str, attrs: list[tuple[str, str | None]]) -> RichStyle:
     new = style
     if tag in ("b", "strong"):
         new = replace(new, bold=True)
@@ -129,16 +128,16 @@ class _RichTextParser(HTMLParser):
 
     def __init__(self, default: RichStyle) -> None:
         super().__init__(convert_charrefs=True)
-        self._stack: List[RichStyle] = [default]
-        self.paragraphs: List[List[RichRun]] = []
-        self._current: List[RichRun] = []
+        self._stack: list[RichStyle] = [default]
+        self.paragraphs: list[list[RichRun]] = []
+        self._current: list[RichRun] = []
 
     def _flush_paragraph(self) -> None:
         if self._current:
             self.paragraphs.append(self._current)
             self._current = []
 
-    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "br":
             self._flush_paragraph()
             return
@@ -147,7 +146,7 @@ class _RichTextParser(HTMLParser):
             self._flush_paragraph()
         self._stack.append(style)
 
-    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "br":
             self._flush_paragraph()
 
@@ -170,7 +169,7 @@ class _RichTextParser(HTMLParser):
         self._flush_paragraph()
 
 
-def parse_rich_text(rc: str, default: RichStyle) -> List[List[RichRun]]:
+def parse_rich_text(rc: str, default: RichStyle) -> list[list[RichRun]]:
     """Parse an XHTML rich-text string into paragraphs of styled runs."""
     parser = _RichTextParser(default)
     try:
@@ -204,23 +203,23 @@ def _measure(text: str, style: RichStyle) -> float:
 
 @dataclass
 class _Line:
-    words: List[Tuple[str, RichStyle]]
+    words: list[tuple[str, RichStyle]]
     align: int
     size: float  # dominant (max) font size on the line
 
 
-def _wrap_paragraph(runs: List[RichRun], max_width: float) -> List[_Line]:
+def _wrap_paragraph(runs: list[RichRun], max_width: float) -> list[_Line]:
     """Greedy word-wrap a paragraph's runs into lines of ``(word, style)``."""
     align = runs[0].style.align if runs else 0
-    tokens: List[Tuple[str, RichStyle]] = []
+    tokens: list[tuple[str, RichStyle]] = []
     for run in runs:
         for word in run.text.split():
             tokens.append((word, run.style))
     if not tokens:
         return [_Line([], align, 12.0)]
 
-    lines: List[_Line] = []
-    cur: List[Tuple[str, RichStyle]] = []
+    lines: list[_Line] = []
+    cur: list[tuple[str, RichStyle]] = []
     cur_w = 0.0
     for word, style in tokens:
         word_w = _measure(word, style)
@@ -252,7 +251,7 @@ def build_rich_text_content(
     default_style: RichStyle,
     padding: float = 2.0,
     default_align: int = 0,
-) -> Optional[Tuple[List[str], Dict[str, Dict[str, str]]]]:
+) -> tuple[list[str], dict[str, dict[str, str]]] | None:
     """Lay out rich text into ``(BT…ET body lines, fonts)``, or ``None`` if empty.
 
     *default_style* seeds size/colour/alignment for text outside any styled span
@@ -266,16 +265,16 @@ def build_rich_text_content(
         return None
 
     max_width = max(1.0, width - 2.0 * padding)
-    lines: List[_Line] = []
+    lines: list[_Line] = []
     for para in paragraphs:
         lines.extend(_wrap_paragraph(para, max_width))
     if not any(line.words for line in lines):
         return None
 
-    body: List[str] = ["BT"]
-    fonts: Dict[str, Dict[str, str]] = {}
-    cur_font: Optional[Tuple[str, float]] = None
-    cur_color: Optional[str] = None
+    body: list[str] = ["BT"]
+    fonts: dict[str, dict[str, str]] = {}
+    cur_font: tuple[str, float] | None = None
+    cur_color: str | None = None
     y = height - padding
     for line in lines:
         y -= line.size

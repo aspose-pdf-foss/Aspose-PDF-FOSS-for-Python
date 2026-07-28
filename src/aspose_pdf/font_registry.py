@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 from aspose_pdf.engine.woff import decode as decode_woff
 from aspose_pdf.exceptions import FontEmbeddingException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 
 class FontDescriptor:
@@ -109,7 +110,7 @@ class FontRegistry:
 
     _instance: FontRegistry | None = None
 
-    STANDARD_FONTS = {
+    STANDARD_FONTS: ClassVar[dict[str, str]] = {
         "Arial": "Helvetica",
         "Arial Black": "Helvetica",
         "Comic Sans MS": "Helvetica",

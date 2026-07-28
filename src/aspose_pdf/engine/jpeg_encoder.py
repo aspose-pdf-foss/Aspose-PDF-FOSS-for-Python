@@ -190,7 +190,7 @@ def _fdct_quantize(block: list[int], qt: list[int]) -> list[int]:
             )
             pos = v * 8 + u
             q = qt[pos]
-            out[pos] = int(math.floor(coeff / q + 0.5))
+            out[pos] = math.floor(coeff / q + 0.5)
     return out
 
 
@@ -236,7 +236,7 @@ def _optimal_table(freq_in) -> tuple[list[int], list[int]]:
     A reserved symbol (index 256) with frequency 1 guarantees no code is all
     ones, and the code lengths are limited to 16 bits per Annex K.3.
     """
-    freq = list(freq_in) + [1]  # index 256: reserved
+    freq = [*list(freq_in), 1]  # index 256: reserved
     codesize = [0] * 257
     others = [-1] * 257
 

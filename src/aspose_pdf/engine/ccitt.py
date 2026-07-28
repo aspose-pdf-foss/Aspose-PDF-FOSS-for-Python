@@ -6,13 +6,14 @@ This module provides a pure Python decoder for CCITT Group 4 compressed image da
 from __future__ import annotations
 
 from itertools import repeat
+from typing import ClassVar
 
 from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 # Import the standard Huffman tables
 try:
-    from .ccitt_tables import WHITE_TERM, WHITE_MAKEUP, BLACK_TERM, BLACK_MAKEUP
+    from .ccitt_tables import BLACK_MAKEUP, BLACK_TERM, WHITE_MAKEUP, WHITE_TERM
 except ImportError:
     # Fallback to empty if not found (should not happen in prod)
     WHITE_TERM = {}
@@ -51,8 +52,8 @@ class _BitReader:
 
 class Decoder:
     # Pre-computed lookup tables for Huffman codes (code, bits) -> length
-    _WHITE_LOOKUP = {}
-    _BLACK_LOOKUP = {}
+    _WHITE_LOOKUP: ClassVar[dict[tuple[int, int], int]] = {}
+    _BLACK_LOOKUP: ClassVar[dict[tuple[int, int], int]] = {}
 
     @classmethod
     def _init_lookups(cls):
@@ -366,22 +367,22 @@ def decode_group4(
     black_is_1: bool = False,
     limits: PdfLoadLimits | None = None,
 ) -> bytes:
-    """Decode CCITT Group‑4 (T.6) compressed image data.
+    """Decode CCITT Group-4 (T.6) compressed image data.
 
     This convenience wrapper constructs the parameter dictionary expected by
-    :pymeth:`Decoder.decode` and forces ``K`` to ``-1`` (Group‑4).  The optional
-    ``black_is_1`` flag mirrors the PDF ``BlackIs1`` entry – when ``False`` the
+    :pymeth:`Decoder.decode` and forces ``K`` to ``-1`` (Group-4).  The optional
+    ``black_is_1`` flag mirrors the PDF ``BlackIs1`` entry - when ``False`` the
     output follows the PDF convention where ``0`` is black and ``1`` is white.
 
     Args:
-        data:   The raw CCITT‑encoded byte stream.
+        data:   The raw CCITT-encoded byte stream.
         width:  Number of pixels per row.
         height: Number of rows.
         black_is_1: If ``True`` the output uses ``1`` for black pixels.
         limits: Optional resource limits for untrusted image data.
 
     Returns:
-        A ``bytes`` object containing the decoded 1‑bit bitmap.
+        A ``bytes`` object containing the decoded 1-bit bitmap.
     """
     params = {
         "Columns": width,

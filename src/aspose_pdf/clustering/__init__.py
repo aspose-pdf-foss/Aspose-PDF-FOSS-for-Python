@@ -2,7 +2,11 @@
 
 from .hierarchical_agglomerative_clustering import (
     Cluster as Cluster,
+)
+from .hierarchical_agglomerative_clustering import (
     ClusterCollection as ClusterCollection,
+)
+from .hierarchical_agglomerative_clustering import (
     DataPoint as DataPoint,
 )
 

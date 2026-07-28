@@ -18,13 +18,13 @@ __all__ = [
 ]
 
 
-class PDF3DRenderMode(str, Enum):
+class PDF3DRenderMode(str, Enum):  # noqa: UP042
     SOLID = "Solid"
     WIREFRAME = "Wireframe"
     TRANSPARENT = "Transparent"
 
 
-class PDF3DLightingScheme(str, Enum):
+class PDF3DLightingScheme(str, Enum):  # noqa: UP042
     HEADLAMP = "Headlamp"
     WHITE = "White"
     GRAY = "Gray"

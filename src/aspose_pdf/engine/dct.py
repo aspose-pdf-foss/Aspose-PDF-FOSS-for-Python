@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from aspose_pdf.exceptions import PdfResourceLimitException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits
 
-__all__ = ["decode", "DecodedJpeg"]
+__all__ = ["DecodedJpeg", "decode"]
 
 # Zig-zag order: coefficient k in the entropy stream maps to natural index
 # ``_ZIGZAG[k]`` of the 8x8 block.

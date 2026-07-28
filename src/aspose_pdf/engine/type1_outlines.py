@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import re
 import struct
-from typing import Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
 
 __all__ = ["Type1Outlines"]
 
-Point = Tuple[float, float]
-Contour = List[Point]
+Point = tuple[float, float]
+Contour = list[Point]
 
 _CURVE_STEPS = 8
 _MAX_SUBR_DEPTH = 30
@@ -64,17 +64,17 @@ class Type1Outlines:
     def __init__(
         self,
         font_bytes: bytes,
-        length1: Optional[int] = None,
-        length2: Optional[int] = None,
+        length1: int | None = None,
+        length2: int | None = None,
     ):
         self.units_per_em = 1000
         self.num_glyphs = 0
-        self.glyph_names: List[str] = []
-        self.name_to_gid: Dict[str, int] = {}
-        self.builtin_encoding: Dict[int, str] = {}
-        self._charstrings: List[bytes] = []
-        self._subrs: Dict[int, bytes] = {}
-        self._cache: Dict[int, List[Contour]] = {}
+        self.glyph_names: list[str] = []
+        self.name_to_gid: dict[str, int] = {}
+        self.builtin_encoding: dict[int, str] = {}
+        self._charstrings: list[bytes] = []
+        self._subrs: dict[int, bytes] = {}
+        self._cache: dict[int, list[Contour]] = {}
         self._ok = False
         try:
             self._parse(bytes(font_bytes), length1, length2)
@@ -89,7 +89,7 @@ class Type1Outlines:
     # -- parsing ----------------------------------------------------------
 
     def _parse(
-        self, data: bytes, length1: Optional[int], length2: Optional[int]
+        self, data: bytes, length1: int | None, length2: int | None
     ) -> None:
         clear, encrypted = self._split(data, length1, length2)
         if not encrypted:
@@ -119,8 +119,8 @@ class Type1Outlines:
         self._ok = True
 
     def _split(
-        self, data: bytes, length1: Optional[int], length2: Optional[int]
-    ) -> Tuple[bytes, bytes]:
+        self, data: bytes, length1: int | None, length2: int | None
+    ) -> tuple[bytes, bytes]:
         if length1 and length2 and length1 + length2 <= len(data):
             return data[:length1], data[length1 : length1 + length2]
         idx = data.find(b"eexec")
@@ -137,7 +137,7 @@ class Type1Outlines:
             try:
                 a = float(m.group(1))
                 if a:
-                    self.units_per_em = max(1, int(round(1.0 / a)))
+                    self.units_per_em = max(1, round(1.0 / a))
             except ValueError:
                 pass
 
@@ -147,13 +147,13 @@ class Type1Outlines:
         for m in re.finditer(rb"dup\s+(\d+)\s*/([^ \t\r\n/]+)\s+put", clear):
             self.builtin_encoding[int(m.group(1))] = m.group(2).decode("latin-1")
 
-    def _read_subrs(self, private: bytes, len_iv: int) -> Dict[int, bytes]:
+    def _read_subrs(self, private: bytes, len_iv: int) -> dict[int, bytes]:
         start = private.find(b"/Subrs")
         if start < 0:
             return {}
         stop = private.find(b"/CharStrings")
         end = stop if stop > start else len(private)
-        subrs: Dict[int, bytes] = {}
+        subrs: dict[int, bytes] = {}
         pattern = re.compile(rb"dup\s+(\d+)\s+(\d+)\s+(?:RD|-\|)[ ]")
         pos = start
         while True:
@@ -169,11 +169,11 @@ class Type1Outlines:
             pos = blob_start + length
         return subrs
 
-    def _read_charstrings(self, private: bytes, len_iv: int) -> Dict[str, bytes]:
+    def _read_charstrings(self, private: bytes, len_iv: int) -> dict[str, bytes]:
         start = private.find(b"/CharStrings")
         if start < 0:
             return {}
-        charstrings: Dict[str, bytes] = {}
+        charstrings: dict[str, bytes] = {}
         pattern = re.compile(rb"/([^ \t\r\n/{}\[\]()]+)\s+(\d+)\s+(?:RD|-\|)[ ]")
         pos = start
         # Skip the "/CharStrings N dict dup begin" header to the first glyph.
@@ -195,7 +195,7 @@ class Type1Outlines:
 
     # -- outline access ---------------------------------------------------
 
-    def outline(self, gid: int) -> List[Contour]:
+    def outline(self, gid: int) -> list[Contour]:
         """Return flattened, closed contours for *gid* in font units (y up)."""
         if not self._ok or gid < 0 or gid >= self.num_glyphs:
             return []
@@ -210,7 +210,7 @@ class Type1Outlines:
         self._cache[gid] = contours
         return contours
 
-    def _charstring_for_std_code(self, code: int) -> Optional[bytes]:
+    def _charstring_for_std_code(self, code: int) -> bytes | None:
         """Charstring for a StandardEncoding *code* (``seac`` component lookup)."""
         from .symbol_encodings import STANDARD_ENCODING_NAMES
 
@@ -222,12 +222,12 @@ class Type1Outlines:
             return None
         return self._charstrings[gid]
 
-    def advance_width(self, gid: int) -> Optional[int]:
+    def advance_width(self, gid: int) -> int | None:
         """Type 1 advance widths are not surfaced (PDF ``/Widths`` is used)."""
         return None
 
 
-def _read_operand(data: bytes, i: int, b0: int) -> Tuple[float, int]:
+def _read_operand(data: bytes, i: int, b0: int) -> tuple[float, int]:
     """Decode one Type 1 charstring numeric operand (255 is a 32-bit integer)."""
     if b0 < 247:  # 32..246
         return float(b0 - 139), i + 1
@@ -243,26 +243,26 @@ class _T1Glyph:
 
     def __init__(
         self,
-        subrs: Dict[int, bytes],
-        std_lookup: Optional[Callable[[int], Optional[bytes]]] = None,
+        subrs: dict[int, bytes],
+        std_lookup: Callable[[int], bytes | None] | None = None,
         seac_depth: int = 0,
     ):
         self._subrs = subrs
         self._std_lookup = std_lookup
         self._seac_depth = seac_depth
-        self.stack: List[float] = []
-        self.ps_stack: List[float] = []
+        self.stack: list[float] = []
+        self.ps_stack: list[float] = []
         self.x = 0.0
         self.y = 0.0
-        self.contours: List[Contour] = []
-        self._current: Optional[Contour] = None
+        self.contours: list[Contour] = []
+        self._current: Contour | None = None
         self._done = False
         self._flex = False
-        self._flex_pts: List[Point] = []
+        self._flex_pts: list[Point] = []
         self._flex_start: Point = (0.0, 0.0)
         self._sbx = 0.0  # left sidebearing from hsbw/sbw (seac accent origin)
 
-    def run(self, charstring: bytes) -> List[Contour]:
+    def run(self, charstring: bytes) -> list[Contour]:
         self._exec(charstring, 0)
         self._close()
         return self.contours

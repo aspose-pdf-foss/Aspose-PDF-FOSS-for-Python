@@ -24,45 +24,46 @@ same plugin works regardless of where the PDF data lives.
 
 from __future__ import annotations
 
-import io
 import inspect
+import io
+from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
-from typing import BinaryIO, Iterable
+from typing import BinaryIO
 
 from aspose_pdf.document import Document
 from aspose_pdf.exceptions import AsposePdfException
 from aspose_pdf.facades import PdfExtractor
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
-    _LoadBudget,
     _coerce_limits,
+    _LoadBudget,
     _read_limited,
 )
 from aspose_pdf.optimization import OptimizationOptions
 
 __all__ = [
-    "Plugin",
+    "ByteArrayDataSource",
     "DataSource",
     "FileDataSource",
-    "StreamDataSource",
-    "ByteArrayDataSource",
-    "OperationResult",
-    "ResultContainer",
-    "PluginOptions",
     "MergeOptions",
-    "OptimizeOptions",
-    "SplitOptions",
-    "TextExtractorOptions",
-    "PdfPlugin",
     "Merger",
+    "OperationResult",
+    "OptimizeOptions",
     "Optimizer",
+    "PdfPlugin",
+    "Plugin",
+    "PluginOptions",
+    "ResultContainer",
+    "SplitOptions",
     "Splitter",
+    "StreamDataSource",
     "TextExtractor",
+    "TextExtractorOptions",
 ]
 
 
-class Plugin(str, Enum):
+class Plugin(str, Enum):  # noqa: UP042
     """Identifiers for the available low-code plugins."""
 
     OPTIMIZER = "Optimizer"
@@ -257,20 +258,20 @@ class PluginOptions:
         self.inputs: list[DataSource] = []
         self.outputs: list[DataSource] = []
 
-    def add_input(self, source: DataSource) -> "PluginOptions":
+    def add_input(self, source: DataSource) -> PluginOptions:
         if not isinstance(source, DataSource):
             raise TypeError("input must be a DataSource")
         self.inputs.append(source)
         return self
 
-    def add_output(self, source: DataSource) -> "PluginOptions":
+    def add_output(self, source: DataSource) -> PluginOptions:
         if not isinstance(source, DataSource):
             raise TypeError("output must be a DataSource")
         self.outputs.append(source)
         return self
 
     # Aspose-style alias.
-    def add_data_source(self, source: DataSource) -> "PluginOptions":
+    def add_data_source(self, source: DataSource) -> PluginOptions:
         return self.add_input(source)
 
 

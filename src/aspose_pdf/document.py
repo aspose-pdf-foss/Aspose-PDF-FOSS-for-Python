@@ -5,24 +5,21 @@ This module provides the main Document class that wraps the native PDF engine.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator, Iterator, Sequence
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
     BinaryIO,
-    Callable,
-    Dict,
-    Generator,
-    Iterator,
-    List,
-    Optional,
-    Sequence,
-    Union,
 )
 
 from aspose_pdf._compat_surface import (
     describe as _describe_unsupported,
+)
+from aspose_pdf._compat_surface import (
     reject_load_options as _reject_load_options,
+)
+from aspose_pdf._compat_surface import (
     require_pdf_save_format as _require_pdf_save_format,
 )
 from aspose_pdf.attachments import FileSpecification
@@ -34,8 +31,8 @@ from aspose_pdf.engine.simple_pdf import (
 from aspose_pdf.exceptions import AsposePdfException
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
-    _LoadBudget,
     _coerce_limits,
+    _LoadBudget,
     _read_limited,
 )
 from aspose_pdf.outlines import OutlineCollection
@@ -53,7 +50,7 @@ if TYPE_CHECKING:
     from aspose_pdf.xmp import XmpPacket
 
 
-def _coerce_date(value: Any) -> "Optional[_datetime.datetime]":
+def _coerce_date(value: Any) -> _datetime.datetime | None:
     """Normalise an attachment date to a ``datetime`` (or ``None``).
 
     Read-back metadata is already parsed to :class:`datetime.datetime`; metadata
@@ -74,10 +71,10 @@ class Document:
 
     def __init__(
         self,
-        source: Union[str, Path, bytes, bytearray, BinaryIO, None] = None,
+        source: str | Path | bytes | bytearray | BinaryIO | None = None,
         options: Any = None,
         *,
-        password: Optional[str] = None,
+        password: str | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> None:
         """Create an empty document, or load *source* when one is supplied.
@@ -110,13 +107,13 @@ class Document:
         self._engine_pdf._load_limits = self._load_limits
         self._engine_pdf._load_budget = _LoadBudget(self._load_limits)
         self._disposed: bool = False
-        self._pages: Optional[Any] = None
-        self._form: Optional[Any] = None
-        self._outlines: Optional[OutlineCollection] = None
-        self._tagged_content: Optional[Any] = None
-        self._password: Optional[str] = None
+        self._pages: Any | None = None
+        self._form: Any | None = None
+        self._outlines: OutlineCollection | None = None
+        self._tagged_content: Any | None = None
+        self._password: str | None = None
         self._encrypted: bool = False
-        self.file_name: Optional[str] = None
+        self.file_name: str | None = None
 
         if options is not None:
             _reject_load_options(options)
@@ -139,7 +136,7 @@ class Document:
         if self._disposed:
             raise AsposePdfException("Document has been disposed")
 
-    def __enter__(self) -> "Document":
+    def __enter__(self) -> Document:
         """Support for context manager."""
         return self
 
@@ -168,7 +165,7 @@ class Document:
         return self._form
 
     @property
-    def tagged_content(self) -> "TaggedContent":
+    def tagged_content(self) -> TaggedContent:
         """Get an editable view of the document's tagged structure tree."""
         self._ensure_not_disposed()
         if self._tagged_content is None:
@@ -196,7 +193,7 @@ class Document:
         creation_date=None,
         mod_date=None,
         compress: bool = True,
-    ) -> "Document":
+    ) -> Document:
         """Embed *content* as a document-level file attachment named *name*.
 
         The attachment is written to the catalog ``/Names /EmbeddedFiles`` name
@@ -233,7 +230,7 @@ class Document:
         return self
 
     @property
-    def embedded_files(self) -> List[FileSpecification]:
+    def embedded_files(self) -> list[FileSpecification]:
         """The document's embedded files as typed :class:`FileSpecification`.
 
         Each entry carries the decoded ``contents`` plus any MIME type,
@@ -252,7 +249,7 @@ class Document:
             return []
         read_meta = getattr(eng, "attachment_read_meta", {}) or {}
         write_meta = getattr(eng, "attachment_meta", {}) or {}
-        specs: List[FileSpecification] = []
+        specs: list[FileSpecification] = []
         for name in sorted(eng.attachments):
             # In-memory metadata (add_attachment) wins over parsed read-back
             # metadata for the same name.
@@ -269,7 +266,7 @@ class Document:
             )
         return specs
 
-    def get_embedded_file(self, name: str) -> Optional[FileSpecification]:
+    def get_embedded_file(self, name: str) -> FileSpecification | None:
         """Return the embedded file named *name* as a :class:`FileSpecification`,
         or ``None`` when the document has no attachment with that name."""
         self._ensure_not_disposed()
@@ -287,7 +284,7 @@ class Document:
         return len(self._engine_pdf.pages)
 
     @property
-    def info(self) -> Dict[str, str]:
+    def info(self) -> dict[str, str]:
         """Get or set the document metadata (info dictionary)."""
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -295,13 +292,13 @@ class Document:
         return self._engine_pdf.metadata
 
     @info.setter
-    def info(self, value: Dict[str, str]):
+    def info(self, value: dict[str, str]):
         self._ensure_not_disposed()
         if self._engine_pdf is not None:
             self._engine_pdf.metadata = dict(value)
 
     @property
-    def xmp_metadata(self) -> "XmpPacket":
+    def xmp_metadata(self) -> XmpPacket:
         """Get or set the document's XMP metadata packet (catalog ``/Metadata``).
 
         The getter lazily parses the catalog ``/Metadata`` stream (an empty
@@ -321,12 +318,12 @@ class Document:
         return self._engine_pdf.xmp_packet
 
     @xmp_metadata.setter
-    def xmp_metadata(self, value: "XmpPacket") -> None:
+    def xmp_metadata(self, value: XmpPacket) -> None:
         self._ensure_not_disposed()
         if self._engine_pdf is not None:
             self._engine_pdf.xmp_packet = value
 
-    def sync_metadata(self, *, direction: str = "info_to_xmp") -> "Document":
+    def sync_metadata(self, *, direction: str = "info_to_xmp") -> Document:
         """Synchronise the ``/Info`` dictionary and the XMP metadata packet.
 
         The standard document properties are kept consistent between the
@@ -374,7 +371,7 @@ class Document:
         )
 
     @property
-    def id(self) -> Optional[List[bytes]]:
+    def id(self) -> list[bytes] | None:
         """Return the two-element file-identifier array from the PDF trailer.
 
         The value is ``None`` for freshly created (unsaved) documents; after
@@ -423,7 +420,7 @@ class Document:
 
         For unencrypted documents this returns ``-4`` (all permissions granted).
         The value is a signed 32-bit integer as defined in the PDF spec
-        (Table 22 – User access permissions).
+        (Table 22 - User access permissions).
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -433,11 +430,11 @@ class Document:
     @classmethod
     def open_streaming(
         cls,
-        path: Union[str, Path],
+        path: str | Path,
         *,
-        password: Optional[str] = None,
+        password: str | None = None,
         limits: PdfLoadLimits | None = None,
-    ) -> "Document":
+    ) -> Document:
         """Open a PDF in streaming/lazy mode for memory-efficient page processing.
 
         Unlike :meth:`load_from`, page content streams are **not** decoded
@@ -532,8 +529,8 @@ class Document:
         dpi: float = 72.0,
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
-        antialias: Union[bool, int] = True,
-    ) -> "RasterizedPage":
+        antialias: bool | int = True,
+    ) -> RasterizedPage:
         """Render a page to an RGB raster image.
 
         ``page_index`` is zero-based. The result can be encoded with
@@ -559,12 +556,12 @@ class Document:
     def save_page_as_image(
         self,
         page_index: int,
-        destination: Union[str, Path],
+        destination: str | Path,
         *,
         dpi: float = 72.0,
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
-        antialias: Union[bool, int] = True,
+        antialias: bool | int = True,
     ) -> Path:
         """Render a page and save it as ``.png`` or ``.tif/.tiff``."""
         return self.render_page(
@@ -580,7 +577,7 @@ class Document:
         search: str,
         replacement: str,
         *,
-        page_index: Optional[int] = None,
+        page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
     ) -> int:
@@ -606,7 +603,7 @@ class Document:
         self,
         search: str,
         *,
-        page_index: Optional[int] = None,
+        page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
         overlay: bool = False,
@@ -634,11 +631,11 @@ class Document:
 
     def load_from(
         self,
-        source: Union[str, bytes, bytearray, Path, BinaryIO],
+        source: str | bytes | bytearray | Path | BinaryIO,
         *,
-        password: Optional[str] = None,
+        password: str | None = None,
         limits: PdfLoadLimits | None = None,
-    ) -> "Document":
+    ) -> Document:
         """Load a PDF from a file path, raw bytes, or a binary stream.
 
         Parameters
@@ -722,10 +719,10 @@ class Document:
 
     def optimize(
         self,
-        options: "OptimizationOptions | None" = None,
+        options: OptimizationOptions | None = None,
         *,
         compress_streams: bool = True,
-    ) -> "Document":
+    ) -> Document:
         """Process the document and remove unused resources.
 
         This includes image/stream deduplication, garbage collection, and stream
@@ -752,12 +749,12 @@ class Document:
         return self
 
     def optimize_resources(
-        self, options: "OptimizationOptions | None" = None
-    ) -> "Document":
+        self, options: OptimizationOptions | None = None
+    ) -> Document:
         """Alias for :meth:`optimize`."""
         return self.optimize(options)
 
-    def compress_streams(self) -> "Document":
+    def compress_streams(self) -> Document:
         """Compress uncompressed document streams.
 
         Returns
@@ -853,8 +850,8 @@ class Document:
         self,
         level: str = "1b",
         *,
-        font_lookup_directory: Optional[Union[str, Path]] = None,
-    ) -> List[str]:
+        font_lookup_directory: str | Path | None = None,
+    ) -> list[str]:
         """Convert the document to PDF/A format in-place.
 
         Removes prohibited content, injects an OutputIntents array with an
@@ -895,9 +892,9 @@ class Document:
         self,
         *,
         language: str = "en",
-        title: Optional[str] = None,
+        title: str | None = None,
         auto_tag: bool = False,
-    ) -> List[str]:
+    ) -> list[str]:
         """Add the catalog-level PDF/UA prerequisites to the document in place.
 
         Creates the structural shell PDF/UA-1 requires at the catalog level — a
@@ -943,7 +940,7 @@ class Document:
 
     def auto_tag(
         self,
-        image_alt: Optional[Union[str, Callable[[str], str]]] = "Image",
+        image_alt: str | Callable[[str], str] | None = "Image",
     ) -> int:
         """Heuristically tag existing page content into the structure tree.
 
@@ -981,11 +978,11 @@ class Document:
 
     def save(
         self,
-        destination: Union[str, Path, BinaryIO],
+        destination: str | Path | BinaryIO,
         save_format: Any = None,
         *,
         overwrite: bool = False,
-    ) -> "Document":
+    ) -> Document:
         """Save the document to a file path or a binary stream.
 
         Parameters
@@ -1052,7 +1049,7 @@ class Document:
         """Alias of :meth:`dispose` (matches .NET ``Close``)."""
         self.dispose()
 
-    def merge(self, *documents: "Document") -> "Document":
+    def merge(self, *documents: Document) -> Document:
         """Merge the supplied documents into this one."""
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -1068,10 +1065,10 @@ class Document:
     def encrypt(
         self,
         user_password: str,
-        owner_password: Optional[str] = None,
+        owner_password: str | None = None,
         *,
         permissions: int = -4,
-    ) -> "Document":
+    ) -> Document:
         """Encrypt the PDF document.
 
         Parameters
@@ -1094,7 +1091,7 @@ class Document:
         self._encrypted = True
         return self
 
-    def decrypt(self, password: str) -> "Document":
+    def decrypt(self, password: str) -> Document:
         """Decrypt the PDF document."""
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -1107,8 +1104,8 @@ class Document:
         self,
         old_password: str,
         new_user_password: str,
-        new_owner_password: Optional[str] = None,
-    ) -> "Document":
+        new_owner_password: str | None = None,
+    ) -> Document:
         """Change document passwords."""
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -1129,7 +1126,7 @@ class Document:
         """Check PDF integrity."""
         return self.validate()
 
-    def repair(self) -> "Document":
+    def repair(self) -> Document:
         """Attempt to repair the PDF document."""
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -1137,7 +1134,7 @@ class Document:
         self._engine_pdf.repair()
         return self
 
-    def flatten(self) -> "Document":
+    def flatten(self) -> Document:
         """Flatten annotations and forms.
 
         Supported shape and text-markup annotations without an appearance stream
@@ -1182,7 +1179,7 @@ class Document:
             raise AsposePdfException("No document loaded")
         return self._engine_pdf.generate_field_appearances()
 
-    def free_memory(self) -> "Document":
+    def free_memory(self) -> Document:
         """Free memory by clearing caches."""
         self._ensure_not_disposed()
         if self._engine_pdf:

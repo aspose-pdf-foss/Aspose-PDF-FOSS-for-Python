@@ -15,8 +15,8 @@ network.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
@@ -96,7 +96,7 @@ def _verify_ocsp_signature(
 
 def check_ocsp_response(
     der: bytes, cert: x509.Certificate, issuer: x509.Certificate
-) -> Optional[RevocationResult]:
+) -> RevocationResult | None:
     """Evaluate a single DER OCSP response for *cert*; ``None`` if not applicable."""
     try:
         response = ocsp.load_der_ocsp_response(der)
@@ -123,7 +123,7 @@ def check_ocsp_response(
 # ---------------------------------------------------------------------------
 def check_crl(
     der: bytes, cert: x509.Certificate, issuer: x509.Certificate
-) -> Optional[RevocationResult]:
+) -> RevocationResult | None:
     """Evaluate a single DER CRL for *cert*; ``None`` if not applicable."""
     try:
         crl = x509.load_der_x509_crl(der)
@@ -144,8 +144,8 @@ def check_crl(
 # ---------------------------------------------------------------------------
 # URL extraction
 # ---------------------------------------------------------------------------
-def _ocsp_urls(cert: x509.Certificate) -> List[str]:
-    urls: List[str] = []
+def _ocsp_urls(cert: x509.Certificate) -> list[str]:
+    urls: list[str] = []
     try:
         aia = cert.extensions.get_extension_for_oid(
             ExtensionOID.AUTHORITY_INFORMATION_ACCESS
@@ -158,8 +158,8 @@ def _ocsp_urls(cert: x509.Certificate) -> List[str]:
     return urls
 
 
-def _crl_urls(cert: x509.Certificate) -> List[str]:
-    urls: List[str] = []
+def _crl_urls(cert: x509.Certificate) -> list[str]:
+    urls: list[str] = []
     try:
         cdp = cert.extensions.get_extension_for_oid(
             ExtensionOID.CRL_DISTRIBUTION_POINTS
@@ -196,7 +196,7 @@ def _http_get(url: str, timeout: float) -> bytes:
 
 def _fetch_ocsp(
     cert: x509.Certificate, issuer: x509.Certificate, timeout: float
-) -> Optional[RevocationResult]:
+) -> RevocationResult | None:
     urls = _ocsp_urls(cert)
     if not urls:
         return None
@@ -215,7 +215,7 @@ def _fetch_ocsp(
 
 def _fetch_crl(
     cert: x509.Certificate, issuer: x509.Certificate, timeout: float
-) -> Optional[RevocationResult]:
+) -> RevocationResult | None:
     for url in _crl_urls(cert):
         try:
             body = _http_get(url, timeout)

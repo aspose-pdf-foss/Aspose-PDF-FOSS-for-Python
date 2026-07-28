@@ -2,14 +2,14 @@
 
 This module provides:
 
-- :class:`ValidationMode` – controls *how* certificates are checked (offline
+- :class:`ValidationMode` - controls *how* certificates are checked (offline
   cryptographic verification vs. online OCSP/CRL lookup).
-- :class:`ValidationMethod` – selects the signature format to validate
+- :class:`ValidationMethod` - selects the signature format to validate
   (PKCS#7 or Long-Term Information Profile).
-- :class:`ValidationStatus` – the outcome of a validation run.
-- :class:`ValidationOptions` – bundles mode + method into a single config
+- :class:`ValidationStatus` - the outcome of a validation run.
+- :class:`ValidationOptions` - bundles mode + method into a single config
   object passed to :meth:`~aspose_pdf.signature.PdfSignature.validate`.
-- :class:`ValidationResult` – the structured result returned by
+- :class:`ValidationResult` - the structured result returned by
   :meth:`~aspose_pdf.signature.PdfSignature.validate`.
 """
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any
 
 
 class ValidationMode(Enum):
@@ -31,7 +31,7 @@ class ValidationMode(Enum):
     ONLINE = "online"
     """Attempt OCSP/CRL revocation check in addition to the cryptographic
     verification.  Falls back to offline result if the network is unavailable.
-    Not fully implemented – the class records the intent but the current
+    Not fully implemented - the class records the intent but the current
     engine only performs offline checks regardless.
     """
 
@@ -46,7 +46,7 @@ class ValidationMethod(Enum):
     """Validate a standard PKCS#7 / CMS detached or attached signature."""
 
     LTIP = "ltip"
-    """Long-Term Information Profile – validate embedded validation info (not
+    """Long-Term Information Profile - validate embedded validation info (not
     yet fully implemented; falls back to PKCS#7 validation).
     """
 
@@ -102,13 +102,13 @@ class PadesLevel(Enum):
     Mirrors the ETSI EN 319 142 baseline levels (named *B-B*, *B-T*, *B-LT*,
     *B-LTA* in the standard).  Each level builds on the previous one:
 
-    * :attr:`B`   – CAdES-BES baseline: the signed attributes carry an ESS
+    * :attr:`B`   - CAdES-BES baseline: the signed attributes carry an ESS
       ``signing-certificate-v2`` binding and the ``ETSI.CAdES.detached``
       ``/SubFilter``.
-    * :attr:`T`   – B plus a verified RFC 3161 signature timestamp.
-    * :attr:`LT`  – T plus long-term validation material (certificates, CRLs
+    * :attr:`T`   - B plus a verified RFC 3161 signature timestamp.
+    * :attr:`LT`  - T plus long-term validation material (certificates, CRLs
       and OCSP responses) available in the document security store (``/DSS``).
-    * :attr:`LTA` – LT plus a document timestamp (``ETSI.RFC3161``) that allows
+    * :attr:`LTA` - LT plus a document timestamp (``ETSI.RFC3161``) that allows
       the validation material to be renewed before the algorithms weaken.
     """
 
@@ -136,13 +136,13 @@ class CertificationLevel(Enum):
     """An ordinary approval signature (no ``/DocMDP``)."""
 
     NO_CHANGES = 1
-    """``P=1`` – no changes are permitted after signing."""
+    """``P=1`` - no changes are permitted after signing."""
 
     FORM_FILLING = 2
-    """``P=2`` – form filling and digital signatures are permitted."""
+    """``P=2`` - form filling and digital signatures are permitted."""
 
     FORM_FILLING_AND_ANNOTATIONS = 3
-    """``P=3`` – also permits annotation creation/editing."""
+    """``P=3`` - also permits annotation creation/editing."""
 
 
 @dataclass
@@ -184,7 +184,7 @@ class ValidationOptions:
 
     validation_mode: ValidationMode = ValidationMode.OFFLINE
     validation_method: ValidationMethod = ValidationMethod.PKCS7
-    trusted_certificates: List[Any] = field(default_factory=list)
+    trusted_certificates: list[Any] = field(default_factory=list)
     allow_self_signed: bool = True
     check_revocation: bool = False
     check_timestamp: bool = True
@@ -244,14 +244,14 @@ class ValidationResult:
 
     status: ValidationStatus
     message: str = ""
-    errors: List[str] = field(default_factory=list)
-    signer: Optional[str] = None
-    trust_status: Optional[TrustStatus] = None
-    revocation_status: Optional[RevocationStatus] = None
-    timestamp: Optional[Any] = None
-    certification_level: Optional[CertificationLevel] = None
-    signed_at: Optional[str] = None
-    pades_level: Optional["PadesLevel"] = None
+    errors: list[str] = field(default_factory=list)
+    signer: str | None = None
+    trust_status: TrustStatus | None = None
+    revocation_status: RevocationStatus | None = None
+    timestamp: Any | None = None
+    certification_level: CertificationLevel | None = None
+    signed_at: str | None = None
+    pades_level: PadesLevel | None = None
 
     @property
     def is_valid(self) -> bool:

@@ -12,8 +12,7 @@ not revoked **and** any DocMDP certification it carries has not been violated.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from cryptography import x509
 
@@ -31,7 +30,7 @@ from aspose_pdf.validation import (
 _CADES_SUBFILTERS = {"etsi.cades.detached", "etsi.cades"}
 
 
-def _to_cert(obj) -> Optional[x509.Certificate]:
+def _to_cert(obj) -> x509.Certificate | None:
     if isinstance(obj, x509.Certificate):
         return obj
     if isinstance(obj, (bytes, bytearray)):
@@ -44,8 +43,8 @@ def _to_cert(obj) -> Optional[x509.Certificate]:
     return None
 
 
-def _normalise_trust_roots(options: ValidationOptions) -> List[x509.Certificate]:
-    roots: List[x509.Certificate] = []
+def _normalise_trust_roots(options: ValidationOptions) -> list[x509.Certificate]:
+    roots: list[x509.Certificate] = []
     for item in options.trusted_certificates or []:
         cert = _to_cert(item)
         if cert is not None:
@@ -53,12 +52,12 @@ def _normalise_trust_roots(options: ValidationOptions) -> List[x509.Certificate]
     return roots
 
 
-def _iso(dt: Optional[datetime]) -> Optional[str]:
+def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if isinstance(dt, datetime) else None
 
 
-def _load_der_certs(ders) -> List[x509.Certificate]:
-    out: List[x509.Certificate] = []
+def _load_der_certs(ders) -> list[x509.Certificate]:
+    out: list[x509.Certificate] = []
     for der in ders or ():
         cert = _to_cert(der)
         if cert is not None:
@@ -96,10 +95,10 @@ def validate_cms(
     signed_bytes: bytes,
     options: ValidationOptions,
     *,
-    docmdp_level: Optional[int] = None,
-    reference_data: Optional[bytes] = None,
-    signed_end: Optional[int] = None,
-    sub_filter: Optional[str] = None,
+    docmdp_level: int | None = None,
+    reference_data: bytes | None = None,
+    signed_end: int | None = None,
+    sub_filter: str | None = None,
     dss_certs=(),
     dss_crls=(),
     dss_ocsps=(),
@@ -116,8 +115,8 @@ def validate_cms(
     """
     from aspose_pdf.engine import cert_chain, cms, revocation, timestamp
 
-    errors: List[str] = []
-    notes: List[str] = []
+    errors: list[str] = []
+    notes: list[str] = []
 
     # --- Parse + signer signature -----------------------------------------
     try:
@@ -162,7 +161,7 @@ def validate_cms(
         else:
             notes.append(f"timestamp not verified ({ts_info.reason})")
     if at_time is None:
-        at_time = datetime.now(timezone.utc)
+        at_time = datetime.now(UTC)
 
     # --- Certificate chain / trust ----------------------------------------
     # Intermediates may live in the CMS or only in the document security store;

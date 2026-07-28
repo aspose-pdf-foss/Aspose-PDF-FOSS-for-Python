@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterable, Optional, Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from aspose_pdf.document import Document
@@ -28,7 +29,7 @@ class TaggedContent:
 
     __slots__ = ("_document",)
 
-    def __init__(self, document: "Document") -> None:
+    def __init__(self, document: Document) -> None:
         self._document = document
 
     @property
@@ -39,11 +40,11 @@ class TaggedContent:
             raise RuntimeError("Document engine is unavailable")
         return engine
 
-    def _wrap(self, element: Any) -> "StructureElement":
+    def _wrap(self, element: Any) -> StructureElement:
         return StructureElement(self, element)
 
     def _unwrap(
-        self, element: Optional["StructureElement"], *, name: str
+        self, element: StructureElement | None, *, name: str
     ) -> Any | None:
         if element is None:
             return None
@@ -54,7 +55,7 @@ class TaggedContent:
         return element._element
 
     @property
-    def root_elements(self) -> list["StructureElement"]:
+    def root_elements(self) -> list[StructureElement]:
         """Return top-level elements in logical reading order."""
         return [self._wrap(element) for element in self._engine._tagged_root_elements()]
 
@@ -62,13 +63,13 @@ class TaggedContent:
         self,
         structure_type: str,
         *,
-        parent: Optional["StructureElement"] = None,
+        parent: StructureElement | None = None,
         index: int | None = None,
         page_number: int | None = None,
         mcids: Iterable[int] = (),
         alt_text: str | None = None,
         actual_text: str | None = None,
-    ) -> "StructureElement":
+    ) -> StructureElement:
         """Create and attach a structure element.
 
         Supplying ``mcids`` also creates the corresponding ``/ParentTree``
@@ -94,9 +95,9 @@ class TaggedContent:
 
     def move(
         self,
-        element: "StructureElement",
+        element: StructureElement,
         *,
-        parent: Optional["StructureElement"] = None,
+        parent: StructureElement | None = None,
         index: int | None = None,
     ) -> None:
         """Move an element to a parent and reading-order position."""
@@ -109,9 +110,9 @@ class TaggedContent:
 
     def set_reading_order(
         self,
-        elements: Sequence["StructureElement"],
+        elements: Sequence[StructureElement],
         *,
-        parent: Optional["StructureElement"] = None,
+        parent: StructureElement | None = None,
     ) -> None:
         """Set the complete order of a parent's direct structure children."""
         raw_elements = [
@@ -122,13 +123,13 @@ class TaggedContent:
             parent=self._unwrap(parent, name="parent"),
         )
 
-    def remove(self, element: "StructureElement") -> None:
+    def remove(self, element: StructureElement) -> None:
         """Remove an element, its descendants, and their ParentTree mappings."""
         self._engine._tagged_remove_element(self._unwrap(element, name="element"))
 
     def element_for_mcid(
         self, page_number: int, mcid: int
-    ) -> "StructureElement | None":
+    ) -> StructureElement | None:
         """Return the structure element mapped to a page MCID, if any."""
         element = self._engine._tagged_element_for_mcid(page_number, mcid)
         return self._wrap(element) if element is not None else None
@@ -185,13 +186,13 @@ class StructureElement:
         return self._content._engine._tagged_element_mcids(self._element)
 
     @property
-    def parent(self) -> "StructureElement | None":
+    def parent(self) -> StructureElement | None:
         """Return the parent element, or ``None`` for a top-level element."""
         parent = self._content._engine._tagged_parent(self._element)
         return self._content._wrap(parent) if parent is not None else None
 
     @property
-    def children(self) -> list["StructureElement"]:
+    def children(self) -> list[StructureElement]:
         """Return direct child elements in logical reading order."""
         return [
             self._content._wrap(child)
@@ -207,7 +208,7 @@ class StructureElement:
         mcids: Iterable[int] = (),
         alt_text: str | None = None,
         actual_text: str | None = None,
-    ) -> "StructureElement":
+    ) -> StructureElement:
         """Create a direct child element."""
         return self._content.add_element(
             structure_type,
@@ -221,14 +222,14 @@ class StructureElement:
 
     def move_to(
         self,
-        parent: Optional["StructureElement"] = None,
+        parent: StructureElement | None = None,
         *,
         index: int | None = None,
     ) -> None:
         """Move this element to a parent and reading-order position."""
         self._content.move(self, parent=parent, index=index)
 
-    def set_reading_order(self, elements: Sequence["StructureElement"]) -> None:
+    def set_reading_order(self, elements: Sequence[StructureElement]) -> None:
         """Set the complete order of this element's direct children."""
         self._content.set_reading_order(elements, parent=self)
 

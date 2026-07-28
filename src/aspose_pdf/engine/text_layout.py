@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Sequence
+from typing import Any
 
 from aspose_pdf.exceptions import FontEmbeddingException, PdfValidationException
 from aspose_pdf.text_layout import TextLayoutOptions

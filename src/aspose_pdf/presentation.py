@@ -1,7 +1,6 @@
 """Presentation primitives for Aspose.PDF Python SDK."""
 
 from __future__ import annotations
-from typing import Optional
 
 
 class FillMode:
@@ -59,7 +58,7 @@ class IPath:
         """Initialize a path."""
         self._current_x = 0.0
         self._current_y = 0.0
-        self._transform_matrix: Optional[IMatrix] = None
+        self._transform_matrix: IMatrix | None = None
         self._fill_mode = FillMode.ALTERNATE
     
     @property
@@ -73,12 +72,12 @@ class IPath:
         return self._current_y
     
     @property
-    def transform(self) -> Optional[IMatrix]:
+    def transform(self) -> IMatrix | None:
         """Get the transformation matrix."""
         return self._transform_matrix
     
     @transform.setter
-    def transform(self, matrix: Optional[IMatrix]) -> None:
+    def transform(self, matrix: IMatrix | None) -> None:
         """Set the transformation matrix."""
         self._transform_matrix = matrix
     

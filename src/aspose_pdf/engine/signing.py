@@ -1,7 +1,7 @@
 """Signing utilities for PDF handling.
 
 This module provides a small wrapper around the ``cryptography`` library to
-create a self‑signed X.509 certificate and to sign arbitrary binary data using
+create a self-signed X.509 certificate and to sign arbitrary binary data using
 PKCS#7 (CMS) detached signatures.
 
 Certificate and signature *creation* uses only the ``cryptography`` package.
@@ -12,15 +12,15 @@ Embedding an RFC 3161 timestamp additionally relies on
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Sequence
+import logging
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import pkcs7
 from cryptography.x509.oid import NameOID
-import logging
 
 logger = logging.getLogger("aspose_pdf.signing")
 
@@ -50,7 +50,7 @@ class SigningUtils:
 
     @staticmethod
     def create_self_signed_cert() -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
-        """Generate a self‑signed X.509 certificate and a matching RSA private key.
+        """Generate a self-signed X.509 certificate and a matching RSA private key.
 
         Returns
         -------
@@ -63,14 +63,14 @@ class SigningUtils:
         logger.info("Generating 2048-bit RSA private key for self-signed certificate")
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
-        # Subject and issuer are identical for a self‑signed certificate.
+        # Subject and issuer are identical for a self-signed certificate.
         subject = issuer = x509.Name(
             [
                 x509.NameAttribute(NameOID.COMMON_NAME, "SelfSignedCertificate"),
             ]
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cert_builder = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -94,7 +94,7 @@ class SigningUtils:
         """Generate a self-signed CA certificate and key (for building chains)."""
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ski = x509.SubjectKeyIdentifier.from_public_key(key.public_key())
         cert = (
             x509.CertificateBuilder()
@@ -119,9 +119,9 @@ class SigningUtils:
         *,
         ca: bool = False,
         days: int = 365,
-        not_before: Optional[datetime] = None,
-        not_after: Optional[datetime] = None,
-        eku: Optional[Sequence[x509.ObjectIdentifier]] = None,
+        not_before: datetime | None = None,
+        not_after: datetime | None = None,
+        eku: Sequence[x509.ObjectIdentifier] | None = None,
     ) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
         """Issue a certificate signed by *issuer_cert* / *issuer_key*.
 
@@ -130,7 +130,7 @@ class SigningUtils:
         certificates for negative tests.
         """
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not_before is None:
             not_before = now - timedelta(days=1)
         if not_after is None:
@@ -169,9 +169,9 @@ class SigningUtils:
         cert: x509.Certificate,
         key: rsa.RSAPrivateKey,
         *,
-        extra_certs: Optional[Sequence[x509.Certificate]] = None,
-        tsa: Optional[tuple] = None,
-        timestamp_url: Optional[str] = None,
+        extra_certs: Sequence[x509.Certificate] | None = None,
+        tsa: tuple | None = None,
+        timestamp_url: str | None = None,
         timestamp_timeout: float = 10.0,
     ) -> bytes:
         """Create a detached PKCS#7 signature for *data*.
@@ -196,7 +196,7 @@ class SigningUtils:
         Returns
         -------
         bytes
-            DER‑encoded PKCS#7 signature (detached).
+            DER-encoded PKCS#7 signature (detached).
         """
         builder = (
             pkcs7.PKCS7SignatureBuilder()
@@ -225,10 +225,10 @@ class SigningUtils:
         cert: x509.Certificate,
         key: rsa.RSAPrivateKey,
         *,
-        extra_certs: Optional[Sequence[x509.Certificate]] = None,
+        extra_certs: Sequence[x509.Certificate] | None = None,
         hash_algo: str = "sha256",
-        tsa: Optional[tuple] = None,
-        timestamp_url: Optional[str] = None,
+        tsa: tuple | None = None,
+        timestamp_url: str | None = None,
         timestamp_timeout: float = 10.0,
     ) -> bytes:
         """Create a detached **CAdES-BES** signature for *data* (PAdES baseline).
@@ -260,8 +260,8 @@ class SigningUtils:
     @staticmethod
     def _embed_timestamp(
         signature_der: bytes,
-        tsa: Optional[tuple],
-        timestamp_url: Optional[str],
+        tsa: tuple | None,
+        timestamp_url: str | None,
         timeout: float,
     ) -> bytes:
         """Add an RFC 3161 timestamp over the signer's signature value."""

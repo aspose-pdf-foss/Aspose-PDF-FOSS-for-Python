@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterator, List
+from collections.abc import Iterator
 
 
 class OutlineItem:
@@ -34,9 +34,9 @@ class OutlineItem:
         self.page_index: int = page_index
         self.is_bold: bool = is_bold
         self.is_italic: bool = is_italic
-        self.children: List[OutlineItem] = []
+        self.children: list[OutlineItem] = []
 
-    def add(self, item: "OutlineItem") -> "OutlineItem":
+    def add(self, item: OutlineItem) -> OutlineItem:
         """Append *item* as a child of this outline entry and return it."""
         if not isinstance(item, OutlineItem):
             raise TypeError("item must be an OutlineItem")
@@ -59,7 +59,7 @@ class OutlineItem:
         }
 
     @classmethod
-    def _from_dict(cls, d: dict) -> "OutlineItem":
+    def _from_dict(cls, d: dict) -> OutlineItem:
         item = cls(
             title=d.get("title", ""),
             page_index=d.get("page_index", 0),
@@ -79,7 +79,7 @@ class OutlineCollection:
     """
 
     def __init__(self) -> None:
-        self._items: List[OutlineItem] = []
+        self._items: list[OutlineItem] = []
 
     # ------------------------------------------------------------------
     # Mutation
@@ -126,11 +126,11 @@ class OutlineCollection:
     # Serialisation helpers (used by SimplePdf / PdfWriterV0)
     # ------------------------------------------------------------------
 
-    def _to_list(self) -> List[dict]:
+    def _to_list(self) -> list[dict]:
         return [item._to_dict() for item in self._items]
 
     @classmethod
-    def _from_list(cls, data: List[dict]) -> "OutlineCollection":
+    def _from_list(cls, data: list[dict]) -> OutlineCollection:
         col = cls()
         for d in data:
             col._items.append(OutlineItem._from_dict(d))

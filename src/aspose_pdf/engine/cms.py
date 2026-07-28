@@ -13,9 +13,9 @@ lives in :mod:`aspose_pdf.engine.signature_validator`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import List, Optional, Sequence, Tuple
+from datetime import UTC, datetime
 
 from asn1crypto import cms, core, tsp
 from asn1crypto import crl as asn1_crl
@@ -48,7 +48,7 @@ _HASH_BY_NAME = {
 }
 
 
-def hash_from_name(name: Optional[str]):
+def hash_from_name(name: str | None):
     """Return a ``cryptography`` hash instance for an asn1crypto algo name."""
     cls = _HASH_BY_NAME.get((name or "").lower())
     if cls is None:
@@ -60,24 +60,24 @@ def hash_from_name(name: Optional[str]):
 class SignedDataInfo:
     """Everything we need from a parsed CMS ``SignedData``."""
 
-    signer_cert: Optional[x509.Certificate]
-    certificates: List[x509.Certificate] = field(default_factory=list)
+    signer_cert: x509.Certificate | None
+    certificates: list[x509.Certificate] = field(default_factory=list)
     digest_algo: str = "sha256"
     signature_algo: str = "rsassa_pkcs1v15"
     signature: bytes = b""
-    signed_attrs_der: Optional[bytes] = None
-    message_digest: Optional[bytes] = None
-    signing_time: Optional[datetime] = None
-    pss_params: Optional[object] = None
-    econtent: Optional[bytes] = None
-    timestamp_token_der: Optional[bytes] = None
-    crls_der: List[bytes] = field(default_factory=list)
-    ocsps_der: List[bytes] = field(default_factory=list)
+    signed_attrs_der: bytes | None = None
+    message_digest: bytes | None = None
+    signing_time: datetime | None = None
+    pss_params: object | None = None
+    econtent: bytes | None = None
+    timestamp_token_der: bytes | None = None
+    crls_der: list[bytes] = field(default_factory=list)
+    ocsps_der: list[bytes] = field(default_factory=list)
     # ESS signing-certificate cert IDs as ``(hash_algo, cert_hash)`` pairs.  The
     # first entry (per RFC 5035) identifies the signer's own certificate.  Empty
     # when the signature carries no signing-certificate attribute (i.e. it is a
     # bare PKCS#7 rather than CAdES/PAdES).
-    ess_cert_ids: List[Tuple[str, bytes]] = field(default_factory=list)
+    ess_cert_ids: list[tuple[str, bytes]] = field(default_factory=list)
 
 
 @dataclass
@@ -111,8 +111,8 @@ def _match_signer_cert(signer_info, asn1_certs, crypto_certs):
 
 def _collect_revocation(signed_data):
     """Return (crls_der, ocsps_der) embedded in a SignedData ``crls`` field."""
-    crls_der: List[bytes] = []
-    ocsps_der: List[bytes] = []
+    crls_der: list[bytes] = []
+    ocsps_der: list[bytes] = []
     revocation = signed_data["crls"]
     if isinstance(revocation, core.Void):
         return crls_der, ocsps_der
@@ -128,7 +128,7 @@ def _collect_revocation(signed_data):
     return crls_der, ocsps_der
 
 
-def _signed_attrs_der(signer_info) -> Optional[bytes]:
+def _signed_attrs_der(signer_info) -> bytes | None:
     """Return the DER of the signed attributes as an explicit ``SET OF``.
 
     RFC 5652 §5.4: the value signed is the DER of ``SignedAttributes`` encoded
@@ -155,13 +155,13 @@ def _signed_attr_values(signer_info):
             continue
 
 
-def _parse_ess_cert_ids(value, is_v2: bool) -> List[Tuple[str, bytes]]:
+def _parse_ess_cert_ids(value, is_v2: bool) -> list[tuple[str, bytes]]:
     """Extract ``(hash_algo, cert_hash)`` pairs from an ESS signing-cert attr.
 
     ``value`` is the parsed ``SigningCertificateV2`` (``is_v2``) or
     ``SigningCertificate`` (SHA-1, fixed) structure.
     """
-    out: List[Tuple[str, bytes]] = []
+    out: list[tuple[str, bytes]] = []
     try:
         for cert_id in value["certs"]:
             if is_v2:
@@ -174,7 +174,7 @@ def _parse_ess_cert_ids(value, is_v2: bool) -> List[Tuple[str, bytes]]:
     return out
 
 
-def _find_timestamp_token(signer_info) -> Optional[bytes]:
+def _find_timestamp_token(signer_info) -> bytes | None:
     """Return the DER of the RFC 3161 timestamp token in unsigned attrs, if any."""
     ua = signer_info["unsigned_attrs"]
     if isinstance(ua, core.Void) or ua.native is None:
@@ -199,7 +199,7 @@ def parse_signed_data(der: bytes) -> SignedDataInfo:
     signed_data = content_info["content"]
 
     asn1_certs = []
-    crypto_certs: List[x509.Certificate] = []
+    crypto_certs: list[x509.Certificate] = []
     certs = signed_data["certificates"]
     if not isinstance(certs, core.Void):
         for choice in certs:
@@ -219,9 +219,9 @@ def parse_signed_data(der: bytes) -> SignedDataInfo:
     if sig_alg.signature_algo == "rsassa_pss":
         pss_params = sig_alg["parameters"]
 
-    message_digest: Optional[bytes] = None
-    signing_time: Optional[datetime] = None
-    ess_cert_ids: List[Tuple[str, bytes]] = []
+    message_digest: bytes | None = None
+    signing_time: datetime | None = None
+    ess_cert_ids: list[tuple[str, bytes]] = []
     for type_name, _dotted, value in _signed_attr_values(signer_info):
         if type_name == "message_digest":
             message_digest = value.native
@@ -258,7 +258,7 @@ def parse_signed_data(der: bytes) -> SignedDataInfo:
     )
 
 
-def verify_signing_certificate(info: SignedDataInfo) -> Optional[bool]:
+def verify_signing_certificate(info: SignedDataInfo) -> bool | None:
     """Verify the ESS signing-certificate attribute binds the signer cert.
 
     Returns ``True``/``False`` when a signing-certificate(-v2) attribute is
@@ -437,7 +437,7 @@ def build_cades_signed_data(
     *,
     hash_algo: str = "sha256",
     extra_certs: Sequence[x509.Certificate] = (),
-    signing_time: Optional[datetime] = None,
+    signing_time: datetime | None = None,
 ) -> bytes:
     """Build a detached **CAdES-BES** ``SignedData`` over *data* (PAdES-B core).
 
@@ -447,7 +447,7 @@ def build_cades_signed_data(
     verified by :func:`verify_signer`.
     """
     if signing_time is None:
-        signing_time = datetime.now(timezone.utc)
+        signing_time = datetime.now(UTC)
 
     digest = hashes.Hash(hash_from_name(hash_algo))
     digest.update(data)

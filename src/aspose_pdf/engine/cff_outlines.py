@@ -20,7 +20,6 @@ outline (or an inert source) rather than raising.
 from __future__ import annotations
 
 import struct
-from typing import Dict, List, Optional, Tuple
 
 from .font_subset_cff import (
     _OP_CHARSTRINGS,
@@ -39,8 +38,8 @@ from .font_subset_cff import (
 
 __all__ = ["CffOutlines"]
 
-Point = Tuple[float, float]
-Contour = List[Point]
+Point = tuple[float, float]
+Contour = list[Point]
 
 _OP_CHARSET = 15
 _OP_FONTMATRIX = (12, 7)
@@ -59,7 +58,7 @@ def _subr_bias(count: int) -> int:
     return 32768
 
 
-def _read_operand(data: bytes, i: int, b0: int) -> Tuple[float, int]:
+def _read_operand(data: bytes, i: int, b0: int) -> tuple[float, int]:
     """Decode one charstring numeric operand starting at *i* (``b0 == data[i]``)."""
     if b0 == 28:
         return float(struct.unpack_from(">h", data, i + 1)[0]), i + 3
@@ -73,9 +72,9 @@ def _read_operand(data: bytes, i: int, b0: int) -> Tuple[float, int]:
     return struct.unpack_from(">i", data, i + 1)[0] / 65536.0, i + 5
 
 
-def _decode_reals(operand_bytes: bytes) -> List[float]:
+def _decode_reals(operand_bytes: bytes) -> list[float]:
     """Decode DICT operands as floats, including CFF real (operator 30) numbers."""
-    vals: List[float] = []
+    vals: list[float] = []
     i = 0
     n = len(operand_bytes)
     while i < n:
@@ -149,14 +148,14 @@ class CffOutlines:
     def __init__(self, font_bytes: bytes):
         self.units_per_em = 1000
         self.num_glyphs = 0
-        self._charstrings: List[bytes] = []
-        self._gsubrs: List[bytes] = []
-        self._fd_lsubrs: List[List[bytes]] = []
-        self._fdselect: Optional[List[int]] = None
+        self._charstrings: list[bytes] = []
+        self._gsubrs: list[bytes] = []
+        self._fd_lsubrs: list[list[bytes]] = []
+        self._fdselect: list[int] | None = None
         self._is_cid = False
-        self._encoding_off: Optional[int] = None
+        self._encoding_off: int | None = None
         self._data = b""
-        self._cache: Dict[int, List[Contour]] = {}
+        self._cache: dict[int, list[Contour]] = {}
         self._ok = False
         try:
             self._parse(_maybe_extract_cff(bytes(font_bytes)))
@@ -209,10 +208,10 @@ class CffOutlines:
         if raw is not None:
             vals = _decode_reals(raw)
             if vals and vals[0]:
-                return max(1, int(round(1.0 / vals[0])))
+                return max(1, round(1.0 / vals[0]))
         return 1000
 
-    def _read_local_subrs(self, data: bytes, entries) -> List[bytes]:
+    def _read_local_subrs(self, data: bytes, entries) -> list[bytes]:
         priv = _dict_ints(entries, _OP_PRIVATE)
         if not priv or len(priv) != 2:
             return []
@@ -238,7 +237,7 @@ class CffOutlines:
         ] or [[]]
         self._fdselect = self._read_fdselect(data, fdselect_off)
 
-    def _read_fdselect(self, data: bytes, off: int) -> Optional[List[int]]:
+    def _read_fdselect(self, data: bytes, off: int) -> list[int] | None:
         fmt = data[off]
         result = [0] * self.num_glyphs
         if fmt == 0:
@@ -265,7 +264,7 @@ class CffOutlines:
 
     # -- public outline access --------------------------------------------
 
-    def outline(self, gid: int) -> List[Contour]:
+    def outline(self, gid: int) -> list[Contour]:
         """Return flattened, closed contours for *gid* in font units (y up)."""
         if not self._ok or gid < 0 or gid >= self.num_glyphs:
             return []
@@ -280,11 +279,11 @@ class CffOutlines:
         self._cache[gid] = contours
         return contours
 
-    def advance_width(self, gid: int) -> Optional[int]:
+    def advance_width(self, gid: int) -> int | None:
         """CFF advance widths are not surfaced (PDF ``/Widths`` is authoritative)."""
         return None
 
-    def _local_subrs(self, gid: int) -> List[bytes]:
+    def _local_subrs(self, gid: int) -> list[bytes]:
         if self._is_cid and self._fdselect is not None and gid < len(self._fdselect):
             fd = self._fdselect[gid]
             if 0 <= fd < len(self._fd_lsubrs):
@@ -292,7 +291,7 @@ class CffOutlines:
             return []
         return self._fd_lsubrs[0] if self._fd_lsubrs else []
 
-    def encoding_code_to_gid(self) -> Dict[int, int]:
+    def encoding_code_to_gid(self) -> dict[int, int]:
         """Return the CFF's built-in custom Encoding as ``code -> gid``, or ``{}``.
 
         Predefined Standard/Expert encodings (offset 0/1, or absent) return
@@ -305,7 +304,7 @@ class CffOutlines:
         data = self._data
         fmt = data[off]
         base = fmt & 0x7F
-        mapping: Dict[int, int] = {}
+        mapping: dict[int, int] = {}
         try:
             if base == 0:
                 n = data[off + 1]
@@ -329,21 +328,21 @@ class CffOutlines:
 class _T2Glyph:
     """Type 2 charstring interpreter producing flattened, filled contours."""
 
-    def __init__(self, gsubrs: List[bytes], lsubrs: List[bytes]):
+    def __init__(self, gsubrs: list[bytes], lsubrs: list[bytes]):
         self._gsubrs = gsubrs
         self._lsubrs = lsubrs
         self._gbias = _subr_bias(len(gsubrs))
         self._lbias = _subr_bias(len(lsubrs))
-        self.stack: List[float] = []
+        self.stack: list[float] = []
         self.x = 0.0
         self.y = 0.0
-        self.contours: List[Contour] = []
-        self._current: Optional[Contour] = None
+        self.contours: list[Contour] = []
+        self._current: Contour | None = None
         self._nstems = 0
         self._have_width = False
         self._done = False
 
-    def run(self, charstring: bytes) -> List[Contour]:
+    def run(self, charstring: bytes) -> list[Contour]:
         self._exec(charstring, 0)
         self._close()
         return self.contours

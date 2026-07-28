@@ -1,7 +1,9 @@
 """Graphics element absorption and manipulation functionality."""
 
 from __future__ import annotations
-from typing import List, Optional, Iterator, Any
+
+from collections.abc import Iterator
+from typing import Any
 
 
 class InvalidOperationException(RuntimeError):
@@ -13,7 +15,7 @@ class GraphicElementCollection:
     
     def __init__(self):
         """Initialize a new instance of GraphicElementCollection."""
-        self._elements: List[Any] = []
+        self._elements: list[Any] = []
         self._parent: Any = None
     
     def add(self, element: Any) -> None:
@@ -58,7 +60,7 @@ class GraphicElementCollection:
                 element._collection = None
     
     @property
-    def elements(self) -> List[Any]:
+    def elements(self) -> list[Any]:
         """Get the collection of graphic elements."""
         return self._elements
     
@@ -77,7 +79,7 @@ class GraphicsAbsorber:
     
     def __init__(self):
         """Initialize a new instance of GraphicsAbsorber."""
-        self._elements: Optional[GraphicElementCollection] = None
+        self._elements: GraphicElementCollection | None = None
         self._suppressed = False
     
     @property

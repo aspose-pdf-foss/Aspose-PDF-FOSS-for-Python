@@ -46,7 +46,7 @@ class PdfLoadLimits:
                 raise ValueError(f"{item.name} must be a positive integer or None")
 
     @classmethod
-    def unlimited(cls) -> "PdfLoadLimits":
+    def unlimited(cls) -> PdfLoadLimits:
         """Return a configuration with every limit disabled."""
         return cls(**{item.name: None for item in fields(cls)})
 
@@ -59,7 +59,7 @@ def _coerce_limits(limits: PdfLoadLimits | None) -> PdfLoadLimits:
     return limits
 
 
-def _read_limited(stream, budget: "_LoadBudget") -> bytes:
+def _read_limited(stream, budget: _LoadBudget) -> bytes:
     """Read a binary stream without crossing the configured input limit."""
     limit = budget.limits.max_input_bytes
     if limit is None:

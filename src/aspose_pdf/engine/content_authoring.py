@@ -6,14 +6,13 @@ import math
 import re
 import struct
 import zlib
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
 
 from aspose_pdf.exceptions import PdfValidationException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 from .filters import StreamDecoder
-
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8"
@@ -31,7 +30,7 @@ class AuthoredImage:
     bits_per_component: int
     color_space: str
     components: int
-    filter_name: Optional[str] = None
+    filter_name: str | None = None
 
     @property
     def meta(self) -> dict:
@@ -70,7 +69,7 @@ def format_number(value: float) -> str:
     return f"{number:.6f}".rstrip("0").rstrip(".")
 
 
-def safe_resource_name(name: Optional[str], prefix: str) -> Optional[str]:
+def safe_resource_name(name: str | None, prefix: str) -> str | None:
     """Return *name* when it is safe for content streams, otherwise ``None``."""
 
     if not name:
@@ -108,7 +107,7 @@ def pdf_literal(text: str) -> str:
     return "(" + out.decode("latin-1") + ")"
 
 
-def normalize_rgb(color: Sequence[float]) -> Tuple[float, float, float]:
+def normalize_rgb(color: Sequence[float]) -> tuple[float, float, float]:
     """Normalize an RGB color from 0..1 or 0..255 channels to PDF 0..1 values."""
 
     if len(color) != 3:
@@ -249,8 +248,8 @@ def build_rectangle_stream(
     width: float,
     height: float,
     *,
-    stroke_color: Optional[Sequence[float]],
-    fill_color: Optional[Sequence[float]],
+    stroke_color: Sequence[float] | None,
+    fill_color: Sequence[float] | None,
     line_width: float,
 ) -> bytes:
     if stroke_color is None and fill_color is None:
@@ -265,10 +264,8 @@ def build_rectangle_stream(
     if fill_color is not None:
         parts.append(color_operator(fill_color, stroking=False))
     parts.append(
-        (
-            f"{format_number(x)} {format_number(y)} "
-            f"{format_number(width)} {format_number(height)} re {op}"
-        )
+        f"{format_number(x)} {format_number(y)} "
+        f"{format_number(width)} {format_number(height)} re {op}"
     )
     parts.append("Q")
     return (" ".join(parts) + "\n").encode("ascii")
@@ -310,8 +307,8 @@ def wrap_marked_content(content: bytes, tag: str, mcid: int) -> bytes:
 def prepare_image(
     data: bytes,
     *,
-    pixel_width: Optional[int] = None,
-    pixel_height: Optional[int] = None,
+    pixel_width: int | None = None,
+    pixel_height: int | None = None,
     color_space: str = "DeviceRGB",
     bits_per_component: int = 8,
     limits: PdfLoadLimits | None = None,
@@ -351,8 +348,8 @@ def prepare_image(
 def _prepare_raw(
     data: bytes,
     *,
-    pixel_width: Optional[int],
-    pixel_height: Optional[int],
+    pixel_width: int | None,
+    pixel_height: int | None,
     color_space: str,
     bits_per_component: int,
     budget: _LoadBudget,
@@ -471,7 +468,7 @@ def _normalize_color_space(value: str) -> str:
     return aliases[name]
 
 
-def _jpeg_geometry(data: bytes) -> Tuple[int, int, int, int]:
+def _jpeg_geometry(data: bytes) -> tuple[int, int, int, int]:
     pos = 2
     sof_markers = {
         0xC0,

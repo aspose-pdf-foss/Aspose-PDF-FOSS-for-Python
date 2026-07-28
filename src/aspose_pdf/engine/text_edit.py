@@ -8,12 +8,13 @@ guessing at layout, shaping, or font-specific CMap rewrites.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Callable, Iterable, Mapping, Optional
+from typing import Any
 
 from aspose_pdf.exceptions import PdfValidationException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 _WHITESPACE = b" \t\n\r\x0c"
 _DELIMITERS = b"()<>[]{}/%"
@@ -290,7 +291,7 @@ class CidTextCodec:
                 i += take
         return units
 
-    def encode(self, text: str) -> Optional[bytes]:
+    def encode(self, text: str) -> bytes | None:
         """Encode *text* as code bytes, or None if any part is unmappable.
 
         Greedy longest-match against the reverse ToUnicode map, so multi-char
@@ -384,7 +385,7 @@ def _linear_close(m: tuple, n: tuple) -> bool:
     return all(abs(m[i] - n[i]) <= 1e-6 * max(1.0, abs(m[i])) for i in range(4))
 
 
-def _text_delta(origin: tuple, m: tuple) -> Optional[tuple[float, float]]:
+def _text_delta(origin: tuple, m: tuple) -> tuple[float, float] | None:
     """Translation of *m* relative to *origin*, in origin's text space."""
     if not _linear_close(origin, m):
         return None
@@ -401,15 +402,15 @@ def _text_delta(origin: tuple, m: tuple) -> Optional[tuple[float, float]]:
 class _RunSegment:
     """One string operand (or a synthesized inter-operator gap) of a run."""
 
-    token: Optional[_Token]  # None for a synthesized gap
-    codec: Optional[CidTextCodec]
+    token: _Token | None  # None for a synthesized gap
+    codec: CidTextCodec | None
     metric: Any  # duck-typed: width_of / ascent / descent / code_to_text
     size: float
     char_spacing: float
     word_spacing: float
     h_scale: float
     rise: float
-    pen: Optional[tuple[float, float]]  # text-space offset from the run origin
+    pen: tuple[float, float] | None  # text-space offset from the run origin
     gap_text: str = ""  # synthesized logical text ("" or " ")
     gap_width: float = 0.0  # text-space width of the synthesized gap
 
@@ -419,11 +420,11 @@ class _Run:
     """A logical text run: show operands joined into one matchable string."""
 
     segments: list[_RunSegment]
-    origin_trm: Optional[tuple]  # tm x ctm at the run start, if trackable
+    origin_trm: tuple | None  # tm x ctm at the run start, if trackable
     geometry_ok: bool  # per-segment pens and advances are trustworthy
 
 
-def _code_to_cid(metric: Any, code: bytes) -> Optional[int]:
+def _code_to_cid(metric: Any, code: bytes) -> int | None:
     """Resolve a composite show-string code to its CID (duck-typed metric)."""
     fn = getattr(metric, "code_to_cid", None)
     if fn is not None:
@@ -435,7 +436,7 @@ def _code_to_cid(metric: Any, code: bytes) -> Optional[int]:
 
 def _string_advance(
     raw: bytes,
-    codec: Optional[CidTextCodec],
+    codec: CidTextCodec | None,
     metric: Any,
     size: float,
     char_spacing: float,
@@ -443,7 +444,7 @@ def _string_advance(
     h_scale: float,
     *,
     budget: _LoadBudget | None = None,
-) -> Optional[float]:
+) -> float | None:
     """Advance of a show string along the font's writing axis, or None.
 
     For composite fonts the string is tokenized through *codec* (codes may be
@@ -490,8 +491,8 @@ def _string_advance(
 def _walk_show_runs(
     tokens: list[_Token],
     *,
-    codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
-    metric_for_name: Optional[Callable[[str], Any]] = None,
+    codec_for_name: Callable[[str | None], CidTextCodec | None] | None = None,
+    metric_for_name: Callable[[str], Any] | None = None,
     base_ctm: tuple = _ID_MATRIX,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
@@ -525,7 +526,7 @@ def _walk_show_runs(
     tm = tlm = _ID_MATRIX
     tm_valid = True
     metric: Any = None
-    codec: Optional[CidTextCodec] = None
+    codec: CidTextCodec | None = None
     size = 0.0
     char_spacing = 0.0
     word_spacing = 0.0
@@ -534,8 +535,8 @@ def _walk_show_runs(
     rise = 0.0
 
     cur: list[_RunSegment] = []
-    origin_tm: Optional[tuple] = None
-    origin_trm: Optional[tuple] = None
+    origin_tm: tuple | None = None
+    origin_trm: tuple | None = None
     geom_ok = False
     broke = True
 
@@ -641,7 +642,7 @@ def _walk_show_runs(
         if not joined:
             broke = True
 
-    def resolve_font(name: Optional[str]) -> None:
+    def resolve_font(name: str | None) -> None:
         nonlocal metric, codec
         metric = metric_for_name(name) if metric_for_name and name else None
         codec = codec_for_name(name) if codec_for_name else None
@@ -856,8 +857,8 @@ def replace_text_in_content(
     *,
     case_sensitive: bool = True,
     max_count: int = 0,
-    codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
-    metric_for_name: Optional[Callable[[str], Any]] = None,
+    codec_for_name: Callable[[str | None], CidTextCodec | None] | None = None,
+    metric_for_name: Callable[[str], Any] | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
 ) -> tuple[bytes, int]:
@@ -970,8 +971,8 @@ def redact_text_in_content(
     *,
     case_sensitive: bool = True,
     max_count: int = 0,
-    codec_for_name: Optional[Callable[[Optional[str]], Optional[CidTextCodec]]] = None,
-    metric_for_name: Optional[Callable[[str], Any]] = None,
+    codec_for_name: Callable[[str | None], CidTextCodec | None] | None = None,
+    metric_for_name: Callable[[str], Any] | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
 ) -> tuple[bytes, int]:
@@ -1063,7 +1064,7 @@ def _run_char_data(
     match. ``seg_starts[i]`` is the global index of segment *i*'s first char.
     """
     active_budget = _resolve_load_budget(limits, budget)
-    infos: list[tuple[str, str, Optional[list]]] = []
+    infos: list[tuple[str, str, list | None]] = []
     for seg in run.segments:
         if seg.token is None:
             info = ("virtual", seg.gap_text, None)

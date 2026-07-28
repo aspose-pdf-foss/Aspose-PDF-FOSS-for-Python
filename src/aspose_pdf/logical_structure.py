@@ -8,7 +8,7 @@ from typing import Any
 __all__ = ["StructureTypeStandard", "WarichuWPElement"]
 
 
-class StructureTypeStandard(str, Enum):
+class StructureTypeStandard(str, Enum):  # noqa: UP042
     DOCUMENT = "Document"
     PART = "Part"
     SECT = "Sect"

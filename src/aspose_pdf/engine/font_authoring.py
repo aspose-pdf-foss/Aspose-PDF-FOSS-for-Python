@@ -22,14 +22,15 @@ from typing import Any
 
 from aspose_pdf.exceptions import FontEmbeddingException
 from aspose_pdf.font_registry import FontDescriptor
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 from .cff_outlines import CffOutlines
 from .font_subset import read_unicode_cmap, subset_truetype
 from .font_subset_cff import cff_charset_cid_to_gid, subset_cff
 from .glyph_outlines import TrueTypeOutlines
 from .sfnt import parse_faces
-from .woff import build_sfnt, decode as decode_woff, is_woff, is_woff2
+from .woff import build_sfnt, is_woff, is_woff2
+from .woff import decode as decode_woff
 
 __all__ = ["AuthoredFont", "prepare_authored_font"]
 

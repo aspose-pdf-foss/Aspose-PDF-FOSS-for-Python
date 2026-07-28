@@ -26,30 +26,31 @@ preserved exactly.
 
 from __future__ import annotations
 
+import itertools
 import re
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Iterator, List, Mapping, Optional, Set, Tuple
 
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 __all__ = [
-    "TextObject",
     "LayoutElement",
+    "TextObject",
+    "assign_reading_order",
+    "build_tagged_content",
+    "choose_tags",
+    "detect_columns",
+    "detect_tables",
+    "find_image_placements",
+    "find_layout_elements",
+    "find_mcids",
     "find_text_objects",
     "find_xobject_invocations",
-    "find_layout_elements",
-    "find_image_placements",
-    "find_mcids",
-    "detect_columns",
-    "assign_reading_order",
-    "group_rows",
-    "detect_tables",
     "group_into_paragraphs",
-    "list_marker",
-    "is_list_item",
+    "group_rows",
     "has_marked_content",
-    "choose_tags",
-    "build_tagged_content",
+    "is_list_item",
+    "list_marker",
 ]
 
 # Whitespace and delimiter bytes that end a regular token (PDF 32000-1 §7.2).
@@ -84,12 +85,12 @@ _TABLE_COL_TOL_MIN = 4.0  # ... with this floor in user units
 # List-detection heuristics (see :func:`list_marker`).
 _HEAD_CAP = 32            # bytes of leading shown text kept for marker sniffing
 # Common bullet glyphs, including the WinAnsi bullet (byte 0x95) and dashes.
-_BULLET_CHARS = set("•·◦‣▪●■⁃-–—*\x95")
+_BULLET_CHARS = set("•·◦‣▪●■\u2043-\u2013—*\x95")
 # An ordered marker: an optional "(", then digits / a letter / a small roman
 # numeral, then "." or ")" -- e.g. "1.", "(a)", "iv)".
 _ORDERED_RE = re.compile(r"^\(?(?:[0-9]{1,3}|[ivxlcdmIVXLCDM]{1,5}|[A-Za-z])[.)]$")
 
-Matrix = Tuple[float, float, float, float, float, float]
+Matrix = tuple[float, float, float, float, float, float]
 _IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 
@@ -119,9 +120,9 @@ class LayoutElement:
     y: float = 0.0
     font_size: float = 0.0
     text_length: int = 0
-    name: Optional[str] = None  # xobject resource name, with leading slash
-    tag: Optional[str] = None
-    alt: Optional[str] = None
+    name: str | None = None  # xobject resource name, with leading slash
+    tag: str | None = None
+    alt: str | None = None
     text_head: str = ""  # leading shown text of the object, for list sniffing
 
 
@@ -139,7 +140,7 @@ def _mul(m: Matrix, n: Matrix) -> Matrix:
     )
 
 
-def _apply(m: Matrix, x: float, y: float) -> Tuple[float, float]:
+def _apply(m: Matrix, x: float, y: float) -> tuple[float, float]:
     a, b, c, d, e, f = m
     return (a * x + c * y + e, b * x + d * y + f)
 
@@ -163,7 +164,7 @@ def _tokens(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> Iterator[Tuple[Optional[str], int, int]]:
+) -> Iterator[tuple[str | None, int, int]]:
     """Yield ``(token, start, end)`` for a content stream.
 
     ``token`` is the operator/operand/name text, or ``None`` for a literal or
@@ -179,7 +180,7 @@ def _tokens(
     )
 
     token_count = 0
-    container_stack: List[str] = []
+    container_stack: list[str] = []
 
     def count_token() -> None:
         nonlocal token_count
@@ -330,7 +331,7 @@ def _is_number(token: str) -> bool:
         return False
 
 
-def _to_float(token: str) -> Optional[float]:
+def _to_float(token: str) -> float | None:
     try:
         return float(token)
     except ValueError:
@@ -387,7 +388,7 @@ def _decode_string_span(content: bytes, start: int, end: int) -> str:
     return ""
 
 
-def list_marker(head: str) -> Optional[str]:
+def list_marker(head: str) -> str | None:
     """Classify a line's leading text as a list marker: ``"ul"``, ``"ol"`` or None.
 
     Unordered when it starts with a bullet/dash glyph standing alone or followed
@@ -407,7 +408,7 @@ def list_marker(head: str) -> Optional[str]:
     return None
 
 
-def is_list_item(group: List["LayoutElement"]) -> bool:
+def is_list_item(group: list[LayoutElement]) -> bool:
     """Whether a paragraph *group* is a list item (a ``/P`` line with a marker)."""
     if not group:
         return False
@@ -434,7 +435,7 @@ def find_layout_elements(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> List[LayoutElement]:
+) -> list[LayoutElement]:
     """Locate positioned text objects and image paints in *content*, in stream order.
 
     Tracks the CTM (``q``/``Q``/``cm``) and text matrix (``Tm``/``Td``/``TD``/
@@ -443,9 +444,9 @@ def find_layout_elements(
     length; image paints carry the invoked resource name.
     """
     active_budget = _resolve_scan_budget(limits, budget)
-    elements: List[LayoutElement] = []
+    elements: list[LayoutElement] = []
     ctm: Matrix = _IDENTITY
-    ctm_stack: List[Matrix] = []
+    ctm_stack: list[Matrix] = []
     tm: Matrix = _IDENTITY
     tlm: Matrix = _IDENTITY
     leading = 0.0
@@ -455,10 +456,10 @@ def find_layout_elements(
     max_size = 0.0
     text_length = 0
     text_head = ""
-    anchor: Optional[Tuple[float, float]] = None
+    anchor: tuple[float, float] | None = None
 
-    nums: List[float] = []
-    last_name: Optional[Tuple[str, int]] = None
+    nums: list[float] = []
+    last_name: tuple[str, int] | None = None
 
     def record_show() -> None:
         nonlocal anchor
@@ -587,7 +588,7 @@ def find_image_placements(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> List[Tuple[str, float, float]]:
+) -> list[tuple[str, float, float]]:
     """Return ``(xobject_name, displayed_width, displayed_height)`` per ``Do``.
 
     The name keeps its leading slash. Sizes are in default user-space units
@@ -596,11 +597,11 @@ def find_image_placements(
     Form and image XObjects share ``Do``; the caller keeps only the image names.
     """
     active_budget = _resolve_scan_budget(limits, budget)
-    placements: List[Tuple[str, float, float]] = []
+    placements: list[tuple[str, float, float]] = []
     ctm: Matrix = _IDENTITY
-    ctm_stack: List[Matrix] = []
-    nums: List[float] = []
-    last_name: Optional[str] = None
+    ctm_stack: list[Matrix] = []
+    nums: list[float] = []
+    last_name: str | None = None
 
     for token, _tok_start, _tok_end in _tokens(content, budget=active_budget):
         if token is None or token in ("[", "]", "{", "}", "<<", ">>"):
@@ -658,7 +659,7 @@ def find_mcids(
     named_properties: Mapping[str, int] | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> Set[int]:
+) -> set[int]:
     """Return the set of marked-content ``/MCID`` integers declared in *content*.
 
     Scans the inline property dictionary of each ``BDC``/``DP`` operator for an
@@ -669,12 +670,12 @@ def find_mcids(
     ``/Tag /P1 BDC`` to be included as well.
     """
     active_budget = _resolve_scan_budget(limits, budget)
-    mcids: Set[int] = set()
+    mcids: set[int] = set()
     depth = 0
-    current: Optional[int] = None
+    current: int | None = None
     expect_value = False
-    previous_name: Optional[str] = None
-    last_name: Optional[str] = None
+    previous_name: str | None = None
+    last_name: str | None = None
     inline_properties = False
     for token, _tok_start, _tok_end in _tokens(content, budget=active_budget):
         if token is None:
@@ -743,7 +744,7 @@ def find_text_objects(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> List[TextObject]:
+) -> list[TextObject]:
     """Return the ``BT`` ... ``ET`` text objects in *content*, in stream order."""
     return [
         TextObject(e.start, e.end, e.font_size, e.text_length)
@@ -757,7 +758,7 @@ def find_xobject_invocations(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> List[Tuple[str, int, int]]:
+) -> list[tuple[str, int, int]]:
     """Return ``(name, start, end)`` for each ``/Name Do`` in stream order.
 
     *name* keeps its leading slash; the span ``[start, end)`` covers the name
@@ -772,7 +773,7 @@ def find_xobject_invocations(
     ]
 
 
-def _median(values: List[float]) -> float:
+def _median(values: list[float]) -> float:
     ordered = sorted(values)
     n = len(ordered)
     if n == 0:
@@ -782,7 +783,7 @@ def _median(values: List[float]) -> float:
 
 
 def _side_by_side(
-    left: List[LayoutElement], right: List[LayoutElement], med_fs: float
+    left: list[LayoutElement], right: list[LayoutElement], med_fs: float
 ) -> bool:
     """Whether two x-separated bands truly sit side by side (vertical overlap)."""
     ly0, ly1 = min(e.y for e in left), max(e.y for e in left)
@@ -797,14 +798,14 @@ def _side_by_side(
 
 
 def _split_columns(
-    elements: List[LayoutElement], med_fs: float, depth: int
-) -> List[List[LayoutElement]]:
+    elements: list[LayoutElement], med_fs: float, depth: int
+) -> list[list[LayoutElement]]:
     """Recursively cut *elements* at whitespace gutters into column bands."""
     if depth >= _MAX_COL_DEPTH or len(elements) < _COL_MIN_ELEMENTS:
         return [elements]
     xs = sorted(e.x for e in elements)
     best_gap, best_at = 0.0, None
-    for lo, hi in zip(xs, xs[1:]):
+    for lo, hi in itertools.pairwise(xs):
         if hi - lo > best_gap:
             best_gap, best_at = hi - lo, (lo + hi) / 2.0
     if best_at is None or best_gap < max(_COL_GUTTER_MIN, _COL_GUTTER_EM * med_fs):
@@ -819,7 +820,7 @@ def _split_columns(
     )
 
 
-def detect_columns(elements: List[LayoutElement]) -> List[List[LayoutElement]]:
+def detect_columns(elements: list[LayoutElement]) -> list[list[LayoutElement]]:
     """Partition *elements* into left-to-right column bands (one or more).
 
     A band boundary is a vertical whitespace gutter -- a horizontal gap between
@@ -837,7 +838,7 @@ def detect_columns(elements: List[LayoutElement]) -> List[List[LayoutElement]]:
     return _split_columns(list(elements), med_fs, 0)
 
 
-def group_rows(elements: List[LayoutElement]) -> List[List[LayoutElement]]:
+def group_rows(elements: list[LayoutElement]) -> list[list[LayoutElement]]:
     """Group *elements* into rows of one visual line each, in reading order.
 
     Elements whose baselines are within a small tolerance form one row, ordered
@@ -847,8 +848,8 @@ def group_rows(elements: List[LayoutElement]) -> List[List[LayoutElement]]:
     if not elements:
         return []
     ordered = sorted(elements, key=lambda e: (-e.y, e.x))
-    rows: List[List[LayoutElement]] = []
-    line: List[LayoutElement] = [ordered[0]]
+    rows: list[list[LayoutElement]] = []
+    line: list[LayoutElement] = [ordered[0]]
     for e in ordered[1:]:
         ref = line[0]
         tol = max(1.0, _LINE_TOL_RATIO * (ref.font_size or e.font_size or 10.0))
@@ -861,33 +862,33 @@ def group_rows(elements: List[LayoutElement]) -> List[List[LayoutElement]]:
     return rows
 
 
-def assign_reading_order(elements: List[LayoutElement]) -> List[LayoutElement]:
+def assign_reading_order(elements: list[LayoutElement]) -> list[LayoutElement]:
     """Sort *elements* into reading order: top-to-bottom, then left-to-right.
 
     Elements whose baselines are within a small tolerance are treated as one
     line and ordered left-to-right; lines are stacked from the top of the page
     down.  This recovers the intended order even when the stream order differs.
     """
-    result: List[LayoutElement] = []
+    result: list[LayoutElement] = []
     for row in group_rows(elements):
         result.extend(row)
     return result
 
 
-def _row_tol(row: List[LayoutElement]) -> float:
+def _row_tol(row: list[LayoutElement]) -> float:
     """Column x-alignment tolerance for a table *row*, scaled by its font size."""
     fs = _median([e.font_size for e in row if e.font_size > 0]) or 10.0
     return max(_TABLE_COL_TOL_MIN, _TABLE_COL_TOL_EM * fs)
 
 
-def _xs_aligned(xs: List[float], anchors: List[float], tol: float) -> bool:
+def _xs_aligned(xs: list[float], anchors: list[float], tol: float) -> bool:
     """Whether cell x-positions *xs* line up with column *anchors* within *tol*."""
     if len(xs) != len(anchors):
         return False
     return all(abs(x - a) <= tol for x, a in zip(xs, anchors))
 
 
-def _table_run(rows: List[List[LayoutElement]], start: int) -> Optional[List[List[LayoutElement]]]:
+def _table_run(rows: list[list[LayoutElement]], start: int) -> list[list[LayoutElement]] | None:
     """Maximal grid of aligned rows starting at *start*, or ``None``.
 
     A grid is two or more consecutive rows that each hold the same number of
@@ -914,16 +915,16 @@ def _table_run(rows: List[List[LayoutElement]], start: int) -> Optional[List[Lis
 
 
 def detect_tables(
-    rows: List[List[LayoutElement]],
-) -> List[Tuple[str, List[List[LayoutElement]]]]:
+    rows: list[list[LayoutElement]],
+) -> list[tuple[str, list[list[LayoutElement]]]]:
     """Segment *rows* into ``("table", grid_rows)`` and ``("flow", rows)`` runs.
 
     Consecutive rows forming a regular aligned grid (see :func:`_table_run`)
     become a table segment; everything else is coalesced into flow segments for
     ordinary paragraph/list handling.
     """
-    segments: List[Tuple[str, List[List[LayoutElement]]]] = []
-    flow: List[List[LayoutElement]] = []
+    segments: list[tuple[str, list[list[LayoutElement]]]] = []
+    flow: list[list[LayoutElement]] = []
 
     def flush_flow() -> None:
         if flow:
@@ -965,7 +966,7 @@ def _same_paragraph(prev: LayoutElement, cur: LayoutElement) -> bool:
     return line_tol < dy <= _PARA_GAP_RATIO * fs
 
 
-def group_into_paragraphs(ordered: List[LayoutElement]) -> List[List[LayoutElement]]:
+def group_into_paragraphs(ordered: list[LayoutElement]) -> list[list[LayoutElement]]:
     """Group reading-ordered *ordered* elements into structure groups.
 
     Consecutive body-text (``/P``) elements that are close in size and vertical
@@ -973,8 +974,8 @@ def group_into_paragraphs(ordered: List[LayoutElement]) -> List[List[LayoutEleme
     own single-element group.  Each returned group becomes one structure element
     (a paragraph spans several marked-content sequences, one per line).
     """
-    groups: List[List[LayoutElement]] = []
-    current: List[LayoutElement] = []
+    groups: list[list[LayoutElement]] = []
+    current: list[LayoutElement] = []
     for e in ordered:
         if current and _same_paragraph(current[-1], e):
             current.append(e)
@@ -987,7 +988,7 @@ def group_into_paragraphs(ordered: List[LayoutElement]) -> List[List[LayoutEleme
     return groups
 
 
-def _heading_levels(sizes_desc: List[float]) -> dict[float, str]:
+def _heading_levels(sizes_desc: list[float]) -> dict[float, str]:
     """Map heading font sizes (largest first) to ``H1``/``H2``/``H3`` tiers.
 
     Sizes within :data:`_HEADING_LEVEL_RATIO` of each other share a tier; the
@@ -996,7 +997,7 @@ def _heading_levels(sizes_desc: List[float]) -> dict[float, str]:
     """
     levels: dict[float, str] = {}
     level = 0
-    prev: Optional[float] = None
+    prev: float | None = None
     for size in sizes_desc:
         if prev is None or prev / size > _HEADING_LEVEL_RATIO:
             level += 1
@@ -1005,7 +1006,7 @@ def _heading_levels(sizes_desc: List[float]) -> dict[float, str]:
     return levels
 
 
-def choose_tags(objects: List[TextObject]) -> List[str]:
+def choose_tags(objects: list[TextObject]) -> list[str]:
     """Pick a structure tag (``H1``/``H2``/``H3`` or ``P``) per text object.
 
     The body size is the font size carrying the most shown text; objects whose
@@ -1032,7 +1033,7 @@ def choose_tags(objects: List[TextObject]) -> List[str]:
 
 
 def build_tagged_content(
-    content: bytes, marks: List[Tuple[int, int, str, int]]
+    content: bytes, marks: list[tuple[int, int, str, int]]
 ) -> bytes:
     """Splice ``BDC``/``EMC`` around *marks* ``(start, end, tag, mcid)``.
 

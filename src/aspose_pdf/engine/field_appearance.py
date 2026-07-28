@@ -18,7 +18,7 @@ estimate is used.
 
 from __future__ import annotations
 
-from typing import Callable, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 # code (single-byte, cp1252 domain) -> advance width in 1000-unit glyph space.
 WidthFn = Callable[[int], float]
@@ -42,20 +42,20 @@ def _is_number(token: str) -> bool:
         return False
 
 
-def parse_default_appearance(da: Optional[str]) -> Tuple[Optional[str], float, str]:
+def parse_default_appearance(da: str | None) -> tuple[str | None, float, str]:
     """Parse a ``/DA`` string into ``(font_name, font_size, fill_colour_op)``.
 
     ``font_name`` is the resource name without the leading slash (or ``None`` when
     the string has no ``Tf``); ``font_size`` is ``0.0`` for auto-size; the colour
     operator defaults to ``"0 g"`` (black) when ``/DA`` sets none.
     """
-    font_name: Optional[str] = None
+    font_name: str | None = None
     font_size = 0.0
     color = "0 g"
     if not da:
         return font_name, font_size, color
 
-    operands: List[str] = []
+    operands: list[str] = []
     for token in str(da).replace("\n", " ").replace("\r", " ").split():
         if token == "Tf":
             if len(operands) >= 2:
@@ -84,7 +84,7 @@ def auto_font_size(height: float, *, multiline: bool, padding: float = 2.0) -> f
     return max(4.0, min(12.0, height - 2.0 * padding))
 
 
-def _split_lines(text: str) -> List[str]:
+def _split_lines(text: str) -> list[str]:
     return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
@@ -95,7 +95,7 @@ def _char_code(ch: str) -> int:
 
 
 def _text_width(
-    text: str, font_size: float, width_fn: Optional[WidthFn] = None
+    text: str, font_size: float, width_fn: WidthFn | None = None
 ) -> float:
     """Measure *text* with *width_fn* glyph metrics (flat estimate without)."""
     if width_fn is None:
@@ -107,8 +107,8 @@ def _wrap_text(
     text: str,
     max_width: float,
     font_size: float,
-    width_fn: Optional[WidthFn] = None,
-) -> List[str]:
+    width_fn: WidthFn | None = None,
+) -> list[str]:
     """Greedily wrap *text* into lines no wider than *max_width*.
 
     Explicit newlines are honoured as hard paragraph breaks; within a paragraph,
@@ -124,7 +124,7 @@ def _wrap_text(
     def measure(s: str) -> float:
         return _text_width(s, font_size, width_fn)
 
-    lines: List[str] = []
+    lines: list[str] = []
     for paragraph in _split_lines(text):
         current = ""
         for word in paragraph.split():
@@ -174,7 +174,7 @@ def _quad_x(
     font_size: float,
     quadding: int,
     padding: float,
-    width_fn: Optional[WidthFn] = None,
+    width_fn: WidthFn | None = None,
 ) -> float:
     """Left-edge x for *line* honouring the quadding (0 left, 1 centre, 2 right)."""
     if quadding not in (1, 2):
@@ -196,7 +196,7 @@ def build_text_appearance(
     quadding: int = 0,
     multiline: bool = False,
     padding: float = 2.0,
-    width_fn: Optional[WidthFn] = None,
+    width_fn: WidthFn | None = None,
 ) -> bytes:
     """Build a ``/Tx``-marked variable-text appearance content stream.
 
@@ -231,7 +231,7 @@ def build_text_appearance(
 
 
 def build_list_box_appearance(
-    options: Sequence[Tuple[str, str]],
+    options: Sequence[tuple[str, str]],
     selected_values: Sequence[str],
     width: float,
     height: float,
@@ -242,7 +242,7 @@ def build_list_box_appearance(
     quadding: int = 0,
     top_index: int = 0,
     padding: float = 2.0,
-    width_fn: Optional[WidthFn] = None,
+    width_fn: WidthFn | None = None,
 ) -> bytes:
     """Build a scrollable list-box appearance with selected-row highlighting."""
     fs = font_size if font_size > 0 else 10.0

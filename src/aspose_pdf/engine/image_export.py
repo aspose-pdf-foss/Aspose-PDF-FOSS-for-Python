@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import struct
 import zlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from aspose_pdf.exceptions import PdfResourceLimitException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget, _coerce_limits
+from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 try:  # optional, mirrors engine/jpx.py
     import io as _io
@@ -50,7 +50,7 @@ _PNG_CHANNELS = {"L": 1, "RGB": 3, "P": 1, "RGBA": 4}
 # ---------------------------------------------------------------------------
 # Encoded-image sniffing
 # ---------------------------------------------------------------------------
-def ext_from_magic(data: bytes) -> Optional[str]:
+def ext_from_magic(data: bytes) -> str | None:
     """Return a file extension if *data* already is an encoded image, else None."""
     if not data:
         return None
@@ -115,7 +115,7 @@ def write_png(
     data: bytes,
     *,
     bit_depth: int = 8,
-    palette: Optional[bytes] = None,
+    palette: bytes | None = None,
 ) -> bytes:
     """Encode raw, row-major samples as a PNG file.
 
@@ -169,7 +169,7 @@ def write_png(
 # ---------------------------------------------------------------------------
 def unpack_samples(
     data: bytes, bpc: int, width: int, height: int, comps: int
-) -> List[int]:
+) -> list[int]:
     """Return ``width*height*comps`` integer samples, removing per-row padding.
 
     Handles sub-byte bit depths (1/2/4), 8-bit (fast path), and 16-bit (keeps the
@@ -177,7 +177,7 @@ def unpack_samples(
     """
     samples_per_row = width * comps
     if bpc == 8:
-        out: List[int] = []
+        out: list[int] = []
         for y in range(height):
             row = data[y * samples_per_row : (y + 1) * samples_per_row]
             out.extend(row)
@@ -216,7 +216,7 @@ def unpack_samples(
     return out
 
 
-def _scale_to_byte(values: List[int], bpc: int) -> bytes:
+def _scale_to_byte(values: list[int], bpc: int) -> bytes:
     if bpc == 8:
         return bytes(v & 0xFF for v in values)
     maxv = (1 << bpc) - 1
@@ -382,8 +382,8 @@ def _decode_is_inverted(decode: Any, comps: int) -> bool:
 
 
 def _build_raster(
-    meta: Dict[str, Any], decoded: bytes
-) -> Tuple[str, bytes, int, Optional[bytes]]:
+    meta: dict[str, Any], decoded: bytes
+) -> tuple[str, bytes, int, bytes | None]:
     """Return ``(mode, data, bit_depth, palette)`` for a raster image."""
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
@@ -422,7 +422,7 @@ def _build_raster(
     return ("L", samples, 8, None)
 
 
-def _normalize_cs(force_cs: Optional[str]) -> Optional[str]:
+def _normalize_cs(force_cs: str | None) -> str | None:
     if not force_cs:
         return None
     fc = str(force_cs).strip().upper()
@@ -437,10 +437,10 @@ def _apply_force_cs(
     mode: str,
     data: bytes,
     bit_depth: int,
-    force_cs: Optional[str],
+    force_cs: str | None,
     width: int,
     height: int,
-) -> Tuple[str, bytes, int]:
+) -> tuple[str, bytes, int]:
     target = _normalize_cs(force_cs)
     if target is None or target == mode:
         return mode, data, bit_depth
@@ -455,9 +455,9 @@ def _apply_force_cs(
 
 
 def _samples_to_png(
-    meta: Dict[str, Any],
+    meta: dict[str, Any],
     decoded: bytes,
-    force_cs: Optional[str] = None,
+    force_cs: str | None = None,
     limits: PdfLoadLimits | None = None,
 ) -> bytes:
     resolved_limits = _coerce_limits(limits)
@@ -485,9 +485,9 @@ def _samples_to_png(
 def _dct_to_raster(
     jpeg: bytes,
     want: str,
-    force_cs: Optional[str],
+    force_cs: str | None,
     limits: PdfLoadLimits | None = None,
-) -> Optional[Tuple[bytes, str]]:
+) -> tuple[bytes, str] | None:
     """Decode a JPEG to a raster file without Pillow.
 
     Handles baseline and progressive Huffman JPEG (grayscale, RGB/YCbCr and
@@ -513,13 +513,13 @@ def _dct_to_raster(
 
 
 def reconstruct_image_file(
-    meta: Optional[Dict[str, Any]],
+    meta: dict[str, Any] | None,
     decoded: bytes,
-    target_ext: Optional[str] = None,
-    force_cs: Optional[str] = None,
+    target_ext: str | None = None,
+    force_cs: str | None = None,
     *,
     limits: PdfLoadLimits | None = None,
-) -> Tuple[bytes, str]:
+) -> tuple[bytes, str]:
     """Turn decoded image bytes + metadata into a real image file.
 
     Returns ``(file_bytes, ext)`` where *ext* is the actual format produced (no

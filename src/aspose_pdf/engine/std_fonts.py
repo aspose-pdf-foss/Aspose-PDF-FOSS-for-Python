@@ -18,7 +18,7 @@ _STANDARD_FONTS = [
     "ZapfDingbats",
 ]
 
-# Very simple glyph width table: width for ASCII 32‑126 set to 600 units.
+# Very simple glyph width table: width for ASCII 32-126 set to 600 units.
 _DEFAULT_WIDTH = 600
 _ASCII_RANGE = range(32, 127)
 
@@ -33,7 +33,7 @@ class StandardFonts:
 
     This class provides:
     * A list of the Standard 14 font names.
-    * A simple glyph‑width lookup (all ASCII characters default to 600 units).
+    * A simple glyph-width lookup (all ASCII characters default to 600 units).
     * Helpers to check if a font name is standard and to retrieve default
       encodings.
     """
@@ -47,7 +47,7 @@ class StandardFonts:
     def is_standard_font(cls, font_name):
         """Return ``True`` if *font_name* is one of the PDF Standard 14 fonts.
 
-        The check is case‑sensitive to match the exact names used in PDFs.
+        The check is case-sensitive to match the exact names used in PDFs.
         """
         return font_name in _STANDARD_FONTS
 

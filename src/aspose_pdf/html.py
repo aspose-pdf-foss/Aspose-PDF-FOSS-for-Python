@@ -1,8 +1,8 @@
 """HTML conversion support for Aspose.PDF Python SDK."""
 
 from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional, Union
 
 
 class HtmlSaveOptions:
@@ -15,9 +15,9 @@ class HtmlSaveOptions:
     def __init__(self) -> None:
         """Initialize HTML save options with default values."""
         self._split_into_pages: bool = False
-        self._resources_directory: Optional[str] = None
-        self._xps_intermediate_file: Optional[Union[str, Path]] = None
-        self._aps_intermediate_file: Optional[Union[str, Path]] = None
+        self._resources_directory: str | None = None
+        self._xps_intermediate_file: str | Path | None = None
+        self._aps_intermediate_file: str | Path | None = None
         self._use_area_clipping: bool = True
         self._max_distance_between_text_lines: float = 2.0
 
@@ -31,30 +31,30 @@ class HtmlSaveOptions:
         self._split_into_pages = bool(value)
 
     @property
-    def resources_directory(self) -> Optional[str]:
+    def resources_directory(self) -> str | None:
         """Get or set the directory where resources (images, CSS, etc.) will be saved."""
         return self._resources_directory
 
     @resources_directory.setter
-    def resources_directory(self, value: Optional[str]) -> None:
+    def resources_directory(self, value: str | None) -> None:
         self._resources_directory = value
 
     @property
-    def xps_intermediate_file(self) -> Optional[str]:
+    def xps_intermediate_file(self) -> str | None:
         """Get or set the path for the intermediate XPS file."""
         return self._xps_intermediate_file
 
     @xps_intermediate_file.setter
-    def xps_intermediate_file(self, value: Optional[Union[str, Path]]) -> None:
+    def xps_intermediate_file(self, value: str | Path | None) -> None:
         self._xps_intermediate_file = str(value) if value is not None else None
 
     @property
-    def aps_intermediate_file(self) -> Optional[str]:
+    def aps_intermediate_file(self) -> str | None:
         """Get or set the path for the intermediate APS file."""
         return self._aps_intermediate_file
 
     @aps_intermediate_file.setter
-    def aps_intermediate_file(self, value: Optional[Union[str, Path]]) -> None:
+    def aps_intermediate_file(self, value: str | Path | None) -> None:
         self._aps_intermediate_file = str(value) if value is not None else None
 
     @property
@@ -83,17 +83,17 @@ class HtmlLoadOptions:
     including resource handling and base directory settings.
     """
 
-    def __init__(self, base_dir: Optional[str] = None) -> None:
+    def __init__(self, base_dir: str | None = None) -> None:
         """Initialize HTML load options.
 
         Args:
             base_dir: Base directory for resolving relative paths in the HTML.
         """
-        self._base_dir: Optional[str] = base_dir
-        self._xps_intermediate_file: Optional[str] = None
-        self._aps_intermediate_file: Optional[str] = None
+        self._base_dir: str | None = base_dir
+        self._xps_intermediate_file: str | None = None
+        self._aps_intermediate_file: str | None = None
         self._use_area_clipping: bool = True
 
     @property
-    def base_dir(self) -> Optional[str]:
+    def base_dir(self) -> str | None:
         """Get or set the base directory for resolving relative paths."""

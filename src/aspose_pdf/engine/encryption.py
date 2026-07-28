@@ -8,14 +8,14 @@ Implements:
 - Standard encryption/decryption for streams and strings
 """
 
-import os
 import hashlib
-from typing import Optional, Tuple
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import logging
+import os
+
 from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from aspose_pdf.exceptions import PdfSecurityException
-import logging
 
 logger = logging.getLogger("aspose_pdf.encryption")
 
@@ -94,7 +94,7 @@ class EncryptionUtils:
     # Basic Encryption/Decryption
     # -------------------------------------------------------------------------
     @staticmethod
-    def encrypt_aes_cbc(key: bytes, data: bytes, iv: Optional[bytes] = None) -> bytes:
+    def encrypt_aes_cbc(key: bytes, data: bytes, iv: bytes | None = None) -> bytes:
         """Encrypt data using AES-CBC with PKCS7 padding.
 
         Args:
@@ -301,7 +301,7 @@ class EncryptionUtils:
         key_length: int = 16,
         revision: int = 4,
         encrypt_metadata: bool = True,
-    ) -> Tuple[bytes, bytes]:
+    ) -> tuple[bytes, bytes]:
         """Compute User password value (U) and encryption key per Algorithm 3.4/3.5.
 
         Args:
@@ -358,7 +358,7 @@ class EncryptionUtils:
         key_length: int = 16,
         revision: int = 4,
         encrypt_metadata: bool = True,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Verify password and return encryption key if valid.
 
         Args:
@@ -416,7 +416,7 @@ class EncryptionUtils:
         key_length: int,
         revision: int,
         encrypt_metadata: bool = True,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Verify owner password and return encryption key.
 
         Per Algorithm 3.7: Use owner password to recover user password from O.
@@ -564,8 +564,8 @@ class EncryptionUtils:
 
     @staticmethod
     def compute_user_owner_keys_v6(
-        user_password: str, owner_password: str, file_key: Optional[bytes] = None
-    ) -> Tuple[bytes, bytes, bytes, bytes]:
+        user_password: str, owner_password: str, file_key: bytes | None = None
+    ) -> tuple[bytes, bytes, bytes, bytes]:
         """Compute U, O, UE, OE values for AES-256 (R6) per ISO 32000-2.
 
         Algorithm 2.A variants for creation.
@@ -612,14 +612,14 @@ class EncryptionUtils:
         o_value: bytes,
         ue_value: bytes,
         oe_value: bytes,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Verify user or owner password for PDF V5 revision 5/6; return file key or None."""
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
         from cryptography.hazmat.primitives import padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
         pwd = password.encode("utf-8")[:127]
 
-        def _try_decrypt_ue_oe(key_material: bytes, blob: bytes) -> Optional[bytes]:
+        def _try_decrypt_ue_oe(key_material: bytes, blob: bytes) -> bytes | None:
             if not blob:
                 return None
             try:
