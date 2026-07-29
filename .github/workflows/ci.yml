@@ -27,9 +27,13 @@ jobs:
 
       - name: Verify optional dependencies are absent
         run: |
+          # Import names for every optional runtime dependency: images (PIL),
+          # woff2 (brotli), and text-layout (fontTools, uharfbuzz, bidi).
           python -c "import importlib.util; assert importlib.util.find_spec('PIL') is None"
           python -c "import importlib.util; assert importlib.util.find_spec('brotli') is None"
           python -c "import importlib.util; assert importlib.util.find_spec('fontTools') is None"
+          python -c "import importlib.util; assert importlib.util.find_spec('uharfbuzz') is None"
+          python -c "import importlib.util; assert importlib.util.find_spec('bidi') is None"
 
       - name: Run test suite without optional dependencies
         run: pytest -q

@@ -33,7 +33,10 @@ jobs:
       - name: Install project dependencies and audit tool
         run: |
           python -m pip install --upgrade pip "setuptools>=83.0.0"
-          python -m pip install -e '.[images,woff2]'
+          # Audit every optional runtime dependency the package can pull into a
+          # user environment: images (Pillow), woff2 (Brotli), and text-layout
+          # (uharfbuzz, python-bidi, fonttools).
+          python -m pip install -e '.[images,woff2,text-layout]'
           python -m pip install pip-audit==2.10.1
 
       - name: Audit installed dependencies

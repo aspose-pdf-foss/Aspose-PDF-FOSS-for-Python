@@ -22,6 +22,10 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `MarkdownSaveOptions`, and `PrinterSettings` before writing anything.
 - Documented the full inventory of unimplemented compatibility surfaces in
   `supported-features.md`.
+- Extended the scheduled security audit to install and audit the `text-layout`
+  extra (uharfbuzz, python-bidi, fonttools) alongside `images` and `woff2`, and
+  made the minimal-install CI job assert those three modules are absent too, so
+  every optional runtime dependency is covered by both gates.
 - Added function-based PDF shadings with multidimensional sampled functions,
   shading matrix/domain/bounds/background handling, and Separation/DeviceN
   alternate-colour conversion.
