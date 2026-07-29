@@ -264,7 +264,12 @@ Supported:
   hint-replacement OtherSubrs) -- resolved through Identity CID maps, a simple
   font's `/Encoding`/symbol cmap, the CFF charset/built-in encoding, or the
   Type 1 built-in encoding, with Type 1 `seac` accent composites drawn from
-  their StandardEncoding components. Fonts with no embedded program -- the
+  their StandardEncoding components. A composite font whose `/Encoding` names
+  one of the bundled predefined CJK CMaps (the eight allowlisted names) is also
+  drawn: the show string is split on the CMap's mixed single/double-byte
+  codespaces and each code mapped to a CID before the descendant font's
+  `CIDToGIDMap` (CIDFontType2) or CFF charset (CIDFontType0), against the
+  descendant `CIDSystemInfo`. Fonts with no embedded program -- the
   Standard 14 and other non-embedded simple fonts -- are filled from bundled
   open substitutes chosen by base-font name and FontDescriptor flags:
   metric-compatible Liberation faces (SIL OFL 1.1) for the
@@ -342,6 +347,12 @@ Boundaries:
   that relies on a predefined (Standard/Expert) encoding, unknown symbolic
   fonts (e.g. non-embedded Wingdings), and text shaping (ligatures, GSUB/GPOS)
   are drawn as glyph boxes.
+- Composite-font glyph rendering covers Identity encodings and the eight
+  bundled predefined CJK CMaps only. Other predefined CMap names, embedded
+  (stream) CMaps, and a bundled name whose descendant `CIDSystemInfo` does not
+  match are still drawn as glyph boxes. Vertical CMaps resolve and draw the
+  correct glyphs but advance horizontally; true vertical positioning is not
+  applied.
 - Layout reflow remains out of scope in this prerelease.
 
 ## Text
@@ -456,8 +467,9 @@ Boundaries:
   name with missing or mismatched `CIDSystemInfo` is also opaque, including
   when a `ToUnicode` stream is present; other named encodings can still use an
   exact `ToUnicode` map, but may lack overlay geometry. Unsupported runs are
-  never extracted heuristically or edited bytewise. Rendering glyphs for named
-  predefined CMaps is not part of this slice. The redaction overlay still
+  never extracted heuristically or edited bytewise. (The page renderer draws
+  glyphs for these same bundled predefined CMaps; see [Pages](#pages).) The
+  redaction overlay still
   assumes a balanced content stream (identity CTM at its end). Existing text
   editing does not invoke the complex-text authoring layout path, and rich-text
   or general paragraph analysis is not implemented.

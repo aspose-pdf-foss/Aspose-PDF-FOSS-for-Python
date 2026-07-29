@@ -300,15 +300,35 @@ class _GlyphFont:
     glyph id; ``width_1000`` returns the advance in text-space/1000 units keyed
     the same way; ``bytes_per_code`` is 1 for simple fonts and 2 for Identity
     composite fonts.
+
+    For a composite font whose ``/Encoding`` names a bundled predefined CMap,
+    ``cmap`` carries the compact code-to-CID view: ``iter_glyphs`` then splits
+    the show string on the CMap's (possibly mixed-width) codespaces and maps
+    each code to a CID before ``code_to_gid``/``width_1000``. ``bytes_per_code``
+    is ignored while ``cmap`` is set.
     """
 
     outlines: Any  # TrueTypeOutlines | CffOutlines (duck-typed outline source)
     code_to_gid: Callable[[int], int | None]
     width_1000: Callable[[int], float]
     bytes_per_code: int
+    cmap: Any = None  # PredefinedCMapEncoding for named composite fonts
+    cmap_budget: Any = None  # _LoadBudget bounding decode_units work
+    default_width_1000: float = 1000.0  # advance for codes the CMap cannot map
 
     def iter_glyphs(self, raw: bytes):
         """Yield ``(gid_or_None, width_1000, applies_word_spacing)`` per code."""
+        if self.cmap is not None:
+            for offset, length, cid in self.cmap.decode_units(
+                raw, budget=self.cmap_budget
+            ):
+                # PDF word spacing applies only to a single-byte code 32.
+                applies_word = length == 1 and raw[offset] == 32
+                if cid is None:
+                    yield None, self.default_width_1000, applies_word
+                else:
+                    yield self.code_to_gid(cid), self.width_1000(cid), applies_word
+            return
         if self.bytes_per_code == 2:
             for i in range(0, len(raw) - 1, 2):
                 code = (raw[i] << 8) | raw[i + 1]
@@ -1777,14 +1797,21 @@ class _PageRasterizer:
 
     def _build_type0_font(self, font_dict: PdfDictionary) -> _GlyphFont | None:
         encoding = self._cos_name(font_dict.mapping.get(PdfName("Encoding")))
-        if encoding not in ("Identity-H", "Identity-V", "Identity"):
-            return None  # Named CMaps are not decoded yet; fall back to boxes.
+        identity = encoding in ("Identity-H", "Identity-V", "Identity")
         descendants = self._resolve(font_dict.mapping.get(PdfName("DescendantFonts")))
         cidfont = None
         if isinstance(descendants, PdfArray) and descendants.items:
             cidfont = self._resolve(descendants.items[0])
         if not isinstance(cidfont, PdfDictionary):
             return None
+        cmap = None
+        if not identity:
+            # A named /Encoding: render it only when it resolves to one of the
+            # bundled predefined CMaps against the descendant CIDSystemInfo.
+            # Unknown names and embedded CMap streams fall back to boxes.
+            cmap = self._predefined_cmap_encoding(font_dict, cidfont)
+            if cmap is None:
+                return None
         cid_subtype = self._cos_name(cidfont.mapping.get(PdfName("Subtype")))
         descriptor = self._resolve(cidfont.mapping.get(PdfName("FontDescriptor")))
         width_1000 = self._cid_widths(cidfont)
@@ -1803,7 +1830,37 @@ class _PageRasterizer:
             cid_to_gid = self._cff_cid_to_gid(program)
         else:
             return None
-        return _GlyphFont(outlines, cid_to_gid, width_1000, bytes_per_code=2)
+        dw = self._cos_number(cidfont.mapping.get(PdfName("DW")))
+        default_width = float(dw) if dw is not None else 1000.0
+        return _GlyphFont(
+            outlines,
+            cid_to_gid,
+            width_1000,
+            bytes_per_code=2,
+            cmap=cmap,
+            cmap_budget=self._load_budget,
+            default_width_1000=default_width,
+        )
+
+    def _predefined_cmap_encoding(
+        self, font_dict: PdfDictionary, cidfont: PdfDictionary
+    ) -> Any:
+        """Resolve a named predefined CMap's compact code->CID view, or None.
+
+        Delegates to the engine so the renderer shares the exact allowlist,
+        CIDSystemInfo matching, and ``usecmap`` handling used by extraction and
+        editing. Resource-limit errors propagate; anything else means the CMap
+        is unsupported and the caller draws boxes.
+        """
+        resolver = getattr(self.pdf, "_predefined_cmap_encoding_for_font", None)
+        if resolver is None:
+            return None
+        try:
+            return resolver(font_dict, cidfont)
+        except PdfResourceLimitException:
+            raise
+        except Exception:
+            return None
 
     def _build_simple_cff_font(
         self, font_dict: PdfDictionary

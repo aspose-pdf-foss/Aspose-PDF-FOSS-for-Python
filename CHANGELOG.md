@@ -9,6 +9,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The page renderer now draws glyphs for Type0 fonts whose `/Encoding` names one
+  of the eight bundled predefined CJK CMaps, instead of falling back to boxes. It
+  splits the show string on the CMap's mixed single/double-byte codespaces, maps
+  each code to a CID against the descendant `CIDSystemInfo`, and fills the real
+  outlines through `CIDToGIDMap` (CIDFontType2) or the CFF charset
+  (CIDFontType0). Unbundled names, embedded CMap streams, and mismatched
+  collections still render as boxes.
 - `Document(...)` no longer discards its arguments. It now loads the supplied
   source with the same semantics and errors as `Document.load_from(...)`, and
   rejects unknown arguments, so `Document("input.pdf")` can no longer return an
