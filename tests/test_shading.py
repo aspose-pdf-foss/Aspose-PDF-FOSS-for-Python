@@ -790,6 +790,81 @@ def test_image_overprint_uses_image_color_space_not_current_fill_space():
     assert raster.get_pixel(5, 5) == (255, 0, 0)
 
 
+def test_render_cmyk_overprint_replaces_colorant_with_lighter_tint():
+    # A non-zero colorant overprints by *replacing* the backdrop's colorant, not
+    # by multiplying with it. Painting 50% cyan over solid cyan lightens the cyan
+    # channel; the old Multiply preview wrongly kept it at full strength
+    # (0, 255, 255).
+    pdf = SimplePdf(
+        pages=[(0, 0, 20, 10)],
+        page_contents=[
+            b"1 0 0 0 k 0 0 20 10 re f "
+            b"q /Mode1 gs 0.5 0 0 0 k 0 0 10 10 re f Q"
+        ],
+    )
+    pdf._ensure_cos()
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("ExtGState"): PdfDictionary(
+                {
+                    PdfName("Mode1"): PdfDictionary(
+                        {
+                            PdfName("op"): PdfBoolean(True),
+                            PdfName("OPM"): _n(1),
+                        }
+                    )
+                }
+            )
+        }
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(5, 5) == (128, 255, 255)
+
+
+def test_render_spot_overprint_replaces_shared_colorant():
+    # A Separation whose tint transform maps onto process cyan overprints a solid
+    # cyan backdrop. The 50% spot tint replaces the cyan channel (lighter cyan)
+    # rather than multiplying to full strength, and leaves the other inks alone.
+    color_space = PdfArray(
+        [
+            PdfName("Separation"),
+            PdfName("CyanInk"),
+            PdfName("DeviceCMYK"),
+            _exp_function([0, 0, 0, 0], [1, 0, 0, 0]),
+        ]
+    )
+    pdf = SimplePdf(
+        pages=[(0, 0, 20, 10)],
+        page_contents=[
+            b"1 0 0 0 k 0 0 20 10 re f "
+            b"q /Overprint gs /Spot cs 0.5 scn 0 0 10 10 re f Q"
+        ],
+    )
+    pdf._ensure_cos()
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {
+            PdfName("ColorSpace"): PdfDictionary({PdfName("Spot"): color_space}),
+            PdfName("ExtGState"): PdfDictionary(
+                {
+                    PdfName("Overprint"): PdfDictionary(
+                        {PdfName("OP"): PdfBoolean(True)}
+                    )
+                }
+            ),
+        }
+    )
+    doc = Document()
+    doc._engine_pdf = pdf
+
+    raster = doc.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(5, 5) == (128, 255, 255)
+
+
 def test_render_free_form_mesh_sh_operator():
     pdf = SimplePdf(
         pages=[(0, 0, 20, 20)],

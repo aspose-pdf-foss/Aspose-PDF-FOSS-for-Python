@@ -267,7 +267,21 @@ class _Canvas:
         else:
             backdrop_alpha = 1.0
         if overprint:
-            overprinted = _blend_color(color, backdrop, "Multiply")
+            # Composite overprint preview in the subtractive device model: a
+            # source colorant paints only where its tint is non-zero, while a
+            # zero-tint colorant leaves the backdrop's colorant untouched. This
+            # is the nonzero-overprint rule for DeviceCMYK/DeviceGray and the
+            # colorant-isolation rule for Separation/DeviceN. The old blanket
+            # Multiply instead darkened untouched colorants and could not
+            # replace a colorant with a lighter tint of itself.
+            sc, sm, sy, sk = _rgb_to_cmyk(color)
+            bc, bm, by, bk = _rgb_to_cmyk(backdrop)
+            overprinted = _cmyk(
+                sc if sc > 0.0 else bc,
+                sm if sm > 0.0 else bm,
+                sy if sy > 0.0 else by,
+                sk if sk > 0.0 else bk,
+            )
             blended = (
                 overprinted
                 if blend_mode == "Normal"
@@ -3005,6 +3019,25 @@ def _cmyk(c: float, m: float, y: float, k: float) -> Color:
         _byte((1.0 - min(1.0, m)) * (1.0 - min(1.0, k)) * 255.0),
         _byte((1.0 - min(1.0, y)) * (1.0 - min(1.0, k)) * 255.0),
     )
+
+
+def _rgb_to_cmyk(color: Color) -> tuple[float, float, float, float]:
+    """Recover approximate device colorants from an RGB pixel.
+
+    The renderer composites in RGB, so overprint reconstructs colorants from the
+    painted RGB using the exact inverse of the naive :func:`_cmyk` conversion
+    (maximum grey-component removal). Round-tripping a ``_cmyk`` result through
+    this function reproduces the original colorants without drift, which keeps
+    the composite overprint preview idempotent.
+    """
+    r = color[0] / 255.0
+    g = color[1] / 255.0
+    b = color[2] / 255.0
+    k = 1.0 - max(r, g, b)
+    if k >= 1.0:
+        return 0.0, 0.0, 0.0, 1.0
+    scale = 1.0 - k
+    return (1.0 - r - k) / scale, (1.0 - g - k) / scale, (1.0 - b - k) / scale, k
 
 
 def _is_operator(token: Any) -> bool:

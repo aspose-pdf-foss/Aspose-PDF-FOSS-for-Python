@@ -39,6 +39,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Replaced fixed patch-mesh tessellation with bounded device-scale-adaptive
   subdivision and added composite preview for common CMYK and spot overprint
   cases through `/OP`, `/op`, and `/OPM`.
+- Corrected the overprint composite preview to work in the subtractive device
+  colorant model: a non-zero source colorant now replaces the backdrop colorant
+  while a zero-tint colorant leaves it untouched (nonzero-overprint semantics for
+  DeviceCMYK/DeviceGray, colorant isolation for Separation/DeviceN). The previous
+  blanket `Multiply` darkened untouched colorants and could not replace a
+  colorant with a lighter tint of itself.
 - Corrected project metadata links and added minimal-install CI coverage.
 - Added bounded fuzz targets and a redistributable parser corpus, replaced the
   skipped signature-extraction placeholder with an end-to-end test, and applied
