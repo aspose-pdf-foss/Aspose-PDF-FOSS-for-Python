@@ -2490,83 +2490,117 @@ class SimplePdf:
         Path(path).write_bytes(data)
 
     def to_bytes_incremental(self) -> bytes:
-        """Serialize PDF using incremental update to preserve signatures.
+        """Serialize the document as a byte-preserving incremental update.
 
-        Returns the original bytes plus any appended changes.
+        The original file bytes are emitted verbatim, followed by an appended
+        revision holding only the objects added or modified since load, a
+        cross-reference section for them, and a trailer chained to the previous
+        ``startxref`` through ``/Prev``. Because the original bytes are
+        preserved exactly, an existing digital signature stays valid: its signed
+        ByteRange falls entirely within the untouched prefix.
+
+        Change detection re-parses the pristine original and compares each
+        materialized object's canonical serialization. Dictionary keys are
+        emitted in sorted order, so the comparison is insensitive to key order
+        and unchanged objects are never re-emitted.
+
+        Falls back to a full :meth:`to_bytes` when there is no base revision to
+        append to (a document built from scratch). Encrypted or to-be-signed
+        documents are rejected, because a correct incremental revision for them
+        must be produced through the encrypting/signing writer rather than this
+        plaintext appender.
         """
         self._ensure_not_disposed()
-        if self._raw_bytes is None:
+        raw = self._raw_bytes
+        if raw is None:
+            # No base revision exists; a full serialization is the only
+            # meaningful result.
             return self.to_bytes()
+        if self.encrypted or self._original_encrypted or self.signing_creds:
+            raise PdfSecurityException(
+                "Incremental save is not supported for encrypted or to-be-signed "
+                "documents; use save() for a full rewrite or sign() for signing."
+            )
+        if self._cos_doc is None:
+            # Minimal/parse-only document with no object graph to diff against.
+            return bytes(raw)
 
-        from .cos import PdfName, PdfNumber, PdfStream
+        raw = bytes(raw)
+
+        # Push in-memory edits (new pages, outlines, metadata, XMP, attachments)
+        # into the COS object graph so the diff below observes them. These are
+        # the same syncs the full writer performs, minus /ID regeneration: the
+        # file identifier must be preserved across an incremental revision.
+        outline_items = getattr(self, "_outlines_data", None)
+        if outline_items:
+            self._inject_outlines_to_cos(outline_items)
+        self._ensure_page_cache()
+        self._sync_pages_to_cos()
+        self._sync_metadata_to_cos()
+        self._sync_xmp_to_cos()
+        self._sync_attachments_to_cos()
+
+        from .cos import PdfDictionary, PdfName, PdfNumber
+        from .pdf_parser_cos import PdfCosParser
+
+        pristine = PdfCosParser(
+            raw, limits=self._load_limits, budget=self._load_budget
+        ).parse()
+        pristine_writer = PdfCosWriter(pristine)
+        writer = PdfCosWriter(self._cos_doc)
 
         incr = IncrementalUpdate(
-            self._raw_bytes,
-            limits=self._load_limits,
-            budget=self._load_budget,
+            raw, limits=self._load_limits, budget=self._load_budget
         )
-        writer = PdfCosWriter(self._cos_doc) if self._cos_doc else None
+        for obj_num in sorted(self._cos_doc.objects):
+            obj = self._cos_doc.objects.get(obj_num)
+            if obj is None:
+                continue
+            current = writer.serialize_object(obj)
+            pristine_obj = pristine.objects.get(obj_num)
+            if (
+                pristine_obj is not None
+                and pristine_writer.serialize_object(pristine_obj) == current
+            ):
+                continue  # unchanged; leave it in the preserved prefix
+            body = f"{obj_num} 0 obj\n{current}\nendobj\n".encode("latin-1")
+            incr.add_object(obj_num, body)
 
-        # Track if any modifications actually occurred
-        modified = False
+        if not incr.modified_objects:
+            return raw  # nothing changed; the original bytes are the whole file
 
-        if writer and self._cos_doc:
-            # 1. Update modified content streams
-            # We compare current page_contents with the original data only if
-            # we have the mapping
-            for i, content in enumerate(self.page_contents):
-                if i < len(self._content_obj_ids) and self._content_obj_ids[i] > 0:
-                    obj_id = self._content_obj_ids[i]
-                    original_obj = self._cos_doc.objects.get(obj_id)
+        objects_bytes = b"".join(
+            incr.modified_objects[n] for n in sorted(incr.modified_objects)
+        )
+        append_origin = len(raw)
+        xref_bytes = incr.build_incremental_xref(append_origin)
+        xref_offset = append_origin + len(objects_bytes)
+        prev_startxref = incr.find_startxref()
 
-                    if isinstance(original_obj, PdfStream):
-                        # SimplePdf does not track per-page dirty flags, so each
-                        # original page stream is rewritten unconditionally.
-                        original_obj.content = content
-                        original_obj.mapping[PdfName("Length")] = PdfNumber(
-                            len(content)
-                        )
+        highest = max(
+            max(self._cos_doc.objects, default=0),
+            max((num for num, _, _ in incr.xref_entries), default=0),
+        )
 
-                        obj_bytes = (
-                            f"{obj_id} 0 obj\n"
-                            f"{writer.serialize_object(original_obj)}\nendobj\n"
-                        ).encode("latin-1")
-                        incr.add_object(obj_id, obj_bytes)
-                        modified = True
-
-            # 2. Update Metadata if changed
-            if self.metadata != self._original_metadata:
-                info_ref = self._cos_doc.trailer.mapping.get(PdfName("Info"))
-                if info_ref:
-                    from .cos import PdfDictionary, PdfIndirectReference, PdfString
-
-                    info_id = (
-                        info_ref.object_number
-                        if isinstance(info_ref, PdfIndirectReference)
-                        else 0
-                    )
-                    if info_id:
-                        info_dict = self._cos_doc.objects.get(info_id)
-                        if isinstance(info_dict, PdfDictionary):
-                            for k, v in self.metadata.items():
-                                info_dict.mapping[PdfName(k)] = PdfString(
-                                    v.encode("utf-8")
-                                )
-
-                            obj_bytes = (
-                                f"{info_id} 0 obj\n"
-                                f"{writer.serialize_object(info_dict)}\nendobj\n"
-                            ).encode("latin-1")
-                            incr.add_object(info_id, obj_bytes)
-                            modified = True
-
-        if not modified:
-            return self._raw_bytes
-
-        inc_section = incr.generate()
-        if inc_section:
-            return self._raw_bytes + inc_section
-        return self._raw_bytes
+        # Build a classic trailer from the *current* trailer so newly referenced
+        # /Root, /Info, or /AcroForm survive, but drop cross-reference-stream and
+        # stale chaining keys that must not appear in a classic trailer.
+        trailer = PdfDictionary(dict(self._cos_doc.trailer.mapping))
+        for drop in (
+            "Type", "Index", "W", "Length", "Filter", "DecodeParms",
+            "XRefStm", "Prev", "Size", "Encrypt",
+        ):
+            trailer.mapping.pop(PdfName(drop), None)
+        trailer.mapping[PdfName("Size")] = PdfNumber(highest + 1)
+        trailer.mapping[PdfName("Prev")] = PdfNumber(prev_startxref)
+        trailer_bytes = (
+            b"trailer\n"
+            + writer.serialize_object(trailer).encode("latin-1")
+            + b"\nstartxref\n"
+            + str(xref_offset).encode("ascii")
+            + b"\n%%EOF\n"
+        )
+        return raw + objects_bytes + xref_bytes + trailer_bytes
 
     def _hydrate_image_info(self) -> None:
         """Populate image metadata and placement maps for lazy-loaded documents.

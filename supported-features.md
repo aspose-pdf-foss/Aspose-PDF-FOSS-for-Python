@@ -33,6 +33,13 @@ Supported:
   missing password instead of yielding an empty document.
 - Save PDFs to a path or writable binary stream, with overwrite protection for
   existing path targets.
+- Save a byte-preserving incremental update with `save(..., incremental=True)`:
+  the original file bytes are emitted verbatim and only objects added or
+  modified since load are appended as a new revision chained through `/Prev`, so
+  an existing signature stays valid. Change detection compares each object's
+  canonical serialization against a re-parse of the original. Documents built
+  from scratch fall back to a full write; encrypted or to-be-signed documents
+  are rejected (their revisions must go through the encrypting/signing writer).
 - Use `Document` as a context manager and release resources with `dispose()` or
   `close()`.
 - Read and write document info metadata.

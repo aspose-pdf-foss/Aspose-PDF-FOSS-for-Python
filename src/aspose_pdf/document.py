@@ -982,6 +982,7 @@ class Document:
         save_format: Any = None,
         *,
         overwrite: bool = False,
+        incremental: bool = False,
     ) -> Document:
         """Save the document to a file path or a binary stream.
 
@@ -998,6 +999,15 @@ class Document:
         overwrite : bool
             Only relevant when *destination* is a path.  When ``False`` (the
             default) an existing file raises :exc:`FileExistsError`.
+        incremental : bool
+            When ``True``, write a byte-preserving incremental update: the
+            original file bytes are emitted verbatim and only the objects added
+            or modified since load are appended as a new revision chained
+            through ``/Prev``. This keeps any existing digital signature valid
+            and is efficient for small edits to large files. Requires a document
+            that was loaded from an existing PDF (a document built from scratch
+            falls back to a full write); encrypted or to-be-signed documents are
+            rejected with :exc:`~aspose_pdf.exceptions.PdfSecurityException`.
 
         Returns
         -------
@@ -1016,6 +1026,17 @@ class Document:
         # Sync the in-memory outline collection back to the engine before writing
         if self._outlines is not None and self._engine_pdf is not None:
             self._engine_pdf._outlines_data = self._outlines._to_list()
+
+        if incremental:
+            data = self._engine_pdf.to_bytes_incremental()
+            if hasattr(destination, "write"):
+                destination.write(data)
+            else:
+                path = Path(destination)
+                if path.exists() and not overwrite:
+                    raise FileExistsError(f"File already exists: {path}")
+                path.write_bytes(data)
+            return self
 
         if hasattr(destination, "write"):
             destination.write(self._engine_pdf.to_bytes())

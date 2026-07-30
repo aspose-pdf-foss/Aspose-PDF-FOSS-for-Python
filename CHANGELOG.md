@@ -39,6 +39,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Replaced fixed patch-mesh tessellation with bounded device-scale-adaptive
   subdivision and added composite preview for common CMYK and spot overprint
   cases through `/OP`, `/op`, and `/OPM`.
+- Added a public byte-preserving incremental save: `Document.save(...,
+  incremental=True)` emits the original file bytes verbatim and appends only the
+  objects added or modified since load as a new revision chained through
+  `/Prev`. Change detection compares each object's canonical (key-sorted)
+  serialization against a re-parse of the original, so unchanged objects are not
+  re-emitted and an existing signature's byte range stays intact. Documents
+  built from scratch fall back to a full write; encrypted or to-be-signed
+  documents are rejected.
 - Corrected the overprint composite preview to work in the subtractive device
   colorant model: a non-zero source colorant now replaces the backdrop colorant
   while a zero-tint colorant leaves it untouched (nonzero-overprint semantics for
