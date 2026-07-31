@@ -669,6 +669,13 @@ Supported:
   `/DR` and `/DA`, common/type-specific flags, choice `/Opt` and multiselect
   `/I`, `/DV`, and generated appearances. Choice options may be strings or
   `(export_value, display_value)` pairs.
+- Author empty (unsigned) signature fields with `Form.add_signature_field()`.
+  The field is written as `/FT /Sig` with a widget on the page, the AcroForm
+  `/SigFlags` SignaturesExist bit is set (existing bits preserved), the widget
+  renders as an empty box, and the field carries no value until signed. It
+  round-trips and reports as a `signature` field and can be removed like any
+  other. Signing an authored field, and lock/seed-value dictionaries, are not
+  yet wired.
 - Regenerate field appearance streams from their values via
   `Document.generate_field_appearances()` or `Form.generate_appearances()`:
   text and choice fields are drawn from their `/V` and default appearance
@@ -707,7 +714,8 @@ Boundaries:
   estimate). Check box / radio appearances are synthesised (a ZapfDingbats check
   or a vector dot). Public push-button authoring currently supports a static
   caption face only; icons, rollover/down faces, actions, submit/reset behavior,
-  signature-field authoring, and XFA authoring are not implemented.
+  and XFA authoring are not implemented. Signature *fields* can be authored (see
+  above), but signing an authored field and seed-value/lock dictionaries are not.
 
 ## Annotations
 
@@ -776,14 +784,20 @@ Supported:
   `/Names /EmbeddedFiles` name tree as `/Filespec` + `/EmbeddedFile` objects.
 - Attach metadata via `Document.add_attachment`: a MIME media type (written as
   the embedded file `/Subtype`, e.g. `text/plain` → `/text#2Fplain`), a `/Desc`
-  description, and creation / modification dates (a `datetime` or a pre-formatted
-  `D:` string) stored in the embedded file `/Params`.
+  description, creation / modification dates (a `datetime` or a pre-formatted
+  `D:` string) stored in the embedded file `/Params`, and an associated-file
+  relationship written as `/AFRelationship` (one of `AF_RELATIONSHIPS`; invalid
+  values are rejected). Re-adding an existing name replaces it.
+- Remove an attachment with `Document.remove_attachment(name)` (returns whether
+  one was removed); removing the last one drops the `/EmbeddedFiles` name tree.
 - Read attachment metadata back through a typed API: `Document.embedded_files`
   returns `FileSpecification` objects (`name`, `contents`, `mime_type`,
-  `description`, `creation_date`, `mod_date`, `size`), and
+  `description`, `creation_date`, `mod_date`, `relationship`, `size`), and
   `Document.get_embedded_file(name)` looks one up by name. The MIME `/Subtype`,
-  `/Desc` and `/Params` dates are decoded back to Python values (`#XX`-escaped
-  names and `D:` dates are parsed), so a save / reload round trip preserves them.
+  `/Desc`, `/Params` dates and `/AFRelationship` are decoded back to Python
+  values (`#XX`-escaped names and `D:` dates are parsed; the default
+  `Unspecified` relationship reads back as `None`), so a save / reload round trip
+  preserves them.
 - Flate-compress the embedded payload by default (`compress=True`), skipping
   compression automatically when it would not make the payload smaller.
 - Preserve tested attachment names and bytes through COS round trips, including
@@ -791,8 +805,12 @@ Supported:
 
 Boundaries:
 
-- The typed `FileSpecification` view is read-only; mutate attachments through the
-  `attachments` mapping or `Document.add_attachment` and re-read `embedded_files`.
+- The typed `FileSpecification` view is read-only; mutate attachments through
+  `Document.add_attachment` / `Document.remove_attachment` (or the `attachments`
+  mapping) and re-read `embedded_files`.
+- Embedded-file name trees are read from and written as a single flat `/Names`
+  array; deeply nested `/Kids` name-tree nodes produced by other tools are not
+  traversed on read.
 
 ## Security, Encryption, And Signatures
 

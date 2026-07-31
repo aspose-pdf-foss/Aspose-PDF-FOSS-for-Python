@@ -6,7 +6,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-__all__ = ["FileSpecification"]
+__all__ = ["AF_RELATIONSHIPS", "FileSpecification"]
+
+#: Valid ``/AFRelationship`` values for an associated file (ISO 32000-2 Table 45).
+AF_RELATIONSHIPS: frozenset[str] = frozenset(
+    {
+        "Source",
+        "Data",
+        "Alternative",
+        "Supplement",
+        "EncryptedPayload",
+        "FormData",
+        "Schema",
+        "Unspecified",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +39,9 @@ class FileSpecification:
     description: str | None = None
     creation_date: datetime | None = None
     mod_date: datetime | None = None
+    relationship: str | None = None
+    """The associated-file relationship (``/AFRelationship``), e.g. ``"Data"`` or
+    ``"Source"``. ``None`` when the attachment uses the default ``Unspecified``."""
 
     @property
     def size(self) -> int:

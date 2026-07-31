@@ -22,7 +22,7 @@ from aspose_pdf._compat_surface import (
 from aspose_pdf._compat_surface import (
     require_pdf_save_format as _require_pdf_save_format,
 )
-from aspose_pdf.attachments import FileSpecification
+from aspose_pdf.attachments import AF_RELATIONSHIPS, FileSpecification
 from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
     _effective_encryption_password,
@@ -192,6 +192,7 @@ class Document:
         description: str | None = None,
         creation_date=None,
         mod_date=None,
+        relationship: str | None = None,
         compress: bool = True,
     ) -> Document:
         """Embed *content* as a document-level file attachment named *name*.
@@ -208,14 +209,25 @@ class Document:
         * *description* — a human-readable ``/Desc`` on the file specification.
         * *creation_date* / *mod_date* — a :class:`datetime.datetime` (or a
           pre-formatted ``D:`` string) stored in the embedded file ``/Params``.
+        * *relationship* — the associated-file relationship written as
+          ``/AFRelationship`` (one of :data:`aspose_pdf.attachments.AF_RELATIONSHIPS`:
+          ``"Source"``, ``"Data"``, ``"Alternative"``, ``"Supplement"``,
+          ``"EncryptedPayload"``, ``"FormData"``, ``"Schema"``, or
+          ``"Unspecified"``). Defaults to ``"Unspecified"``.
         * *compress* — Flate-compress the payload (default), unless that would
           make it larger.
 
-        Returns *self* for chaining.
+        Re-adding an existing *name* replaces its contents and metadata. Returns
+        *self* for chaining.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
+        if relationship is not None and relationship not in AF_RELATIONSHIPS:
+            raise ValueError(
+                f"relationship must be one of {sorted(AF_RELATIONSHIPS)}, "
+                f"got {relationship!r}"
+            )
         self._engine_pdf.attachments[name] = bytes(content)
         meta = {"compress": compress}
         if mime is not None:
@@ -226,7 +238,12 @@ class Document:
             meta["creation_date"] = creation_date
         if mod_date is not None:
             meta["mod_date"] = mod_date
+        if relationship is not None:
+            meta["relationship"] = relationship
         self._engine_pdf.attachment_meta[name] = meta
+        # A previously loaded document may carry parsed metadata for this name;
+        # a fresh add fully supersedes it.
+        self._engine_pdf.attachment_read_meta.pop(name, None)
         return self
 
     @property
@@ -262,9 +279,26 @@ class Document:
                     description=meta.get("description"),
                     creation_date=_coerce_date(meta.get("creation_date")),
                     mod_date=_coerce_date(meta.get("mod_date")),
+                    relationship=meta.get("relationship"),
                 )
             )
         return specs
+
+    def remove_attachment(self, name: str) -> bool:
+        """Remove the embedded file named *name*.
+
+        Returns ``True`` when an attachment was removed, ``False`` when the
+        document had no attachment with that name. The change is written to the
+        ``/Names /EmbeddedFiles`` name tree on the next save.
+        """
+        self._ensure_not_disposed()
+        eng = self._engine_pdf
+        if eng is None:
+            return False
+        existed = eng.attachments.pop(name, None) is not None
+        eng.attachment_meta.pop(name, None)
+        eng.attachment_read_meta.pop(name, None)
+        return existed
 
     def get_embedded_file(self, name: str) -> FileSpecification | None:
         """Return the embedded file named *name* as a :class:`FileSpecification`,

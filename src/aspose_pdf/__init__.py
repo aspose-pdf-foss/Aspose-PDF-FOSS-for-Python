@@ -9,7 +9,7 @@ from .annotations import (
     LinkAnnotation,
     MarkupAnnotation,
 )
-from .attachments import FileSpecification
+from .attachments import AF_RELATIONSHIPS, FileSpecification
 from .document import Document
 from .exceptions import (
     FontEmbeddingException,
@@ -88,6 +88,7 @@ from .xmp import (
 )
 
 __all__ = [
+    "AF_RELATIONSHIPS",
     "Annotation",
     "AnnotationCollection",
     "AnnotationFlags",

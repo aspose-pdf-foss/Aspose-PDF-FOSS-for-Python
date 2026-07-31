@@ -2189,10 +2189,17 @@ class SimplePdf:
         ``/Desc`` description and ``/Params`` creation/modification dates; the
         payload is Flate-compressed when that makes it smaller.
         """
-        if not self._cos_doc or not self.attachments:
+        if not self._cos_doc:
             return
         catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
         if not isinstance(catalog, PdfDictionary):
+            return
+        if not self.attachments:
+            # All attachments were removed: drop any existing embedded-files tree
+            # so the save reflects the removal instead of keeping a stale copy.
+            names_dict = self._resolve(catalog.mapping.get(PdfName("Names")))
+            if isinstance(names_dict, PdfDictionary):
+                names_dict.mapping.pop(PdfName("EmbeddedFiles"), None)
             return
 
         # Name trees must be ordered by key, so emit names sorted.
@@ -2234,7 +2241,9 @@ class SimplePdf:
                 ),
                 # Required by PDF/A-3 for every embedded file; harmless
                 # otherwise and a valid optional Filespec key (ISO 32000-2).
-                PdfName("AFRelationship"): PdfName("Unspecified"),
+                PdfName("AFRelationship"): PdfName(
+                    meta.get("relationship") or "Unspecified"
+                ),
             }
             description = meta.get("description")
             if description:
@@ -8796,7 +8805,10 @@ class SimplePdf:
     ) -> None:
         """Create a terminal AcroForm field and its widget annotations."""
         self._ensure_not_disposed()
-        supported = {"text", "checkbox", "radio", "listbox", "combobox", "pushbutton"}
+        supported = {
+            "text", "checkbox", "radio", "listbox", "combobox", "pushbutton",
+            "signature",
+        }
         if field_type not in supported:
             raise PdfValidationException(f"Unsupported form field type: {field_type}")
         parts = self._form_field_name_parts(name)
@@ -8844,9 +8856,14 @@ class SimplePdf:
         if self._find_named_field(siblings, parts[-1]) is not None:
             raise PdfValidationException(f"Form field '{name}' already exists")
 
-        ft_name = "Btn" if field_type in ("checkbox", "radio", "pushbutton") else (
-            "Ch" if field_type in ("listbox", "combobox") else "Tx"
-        )
+        ft_name = {
+            "checkbox": "Btn",
+            "radio": "Btn",
+            "pushbutton": "Btn",
+            "listbox": "Ch",
+            "combobox": "Ch",
+            "signature": "Sig",
+        }.get(field_type, "Tx")
         field_map: dict[PdfName, Any] = {
             PdfName("FT"): PdfName(ft_name),
             PdfName("T"): _pdf_text_string(parts[-1]),
@@ -8882,7 +8899,7 @@ class SimplePdf:
             state = str(value) if value is not None else "Off"
             field_map[PdfName("V")] = PdfName(state)
             field_map[PdfName("DV")] = PdfName(state)
-        elif field_type != "pushbutton" and not (
+        elif field_type not in ("pushbutton", "signature") and not (
             field_type in ("listbox", "combobox") and value is None
         ):
             if isinstance(value, (list, tuple)):
@@ -8950,6 +8967,18 @@ class SimplePdf:
         }
         self._gen_field_appearance_rec(field_ref, inherited, acro)
         acro.mapping[PdfName("NeedAppearances")] = PdfBoolean(False)
+
+        if field_type == "signature":
+            # The catalog must advertise that a signature field exists (ISO
+            # 32000-1 SigFlags bit 1). Preserve any bits already present (e.g.
+            # AppendOnly from an existing signature) and only add SignaturesExist.
+            existing_flags = self._resolve(acro.mapping.get(PdfName("SigFlags")))
+            flags_val = (
+                int(existing_flags.value)
+                if isinstance(existing_flags, PdfNumber)
+                else 0
+            )
+            acro.mapping[PdfName("SigFlags")] = PdfNumber(flags_val | 1)
 
     def remove_form_field(self, name: str) -> bool:
         """Remove one terminal field and its widget annotations."""
@@ -9299,6 +9328,14 @@ class SimplePdf:
             return self._set_text_widget_appearance(
                 widget, ft, ff, q, v, da, acro, rect_n, w, h, opt
             )
+        if ft == "Sig":
+            # An unsigned signature field shows an empty box: draw only the /MK
+            # background and border, no value text.
+            box_content = self._field_widget_box_content(widget, w, h)
+            widget.mapping[PdfName("AP")] = self._register_annotation_appearance(
+                rect_n, {"N": box_content}, None
+            )
+            return True
         return False
 
     def _set_text_widget_appearance(
@@ -11695,6 +11732,7 @@ class CosExtractor:
             and not is_pushbutton
         )
         is_choice = isinstance(ft, PdfName) and ft.name == "/Ch"
+        is_signature = isinstance(ft, PdfName) and ft.name == "/Sig"
         combo = is_choice and bool(ff_val & (1 << 17))  # Ff bit 18 = Combo
 
         kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
@@ -11715,13 +11753,17 @@ class CosExtractor:
             field_type = "checkbox"
         elif is_radio:
             field_type = "radio"
+        elif is_signature:
+            field_type = "signature"
         elif is_choice:
             field_type = "combobox" if combo else "listbox"
         else:
             field_type = "text"
 
         v = self._resolve(field_obj.mapping.get(PdfName("V")))
-        if is_terminal and v is not None:
+        # A signature field's /V is a signature dictionary, not a reportable form
+        # value; surface it as unsigned (None) here — verification is separate.
+        if is_terminal and v is not None and not is_signature:
             if isinstance(v, PdfString):
                 val_str = decode_pdf_text_string(v)
                 if is_checkbox:
@@ -11898,6 +11940,13 @@ class CosExtractor:
             text = decode_pdf_text_string(desc)
             if text:
                 meta["description"] = text
+
+        rel = self._resolve(filespec.mapping.get(PdfName("AFRelationship")))
+        if isinstance(rel, PdfName):
+            rel_name = rel.name.lstrip("/")
+            # "Unspecified" is the default; surface only a meaningful relationship.
+            if rel_name and rel_name != "Unspecified":
+                meta["relationship"] = rel_name
 
         params = self._resolve(ef_stream.mapping.get(PdfName("Params")))
         if isinstance(params, PdfDictionary):

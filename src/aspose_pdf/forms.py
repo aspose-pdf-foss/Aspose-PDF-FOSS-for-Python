@@ -32,6 +32,9 @@ class FieldType(Enum):
     PUSHBUTTON = "PushButton"
     """Push button field."""
 
+    SIGNATURE = "Signature"
+    """Digital signature field."""
+
 
 class FormType(Enum):
     """Type of PDF form."""
@@ -437,6 +440,28 @@ class Form:
             [{"page_index": self._page_index(page), "rect": rect}],
             flags=flags,
             caption=caption,
+        )
+
+    def add_signature_field(
+        self,
+        name: str,
+        page: Any,
+        rect: Sequence[float],
+        *,
+        read_only: bool = False,
+        required: bool = False,
+    ) -> Field:
+        """Add an empty (unsigned) signature field and return it.
+
+        Creates an ``/FT /Sig`` field with a widget on *page* and sets the
+        AcroForm ``/SigFlags`` ``SignaturesExist`` bit. The field carries no
+        value until it is signed; it renders as an empty box.
+        """
+        return self._create_field(
+            name,
+            "signature",
+            [{"page_index": self._page_index(page), "rect": rect}],
+            flags=self._common_flags(read_only=read_only, required=required),
         )
 
     def remove_field(self, name: str) -> Field:

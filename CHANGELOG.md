@@ -39,6 +39,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Replaced fixed patch-mesh tessellation with bounded device-scale-adaptive
   subdivision and added composite preview for common CMYK and spot overprint
   cases through `/OP`, `/op`, and `/OPM`.
+- Extended the attachment API with associated-file relationships and typed
+  removal: `Document.add_attachment(..., relationship=...)` writes a validated
+  `/AFRelationship` (`AF_RELATIONSHIPS`), `FileSpecification` exposes a
+  `relationship` field read back from the file spec, and
+  `Document.remove_attachment(name)` deletes an embedded file (dropping the
+  `/Names /EmbeddedFiles` tree when the last one is removed). Re-adding a name
+  now fully supersedes any previously loaded metadata.
+- Added public signature-field authoring: `Form.add_signature_field(name, page,
+  rect, ...)` creates an empty `/FT /Sig` field with a page widget, sets the
+  AcroForm `/SigFlags` SignaturesExist bit (preserving existing bits), renders an
+  empty box, and carries no value until signed. Signature fields round-trip,
+  report as a `signature` field type (new `FieldType.SIGNATURE`), and can be
+  removed like any other field. Signing an authored field and seed-value/lock
+  dictionaries remain out of scope.
 - Added a public byte-preserving incremental save: `Document.save(...,
   incremental=True)` emits the original file bytes verbatim and appends only the
   objects added or modified since load as a new revision chained through

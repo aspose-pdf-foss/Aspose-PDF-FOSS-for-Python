@@ -44,7 +44,7 @@ def test_format_pdf_date_variants():
     # Naive datetime -> no zone suffix.
     assert _format_pdf_date(datetime.datetime(2026, 6, 8, 9, 5, 7)) == "D:20260608090507"
     # UTC -> 'Z'.
-    utc = datetime.datetime(2026, 6, 8, 9, 5, 7, tzinfo=datetime.timezone.utc)
+    utc = datetime.datetime(2026, 6, 8, 9, 5, 7, tzinfo=datetime.UTC)
     assert _format_pdf_date(utc) == "D:20260608090507Z"
     # Offset zone -> +HH'mm'.
     tz = datetime.timezone(datetime.timedelta(hours=2, minutes=30))
@@ -81,8 +81,8 @@ def test_dates_written_to_params():
     doc.add_attachment(
         "log.txt",
         b"y" * 100,
-        creation_date=datetime.datetime(2026, 6, 8, 12, 0, 0, tzinfo=datetime.timezone.utc),
-        mod_date=datetime.datetime(2026, 6, 9, 13, 30, 0, tzinfo=datetime.timezone.utc),
+        creation_date=datetime.datetime(2026, 6, 8, 12, 0, 0, tzinfo=datetime.UTC),
+        mod_date=datetime.datetime(2026, 6, 9, 13, 30, 0, tzinfo=datetime.UTC),
     )
     out = _save(doc)
     assert b"/CreationDate (D:20260608120000Z)" in out
@@ -148,7 +148,7 @@ def test_parse_pdf_date_reverses_format():
     naive = datetime.datetime(2026, 6, 8, 9, 5, 7)
     assert _parse_pdf_date(_format_pdf_date(naive)) == naive
     # UTC ('Z').
-    utc = datetime.datetime(2026, 6, 8, 9, 5, 7, tzinfo=datetime.timezone.utc)
+    utc = datetime.datetime(2026, 6, 8, 9, 5, 7, tzinfo=datetime.UTC)
     assert _parse_pdf_date(_format_pdf_date(utc)) == utc
     # Offset zone (+02'30').
     tz = datetime.timezone(datetime.timedelta(hours=2, minutes=30))
@@ -185,8 +185,8 @@ def test_embedded_files_reads_description_after_roundtrip():
 
 
 def test_embedded_files_reads_dates_after_roundtrip():
-    created = datetime.datetime(2026, 6, 8, 12, 0, 0, tzinfo=datetime.timezone.utc)
-    modified = datetime.datetime(2026, 6, 9, 13, 30, 0, tzinfo=datetime.timezone.utc)
+    created = datetime.datetime(2026, 6, 8, 12, 0, 0, tzinfo=datetime.UTC)
+    modified = datetime.datetime(2026, 6, 9, 13, 30, 0, tzinfo=datetime.UTC)
     doc = Document()
     doc.add_attachment("log.txt", b"y" * 100, creation_date=created, mod_date=modified)
     spec = _reload(doc).get_embedded_file("log.txt")
@@ -196,7 +196,7 @@ def test_embedded_files_reads_dates_after_roundtrip():
 
 
 def test_embedded_files_full_metadata_roundtrip_and_ordering():
-    created = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+    created = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.UTC)
     doc = Document()
     doc.add_attachment(
         "report.pdf",
@@ -276,3 +276,69 @@ def test_engine_level_read_meta_populated_on_load():
     reopened = SimplePdf.from_bytes(_save(doc))
     assert reopened.attachment_read_meta["note.txt"]["mime"] == "text/plain"
     assert reopened.attachment_read_meta["note.txt"]["description"] == "d"
+
+
+# ---------------------------------------------------------------------------
+# Associated-file relationship (/AFRelationship) and typed removal
+# ---------------------------------------------------------------------------
+
+
+def test_add_attachment_relationship_round_trips():
+    doc = Document()
+    doc.add_attachment("data.csv", b"a,b\n1,2\n", mime="text/csv", relationship="Data")
+    doc.add_attachment("origin.txt", b"src", relationship="Source")
+
+    reopened = _reload(doc)
+    by_name = {spec.name: spec for spec in reopened.embedded_files}
+    assert by_name["data.csv"].relationship == "Data"
+    assert by_name["origin.txt"].relationship == "Source"
+
+
+def test_default_relationship_reads_back_as_none():
+    # The writer stamps the default "Unspecified"; the typed read model surfaces
+    # that as None so only meaningful relationships appear.
+    doc = Document()
+    doc.add_attachment("plain.txt", b"hi")
+    assert _reload(doc).embedded_files[0].relationship is None
+
+
+def test_add_attachment_rejects_invalid_relationship():
+    doc = Document()
+    with __import__("pytest").raises(ValueError):
+        doc.add_attachment("x.txt", b"y", relationship="NotAReal")
+
+
+def test_file_specification_exposes_relationship_field():
+    doc = Document()
+    doc.add_attachment("d.bin", b"\x00\x01", relationship="Supplement")
+    spec = doc.embedded_files[0]
+    assert isinstance(spec, FileSpecification)
+    assert spec.relationship == "Supplement"
+
+
+def test_remove_attachment_removes_one_and_keeps_others():
+    doc = Document()
+    doc.add_attachment("a.txt", b"a")
+    doc.add_attachment("b.txt", b"b")
+
+    assert doc.remove_attachment("a.txt") is True
+    reopened = _reload(doc)
+    assert [spec.name for spec in reopened.embedded_files] == ["b.txt"]
+
+
+def test_remove_attachment_returns_false_when_absent():
+    doc = Document()
+    doc.add_attachment("a.txt", b"a")
+    assert doc.remove_attachment("missing.txt") is False
+    assert [spec.name for spec in doc.embedded_files] == ["a.txt"]
+
+
+def test_remove_last_attachment_clears_embedded_files_tree():
+    doc = Document()
+    doc.add_attachment("only.txt", b"x")
+    reopened = _reload(doc)  # now the tree exists in the loaded COS
+    assert reopened.remove_attachment("only.txt") is True
+
+    final_bytes = _save(reopened)
+    assert b"/EmbeddedFiles" not in final_bytes
+    assert Document().load_from(final_bytes).embedded_files == []
