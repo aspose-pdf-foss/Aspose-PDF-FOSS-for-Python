@@ -13,8 +13,14 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf.exceptions import FontEmbeddingException, PdfValidationException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
+
+# A shaped glyph is spliceable into the run's own font only when its advance
+# matches the CIDFont's /W width and it carries no GPOS offset, i.e. shaping was
+# pure substitution/reordering. Anything with kerning or mark positioning falls
+# through to the author branch. Tolerance is in em units (/W has 1/1000 em steps).
+_RESHAPE_EPS = 2e-3
 
 _WHITESPACE = b" \t\n\r\x0c"
 _DELIMITERS = b"()<>[]{}/%"
@@ -859,6 +865,7 @@ def replace_text_in_content(
     max_count: int = 0,
     codec_for_name: Callable[[str | None], CidTextCodec | None] | None = None,
     metric_for_name: Callable[[str], Any] | None = None,
+    reshaper: Reshaper | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
 ) -> tuple[bytes, int]:
@@ -911,6 +918,7 @@ def replace_text_in_content(
             case_sensitive=case_sensitive,
             max_count=remaining,
             budget=active_budget,
+            reshaper=reshaper,
         )
         if count:
             active_budget.check(
@@ -1130,6 +1138,28 @@ def _run_char_data(
     return infos, "".join(full_parts), entries, seg_starts
 
 
+def _search_variants(search: str) -> list[str]:
+    """Return the forms of *search* to look for in a decoded (visual-order) run.
+
+    A right-to-left or complex-script phrase is stored in a content stream in
+    visual order, so the logical search string never matches directly. When the
+    optional bidi dependency is present the reordered (display) form is added, so
+    an RTL phrase can be located and reshaped. LTR/ASCII searches are unchanged.
+    """
+    from .text_layout import needs_shaping
+
+    variants = [search]
+    if needs_shaping(search):
+        try:
+            from bidi.algorithm import get_display
+        except ImportError:
+            return variants
+        visual = get_display(search)
+        if visual and visual != search:
+            variants.append(visual)
+    return variants
+
+
 def _aligned_spans(
     full: str,
     entries: list[tuple[int, int, bool, bool, bool, bool]],
@@ -1144,17 +1174,31 @@ def _aligned_spans(
 
     A span ending inside a multi-char code unit (a ligature) cannot be
     spliced code-exactly and is skipped; a span covering only synthesized gap
-    chars has nothing to edit.
+    chars has nothing to edit. Right-to-left phrases are also matched in their
+    visual (display) order; overlapping candidates keep the earliest.
     """
     active_budget = _resolve_load_budget(limits, budget)
+    candidates: list[tuple[int, int]] = []
+    for variant in _search_variants(search):
+        for span in _find_matches(
+            full,
+            variant,
+            case_sensitive,
+            0,
+            budget=active_budget,
+        ):
+            _append_checked(
+                candidates,
+                span,
+                active_budget,
+                "text edit candidate match spans",
+            )
+    candidates.sort()
     kept: list[tuple[int, int]] = []
-    for s, e in _find_matches(
-        full,
-        search,
-        case_sensitive,
-        0,
-        budget=active_budget,
-    ):
+    last_end = -1
+    for s, e in candidates:
+        if s < last_end:
+            continue  # overlaps an already-kept span
         if not entries[s][2] or not entries[e - 1][3]:
             continue
         if all(entries[i][4] for i in range(s, e)):
@@ -1167,9 +1211,182 @@ def _aligned_spans(
             active_budget,
             "text edit aligned match spans",
         )
+        last_end = e
         if max_count and len(kept) >= max_count:
             break
     return kept
+
+
+@dataclass
+class _ReshapeAuthorRequest:
+    """A shaped replacement the engine must author with a fresh embedded font."""
+
+    text: str
+    origin_trm: tuple
+    pen_x: float
+    pen_y: float
+    size: float
+
+
+class Reshaper:
+    """Policy for shaping complex-script replacements during a text edit.
+
+    ``inline_codes`` is the *reuse* branch: shape the replacement against the
+    run's own embedded font and return spliceable two-byte codes, or ``None``
+    when that font cannot represent the shaped run in place. ``request_author``
+    is the *author* branch: record a request for the engine to draw the shaped
+    replacement with a freshly embedded font, returning ``True`` when it can.
+    When neither branch applies the caller raises rather than emit misshaped
+    bytes.
+    """
+
+    def __init__(self, *, can_author: bool, budget: _LoadBudget) -> None:
+        self.can_author = can_author
+        self._budget = budget
+        self.author_requests: list[_ReshapeAuthorRequest] = []
+
+    def inline_codes(self, replacement: str, metric: Any) -> bytes | None:
+        return _shape_replacement_codes(replacement, metric, self._budget)
+
+    def request_author(
+        self,
+        replacement: str,
+        origin_trm: tuple | None,
+        pen_x: float,
+        pen_y: float,
+        size: float,
+    ) -> bool:
+        if not self.can_author or origin_trm is None:
+            return False
+        a, b, c, d, _e, _f = origin_trm
+        # Only an upright, uniformly scaled run can be re-authored in page space
+        # from a single (x, y, size); rotation/shear/non-uniform scale is refused.
+        if abs(b) > 1e-6 or abs(c) > 1e-6 or a <= 1e-9 or d <= 1e-9:
+            return False
+        if abs(a - d) > 1e-6 * max(1.0, abs(a)):
+            return False
+        self._budget.check(
+            len(self.author_requests) + 1,
+            "max_container_items",
+            "text edit reshape author requests",
+        )
+        self.author_requests.append(
+            _ReshapeAuthorRequest(replacement, origin_trm, pen_x, pen_y, size)
+        )
+        return True
+
+
+def _shape_replacement_codes(
+    replacement: str,
+    metric: Any,
+    budget: _LoadBudget,
+) -> bytes | None:
+    """Shape *replacement* into the run's own embedded font, or ``None``.
+
+    Returns spliceable two-byte Identity codes when every shaped glyph maps back
+    to a CID with a matching /W advance and no GPOS offset; otherwise ``None`` so
+    the caller can fall back to the author branch. Raises when the optional
+    text-layout stack is missing, so a complex replacement never silently
+    degrades to an unshaped byte splice.
+    """
+    program = getattr(metric, "shaping_program", None)
+    gid_to_cid = getattr(metric, "gid_to_cid", None)
+    if not program or gid_to_cid is None:
+        return None
+    from .text_layout import shape_single_font_line
+
+    try:
+        line = shape_single_font_line(program, replacement)
+    except FontEmbeddingException:
+        return None  # a needed glyph is missing from this embedded font
+    out = bytearray()
+    pen = 0.0
+    for glyph in line.glyphs:
+        cid = gid_to_cid(glyph.gid)
+        if cid is None or not 0 <= cid <= 0xFFFF:
+            return None
+        native = metric.width_of(cid) / 1000.0
+        if (
+            abs(glyph.x - pen) > _RESHAPE_EPS
+            or abs(glyph.y) > _RESHAPE_EPS
+            or abs(glyph.x_advance - native) > _RESHAPE_EPS
+        ):
+            return None
+        out += cid.to_bytes(2, "big")
+        pen += glyph.x_advance
+    budget.check(
+        len(out),
+        "max_container_items",
+        "text edit shaped replacement codes",
+    )
+    return bytes(out)
+
+
+def _target_text_pen(
+    seg: _RunSegment,
+    units: list,
+    t_unit: int,
+    budget: _LoadBudget,
+) -> tuple[float, float] | None:
+    """Text-space ``(x, y)`` of the target unit, or ``None`` if untrackable."""
+    if seg.pen is None or seg.token is None or seg.codec is None:
+        return None
+    offset = units[t_unit][0]
+    prefix = seg.token.value[:offset]
+    advance = _string_advance(
+        prefix,
+        seg.codec,
+        seg.metric,
+        seg.size,
+        seg.char_spacing,
+        seg.word_spacing,
+        seg.h_scale,
+        budget=budget,
+    )
+    if advance is None:
+        return None
+    return (seg.pen[0] + advance, seg.pen[1] + seg.rise)
+
+
+def _encode_cid_replacement(
+    replacement: str,
+    run: _Run,
+    seg: _RunSegment,
+    units: list,
+    t_unit: int,
+    *,
+    reshaper: Reshaper | None,
+    budget: _LoadBudget,
+) -> bytes:
+    """Return the replacement bytes for a composite target, reshaping if needed.
+
+    Simple LTR/ASCII replacements keep the exact reverse-``ToUnicode`` splice.
+    Complex-script replacements are shaped: reused in the run's own font when
+    possible, otherwise deferred to the author branch, otherwise refused.
+    """
+    from .text_layout import needs_shaping
+
+    if reshaper is not None and needs_shaping(replacement):
+        codes = reshaper.inline_codes(replacement, seg.metric)
+        if codes is not None:
+            return codes
+        pen = _target_text_pen(seg, units, t_unit, budget)
+        if pen is not None and reshaper.request_author(
+            replacement, run.origin_trm, pen[0], pen[1], seg.size
+        ):
+            return b""  # matched codes removed; shaped run authored separately
+        raise FontEmbeddingException(
+            "Cannot reshape the replacement into this document's embedded font. "
+            "Pass font=... so a shaping-capable font can be embedded, and ensure "
+            "the run's placement is upright."
+        )
+    encoded = seg.codec.encode(replacement)
+    if encoded is None:
+        raise PdfValidationException(
+            "Replacement text cannot be encoded with this font's composite "
+            "encoding."
+        )
+    return encoded
 
 
 def _edit_run(
@@ -1180,6 +1397,7 @@ def _edit_run(
     case_sensitive: bool,
     max_count: int,
     budget: _LoadBudget,
+    reshaper: Reshaper | None = None,
 ) -> tuple[list[tuple[int, int, bytes]], int]:
     """Match *search* across the run's logical string and rewrite operands.
 
@@ -1221,13 +1439,15 @@ def _edit_run(
         if infos[t_seg][0] == "cid":
             payload: Any = b""
             if replacement:
-                encoded = segs[t_seg].codec.encode(replacement)
-                if encoded is None:
-                    raise PdfValidationException(
-                        "Replacement text cannot be encoded with this font's "
-                        "composite encoding."
-                    )
-                payload = encoded
+                payload = _encode_cid_replacement(
+                    replacement,
+                    run,
+                    segs[t_seg],
+                    infos[t_seg][2],
+                    t_unit,
+                    reshaper=reshaper,
+                    budget=budget,
+                )
         else:
             payload = replacement
         if t_seg not in inject:

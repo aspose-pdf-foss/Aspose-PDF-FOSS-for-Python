@@ -352,8 +352,10 @@ Boundaries:
   faces and the symbolic ones DejaVu subsets, so glyphs outside that coverage
   (including Symbol's private-use bracket-extender pieces), a simple CFF font
   that relies on a predefined (Standard/Expert) encoding, unknown symbolic
-  fonts (e.g. non-embedded Wingdings), and text shaping (ligatures, GSUB/GPOS)
-  are drawn as glyph boxes.
+  fonts (e.g. non-embedded Wingdings) are drawn as glyph boxes. Latin GSUB
+  (ligatures, kerning) through a substitute face is not applied; complex-script
+  substitute runs are cursively joined when the face covers the script
+  (`shape_substitute_text`, a no-op for the bundled Latin/symbol faces).
 - Composite-font glyph rendering covers Identity encodings and the eight
   bundled predefined CJK CMaps only. Other predefined CMap names, embedded
   (stream) CMaps, and a bundled name whose descendant `CIDSystemInfo` does not
@@ -477,9 +479,17 @@ Boundaries:
   never extracted heuristically or edited bytewise. (The page renderer draws
   glyphs for these same bundled predefined CMaps; see [Pages](#pages).) The
   redaction overlay still
-  assumes a balanced content stream (identity CTM at its end). Existing text
-  editing does not invoke the complex-text authoring layout path, and rich-text
-  or general paragraph analysis is not implemented.
+  assumes a balanced content stream (identity CTM at its end). A replacement
+  containing right-to-left or complex-script characters is shaped (HarfBuzz plus
+  Unicode bidi) and the phrase is matched in its stored visual order: it reuses
+  the run's own embedded font when that font already carries every shaped glyph
+  (an embedded, Identity-encoded `CIDFontType2` whose shaped advances match `/W`
+  with no positioning adjustment), otherwise a shaping-capable `font=` is
+  embedded and the shaped run drawn at the match baseline for an upright,
+  uniformly scaled placement. A rotated or sheared placement, or a missing
+  `font=` when the run's own font cannot represent the shaped glyphs, raises
+  rather than emit misshaped glyphs; reshaping needs the optional `text-layout`
+  extra. Rich-text spans and general paragraph reflow are still not implemented.
 
 ## Fonts
 
@@ -562,7 +572,12 @@ Boundaries:
   (SIL OFL 1.1, Latin subset) for the text families, and DejaVu Sans shape
   subsets (Bitstream Vera license) for Symbol and ZapfDingbats via their
   built-in encodings. Rendering paints shaped authored glyphs at their stored
-  positions but does not reshape text from existing PDF content streams.
+  positions and does not re-lay-out existing content streams; it does, however,
+  draw complex-script runs that fall back to a substitute face with
+  cursive-joined forms instead of isolated glyphs (order-preserving, so nothing
+  moves; needs the `text-layout` extra; toggled by `shape_substitute_text`).
+  This is active only when the substitute covers the script, which the bundled
+  Latin/symbol faces do not, so it is a no-op for those today.
   (Embedded TrueType and CFF — including CID-keyed CFF — glyph subsetting is
   available through `OptimizationOptions.subset_fonts`; see
   [Optimization](#optimization).)

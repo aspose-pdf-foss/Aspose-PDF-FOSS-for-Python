@@ -159,6 +159,52 @@ def _cluster_script(cluster: str, unicode_data: Any) -> str | None:
     return None
 
 
+def _resolve_scripts(
+    clusters: Sequence[str],
+    unicode_data: Any,
+    explicit_script: str | None,
+) -> list[str | None]:
+    """Resolve each cluster's script, filling common/neutral runs from neighbours."""
+    resolved = [
+        explicit_script or _cluster_script(cluster, unicode_data)
+        for cluster in clusters
+    ]
+    previous_script = None
+    for index, script in enumerate(resolved):
+        if script is not None:
+            previous_script = script
+        elif previous_script is not None:
+            resolved[index] = previous_script
+    next_script = None
+    for index in range(len(resolved) - 1, -1, -1):
+        script = resolved[index]
+        if script is not None:
+            next_script = script
+        elif next_script is not None:
+            resolved[index] = next_script
+    return resolved
+
+
+def _script_groups(
+    text: str,
+    unicode_data: Any,
+    direction: str,
+    explicit_script: str | None,
+) -> list[tuple[str, str | None]]:
+    """Group *text* into ``(run_text, script)`` spans, reversed for RTL."""
+    clusters = _grapheme_clusters(text)
+    scripts = _resolve_scripts(clusters, unicode_data, explicit_script)
+    grouped: list[tuple[str, str | None]] = []
+    for cluster, script in zip(clusters, scripts):
+        if grouped and grouped[-1][1] == script:
+            grouped[-1] = (grouped[-1][0] + cluster, script)
+        else:
+            grouped.append((cluster, script))
+    if direction == "rtl":
+        grouped.reverse()
+    return grouped
+
+
 def _font_script_runs(
     text: str,
     fonts: Sequence[Any],
@@ -166,8 +212,9 @@ def _font_script_runs(
     unicode_data: Any,
     explicit_script: str | None,
 ) -> list[tuple[int, str, str | None]]:
-    selected: list[tuple[int, str, str | None]] = []
-    for cluster in _grapheme_clusters(text):
+    clusters = _grapheme_clusters(text)
+    font_indices: list[int] = []
+    for cluster in clusters:
         font_index = next(
             (
                 index
@@ -188,26 +235,13 @@ def _font_script_runs(
             raise FontEmbeddingException(
                 f"No layout font has a glyph for U+{ord(visible):04X}."
             )
-        script = explicit_script or _cluster_script(cluster, unicode_data)
-        selected.append((font_index, cluster, script))
+        font_indices.append(font_index)
 
-    resolved_scripts = [item[2] for item in selected]
-    previous_script = None
-    for index, script in enumerate(resolved_scripts):
-        if script is not None:
-            previous_script = script
-        elif previous_script is not None:
-            resolved_scripts[index] = previous_script
-    next_script = None
-    for index in range(len(resolved_scripts) - 1, -1, -1):
-        script = resolved_scripts[index]
-        if script is not None:
-            next_script = script
-        elif next_script is not None:
-            resolved_scripts[index] = next_script
-
+    resolved_scripts = _resolve_scripts(clusters, unicode_data, explicit_script)
     grouped: list[tuple[int, str, str | None]] = []
-    for (font_index, cluster, _script), script in zip(selected, resolved_scripts):
+    for font_index, cluster, script in zip(
+        font_indices, clusters, resolved_scripts
+    ):
         if grouped and grouped[-1][0] == font_index and grouped[-1][2] == script:
             grouped[-1] = (font_index, grouped[-1][1] + cluster, script)
         else:
@@ -246,18 +280,28 @@ def _cluster_unicode_assignments(text: str, infos: Sequence[Any]) -> list[str]:
     return assignments
 
 
-def _shape_font_run(
+def shape_run(
+    program: bytes,
     text: str,
     *,
-    font: Any,
-    font_index: int,
     direction: str,
-    script: str | None,
-    options: TextLayoutOptions,
-    hb: Any,
-    origin_x: float,
+    script: str | None = None,
+    features: Any = (),
+    language: str | None = None,
+    font_index: int = 0,
+    origin_x: float = 0.0,
+    hb: Any = None,
 ) -> tuple[list[GlyphPlacement], float]:
-    face = hb.Face(font.shaping_program)
+    """Shape *text* against one SFNT *program*; coords/advances in em units.
+
+    A ``.notdef`` for a non-empty cluster raises ``FontEmbeddingException`` so
+    callers can fall back when the program lacks a needed glyph. This is the
+    low-level primitive shared by authored layout, the edit reshape path, and
+    the substitute-font render path.
+    """
+    if hb is None:
+        hb, _bidi, _unicode = _load_dependencies()
+    face = hb.Face(program)
     hb_font = hb.Font(face)
     upem = int(face.upem) or 1000
     hb_font.scale = (upem, upem)
@@ -265,11 +309,11 @@ def _shape_font_run(
     buffer.add_str(text)
     buffer.guess_segment_properties()
     buffer.direction = direction
-    if options.language is not None:
-        buffer.language = options.language
+    if language is not None:
+        buffer.language = language
     if script is not None:
         buffer.script = script
-    hb.shape(hb_font, buffer, dict(options.features))
+    hb.shape(hb_font, buffer, dict(features))
     infos = buffer.glyph_infos
     positions = buffer.glyph_positions
     assignments = _cluster_unicode_assignments(text, infos)
@@ -326,15 +370,16 @@ def _shape_line(
             unicode_data,
             options.script,
         ):
-            glyphs, advance = _shape_font_run(
+            glyphs, advance = shape_run(
+                fonts[font_index].shaping_program,
                 run_text,
-                font=fonts[font_index],
-                font_index=font_index,
                 direction=bidi_run.direction,
                 script=script,
-                options=options,
-                hb=hb,
+                features=options.features,
+                language=options.language,
+                font_index=font_index,
                 origin_x=pen_x,
+                hb=hb,
             )
             placements.extend(glyphs)
             pen_x += advance
@@ -345,6 +390,99 @@ def _shape_line(
         width=max(0.0, pen_x),
         base_direction=base_direction,
     )
+
+
+def shape_single_font_line(
+    program: bytes,
+    text: str,
+    *,
+    base_direction: str = "auto",
+    features: Any = (),
+    language: str | None = None,
+    explicit_script: str | None = None,
+) -> LayoutLine:
+    """Bidi-reorder and shape one line of *text* against a single SFNT *program*.
+
+    Unlike :func:`layout_text` there is no font fallback: every cluster must be
+    covered by *program* or ``shape_run`` raises ``FontEmbeddingException``. Used
+    by the edit reshape path (against the document's own embedded font) and the
+    substitute-font render path. Glyph coordinates and advances are in em units.
+    """
+    hb, bidi_algorithm, unicode_data = _load_dependencies()
+    display_text = text.replace("\t", "    ")
+    bidi_runs, base_direction_resolved = _bidi_runs(
+        display_text, base_direction, bidi_algorithm
+    )
+    placements: list[GlyphPlacement] = []
+    pen_x = 0.0
+    for bidi_run in bidi_runs:
+        for run_text, script in _script_groups(
+            bidi_run.text, unicode_data, bidi_run.direction, explicit_script
+        ):
+            glyphs, advance = shape_run(
+                program,
+                run_text,
+                direction=bidi_run.direction,
+                script=script,
+                features=features,
+                language=language,
+                origin_x=pen_x,
+                hb=hb,
+            )
+            placements.extend(glyphs)
+            pen_x += advance
+    return LayoutLine(
+        text=text,
+        actual_text=text,
+        glyphs=tuple(placements),
+        width=max(0.0, pen_x),
+        base_direction=base_direction_resolved,
+    )
+
+
+def shape_join_preserving(program: bytes, text: str) -> dict[int, int] | None:
+    """Map each input character index to its shaped glyph id, order-preserving.
+
+    Shapes *text* against *program* and returns ``{cluster_index: gid}`` keeping
+    the input order (no bidi reordering), so a renderer can swap an isolated
+    glyph for its cursive-joined form at the character's stored position without
+    moving anything. Ligatures collapse to the first covered index; indices with
+    no entry were absorbed into a preceding glyph. Returns ``None`` on failure.
+    """
+    hb, _bidi, _unicode = _load_dependencies()
+    face = hb.Face(program)
+    font = hb.Font(face)
+    upem = int(face.upem) or 1000
+    font.scale = (upem, upem)
+    buffer = hb.Buffer()
+    buffer.add_str(text)
+    buffer.guess_segment_properties()
+    hb.shape(font, buffer, {})
+    mapping: dict[int, int] = {}
+    for info in buffer.glyph_infos:
+        gid = int(info.codepoint)
+        if gid == 0:
+            continue  # .notdef: leave the original glyph in place
+        mapping.setdefault(int(info.cluster), gid)
+    return mapping
+
+
+def needs_shaping(text: str) -> bool:
+    """Whether *text* contains any RTL or complex-script scalar worth shaping.
+
+    A cheap, dependency-free pre-check so the common LTR/ASCII edit keeps its
+    byte-splice fast path and never imports the optional layout stack.
+    """
+    for character in text:
+        if character in _BIDI_ISOLATES:
+            return True
+        bidi = unicodedata.bidirectional(character)
+        if bidi in ("R", "AL", "AN"):
+            return True
+        # Combining marks imply positioning/reordering work (e.g. Indic, Thai).
+        if unicodedata.combining(character):
+            return True
+    return False
 
 
 def _split_long_token(

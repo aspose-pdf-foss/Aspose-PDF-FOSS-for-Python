@@ -72,6 +72,10 @@ class CompositeFontMetric:
     codec: Any = None
     ascent: float = 800.0
     descent: float = -200.0
+    # Set only for an embedded, horizontal, Identity-encoded CIDFontType2 whose
+    # program HarfBuzz can shape in place (the edit reshape "reuse" branch).
+    shaping_program: bytes | None = None
+    gid_to_cid: Callable[[int], int | None] | None = None
 
 
 FontMetric = SimpleFontMetric | CompositeFontMetric

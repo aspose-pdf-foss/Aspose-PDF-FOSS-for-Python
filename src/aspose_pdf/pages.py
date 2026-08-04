@@ -300,6 +300,7 @@ class Page:
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
+        shape_substitute_text: bool = True,
     ) -> RasterizedPage:
         """Render this page to an RGB raster image.
 
@@ -309,6 +310,9 @@ class Page:
 
         ``antialias`` smooths edges by supersampling (``True`` = 3x, an integer
         1-8 sets the factor, ``False`` disables it for a hard-edged raster).
+        ``shape_substitute_text`` (default on) joins complex-script runs drawn
+        with a bundled substitute face; it needs the optional ``text-layout``
+        extra and only affects non-embedded fonts.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -323,6 +327,7 @@ class Page:
             scale=scale,
             background=background,
             antialias=antialias,
+            shape_substitute_text=shape_substitute_text,
         )
 
     def save_as_image(
@@ -346,12 +351,21 @@ class Page:
         *,
         case_sensitive: bool = True,
         max_count: int = 0,
+        font: FontDescriptor | bytes | bytearray | str | Path | None = None,
+        layout: TextLayoutOptions | None = None,
     ) -> int:
         """Replace existing text in simple text-showing operands on this page.
 
         ``max_count=0`` means unlimited. This is a conservative content-stream
         edit: it handles simple ``Tj``/``TJ`` operands and does not reflow layout.
         Returns the number of replacements made.
+
+        A replacement with right-to-left or complex-script characters is shaped
+        (HarfBuzz + Unicode bidi): reused in the run's own embedded font when it
+        already carries every shaped glyph, otherwise a shaping-capable *font* is
+        embedded and the replacement drawn at the match position (see
+        :meth:`Document.replace_text`). Reshaping needs the optional
+        ``text-layout`` extra.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -363,6 +377,8 @@ class Page:
             page_index=self._index,
             case_sensitive=case_sensitive,
             max_count=max_count,
+            font=font,
+            layout=layout,
         )
 
     def redact_text(

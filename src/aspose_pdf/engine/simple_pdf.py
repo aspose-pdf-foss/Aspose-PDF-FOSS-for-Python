@@ -4402,6 +4402,8 @@ class SimplePdf:
         page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
+        font: FontDescriptor | bytes | bytearray | str | Path | None = None,
+        layout: TextLayoutOptions | None = None,
     ) -> int:
         """Replace existing text in simple page-content text-showing operands.
 
@@ -4410,6 +4412,14 @@ class SimplePdf:
         across several ``TJ`` elements or across consecutive show operators (e.g.
         two adjacent ``Tj``) is matched and rewritten across the boundary; it
         does not perform layout reflow. Returns the number of replacements made.
+
+        A replacement that contains right-to-left or complex-script characters is
+        shaped (HarfBuzz + Unicode bidi) instead of encoded code-for-code: it is
+        reused in the run's own embedded font when that font already carries every
+        shaped glyph, otherwise a shaping-capable ``font`` is embedded and the
+        replacement drawn at the match position. Reshaping needs the optional
+        ``text-layout`` extra; without a usable path the edit raises rather than
+        emit misshaped glyphs.
         """
         self._ensure_not_disposed()
         if not isinstance(search, str):
@@ -4421,6 +4431,16 @@ class SimplePdf:
         max_count = int(max_count)
         if max_count < 0:
             raise ValueError("max_count must be greater than or equal to zero")
+
+        from aspose_pdf.text_layout import TextLayoutOptions
+
+        from .text_edit import Reshaper
+        from .text_layout import needs_shaping
+
+        if layout is not None and not isinstance(layout, TextLayoutOptions):
+            raise TypeError("layout must be a TextLayoutOptions instance or None")
+        wants_reshape = needs_shaping(replacement)
+        author_layout = layout if layout is not None else TextLayoutOptions()
 
         self._materialize_page_contents_for_edit()
         if page_index is None:
@@ -4448,6 +4468,11 @@ class SimplePdf:
                 metric_for_name=metric_for_name,
                 shared_cache=codec_cache,
             )
+            reshaper = (
+                Reshaper(can_author=font is not None, budget=self._load_budget)
+                if wants_reshape
+                else None
+            )
             updated, count = replace_text_in_content(
                 content,
                 search,
@@ -4456,16 +4481,45 @@ class SimplePdf:
                 max_count=remaining,
                 codec_for_name=codec_for_name,
                 metric_for_name=metric_for_name,
+                reshaper=reshaper,
                 limits=self._load_limits,
                 budget=self._load_budget,
             )
             if count:
                 self._set_page_content(index, updated)
                 total += count
+                if reshaper is not None:
+                    self._author_reshaped_runs(index, reshaper, font, author_layout)
 
         if total:
             self._extracted_text = None
         return total
+
+    def _author_reshaped_runs(
+        self,
+        page_index: int,
+        reshaper: Any,
+        font: Any,
+        layout: TextLayoutOptions,
+    ) -> None:
+        """Draw the shaped replacements the edit deferred to the author branch.
+
+        Each request carries the matched run's text-rendering matrix (validated
+        upright and uniformly scaled) and the target pen in that run's text
+        space, so the shaped glyphs land at the removed text's baseline.
+        """
+        for request in reshaper.author_requests:
+            a, _b, _c, _d, e, f = request.origin_trm
+            self.add_text_to_page(
+                page_index,
+                request.text,
+                a * request.pen_x + e,
+                a * request.pen_y + f,
+                font_size=request.size * a,
+                font=font,
+                layout=layout,
+                color=(0.0, 0.0, 0.0),
+            )
 
     def redact_text(
         self,
@@ -4829,6 +4883,23 @@ class SimplePdf:
                 opaque_unknown=True,
                 budget=self._load_budget,
             )
+        # An embedded, horizontal, Identity-encoded CIDFontType2 can be shaped in
+        # place by the edit reshape path: its /FontFile2 is a valid SFNT and the
+        # two-byte show code is the CID, so gid -> cid -> code is exact.
+        shaping_program = None
+        gid_to_cid = None
+        if (
+            not vertical
+            and enc_name in ("Identity-H", "Identity")
+            and self._get_name(cid_font.mapping.get(PdfName("Subtype")))
+            == "CIDFontType2"
+            and isinstance(descriptor, PdfDictionary)
+        ):
+            program = self._load_embedded_font_program(descriptor, "FontFile2")
+            if program:
+                shaping_program = program
+                gid_to_cid = self._build_gid_to_cid(cid_font)
+
         return CompositeFontMetric(
             width_of=width_of,
             code_to_text=code_to_text,
@@ -4838,6 +4909,8 @@ class SimplePdf:
             codec=codec,
             ascent=ascent,
             descent=descent,
+            shaping_program=shaping_program,
+            gid_to_cid=gid_to_cid,
         )
 
     def _predefined_cmap_for_font(self, font_dict: Any, cid_font: Any = None):

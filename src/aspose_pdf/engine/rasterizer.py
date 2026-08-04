@@ -329,6 +329,11 @@ class _GlyphFont:
     cmap: Any = None  # PredefinedCMapEncoding for named composite fonts
     cmap_budget: Any = None  # _LoadBudget bounding decode_units work
     default_width_1000: float = 1000.0  # advance for codes the CMap cannot map
+    # Set only for a bundled substitute face: its SFNT program (for HarfBuzz
+    # cursive joining) and a single-byte code -> Unicode codepoint map. Used to
+    # render complex-script runs with joined forms instead of isolated glyphs.
+    shaping_program: bytes | None = None
+    code_to_unicode: Callable[[int], int | None] | None = None
 
     def iter_glyphs(self, raw: bytes):
         """Yield ``(gid_or_None, width_1000, applies_word_spacing)`` per code."""
@@ -372,12 +377,17 @@ def render_page(
     scale: float = 1.0,
     background: Sequence[int] = (255, 255, 255),
     antialias: bool | int = True,
+    shape_substitute_text: bool = True,
 ) -> RasterizedPage:
     """Render ``page_index`` from a ``SimplePdf`` into an RGB raster.
 
     ``antialias`` smooths edges by supersampling: ``True`` (the default) renders
     at 3x and box-downsamples, an integer 1-8 sets the factor explicitly, and
     ``False`` (or ``1``) disables it for an exact, hard-edged raster.
+
+    ``shape_substitute_text`` (default on) draws complex-script runs that fall
+    back to a bundled substitute face with cursive-joined forms instead of
+    isolated glyphs, when the optional ``text-layout`` extra is present.
     """
     if pdf is None:
         raise AsposePdfException("No document loaded")
@@ -390,6 +400,7 @@ def render_page(
         scale=scale,
         background=background,
         antialias=antialias,
+        shape_substitute_text=shape_substitute_text,
     )
     return renderer.render()
 
@@ -404,7 +415,9 @@ class _PageRasterizer:
         scale: float,
         background: Sequence[int],
         antialias: bool | int = True,
+        shape_substitute_text: bool = True,
     ):
+        self.shape_substitute_text = bool(shape_substitute_text)
         try:
             dpi_value = float(dpi)
             scale_value = float(scale)
@@ -1556,9 +1569,15 @@ class _PageRasterizer:
             self._show_text_boxes(raw)
             return
         units_per_em = font.outlines.units_per_em
-        for gid, width_1000, applies_word in font.iter_glyphs(raw):
-            if gid is not None:
-                contours = font.outlines.outline(gid)
+        joined = (
+            self._joined_substitute_gids(raw, font)
+            if self.shape_substitute_text and font.shaping_program is not None
+            else None
+        )
+        for index, (gid, width_1000, applies_word) in enumerate(font.iter_glyphs(raw)):
+            draw_gid = joined[index] if joined is not None else gid
+            if draw_gid is not None:
+                contours = font.outlines.outline(draw_gid)
                 if contours:
                     self._fill_glyph(contours, units_per_em)
             advance = width_1000 / 1000.0 * text.font_size + text.char_spacing
@@ -1568,6 +1587,40 @@ class _PageRasterizer:
             text.text_matrix = _multiply(
                 (1.0, 0.0, 0.0, 1.0, advance, 0.0), text.text_matrix
             )
+
+    def _joined_substitute_gids(
+        self, raw: bytes, font: _GlyphFont
+    ) -> list[int | None] | None:
+        """Per-code shaped glyph ids for a complex-script substitute run.
+
+        Reconstructs the run's logical text, applies order-preserving cursive
+        joining against the substitute program, and returns a glyph id (or
+        ``None`` to draw nothing) aligned to ``iter_glyphs`` order. Returns
+        ``None`` to keep the plain per-code path -- for Latin runs, when the
+        text-layout extra is missing, or when reconstruction/shaping fails.
+        """
+        if font.bytes_per_code != 1 or font.code_to_unicode is None:
+            return None
+        codepoints: list[int] = []
+        for code in raw:
+            cp = font.code_to_unicode(code)
+            if cp is None:
+                return None
+            codepoints.append(cp)
+        logical = "".join(chr(cp) for cp in codepoints)
+        from .text_layout import needs_shaping, shape_join_preserving
+
+        if not needs_shaping(logical):
+            return None
+        try:
+            mapping = shape_join_preserving(font.shaping_program, logical)
+        except PdfResourceLimitException:
+            raise
+        except Exception:
+            return None
+        if mapping is None:
+            return None
+        return [mapping.get(index) for index in range(len(codepoints))]
 
     def _show_text_boxes(self, raw: bytes) -> None:
         """Fallback for non-TrueType fonts: draw a box per visible glyph."""
@@ -1761,13 +1814,22 @@ class _PageRasterizer:
         outlines = TrueTypeOutlines(sfnt)
         if not outlines.ok:
             return None
-        code_to_gid = self._substitute_code_to_gid(font_dict, outlines, key)
+        code_to_gid, code_to_unicode = self._substitute_code_to_gid(
+            font_dict, outlines, key
+        )
         width_1000 = self._simple_widths(font_dict, outlines, code_to_gid)
-        return _GlyphFont(outlines, code_to_gid, width_1000, bytes_per_code=1)
+        return _GlyphFont(
+            outlines,
+            code_to_gid,
+            width_1000,
+            bytes_per_code=1,
+            shaping_program=sfnt,
+            code_to_unicode=lambda code, _m=code_to_unicode: _m.get(code),
+        )
 
     def _substitute_code_to_gid(
         self, font_dict: PdfDictionary, outlines: TrueTypeOutlines, key: str
-    ) -> Callable[[int], int | None]:
+    ) -> tuple[Callable[[int], int | None], dict[int, int]]:
         from .font_subset import read_unicode_cmap
         from .std_font_data import substitute_code_to_unicode
 
@@ -1807,7 +1869,7 @@ class _PageRasterizer:
                     return gid
             return None
 
-        return resolve
+        return resolve, code_to_unicode
 
     def _build_type0_font(self, font_dict: PdfDictionary) -> _GlyphFont | None:
         encoding = self._cos_name(font_dict.mapping.get(PdfName("Encoding")))

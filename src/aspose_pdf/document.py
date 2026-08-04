@@ -43,10 +43,12 @@ if TYPE_CHECKING:
     import datetime as _datetime
 
     from aspose_pdf.engine.rasterizer import RasterizedPage
+    from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.forms import Form
     from aspose_pdf.optimization import OptimizationOptions
     from aspose_pdf.pages import Page, PageCollection
     from aspose_pdf.tagged import TaggedContent
+    from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.xmp import XmpPacket
 
 
@@ -564,6 +566,7 @@ class Document:
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
+        shape_substitute_text: bool = True,
     ) -> RasterizedPage:
         """Render a page to an RGB raster image.
 
@@ -571,7 +574,9 @@ class Document:
         :meth:`RasterizedPage.to_png`, :meth:`RasterizedPage.to_tiff`, or saved
         directly with :meth:`RasterizedPage.save`. ``antialias`` smooths edges by
         supersampling (``True`` = 3x, an integer 1-8 sets the factor, ``False``
-        disables it).
+        disables it). ``shape_substitute_text`` (default on) joins complex-script
+        runs drawn with a bundled substitute face; it needs the optional
+        ``text-layout`` extra and only affects non-embedded fonts.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -585,6 +590,7 @@ class Document:
             scale=scale,
             background=background,
             antialias=antialias,
+            shape_substitute_text=shape_substitute_text,
         )
 
     def save_page_as_image(
@@ -614,6 +620,8 @@ class Document:
         page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
+        font: FontDescriptor | bytes | bytearray | str | Path | None = None,
+        layout: TextLayoutOptions | None = None,
     ) -> int:
         """Replace existing text in simple page-content text-showing operands.
 
@@ -621,6 +629,15 @@ class Document:
         means unlimited. This is a conservative content-stream edit for simple
         ``Tj``/``TJ`` operands; it does not perform layout reflow. Returns the
         number of replacements made.
+
+        A replacement containing right-to-left or complex-script characters is
+        shaped (HarfBuzz + Unicode bidi): it reuses the run's own embedded font
+        when that font already carries every shaped glyph, otherwise a
+        shaping-capable *font* is embedded and the replacement drawn at the match
+        position, using *layout* (a :class:`~aspose_pdf.text_layout.TextLayoutOptions`)
+        for direction, script, and features. Reshaping needs the optional
+        ``text-layout`` extra; without a usable path the edit raises rather than
+        emit misshaped glyphs.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -631,6 +648,8 @@ class Document:
             page_index=page_index,
             case_sensitive=case_sensitive,
             max_count=max_count,
+            font=font,
+            layout=layout,
         )
 
     def redact_text(

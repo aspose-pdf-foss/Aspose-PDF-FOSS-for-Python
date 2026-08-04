@@ -7,6 +7,28 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `Document.replace_text` / `Page.replace_text` now shape right-to-left and
+  complex-script replacements (HarfBuzz + Unicode bidi) instead of encoding them
+  code-for-code, and match such phrases in their stored visual order. A
+  replacement is reused in the run's own embedded font when that font already
+  carries every shaped glyph (an embedded, Identity-encoded `CIDFontType2` whose
+  shaped advances match `/W` with no positioning adjustment); otherwise a
+  shaping-capable `font=` is embedded and the replacement drawn at the match
+  baseline, with optional `layout=TextLayoutOptions(...)` for direction, script,
+  and features. When neither path applies the edit raises rather than emit
+  misshaped glyphs, and reshaping needs the optional `text-layout` extra. Simple
+  LTR/ASCII replacements keep the previous exact byte-splice.
+- The page renderer can join complex-script runs that fall back to a bundled
+  substitute face, drawing cursive-connected forms instead of isolated glyphs
+  (order-preserving, so nothing is reordered or repositioned), controlled by the
+  new `shape_substitute_text` flag on `Document.render_page` / `Page.render`
+  (default on). It needs the `text-layout` extra and is active only when the
+  substitute face covers the script; the bundled Liberation/DejaVu faces cover
+  Latin and symbol only, so it is a safe no-op for other scripts today. Embedded
+  fonts are unaffected — their glyphs are already final.
+
 ### Changed
 
 - The page renderer now draws glyphs for Type0 fonts whose `/Encoding` names one
