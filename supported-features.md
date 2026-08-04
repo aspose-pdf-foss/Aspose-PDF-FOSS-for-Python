@@ -350,9 +350,13 @@ Boundaries:
   unknown non-embedded fonts routed to a sans/serif/mono substitute by their
   FontDescriptor flags). The Latin substitutes are Latin-subset Liberation
   faces and the symbolic ones DejaVu subsets, so glyphs outside that coverage
-  (including Symbol's private-use bracket-extender pieces), a simple CFF font
-  that relies on a predefined (Standard/Expert) encoding, unknown symbolic
-  fonts (e.g. non-embedded Wingdings) are drawn as glyph boxes. Latin GSUB
+  (including Symbol's private-use bracket-extender pieces), a simple CFF or
+  Type 1 font under an Expert/MacExpert encoding, and unknown symbolic fonts
+  (e.g. non-embedded Wingdings, deliberately boxed rather than mapped to a Latin
+  face to avoid drawing the wrong glyphs) are drawn as glyph boxes. Simple CFF
+  and Type 1 fonts under a Standard/WinAnsi/MacRoman predefined encoding (or a
+  `/Differences` map) now resolve real glyphs through the font's charset and the
+  Adobe Glyph List rather than falling back to boxes. Latin GSUB
   (ligatures, kerning) through a substitute face is not applied; complex-script
   substitute runs are cursively joined when the face covers the script
   (`shape_substitute_text`, a no-op for the bundled Latin/symbol faces).
@@ -551,8 +555,13 @@ Supported:
 
 Boundaries:
 
-- WOFF2 decoding needs the optional `brotli` dependency; WOFF2 font
-  *collections* (`ttcf` flavour) are not reconstructed.
+- WOFF2 decoding needs the optional `brotli` dependency. WOFF2 font
+  *collections* (`ttcf` flavour) are reconstructed into a TrueType Collection,
+  after which the descendant face is selected as for any TTC.
+- CFF2 outline programs are rasterized for the default instance: variable-font
+  `blend`/`vsindex` region deltas are dropped, so a variable CFF2 draws its
+  default master, not an interpolated instance. CFF2 is left whole by the
+  optimizer (not subset) and rejected for authoring new text.
 - Complex-text authoring requires the optional `uharfbuzz`, `python-bidi`, and
   `fonttools` dependencies
   (`pip install aspose-pdf-foss-for-python[text-layout]`) and an embedded

@@ -21,14 +21,14 @@ from __future__ import annotations
 
 import struct
 
-from aspose_pdf.engine.woff import _check_decode_limits, build_sfnt
+from aspose_pdf.engine.woff import _check_decode_limits, build_sfnt, build_ttc
 from aspose_pdf.exceptions import PdfResourceLimitException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 __all__ = ["decode"]
 
 _WOFF2_SIGNATURE = b"wOF2"
-_TTCF_FLAVOR = 0x74746366  # 'ttcf' -- font collections are out of scope.
+_TTCF_FLAVOR = 0x74746366  # 'ttcf' -- reconstructed as a TrueType Collection.
 
 _HEADER_SIZE = 48
 _GLYF_HEADER_SIZE = 36
@@ -71,9 +71,9 @@ def decode(
 ) -> bytes | None:
     """Reconstruct the SFNT font wrapped in WOFF2 *data*.
 
-    Returns the decoded TrueType / OpenType byte stream, or ``None`` when
-    *data* is not WOFF2, is malformed, wraps a font collection, or when the
-    optional ``brotli`` dependency is not installed.
+    Returns the decoded TrueType / OpenType byte stream -- or a reconstructed
+    ``ttcf`` collection when *data* wraps one -- or ``None`` when *data* is not
+    WOFF2, is malformed, or the optional ``brotli`` dependency is not installed.
     """
     resolved_limits = _coerce_limits(limits)
     _LoadBudget(resolved_limits).check(
@@ -114,10 +114,7 @@ def _decode(
     limits: PdfLoadLimits,
 ) -> bytes | None:
     flavor = struct.unpack_from(">I", data, 4)[0]
-    if flavor == _TTCF_FLAVOR:
-        return None  # WOFF2 font collections are not supported.
     num_tables = struct.unpack_from(">H", data, 12)[0]
-    total_compressed = struct.unpack_from(">I", data, 20)[0]
     if num_tables == 0:
         return None
     _LoadBudget(limits).check(
@@ -125,6 +122,27 @@ def _decode(
     )
 
     entries, pos = _read_directory(data, num_tables)
+    faces = None
+    if flavor == _TTCF_FLAVOR:
+        faces, pos = _read_collection_directory(data, pos, num_tables, limits)
+
+    table_data = _decompress_tables(data, brotli, limits, entries, pos)
+    if table_data is None:
+        return None
+    if faces is None:
+        return _assemble_single(flavor, entries, table_data, data, limits)
+    return _assemble_collection(faces, entries, table_data, data, limits)
+
+
+def _decompress_tables(
+    data: bytes,
+    brotli,
+    limits: PdfLoadLimits,
+    entries: list[tuple[str, bool, int]],
+    pos: int,
+) -> list[bytes] | None:
+    """Decompress the Brotli block and slice it into per-entry table bytes."""
+    total_compressed = struct.unpack_from(">I", data, 20)[0]
     transformed_size = sum(entry[2] for entry in entries)
     total_sfnt_size = struct.unpack_from(">I", data, 16)[0]
     _check_decode_limits(
@@ -134,50 +152,129 @@ def _decode(
         context="WOFF2 Brotli output",
         additional_work_bytes=total_sfnt_size,
     )
-
     block_end = pos + total_compressed
     if block_end > len(data):
         return None
-    block = data[pos:block_end]
     decompressed = _decompress_brotli_limited(
-        block,
-        brotli,
-        transformed_size,
+        data[pos:block_end], brotli, transformed_size
     )
     if len(decompressed) != transformed_size:
         return None
-
-    # Slice each table out of the decompressed stream, in directory order.
     cursor = 0
-    raw: dict[str, bytes] = {}
-    transformed: dict[str, bool] = {}
-    order: list[str] = []
-    for tag, is_transformed, in_stream_size in entries:
+    table_data: list[bytes] = []
+    for _tag, _is_transformed, in_stream_size in entries:
         chunk = decompressed[cursor : cursor + in_stream_size]
         if len(chunk) != in_stream_size:
             return None
         cursor += in_stream_size
-        raw[tag] = chunk
-        transformed[tag] = is_transformed
-        order.append(tag)
+        table_data.append(chunk)
+    return table_data
 
-    tables = dict(raw)
-    if transformed.get("glyf"):
-        glyf_bytes, loca_bytes = _reconstruct_glyf(raw["glyf"])
+
+def _assemble_single(
+    flavor: int,
+    entries: list[tuple[str, bool, int]],
+    table_data: list[bytes],
+    data: bytes,
+    limits: PdfLoadLimits,
+) -> bytes | None:
+    tables: dict[str, bytes] = {}
+    order: list[str] = []
+    for (tag, _is_transformed, _size), chunk in zip(entries, table_data):
+        tables[tag] = chunk
+        order.append(tag)
+    glyf_index = next(
+        (i for i, (tag, is_t, _s) in enumerate(entries) if tag == "glyf" and is_t),
+        None,
+    )
+    if glyf_index is not None:
+        glyf_bytes, loca_bytes = _reconstruct_glyf(table_data[glyf_index])
         tables["glyf"] = glyf_bytes
         tables["loca"] = loca_bytes  # transformed loca is reconstructed here.
         if "loca" not in order:
             order.append("loca")
         if "head" in tables:
             tables["head"] = _force_long_loca(tables["head"])
-
     result = build_sfnt(flavor, [(tag, tables[tag]) for tag in order])
     _check_decode_limits(
         len(data),
         len(result),
         limits,
         context="WOFF2 reconstructed font",
-        additional_work_bytes=len(decompressed),
+        additional_work_bytes=sum(len(chunk) for chunk in table_data),
+    )
+    return result
+
+
+def _read_collection_directory(
+    data: bytes,
+    pos: int,
+    num_tables: int,
+    limits: PdfLoadLimits,
+) -> tuple[list[tuple[int, list[int]]], int]:
+    """Parse the WOFF2 CollectionDirectory into per-face ``(flavor, indices)``."""
+    _version = struct.unpack_from(">I", data, pos)[0]
+    pos += 4
+    num_fonts, pos = _read_255ushort(data, pos)
+    if num_fonts == 0:
+        raise ValueError("WOFF2 collection declares no fonts")
+    _LoadBudget(limits).check(
+        num_fonts, "max_container_items", "WOFF2 collection fonts"
+    )
+    faces: list[tuple[int, list[int]]] = []
+    for _ in range(num_fonts):
+        face_num_tables, pos = _read_255ushort(data, pos)
+        face_flavor = struct.unpack_from(">I", data, pos)[0]
+        pos += 4
+        indices: list[int] = []
+        for _ in range(face_num_tables):
+            index, pos = _read_255ushort(data, pos)
+            if index >= num_tables:
+                raise ValueError("WOFF2 collection table index out of range")
+            indices.append(index)
+        faces.append((face_flavor, indices))
+    return faces, pos
+
+
+def _assemble_collection(
+    faces: list[tuple[int, list[int]]],
+    entries: list[tuple[str, bool, int]],
+    table_data: list[bytes],
+    data: bytes,
+    limits: PdfLoadLimits,
+) -> bytes | None:
+    # Reconstruct each transformed glyf table once; faces share it by index.
+    reconstructed: dict[int, tuple[bytes, bytes]] = {}
+    for index, (tag, is_transformed, _size) in enumerate(entries):
+        if tag == "glyf" and is_transformed:
+            reconstructed[index] = _reconstruct_glyf(table_data[index])
+
+    built_faces: list[tuple[int, list[tuple[str, bytes]]]] = []
+    for flavor, indices in faces:
+        glyf_index = next(
+            (i for i in indices if entries[i][0] == "glyf"), None
+        )
+        recon = reconstructed.get(glyf_index) if glyf_index is not None else None
+        tables: list[tuple[str, bytes]] = []
+        for index in indices:
+            tag = entries[index][0]
+            if tag == "glyf" and recon is not None:
+                tables.append(("glyf", recon[0]))
+            elif tag == "loca" and recon is not None:
+                tables.append(("loca", recon[1]))
+            elif tag == "head" and recon is not None:
+                tables.append(("head", _force_long_loca(table_data[index])))
+            else:
+                tables.append((tag, table_data[index]))
+        built_faces.append((flavor, tables))
+
+    result = build_ttc(built_faces)
+    _check_decode_limits(
+        len(data),
+        len(result),
+        limits,
+        context="WOFF2 reconstructed collection",
+        additional_work_bytes=sum(len(chunk) for chunk in table_data),
     )
     return result
 

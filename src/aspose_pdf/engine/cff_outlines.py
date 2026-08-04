@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import struct
 
+from .agl import cff_standard_strings
 from .font_subset_cff import (
     _OP_CHARSTRINGS,
     _OP_ENCODING,
@@ -40,6 +41,32 @@ __all__ = ["CffOutlines"]
 
 Point = tuple[float, float]
 Contour = list[Point]
+
+_OP_VSTORE = 24  # CFF2 Top DICT: offset to the ItemVariationStore.
+
+
+def _read_index2(data: bytes, pos: int) -> tuple[list[bytes], int]:
+    """Read a CFF2 INDEX (32-bit count), returning items and the next offset."""
+    count = struct.unpack_from(">I", data, pos)[0]
+    pos += 4
+    if count == 0:
+        return [], pos
+    off_size = data[pos]
+    pos += 1
+    if off_size < 1 or off_size > 4:
+        raise ValueError("bad CFF2 INDEX offSize")
+    offsets = []
+    for _ in range(count + 1):
+        offsets.append(int.from_bytes(data[pos : pos + off_size], "big"))
+        pos += off_size
+    base = pos - 1
+    items = []
+    for i in range(count):
+        start, end = base + offsets[i], base + offsets[i + 1]
+        if not (pos <= start <= end <= len(data)):
+            raise ValueError("bad CFF2 INDEX offsets")
+        items.append(data[start:end])
+    return items, base + offsets[count]
 
 _OP_CHARSET = 15
 _OP_FONTMATRIX = (12, 7)
@@ -125,18 +152,25 @@ def _decode_reals(operand_bytes: bytes) -> list[float]:
 
 
 def _maybe_extract_cff(data: bytes) -> bytes:
-    """Return the ``CFF `` table when *data* is an SFNT/OpenType wrapper."""
+    """Return the ``CFF ``/``CFF2`` table when *data* is an SFNT/OpenType wrapper."""
     if len(data) >= 12 and data[:4] in (b"OTTO", b"\x00\x01\x00\x00", b"true"):
         try:
             num_tables = struct.unpack_from(">H", data, 4)[0]
+            found: dict[bytes, bytes] = {}
             record = 12
             for _ in range(num_tables):
                 if record + 16 > len(data):
                     break
-                if data[record : record + 4] == b"CFF ":
+                tag = data[record : record + 4]
+                if tag in (b"CFF ", b"CFF2"):
                     off, length = struct.unpack_from(">II", data, record + 8)
-                    return data[off : off + length]
+                    found[tag] = data[off : off + length]
                 record += 16
+            # Prefer the classic outline table; fall back to CFF2 when only it exists.
+            if b"CFF " in found:
+                return found[b"CFF "]
+            if b"CFF2" in found:
+                return found[b"CFF2"]
         except struct.error:
             pass
     return data
@@ -153,7 +187,12 @@ class CffOutlines:
         self._fd_lsubrs: list[list[bytes]] = []
         self._fdselect: list[int] | None = None
         self._is_cid = False
+        self._is_cff2 = False
+        self._region_counts: dict[int, int] = {}
         self._encoding_off: int | None = None
+        self._charset_off: int | None = None
+        self._strings: list[bytes] = []
+        self._name_to_gid: dict[str, int] | None = None
         self._data = b""
         self._cache: dict[int, list[Contour]] = {}
         self._ok = False
@@ -173,13 +212,17 @@ class CffOutlines:
         self._data = data
         if len(data) < 4:
             return
-        major, _minor, hdr_size, _off_size = data[0:4]
+        major = data[0]
+        if major == 2:
+            self._parse_cff2(data)
+            return
+        hdr_size = data[2]
         if major != 1 or hdr_size < 4:
-            return  # CFF2 (major 2) and odd headers are out of scope.
+            return  # unknown major version / odd header.
 
         _name_index, pos = _read_index(data, hdr_size)
         topdict_index, pos = _read_index(data, pos)
-        _string_index, pos = _read_index(data, pos)
+        self._strings, pos = _read_index(data, pos)
         gsubr_index, pos = _read_index(data, pos)
         if len(topdict_index) != 1:
             return
@@ -196,12 +239,72 @@ class CffOutlines:
 
         self.units_per_em = self._units_per_em(entries)
         self._encoding_off = _dict_int(entries, _OP_ENCODING)
+        self._charset_off = _dict_int(entries, _OP_CHARSET)
         self._is_cid = _dict_get(entries, _OP_ROS) is not None
         if self._is_cid:
             self._parse_cid(data, entries)
         else:
             self._fd_lsubrs = [self._read_local_subrs(data, entries)]
         self._ok = True
+
+    def _parse_cff2(self, data: bytes) -> None:
+        """Parse a static (default-instance) CFF2 program.
+
+        CFF2 replaces the name/Top-DICT/String INDEXes with a fixed-length Top
+        DICT, uses 32-bit INDEXes, and is always FD-based (FDArray/FDSelect).
+        Variable-font ``blend``/``vsindex`` operators are honored only for the
+        default instance -- region deltas are dropped -- so a variable CFF2 draws
+        its default master rather than an interpolated instance.
+        """
+        if len(data) < 5:
+            return
+        hdr_size = data[2]
+        top_dict_length = struct.unpack_from(">H", data, 3)[0]
+        top_start = hdr_size
+        top_end = top_start + top_dict_length
+        if hdr_size < 5 or top_end > len(data):
+            return
+        entries = _parse_dict(data[top_start:top_end])
+        self._gsubrs, _ = _read_index2(data, top_end)
+        cs_off = _dict_int(entries, _OP_CHARSTRINGS)
+        if cs_off is None:
+            return
+        self._charstrings, _ = _read_index2(data, cs_off)
+        self.num_glyphs = len(self._charstrings)
+        if self.num_glyphs == 0:
+            return
+        self.units_per_em = self._units_per_em(entries)
+        self._is_cid = True  # CFF2 always selects a Font DICT per glyph.
+        fdarray_off = _dict_int(entries, _OP_FDARRAY)
+        fdselect_off = _dict_int(entries, _OP_FDSELECT)
+        if fdarray_off is not None and fdselect_off is not None:
+            fd_items, _ = _read_index2(data, fdarray_off)
+            self._fd_lsubrs = [
+                self._read_local_subrs(data, _parse_dict(fd), cff2=True)
+                for fd in fd_items
+            ] or [[]]
+            self._fdselect = self._read_fdselect(data, fdselect_off)
+        else:
+            self._fd_lsubrs = [[]]
+        vstore_off = _dict_int(entries, _OP_VSTORE)
+        if vstore_off is not None:
+            self._region_counts = self._parse_variation_regions(data, vstore_off)
+        self._is_cff2 = True
+        self._ok = True
+
+    def _parse_variation_regions(self, data: bytes, off: int) -> dict[int, int]:
+        """Return ``{vsindex: region count}`` from the ItemVariationStore."""
+        try:
+            if struct.unpack_from(">H", data, off)[0] != 1:
+                return {}
+            data_count = struct.unpack_from(">H", data, off + 6)[0]
+            counts: dict[int, int] = {}
+            for index in range(data_count):
+                ivd_offset = struct.unpack_from(">I", data, off + 8 + 4 * index)[0]
+                counts[index] = struct.unpack_from(">H", data, off + ivd_offset + 4)[0]
+            return counts
+        except struct.error:
+            return {}
 
     def _units_per_em(self, entries) -> int:
         raw = _dict_get(entries, _OP_FONTMATRIX)
@@ -211,7 +314,7 @@ class CffOutlines:
                 return max(1, round(1.0 / vals[0]))
         return 1000
 
-    def _read_local_subrs(self, data: bytes, entries) -> list[bytes]:
+    def _read_local_subrs(self, data: bytes, entries, cff2: bool = False) -> list[bytes]:
         priv = _dict_ints(entries, _OP_PRIVATE)
         if not priv or len(priv) != 2:
             return []
@@ -222,7 +325,8 @@ class CffOutlines:
         subrs_rel = _dict_int(priv_entries, _OP_SUBRS)
         if subrs_rel is None:
             return []
-        subrs, _ = _read_index(data, off + subrs_rel)
+        reader = _read_index2 if cff2 else _read_index
+        subrs, _ = reader(data, off + subrs_rel)
         return subrs
 
     def _parse_cid(self, data: bytes, entries) -> None:
@@ -272,7 +376,12 @@ class CffOutlines:
         if cached is not None:
             return cached
         try:
-            interp = _T2Glyph(self._gsubrs, self._local_subrs(gid))
+            interp = _T2Glyph(
+                self._gsubrs,
+                self._local_subrs(gid),
+                is_cff2=self._is_cff2,
+                region_counts=self._region_counts,
+            )
             contours = interp.run(self._charstrings[gid])
         except (struct.error, IndexError, ValueError):
             contours = []
@@ -324,11 +433,97 @@ class CffOutlines:
             return {}
         return mapping
 
+    def name_to_gid(self) -> dict[str, int]:
+        """Return ``{glyph name: gid}`` from the CFF charset, or ``{}``.
+
+        Resolves the charset (formats 0/1/2, or the ISOAdobe identity charset for
+        offset 0) to per-glyph SIDs, then each SID to a name via the predefined
+        CFF strings and the font's own String INDEX. CID-keyed fonts and the
+        Expert/ExpertSubset predefined charsets have no glyph names here and
+        return ``{}``.
+        """
+        if self._name_to_gid is not None:
+            return self._name_to_gid
+        result: dict[str, int] = {}
+        sids = self._charset_sids()
+        if sids is not None:
+            for gid, sid in enumerate(sids):
+                name = self._sid_name(sid)
+                if name is not None:
+                    result.setdefault(name, gid)
+        self._name_to_gid = result
+        return result
+
+    def _charset_sids(self) -> list[int] | None:
+        """Return ``gid -> SID`` for a name-keyed font, or ``None``."""
+        if not self._ok or self._is_cid or self.num_glyphs == 0:
+            return None
+        off = self._charset_off
+        n = self.num_glyphs
+        sids = [0] * n  # gid 0 is always .notdef (SID 0)
+        if off is None or off == 0:  # ISOAdobe / absent: gid i -> SID i
+            for gid in range(1, n):
+                sids[gid] = gid
+            return sids
+        if off in (1, 2):
+            return None  # Expert / ExpertSubset predefined charsets unsupported
+        data = self._data
+        if off >= len(data):
+            return None
+        try:
+            fmt = data[off]
+            pos = off + 1
+            gid = 1
+            if fmt == 0:
+                while gid < n:
+                    sids[gid] = struct.unpack_from(">H", data, pos)[0]
+                    pos += 2
+                    gid += 1
+            elif fmt in (1, 2):
+                while gid < n:
+                    first = struct.unpack_from(">H", data, pos)[0]
+                    pos += 2
+                    if fmt == 1:
+                        n_left = data[pos]
+                        pos += 1
+                    else:
+                        n_left = struct.unpack_from(">H", data, pos)[0]
+                        pos += 2
+                    for offset in range(n_left + 1):
+                        if gid >= n:
+                            break
+                        sids[gid] = first + offset
+                        gid += 1
+            else:
+                return None
+        except (struct.error, IndexError):
+            return None
+        return sids
+
+    def _sid_name(self, sid: int) -> str | None:
+        standard = cff_standard_strings()
+        if 0 <= sid < len(standard):
+            return standard[sid]
+        index = sid - len(standard)
+        if 0 <= index < len(self._strings):
+            try:
+                return self._strings[index].decode("latin-1")
+            except (UnicodeDecodeError, AttributeError):
+                return None
+        return None
+
 
 class _T2Glyph:
     """Type 2 charstring interpreter producing flattened, filled contours."""
 
-    def __init__(self, gsubrs: list[bytes], lsubrs: list[bytes]):
+    def __init__(
+        self,
+        gsubrs: list[bytes],
+        lsubrs: list[bytes],
+        *,
+        is_cff2: bool = False,
+        region_counts: dict[int, int] | None = None,
+    ):
         self._gsubrs = gsubrs
         self._lsubrs = lsubrs
         self._gbias = _subr_bias(len(gsubrs))
@@ -339,7 +534,11 @@ class _T2Glyph:
         self.contours: list[Contour] = []
         self._current: Contour | None = None
         self._nstems = 0
-        self._have_width = False
+        self._is_cff2 = is_cff2
+        self._region_counts = region_counts or {}
+        self._vsindex = 0
+        # CFF2 charstrings carry no leading width, so none is ever consumed.
+        self._have_width = is_cff2
         self._done = False
 
     def run(self, charstring: bytes) -> list[Contour]:
@@ -409,6 +608,16 @@ class _T2Glyph:
                 self._have_width = True
                 self._done = True
                 return
+            elif b0 == 15:  # vsindex (CFF2)
+                if self._is_cff2 and self.stack:
+                    self._vsindex = int(self.stack.pop())
+                else:
+                    self.stack.clear()
+            elif b0 == 16:  # blend (CFF2)
+                if self._is_cff2:
+                    self._blend()
+                else:
+                    self.stack.clear()
             elif b0 == 12:  # escape
                 if i < n:
                     self._escape(cs[i])
@@ -425,6 +634,21 @@ class _T2Glyph:
         if not self._have_width and len(self.stack) > expected:
             self.stack.pop(0)
         self._have_width = True
+
+    def _blend(self) -> None:
+        """Collapse a CFF2 ``blend`` to the default instance (drop region deltas).
+
+        Stack layout is ``base(n), deltas(n*k), n``; dropping the top ``n*k``
+        deltas leaves the ``n`` default values for the following operator.
+        """
+        if not self.stack:
+            return
+        n = int(self.stack.pop())
+        if n < 0:
+            return
+        drop = n * self._region_counts.get(self._vsindex, 0)
+        if 0 < drop <= len(self.stack):
+            del self.stack[len(self.stack) - drop :]
 
     def _stems(self) -> None:
         if not self._have_width and len(self.stack) % 2 == 1:

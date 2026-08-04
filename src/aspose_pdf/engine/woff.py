@@ -220,6 +220,66 @@ def build_sfnt(flavor: int, tables: list[tuple[str, bytes]]) -> bytes:
     return bytes(out)
 
 
+def build_ttc(faces: list[tuple[int, list[tuple[str, bytes]]]]) -> bytes:
+    """Assemble a TrueType Collection (``ttcf``) from per-face table lists.
+
+    Each face is ``(sfntVersion, [(tag, body)])``. Identical table blobs are
+    stored once and shared across faces (so a collection that shares ``glyf``
+    stays compact). Per-table checksums are written; ``head.checkSumAdjustment``
+    is left as supplied -- collection readers recompute or ignore it, and this
+    library's parser does not validate it. Shared with :mod:`.woff2`.
+    """
+    num_fonts = len(faces)
+    prepared: list[tuple[int, list[tuple[str, bytes, int]]]] = []
+    for flavor, tables in faces:
+        ordered = sorted(tables, key=lambda item: item[0])
+        rows: list[tuple[str, bytes, int]] = []
+        for tag, body in ordered:
+            checksum_body = body
+            if tag == "head" and len(body) >= 12:
+                checksum_body = body[:8] + b"\x00\x00\x00\x00" + body[12:]
+            rows.append((tag, body, _checksum(checksum_body)))
+        prepared.append((flavor, rows))
+
+    header_size = 12 + 4 * num_fonts
+    dir_sizes = [12 + 16 * len(rows) for _flavor, rows in prepared]
+    data_start = _aligned4(header_size + sum(dir_sizes))
+
+    # Place each unique table body once, 4-byte aligned, after the directories.
+    blob_offset: dict[bytes, int] = {}
+    blobs: list[bytes] = []
+    cursor = data_start
+    for _flavor, rows in prepared:
+        for _tag, body, _cs in rows:
+            if body not in blob_offset:
+                blob_offset[body] = cursor
+                blobs.append(body)
+                cursor += _aligned4(len(body))
+
+    out = bytearray(b"ttcf")
+    out += struct.pack(">II", 0x00010000, num_fonts)  # version + numFonts
+    face_dir_offset = header_size
+    for _flavor, rows in prepared:
+        out += struct.pack(">I", face_dir_offset)
+        face_dir_offset += 12 + 16 * len(rows)
+    for flavor, rows in prepared:
+        n = len(rows)
+        entry_selector = max(n.bit_length() - 1, 0)
+        search_range = (1 << entry_selector) * 16
+        range_shift = n * 16 - search_range
+        out += struct.pack(
+            ">IHHHH", flavor, n, search_range, entry_selector, range_shift
+        )
+        for tag, body, checksum in rows:
+            out += tag.encode("latin-1")
+            out += struct.pack(">III", checksum, blob_offset[body], len(body))
+    out += b"\x00" * (data_start - len(out))
+    for body in blobs:
+        out += body
+        out += b"\x00" * (_aligned4(len(body)) - len(body))
+    return bytes(out)
+
+
 def _apply_checksum_adjustment(out: bytearray, head_offset: int | None) -> None:
     """Write ``head.checkSumAdjustment`` so the whole file checksums correctly."""
     if head_offset is None or head_offset + 12 > len(out):

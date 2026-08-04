@@ -125,23 +125,20 @@ def _trim_der_padding(data: bytes) -> bytes:
     return data[:total] if 0 < total <= len(data) else data
 
 def _glyph_name_to_unicode(name: str) -> int | None:
-    """Resolve a glyph name to a unicode codepoint without the full AGL.
+    """Resolve a glyph name to a single Unicode codepoint via the Adobe Glyph List.
 
-    Only the algorithmic ``uniXXXX`` (one BMP value) and ``uXXXX[XX]`` forms are
-    handled; arbitrary Adobe glyph names return ``None`` so the caller can bail
-    rather than guess a mapping.
+    Uses the full AGL algorithm (see :mod:`aspose_pdf.engine.agl`), covering
+    named glyphs (``aacute``, ``Euro``, ``afii10017`` …) as well as the
+    algorithmic ``uniXXXX``/``uXXXX`` forms. A name that maps to a multi-scalar
+    sequence returns ``None`` because the caller keys a code -> single-codepoint
+    table.
     """
-    if name.startswith("uni") and len(name) == 7:
-        try:
-            return int(name[3:], 16)
-        except ValueError:
-            return None
-    if name.startswith("u") and 5 <= len(name) <= 7:
-        try:
-            return int(name[1:], 16)
-        except ValueError:
-            return None
-    return None
+    from .agl import glyph_name_to_unicode
+
+    mapped = glyph_name_to_unicode(name)
+    if mapped is None or len(mapped) != 1:
+        return None
+    return ord(mapped)
 
 
 # Maximum /First nesting depth for outline trees; deeper chains raise.

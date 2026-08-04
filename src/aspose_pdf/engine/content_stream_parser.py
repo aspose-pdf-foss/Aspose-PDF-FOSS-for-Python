@@ -1376,152 +1376,16 @@ class ContentStreamParser:
                     curr_code += 1
 
     def _map_glyph_to_unicode(self, name: str) -> str | None:
-        """Map standard PDF glyph names to Unicode characters."""
+        """Map a PDF glyph name to Unicode via the Adobe Glyph List algorithm.
+
+        Handles the full Adobe Glyph List plus the algorithmic ``uniXXXX`` /
+        ``uXXXX`` forms, ligature (underscore) and variant (period) components.
+        """
         if len(name) == 1:
             return name
-        # Adobe AGL: uniXXXX (+ multiples of 4 hex) and uXXXX[XX] for Unicode literals.
-        if name.startswith("uni") and len(name) > 3:
-            hx = name[3:]
-            if (
-                len(hx) >= 4
-                and len(hx) % 4 == 0
-                and all(c in "0123456789abcdefABCDEF" for c in hx)
-            ):
-                parts: list[str] = []
-                for i in range(0, len(hx), 4):
-                    cp = int(hx[i : i + 4], 16)
-                    try:
-                        parts.append(chr(cp))
-                    except ValueError:
-                        return None
-                return "".join(parts)
-        if name.startswith("u") and len(name) >= 5:
-            hx = name[1:]
-            if 4 <= len(hx) <= 6 and all(c in "0123456789abcdefABCDEF" for c in hx):
-                try:
-                    return chr(int(hx, 16))
-                except ValueError:
-                    return None
-        # A minimal mapping for common glyphs
-        mapping = {
-            "space": " ",
-            "exclam": "!",
-            "quotedbl": '"',
-            "numbersign": "#",
-            "dollar": "$",
-            "percent": "%",
-            "ampersand": "&",
-            "quotesingle": "'",
-            "parenleft": "(",
-            "parenright": ")",
-            "asterisk": "*",
-            "plus": "+",
-            "comma": ",",
-            "hyphen": "-",
-            "period": ".",
-            "slash": "/",
-            "zero": "0",
-            "one": "1",
-            "two": "2",
-            "three": "3",
-            "four": "4",
-            "five": "5",
-            "six": "6",
-            "seven": "7",
-            "eight": "8",
-            "nine": "9",
-            "colon": ":",
-            "semicolon": ";",
-            "less": "<",
-            "equal": "=",
-            "greater": ">",
-            "question": "?",
-            "at": "@",
-            "A": "A",
-            "B": "B",
-            "C": "C",
-            "D": "D",
-            "E": "E",
-            "F": "F",
-            "G": "G",
-            "H": "H",
-            "I": "I",
-            "J": "J",
-            "K": "K",
-            "L": "L",
-            "M": "M",
-            "N": "N",
-            "O": "O",
-            "P": "P",
-            "Q": "Q",
-            "R": "R",
-            "S": "S",
-            "T": "T",
-            "U": "U",
-            "V": "V",
-            "W": "W",
-            "X": "X",
-            "Y": "Y",
-            "Z": "Z",
-            "bracketleft": "[",
-            "backslash": "\\",
-            "bracketright": "]",
-            "asciicircum": "^",
-            "underscore": "_",
-            "grave": "`",
-            "a": "a",
-            "b": "b",
-            "c": "c",
-            "d": "d",
-            "e": "e",
-            "f": "f",
-            "g": "g",
-            "h": "h",
-            "i": "i",
-            "j": "j",
-            "k": "k",
-            "l": "l",
-            "m": "m",
-            "n": "n",
-            "o": "o",
-            "p": "p",
-            "q": "q",
-            "r": "r",
-            "s": "s",
-            "t": "t",
-            "u": "u",
-            "v": "v",
-            "w": "w",
-            "x": "x",
-            "y": "y",
-            "z": "z",
-            "braceleft": "{",
-            "bar": "|",
-            "braceright": "}",
-            "asciitilde": "~",
-            "bullet": "•",
-            "dagger": "†",
-            "daggerdbll": "‡",
-            "ellipsis": "…",
-            "emdash": "—",
-            "endash": "\u2013",
-            "fi": "fi",
-            "fl": "fl",
-            "fraction": "\u2044",
-            "guillemotleft": "«",
-            "guillemotright": "»",
-            "guilsinglleft": "\u2039",
-            "guilsinglright": "\u203a",
-            "minus": "\u2212",
-            "quotedblbase": "„",
-            "quotedblleft": "“",
-            "quotedblright": "”",
-            "quoteleft": "\u2018",
-            "quoteright": "\u2019",
-            "quotesinglbase": "\u201a",
-            "trademark": "™",
-        }
-        return mapping.get(name)
+        from .agl import glyph_name_to_unicode
+
+        return glyph_name_to_unicode(name)
 
     def _decode_bytes(self, data: bytes) -> str:
         if not isinstance(data, bytes):

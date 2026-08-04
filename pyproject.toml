@@ -82,6 +82,9 @@ aspose_pdf = ["py.typed"]
   "fonts/LICENSE-OFL.txt",
   "fonts/LICENSE-DEJAVU.txt",
   "fonts/README.md",
+  "agl/*.json.zlib",
+  "agl/*.txt",
+  "agl/README.md",
 ]
 
 [tool.setuptools.packages.find]

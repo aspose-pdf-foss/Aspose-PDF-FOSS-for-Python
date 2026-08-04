@@ -1948,14 +1948,48 @@ class _PageRasterizer:
         outlines = CffOutlines(program)
         if not outlines.ok:
             return None
-        # Resolve codes through the CFF's own built-in custom Encoding; predefined
-        # encodings need the CFF standard-strings tables, so leave those to boxes.
-        enc_map = outlines.encoding_code_to_gid()
-        if not enc_map:
+        # Prefer the PDF /Encoding (base + /Differences) or a predefined encoding
+        # resolved through the CFF charset (name -> gid); fall back to the CFF's
+        # own custom code -> gid Encoding for any code without a name.
+        name_to_gid = outlines.name_to_gid()
+        custom = outlines.encoding_code_to_gid()
+        if not name_to_gid and not custom:
             return None
-        code_to_gid = lambda code, _m=enc_map: _m.get(code)  # noqa: E731
+        code_to_name = self._simple_code_to_name(
+            font_dict, {}, has_custom_gid=bool(custom)
+        )
+
+        def code_to_gid(code, _c2n=code_to_name, _n2g=name_to_gid, _cm=custom):
+            name = _c2n.get(code)
+            if name is not None:
+                gid = _n2g.get(name)
+                if gid is not None:
+                    return gid
+            return _cm.get(code) if _cm else None
+
         width_1000 = self._simple_widths(font_dict, outlines, code_to_gid)
-        return _GlyphFont(outlines, code_to_gid, width_1000, bytes_per_code=1)
+        return _GlyphFont(
+            outlines,
+            code_to_gid,
+            width_1000,
+            bytes_per_code=1,
+            code_to_unicode=self._code_to_unicode_lookup(code_to_name),
+        )
+
+    def _code_to_unicode_lookup(
+        self, code_to_name: dict[int, str]
+    ) -> Callable[[int], int | None] | None:
+        """Build a code -> single Unicode scalar lookup from a code -> name map."""
+        from .agl import glyph_name_to_unicode
+
+        mapping: dict[int, int] = {}
+        for code, name in code_to_name.items():
+            mapped = glyph_name_to_unicode(name)
+            if mapped is not None and len(mapped) == 1:
+                mapping[code] = ord(mapped)
+        if not mapping:
+            return None
+        return lambda code, _m=mapping: _m.get(code)
 
     def _cff_cid_to_gid(self, program: bytes) -> Callable[[int], int | None]:
         from .font_subset_cff import cff_charset_cid_to_gid
@@ -1978,8 +2012,17 @@ class _PageRasterizer:
         if not outlines.ok:
             return None
         code_to_gid = self._type1_code_to_gid(font_dict, outlines)
+        code_to_name = self._simple_code_to_name(
+            font_dict, outlines.builtin_encoding, has_custom_gid=False
+        )
         width_1000 = self._simple_widths(font_dict, outlines, code_to_gid)
-        return _GlyphFont(outlines, code_to_gid, width_1000, bytes_per_code=1)
+        return _GlyphFont(
+            outlines,
+            code_to_gid,
+            width_1000,
+            bytes_per_code=1,
+            code_to_unicode=self._code_to_unicode_lookup(code_to_name),
+        )
 
     def _load_fontfile1(
         self, descriptor: PdfDictionary
@@ -2004,24 +2047,63 @@ class _PageRasterizer:
             int(length2) if length2 else None,
         )
 
+    def _simple_code_to_name(
+        self,
+        font_dict: PdfDictionary,
+        builtin_code_to_name: dict[int, str],
+        has_custom_gid: bool,
+    ) -> dict[int, str]:
+        """Resolve a simple font's code -> glyph name table.
+
+        The base is the PDF ``/Encoding`` (a predefined name, or a dictionary's
+        ``/BaseEncoding``); failing that, the font's own built-in encoding, then
+        StandardEncoding -- unless the font already supplies a custom code -> gid
+        map, in which case no name base is imposed. ``/Differences`` overlay last.
+        """
+        from .agl import base_encoding_table
+
+        enc_ref = font_dict.mapping.get(PdfName("Encoding"))
+        base_name = self._cos_name(enc_ref)
+        enc_obj = self._resolve(enc_ref)
+        differences = None
+        if isinstance(enc_obj, PdfDictionary):
+            base_name = self._cos_name(enc_obj.mapping.get(PdfName("BaseEncoding")))
+            differences = self._resolve(enc_obj.mapping.get(PdfName("Differences")))
+
+        base: dict[int, str] | None = None
+        if base_name:
+            table = base_encoding_table(base_name)
+            if table is not None:
+                base = {code: name for code, name in enumerate(table) if name}
+        if base is None:
+            if builtin_code_to_name:
+                base = dict(builtin_code_to_name)
+            elif has_custom_gid:
+                base = {}
+            else:
+                standard = base_encoding_table("StandardEncoding") or ()
+                base = {code: name for code, name in enumerate(standard) if name}
+
+        code_to_name = dict(base)
+        if isinstance(differences, PdfArray):
+            current = 0
+            for item in differences.items:
+                item = self._resolve(item)
+                if isinstance(item, PdfNumber):
+                    current = int(item.value)
+                elif isinstance(item, PdfName):
+                    code_to_name[current] = item.name.lstrip("/")
+                    current += 1
+        return code_to_name
+
     def _type1_code_to_gid(
         self, font_dict: PdfDictionary, outlines: Type1Outlines
     ) -> Callable[[int], int | None]:
-        # Resolve a code to a glyph name through the font's built-in encoding,
-        # overlaid by any PDF /Encoding /Differences, then to a synthetic gid.
-        code_to_name = dict(outlines.builtin_encoding)
-        enc = self._resolve(font_dict.mapping.get(PdfName("Encoding")))
-        if isinstance(enc, PdfDictionary):
-            diffs = self._resolve(enc.mapping.get(PdfName("Differences")))
-            if isinstance(diffs, PdfArray):
-                current = 0
-                for item in diffs.items:
-                    item = self._resolve(item)
-                    if isinstance(item, PdfNumber):
-                        current = int(item.value)
-                    elif isinstance(item, PdfName):
-                        code_to_name[current] = item.name.lstrip("/")
-                        current += 1
+        # Resolve a code to a glyph name (built-in encoding, then the PDF base
+        # encoding and /Differences) and look up the font's own name -> gid.
+        code_to_name = self._simple_code_to_name(
+            font_dict, outlines.builtin_encoding, has_custom_gid=False
+        )
         name_to_gid = outlines.name_to_gid
 
         def resolve(code: int, _c2n=code_to_name, _n2g=name_to_gid) -> int | None:
