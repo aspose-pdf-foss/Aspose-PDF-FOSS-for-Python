@@ -177,8 +177,11 @@ def test_iter_glyphs_decodes_mixed_width_predefined_cmap():
     glyphs = list(font.iter_glyphs(_SINGLE_BYTE_CODE + _DOUBLE_BYTE_CODE))
 
     # One single-byte unit then one double-byte unit: variable-length split,
-    # code -> CID -> GID, and CID-keyed widths.
-    assert glyphs == [(1, 500.0, False), (2, 800.0, False)]
+    # code -> CID -> GID, CID-keyed widths, and the resolved CID last.
+    assert glyphs == [
+        (1, 500.0, False, single_cid),
+        (2, 800.0, False, double_cid),
+    ]
 
 
 def test_iter_glyphs_applies_word_spacing_only_to_single_byte_32():
@@ -197,7 +200,7 @@ def test_iter_glyphs_applies_word_spacing_only_to_single_byte_32():
 
     # A double-byte code that happens to contain 0x20 must not trigger it.
     two_byte = list(font.iter_glyphs(_DOUBLE_BYTE_CODE))
-    assert all(applies is False for _gid, _w, applies in two_byte)
+    assert all(applies is False for _gid, _w, applies, _cid in two_byte)
 
 
 def test_iter_glyphs_undecodable_code_draws_nothing_and_advances_by_dw():
@@ -214,7 +217,7 @@ def test_iter_glyphs_undecodable_code_draws_nothing_and_advances_by_dw():
     # 0x81 is a lead byte with no trailing byte: outside every single-byte
     # codespace and truncated as a double-byte code.
     (unit,) = list(font.iter_glyphs(b"\x81"))
-    assert unit == (None, 1234.0, False)
+    assert unit == (None, 1234.0, False, None)
 
 
 # ---------------------------------------------------------------------------
@@ -301,3 +304,24 @@ def test_render_unbundled_cmap_does_not_crash_and_differs_from_glyphs():
 
     # The box fallback still renders something, but not the resolved glyphs.
     assert bundled != unbundled
+
+
+def test_build_type0_font_marks_bundled_vertical_cmap():
+    # A bundled *vertical* predefined CMap now drives vertical positioning
+    # (`/W2`/`/DW2` displacement + position vector), not just glyph resolution.
+    single_cid, double_cid = _cids_for(_SINGLE_BYTE_CODE, _DOUBLE_BYTE_CODE)
+    cid_gid = {single_cid: 1, double_cid: 2}
+    widths = {single_cid: 600.0, double_cid: 600.0}
+    pdf, type0, _ = _make_cjk_pdf(
+        encoding="90ms-RKSJ-V",
+        content=b"BT /F0 20 Tf <41889F> Tj ET",
+        cid_gid=cid_gid,
+        widths=widths,
+    )
+    renderer = _PageRasterizer(
+        pdf, 0, dpi=72.0, scale=1.0, background=(255, 255, 255), antialias=False
+    )
+    font = renderer._build_type0_font(type0)
+    assert font is not None
+    assert font.vertical is True
+    assert font.vertical_metrics_1000 is not None

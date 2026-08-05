@@ -334,9 +334,18 @@ class _GlyphFont:
     # render complex-script runs with joined forms instead of isolated glyphs.
     shaping_program: bytes | None = None
     code_to_unicode: Callable[[int], int | None] | None = None
+    # Set for a vertical composite font: ``vertical_metrics_1000(cid)`` returns
+    # ``(w1y, v1x, v1y)`` in 1000 units for the vertical displacement and glyph
+    # position vector (from /W2 and /DW2).
+    vertical: bool = False
+    vertical_metrics_1000: Callable[[int], tuple[float, float, float]] | None = None
 
     def iter_glyphs(self, raw: bytes):
-        """Yield ``(gid_or_None, width_1000, applies_word_spacing)`` per code."""
+        """Yield ``(gid_or_None, width_1000, applies_word_spacing, cid)`` per code.
+
+        ``cid`` is the resolved CID (composite) or the raw code (simple/Identity),
+        used to look up the per-glyph vertical metric.
+        """
         if self.cmap is not None:
             for offset, length, cid in self.cmap.decode_units(
                 raw, budget=self.cmap_budget
@@ -344,17 +353,66 @@ class _GlyphFont:
                 # PDF word spacing applies only to a single-byte code 32.
                 applies_word = length == 1 and raw[offset] == 32
                 if cid is None:
-                    yield None, self.default_width_1000, applies_word
+                    yield None, self.default_width_1000, applies_word, None
                 else:
-                    yield self.code_to_gid(cid), self.width_1000(cid), applies_word
+                    yield self.code_to_gid(cid), self.width_1000(cid), applies_word, cid
             return
         if self.bytes_per_code == 2:
             for i in range(0, len(raw) - 1, 2):
                 code = (raw[i] << 8) | raw[i + 1]
-                yield self.code_to_gid(code), self.width_1000(code), False
+                yield self.code_to_gid(code), self.width_1000(code), False, code
         else:
             for byte in raw:
-                yield self.code_to_gid(byte), self.width_1000(byte), byte == 32
+                yield self.code_to_gid(byte), self.width_1000(byte), byte == 32, byte
+
+
+@dataclass
+class _StreamCMap:
+    """An embedded (stream) CMap as a compact code->CID decoder for rendering.
+
+    Mirrors :meth:`PredefinedCMapEncoding.decode_units` so ``_GlyphFont`` can
+    consume it identically: codespace-aware code splitting, then a direct
+    code-bytes -> CID lookup. An unmapped code yields ``cid=None`` (drawn as
+    nothing at the default advance), never a wrong glyph.
+    """
+
+    code_to_cid: dict[bytes, int]
+    codespaces: tuple[tuple[bytes, bytes], ...]
+    vertical: bool = False
+
+    def decode_units(
+        self, raw: bytes, *, budget: Any = None
+    ) -> list[tuple[int, int, int | None]]:
+        by_length: dict[int, list[tuple[int, int]]] = {}
+        for low, high in self.codespaces:
+            by_length.setdefault(len(low), []).append(
+                (int.from_bytes(low, "big"), int.from_bytes(high, "big"))
+            )
+        lengths = sorted(by_length)
+        units: list[tuple[int, int, int | None]] = []
+        offset = 0
+        n = len(raw)
+        while offset < n:
+            matched: bytes | None = None
+            for length in lengths:
+                if offset + length > n:
+                    continue
+                candidate = raw[offset : offset + length]
+                value = int.from_bytes(candidate, "big")
+                if any(low <= value <= high for low, high in by_length[length]):
+                    matched = candidate
+                    break
+            length = len(matched) if matched is not None else 1
+            cid = self.code_to_cid.get(matched) if matched is not None else None
+            if budget is not None:
+                budget.check(
+                    len(units) + 1,
+                    "max_container_items",
+                    "stream CMap decoded units",
+                )
+            units.append((offset, length, cid))
+            offset += length
+        return units
 
 
 def _normalize_antialias(antialias: Any) -> int:
@@ -1574,13 +1632,36 @@ class _PageRasterizer:
             if self.shape_substitute_text and font.shaping_program is not None
             else None
         )
-        for index, (gid, width_1000, applies_word) in enumerate(font.iter_glyphs(raw)):
+        size = text.font_size
+        for index, (gid, width_1000, applies_word, cid) in enumerate(
+            font.iter_glyphs(raw)
+        ):
             draw_gid = joined[index] if joined is not None else gid
+            if font.vertical:
+                # Vertical writing: displace the glyph by its position vector and
+                # advance downward by the CID's /W2 (or /DW2) displacement.
+                if cid is not None and font.vertical_metrics_1000 is not None:
+                    w1y, v1x, v1y = font.vertical_metrics_1000(cid)
+                else:
+                    w1y, v1x, v1y = -1000.0, font.default_width_1000 / 2.0, 880.0
+                if draw_gid is not None:
+                    contours = font.outlines.outline(draw_gid)
+                    if contours:
+                        self._fill_glyph(
+                            contours,
+                            units_per_em,
+                            offset=(-v1x / 1000.0 * size, -v1y / 1000.0 * size),
+                        )
+                advance = w1y / 1000.0 * size + text.char_spacing
+                text.text_matrix = _multiply(
+                    (1.0, 0.0, 0.0, 1.0, 0.0, advance), text.text_matrix
+                )
+                continue
             if draw_gid is not None:
                 contours = font.outlines.outline(draw_gid)
                 if contours:
                     self._fill_glyph(contours, units_per_em)
-            advance = width_1000 / 1000.0 * text.font_size + text.char_spacing
+            advance = width_1000 / 1000.0 * size + text.char_spacing
             if applies_word:
                 advance += text.word_spacing
             advance *= text.horizontal_scale
@@ -1642,21 +1723,30 @@ class _PageRasterizer:
                 (1.0, 0.0, 0.0, 1.0, advance, 0.0), text.text_matrix
             )
 
-    def _fill_glyph(self, contours: list[list[Point]], units_per_em: int) -> None:
-        """Fill a glyph's font-unit contours through the text/CTM transform."""
+    def _fill_glyph(
+        self,
+        contours: list[list[Point]],
+        units_per_em: int,
+        offset: tuple[float, float] = (0.0, 0.0),
+    ) -> None:
+        """Fill a glyph's font-unit contours through the text/CTM transform.
+
+        *offset* is a text-space shift of the glyph origin (used by vertical
+        writing to apply the CID position vector).
+        """
         text = self.state.text
         if units_per_em <= 0 or text.font_size == 0:
             return
         scale = text.font_size / units_per_em
         # glyph space -> text space: scale by font size, apply horizontal
-        # scaling on x and the text rise on y.
+        # scaling on x, the text rise plus any vertical offset on y.
         glyph_to_text: Matrix = (
             scale * text.horizontal_scale,
             0.0,
             0.0,
             scale,
-            0.0,
-            text.rise,
+            offset[0],
+            text.rise + offset[1],
         )
         base = _multiply(
             _multiply(self.state.ctm, text.text_matrix), glyph_to_text
@@ -1882,10 +1972,12 @@ class _PageRasterizer:
             return None
         cmap = None
         if not identity:
-            # A named /Encoding: render it only when it resolves to one of the
-            # bundled predefined CMaps against the descendant CIDSystemInfo.
-            # Unknown names and embedded CMap streams fall back to boxes.
+            # A named /Encoding resolves against the descendant CIDSystemInfo to
+            # one of the bundled predefined CMaps; an /Encoding *stream* is
+            # decoded directly. Unknown predefined names still fall back to boxes.
             cmap = self._predefined_cmap_encoding(font_dict, cidfont)
+            if cmap is None:
+                cmap = self._stream_encoding_cmap(font_dict)
             if cmap is None:
                 return None
         cid_subtype = self._cos_name(cidfont.mapping.get(PdfName("Subtype")))
@@ -1908,6 +2000,10 @@ class _PageRasterizer:
             return None
         dw = self._cos_number(cidfont.mapping.get(PdfName("DW")))
         default_width = float(dw) if dw is not None else 1000.0
+        vertical = bool(getattr(cmap, "vertical", False))
+        vertical_metrics = (
+            self._cid_vertical_metrics(cidfont, width_1000) if vertical else None
+        )
         return _GlyphFont(
             outlines,
             cid_to_gid,
@@ -1916,7 +2012,44 @@ class _PageRasterizer:
             cmap=cmap,
             cmap_budget=self._load_budget,
             default_width_1000=default_width,
+            vertical=vertical,
+            vertical_metrics_1000=vertical_metrics,
         )
+
+    def _cid_vertical_metrics(
+        self, cidfont: PdfDictionary, width_1000: Callable[[int], float]
+    ) -> Callable[[int], tuple[float, float, float]]:
+        """Return a ``cid -> (w1y, v1x, v1y)`` callable from ``/W2`` and ``/DW2``.
+
+        Defaults follow PDF 32000-1 9.7.4.3: position vector ``v1x = w0/2`` and
+        ``/DW2`` ``[v1y, w1y]`` defaulting to ``[880, -1000]`` (1000 units).
+        """
+        from .content_stream_parser import load_cid_vertical_metrics
+
+        default_v1y, default_w1y = 880.0, -1000.0
+        dw2 = self._resolve(cidfont.mapping.get(PdfName("DW2")))
+        if isinstance(dw2, PdfArray) and len(dw2.items) >= 2:
+            v = self._cos_number(dw2.items[0])
+            w = self._cos_number(dw2.items[1])
+            if v is not None:
+                default_v1y = float(v)
+            if w is not None:
+                default_w1y = float(w)
+        w2_list = None
+        if hasattr(self.pdf, "_convert_cos_to_dict"):
+            w2_list = self.pdf._convert_cos_to_dict(cidfont.mapping.get(PdfName("W2")))
+        metrics = load_cid_vertical_metrics(w2_list, budget=self._load_budget)
+
+        def vertical_metric(
+            cid: int,
+            _m=metrics,
+            _w1y=default_w1y,
+            _v1y=default_v1y,
+            _width=width_1000,
+        ) -> tuple[float, float, float]:
+            return _m.get(cid, (_w1y, _width(cid) / 2.0, _v1y))
+
+        return vertical_metric
 
     def _predefined_cmap_encoding(
         self, font_dict: PdfDictionary, cidfont: PdfDictionary
@@ -1937,6 +2070,49 @@ class _PageRasterizer:
             raise
         except Exception:
             return None
+
+    def _stream_encoding_cmap(self, font_dict: PdfDictionary) -> _StreamCMap | None:
+        """Decode an embedded ``/Encoding`` CMap stream into a render decoder.
+
+        Reuses the extraction parsers so a Type0 font whose encoding is a CMap
+        *stream* (rather than Identity or a bundled predefined name) renders
+        instead of boxing. Returns ``None`` when there is no stream, it declares
+        no CID ranges, or its codespaces are ambiguous.
+        """
+        from .content_stream_parser import (
+            parse_encoding_cmap,
+            parse_encoding_cmap_codespaces,
+            parse_encoding_cmap_wmode,
+        )
+
+        ref = font_dict.mapping.get(PdfName("Encoding"))
+        stream = self._resolve(ref)
+        if not isinstance(stream, PdfStream):
+            return None
+        decoder = getattr(self.pdf, "_decode_cos_stream", None)
+        if decoder is None:
+            return None
+        try:
+            data = decoder(stream, ref)
+        except PdfResourceLimitException:
+            raise
+        except Exception:
+            return None
+
+        code_to_cid, _lengths = parse_encoding_cmap(data, budget=self._load_budget)
+        if not code_to_cid:
+            return None
+        codespaces = parse_encoding_cmap_codespaces(data, budget=self._load_budget)
+        if not codespaces:
+            # No declared codespaces: synthesize one only when every code shares
+            # a single, unambiguous byte length.
+            key_lengths = {len(code) for code in code_to_cid}
+            if len(key_lengths) != 1:
+                return None
+            (length,) = tuple(key_lengths)
+            codespaces = ((bytes(length), b"\xff" * length),)
+        vertical = parse_encoding_cmap_wmode(data, budget=self._load_budget) == 1
+        return _StreamCMap(code_to_cid, codespaces, vertical)
 
     def _build_simple_cff_font(
         self, font_dict: PdfDictionary

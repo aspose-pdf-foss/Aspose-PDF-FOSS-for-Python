@@ -9,6 +9,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Composite (Type0) text renders through embedded (stream) CMaps.** A font
+  whose `/Encoding` is a CMap *stream* (rather than Identity or a bundled
+  predefined name) is decoded with the same parser extraction uses and fills the
+  descendant font's real glyphs instead of boxes. Named predefined CMaps outside
+  the eight bundled tables remain boxed (no bundled code→CID table).
+- **True vertical writing (`WMode 1`).** Vertical CMaps — bundled or embedded —
+  now offset each glyph by its `/W2`/`/DW2` position vector and advance the text
+  downward by the vertical displacement, instead of advancing horizontally.
 - Bundled the full **Adobe Glyph List** (4281 names) as a deterministic,
   integrity-checked data file, and resolve glyph names through the Adobe AGL
   algorithm (exact list, `.`-suffix stripping, `_` ligature components, then the

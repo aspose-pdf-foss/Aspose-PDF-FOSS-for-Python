@@ -360,12 +360,15 @@ Boundaries:
   (ligatures, kerning) through a substitute face is not applied; complex-script
   substitute runs are cursively joined when the face covers the script
   (`shape_substitute_text`, a no-op for the bundled Latin/symbol faces).
-- Composite-font glyph rendering covers Identity encodings and the eight
-  bundled predefined CJK CMaps only. Other predefined CMap names, embedded
-  (stream) CMaps, and a bundled name whose descendant `CIDSystemInfo` does not
-  match are still drawn as glyph boxes. Vertical CMaps resolve and draw the
-  correct glyphs but advance horizontally; true vertical positioning is not
-  applied.
+- Composite-font glyph rendering covers Identity encodings, the eight bundled
+  predefined CJK CMaps, and **embedded (stream) CMaps** (decoded through the same
+  parser extraction uses, so a font that ships its own CMap renders real glyphs).
+  A *named* predefined CMap outside the eight bundled tables, or a bundled name
+  whose descendant `CIDSystemInfo` does not match, is still drawn as glyph boxes
+  — rendering needs a code→CID table the library does not bundle, exactly as for
+  extraction. **Vertical CMaps** (`WMode 1`, bundled or embedded) now position
+  correctly: each glyph is offset by its `/W2` (or `/DW2`) position vector and
+  the text advances downward by the vertical displacement.
 - Layout reflow remains out of scope in this prerelease.
 
 ## Text
