@@ -5443,6 +5443,28 @@ class SimplePdf:
         self._ensure_cos()
         fonts = self._ensure_resource_subdict(page_index, "Font")
         resource_name = self._unique_resource_name(fonts, "F", "F1")
+        type0_ref, parts = self._build_type0_font_graph(authored)
+        fonts.mapping[PdfName(resource_name)] = type0_ref
+        resource = _AuthoredFontResource(
+            authored_font=authored,
+            resource_name=resource_name,
+            type0_font=parts["type0_font"],
+            cid_font=parts["cid_font"],
+            descriptor=parts["descriptor"],
+            font_stream=parts["font_stream"],
+            to_unicode_stream=parts["to_unicode_stream"],
+            cid_to_gid_stream=parts["cid_to_gid_stream"],
+        )
+        self.fonts[resource_name] = parts["type0_font"]
+        return resource
+
+    def _build_type0_font_graph(self, authored: Any) -> tuple[Any, dict[str, Any]]:
+        """Register the Type0 font COS graph; return ``(type0_ref, parts)``.
+
+        Shared by page authoring (``_register_authored_font_resource``) and the
+        AcroForm ``/DR`` field-font path; the caller registers ``type0_ref`` into
+        the appropriate ``/Font`` resource dictionary.
+        """
         base_name = str(authored.base_name).lstrip("/")
         program = bytes(authored.embedded_program())
 
@@ -5524,20 +5546,14 @@ class SimplePdf:
             }
         )
         type0_ref = self._cos_doc.register_object(type0_font)
-        fonts.mapping[PdfName(resource_name)] = type0_ref
-
-        resource = _AuthoredFontResource(
-            authored_font=authored,
-            resource_name=resource_name,
-            type0_font=type0_font,
-            cid_font=cid_font,
-            descriptor=descriptor,
-            font_stream=font_stream,
-            to_unicode_stream=to_unicode_stream,
-            cid_to_gid_stream=cid_to_gid_stream,
-        )
-        self.fonts[resource_name] = type0_font
-        return resource
+        return type0_ref, {
+            "type0_font": type0_font,
+            "cid_font": cid_font,
+            "descriptor": descriptor,
+            "font_stream": font_stream,
+            "to_unicode_stream": to_unicode_stream,
+            "cid_to_gid_stream": cid_to_gid_stream,
+        }
 
     def _register_actual_text_property(self, page_index: int, text: str) -> str:
         """Register a named marked-content property list carrying ActualText."""
@@ -8978,6 +8994,7 @@ class SimplePdf:
         action: Any = None,
         border_color: Sequence[float] | None = None,
         background: Sequence[float] | None = None,
+        font: Any = None,
     ) -> None:
         """Create a terminal AcroForm field and its widget annotations."""
         self._ensure_not_disposed()
@@ -9031,6 +9048,26 @@ class SimplePdf:
         parent_ref, siblings = self._ensure_form_parent_path(root_fields, parts[:-1])
         if self._find_named_field(siblings, parts[-1]) is not None:
             raise PdfValidationException(f"Form field '{name}' already exists")
+
+        # An embedded Type0 (CID) field font: register it in /DR, point /DA at
+        # it, and bake a CID-encoded /AP so non-Latin values render.
+        type0_field_name = None
+        type0_field_ref = None
+        type0_field_size = 12.0
+        authored_field_font = None
+        if font is not None and field_type == "text":
+            from .field_appearance import parse_default_appearance
+            from .font_authoring import prepare_authored_font
+
+            authored_field_font = prepare_authored_font(font, limits=self._load_limits)
+            type0_field_name, type0_field_ref = self._embed_type0_dr_font(
+                acro, authored_field_font
+            )
+            _n, parsed_size, _c = parse_default_appearance(
+                default_appearance or "/Helv 12 Tf 0 g"
+            )
+            type0_field_size = parsed_size or 12.0
+            default_appearance = f"/{type0_field_name} {type0_field_size:g} Tf 0 g"
 
         ft_name = {
             "checkbox": "Btn",
@@ -9133,6 +9170,13 @@ class SimplePdf:
                 if action is not None:
                     widget_map[PdfName("A")] = self._widget_action_cos(action)
             widget_map[PdfName("MK")] = PdfDictionary(mk_map)
+            if authored_field_font is not None:
+                encoded = (
+                    authored_field_font.encode(str(value)) if value else b""
+                )
+                widget_map[PdfName("AP")] = self._build_type0_field_appearance(
+                    rect, type0_field_name, type0_field_size, encoded, type0_field_ref
+                )
 
             widget_ref = self._cos_doc.register_object(PdfDictionary(widget_map))
             kid_refs.append(widget_ref)
@@ -9559,10 +9603,20 @@ class SimplePdf:
                 )
                 return True
         font_ref, used_name = self._resolve_field_font(font_name, acro)
+        font_obj = self._resolve(font_ref)
+        # A Type0 (CID) field font's /AP is baked with CID codes at authoring
+        # time; the simple-font path here cannot re-encode it, so keep the baked
+        # appearance rather than overwrite it with mis-encoded bytes.
+        if (
+            isinstance(font_obj, PdfDictionary)
+            and self._get_name(font_obj.mapping.get(PdfName("Subtype"))) == "Type0"
+        ):
+            return isinstance(
+                self._resolve(widget.mapping.get(PdfName("AP"))), PdfDictionary
+            )
         # Glyph-metric advances for wrap/quadding: the field font's /Widths, or
         # a bundled substitute's metrics; None (e.g. Type0) -> flat estimate.
         width_fn = None
-        font_obj = self._resolve(font_ref)
         if isinstance(font_obj, PdfDictionary):
             metric = self._simple_font_metric(font_obj)
             if metric is not None:
@@ -9842,6 +9896,48 @@ class SimplePdf:
             )
         widget.mapping[PdfName("AP")] = self._cos_doc.register_object(ap_dict)
         return True
+
+    def _embed_type0_dr_font(
+        self, acro: PdfDictionary, authored: Any
+    ) -> tuple[str, Any]:
+        """Embed a Type0 font in the AcroForm ``/DR``; return ``(name, ref)``."""
+        dr = self._resolve(acro.mapping.get(PdfName("DR")))
+        if not isinstance(dr, PdfDictionary):
+            dr = PdfDictionary({})
+            acro.mapping[PdfName("DR")] = dr
+        fonts = self._resolve(dr.mapping.get(PdfName("Font")))
+        if not isinstance(fonts, PdfDictionary):
+            fonts = PdfDictionary({})
+            dr.mapping[PdfName("Font")] = fonts
+        name = self._unique_resource_name(fonts, "F", "F1")
+        type0_ref, _parts = self._build_type0_font_graph(authored)
+        fonts.mapping[PdfName(name)] = type0_ref
+        return name, type0_ref
+
+    def _build_type0_field_appearance(
+        self,
+        rect: tuple[float, float, float, float],
+        type0_name: str,
+        size: float,
+        encoded: bytes,
+        font_ref: Any,
+    ) -> Any:
+        """Bake a left-aligned single-line ``/AP`` for a Type0 field value.
+
+        The value is shown as its Identity-H CID codes (two-byte hex), so a
+        non-Latin field value renders through the embedded CID font.
+        """
+        h = float(rect[3]) - float(rect[1])
+        baseline = max(2.0, (h - size) / 2.0 + size * 0.2)
+        content = (
+            "/Tx BMC\nq\nBT\n"
+            f"/{type0_name} {size:g} Tf\n0 g\n2 {baseline:g} Td\n"
+            f"<{encoded.hex().upper()}> Tj\nET\nQ\nEMC\n"
+        ).encode("latin-1")
+        resources = PdfDictionary(
+            {PdfName("Font"): PdfDictionary({PdfName(type0_name): font_ref})}
+        )
+        return self._register_annotation_appearance(rect, {"N": content}, resources)
 
     def _cos_number_list(self, obj: Any) -> list | None:
         """Coerce a COS array of numbers to a ``list[float]`` (or ``None``)."""

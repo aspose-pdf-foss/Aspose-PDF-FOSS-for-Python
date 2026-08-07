@@ -221,12 +221,18 @@ class Form:
         *,
         value: str = "",
         font_size: float = 12,
+        font: Any = None,
         multiline: bool = False,
         alignment: str | int = "left",
         read_only: bool = False,
         required: bool = False,
     ) -> Field:
-        """Add an editable text field and return it."""
+        """Add an editable text field and return it.
+
+        *font* embeds a Type0 (CID) field font — bytes/path/``FontDescriptor`` —
+        so a non-Latin *value* renders (its ``/AP`` is baked with CID codes at
+        authoring time). Without *font*, the Standard-14 ``/DR`` Helvetica is used.
+        """
         if not isinstance(value, str):
             raise TypeError("Text field value must be a string")
         if not isinstance(multiline, bool):
@@ -242,6 +248,7 @@ class Form:
             flags=flags,
             default_appearance=self._default_appearance(font_size),
             alignment=self._alignment_value(alignment),
+            font=font,
         )
 
     def add_checkbox(

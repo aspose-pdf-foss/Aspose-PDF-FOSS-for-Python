@@ -20,6 +20,10 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`/AP` `N`/`R`/`D`) appearances, and `Form.add_push_button` accepts
   `border_color` / `background` (`/MK` `/BC` / `/BG`); the rollover and down faces
   are shaded variants of the background.
+- **Type0 (CID) field fonts.** `Form.add_text_field(font=…)` embeds a Type0 font
+  in the AcroForm `/DR` and bakes a CID-encoded `/AP`, so a non-Latin field value
+  renders through the embedded CID font. (`generate_appearances` leaves the baked
+  Type0 appearance intact; Type0 rich text `/RC` falls back to the plain `/DA`.)
 - **PDF/A conversion embeds Standard-14 fonts and normalizes DeviceCMYK.**
   `convert_to_pdfa` now embeds non-embedded Standard-14 and Symbol/ZapfDingbats
   fonts with the bundled metric-compatible substitute (synthesizing `/Widths`

@@ -744,10 +744,15 @@ Boundaries:
   `action`, and — with link annotations, outline items, and `Page.add_link` —
   use the typed action/destination API (`aspose_pdf.interactive`: `GoTo`/`URI`/
   `GoToR`/`Named`/`JavaScript`/`Launch` actions and `Fit`/`XYZ`/`FitH`/`FitV`/
-  `FitR`/`FitB` destinations, serialized to `/A` and `/Dest`). Button **icons**
-  (`/MK /I`), composite/Type0 field-font appearances, submit/reset behavior, and
-  XFA authoring are not implemented. Signature *fields* can be authored (see
-  above), but signing an authored field and seed-value/lock dictionaries are not.
+  `FitR`/`FitB` destinations, serialized to `/A` and `/Dest`). A text field can
+  embed a **Type0 (CID) font** (`add_text_field(font=…)`): the font is added to
+  the AcroForm `/DR`, `/DA` points at it, and a CID-encoded `/AP` is baked at
+  authoring time so a non-Latin value renders (this baked appearance is left
+  intact by later `generate_appearances`, which cannot re-encode a Type0 value).
+  Button **icons** (`/MK /I`), Type0 field **rich text** (`/RC` values fall back
+  to the plain `/DA` appearance), submit/reset behavior, and XFA authoring are
+  not implemented. Signature *fields* can be authored (see above), but signing an
+  authored field and seed-value/lock dictionaries are not.
 
 ## Annotations
 
