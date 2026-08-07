@@ -8976,6 +8976,8 @@ class SimplePdf:
         caption: str = "",
         on_value: str = "Yes",
         action: Any = None,
+        border_color: Sequence[float] | None = None,
+        background: Sequence[float] | None = None,
     ) -> None:
         """Create a terminal AcroForm field and its widget annotations."""
         self._ensure_not_disposed()
@@ -9120,6 +9122,14 @@ class SimplePdf:
             elif field_type == "pushbutton":
                 mk_map[PdfName("CA")] = _pdf_text_string(caption)
                 widget_map[PdfName("H")] = PdfName("P")
+                if border_color is not None:
+                    mk_map[PdfName("BC")] = PdfArray(
+                        [PdfNumber(float(c)) for c in border_color]
+                    )
+                if background is not None:
+                    mk_map[PdfName("BG")] = PdfArray(
+                        [PdfNumber(float(c)) for c in background]
+                    )
                 if action is not None:
                     widget_map[PdfName("A")] = self._widget_action_cos(action)
             widget_map[PdfName("MK")] = PdfDictionary(mk_map)
@@ -9807,20 +9817,30 @@ class SimplePdf:
 
         from .appearance import build_push_button_appearance
 
-        generated = build_push_button_appearance(
-            w,
-            h,
-            caption=caption,
-            border_color=border_color,
-            bg_color=background,
-            border_width=self._button_border_width(widget),
+        border_width = self._button_border_width(widget)
+        # Rollover (R) and down (D) faces shade a base background; the normal (N)
+        # face keeps the widget's own background (possibly none) so it is
+        # unchanged from the caption-only behavior.
+        base = background if background else [0.85, 0.85, 0.85]
+        states = (
+            ("N", background),
+            ("R", [min(1.0, channel + 0.1) for channel in base]),
+            ("D", [max(0.0, channel - 0.15) for channel in base]),
         )
-        resources = self._build_appearance_resources(
-            generated.ext_gstates, generated.fonts
-        )
-        widget.mapping[PdfName("AP")] = self._register_annotation_appearance(
-            rect, {"N": generated.content}, resources
-        )
+        ap_dict = PdfDictionary({})
+        for key, bg_color in states:
+            generated = build_push_button_appearance(
+                w,
+                h,
+                caption=caption,
+                border_color=border_color,
+                bg_color=bg_color,
+                border_width=border_width,
+            )
+            ap_dict.mapping[PdfName(key)] = self._register_form_xobject(
+                w, h, generated
+            )
+        widget.mapping[PdfName("AP")] = self._cos_doc.register_object(ap_dict)
         return True
 
     def _cos_number_list(self, obj: Any) -> list | None:

@@ -739,9 +739,14 @@ Boundaries:
   variable-text value is single-font and measured per byte code (single-byte
   simple fonts — composite/Type0 field fonts fall back to a flat width
   estimate). Check box / radio appearances are synthesised (a ZapfDingbats check
-  or a vector dot). Public push-button authoring currently supports a static
-  caption face only; icons, rollover/down faces, actions, submit/reset behavior,
-  and XFA authoring are not implemented. Signature *fields* can be authored (see
+  or a vector dot). Push buttons author normal/rollover/down (`/AP` `N`/`R`/`D`)
+  faces from their caption, accept `/MK` border/background colors and a typed
+  `action`, and — with link annotations, outline items, and `Page.add_link` —
+  use the typed action/destination API (`aspose_pdf.interactive`: `GoTo`/`URI`/
+  `GoToR`/`Named`/`JavaScript`/`Launch` actions and `Fit`/`XYZ`/`FitH`/`FitV`/
+  `FitR`/`FitB` destinations, serialized to `/A` and `/Dest`). Button **icons**
+  (`/MK /I`), composite/Type0 field-font appearances, submit/reset behavior, and
+  XFA authoring are not implemented. Signature *fields* can be authored (see
   above), but signing an authored field and seed-value/lock dictionaries are not.
 
 ## Annotations

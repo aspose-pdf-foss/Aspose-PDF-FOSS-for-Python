@@ -428,13 +428,18 @@ class Form:
         *,
         caption: str = "",
         action: Any = None,
+        border_color: Sequence[float] | None = None,
+        background: Sequence[float] | None = None,
         read_only: bool = False,
         required: bool = False,
     ) -> Field:
-        """Add a push button with a generated caption appearance.
+        """Add a push button with generated caption/rollover/down appearances.
 
         *action* is an :class:`~aspose_pdf.interactive.Action` (or a
         ``Destination``, treated as a go-to) run when the button is pressed.
+        *border_color* and *background* are DeviceRGB/Gray/CMYK component lists
+        for the widget ``/MK`` border and background; the rollover and down
+        faces are shaded variants of the background.
         """
         if not isinstance(caption, str):
             raise TypeError("caption must be a string")
@@ -446,6 +451,8 @@ class Form:
             flags=flags,
             caption=caption,
             action=action,
+            border_color=border_color,
+            background=background,
         )
 
     def add_signature_field(

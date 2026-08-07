@@ -16,6 +16,10 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   outline items (`OutlineItem(..., destination=…)`, replacing the previous
   fixed fit-to-page `/Dest`), and push-button widgets
   (`Form.add_push_button(..., action=…)`). Serialized to COS `/A` and `/Dest`.
+- **Push-button visual states.** Push buttons now generate normal/rollover/down
+  (`/AP` `N`/`R`/`D`) appearances, and `Form.add_push_button` accepts
+  `border_color` / `background` (`/MK` `/BC` / `/BG`); the rollover and down faces
+  are shaded variants of the background.
 - **PDF/A conversion embeds Standard-14 fonts and normalizes DeviceCMYK.**
   `convert_to_pdfa` now embeds non-embedded Standard-14 and Symbol/ZapfDingbats
   fonts with the bundled metric-compatible substitute (synthesizing `/Widths`
