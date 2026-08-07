@@ -10031,6 +10031,11 @@ class SimplePdf:
         # 7. Automatic font embedding
         if font_lookup_directory:
             self._embed_missing_fonts(Path(font_lookup_directory))
+        # Fill any still-unembedded Standard-14/symbol fonts with bundled
+        # metric-compatible substitutes (PDF/A requires even Standard-14 embedded).
+        self._embed_standard14_fonts()
+        # Normalize DeviceCMYK content color to RGB under the sRGB OutputIntent.
+        self._normalize_cmyk_content()
 
         logger.info(
             "PDF/A conversion complete for level %s. Checking remaining issues.", level
@@ -10336,6 +10341,357 @@ class SimplePdf:
                         raise
                     except PDF_OPERATION_ERRORS as e:
                         logger.error(f"Failed to embed font {base_font}: {e}")
+
+    def _descriptor_signals(
+        self, descriptor: Any
+    ) -> tuple[int, float, float | None]:
+        """Return ``(flags, italic_angle, font_weight)`` from a FontDescriptor."""
+        flags, italic, weight = 0, 0.0, None
+        if isinstance(descriptor, PdfDictionary):
+            value = self._get_number(descriptor.mapping.get(PdfName("Flags")))
+            if value is not None:
+                flags = int(value)
+            value = self._get_number(descriptor.mapping.get(PdfName("ItalicAngle")))
+            if value is not None:
+                italic = float(value)
+            value = self._get_number(descriptor.mapping.get(PdfName("FontWeight")))
+            if value is not None:
+                weight = float(value)
+        return flags, italic, weight
+
+    def _embed_standard14_fonts(self) -> None:
+        """Embed bundled substitutes for non-embedded Standard-14/symbol fonts.
+
+        Standard-14 families and Symbol/ZapfDingbats resolve to bundled,
+        metric-compatible faces (Liberation / DejaVu); any other non-embedded
+        font returns no substitute key and is left for a lookup directory,
+        remaining in the reported issues. Descriptor metrics and per-code
+        ``/Widths`` come from the substitute, so the embedded font is
+        self-consistent and renders as before.
+        """
+        if not self._cos_doc:
+            return
+        from .font_authoring import prepare_authored_font
+        from .font_subset import read_unicode_cmap
+        from .glyph_outlines import TrueTypeOutlines
+        from .std_font_data import load_substitute_sfnt, resolve_substitute_key
+        from .std_fonts import StandardFonts
+
+        cache: dict[str, dict | None] = {}
+
+        def substitute_for(key: str) -> dict | None:
+            if key in cache:
+                return cache[key]
+            sfnt = load_substitute_sfnt(key)
+            outlines = TrueTypeOutlines(sfnt) if sfnt else None
+            if not sfnt or outlines is None or not outlines.ok:
+                cache[key] = None
+                return None
+            try:
+                metrics = prepare_authored_font(sfnt).descriptor_metrics
+            except FontEmbeddingException:
+                cache[key] = None
+                return None
+            stream = PdfStream(
+                bytes(sfnt),
+                {
+                    PdfName("Length"): PdfNumber(len(sfnt)),
+                    PdfName("Length1"): PdfNumber(len(sfnt)),
+                },
+            )
+            cache[key] = {
+                "ref": self._cos_doc.register_object(stream),
+                "metrics": metrics,
+                "unicode_to_gid": read_unicode_cmap(sfnt) or {},
+                "outlines": outlines,
+                "upem": outlines.units_per_em or 1000,
+                "key": key,
+            }
+            return cache[key]
+
+        processed: set[int] = set()
+        for i in range(len(self.pages)):
+            page = self._get_page_dict(i)
+            if not isinstance(page, PdfDictionary):
+                continue
+            res = self._resolve(page.mapping.get(PdfName("Resources")))
+            if not isinstance(res, PdfDictionary):
+                continue
+            fonts = self._resolve(res.mapping.get(PdfName("Font")))
+            if not isinstance(fonts, PdfDictionary):
+                continue
+            for font_ref in fonts.mapping.values():
+                font = self._resolve(font_ref)
+                if not isinstance(font, PdfDictionary) or id(font) in processed:
+                    continue
+                processed.add(id(font))
+                subtype = self._get_name(font.mapping.get(PdfName("Subtype")))
+                if subtype not in ("Type1", "TrueType", "MMType1"):
+                    continue  # composite fonts embed through their own path
+                descriptor = self._resolve(
+                    font.mapping.get(PdfName("FontDescriptor"))
+                )
+                if isinstance(descriptor, PdfDictionary) and any(
+                    PdfName(k) in descriptor.mapping
+                    for k in ("FontFile", "FontFile2", "FontFile3")
+                ):
+                    continue  # already embedded
+                base_font = self._get_name(font.mapping.get(PdfName("BaseFont")))
+                clean = base_font.split("+")[-1] if base_font else ""
+                if not StandardFonts.is_standard_font(clean):
+                    continue  # only Standard-14/Symbol/ZapfDingbats auto-embed;
+                    # arbitrary custom fonts still need the lookup directory
+                flags, italic, weight = self._descriptor_signals(descriptor)
+                key = resolve_substitute_key(
+                    clean, flags=flags, italic_angle=italic, font_weight=weight
+                )
+                if key is None:
+                    continue  # unrecognized custom font stays reported
+                entry = substitute_for(key)
+                if entry is not None:
+                    self._apply_embedded_substitute(font, descriptor, base_font, entry)
+
+    def _apply_embedded_substitute(
+        self, font: PdfDictionary, descriptor: Any, base_font: str | None, entry: dict
+    ) -> None:
+        """Attach the substitute program, descriptor metrics, and /Widths."""
+        if not isinstance(descriptor, PdfDictionary):
+            descriptor = PdfDictionary({PdfName("Type"): PdfName("FontDescriptor")})
+            font.mapping[PdfName("FontDescriptor")] = self._cos_doc.register_object(
+                descriptor
+            )
+        descriptor.mapping[PdfName("FontFile2")] = entry["ref"]
+        if base_font and PdfName("FontName") not in descriptor.mapping:
+            descriptor.mapping[PdfName("FontName")] = PdfName(base_font)
+        metrics = entry["metrics"]
+        for name, value in (
+            ("Flags", PdfNumber(int(metrics.get("Flags", 32)))),
+            ("ItalicAngle", PdfNumber(float(metrics.get("ItalicAngle", 0.0)))),
+            ("Ascent", PdfNumber(int(metrics.get("Ascent", 728)))),
+            ("Descent", PdfNumber(int(metrics.get("Descent", -210)))),
+            ("CapHeight", PdfNumber(int(metrics.get("CapHeight", 688)))),
+            ("StemV", PdfNumber(int(metrics.get("StemV", 80)))),
+        ):
+            descriptor.mapping.setdefault(PdfName(name), value)
+        bbox = metrics.get("FontBBox")
+        if isinstance(bbox, (tuple, list)) and len(bbox) == 4:
+            descriptor.mapping.setdefault(
+                PdfName("FontBBox"), PdfArray([PdfNumber(int(v)) for v in bbox])
+            )
+        if PdfName("Widths") not in font.mapping:
+            first, last, widths = self._substitute_widths(font, entry)
+            font.mapping[PdfName("FirstChar")] = PdfNumber(first)
+            font.mapping[PdfName("LastChar")] = PdfNumber(last)
+            font.mapping[PdfName("Widths")] = PdfArray(
+                [PdfNumber(w) for w in widths]
+            )
+
+    def _winansi_code_to_unicode(self) -> dict[int, int]:
+        """WinAnsiEncoding code -> Unicode scalar, via the bundled tables."""
+        from .agl import base_encoding_table, glyph_name_to_unicode
+
+        table = base_encoding_table("WinAnsiEncoding") or ()
+        result: dict[int, int] = {}
+        for code in range(min(256, len(table))):
+            name = table[code]
+            if name:
+                mapped = glyph_name_to_unicode(name)
+                if mapped is not None and len(mapped) == 1:
+                    result[code] = ord(mapped)
+        return result
+
+    def _substitute_widths(
+        self, font: PdfDictionary, entry: dict
+    ) -> tuple[int, int, list[int]]:
+        """Per-code advances (1000 units) for the embedded substitute face."""
+        from .std_font_data import substitute_code_to_unicode
+
+        first, last = 32, 255
+        symbolic = substitute_code_to_unicode(entry["key"])
+        if symbolic is not None:
+            code_to_unicode = dict(symbolic)
+        else:
+            # Standard-14 Latin fonts often omit /Encoding; default to WinAnsi and
+            # overlay any explicit /Encoding + /Differences the font declares.
+            code_to_unicode = self._winansi_code_to_unicode()
+            code_to_unicode.update(self._simple_code_to_unicode(font) or {})
+        unicode_to_gid = entry["unicode_to_gid"]
+        outlines = entry["outlines"]
+        upem = entry["upem"]
+        missing = int(entry["metrics"].get("MissingWidth", 0))
+        widths: list[int] = []
+        for code in range(first, last + 1):
+            width = missing
+            unicode_value = code_to_unicode.get(code)
+            if unicode_value is not None:
+                gid = unicode_to_gid.get(unicode_value)
+                if gid:
+                    advance = outlines.advance_width(gid)
+                    if advance is not None:
+                        width = round(advance * 1000 / upem)
+            widths.append(width)
+        return first, last, widths
+
+    def _normalize_cmyk_content(self) -> None:
+        """Rewrite DeviceCMYK color in page and form-XObject content to RGB.
+
+        Converts the ``k``/``K`` operators and ``/DeviceCMYK`` color-space fills/
+        strokes (``cs``/``CS`` + 4-operand ``sc``/``scn``) using the naive device
+        conversion the renderer already applies, so appearance is unchanged.
+        CMYK image XObjects, Separation/DeviceN, and ICC-CMYK are not touched and
+        remain in the reported issues.
+        """
+        if not self._cos_doc:
+            return
+        for i in range(len(self.page_contents)):
+            rewritten = self._rewrite_cmyk_content(self.page_contents[i])
+            if rewritten is not None:
+                self._set_page_content(i, rewritten)
+        # Form XObjects reachable from page resources.
+        seen: set[int] = set()
+        for i in range(len(self.pages)):
+            resources = self._get_page_resources(i)
+            if isinstance(resources, PdfDictionary):
+                self._normalize_cmyk_xobjects(resources, seen, depth=0)
+
+    def _normalize_cmyk_xobjects(
+        self, resources: PdfDictionary, seen: set[int], depth: int
+    ) -> None:
+        if depth > 8:
+            return
+        xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
+        if not isinstance(xobjects, PdfDictionary):
+            return
+        for ref in xobjects.mapping.values():
+            stream = self._resolve(ref)
+            if not isinstance(stream, PdfStream) or id(stream) in seen:
+                continue
+            seen.add(id(stream))
+            if self._get_name(stream.mapping.get(PdfName("Subtype"))) != "Form":
+                continue
+            try:
+                data = self._decode_cos_stream(stream, ref)
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                continue
+            rewritten = self._rewrite_cmyk_content(data)
+            if rewritten is not None:
+                stream.content = rewritten
+                stream.mapping[PdfName("Length")] = PdfNumber(len(rewritten))
+                stream.mapping.pop(PdfName("Filter"), None)
+                stream.mapping.pop(PdfName("DecodeParms"), None)
+            inner = self._resolve(stream.mapping.get(PdfName("Resources")))
+            if isinstance(inner, PdfDictionary):
+                self._normalize_cmyk_xobjects(inner, seen, depth + 1)
+
+    def _rewrite_cmyk_content(self, content: bytes) -> bytes | None:
+        """Return *content* with DeviceCMYK color rewritten to RGB, or None."""
+        if b" k" not in content and b" K" not in content and b"DeviceCMYK" not in content:
+            return None
+        from .text_edit import _lex
+
+        def fmt(value: float) -> str:
+            value = max(0.0, min(1.0, value))
+            if value in (0.0, 1.0):
+                return str(int(value))
+            return f"{value:.5f}".rstrip("0").rstrip(".")
+
+        def to_rgb(c: float, m: float, y: float, k: float) -> str:
+            r, g, b = (1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k)
+            return f"{fmt(r)} {fmt(g)} {fmt(b)}"
+
+        tokens = _lex(content, budget=self._load_budget)
+        out = bytearray()
+        operands: list[Any] = []
+        fill_cmyk = stroke_cmyk = False
+        changed = False
+
+        def numeric(count: int) -> list[float] | None:
+            if len(operands) < count:
+                return None
+            values: list[float] = []
+            for token in operands[-count:]:
+                if token.kind != "word":
+                    return None
+                try:
+                    values.append(float(token.value))
+                except ValueError:
+                    return None
+            return values
+
+        def flush_before(count: int) -> None:
+            for token in operands[: len(operands) - count]:
+                out.extend(content[token.start : token.end])
+                out.extend(b" ")
+
+        def flush_all() -> None:
+            for token in operands:
+                out.extend(content[token.start : token.end])
+                out.extend(b" ")
+
+        def is_number(value: str) -> bool:
+            try:
+                float(value)
+                return True
+            except ValueError:
+                return False
+
+        for token in tokens:
+            # Operands (numbers, names, strings, arrays, dicts) buffer; only a
+            # non-numeric ``word`` is an operator.
+            if token.kind != "word" or token.value in ("<<", ">>") or is_number(
+                token.value
+            ):
+                operands.append(token)
+                continue
+            op = token.value
+            handled = False
+            if op in ("k", "K"):
+                values = numeric(4)
+                if values is not None:
+                    flush_before(4)
+                    out.extend(
+                        f"{to_rgb(*values)} {'rg' if op == 'k' else 'RG'} ".encode()
+                    )
+                    if op == "k":
+                        fill_cmyk = False
+                    else:
+                        stroke_cmyk = False
+                    changed = handled = True
+            elif op in ("cs", "CS"):
+                is_cmyk = bool(
+                    operands
+                    and operands[-1].kind == "name"
+                    and operands[-1].value == "/DeviceCMYK"
+                )
+                if op == "cs":
+                    fill_cmyk = is_cmyk
+                else:
+                    stroke_cmyk = is_cmyk
+                if is_cmyk:
+                    flush_before(1)
+                    out.extend(f"/DeviceRGB {op} ".encode())
+                    changed = handled = True
+            elif op in ("sc", "scn", "SC", "SCN"):
+                cmyk = fill_cmyk if op in ("sc", "scn") else stroke_cmyk
+                if cmyk:
+                    values = numeric(4)
+                    if values is not None:
+                        flush_before(4)
+                        out.extend(f"{to_rgb(*values)} {op} ".encode())
+                        changed = handled = True
+            elif op in ("g", "rg"):
+                fill_cmyk = False
+            elif op in ("G", "RG"):
+                stroke_cmyk = False
+            if not handled:
+                flush_all()
+                out.extend(content[token.start : token.end])
+                out.extend(b" ")
+            operands = []
+        flush_all()
+        return bytes(out) if changed else None
 
     def set_watermark(self, text: str) -> None:
         """Set watermark text."""

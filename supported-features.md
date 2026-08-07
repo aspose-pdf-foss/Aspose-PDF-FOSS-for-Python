@@ -924,6 +924,14 @@ Supported:
   XMP metadata, setting a title and trailer `/ID` when missing, capping the
   header version, and removing prohibited JavaScript/OpenAction/AA/OCProperties
   entries, AcroForm `/NeedAppearances`/XFA, and offending annotation flags.
+  Non-embedded **Standard-14 and Symbol/ZapfDingbats** fonts are embedded with
+  the bundled metric-compatible substitute (with synthesized `/Widths` from that
+  face) even without a `font_lookup_directory`; other non-embedded fonts still
+  need the directory and stay reported. **DeviceCMYK** content color is
+  normalized to RGB (the `k`/`K` operators and `/DeviceCMYK` color-space
+  fills/strokes), using the same device conversion the renderer applies so
+  appearance is unchanged. CMYK **image XObjects**, `/Separation`/`/DeviceN`,
+  ICC-CMYK, and transparency are not converted and remain in the reported issues.
 - Run heuristic PDF/UA checks. The catalog-level prerequisites
   (`/StructTreeRoot`, `/MarkInfo /Marked true`, ViewerPreferences
   `/DisplayDocTitle true`, a document title, and an XMP `pdfuaid:part`

@@ -9,6 +9,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **PDF/A conversion embeds Standard-14 fonts and normalizes DeviceCMYK.**
+  `convert_to_pdfa` now embeds non-embedded Standard-14 and Symbol/ZapfDingbats
+  fonts with the bundled metric-compatible substitute (synthesizing `/Widths`
+  from that face) even without a `font_lookup_directory`, and rewrites
+  DeviceCMYK content color (`k`/`K` and `/DeviceCMYK` fills/strokes) to RGB using
+  the renderer's device conversion so appearance is unchanged. CMYK image
+  XObjects, Separation/DeviceN, ICC-CMYK, and transparency stay reported, not
+  converted.
 - **Composite (Type0) text renders through embedded (stream) CMaps.** A font
   whose `/Encoding` is a CMap *stream* (rather than Identity or a bundled
   predefined name) is decoded with the same parser extraction uses and fills the
