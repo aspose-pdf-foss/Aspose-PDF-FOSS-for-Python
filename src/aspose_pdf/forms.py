@@ -427,10 +427,15 @@ class Form:
         rect: Sequence[float],
         *,
         caption: str = "",
+        action: Any = None,
         read_only: bool = False,
         required: bool = False,
     ) -> Field:
-        """Add a caption-only push button with a generated normal appearance."""
+        """Add a push button with a generated caption appearance.
+
+        *action* is an :class:`~aspose_pdf.interactive.Action` (or a
+        ``Destination``, treated as a go-to) run when the button is pressed.
+        """
         if not isinstance(caption, str):
             raise TypeError("caption must be a string")
         flags = self._common_flags(read_only=read_only, required=required) | (1 << 16)
@@ -440,6 +445,7 @@ class Form:
             [{"page_index": self._page_index(page), "rect": rect}],
             flags=flags,
             caption=caption,
+            action=action,
         )
 
     def add_signature_field(

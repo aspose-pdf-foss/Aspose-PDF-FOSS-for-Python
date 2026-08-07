@@ -410,6 +410,24 @@ class Page:
             overlay_color=tuple(overlay_color),
         )
 
+    def add_link(
+        self,
+        rect: Sequence[float],
+        target: Any,
+    ) -> None:
+        """Add a clickable link over *rect* triggering *target*.
+
+        *rect* is ``(x0, y0, x1, y1)`` in PDF user space. *target* is an
+        :class:`~aspose_pdf.interactive.Action` (e.g. ``URIAction``,
+        ``GoToAction``) or a :class:`~aspose_pdf.interactive.Destination`
+        (a bare destination becomes an implicit go-to within this document).
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        eng.add_link(self._index, tuple(rect), target)
+
 
 class PageCollection:
     """A collection to manage PDF pages within a Document."""

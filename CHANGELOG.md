@@ -9,6 +9,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Typed action/destination API** (`aspose_pdf.interactive`): destination value
+  objects (`FitDestination`, `XYZDestination`, `FitH/V/R/B`…) and actions
+  (`GoToAction`, `URIAction`, `GoToRAction`, `NamedAction`, `JavaScriptAction`,
+  `LaunchAction`), wired to link annotations (`Page.add_link(rect, target)`),
+  outline items (`OutlineItem(..., destination=…)`, replacing the previous
+  fixed fit-to-page `/Dest`), and push-button widgets
+  (`Form.add_push_button(..., action=…)`). Serialized to COS `/A` and `/Dest`.
 - **PDF/A conversion embeds Standard-14 fonts and normalizes DeviceCMYK.**
   `convert_to_pdfa` now embeds non-embedded Standard-14 and Symbol/ZapfDingbats
   fonts with the bundled metric-compatible substitute (synthesizing `/Widths`

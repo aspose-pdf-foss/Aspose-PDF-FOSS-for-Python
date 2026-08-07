@@ -2069,9 +2069,6 @@ class SimplePdf:
         def build_outline_item(
             item: dict, parent_ref: PdfIndirectReference
         ) -> PdfIndirectReference | None:
-            page_idx = item.get("page_index", 0)
-            page_ref = make_page_ref(page_idx)
-            dest = PdfArray([page_ref, PdfName("Fit")])
             flags = (1 if item.get("is_italic") else 0) | (
                 2 if item.get("is_bold") else 0
             )
@@ -2080,9 +2077,17 @@ class SimplePdf:
                 {
                     PdfName("Title"): PdfString(item.get("title", "")),
                     PdfName("Parent"): parent_ref,
-                    PdfName("Dest"): dest,
                 }
             )
+            target = item.get("target")
+            if target is not None:
+                cos_target, key = self._interactive_target_cos(target)
+                outline_dict.mapping[PdfName(key)] = cos_target
+            else:
+                page_ref = make_page_ref(item.get("page_index", 0))
+                outline_dict.mapping[PdfName("Dest")] = PdfArray(
+                    [page_ref, PdfName("Fit")]
+                )
             if flags:
                 outline_dict.mapping[PdfName("F")] = PdfNumber(flags)
 
@@ -6760,6 +6765,104 @@ class SimplePdf:
             if isinstance(annots_array, PdfArray):
                 annots_array.items.append(annot_ref)
 
+    # -- typed interactive targets (actions / destinations) ---------------
+
+    def _make_page_ref(self, index: int) -> Any:
+        from .cos import PdfIndirectReference
+
+        ids = getattr(self, "_page_obj_ids", [])
+        if not ids:
+            return PdfIndirectReference(0, 0)
+        idx = max(0, min(int(index), len(ids) - 1))
+        return PdfIndirectReference(ids[idx], 0)
+
+    def _destination_cos(self, dest: Any, make_ref: Any) -> PdfArray:
+        from .cos import PdfNull
+
+        kind, params = dest._spec()
+        items: list[Any] = [make_ref(dest.page), PdfName(kind)]
+        for param in params:
+            items.append(PdfNull() if param is None else PdfNumber(float(param)))
+        return PdfArray(items)
+
+    def _action_cos(self, action: Any) -> PdfDictionary:
+        from ..interactive import Destination
+
+        spec = action._spec()
+        mapping: dict[Any, Any] = {PdfName("Type"): PdfName("Action")}
+        for key, value in spec.items():
+            pdf_key = PdfName(key)
+            if key in ("S", "N"):
+                mapping[pdf_key] = PdfName(str(value))
+            elif isinstance(value, Destination):
+                if spec.get("S") == "GoToR":  # remote page *number*, not a ref
+                    mapping[pdf_key] = self._destination_cos(
+                        value, lambda index: PdfNumber(int(index))
+                    )
+                else:
+                    mapping[pdf_key] = self._destination_cos(value, self._make_page_ref)
+            else:
+                mapping[pdf_key] = PdfString(str(value))
+        return PdfDictionary(mapping)
+
+    def _interactive_target_cos(self, target: Any) -> tuple[Any, str]:
+        """Return ``(cos_object, key)`` where key is ``Dest`` or ``A``."""
+        from ..interactive import Action, Destination
+
+        if isinstance(target, Destination):
+            return self._destination_cos(target, self._make_page_ref), "Dest"
+        if isinstance(target, Action):
+            return self._action_cos(target), "A"
+        raise TypeError("target must be an Action or a Destination")
+
+    def _widget_action_cos(self, target: Any) -> PdfDictionary:
+        """Return an ``/A`` action dict for a widget; a Destination becomes GoTo."""
+        from ..interactive import Action, Destination, GoToAction
+
+        if isinstance(target, Destination):
+            target = GoToAction(target)
+        if not isinstance(target, Action):
+            raise TypeError("a button action must be an Action or Destination")
+        return self._action_cos(target)
+
+    def add_link(
+        self,
+        page_index: int,
+        rect: Sequence[float],
+        target: Any,
+    ) -> None:
+        """Add a ``/Link`` annotation with a typed action or destination."""
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        if self._cos_doc is None:
+            return
+        if page_index < 0 or page_index >= len(self._page_obj_ids):
+            return
+        page_id = self._page_obj_ids[page_index]
+        page_dict = self._cos_doc.objects.get(page_id) if page_id else None
+        if not isinstance(page_dict, PdfDictionary):
+            return
+        cos_target, key = self._interactive_target_cos(target)
+        annot = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Annot"),
+                PdfName("Subtype"): PdfName("Link"),
+                PdfName("Rect"): PdfArray([PdfNumber(float(v)) for v in rect]),
+                PdfName("Border"): PdfArray(
+                    [PdfNumber(0), PdfNumber(0), PdfNumber(0)]
+                ),
+                PdfName(key): cos_target,
+            }
+        )
+        annot_ref = self._cos_doc.register_object(annot)
+        annots_ref = page_dict.mapping.get(PdfName("Annots"))
+        if annots_ref is None:
+            page_dict.mapping[PdfName("Annots")] = PdfArray([annot_ref])
+        else:
+            annots_array = self._resolve(annots_ref)
+            if isinstance(annots_array, PdfArray):
+                annots_array.items.append(annot_ref)
+
     def insert_annotation(
         self, page_index: int, annot_index: int, data: dict[str, Any]
     ) -> None:
@@ -8872,6 +8975,7 @@ class SimplePdf:
         alignment: int = 0,
         caption: str = "",
         on_value: str = "Yes",
+        action: Any = None,
     ) -> None:
         """Create a terminal AcroForm field and its widget annotations."""
         self._ensure_not_disposed()
@@ -9016,6 +9120,8 @@ class SimplePdf:
             elif field_type == "pushbutton":
                 mk_map[PdfName("CA")] = _pdf_text_string(caption)
                 widget_map[PdfName("H")] = PdfName("P")
+                if action is not None:
+                    widget_map[PdfName("A")] = self._widget_action_cos(action)
             widget_map[PdfName("MK")] = PdfDictionary(mk_map)
 
             widget_ref = self._cos_doc.register_object(PdfDictionary(widget_map))

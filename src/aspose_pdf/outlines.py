@@ -29,11 +29,15 @@ class OutlineItem:
         *,
         is_bold: bool = False,
         is_italic: bool = False,
+        destination: object | None = None,
     ) -> None:
         self.title: str = title
         self.page_index: int = page_index
         self.is_bold: bool = is_bold
         self.is_italic: bool = is_italic
+        # Optional typed target: an aspose_pdf.interactive Destination or Action.
+        # When set it overrides ``page_index`` (which is the fit-to-page default).
+        self.destination: object | None = destination
         self.children: list[OutlineItem] = []
 
     def add(self, item: OutlineItem) -> OutlineItem:
@@ -55,6 +59,7 @@ class OutlineItem:
             "page_index": self.page_index,
             "is_bold": self.is_bold,
             "is_italic": self.is_italic,
+            "target": self.destination,
             "children": [c._to_dict() for c in self.children],
         }
 
