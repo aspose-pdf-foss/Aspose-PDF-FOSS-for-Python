@@ -971,8 +971,13 @@ Supported:
   (`/ICCBased` with `/N 4`) payloads, raw or `DCTDecode` (Adobe de-inversion and
   YCCK included, decoded through the renderer's own JPEG path), are rewritten as
   8-bit `DeviceRGB` and re-encoded with `FlateDecode`, dropping the now-stale
-  `/Decode` and `/DecodeParms`. `/Separation`/`/DeviceN` and transparency are
-  still not converted and remain in the reported issues.
+  `/Decode` and `/DecodeParms`. `/Separation` and `/DeviceN` spaces over a CMYK
+  alternate are **repointed to DeviceRGB**: PDF cannot compose their tint
+  transform with a CMYK→RGB conversion, so the composition is resampled into a
+  Type 0 (sampled) function over DeviceRGB. The space keeps its kind, colorant
+  names and component count, so content streams that select it are untouched,
+  and a Separation/DeviceN *image* keeps its tint samples — only the space
+  changes. Transparency is still not converted and remains reported.
 - Run heuristic PDF/UA checks. The catalog-level prerequisites
   (`/StructTreeRoot`, `/MarkInfo /Marked true`, ViewerPreferences
   `/DisplayDocTitle true`, a document title, and an XMP `pdfuaid:part`
@@ -1066,6 +1071,11 @@ Supported:
 
 Boundaries:
 
+- Tint-transform resampling is a grid, not an exact composition: a linear
+  transform round-trips exactly, while a curved one is reproduced to within a
+  step or two per channel. The grid is one axis per colorant, sized to a fixed
+  total-sample budget, so a many-colorant `/DeviceN` is sampled more coarsely
+  than a `/Separation`.
 - PDF/A and PDF/UA checks are heuristic signals, not certification-grade
   validation. They inspect document structure, not rendered output, glyph
   coverage, colour fidelity, or the semantic correctness of a tag tree. Use a

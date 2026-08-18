@@ -33,7 +33,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `DCTDecode` — to 8-bit `DeviceRGB` re-encoded with `FlateDecode`, dropping the
   stale `/Decode`/`/DecodeParms`. Pixels go through the same decode path the
   renderer uses (Adobe de-inversion, YCCK), so the page looks the same.
-  `/Separation`, `/DeviceN` and transparency remain reported, not converted.
+  Transparency remains reported, not converted.
+- **PDF/A conversion repoints `/Separation` and `/DeviceN` off CMYK.** A space
+  whose alternate resolves to DeviceCMYK or ICC-CMYK now gets a resampled Type 0
+  tint transform over `DeviceRGB` (PDF has no way to compose the original
+  transform with a CMYK→RGB conversion). The space keeps its kind, colorant
+  names and component count, so content streams selecting it need no rewriting,
+  and a Separation/DeviceN image keeps its tint samples. A linear transform is
+  reproduced exactly; a curved one to within a step or two per channel.
 
 ### Fixed
 

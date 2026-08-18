@@ -10902,10 +10902,11 @@ class SimplePdf:
         # Image metadata (colour space, bpc, filter) is resolved by CosExtractor;
         # it reads the same live COS objects, so rewrites here still land.
         extractor = CosExtractor(self._cos_doc, b"", budget=self._load_budget)
+        spaces: set[int] = set()
         for i in range(len(self.pages)):
             resources = self._cos_page_resources(i)
             if isinstance(resources, PdfDictionary):
-                self._normalize_cmyk_xobjects(resources, seen, 0, extractor)
+                self._normalize_cmyk_xobjects(resources, seen, 0, extractor, spaces)
 
     def _cos_page_resources(self, page_index: int) -> PdfDictionary | None:
         """Return a page's ``/Resources`` as the live COS dictionary.
@@ -10927,9 +10928,15 @@ class SimplePdf:
         seen: set[int],
         depth: int,
         extractor: CosExtractor,
+        spaces: set[int],
     ) -> None:
         if depth > 8:
             return
+        # Named colour spaces the content selects with cs/CS.
+        named = self._resolve(resources.mapping.get(PdfName("ColorSpace")))
+        if isinstance(named, PdfDictionary):
+            for cs_ref in named.mapping.values():
+                self._convert_cmyk_alternate_colorspace(cs_ref, extractor, spaces)
         xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
         if not isinstance(xobjects, PdfDictionary):
             return
@@ -10940,7 +10947,12 @@ class SimplePdf:
             seen.add(id(stream))
             subtype = self._get_name(stream.mapping.get(PdfName("Subtype")))
             if subtype == "Image":
-                self._convert_cmyk_image_xobject(stream, ref, extractor)
+                # A Separation/DeviceN image keeps its tint samples: repointing
+                # the space is enough, and cheaper than rewriting pixels.
+                if not self._convert_cmyk_alternate_colorspace(
+                    stream.mapping.get(PdfName("ColorSpace")), extractor, spaces
+                ):
+                    self._convert_cmyk_image_xobject(stream, ref, extractor)
                 continue
             if subtype != "Form":
                 continue
@@ -10958,7 +10970,109 @@ class SimplePdf:
                 stream.mapping.pop(PdfName("DecodeParms"), None)
             inner = self._resolve(stream.mapping.get(PdfName("Resources")))
             if isinstance(inner, PdfDictionary):
-                self._normalize_cmyk_xobjects(inner, seen, depth + 1, extractor)
+                self._normalize_cmyk_xobjects(
+                    inner, seen, depth + 1, extractor, spaces
+                )
+
+    # Total grid samples allowed when resampling one tint transform. The grid
+    # is size**inputs, so the per-axis resolution shrinks as inputs grow.
+    _TINT_RESAMPLE_BUDGET = 4096
+
+    def _tint_grid_size(self, inputs: int) -> int:
+        """Return the per-axis sample count for an *inputs*-dimensional grid."""
+        size = 2
+        while (size + 1) ** inputs <= self._TINT_RESAMPLE_BUDGET:
+            size += 1
+        return min(size, 256)
+
+    def _convert_cmyk_alternate_colorspace(
+        self, cs_obj: Any, extractor: CosExtractor, seen: set[int]
+    ) -> bool:
+        """Repoint a ``/Separation``/``/DeviceN`` space from CMYK to DeviceRGB.
+
+        PDF has no way to compose the existing tint transform with a CMYK->RGB
+        conversion, so the composition is *resampled* into a Type 0 (sampled)
+        function whose range is DeviceRGB. The space keeps its kind, its
+        colorant names and its component count, so content streams that select
+        it and pass tint values need no rewriting at all.
+
+        Returns ``True`` when the space was rewritten.
+        """
+        from .shading import build_color_converter
+
+        cs = self._resolve(cs_obj)
+        if not isinstance(cs, PdfArray) or len(cs.items) < 4:
+            return False
+        if id(cs) in seen:
+            return False
+        head = self._get_name(cs.items[0])
+        if head not in ("Separation", "DeviceN", "NChannel"):
+            return False
+        kind, _n, _pal, _base = extractor._resolve_colorspace(cs.items[2])
+        if kind != "cmyk":
+            return False
+
+        if head == "Separation":
+            inputs = 1
+        else:
+            names = self._resolve(cs.items[1])
+            inputs = len(names.items) if isinstance(names, PdfArray) else 0
+        if inputs < 1:
+            return False
+
+        try:
+            convert = build_color_converter(self, cs, budget=self._load_budget)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return False
+
+        size = self._tint_grid_size(inputs)
+        total = size**inputs
+        self._load_budget.check(
+            total * 3,
+            "max_decoded_stream_bytes",
+            "PDF/A tint transform resample",
+        )
+
+        # Type 0 sample order: the FIRST input varies fastest (ISO 32000-1 7.10.2).
+        samples = bytearray(total * 3)
+        divisor = float(size - 1)
+        for index in range(total):
+            remainder = index
+            coords = []
+            for _ in range(inputs):
+                coords.append((remainder % size) / divisor)
+                remainder //= size
+            try:
+                rgb = convert(coords if inputs > 1 else [coords[0]])
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                return False
+            offset = index * 3
+            samples[offset] = max(0, min(255, int(rgb[0])))
+            samples[offset + 1] = max(0, min(255, int(rgb[1])))
+            samples[offset + 2] = max(0, min(255, int(rgb[2])))
+
+        packed = zlib.compress(bytes(samples))
+        unit = [PdfNumber(0), PdfNumber(1)]
+        function = PdfStream(
+            packed,
+            {
+                PdfName("FunctionType"): PdfNumber(0),
+                PdfName("Domain"): PdfArray(unit * inputs),
+                PdfName("Range"): PdfArray(unit * 3),
+                PdfName("Size"): PdfArray([PdfNumber(size)] * inputs),
+                PdfName("BitsPerSample"): PdfNumber(8),
+                PdfName("Filter"): PdfName("FlateDecode"),
+                PdfName("Length"): PdfNumber(len(packed)),
+            },
+        )
+        cs.items[2] = PdfName("DeviceRGB")
+        cs.items[3] = self._cos_doc.register_object(function)
+        seen.add(id(cs))
+        return True
 
     def _convert_cmyk_image_xobject(
         self, stream: Any, ref: Any, extractor: CosExtractor
