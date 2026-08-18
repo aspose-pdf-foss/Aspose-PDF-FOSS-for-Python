@@ -3,14 +3,18 @@
 ``convert_to_pdfa`` adds an sRGB OutputIntent, under which DeviceCMYK content is
 non-compliant. It now rewrites the ``k``/``K`` operators and ``/DeviceCMYK``
 color-space fills/strokes to their RGB equivalents (same naive device
-conversion the renderer uses, so appearance is unchanged). CMYK *image* XObjects
-are a documented boundary: left as-is and still reported.
+conversion the renderer uses, so appearance is unchanged), and converts CMYK
+*image* XObjects to DeviceRGB. ``/Separation`` and ``/DeviceN`` remain a
+documented boundary: left as-is and still reported.
 """
 
 from __future__ import annotations
 
+import zlib
+
 from aspose_pdf.document import Document
 from aspose_pdf.engine.cos import (
+    PdfArray,
     PdfDictionary,
     PdfName,
     PdfNumber,
@@ -63,9 +67,8 @@ def test_non_cmyk_content_is_untouched():
     assert b"1 0 0 rg" in out and b"0.5 g" in out
 
 
-def test_cmyk_image_xobject_is_a_documented_boundary():
-    # A CMYK image XObject is NOT converted (pixel conversion is out of scope);
-    # its color space stays DeviceCMYK.
+def test_cmyk_image_xobject_becomes_devicergb():
+    # A CMYK image XObject is converted to DeviceRGB, pixels and all.
     pdf = SimplePdf()
     pdf.pages = [(0, 0, 100, 100)]
     pdf.page_contents = [b"q 100 0 0 100 0 0 cm /Im0 Do Q"]
@@ -97,4 +100,46 @@ def test_cmyk_image_xobject_is_a_documented_boundary():
     res = engine._resolve(page.get(PdfName("Resources")))
     xobjects = engine._resolve(res.get(PdfName("XObject")))
     im = engine._resolve(xobjects.get(PdfName("Im0")))
-    assert engine._get_name(im.mapping.get(PdfName("ColorSpace"))) == "DeviceCMYK"
+    assert engine._get_name(im.mapping.get(PdfName("ColorSpace"))) == "DeviceRGB"
+    assert engine._get_number(im.mapping.get(PdfName("BitsPerComponent"))) == 8
+    # 0,0,0,0 CMYK is white; the payload is now three RGB bytes.
+    assert zlib.decompress(im.content) == b"\xff\xff\xff"
+
+
+def test_cmyk_content_inside_a_form_xobject_is_normalized():
+    """Form XObject *content* is reached through the page's COS resources.
+
+    The walker previously tested the plain-dict view of the resources against
+    PdfDictionary, which never matches, so nested content was silently skipped.
+    """
+    pdf = SimplePdf()
+    pdf.pages = [(0, 0, 100, 100)]
+    pdf.page_contents = [b"q /Fx0 Do Q"]
+    pdf._ensure_cos()
+    cos = pdf._cos_doc
+    inner = b"0.1 0.2 0.3 0.4 k 0 0 10 10 re f"
+    form = cos.register_object(
+        PdfStream(
+            inner,
+            {
+                PdfName("Type"): PdfName("XObject"),
+                PdfName("Subtype"): PdfName("Form"),
+                PdfName("BBox"): PdfArray([PdfNumber(v) for v in (0, 0, 10, 10)]),
+                PdfName("Length"): PdfNumber(len(inner)),
+            },
+        )
+    )
+    cos.objects[pdf._page_obj_ids[0]].mapping[PdfName("Resources")] = PdfDictionary(
+        {PdfName("XObject"): PdfDictionary({PdfName("Fx0"): form})}
+    )
+
+    document = Document().load_from(pdf.to_bytes())
+    document.convert_to_pdfa("2b")
+
+    engine = document._engine_pdf
+    xobjects = engine._resolve(
+        engine._cos_page_resources(0).mapping[PdfName("XObject")]
+    )
+    content = engine._resolve(list(xobjects.mapping.values())[0]).content
+    assert b" k" not in content
+    assert b" rg" in content

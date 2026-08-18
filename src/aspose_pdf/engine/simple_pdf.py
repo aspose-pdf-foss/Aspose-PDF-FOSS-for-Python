@@ -10884,9 +10884,10 @@ class SimplePdf:
 
         Converts the ``k``/``K`` operators and ``/DeviceCMYK`` color-space fills/
         strokes (``cs``/``CS`` + 4-operand ``sc``/``scn``) using the naive device
-        conversion the renderer already applies, so appearance is unchanged.
-        CMYK image XObjects, Separation/DeviceN, and ICC-CMYK are not touched and
-        remain in the reported issues.
+        conversion the renderer already applies, so appearance is unchanged, and
+        rewrites CMYK **image XObjects** (``/DeviceCMYK`` and ICC-CMYK) to
+        DeviceRGB. ``/Separation`` and ``/DeviceN`` are not touched and remain in
+        the reported issues.
         """
         if not self._cos_doc:
             return
@@ -10894,15 +10895,38 @@ class SimplePdf:
             rewritten = self._rewrite_cmyk_content(self.page_contents[i])
             if rewritten is not None:
                 self._set_page_content(i, rewritten)
-        # Form XObjects reachable from page resources.
+        # Image and form XObjects reachable from page resources. The COS
+        # dictionary is needed here, not the plain-dict view _get_page_resources
+        # returns, because these objects are rewritten in place.
         seen: set[int] = set()
+        # Image metadata (colour space, bpc, filter) is resolved by CosExtractor;
+        # it reads the same live COS objects, so rewrites here still land.
+        extractor = CosExtractor(self._cos_doc, b"", budget=self._load_budget)
         for i in range(len(self.pages)):
-            resources = self._get_page_resources(i)
+            resources = self._cos_page_resources(i)
             if isinstance(resources, PdfDictionary):
-                self._normalize_cmyk_xobjects(resources, seen, depth=0)
+                self._normalize_cmyk_xobjects(resources, seen, 0, extractor)
+
+    def _cos_page_resources(self, page_index: int) -> PdfDictionary | None:
+        """Return a page's ``/Resources`` as the live COS dictionary.
+
+        ``_get_page_resources`` converts to plain Python containers, which are
+        copies — mutating them would not reach the document. ``/Resources`` is
+        inheritable, so the ``/Parent`` chain is walked when the page itself
+        does not carry one.
+        """
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            return None
+        resources = self._get_inherited_attr(page, "Resources")
+        return resources if isinstance(resources, PdfDictionary) else None
 
     def _normalize_cmyk_xobjects(
-        self, resources: PdfDictionary, seen: set[int], depth: int
+        self,
+        resources: PdfDictionary,
+        seen: set[int],
+        depth: int,
+        extractor: CosExtractor,
     ) -> None:
         if depth > 8:
             return
@@ -10914,7 +10938,11 @@ class SimplePdf:
             if not isinstance(stream, PdfStream) or id(stream) in seen:
                 continue
             seen.add(id(stream))
-            if self._get_name(stream.mapping.get(PdfName("Subtype"))) != "Form":
+            subtype = self._get_name(stream.mapping.get(PdfName("Subtype")))
+            if subtype == "Image":
+                self._convert_cmyk_image_xobject(stream, ref, extractor)
+                continue
+            if subtype != "Form":
                 continue
             try:
                 data = self._decode_cos_stream(stream, ref)
@@ -10930,7 +10958,59 @@ class SimplePdf:
                 stream.mapping.pop(PdfName("DecodeParms"), None)
             inner = self._resolve(stream.mapping.get(PdfName("Resources")))
             if isinstance(inner, PdfDictionary):
-                self._normalize_cmyk_xobjects(inner, seen, depth + 1)
+                self._normalize_cmyk_xobjects(inner, seen, depth + 1, extractor)
+
+    def _convert_cmyk_image_xobject(
+        self, stream: Any, ref: Any, extractor: CosExtractor
+    ) -> bool:
+        """Rewrite one CMYK image XObject to 8-bit DeviceRGB in place.
+
+        Covers ``/DeviceCMYK`` and ICC-CMYK (``/ICCBased`` with ``/N 4``),
+        whatever the stream filter — a DCTDecode payload is decoded through the
+        same JPEG path the renderer uses (Adobe de-inversion and YCCK included),
+        so the converted pixels match what the page already drew. The result is
+        re-encoded as FlateDecode, which is lossless and always available.
+        Returns ``True`` when the image was converted.
+        """
+        from .rasterizer import _decode_image_to_rgb
+
+        meta = extractor._resolve_image_meta(stream)
+        if meta.get("cs_kind") != "cmyk":
+            return False
+        width = int(meta.get("width") or 0)
+        height = int(meta.get("height") or 0)
+        if width <= 0 or height <= 0:
+            return False
+        self._load_budget.check_image_pixels(width, height, "PDF/A CMYK image")
+
+        try:
+            data = self._decode_cos_stream(stream, ref)
+            converted = _decode_image_to_rgb(
+                meta, data, limits=self._load_budget.limits
+            )
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return False
+        if converted is None:
+            return False
+        out_width, out_height, rgb = converted
+        if len(rgb) != out_width * out_height * 3:
+            return False
+        self._load_budget.reserve_decoded(len(rgb), "PDF/A CMYK image RGB bytes")
+
+        packed = zlib.compress(rgb)
+        stream.content = packed
+        stream.mapping[PdfName("ColorSpace")] = PdfName("DeviceRGB")
+        stream.mapping[PdfName("BitsPerComponent")] = PdfNumber(8)
+        stream.mapping[PdfName("Width")] = PdfNumber(out_width)
+        stream.mapping[PdfName("Height")] = PdfNumber(out_height)
+        stream.mapping[PdfName("Filter")] = PdfName("FlateDecode")
+        stream.mapping[PdfName("Length")] = PdfNumber(len(packed))
+        # The old parameters described the CMYK payload, not this one.
+        stream.mapping.pop(PdfName("DecodeParms"), None)
+        stream.mapping.pop(PdfName("Decode"), None)
+        return True
 
     def _rewrite_cmyk_content(self, content: bytes) -> bytes | None:
         """Return *content* with DeviceCMYK color rewritten to RGB, or None."""

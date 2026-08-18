@@ -27,8 +27,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `/SubFilter` or `/Reasons` is enforced, and a `/Lock` becomes a **FieldMDP**
   signature reference.
 
+- **PDF/A conversion rewrites CMYK images to DeviceRGB.** `convert_to_pdfa`
+  already normalized DeviceCMYK *content* colour; it now also converts CMYK
+  **image XObjects** — `/DeviceCMYK` and ICC-CMYK (`/ICCBased` `/N 4`), raw or
+  `DCTDecode` — to 8-bit `DeviceRGB` re-encoded with `FlateDecode`, dropping the
+  stale `/Decode`/`/DecodeParms`. Pixels go through the same decode path the
+  renderer uses (Adobe de-inversion, YCCK), so the page looks the same.
+  `/Separation`, `/DeviceN` and transparency remain reported, not converted.
+
 ### Fixed
 
+- **PDF/A conversion never reached form XObjects.** The CMYK content walker
+  tested `_get_page_resources()` — which returns a converted plain `dict` — with
+  `isinstance(..., PdfDictionary)`, a condition that can never hold, so DeviceCMYK
+  inside a form XObject was silently left in place. It now walks the live COS
+  resource dictionary (following inherited `/Resources`).
 - **Attachments in nested embedded-file name trees are no longer invisible.**
   `/Names /EmbeddedFiles` was read only as a flat `/Names` array, so a document
   whose tree another producer balanced into `/Kids` sub-nodes (ISO 32000-1

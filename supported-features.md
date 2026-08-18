@@ -966,8 +966,13 @@ Supported:
   need the directory and stay reported. **DeviceCMYK** content color is
   normalized to RGB (the `k`/`K` operators and `/DeviceCMYK` color-space
   fills/strokes), using the same device conversion the renderer applies so
-  appearance is unchanged. CMYK **image XObjects**, `/Separation`/`/DeviceN`,
-  ICC-CMYK, and transparency are not converted and remain in the reported issues.
+  appearance is unchanged — in page content **and** inside nested form XObjects.
+  CMYK **image XObjects** are converted too: `/DeviceCMYK` and **ICC-CMYK**
+  (`/ICCBased` with `/N 4`) payloads, raw or `DCTDecode` (Adobe de-inversion and
+  YCCK included, decoded through the renderer's own JPEG path), are rewritten as
+  8-bit `DeviceRGB` and re-encoded with `FlateDecode`, dropping the now-stale
+  `/Decode` and `/DecodeParms`. `/Separation`/`/DeviceN` and transparency are
+  still not converted and remain in the reported issues.
 - Run heuristic PDF/UA checks. The catalog-level prerequisites
   (`/StructTreeRoot`, `/MarkInfo /Marked true`, ViewerPreferences
   `/DisplayDocTitle true`, a document title, and an XMP `pdfuaid:part`
