@@ -470,18 +470,30 @@ class Form:
         *,
         read_only: bool = False,
         required: bool = False,
+        seed_value: Mapping[str, Any] | None = None,
+        lock: Mapping[str, Any] | None = None,
     ) -> Field:
         """Add an empty (unsigned) signature field and return it.
 
         Creates an ``/FT /Sig`` field with a widget on *page* and sets the
         AcroForm ``/SigFlags`` ``SignaturesExist`` bit. The field carries no
-        value until it is signed; it renders as an empty box.
+        value until it is signed; it renders as an empty box. Fill it later
+        with :func:`aspose_pdf.engine.sign_field.sign_field`, which signs the
+        saved bytes as an incremental update.
+
+        *seed_value* constrains how the field may be signed (``/SV``) — keys
+        ``filter``, ``sub_filter``, ``digest_method``, ``reasons``, plus
+        ``required`` naming those a signer must honour rather than prefer.
+        *lock* (``/Lock``) names the fields this signature freezes: ``action``
+        of ``All``/``Include``/``Exclude`` and, for the latter two, ``fields``.
         """
         return self._create_field(
             name,
             "signature",
             [{"page_index": self._page_index(page), "rect": rect}],
             flags=self._common_flags(read_only=read_only, required=required),
+            seed_value=seed_value,
+            field_lock=lock,
         )
 
     def remove_field(self, name: str) -> Field:

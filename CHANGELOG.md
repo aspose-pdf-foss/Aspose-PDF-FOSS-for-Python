@@ -9,6 +9,33 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Signing an authored signature field.** `engine.sign_field.sign_field()`
+  fills the `/FT /Sig` field created by `Form.add_signature_field()` as an
+  incremental update: the original bytes are emitted verbatim, so a signature
+  already in the document stays valid and the surrounding COS structure
+  (widgets, other fields, outlines, annotations) is preserved instead of being
+  rebuilt. Several fields can be signed in turn. Covers `adbe.pkcs7.detached`
+  and PAdES (`pades=True`), an embedded chain, local/network timestamps, and
+  DocMDP certification (writing `/Perms /DocMDP`). Previously the only signing
+  path rebuilt the whole file and synthesised its own single field, so an
+  authored field could not be signed at all.
+- **Signature seed values and field locks.** `Form.add_signature_field()`
+  accepts `seed_value=` (`/SV`: `filter`, `sub_filter`, `digest_method`,
+  `reasons`, and `required` naming the entries whose ISO 32000-1 table 234
+  `/Ff` bit makes them binding) and `lock=` (`/Lock`: `action` of
+  `All`/`Include`/`Exclude` with `fields`). At signing time a required
+  `/SubFilter` or `/Reasons` is enforced, and a `/Lock` becomes a **FieldMDP**
+  signature reference.
+
+### Fixed
+
+- **Attachments in nested embedded-file name trees are no longer invisible.**
+  `/Names /EmbeddedFiles` was read only as a flat `/Names` array, so a document
+  whose tree another producer balanced into `/Kids` sub-nodes (ISO 32000-1
+  7.9.6) reported *no attachments at all* — silently, with no error. The tree is
+  now walked in full, preserving its order, with depth, cumulative entry count,
+  and revisited nodes bounded by the shared `PdfLoadLimits` budget.
+
 - **Typed action/destination API** (`aspose_pdf.interactive`): destination value
   objects (`FitDestination`, `XYZDestination`, `FitH/V/R/B`…) and actions
   (`GoToAction`, `URIAction`, `GoToRAction`, `NamedAction`, `JavaScriptAction`,

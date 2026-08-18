@@ -701,8 +701,12 @@ Supported:
   `/SigFlags` SignaturesExist bit is set (existing bits preserved), the widget
   renders as an empty box, and the field carries no value until signed. It
   round-trips and reports as a `signature` field and can be removed like any
-  other. Signing an authored field, and lock/seed-value dictionaries, are not
-  yet wired.
+  other. A **seed value** (`seed_value=` → `/SV`) constrains how the field may
+  be signed (`filter`, `sub_filter`, `digest_method`, `reasons`, plus
+  `required` naming the entries whose `/Ff` bit makes them binding rather than
+  advisory), and a **field lock** (`lock=` → `/Lock`) names the fields the
+  signature freezes (`action` of `All`/`Include`/`Exclude`, with `fields` for
+  the latter two).
 - Regenerate field appearance streams from their values via
   `Document.generate_field_appearances()` or `Form.generate_appearances()`:
   text and choice fields are drawn from their `/V` and default appearance
@@ -751,8 +755,8 @@ Boundaries:
   intact by later `generate_appearances`, which cannot re-encode a Type0 value).
   Button **icons** (`/MK /I`), Type0 field **rich text** (`/RC` values fall back
   to the plain `/DA` appearance), submit/reset behavior, and XFA authoring are
-  not implemented. Signature *fields* can be authored (see above), but signing an
-  authored field and seed-value/lock dictionaries are not.
+  not implemented. Signature fields can be authored *and* signed (see above and
+  [Security](#security-encryption-and-signatures)); XFA authoring is not.
 
 ## Annotations
 
@@ -845,9 +849,11 @@ Boundaries:
 - The typed `FileSpecification` view is read-only; mutate attachments through
   `Document.add_attachment` / `Document.remove_attachment` (or the `attachments`
   mapping) and re-read `embedded_files`.
-- Embedded-file name trees are read from and written as a single flat `/Names`
-  array; deeply nested `/Kids` name-tree nodes produced by other tools are not
-  traversed on read.
+- Embedded-file name trees are **read** through their full `/Kids` structure —
+  a tree another tool balanced into intermediate nodes yields the same
+  attachments as a flat one, in the tree's own order, with depth, cumulative
+  entry count, and revisited nodes bounded by `PdfLoadLimits`. They are
+  **written** back as a single flat `/Names` array.
 
 ## Security, Encryption, And Signatures
 
@@ -874,6 +880,19 @@ Supported:
 - Verify embedded RFC 3161 signature timestamps (TSA signature and message
   imprint) and surface the timestamp time; embed a timestamp when signing from a
   local TSA or (opt-in) a network TSA.
+- **Sign an authored signature field in place**
+  (`engine.sign_field.sign_field(pdf_bytes, name, cert, key, …)`): the field
+  created by `Form.add_signature_field()` is filled as an *incremental update*,
+  so the original bytes — and any signature already in them — stay
+  byte-for-byte intact, and the surrounding structure (widgets, other form
+  fields, outlines, annotations) is preserved rather than rebuilt. Several
+  fields in one document can be signed in turn, each revision leaving the
+  earlier signatures valid. Supports `adbe.pkcs7.detached` and PAdES
+  (`pades=True`), an embedded chain, a local or network timestamp, and DocMDP
+  certification. The field's `/SV` seed value is **enforced** where its `/Ff`
+  marks an entry binding (`/SubFilter`, `/Reasons`), and a `/Lock` is carried
+  into the signature as a **FieldMDP** transform. A field that already carries
+  a `/V` is rejected rather than overwritten.
 - Create and validate DocMDP certification (certifying) signatures, including
   reporting the certification level and flagging changes that violate a
   "no changes permitted" certification.
@@ -905,6 +924,13 @@ Boundaries:
   validators (e.g. veraPDF, eIDAS validation services). Online harvesting of
   fresh revocation material into the `/DSS` at build time is opt-in by supplying
   it to `enable_ltv`; the builder itself stays offline.
+- Signing an authored field goes through `sign_field` on the *saved bytes*,
+  which is what a byte-range signature covers. The whole-document signing path
+  (`SimplePdf.signing_creds`) is unchanged: it rebuilds the file and synthesises
+  its own single field, so it neither fills an authored field nor preserves the
+  COS structure. Of the `/SV` seed value, `/SubFilter` and `/Reasons` are
+  enforced when required; `/Filter`, `/DigestMethod`, `/V`, `/LegalAttestation`
+  and `/AddRevInfo` are written but not enforced at signing time.
 
 ## PDF/A And PDF/UA
 

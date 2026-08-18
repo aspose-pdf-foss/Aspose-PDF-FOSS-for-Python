@@ -13,12 +13,13 @@ import re
 import struct
 import zlib
 from collections import namedtuple
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
 )
 
 from ..exceptions import (
@@ -8978,6 +8979,115 @@ class SimplePdf:
             "Choice options must be strings or (export_value, display_value) pairs"
         )
 
+    # ISO 32000-1 table 234 (/SV /Ff): 1-based bit positions Filter=1,
+    # SubFilter=2, V=3, Reasons=4, LegalAttestation=5, AddRevInfo=6,
+    # DigestMethod=7. A set bit makes that entry a requirement, not a hint.
+    _SEED_REQUIRED_BITS: ClassVar[dict[str, int]] = {
+        "filter": 1 << 0,
+        "sub_filter": 1 << 1,
+        "reasons": 1 << 3,
+        "digest_method": 1 << 6,
+    }
+
+    def _signature_seed_value_cos(self, spec: Mapping[str, Any]) -> PdfDictionary:
+        """Build a signature field's ``/SV`` seed value dictionary.
+
+        Recognised keys: ``filter``, ``sub_filter`` (a sequence of names),
+        ``digest_method`` (a sequence of names), ``reasons`` (a sequence of
+        text strings) and ``required`` (a subset of those key names whose
+        constraints a signer must honour rather than merely prefer).
+        """
+        if not isinstance(spec, Mapping):
+            raise TypeError("seed_value must be a mapping")
+        unknown = set(spec) - {
+            "filter", "sub_filter", "digest_method", "reasons", "required",
+        }
+        if unknown:
+            raise PdfValidationException(
+                f"Unknown seed value entries: {sorted(unknown)}"
+            )
+
+        sv: dict[PdfName, Any] = {PdfName("Type"): PdfName("SV")}
+        filter_name = spec.get("filter")
+        if filter_name is not None:
+            sv[PdfName("Filter")] = PdfName(str(filter_name))
+        for key, entry in (("sub_filter", "SubFilter"), ("digest_method", "DigestMethod")):
+            values = spec.get(key)
+            if values is None:
+                continue
+            if isinstance(values, str) or not isinstance(values, Sequence):
+                raise PdfValidationException(f"seed value '{key}' must be a sequence")
+            if not values:
+                raise PdfValidationException(f"seed value '{key}' must not be empty")
+            sv[PdfName(entry)] = PdfArray([PdfName(str(item)) for item in values])
+        reasons = spec.get("reasons")
+        if reasons is not None:
+            if isinstance(reasons, str) or not isinstance(reasons, Sequence):
+                raise PdfValidationException("seed value 'reasons' must be a sequence")
+            if not reasons:
+                raise PdfValidationException("seed value 'reasons' must not be empty")
+            sv[PdfName("Reasons")] = PdfArray(
+                [_pdf_text_string(str(item)) for item in reasons]
+            )
+
+        required = spec.get("required") or ()
+        if isinstance(required, str) or not isinstance(required, Sequence):
+            raise PdfValidationException("seed value 'required' must be a sequence")
+        flags = 0
+        for key in required:
+            bit = self._SEED_REQUIRED_BITS.get(str(key))
+            if bit is None:
+                raise PdfValidationException(
+                    f"Cannot mark unknown seed value entry as required: {key!r}"
+                )
+            if str(key) not in spec:
+                raise PdfValidationException(
+                    f"Seed value entry {key!r} is required but not supplied"
+                )
+            flags |= bit
+        if flags:
+            sv[PdfName("Ff")] = PdfNumber(flags)
+        return PdfDictionary(sv)
+
+    def _signature_field_lock_cos(self, spec: Mapping[str, Any]) -> PdfDictionary:
+        """Build a signature field's ``/Lock`` dictionary (ISO 32000-1 12.7.4.5).
+
+        ``action`` is ``All``, ``Include`` or ``Exclude``; the latter two name
+        the affected fields in ``fields``. Signing turns this into a FieldMDP
+        transform so a verifier can enforce it.
+        """
+        if not isinstance(spec, Mapping):
+            raise TypeError("field_lock must be a mapping")
+        unknown = set(spec) - {"action", "fields"}
+        if unknown:
+            raise PdfValidationException(
+                f"Unknown field lock entries: {sorted(unknown)}"
+            )
+        action = str(spec.get("action", "All"))
+        if action not in ("All", "Include", "Exclude"):
+            raise PdfValidationException(
+                "Field lock action must be 'All', 'Include', or 'Exclude'"
+            )
+        lock: dict[PdfName, Any] = {
+            PdfName("Type"): PdfName("SigFieldLock"),
+            PdfName("Action"): PdfName(action),
+        }
+        names = spec.get("fields")
+        if action == "All":
+            if names:
+                raise PdfValidationException(
+                    "Field lock action 'All' does not take a field list"
+                )
+        else:
+            if isinstance(names, str) or not isinstance(names, Sequence) or not names:
+                raise PdfValidationException(
+                    f"Field lock action {action!r} requires a non-empty 'fields' list"
+                )
+            lock[PdfName("Fields")] = PdfArray(
+                [_pdf_text_string(str(item)) for item in names]
+            )
+        return PdfDictionary(lock)
+
     def create_form_field(
         self,
         name: str,
@@ -8995,6 +9105,8 @@ class SimplePdf:
         border_color: Sequence[float] | None = None,
         background: Sequence[float] | None = None,
         font: Any = None,
+        seed_value: Mapping[str, Any] | None = None,
+        field_lock: Mapping[str, Any] | None = None,
     ) -> None:
         """Create a terminal AcroForm field and its widget annotations."""
         self._ensure_not_disposed()
@@ -9121,6 +9233,19 @@ class SimplePdf:
                 pdf_value = _pdf_text_string("" if value is None else value)
             field_map[PdfName("V")] = pdf_value
             field_map[PdfName("DV")] = pdf_value
+
+        if seed_value is not None:
+            if field_type != "signature":
+                raise PdfValidationException(
+                    "A seed value applies to signature fields only"
+                )
+            field_map[PdfName("SV")] = self._signature_seed_value_cos(seed_value)
+        if field_lock is not None:
+            if field_type != "signature":
+                raise PdfValidationException(
+                    "A field lock applies to signature fields only"
+                )
+            field_map[PdfName("Lock")] = self._signature_field_lock_cos(field_lock)
 
         field = PdfDictionary(field_map)
         field_ref = self._cos_doc.register_object(field)
@@ -12483,7 +12608,6 @@ class CosExtractor:
         from the embedded file ``/Params``). Absent fields are omitted.
         """
         from .cos import (
-            PdfArray,
             PdfDictionary,
             PdfIndirectReference,
             PdfName,
@@ -12508,12 +12632,8 @@ class CosExtractor:
         if not isinstance(emb_files, PdfDictionary):
             return entries
 
-        # 4. Process 'Names' array (flat list of [key, value, key, value...])
-        names_arr = self._resolve(emb_files.mapping.get(PdfName("Names")))
-        if not isinstance(names_arr, PdfArray):
-            return entries
-
-        items = names_arr.items
+        # 4. Collect the tree's leaves as a flat [key, value, ...] list.
+        items = self._collect_name_tree_entries(emb_files)
         for i in range(0, len(items), 2):
             if i + 1 >= len(items):
                 break
@@ -12564,6 +12684,53 @@ class CosExtractor:
                 (filename, data, self._read_filespec_meta(val_obj, f_stream))
             )
 
+        return entries
+
+    def _collect_name_tree_entries(self, root: Any) -> list:
+        """Return a name tree's leaves as a flat ``[key, value, ...]`` list.
+
+        A name-tree node holds its entries either directly in ``/Names`` or
+        splits them across ``/Kids`` sub-nodes (ISO 32000-1 7.9.6). Producers
+        balance large trees into the nested form, so reading ``/Names`` alone
+        silently misses every entry such a document carries. Kids are visited
+        in order, preserving the tree's sort order; depth, cumulative entry
+        count, and revisited nodes are bounded like any other document graph.
+        """
+        from .cos import PdfArray, PdfDictionary, PdfName
+
+        entries: list = []
+        seen: set[int] = set()
+        stack: list[tuple[Any, int]] = [(root, 1)]
+        while stack:
+            node, depth = stack.pop()
+            if not isinstance(node, PdfDictionary):
+                continue
+            node_id = id(node)
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            self._budget.check(
+                depth,
+                "max_nesting_depth",
+                "embedded-file name tree depth",
+            )
+            names_arr = self._resolve(node.mapping.get(PdfName("Names")))
+            if isinstance(names_arr, PdfArray):
+                entries.extend(names_arr.items)
+                self._budget.check(
+                    len(entries),
+                    "max_container_items",
+                    "embedded-file name tree entries",
+                )
+            kids = self._resolve(node.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray):
+                self._budget.check(
+                    len(kids.items),
+                    "max_container_items",
+                    "embedded-file name tree kids",
+                )
+                for kid in reversed(kids.items):
+                    stack.append((self._resolve(kid), depth + 1))
         return entries
 
     def _read_filespec_meta(self, filespec: Any, ef_stream: Any) -> dict:
