@@ -19,6 +19,7 @@ from aspose_pdf.engine.sign_field import sign_field
 from aspose_pdf.engine.signing import SigningUtils
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import PdfSecurityException, PdfValidationException
+from aspose_pdf.signature import PdfSignature
 from aspose_pdf.validation import ValidationOptions, ValidationStatus
 
 
@@ -300,3 +301,39 @@ def test_seed_value_and_lock_rejected_on_other_field_types():
             [{"page_index": 0, "rect": (0, 0, 10, 10)}],
             seed_value={"filter": "Adobe.PPKLite"},
         )
+
+
+def test_valid_property_rejects_a_tampered_document(creds):
+    """``PdfSignature.valid`` must agree with ``validate()`` on tampering.
+
+    The quick property used to fall open: its digest comparison went through a
+    ``cryptography`` API that is absent in some releases, and that absence — as
+    well as any parse error — was treated as success, so a tampered document
+    reported ``valid is True`` while ``validate()`` correctly reported INVALID.
+    """
+    cert, key = creds
+    signed = sign_field(_authored(), "Signature1", cert, key)
+    assert SimplePdf.from_bytes(signed).signatures[0].valid is True
+
+    tampered = bytearray(signed)
+    offset = signed.index(b"/MediaBox")
+    tampered[offset : offset + 9] = b"/mediaBOX"
+
+    sig = SimplePdf.from_bytes(bytes(tampered)).signatures[0]
+    assert sig.valid is False
+    assert sig.validate(_options(cert)).status is ValidationStatus.INVALID
+
+
+def test_valid_property_rejects_a_replaced_signature_blob(creds):
+    """Swapping /Contents for a non-CMS blob is not a valid signature."""
+    cert, key = creds
+    signed = sign_field(_authored(), "Signature1", cert, key)
+    sig = SimplePdf.from_bytes(signed).signatures[0]
+    forged = PdfSignature(
+        name=sig.name,
+        contents=b"\x30\x82\x00\x00not a real CMS",
+        byte_range=sig.byte_range,
+        reference_data=sig.reference_data,
+        sub_filter=sig.sub_filter,
+    )
+    assert forged.valid is False

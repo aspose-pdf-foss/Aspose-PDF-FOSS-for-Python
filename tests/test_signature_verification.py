@@ -6,51 +6,74 @@ The integration test constructs a signed PDF through the writer and parses it
 back through the COS extractor, keeping the fixture compact and redistributable.
 """
 
-from aspose_pdf.signature import PdfSignature
-from aspose_pdf.engine.simple_pdf import SimplePdf
+import pytest
+
 from aspose_pdf.engine.signing import SigningUtils
+from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.security import SignaturesCompromiseDetector
+from aspose_pdf.signature import PdfSignature
 
 
-def test_signature_class_integrity_check(monkeypatch):
-    """Validate ``PdfSignature._verify_integrity`` handling of ByteRange.
-
-    The test creates a dummy signature object with a deliberately short
-    reference_data buffer. It then patches the PKCS7 verification step to
-    always succeed so that the integrity path is exercised only.
-    """
-
-    # Prepare a reference buffer of 30 bytes.
-    reference = b"A" * 30
-
-    # ByteRange that stays within the buffer (0-10 and 20-10 => total 20 bytes).
-    good_range = [0, 10, 20, 10]
-    sig_good = PdfSignature(
+def _signed_fixture():
+    """A real detached PKCS#7 over known bytes, laid out as a PDF ByteRange."""
+    data = b"%PDF-1.7 signed body\n" * 4
+    half = len(data) // 2
+    cert, key = SigningUtils.create_self_signed_cert()
+    blob = SigningUtils.sign_data_pkcs7(data[:half] + data[half:], cert, key)
+    return PdfSignature(
         name="TestSig",
-        byte_range=good_range,
-        reference_data=reference,
+        byte_range=[0, half, half, len(data) - half],
+        reference_data=data,
+        contents=blob,
+    )
+
+
+def test_verify_integrity_accepts_a_real_signature():
+    assert _signed_fixture()._verify_integrity() is True
+
+
+def test_verify_integrity_rejects_tampered_bytes():
+    """A byte flipped inside the covered range must fail the digest check."""
+    sig = _signed_fixture()
+    tampered = bytearray(sig.reference_data)
+    tampered[5] ^= 0xFF
+    sig.reference_data = bytes(tampered)
+    assert sig._verify_integrity() is False
+    assert sig.valid is False
+
+
+def test_verify_integrity_rejects_a_non_cms_blob():
+    """A sane ByteRange is not enough: /Contents must be a verifiable CMS.
+
+    This used to return True — the digest comparison went through a
+    ``cryptography`` API that does not exist in every release, and its absence
+    (as well as any parse error) was treated as success.
+    """
+    sig = PdfSignature(
+        name="TestSig",
+        byte_range=[0, 10, 20, 10],
+        reference_data=b"A" * 30,
         contents=b"dummy",
     )
+    assert sig._verify_integrity() is False
+    assert sig.valid is False
 
-    # Patch the PKCS7 verification to avoid parsing error on "dummy" content.
-    import aspose_pdf.signature
 
-    monkeypatch.setattr(
-        aspose_pdf.signature.pkcs7, "load_der_pkcs7_certificates", lambda x: []
-    )
-    # Force fallback to basic verification by hiding load_der_pkcs7_signed_data
-    monkeypatch.delattr(
-        aspose_pdf.signature.pkcs7, "load_der_pkcs7_signed_data", raising=False
-    )
-
-    assert sig_good._verify_integrity() is True
-
-    # ByteRange that exceeds the reference_data size should fail.
-    bad_range = [0, 25, 30, 10]  # 30+10 goes beyond 30 bytes buffer
-    sig_bad = PdfSignature(
-        name="BadSig", byte_range=bad_range, reference_data=reference, contents=b"dummy"
-    )
-    assert sig_bad._verify_integrity() is False
+@pytest.mark.parametrize(
+    "byte_range",
+    [
+        [0, 10, 20],  # not four entries
+        [0, 10, 20, 10, 30],
+        [0, -1, 20, 10],  # negative length
+        [0, 25, 30, 10],  # runs past the buffer
+        [0, 15, 10, 5],  # second range overlaps the first
+        [2, 8, 20, 10],  # does not start at byte 0
+    ],
+)
+def test_verify_integrity_rejects_malformed_byte_range(byte_range):
+    sig = _signed_fixture()
+    sig.byte_range = byte_range
+    assert sig._verify_integrity() is False
 
 
 def test_simple_pdf_signatures_empty():

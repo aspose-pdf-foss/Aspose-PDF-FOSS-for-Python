@@ -81,6 +81,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`PdfSignature.valid` returned `True` for tampered documents.** Its digest
+  comparison went through `cryptography`'s `load_der_pkcs7_signed_data`, which is
+  absent in some releases; that absence — and any error while walking the signed
+  attributes — was treated as success, so a document whose signed bytes had been
+  modified reported `valid is True` while `validate()` correctly reported
+  INVALID. Verification now goes through the same engine path `validate()` uses:
+  the digest algorithm comes from the CMS, the `messageDigest` attribute is
+  checked against the covered bytes, and the **signature value is verified**
+  against the signer certificate — which the old code never did at all. This also
+  fixes SHA-384/SHA-512 signatures, which the hardcoded SHA-256 comparison could
+  never match.
 - **Subsetting resolved base encodings through the stdlib codecs**, which
   disagree with PDF's tables on real codes. MacRomanEncoding `0xDB` is
   `currency`, but `mac_roman` decodes it as the euro sign — so the subsetter

@@ -873,7 +873,13 @@ Supported:
 - Reject missing, empty, whitespace-only, and wrong passwords for encrypted PDFs.
 - Exercise RC4 and AES-CBC primitives, AES-256 setup, and PDF 2.0 V5/R6 key
   derivation helpers.
-- Validate PDF signature ByteRange structure and PKCS#7 container shape.
+- Validate PDF signature ByteRange structure, and verify the signature itself
+  through `PdfSignature.valid`: the digest algorithm is taken from the CMS (so
+  SHA-256/384/512 all verify), the `messageDigest` signed attribute must match
+  the ByteRange-covered bytes, and the signature value must verify against the
+  signer certificate. It answers integrity and signer authenticity only — chain,
+  revocation and timestamps are `PdfSignature.validate(...)`'s job — and returns
+  `False` for anything it cannot verify.
 - Detect meaningful unsigned incremental changes after signed revisions.
 - Create self-signed certificates and PKCS#7 signing payloads through the
   signing helpers, optionally embedding an intermediate-CA chain.

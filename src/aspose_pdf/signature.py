@@ -1,32 +1,29 @@
 """PdfSignature implementation.
 
 This module provides the :class:`PdfSignature` dataclass which represents a PDF
-digital signature and offers a lightweight verification routine. The goal is to
-verify the integrity of the signed document using the ``ByteRange`` array and to
-ensure that the provided PKCS#7 blob is at least syntactically valid.
+digital signature and verifies it against the bytes its ``ByteRange`` covers.
 
-The verification does **not** perform full PKCS#7 certificate chain checking -
-that would require a full CMS implementation which is beyond the scope of the
-project and would introduce heavy dependencies. Instead, the method checks:
+The :attr:`PdfSignature.valid` property checks:
 
 1. The ``ByteRange`` array has exactly four integers.
 2. The ranges describe two non-overlapping slices that together cover the signed
    revision (from byte 0 through ``start2 + len2``) except for the signature
    placeholder. Trailing bytes (e.g. further incremental updates after signing)
    are ignored for hashing; ``reference_data`` may be longer than that revision.
-3. The computed digest of the covered data matches the ``MessageDigest`` attribute
-   inside the PKCS#7 structure when it can be extracted using ``cryptography``.
+3. The signer verifies cryptographically over those bytes: the digest algorithm
+   comes from the CMS itself, the ``messageDigest`` signed attribute must match
+   the covered bytes, and the signature value must verify against the signer
+   certificate's public key.
 
-If any of these checks fail, ``valid`` returns ``False``.
-
-For structured, configurable validation use :meth:`PdfSignature.validate` which
-accepts a :class:`~aspose_pdf.validation.ValidationOptions` instance and returns
-a :class:`~aspose_pdf.validation.ValidationResult`.
+If any of these checks fail — or the signature cannot be verified at all —
+``valid`` returns ``False``. It answers integrity and signer authenticity only;
+it does **not** build or check the certificate chain, revocation, or timestamps.
+For that, and for a structured result, use :meth:`PdfSignature.validate` with a
+:class:`~aspose_pdf.validation.ValidationOptions` instance.
 """
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -42,10 +39,10 @@ _PKCS7_LOAD_ERRORS: tuple[type[BaseException], ...] = (
     TypeError,
     UnsupportedAlgorithm,
 )
-_PKCS7_DIGEST_WALK_ERRORS: tuple[type[BaseException], ...] = (
+# Malformed CMS surfaces as a decoding error from the ASN.1 layer.
+_CMS_PARSE_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,
     TypeError,
-    AttributeError,
     KeyError,
     IndexError,
     UnsupportedAlgorithm,
@@ -333,47 +330,16 @@ class PdfSignature:
                 self.contents, signed_data
             ).verified
 
-        # Stage 2 - Compute hash of the covered data (SHA-256 is the most common)
-        digest = hashlib.sha256(signed_data).digest()
+        # Stage 2 - Cryptographically verify the signer over the covered bytes.
+        #
+        # This is the engine path :meth:`validate` uses: it takes the digest
+        # algorithm from the CMS itself, checks the ``messageDigest`` signed
+        # attribute against the covered bytes, and verifies the signature value.
+        # Anything short of that cannot answer "is this signature valid".
+        from aspose_pdf.engine import cms as _cms
 
-        # Stage 3 - Verify PKCS#7 structure and optional MessageDigest
         try:
-            # ``pkcs7.load_der_pkcs7_certificates`` returns a list of certificates.
-            # It raises if the DER data is not a PKCS#7 container.
-            _ = pkcs7.load_der_pkcs7_certificates(self.contents)
-        except _PKCS7_LOAD_ERRORS:
-            # The blob is not a valid PKCS#7 container.
-            return False
-
-        # Attempt to extract the MessageDigest attribute using cryptography's
-        # internal APIs. The library does not expose a high-level verifier for
-        # detached signatures, but we can inspect the signed attributes.
-        try:
-            # ``pkcs7.PKCS7SignatureBuilder`` cannot load, so we fall back to
-            # ``cryptography.hazmat.primitives.serialization.pkcs7`` which offers
-            # ``load_der_pkcs7_signed_data`` in newer versions. Guard against its
-            # absence.
-            load_func = getattr(pkcs7, "load_der_pkcs7_signed_data", None)
-            if load_func is None:
-                # If unavailable, we cannot compare MessageDigest; consider the
-                # ByteRange check sufficient.
-                return True
-            pkcs7_obj = load_func(self.contents)
-            # ``pkcs7_obj`` provides ``signers`` - each has ``signed_attributes``.
-            for signer in pkcs7_obj.signers:
-                attrs = signer.signed_attributes
-                # Look for the MessageDigest OID (1.2.840.113549.1.9.4)
-                for attr in attrs:
-                    if (
-                        getattr(attr, "oid", None)
-                        and attr.oid.dotted_string == "1.2.840.113549.1.9.4"
-                    ):
-                        # ``attr.value`` is a list of OCTET STRINGs; take first.
-                        msg_digest = attr.value[0].native
-                        if msg_digest == digest:
-                            return True
-            # If none match, verification fails.
-            return False
-        except _PKCS7_DIGEST_WALK_ERRORS:
-            # Parsing issue during MessageDigest walk - ByteRange + PKCS#7 shell OK.
-            return True
+            info = _cms.parse_signed_data(self.contents)
+        except _CMS_PARSE_ERRORS:
+            return False  # not a CMS SignedData container.
+        return _cms.verify_signer(info, signed_data).signature_ok
