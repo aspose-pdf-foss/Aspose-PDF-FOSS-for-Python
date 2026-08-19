@@ -216,7 +216,7 @@ def test_build_caret_honours_rgb_colour():
 
 
 def test_build_unsupported_subtype_returns_none():
-    assert build_appearance("Text", (0, 0, 20, 20), {}) is None
+    assert build_appearance("Sound", (0, 0, 20, 20), {}) is None
     assert build_appearance("Popup", (0, 0, 20, 20), {}) is None
     assert build_appearance("Widget", (0, 0, 20, 20), {}) is None
 
@@ -298,7 +298,7 @@ def test_caret_generate_appearance_end_to_end():
 
 def test_generate_appearance_unsupported_subtype_returns_false():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add("Text", (0, 0, 20, 20), "note")
+    ann = doc.pages[0].annotations.add("Sound", (0, 0, 20, 20), "note")
     assert ann.generate_appearance() is False
     assert not ann.has_appearance
 
@@ -323,7 +323,7 @@ def test_page_generate_appearances_counts_created():
     page = doc.pages[0]
     page.annotations.add("Square", (0, 0, 50, 50), "")
     page.annotations.add("Circle", (60, 0, 110, 50), "")
-    page.annotations.add("Text", (0, 60, 20, 80), "")  # unsupported -> skipped
+    page.annotations.add("Sound", (0, 60, 20, 80), "")  # unsupported -> skipped
     assert page.annotations.generate_appearances() == 2
 
 

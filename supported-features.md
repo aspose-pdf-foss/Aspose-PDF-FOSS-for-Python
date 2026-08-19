@@ -828,7 +828,8 @@ Supported:
 Boundaries:
 
 - Appearance synthesis covers the shape, text-markup, `FreeText`, `Stamp` and
-  `Caret` subtypes above; text uses the synthesised Helvetica family measured
+  `Caret`, `Text` and `FileAttachment` subtypes above; text uses the
+  synthesised Helvetica family measured
   with the bundled substitute's real glyph metrics. Rich text (`/RC`, `/RV`)
   renders a subset — `<p>`/`<span>`/`<b>`/`<i>` with `font-size`, `color`,
   `font-weight`, `font-style` and `text-align` — in the Helvetica family only
@@ -838,8 +839,16 @@ Boundaries:
   a captioned box rather than the standard rubber-stamp artwork. Dash patterns, `/LE` line endings and `/BE` cloud borders
   are drawn (see above); the cloud is a uniform scallop approximation and line
   endings are sized heuristically from the border width. Check-box/radio *widget*
-  appearances are synthesised through the forms API (see Forms); other subtypes
-  (`Sound`, `3D`, …) still need an appearance supplied via `appearance_normal`.
+  appearances are synthesised through the forms API (see Forms). **`Text`**
+  (sticky note) and **`FileAttachment`** annotations draw their standard icon
+  from `/Name` — `Comment`, `Key`, `Note`, `Help`, `NewParagraph`, `Paragraph`,
+  `Insert` and `PushPin`, `Graph`, `Paperclip`, `Tag` — as vector artwork
+  honouring `/C`, squared and centred in the annotation rectangle, with an
+  unknown name falling back to the subtype's default as a viewer does. Other
+  subtypes (`Sound`, `3D`, …) still need an appearance supplied via
+  `appearance_normal`.
+- Annotation appearances are built for viewers; the page rasterizer draws page
+  content only and does not composite annotations.
 
 ## Attachments
 

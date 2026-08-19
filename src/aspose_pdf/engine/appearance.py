@@ -51,6 +51,8 @@ SUPPORTED_SUBTYPES = frozenset(
         "FreeText",
         "Stamp",
         "Caret",
+        "Text",
+        "FileAttachment",
     }
 )
 
@@ -1110,6 +1112,227 @@ def _build_caret(
     return GeneratedAppearance(("\n".join(lines) + "\n").encode("ascii"))
 
 
+# Standard icon names (ISO 32000-1 tables 172 and 184). An unknown name falls
+# back to each subtype's default, which is what a viewer does.
+_TEXT_ICONS = (
+    "Comment", "Key", "Note", "Help", "NewParagraph", "Paragraph", "Insert",
+)
+_FILE_ATTACHMENT_ICONS = ("PushPin", "Graph", "Paperclip", "Tag")
+
+
+def _circle(lines: list[str], cx: float, cy: float, r: float) -> None:
+    """Append a closed circular subpath (four cubic Béziers) at *cx*, *cy*."""
+    k = r * _KAPPA
+    lines += [
+        f"{_fmt(cx + r)} {_fmt(cy)} m",
+        f"{_fmt(cx + r)} {_fmt(cy + k)} {_fmt(cx + k)} {_fmt(cy + r)} "
+        f"{_fmt(cx)} {_fmt(cy + r)} c",
+        f"{_fmt(cx - k)} {_fmt(cy + r)} {_fmt(cx - r)} {_fmt(cy + k)} "
+        f"{_fmt(cx - r)} {_fmt(cy)} c",
+        f"{_fmt(cx - r)} {_fmt(cy - k)} {_fmt(cx - k)} {_fmt(cy - r)} "
+        f"{_fmt(cx)} {_fmt(cy - r)} c",
+        f"{_fmt(cx + k)} {_fmt(cy - r)} {_fmt(cx + r)} {_fmt(cy - k)} "
+        f"{_fmt(cx + r)} {_fmt(cy)} c",
+        "h",
+    ]
+
+
+def _icon_frame(w: float, h: float) -> tuple[float, float, float]:
+    """Return ``(size, x, y)`` for a square icon centred in the annotation box."""
+    size = max(1.0, min(w, h))
+    return size, (w - size) / 2.0, (h - size) / 2.0
+
+
+def _icon_name(props: dict[str, Any], allowed: tuple[str, ...], default: str) -> str:
+    name = props.get("Name")
+    if isinstance(name, str):
+        name = name.lstrip("/")
+        if name in allowed:
+            return name
+    return default
+
+
+def _note_body(u: float, x: float, y: float, lines: list[str], rules: int) -> None:
+    """A rounded speech bubble with *rules* text lines, in unit-scaled space."""
+    left, right = x + 0.08 * u, x + 0.92 * u
+    top, bottom = y + 0.90 * u, y + 0.32 * u
+    k = 0.10 * u  # corner rounding
+    lines += [
+        f"{_fmt(left + k)} {_fmt(top)} m",
+        f"{_fmt(right - k)} {_fmt(top)} l",
+        f"{_fmt(right)} {_fmt(top)} {_fmt(right)} {_fmt(top - k)} "
+        f"{_fmt(right)} {_fmt(top - k)} c",
+        f"{_fmt(right)} {_fmt(bottom + k)} l",
+        f"{_fmt(right)} {_fmt(bottom)} {_fmt(right - k)} {_fmt(bottom)} "
+        f"{_fmt(right - k)} {_fmt(bottom)} c",
+        f"{_fmt(left + 0.34 * u)} {_fmt(bottom)} l",
+        # The tail, pointing down-left.
+        f"{_fmt(left + 0.18 * u)} {_fmt(y + 0.10 * u)} l",
+        f"{_fmt(left + 0.24 * u)} {_fmt(bottom)} l",
+        f"{_fmt(left + k)} {_fmt(bottom)} l",
+        f"{_fmt(left)} {_fmt(bottom)} {_fmt(left)} {_fmt(bottom + k)} "
+        f"{_fmt(left)} {_fmt(bottom + k)} c",
+        f"{_fmt(left)} {_fmt(top - k)} l",
+        f"{_fmt(left)} {_fmt(top)} {_fmt(left + k)} {_fmt(top)} "
+        f"{_fmt(left + k)} {_fmt(top)} c",
+        "h",
+        "B",
+    ]
+    for index in range(rules):
+        ry = top - (0.18 + 0.16 * index) * u
+        if ry <= bottom + 0.06 * u:
+            break
+        lines += [
+            f"{_fmt(left + 0.14 * u)} {_fmt(ry)} m",
+            f"{_fmt(right - 0.14 * u)} {_fmt(ry)} l",
+            "S",
+        ]
+
+
+def _build_text_note(
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
+    """Draw a `Text` (sticky note) annotation's standard icon."""
+    name = _icon_name(props, _TEXT_ICONS, "Comment")
+    comps = _as_floats(props.get("C"))
+    fill = _color_op(comps, stroke=False) or "1 0.82 0.28 rg"  # note yellow
+    stroke = "0.2 0.2 0.2 RG"
+    u, x, y = _icon_frame(w, h)
+    lines = ["q", fill, stroke, f"{_fmt(max(0.6, u * 0.045))} w"]
+
+    if name == "Key":
+        # A bow and a toothed blade.
+        r = 0.17 * u
+        cx, cy = x + 0.30 * u, y + 0.66 * u
+        _circle(lines, cx, cy, r)
+        lines.append("B")
+        lines += [
+            f"{_fmt(cx + r * 0.7)} {_fmt(cy - r * 0.7)} m",
+            f"{_fmt(x + 0.86 * u)} {_fmt(y + 0.18 * u)} l",
+            "S",
+            f"{_fmt(x + 0.70 * u)} {_fmt(y + 0.34 * u)} m",
+            f"{_fmt(x + 0.80 * u)} {_fmt(y + 0.44 * u)} l",
+            "S",
+        ]
+    elif name == "Help":
+        _circle(lines, x + 0.5 * u, y + 0.5 * u, 0.42 * u)
+        lines.append("B")
+        size = 0.5 * u
+        lines += [
+            "BT",
+            f"/{_ANNOT_FONT_NAME} {_fmt(size)} Tf",
+            "0 g",
+            f"1 0 0 1 {_fmt(x + 0.37 * u)} {_fmt(y + 0.30 * u)} Tm",
+            "(?) Tj",
+            "ET",
+        ]
+    elif name == "Insert":
+        # A caret pointing up.
+        lines += [
+            f"{_fmt(x + 0.5 * u)} {_fmt(y + 0.88 * u)} m",
+            f"{_fmt(x + 0.90 * u)} {_fmt(y + 0.12 * u)} l",
+            f"{_fmt(x + 0.10 * u)} {_fmt(y + 0.12 * u)} l",
+            "h",
+            "B",
+        ]
+    elif name in ("Paragraph", "NewParagraph"):
+        _circle(lines, x + 0.5 * u, y + 0.5 * u, 0.42 * u)
+        lines.append("B")
+        size = 0.55 * u
+        glyph = "(P)" if name == "Paragraph" else "(\266)"
+        lines += [
+            "BT",
+            f"/{_ANNOT_FONT_NAME} {_fmt(size)} Tf",
+            "0 g",
+            f"1 0 0 1 {_fmt(x + 0.34 * u)} {_fmt(y + 0.28 * u)} Tm",
+            f"{glyph} Tj",
+            "ET",
+        ]
+    else:  # Comment and Note both read as a lined bubble.
+        _note_body(u, x, y, lines, rules=3 if name == "Note" else 2)
+
+    lines.append("Q")
+    fonts = (
+        {_ANNOT_FONT_NAME: dict(_ANNOT_FONT_SPEC)}
+        if name in ("Help", "Paragraph", "NewParagraph")
+        else {}
+    )
+    return GeneratedAppearance(
+        ("\n".join(lines) + "\n").encode("latin-1", "replace"), fonts=fonts
+    )
+
+
+def _build_file_attachment(
+    props: dict[str, Any], llx: float, lly: float, w: float, h: float
+) -> GeneratedAppearance | None:
+    """Draw a `FileAttachment` annotation's standard icon."""
+    name = _icon_name(props, _FILE_ATTACHMENT_ICONS, "PushPin")
+    comps = _as_floats(props.get("C"))
+    fill = _color_op(comps, stroke=False) or "0.5 0.5 0.55 rg"
+    stroke = "0.15 0.15 0.15 RG"
+    u, x, y = _icon_frame(w, h)
+    lines = ["q", fill, stroke, f"{_fmt(max(0.6, u * 0.045))} w"]
+
+    if name == "Graph":
+        # Three bars of increasing height on an axis.
+        lines += [
+            f"{_fmt(x + 0.12 * u)} {_fmt(y + 0.12 * u)} m",
+            f"{_fmt(x + 0.88 * u)} {_fmt(y + 0.12 * u)} l",
+            "S",
+        ]
+        for index, height in enumerate((0.30, 0.52, 0.74)):
+            bx = x + (0.20 + 0.24 * index) * u
+            lines += [
+                f"{_fmt(bx)} {_fmt(y + 0.14 * u)} {_fmt(0.14 * u)} "
+                f"{_fmt(height * u)} re",
+                "B",
+            ]
+    elif name == "Paperclip":
+        # Two nested rounded hairpins.
+        for inset in (0.0, 0.10):
+            left = x + (0.34 + inset) * u
+            right = x + (0.66 - inset) * u
+            top = y + (0.86 - inset) * u
+            bottom = y + (0.20 + inset * 2.0) * u
+            lines += [
+                f"{_fmt(left)} {_fmt(bottom)} m",
+                f"{_fmt(left)} {_fmt(top)} l",
+                f"{_fmt(left)} {_fmt(top + 0.10 * u)} {_fmt(right)} "
+                f"{_fmt(top + 0.10 * u)} {_fmt(right)} {_fmt(top)} c",
+                f"{_fmt(right)} {_fmt(bottom)} l",
+                "S",
+            ]
+    elif name == "Tag":
+        # A luggage tag with an eyelet.
+        lines += [
+            f"{_fmt(x + 0.16 * u)} {_fmt(y + 0.58 * u)} m",
+            f"{_fmt(x + 0.46 * u)} {_fmt(y + 0.88 * u)} l",
+            f"{_fmt(x + 0.88 * u)} {_fmt(y + 0.46 * u)} l",
+            f"{_fmt(x + 0.58 * u)} {_fmt(y + 0.16 * u)} l",
+            "h",
+            "B",
+        ]
+        _circle(lines, x + 0.34 * u, y + 0.64 * u, 0.07 * u)
+        lines.append("S")
+    else:  # PushPin
+        lines += [
+            f"{_fmt(x + 0.34 * u)} {_fmt(y + 0.86 * u)} m",
+            f"{_fmt(x + 0.72 * u)} {_fmt(y + 0.86 * u)} l",
+            f"{_fmt(x + 0.62 * u)} {_fmt(y + 0.62 * u)} l",
+            f"{_fmt(x + 0.78 * u)} {_fmt(y + 0.44 * u)} l",
+            f"{_fmt(x + 0.28 * u)} {_fmt(y + 0.44 * u)} l",
+            f"{_fmt(x + 0.44 * u)} {_fmt(y + 0.62 * u)} l",
+            "h",
+            "B",
+            f"{_fmt(x + 0.53 * u)} {_fmt(y + 0.44 * u)} m",
+            f"{_fmt(x + 0.53 * u)} {_fmt(y + 0.12 * u)} l",
+            "S",
+        ]
+
+    lines.append("Q")
+    return GeneratedAppearance(("\n".join(lines) + "\n").encode("latin-1", "replace"))
+
+
 _BUILDERS = {
     "Square": _build_square,
     "Circle": _build_circle,
@@ -1124,4 +1347,6 @@ _BUILDERS = {
     "FreeText": _build_freetext,
     "Stamp": _build_stamp,
     "Caret": _build_caret,
+    "Text": _build_text_note,
+    "FileAttachment": _build_file_attachment,
 }

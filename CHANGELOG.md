@@ -9,6 +9,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Standard icons for `Text` and `FileAttachment` annotations.** Two of the
+  most common annotations in a reviewed document could not synthesise an
+  appearance at all — `generate_appearances()` declined and left them with no
+  `/AP`. Both now draw their standard `/Name` icon as vector artwork (`Comment`,
+  `Key`, `Note`, `Help`, `NewParagraph`, `Paragraph`, `Insert`; `PushPin`,
+  `Graph`, `Paperclip`, `Tag`), honouring `/C`, squared and centred in the
+  annotation rectangle, with an unknown name falling back to the subtype's
+  default the way a viewer does.
+
 - **`Page.add_image()` accepts every PNG form.** Adam7 **interlacing** and bit
   depths **1/2/4/16** were hard rejections; an ordinary interlaced or 16-bit PNG
   could not be embedded at all. The decoder now reassembles the seven interlace
