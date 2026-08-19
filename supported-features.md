@@ -970,6 +970,12 @@ Supported:
   `/AFRelationship`. PDF/A level A additionally requires a tagged
   structure tree, which is walked to verify standard structure types (or
   `/RoleMap` mappings), Figure/Formula alternate text, and `/Note` identifiers.
+- Check **device colour against the output intent** (ISO 19005-1 6.2.3.3): a
+  device space is permitted only when an OutputIntent's `DestOutputProfile` is
+  a profile of that same space, read from the ICC header, so DeviceCMYK content
+  does not pass under an sRGB intent. DeviceGray is satisfied by any intent.
+  Device colour is detected both by name (`/DeviceCMYK`) and by operator
+  (`k`/`K`, `rg`/`RG`, `g`/`G`), which name no colour space at all.
 - Run batch PDF/A validation through `PdfAValidateOptions` and `PdfAValidator`.
 - Convert loaded COS-backed documents toward PDF/A by adding OutputIntents and
   XMP metadata, setting a title and trailer `/ID` when missing, capping the
@@ -1091,6 +1097,10 @@ Boundaries:
   step or two per channel. The grid is one axis per colorant, sized to a fixed
   total-sample budget, so a many-colorant `/DeviceN` is sampled more coarsely
   than a `/Separation`.
+- Device-colour detection is a scan of resources and content, not a full
+  content-stream parse: an operator is matched against its numeric operands and
+  a token boundary, and colour set through `sc`/`scn` is attributed to the space
+  its `cs`/`CS` names.
 - PDF/A and PDF/UA checks are heuristic signals, not certification-grade
   validation. They inspect document structure, not rendered output, glyph
   coverage, colour fidelity, or the semantic correctness of a tag tree. Use a

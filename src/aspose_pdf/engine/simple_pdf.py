@@ -751,22 +751,80 @@ def _extract_xmp_pdfaid_fields(xmp_bytes: bytes) -> tuple[str | None, str | None
 
 
 def _scan_resources_for_device_colors(
-    obj: Any, rgb: list[bool], cmyk: list[bool]
+    obj: Any, rgb: list[bool], cmyk: list[bool], gray: list[bool] | None = None
 ) -> None:
-    """Recursively mark ``DeviceRGB``/``DeviceGray``/``DeviceCMYK`` usage in
-    *resources*."""
+    """Recursively mark ``DeviceRGB``/``DeviceGray``/``DeviceCMYK`` usage.
+
+    Gray is tracked separately from RGB: PDF/A ties each device family to the
+    output intent's own colour space, and DeviceGray is satisfied by any of
+    them, so folding it into *rgb* would flag a valid CMYK-intent document.
+    """
     if isinstance(obj, str):
         name = obj.replace("/", "")
-        if name in ("DeviceRGB", "DeviceGray"):
+        if name == "DeviceRGB":
             rgb[0] = True
+        elif name == "DeviceGray":
+            if gray is not None:
+                gray[0] = True
         elif name == "DeviceCMYK":
             cmyk[0] = True
     elif isinstance(obj, dict):
         for v in obj.values():
-            _scan_resources_for_device_colors(v, rgb, cmyk)
+            _scan_resources_for_device_colors(v, rgb, cmyk, gray)
     elif isinstance(obj, list):
         for it in obj:
-            _scan_resources_for_device_colors(it, rgb, cmyk)
+            _scan_resources_for_device_colors(it, rgb, cmyk, gray)
+
+
+# Device colour can be selected by operator as well as by name: `k`/`K` set
+# DeviceCMYK, `rg`/`RG` DeviceRGB and `g`/`G` DeviceGray, none of which mention
+# a colour space. Each operator is anchored to its numeric operands and a token
+# boundary, which keeps `rg` from reading as `g` and avoids matching letters
+# inside names or strings. This is a scan, not a full parse — the same
+# heuristic level as the surrounding checks.
+_DEVICE_COLOR_OPERATORS: tuple[tuple[Any, str], ...] = (
+    (re.compile(rb"(?:^|[\s\]>)])(?:[-+.\d]+\s+){4}[kK](?=[\s\[</(%]|$)"), "cmyk"),
+    (re.compile(rb"(?:^|[\s\]>)])(?:[-+.\d]+\s+){3}(?:rg|RG)(?=[\s\[</(%]|$)"), "rgb"),
+    (re.compile(rb"(?:^|[\s\]>)])(?:[-+.\d]+\s+)[gG](?=[\s\[</(%]|$)"), "gray"),
+)
+
+
+def _scan_content_for_device_colors(
+    content: bytes, rgb: list[bool], cmyk: list[bool], gray: list[bool]
+) -> None:
+    """Mark device colour used by a content stream, by name or by operator."""
+    flags = {"rgb": rgb, "cmyk": cmyk, "gray": gray}
+    for name, key in (
+        (b"/DeviceRGB", "rgb"),
+        (b"/DeviceCMYK", "cmyk"),
+        (b"/DeviceGray", "gray"),
+    ):
+        if name in content:
+            flags[key][0] = True
+    for pattern, key in _DEVICE_COLOR_OPERATORS:
+        if not flags[key][0] and pattern.search(content):
+            flags[key][0] = True
+
+
+# ICC profile header: bytes 16-19 hold the data colour space signature and
+# bytes 36-39 the 'acsp' file signature (ICC.1 clause 7.2).
+_ICC_HEADER_MIN = 128
+_ICC_SPACE_BY_SIGNATURE = {
+    b"GRAY": "Gray",
+    b"RGB ": "RGB",
+    b"CMYK": "CMYK",
+}
+
+
+def _icc_profile_color_space(data: bytes) -> str | None:
+    """Return ``"Gray"``/``"RGB"``/``"CMYK"`` for an ICC profile, else ``None``.
+
+    ``None`` means the stream is not a usable ICC profile, or declares a space
+    PDF/A output intents do not use for device colour (Lab, a named space, …).
+    """
+    if len(data) < _ICC_HEADER_MIN or data[36:40] != b"acsp":
+        return None
+    return _ICC_SPACE_BY_SIGNATURE.get(bytes(data[16:20]))
 
 
 def _collect_filter_names(filter_obj: Any, resolve_fn: Any) -> list[str]:
@@ -2947,57 +3005,71 @@ class SimplePdf:
                                     )
 
         # 6. OutputIntents + device color spaces (content-level)
-        has_rgb = False
-        has_cmyk = False
+        #
+        # ISO 19005-1 6.2.3.3: a device colour space is permitted only when the
+        # output intent's destination profile uses that same space. An sRGB
+        # intent therefore does not license DeviceCMYK content. DeviceGray is
+        # satisfied by any output intent.
         if self._cos_doc:
             rgb_flag: list[bool] = [False]
             cmyk_flag: list[bool] = [False]
+            gray_flag: list[bool] = [False]
             for i in range(len(self.pages)):
                 page_resources = self._get_page_resources(i)
                 if page_resources:
                     _scan_resources_for_device_colors(
-                        page_resources, rgb_flag, cmyk_flag
+                        page_resources, rgb_flag, cmyk_flag, gray_flag
                     )
                 if i < len(self.page_contents):
-                    content = self.page_contents[i]
-                    if b"/DeviceRGB" in content or b"/DeviceGray" in content:
-                        rgb_flag[0] = True
-                    if b"/DeviceCMYK" in content:
-                        cmyk_flag[0] = True
+                    _scan_content_for_device_colors(
+                        self.page_contents[i], rgb_flag, cmyk_flag, gray_flag
+                    )
             has_rgb = rgb_flag[0]
             has_cmyk = cmyk_flag[0]
+            has_gray = gray_flag[0]
 
             root = self._resolve(self._cos_doc.trailer.get(PdfName("Root")))
             if isinstance(root, PdfDictionary):
                 oi_ref = root.get(PdfName("OutputIntents"))
                 oi = self._resolve(oi_ref)
+                intent_spaces: set[str] = set()
+                if isinstance(oi, PdfArray):
+                    for ir in oi.items:
+                        intent = self._resolve(ir)
+                        if not isinstance(intent, PdfDictionary):
+                            continue
+                        prof = self._resolve(intent.get(PdfName("DestOutputProfile")))
+                        if not isinstance(prof, PdfStream):
+                            continue
+                        try:
+                            data = self._decode_cos_stream(prof, None)
+                        except PdfResourceLimitException:
+                            raise
+                        except PDF_OPERATION_ERRORS:
+                            continue
+                        space = _icc_profile_color_space(data)
+                        if space is not None:
+                            intent_spaces.add(space)
                 if not isinstance(oi, PdfArray) or len(oi.items) == 0:
                     problems.append(
                         "PDF/A: Catalog /OutputIntents with a valid ICC "
                         "profile is required."
                     )
-                if has_rgb or has_cmyk:
-                    if not isinstance(oi, PdfArray) or len(oi.items) == 0:
+                elif not intent_spaces:
+                    if has_rgb or has_cmyk or has_gray:
                         problems.append(
-                            "PDF/A: DeviceRGB/DeviceCMYK (or DeviceGray) requires "
-                            "Catalog OutputIntents with a color profile."
+                            "PDF/A: OutputIntents must include DestOutputProfile "
+                            "pointing to a valid ICC profile stream when "
+                            "device color spaces are used."
                         )
-                    else:
-                        has_icc = False
-                        for ir in oi.items:
-                            intent = self._resolve(ir)
-                            if not isinstance(intent, PdfDictionary):
-                                continue
-                            prof_ref = intent.get(PdfName("DestOutputProfile"))
-                            prof = self._resolve(prof_ref)
-                            if isinstance(prof, PdfStream) and len(prof.content) >= 64:
-                                has_icc = True
-                                break
-                        if not has_icc:
+                else:
+                    for used, space in ((has_rgb, "RGB"), (has_cmyk, "CMYK")):
+                        if used and space not in intent_spaces:
                             problems.append(
-                                "PDF/A: OutputIntents must include DestOutputProfile "
-                                "pointing to a valid ICC profile stream when "
-                                "device color spaces are used."
+                                f"PDF/A: Device{space} content requires an "
+                                f"OutputIntent whose DestOutputProfile is a "
+                                f"{space} profile; found "
+                                f"{sorted(intent_spaces)}."
                             )
 
         # 7. XMP pdfaid fields vs. declared validation level

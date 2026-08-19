@@ -53,17 +53,22 @@ def test_readme_documents_public_project_contract() -> None:
 
 
 def test_changelog_documents_the_declared_version() -> None:
-    """A release must carry its own changelog section and link reference.
+    """A release must carry a dated changelog section and a link reference.
 
     This ties the version bump and the changelog together, so neither can move
-    without the other.
+    without the other. Work landing after the cut belongs under ``[Unreleased]``
+    and is expected there — only the *released* section must be dated and
+    complete.
     """
     changelog = (ROOT / "CHANGELOG.md").read_text()
 
     assert f"## [{RELEASE_VERSION}] - " in changelog
     assert f"[{RELEASE_VERSION}]: https://" in changelog
-    # A released section is never left labelled Unreleased.
-    unreleased = changelog.split("## [Unreleased]", 1)[1]
-    assert unreleased.lstrip().startswith("## ["), (
-        "entries were left under [Unreleased]"
+
+    # The released section sits below [Unreleased] and is not empty.
+    _preamble, _unreleased, released = changelog.partition(
+        f"## [{RELEASE_VERSION}] - "
     )
+    assert "## [Unreleased]" in _preamble, "the release must follow [Unreleased]"
+    assert released.lstrip().splitlines()[1:], "the released section is empty"
+    assert "\n- " in released

@@ -7,6 +7,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The PDF/A checker accepted DeviceCMYK under an sRGB output intent.** It only
+  required *some* structurally valid ICC profile, where ISO 19005-1 6.2.3.3 ties
+  each device colour family to the output intent's own space. The destination
+  profile's colour space is now read from the ICC header and matched against the
+  device colour actually used (DeviceGray is satisfied by any intent).
+- **Device colour set by operator went undetected.** The scan looked only for
+  the names `/DeviceRGB`/`/DeviceGray`/`/DeviceCMYK`, missing `k`/`K`, `rg`/`RG`
+  and `g`/`G` — the most common way content selects a device space — so most
+  non-conformant colour was never reported. `DeviceGray` is also tracked
+  separately from `DeviceRGB` now; folding them together would flag a valid
+  CMYK-intent document that only draws gray.
+
 ## [0.1.0] - 2026-08-19
 
 ### Added
