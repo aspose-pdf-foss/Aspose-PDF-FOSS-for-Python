@@ -16,53 +16,180 @@ import zlib
 from pathlib import Path
 from typing import Any
 
-
 CMAP_REVISION = "f5cf3bca7fdfeaceb77aa82847e974f2306c20b4"
 MAPPING_REVISION = "2dd5e53fb74a01718b9dfd448a0d1cce6fff2aa5"
 
+# Every encoding CMap each collection defines. The Adobe-<Ordering>-<N>
+# CMaps are excluded: they map codes that already are CIDs, not an
+# encoding. Each set is closed under usecmap, so a collection file is
+# self-contained.
 COLLECTIONS = {
     "CNS1": {
         "directory": "Adobe-CNS1-7",
         "mapping": "Adobe-CNS1-UCS2",
         "cmaps": (
-            "UniCNS-UTF16-H",
-            "UniCNS-UTF16-V",
+            "B5-H",
+            "B5-V",
+            "B5pc-H",
+            "B5pc-V",
+            "CNS-EUC-H",
+            "CNS-EUC-V",
+            "CNS1-H",
+            "CNS1-V",
+            "CNS2-H",
+            "CNS2-V",
+            "ETHK-B5-H",
+            "ETHK-B5-V",
             "ETen-B5-H",
             "ETen-B5-V",
+            "ETenms-B5-H",
+            "ETenms-B5-V",
+            "HKdla-B5-H",
+            "HKdla-B5-V",
+            "HKdlb-B5-H",
+            "HKdlb-B5-V",
+            "HKgccs-B5-H",
+            "HKgccs-B5-V",
+            "HKm314-B5-H",
+            "HKm314-B5-V",
+            "HKm471-B5-H",
+            "HKm471-B5-V",
+            "HKscs-B5-H",
+            "HKscs-B5-V",
+            "UniCNS-UCS2-H",
+            "UniCNS-UCS2-V",
+            "UniCNS-UTF16-H",
+            "UniCNS-UTF16-V",
+            "UniCNS-UTF32-H",
+            "UniCNS-UTF32-V",
+            "UniCNS-UTF8-H",
+            "UniCNS-UTF8-V",
         ),
     },
     "GB1": {
         "directory": "Adobe-GB1-6",
         "mapping": "Adobe-GB1-UCS2",
         "cmaps": (
-            "UniGB-UTF16-H",
-            "UniGB-UTF16-V",
+            "GB-EUC-H",
+            "GB-EUC-V",
+            "GB-H",
+            "GB-V",
             "GBK-EUC-H",
             "GBK-EUC-V",
+            "GBK2K-H",
+            "GBK2K-V",
+            "GBKp-EUC-H",
+            "GBKp-EUC-V",
+            "GBT-EUC-H",
+            "GBT-EUC-V",
+            "GBT-H",
+            "GBT-V",
+            "GBTpc-EUC-H",
+            "GBTpc-EUC-V",
+            "GBpc-EUC-H",
+            "GBpc-EUC-V",
+            "UniGB-UCS2-H",
+            "UniGB-UCS2-V",
+            "UniGB-UTF16-H",
+            "UniGB-UTF16-V",
+            "UniGB-UTF32-H",
+            "UniGB-UTF32-V",
+            "UniGB-UTF8-H",
+            "UniGB-UTF8-V",
         ),
     },
     "Japan1": {
         "directory": "Adobe-Japan1-7",
         "mapping": "Adobe-Japan1-UCS2",
         "cmaps": (
-            "UniJIS-UTF16-H",
-            "UniJIS-UTF16-V",
+            "78-EUC-H",
+            "78-EUC-V",
+            "78-H",
+            "78-RKSJ-H",
+            "78-RKSJ-V",
+            "78-V",
+            "78ms-RKSJ-H",
+            "78ms-RKSJ-V",
+            "83pv-RKSJ-H",
             "90ms-RKSJ-H",
             "90ms-RKSJ-V",
+            "90msp-RKSJ-H",
+            "90msp-RKSJ-V",
+            "90pv-RKSJ-H",
+            "90pv-RKSJ-V",
+            "Add-H",
+            "Add-RKSJ-H",
+            "Add-RKSJ-V",
+            "Add-V",
+            "EUC-H",
+            "EUC-V",
+            "Ext-H",
+            "Ext-RKSJ-H",
+            "Ext-RKSJ-V",
+            "Ext-V",
+            "H",
+            "Hankaku",
+            "Hiragana",
+            "Katakana",
+            "NWP-H",
+            "NWP-V",
+            "RKSJ-H",
+            "RKSJ-V",
+            "Roman",
+            "UniJIS-UCS2-H",
+            "UniJIS-UCS2-HW-H",
+            "UniJIS-UCS2-HW-V",
+            "UniJIS-UCS2-V",
+            "UniJIS-UTF16-H",
+            "UniJIS-UTF16-V",
+            "UniJIS-UTF32-H",
+            "UniJIS-UTF32-V",
+            "UniJIS-UTF8-H",
+            "UniJIS-UTF8-V",
+            "UniJIS2004-UTF16-H",
+            "UniJIS2004-UTF16-V",
+            "UniJIS2004-UTF32-H",
+            "UniJIS2004-UTF32-V",
+            "UniJIS2004-UTF8-H",
+            "UniJIS2004-UTF8-V",
+            "UniJISPro-UCS2-HW-V",
+            "UniJISPro-UCS2-V",
+            "UniJISPro-UTF8-V",
+            "UniJISX0213-UTF32-H",
+            "UniJISX0213-UTF32-V",
+            "UniJISX02132004-UTF32-H",
+            "UniJISX02132004-UTF32-V",
+            "V",
+            "WP-Symbol",
         ),
     },
     "Korea1": {
         "directory": "Adobe-Korea1-2",
         "mapping": "Adobe-Korea1-UCS2",
         "cmaps": (
+            "KSC-EUC-H",
+            "KSC-EUC-V",
+            "KSC-H",
+            "KSC-Johab-H",
+            "KSC-Johab-V",
+            "KSC-V",
+            "KSCms-UHC-H",
+            "KSCms-UHC-HW-H",
+            "KSCms-UHC-HW-V",
+            "KSCms-UHC-V",
+            "KSCpc-EUC-H",
+            "KSCpc-EUC-V",
+            "UniKS-UCS2-H",
+            "UniKS-UCS2-V",
             "UniKS-UTF16-H",
             "UniKS-UTF16-V",
-            "KSCms-UHC-H",
-            "KSCms-UHC-V",
+            "UniKS-UTF32-H",
+            "UniKS-UTF32-V",
+            "UniKS-UTF8-H",
+            "UniKS-UTF8-V",
         ),
     },
 }
-
 _HEX = r"[0-9A-Fa-f]+"
 
 
@@ -266,25 +393,48 @@ def _compress_unicode_map(mapping: dict[int, str]) -> dict[str, list[list[Any]]]
     return {"ranges": ranges, "values": values}
 
 
-def build(cmap_repo: Path, mapping_repo: Path) -> bytes:
+INDEX_NAME = "predefined_cmaps_index.json.zlib"
+
+
+def _collection_file(ordering: str) -> str:
+    return f"predefined_cmaps_{ordering}.json.zlib"
+
+
+def _serialize(payload: dict[str, Any]) -> tuple[bytes, int]:
+    """Return ``(compressed, uncompressed_length)`` deterministically."""
+    raw = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    return zlib.compress(raw, level=9), len(raw)
+
+
+def build(cmap_repo: Path, mapping_repo: Path) -> dict[str, bytes]:
+    """Return ``{filename: bytes}`` for the index and one file per collection.
+
+    The tables are split per collection so the runtime loads only the one a
+    document's ``CIDSystemInfo`` names. A single file holding every collection
+    would make one CJK document pay for all four.
+    """
     _verify_checkout(cmap_repo, CMAP_REVISION)
     _verify_checkout(mapping_repo, MAPPING_REVISION)
-    payload: dict[str, Any] = {
-        "cmaps": {},
-        "collections": {},
-        "format": 1,
-        "sources": {
-            "cmap-resources": {
-                "revision": CMAP_REVISION,
-                "url": "https://github.com/adobe-type-tools/cmap-resources",
-            },
-            "mapping-resources-pdf": {
-                "revision": MAPPING_REVISION,
-                "url": "https://github.com/adobe-type-tools/mapping-resources-pdf",
-            },
+    sources = {
+        "cmap-resources": {
+            "revision": CMAP_REVISION,
+            "url": "https://github.com/adobe-type-tools/cmap-resources",
+        },
+        "mapping-resources-pdf": {
+            "revision": MAPPING_REVISION,
+            "url": "https://github.com/adobe-type-tools/mapping-resources-pdf",
         },
     }
+    outputs: dict[str, bytes] = {}
+    index: dict[str, Any] = {"collections": {}, "format": 2, "sources": sources}
+
     for ordering, config in COLLECTIONS.items():
+        cmaps: dict[str, Any] = {}
         for name in config["cmaps"]:
             relative_path = Path(config["directory"]) / "CMap" / name
             parsed = _parse_cmap(
@@ -294,38 +444,63 @@ def build(cmap_repo: Path, mapping_repo: Path) -> bytes:
             )
             if parsed["ordering"] != ordering:
                 raise ValueError(f"Unexpected collection for {name}")
-            payload["cmaps"][name] = parsed
+            cmaps[name] = parsed
+
+        # A collection file must be self-contained: every usecmap base has to
+        # live beside the CMap that names it.
+        for name, parsed in cmaps.items():
+            base = parsed.get("base")
+            if base is not None and base not in cmaps:
+                raise ValueError(
+                    f"{name} uses {base}, which is outside collection {ordering}"
+                )
 
         mapping_path = Path("pdf2unicode") / config["mapping"]
         cid_to_text, digest = _parse_cid_unicode(
             _git_blob(mapping_repo, mapping_path),
             mapping_path.as_posix(),
         )
-        payload["collections"][ordering] = {
-            **_compress_unicode_map(cid_to_text),
-            "registry": "Adobe",
-            "sha256": digest,
+        compressed, output_bytes = _serialize(
+            {
+                "cmaps": cmaps,
+                "collection": {
+                    **_compress_unicode_map(cid_to_text),
+                    "registry": "Adobe",
+                    "sha256": digest,
+                },
+                "format": 2,
+                "ordering": ordering,
+            }
+        )
+        filename = _collection_file(ordering)
+        outputs[filename] = compressed
+        index["collections"][ordering] = {
+            "cmaps": sorted(cmaps),
+            "compressed_bytes": len(compressed),
+            "file": filename,
+            "output_bytes": output_bytes,
+            "sha256": hashlib.sha256(compressed).hexdigest(),
         }
 
-    raw = json.dumps(
-        payload,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("ascii")
-    return zlib.compress(raw, level=9)
+    outputs[INDEX_NAME] = _serialize(index)[0]
+    return outputs
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cmap-repo", type=Path, required=True)
     parser.add_argument("--mapping-repo", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
-    output = build(args.cmap_repo, args.mapping_repo)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(output)
+    outputs = build(args.cmap_repo, args.mapping_repo)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    for filename, data in sorted(outputs.items()):
+        (args.output_dir / filename).write_bytes(data)
+        print(
+            f"{filename}: {len(data)} bytes "
+            f"sha256={hashlib.sha256(data).hexdigest()}"
+        )
 
 
 if __name__ == "__main__":

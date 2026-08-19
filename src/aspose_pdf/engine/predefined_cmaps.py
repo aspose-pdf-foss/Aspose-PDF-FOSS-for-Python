@@ -16,10 +16,17 @@ from typing import Any
 
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
-_BUNDLE_NAME = "cmaps/predefined_cmaps.json.zlib"
-_BUNDLE_SHA256 = "c8ee245e6dc2d0f82768acfb45cb4cbc386591291f982787044eaf48210d59a5"
-_MAX_BUNDLE_BYTES = 2 * 1024 * 1024
-_MAX_BUNDLE_OUTPUT = 4 * 1024 * 1024
+# The tables are split one file per character collection, behind a small index.
+# A document names exactly one collection through its CIDSystemInfo, so only
+# that file is ever decompressed; a single combined file would make one CJK
+# document pay for all four. Only the index digest is pinned in code — it in
+# turn pins each collection file's digest and size.
+_INDEX_NAME = "cmaps/predefined_cmaps_index.json.zlib"
+_INDEX_SHA256 = "6d8564c57ad67b0e0e9929e40591aa8f2e437198f92150dbad4bb47361fef5c2"
+_MAX_INDEX_BYTES = 64 * 1024
+_MAX_INDEX_OUTPUT = 256 * 1024
+_MAX_BUNDLE_BYTES = 4 * 1024 * 1024
+_MAX_BUNDLE_OUTPUT = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,31 +217,89 @@ def character_collection(value: Any) -> CharacterCollection | None:
     return CharacterCollection(registry, ordering, supplement)
 
 
-@lru_cache(maxsize=1)
-def _bundle() -> dict[str, Any]:
+def _read_bundle_file(
+    name: str,
+    *,
+    digest: str,
+    max_compressed: int,
+    max_output: int,
+) -> dict[str, Any]:
+    """Read, verify and decode one bundled data file under fixed bounds."""
     compressed = (
-        resources.files("aspose_pdf.engine.data").joinpath(_BUNDLE_NAME).read_bytes()
+        resources.files("aspose_pdf.engine.data").joinpath(name).read_bytes()
     )
-    if len(compressed) > _MAX_BUNDLE_BYTES:
+    if len(compressed) > max_compressed:
         raise RuntimeError("Bundled predefined CMap data is unexpectedly large")
-    if hashlib.sha256(compressed).hexdigest() != _BUNDLE_SHA256:
+    if hashlib.sha256(compressed).hexdigest() != digest:
         raise RuntimeError("Bundled predefined CMap data failed its integrity check")
     decompressor = zlib.decompressobj()
-    raw = decompressor.decompress(compressed, _MAX_BUNDLE_OUTPUT + 1)
-    if len(raw) > _MAX_BUNDLE_OUTPUT or decompressor.unconsumed_tail:
+    raw = decompressor.decompress(compressed, max_output + 1)
+    if len(raw) > max_output or decompressor.unconsumed_tail:
         raise RuntimeError("Bundled predefined CMap data exceeds its output bound")
     raw += decompressor.flush()
-    if len(raw) > _MAX_BUNDLE_OUTPUT:
+    if len(raw) > max_output:
         raise RuntimeError("Bundled predefined CMap data exceeds its output bound")
     payload = json.loads(raw)
-    if not isinstance(payload, dict) or payload.get("format") != 1:
+    if not isinstance(payload, dict) or payload.get("format") != 2:
         raise RuntimeError("Unsupported bundled predefined CMap data format")
     return payload
 
 
+@lru_cache(maxsize=1)
+def _index() -> dict[str, Any]:
+    payload = _read_bundle_file(
+        _INDEX_NAME,
+        digest=_INDEX_SHA256,
+        max_compressed=_MAX_INDEX_BYTES,
+        max_output=_MAX_INDEX_OUTPUT,
+    )
+    if not isinstance(payload.get("collections"), dict):
+        raise RuntimeError("Bundled predefined CMap index is malformed")
+    return payload
+
+
+@lru_cache(maxsize=1)
+def _cmap_orderings() -> Mapping[str, str]:
+    """Map every bundled CMap name to the collection file that holds it."""
+    owners: dict[str, str] = {}
+    for ordering, entry in _index()["collections"].items():
+        for name in entry.get("cmaps", ()):
+            owners[str(name)] = str(ordering)
+    return MappingProxyType(owners)
+
+
+@lru_cache(maxsize=4)
+def _collection_bundle(ordering: str) -> dict[str, Any]:
+    entry = _index()["collections"].get(ordering)
+    if not isinstance(entry, dict):
+        raise KeyError(ordering)
+    payload = _read_bundle_file(
+        f"cmaps/{entry['file']}",
+        digest=str(entry["sha256"]),
+        max_compressed=min(int(entry["compressed_bytes"]), _MAX_BUNDLE_BYTES),
+        max_output=min(int(entry["output_bytes"]), _MAX_BUNDLE_OUTPUT),
+    )
+    if payload.get("ordering") != ordering:
+        raise RuntimeError("Bundled predefined CMap file does not match its index")
+    return payload
+
+
+def _cmap_entry(name: str) -> dict[str, Any] | None:
+    """Return one CMap's table, loading only its own collection file."""
+    ordering = _cmap_orderings().get(name)
+    if ordering is None:
+        return None
+    entry = _collection_bundle(ordering)["cmaps"].get(name)
+    return entry if isinstance(entry, dict) else None
+
+
 def supported_cmap_names() -> tuple[str, ...]:
-    """Return the exact allowlist of bundled predefined CMap names."""
-    return tuple(sorted(_bundle()["cmaps"]))
+    """Return the exact allowlist of bundled predefined CMap names.
+
+    Answered from the index alone: this is called while parsing every composite
+    font, and must not pull a collection's tables into memory.
+    """
+    return tuple(sorted(_cmap_orderings()))
 
 
 def _range_index(entry: Mapping[str, Any]) -> tuple[
@@ -269,8 +334,8 @@ def _encoding_layout(
         ...,
     ],
 ]:
-    entry = _bundle()["cmaps"].get(name)
-    if not isinstance(entry, dict):
+    entry = _cmap_entry(name)
+    if entry is None:
         raise KeyError(name)
     if name in visiting:
         raise RuntimeError("Bundled predefined CMap usecmap cycle")
@@ -300,8 +365,8 @@ def _encoding_layout(
 
 @lru_cache(maxsize=16)
 def _encoding_cached(name: str) -> PredefinedCMapEncoding | None:
-    entry = _bundle()["cmaps"].get(name)
-    if not isinstance(entry, dict):
+    entry = _cmap_entry(name)
+    if entry is None:
         return None
     codespaces, layers = _encoding_layout(name)
     if not codespaces:
@@ -324,9 +389,8 @@ def _expand_cmap(
     *,
     visiting: frozenset[str] = frozenset(),
 ) -> tuple[dict[bytes, int], tuple[tuple[bytes, bytes], ...], dict[str, Any]]:
-    cmaps = _bundle()["cmaps"]
-    entry = cmaps.get(name)
-    if not isinstance(entry, dict):
+    entry = _cmap_entry(name)
+    if entry is None:
         raise KeyError(name)
     if name in visiting:
         raise RuntimeError("Bundled predefined CMap usecmap cycle")
@@ -360,7 +424,10 @@ def _expand_cmap(
 
 
 def _lookup_collection_text(ordering: str, cid: int) -> str | None:
-    entry = _bundle()["collections"].get(ordering)
+    try:
+        entry = _collection_bundle(ordering)["collection"]
+    except (KeyError, RuntimeError):
+        return None
     if not isinstance(entry, dict):
         return None
     ranges = entry.get("ranges", ())
@@ -390,6 +457,19 @@ def _lookup_collection_text(ordering: str, cid: int) -> str | None:
     return None
 
 
+# Unicode-keyed CMap families: the code *is* the character, in the encoding the
+# name states. Taking the scalar from the code keeps text and code a bijection,
+# so a replacement can be written back; going through CID -> Unicode instead is
+# many-to-one (Adobe maps both U+2F47 and U+65E5 to Japan1 CID 3284) and would
+# make those characters unencodable.
+_UNICODE_CODE_ENCODINGS = (
+    ("-UTF16-", "utf-16-be"),
+    ("-UCS2-", "utf-16-be"),
+    ("-UTF8-", "utf-8"),
+    ("-UTF32-", "utf-32-be"),
+)
+
+
 def _semantic_text(
     name: str,
     code: bytes,
@@ -397,19 +477,19 @@ def _semantic_text(
     ordering: str,
     horizontal_mapping: Mapping[bytes, int],
 ) -> str | None:
-    if "-UTF16-" in name:
-        try:
-            return code.decode("utf-16-be")
-        except UnicodeDecodeError:
-            return None
+    for marker, encoding in _UNICODE_CODE_ENCODINGS:
+        if marker in name:
+            try:
+                return code.decode(encoding)
+            except UnicodeDecodeError:
+                return None
     semantic_cid = horizontal_mapping.get(code, cid)
     return _lookup_collection_text(ordering, semantic_cid)
 
 
 @lru_cache(maxsize=16)
 def _resolve_cached(name: str) -> PredefinedCMap | None:
-    cmaps = _bundle()["cmaps"]
-    if name not in cmaps:
+    if _cmap_entry(name) is None:
         return None
     mapping, codespaces, entry = _expand_cmap(name)
     if not codespaces:
@@ -446,8 +526,8 @@ def _declared_mapping_count(
     visiting: frozenset[str] = frozenset(),
 ) -> int:
     """Return a conservative mapping count without expanding any code range."""
-    entry = _bundle()["cmaps"].get(name)
-    if not isinstance(entry, dict) or name in visiting:
+    entry = _cmap_entry(name)
+    if entry is None or name in visiting:
         return 0
     total = sum(
         max(int(high) - int(low) + 1, 0)
@@ -478,8 +558,8 @@ def resolve_predefined_cmap_encoding(
     normalized_name = _ascii_text(name)
     if normalized_name is None or collection is None:
         return None
-    entry = _bundle()["cmaps"].get(normalized_name)
-    if not isinstance(entry, dict):
+    entry = _cmap_entry(normalized_name)
+    if entry is None:
         return None
     if (
         entry.get("registry") != collection.registry
@@ -513,8 +593,8 @@ def resolve_predefined_cmap(
     normalized_name = _ascii_text(name)
     if normalized_name is None or collection is None:
         return None
-    entry = _bundle()["cmaps"].get(normalized_name)
-    if not isinstance(entry, dict):
+    entry = _cmap_entry(normalized_name)
+    if entry is None:
         return None
     if (
         entry.get("registry") != collection.registry

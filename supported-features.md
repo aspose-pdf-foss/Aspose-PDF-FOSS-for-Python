@@ -272,7 +272,7 @@ Supported:
   font's `/Encoding`/symbol cmap, the CFF charset/built-in encoding, or the
   Type 1 built-in encoding, with Type 1 `seac` accent composites drawn from
   their StandardEncoding components. A composite font whose `/Encoding` names
-  one of the bundled predefined CJK CMaps (the eight allowlisted names) is also
+  one of the bundled predefined CJK CMaps is also
   drawn: the show string is split on the CMap's mixed single/double-byte
   codespaces and each code mapped to a CID before the descendant font's
   `CIDToGIDMap` (CIDFontType2) or CFF charset (CIDFontType0), against the
@@ -360,10 +360,10 @@ Boundaries:
   (ligatures, kerning) through a substitute face is not applied; complex-script
   substitute runs are cursively joined when the face covers the script
   (`shape_substitute_text`, a no-op for the bundled Latin/symbol faces).
-- Composite-font glyph rendering covers Identity encodings, the eight bundled
-  predefined CJK CMaps, and **embedded (stream) CMaps** (decoded through the same
+- Composite-font glyph rendering covers Identity encodings, every bundled
+  predefined CJK CMap, and **embedded (stream) CMaps** (decoded through the same
   parser extraction uses, so a font that ships its own CMap renders real glyphs).
-  A *named* predefined CMap outside the eight bundled tables, or a bundled name
+  A *named* predefined CMap outside the bundle, or a bundled name
   whose descendant `CIDSystemInfo` does not match, is still drawn as glyph boxes
   — rendering needs a code→CID table the library does not bundle, exactly as for
   extraction. **Vertical CMaps** (`WMode 1`, bundled or embedded) now position
@@ -386,9 +386,17 @@ Supported:
 - Decode WinAnsi and other simple encodings used by tested fonts.
 - Decode `ToUnicode` CMaps, including `bfchar`, `bfrange`, comments, multiple
   pairs per line, and Unicode/CJK mappings.
-- Resolve bundled Adobe predefined CJK CMaps without `ToUnicode` for the exact
-  `-H`/`-V` names `UniJIS-UTF16`, `UniKS-UTF16`, `UniGB-UTF16`,
-  `UniCNS-UTF16`, `90ms-RKSJ`, `KSCms-UHC`, `GBK-EUC`, and `ETen-B5`.
+- Resolve bundled Adobe predefined CJK CMaps without `ToUnicode`. **Every
+  encoding CMap** the Adobe Japan1, Korea1, GB1 and CNS1 collections define is
+  bundled, in both `-H` and `-V` form — the Unicode families (`UCS2`, `UTF8`,
+  `UTF16`, `UTF32`, including the `HW` and `JIS2004` variants) and the legacy
+  ones (`RKSJ`, `EUC`, `UHC`, `Johab`, `GBK`/`GBK2K`, `B5`, `ETen`, `HKscs`, the
+  `pc`/`pv`/`ms` platform variants, and the rest). The `Adobe-<Ordering>-<N>`
+  CMaps are excluded by design: their codes already are CIDs, not an encoding.
+  For a Unicode-keyed name the code itself carries the scalar, so text and code
+  stay a bijection and a replacement can be written back; legacy names use the
+  exact Adobe code → CID → Unicode tables, where a character reachable from
+  several codes is extracted but not used as a replacement target.
   Resolution validates the descendant font's Adobe Japan1, Korea1, GB1, or
   CNS1 `CIDSystemInfo`, applies `usecmap` vertical overrides, and uses bundled
   BSD-3-Clause Adobe code → CID and CID → Unicode data without runtime network

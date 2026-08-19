@@ -9,6 +9,34 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Every Adobe predefined CJK CMap is now bundled** — 141 names across Japan1,
+  Korea1, GB1 and CNS1 (both `-H` and `-V`), up from 8 name pairs. Text
+  extraction, editing, redaction geometry and glyph rendering now work without
+  `/ToUnicode` for the whole Unicode family (`UCS2`/`UTF8`/`UTF16`/`UTF32`,
+  including `HW` and `JIS2004` variants) and the legacy encodings (`RKSJ`,
+  `EUC`, `UHC`, `Johab`, `GBK`/`GBK2K`, `B5`, `ETen`, `HKscs`, the `pc`/`pv`/`ms`
+  platform variants). The `Adobe-<Ordering>-<N>` CMaps stay excluded: their
+  codes already are CIDs, not an encoding.
+- **Unicode-keyed CMaps take the scalar from the code**, not from
+  code → CID → Unicode. This already applied to `-UTF16-`; it now covers
+  `-UCS2-`, `-UTF8-` and `-UTF32-` too. Those codes *are* the character, so text
+  and code stay a bijection and a replacement can be written back — Adobe maps
+  both U+2F47 and U+65E5 to Japan1 CID 3284, which previously made such
+  characters extractable but not replaceable under those names.
+
+### Changed
+
+- **The bundled CMap tables are split one file per character collection**,
+  behind a small index. A document names exactly one collection through its
+  `CIDSystemInfo`, so only that file is decompressed; a single combined file
+  would make one CJK document pay for all four. `supported_cmap_names()` — called
+  while parsing every composite font — is now answered from the index alone
+  instead of loading the whole bundle. Despite carrying 8.8x more CMaps, the
+  worst-case resolve loads ~35 MB where the old combined bundle loaded ~24 MB.
+  Only the index digest is pinned in code; it pins each collection file in turn.
+  `scripts/build_cmap_data.py` now takes `--output-dir` instead of `--output`,
+  and refuses to emit a collection whose `usecmap` bases are not all in it.
+
 - **Signing an authored signature field.** `engine.sign_field.sign_field()`
   fills the `/FT /Sig` field created by `Form.add_signature_field()` as an
   incremental update: the original bytes are emitted verbatim, so a signature

@@ -124,7 +124,9 @@ def _type0_doc(encoding: str) -> Document:
 
 
 def test_replace_non_identity_named_cmap() -> None:
-    doc = _type0_doc("UniGB-UCS2-H")
+    # Adobe-Japan1-6 is a real name the bundle deliberately excludes, so the
+    # editor falls back to the font's exact ToUnicode map.
+    doc = _type0_doc("Adobe-Japan1-6")
     assert doc.replace_text("Hi", "ii") == 1
     content = doc.pages[0].content
     # "ii" encodes back through the reverse ToUnicode map (both are code 0x0002).
@@ -141,7 +143,7 @@ def test_redact_identity_v_removes_text() -> None:
 def test_named_cmap_without_cidsysteminfo_draws_no_overlay_bar() -> None:
     # The missing CIDSystemInfo makes the named CMap unsafe for geometry, while
     # ToUnicode still permits exact text removal.
-    doc = _type0_doc("UniGB-UCS2-H")
+    doc = _type0_doc("Adobe-Japan1-6")
     assert doc.pages[0].redact_text("Hi", overlay=True) == 1
     content = doc.pages[0].content
     assert b"00010002" not in content  # text removed

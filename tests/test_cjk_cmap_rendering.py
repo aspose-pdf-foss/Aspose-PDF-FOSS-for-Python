@@ -274,10 +274,12 @@ def test_build_type0_font_resolves_bundled_cmap_and_rejects_unbundled():
     assert font is not None
     assert font.cmap is not None
 
-    # A real Adobe name that is not in the eight-CMap allowlist stays opaque, so
-    # the renderer keeps drawing boxes rather than guessing an approximate map.
+    # A real Adobe name outside the allowlist stays opaque, so the renderer
+    # keeps drawing boxes rather than guessing an approximate map. The
+    # Adobe-<Ordering>-<N> CMaps are excluded by design: their codes are CIDs,
+    # not an encoding.
     unbundled_pdf, unbundled_type0, _ = _make_cjk_pdf(
-        encoding="UniJIS-UCS2-H", content=content, cid_gid=cid_gid, widths=widths
+        encoding="Adobe-Japan1-6", content=content, cid_gid=cid_gid, widths=widths
     )
     unbundled_renderer = _PageRasterizer(
         unbundled_pdf, 0, dpi=72.0, scale=1.0, background=(255, 255, 255),

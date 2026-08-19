@@ -273,8 +273,87 @@ def test_predefined_horizontal_cmap_extracts_without_to_unicode(
     assert _extract(data) == case.source
 
 
+# CMaps beyond the original eight-name allowlist, one representative per
+# encoding family and collection. Codes and CIDs were derived from the pinned
+# Adobe sources themselves (Unicode CMaps encoded forward, legacy CMaps through
+# the collection's UCS-2 table), not from this library's own bundle.
+EXPANDED_CASES = (
+    CMapCase("UniJIS-UCS2-H", "Japan1", "日本", "65E5672C", (3284, 3722), "本日", "672C65E5"),
+    CMapCase("UniJIS-UCS2-HW-H", "Japan1", "日本", "65E5672C", (3284, 3722), "本日", "672C65E5"),
+    CMapCase("UniJIS-UTF8-H", "Japan1", "日本", "E697A5E69CAC", (3284, 3722), "本日", "E69CACE697A5"),
+    CMapCase("UniJIS-UTF32-H", "Japan1", "日本", "000065E50000672C", (3284, 3722), "本日", "0000672C000065E5"),
+    CMapCase("90pv-RKSJ-H", "Japan1", "日本", "93FA967B", (3284, 3722), "本日", "967B93FA"),
+    CMapCase("EUC-H", "Japan1", "日本", "C6FCCBDC", (3284, 3722), "本日", "CBDCC6FC"),
+    CMapCase("UniKS-UCS2-H", "Korea1", "한국", "D55CAD6D", (3296, 1204), "국한", "AD6DD55C"),
+    CMapCase("KSC-EUC-H", "Korea1", "한국", "C7D1B1B9", (3296, 1204), "국한", "B1B9C7D1"),
+    CMapCase("UniGB-UCS2-H", "GB1", "中国", "4E2D56FD", (4559, 1875), "国中", "56FD4E2D"),
+    CMapCase("GB-EUC-H", "GB1", "中国", "D6D0B9FA", (4559, 1875), "国中", "B9FAD6D0"),
+    CMapCase("GBK2K-H", "GB1", "中国", "D6D0B9FA", (4559, 1875), "国中", "B9FAD6D0"),
+    CMapCase("UniCNS-UCS2-H", "CNS1", "中國", "4E2D570B", (661, 2615), "國中", "570B4E2D"),
+    CMapCase("UniCNS-UTF8-H", "CNS1", "中國", "E4B8ADE59C8B", (661, 2615), "國中", "E59C8BE4B8AD"),
+    CMapCase("B5pc-H", "CNS1", "中國", "A4A4B0EA", (661, 2615), "國中", "B0EAA4A4"),
+    CMapCase("HKscs-B5-H", "CNS1", "中國", "A4A4B0EA", (661, 2615), "國中", "B0EAA4A4"),
+)
+
+
+@pytest.mark.parametrize("case", EXPANDED_CASES, ids=lambda c: c.name)
+def test_expanded_cmap_extracts_without_tounicode(case: CMapCase) -> None:
+    """Every newly bundled name yields exact text with no /ToUnicode present."""
+    data = _pdf_bytes(
+        cmap_name=case.name,
+        ordering=case.ordering,
+        shown_hex=case.source_hex,
+        cids=case.cids,
+    )
+    assert b"/ToUnicode" not in data
+    assert _extract(data) == case.source
+
+
+@pytest.mark.parametrize("case", EXPANDED_CASES, ids=lambda c: c.name)
+def test_expanded_cmap_replaces_and_round_trips(case: CMapCase) -> None:
+    document = _load(
+        _pdf_bytes(
+            cmap_name=case.name,
+            ordering=case.ordering,
+            shown_hex=case.source_hex,
+            cids=case.cids,
+        )
+    )
+    assert document.replace_text(case.source, case.replacement) == 1
+    assert case.replacement_hex.encode("ascii") in document.pages[0].content
+    assert _extract(_save(document)) == case.replacement
+
+
+@pytest.mark.parametrize("case", EXPANDED_CASES, ids=lambda c: c.name)
+def test_expanded_cmap_vertical_form_is_bundled(case: CMapCase) -> None:
+    """Each expanded name's vertical twin resolves and reports WMode 1."""
+    vertical_name = case.name.removesuffix("-H") + "-V"
+    assert vertical_name in supported_cmap_names()
+    resolved = resolve_predefined_cmap(
+        vertical_name, CharacterCollection("Adobe", case.ordering, 0)
+    )
+    assert resolved is not None
+    assert resolved.vertical is True
+
+
 def test_supported_cmap_names_match_the_documented_allowlist() -> None:
-    assert supported_cmap_names() == EXPECTED_CMAP_NAMES
+    names = supported_cmap_names()
+    # Every case this module exercises must be bundled.
+    assert set(EXPECTED_CMAP_NAMES) <= set(names)
+    # The allowlist is exactly the union the bundle index declares, so a data
+    # rebuild that drops or renames a file is caught here.
+    from aspose_pdf.engine.predefined_cmaps import _index
+
+    declared = {
+        name
+        for entry in _index()["collections"].values()
+        for name in entry["cmaps"]
+    }
+    assert set(names) == declared
+    assert names == tuple(sorted(names))
+    # The Adobe-<Ordering>-<N> CMaps map codes that already are CIDs rather than
+    # an encoding, and are deliberately excluded.
+    assert not [name for name in names if name.startswith("Adobe-")]
 
 
 @pytest.mark.parametrize("case", MODERN_CASES + LEGACY_CASES, ids=lambda c: c.name)
