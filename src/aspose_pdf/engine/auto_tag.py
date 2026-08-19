@@ -46,6 +46,7 @@ __all__ = [
     "find_mcids",
     "find_text_objects",
     "find_xobject_invocations",
+    "find_xobject_placements",
     "group_into_paragraphs",
     "group_rows",
     "has_marked_content",
@@ -586,6 +587,7 @@ def find_layout_elements(
 def find_image_placements(
     content: bytes,
     *,
+    initial_ctm: Matrix | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
 ) -> list[tuple[str, float, float]]:
@@ -595,10 +597,33 @@ def find_image_placements(
     (points): an XObject fills the unit square ``[0,1]²``, so its displayed axes
     are the lengths of the CTM's transformed ``(1,0)`` and ``(0,1)`` vectors.
     Form and image XObjects share ``Do``; the caller keeps only the image names.
+
+    *initial_ctm* seeds the graphics state, which lets a caller measure a form
+    XObject's own content in page space.
+    """
+    return [
+        (name, (m[0] ** 2 + m[1] ** 2) ** 0.5, (m[2] ** 2 + m[3] ** 2) ** 0.5)
+        for name, m in find_xobject_placements(
+            content, initial_ctm=initial_ctm, limits=limits, budget=budget
+        )
+    ]
+
+
+def find_xobject_placements(
+    content: bytes,
+    *,
+    initial_ctm: Matrix | None = None,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> list[tuple[str, Matrix]]:
+    """Return ``(xobject_name, ctm)`` for each ``Do``, in stream order.
+
+    The full matrix — not just the axis lengths — is what a caller needs to
+    descend into a form XObject and keep measuring in page space.
     """
     active_budget = _resolve_scan_budget(limits, budget)
-    placements: list[tuple[str, float, float]] = []
-    ctm: Matrix = _IDENTITY
+    placements: list[tuple[str, Matrix]] = []
+    ctm: Matrix = initial_ctm or _IDENTITY
     ctm_stack: list[Matrix] = []
     nums: list[float] = []
     last_name: str | None = None
@@ -639,15 +664,12 @@ def find_image_placements(
             if len(nums) >= 6:
                 ctm = _mul(tuple(nums[-6:]), ctm)  # type: ignore[arg-type]
         elif op == "Do" and last_name is not None:
-            a, b, c, d = ctm[0], ctm[1], ctm[2], ctm[3]
             active_budget.check(
                 len(placements) + 1,
                 "max_container_items",
                 "image placement results",
             )
-            placements.append(
-                (last_name, (a * a + b * b) ** 0.5, (c * c + d * d) ** 0.5)
-            )
+            placements.append((last_name, ctm))
         nums = []
         last_name = None
     return placements

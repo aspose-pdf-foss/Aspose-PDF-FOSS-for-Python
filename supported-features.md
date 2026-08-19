@@ -199,12 +199,18 @@ Supported (honored options):
 Boundaries:
 
 - Image recompression uses a baseline JPEG encoder for DeviceRGB / DeviceGray
-  (and ICCBased with N=1/3, 4:2:0 chroma) and DeviceCMYK (full-resolution,
-  Adobe-marked); Indexed, Lab, ICC-based CMYK, masks and images with a `/Decode`
-  array are left untouched, as are JPX/CCITT/JBIG2 payloads. Resampling is
-  box-average downscaling only (no upscaling); DPI targeting measures page-level
-  placements only, so an image reached solely through a form XObject keeps its
-  resolution.
+  (and ICCBased with N=1/3, 4:2:0 chroma) and DeviceCMYK — device or **ICCBased
+  with N=4** — full-resolution and Adobe-marked. A `/Decode` array that only
+  inverts (`[1 0]` per component) is folded into the samples and dropped; any
+  other sample remapping, plus Indexed, Lab and stencil (`/ImageMask`) images and
+  JPX/CCITT/JBIG2 payloads, is left untouched. **Soft/stencil masks** are never
+  JPEG-encoded — ringing on a sharp mask is visible — but they *are* downscaled
+  along with the image that carries them, at that image's display size.
+  Resampling is box-average downscaling only (no upscaling). DPI targeting
+  follows **form XObjects**, composing each form's `/Matrix` with the CTM at its
+  `Do`, so an image drawn only inside a form is measured in page space like any
+  other; nesting is bounded and a form that draws itself terminates. An image
+  that is never placed keeps its resolution, its display size being unknown.
 - Font subsetting (glyph erasure) covers embedded **TrueType** (`/FontFile2`) and
   **CFF** (`/FontFile3`) programs. Handled: Type0 fonts with Identity encoding
   over a CIDFontType2 (TrueType) or a CIDFontType0 backed by either a name-keyed

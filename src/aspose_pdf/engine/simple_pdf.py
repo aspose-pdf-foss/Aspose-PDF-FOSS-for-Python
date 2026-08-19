@@ -7667,16 +7667,19 @@ class SimplePdf:
     )
     _JPEG_FILTERS = frozenset({"DCTDecode", "DCT"})
 
+    # How deep to follow nested form XObjects when measuring display size.
+    _DISPLAY_SIZE_MAX_DEPTH = 8
+
     def _image_display_sizes(self) -> dict[int, tuple[float, float]]:
         """Map each placed image XObject's object number to its largest on-page
         display size in points (for effective-DPI downsampling).
 
-        Only page-level placements are measured; an image reachable only through
-        a form XObject is absent from the map, so the caller leaves it untouched
-        (its display size — hence DPI — is unknown).
+        Form XObjects are followed, composing each form's ``/Matrix`` with the
+        CTM at its ``Do``, so an image drawn only inside a form is measured in
+        page space like any other. An image that is never placed stays absent
+        from the map and the caller leaves it untouched, its DPI being unknown.
         """
-        from .auto_tag import find_image_placements
-        from .cos import PdfDictionary, PdfName
+        from .cos import PdfDictionary
 
         sizes: dict[int, tuple[float, float]] = {}
         for i in range(len(self.pages)):
@@ -7686,32 +7689,91 @@ class SimplePdf:
             resources = self._resolve_resources_cos(page)
             if not isinstance(resources, PdfDictionary):
                 continue
-            xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
-            if not isinstance(xobjects, PdfDictionary):
-                continue
-            name_to_obj: dict[str, int] = {}
-            for key, value in xobjects.mapping.items():
-                if isinstance(value, PdfIndirectReference):
-                    name_to_obj[key.name.lstrip("/")] = value.object_number
-            if not name_to_obj:
-                continue
             try:
                 content = self.get_page_content(i)
             except PdfResourceLimitException:
                 raise
             except PDF_OPERATION_ERRORS:
                 continue
-            for name, w, h in find_image_placements(
-                content,
-                limits=self._load_limits,
-                budget=self._load_budget,
-            ):
-                obj_num = name_to_obj.get(name.lstrip("/"))
-                if obj_num is None:
-                    continue
-                pw, ph = sizes.get(obj_num, (0.0, 0.0))
-                sizes[obj_num] = (max(pw, w), max(ph, h))
+            self._collect_display_sizes(
+                content, resources, (1.0, 0.0, 0.0, 1.0, 0.0, 0.0), sizes, set(), 0
+            )
         return sizes
+
+    def _collect_display_sizes(
+        self,
+        content: bytes,
+        resources: Any,
+        ctm: tuple[float, float, float, float, float, float],
+        sizes: dict[int, tuple[float, float]],
+        active: set[int],
+        depth: int,
+    ) -> None:
+        """Accumulate on-page sizes for images placed by *content*."""
+        from .auto_tag import _mul, find_xobject_placements
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
+
+        if depth > self._DISPLAY_SIZE_MAX_DEPTH:
+            return
+        self._load_budget.check(
+            depth + 1, "max_nesting_depth", "image display-size form nesting"
+        )
+        xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
+        if not isinstance(xobjects, PdfDictionary):
+            return
+        by_name: dict[str, Any] = {
+            key.name.lstrip("/"): value for key, value in xobjects.mapping.items()
+        }
+
+        for name, placement in find_xobject_placements(
+            content,
+            initial_ctm=ctm,
+            limits=self._load_limits,
+            budget=self._load_budget,
+        ):
+            ref = by_name.get(name.lstrip("/"))
+            target = self._resolve(ref)
+            if not isinstance(target, PdfStream):
+                continue
+            subtype = self._get_name(target.mapping.get(PdfName("Subtype")))
+            if subtype == "Image":
+                if not isinstance(ref, PdfIndirectReference):
+                    continue
+                a, b, c, d = placement[0], placement[1], placement[2], placement[3]
+                width = (a * a + b * b) ** 0.5
+                height = (c * c + d * d) ** 0.5
+                pw, ph = sizes.get(ref.object_number, (0.0, 0.0))
+                sizes[ref.object_number] = (max(pw, width), max(ph, height))
+                continue
+            if subtype != "Form":
+                continue
+            marker = id(target)
+            if marker in active:
+                continue  # a form drawing itself; do not recurse forever.
+            inner_resources = self._resolve(target.mapping.get(PdfName("Resources")))
+            if not isinstance(inner_resources, PdfDictionary):
+                inner_resources = resources  # forms may inherit page resources.
+            # A form's own /Matrix applies before the CTM at its Do.
+            form_matrix = self._resolve(target.mapping.get(PdfName("Matrix")))
+            inner_ctm = placement
+            if isinstance(form_matrix, PdfArray) and len(form_matrix.items) == 6:
+                values = [self._get_number(v) for v in form_matrix.items]
+                if all(v is not None for v in values):
+                    inner_ctm = _mul(tuple(float(v) for v in values), placement)
+            try:
+                inner_content = self._decode_cos_stream(target, ref)
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                continue
+            active.add(marker)
+            try:
+                self._collect_display_sizes(
+                    inner_content, inner_resources, inner_ctm, sizes,
+                    active, depth + 1,
+                )
+            finally:
+                active.discard(marker)
 
     def _recompress_images_cos(
         self,
@@ -7741,26 +7803,67 @@ class SimplePdf:
         # Objects used as soft masks / stencil masks must not be lossily
         # recompressed — JPEG ringing on a sharp mask is visible.
         mask_targets: set = set()
-        for obj in objects.values():
+        # A mask is not placed by the content stream; it is displayed at the
+        # size of the image that carries it, so it inherits that display size.
+        mask_display_sizes: dict[int, tuple[float, float]] = {}
+        for owner_num, obj in objects.items():
             if not isinstance(obj, PdfStream):
                 continue
             for key in (PdfName("SMask"), PdfName("Mask")):
                 ref = obj.mapping.get(key)
                 if isinstance(ref, PdfIndirectReference):
                     mask_targets.add(ref.object_number)
+                    owner_size = display_sizes.get(owner_num)
+                    if owner_size is not None:
+                        previous = mask_display_sizes.get(
+                            ref.object_number, (0.0, 0.0)
+                        )
+                        mask_display_sizes[ref.object_number] = (
+                            max(previous[0], owner_size[0]),
+                            max(previous[1], owner_size[1]),
+                        )
 
         count = 0
         for obj_num in sorted(objects.keys()):
-            if obj_num in mask_targets:
-                continue
             stream = objects[obj_num]
-            if isinstance(stream, PdfStream) and self._recompress_one_image(
-                stream, quality, max_dim, target_dpi,
-                display_sizes.get(obj_num), progressive,
+            if not isinstance(stream, PdfStream):
+                continue
+            # A mask may still be downscaled — only its *lossy* re-encoding is
+            # off the table, because JPEG ringing on a sharp mask is visible.
+            is_mask = obj_num in mask_targets
+            if is_mask and max_dim is None and target_dpi is None:
+                continue
+            if self._recompress_one_image(
+                stream,
+                None if is_mask else quality,
+                max_dim, target_dpi,
+                display_sizes.get(obj_num) or mask_display_sizes.get(obj_num),
+                progressive,
             ):
                 count += 1
         if count:
             logger.info("Recompressed/resized %d image(s).", count)
+
+    def _decode_array_is_inversion(self, decode: Any) -> bool:
+        """True for a ``/Decode`` array that only inverts every component.
+
+        That is ``[1 0]`` repeated per component — the common form on inverted
+        CMYK and gray scans. Inverting the samples reproduces it exactly, so the
+        array can then be dropped.
+        """
+        from .cos import PdfArray
+
+        if not isinstance(decode, PdfArray) or not decode.items:
+            return False
+        if len(decode.items) % 2:
+            return False
+        values = [self._get_number(item) for item in decode.items]
+        if any(value is None for value in values):
+            return False
+        return all(
+            float(values[i]) == 1.0 and float(values[i + 1]) == 0.0
+            for i in range(0, len(values), 2)
+        )
 
     def _recompress_one_image(
         self,
@@ -7781,8 +7884,15 @@ class SimplePdf:
         mask = self._resolve(m.get(PdfName("ImageMask")))
         if isinstance(mask, PdfBoolean) and mask.value:
             return False
-        if m.get(PdfName("Decode")) is not None:
-            return False  # sample remapping we would have to reproduce.
+        # A /Decode array remaps samples. The inverting form ([1 0] per
+        # component) is reproduced exactly by inverting the samples and dropping
+        # the array; any other mapping we do not attempt.
+        inverted = False
+        decode = self._resolve(m.get(PdfName("Decode")))
+        if decode is not None:
+            if not self._decode_array_is_inversion(decode):
+                return False
+            inverted = True
         width = self._get_number(m.get(PdfName("Width")))
         height = self._get_number(m.get(PdfName("Height")))
         if not width or not height:
@@ -7841,6 +7951,8 @@ class SimplePdf:
                 return False
             samples = samples[: width * height * comps]
 
+        if inverted:
+            samples = bytes(255 - value for value in samples)
         if resized:
             samples = downscale(samples, width, height, comps, new_w, new_h)
 
@@ -7867,6 +7979,8 @@ class SimplePdf:
         stream.content = new_content
         m[PdfName("Filter")] = PdfName(new_filter)
         m.pop(PdfName("DecodeParms"), None)
+        if inverted:
+            m.pop(PdfName("Decode"), None)  # now folded into the samples.
         m[PdfName("BitsPerComponent")] = PdfNumber(8)
         m[PdfName("Width")] = PdfNumber(new_w)
         m[PdfName("Height")] = PdfNumber(new_h)
@@ -7886,9 +8000,9 @@ class SimplePdf:
     def _cs_components(self, cs: Any) -> int | None:
         """Return the component count of an image colour space (1/3/4) or None.
 
-        Only device/calibrated gray and RGB (and ICCBased with N=1/3) are mapped;
-        Indexed/Separation/DeviceN/Lab/Pattern return ``None`` so the caller
-        leaves those images untouched.
+        Device/calibrated gray and RGB, DeviceCMYK, and ICCBased with N=1/3/4 are
+        mapped; Indexed/Separation/DeviceN/Lab/Pattern return ``None`` so the
+        caller leaves those images untouched.
         """
         from .cos import PdfArray, PdfName, PdfStream
 
@@ -7905,7 +8019,7 @@ class SimplePdf:
                 profile = self._resolve(cs.items[1])
                 if isinstance(profile, PdfStream):
                     n = self._get_number(profile.mapping.get(PdfName("N")))
-                    return int(n) if n in (1, 3) else None
+                    return int(n) if n in (1, 3, 4) else None
                 return None
             if head == "CalGray":
                 return 1

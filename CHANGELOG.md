@@ -7,6 +7,24 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The optimizer's DPI target follows form XObjects.** Display size was
+  measured from page-level placements only, so an image drawn inside a form was
+  invisible to `image_target_dpi` and kept its full resolution. Forms are now
+  descended into, composing each form's `/Matrix` with the CTM at its `Do`, with
+  bounded nesting and cycle detection.
+- **ICC-based CMYK images are recompressed.** `/ICCBased` with `/N 4` is CMYK,
+  which the JPEG encoder already handled; only the colour-space probe rejected
+  it.
+- **An inverting `/Decode` array is folded into the samples.** `[1 0]` per
+  component — the common form on inverted scans — is reproduced exactly by
+  inverting the samples and dropping the array, so such images are no longer
+  skipped. Other sample remappings are still left alone.
+- **Masks are downscaled with the image that carries them.** A mask was skipped
+  outright, so a full-resolution soft mask survived a downscale of its image.
+  Masks now follow the image's display size but are never JPEG-encoded.
+
 ### Fixed
 
 - **The PDF/A checker accepted DeviceCMYK under an sRGB output intent.** It only

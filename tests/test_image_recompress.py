@@ -198,11 +198,43 @@ def test_indexed_image_untouched():
     assert pdf._cos_doc.objects[num].content == before
 
 
-def test_image_with_decode_array_untouched():
+def test_inverting_decode_array_is_folded_into_the_samples():
+    """``/Decode [1 0 ...]`` only inverts, which the samples can absorb."""
+    from aspose_pdf.engine import dct
+
     extra = {
         PdfName("ColorSpace"): PdfName("DeviceRGB"),
         PdfName("Filter"): PdfName("FlateDecode"),
         PdfName("Decode"): PdfArray([PdfNumber(1), PdfNumber(0)] * 3),
+    }
+    pdf, num = _pdf_with_image(extra, _flate_rgb())
+    before = pdf._cos_doc.objects[num].content
+    pdf.optimize(_opts(image_compression_quality=50))
+
+    stream = pdf._cos_doc.objects[num]
+    assert stream.content != before
+    assert stream.mapping[PdfName("Filter")] == PdfName("DCTDecode")
+    # The array is gone because the inversion now lives in the samples.
+    assert PdfName("Decode") not in stream.mapping
+
+    decoded = dct.decode(stream.content)
+    original = _rgb_gradient(_W, _H)
+    # Lossy, so compare the mean against the inverted source rather than bytes.
+    mean_delta = sum(
+        abs(a - (255 - b)) for a, b in zip(decoded.samples, original)
+    ) / len(original)
+    assert mean_delta < 12, mean_delta
+
+
+def test_non_inverting_decode_array_is_untouched():
+    """Any other sample remapping is not reproduced, so the image is kept."""
+    extra = {
+        PdfName("ColorSpace"): PdfName("DeviceRGB"),
+        PdfName("Filter"): PdfName("FlateDecode"),
+        PdfName("Decode"): PdfArray(
+            [PdfNumber(0), PdfNumber(1), PdfNumber(0), PdfNumber(1),
+             PdfNumber(0), PdfNumber(0.5)]
+        ),
     }
     pdf, num = _pdf_with_image(extra, _flate_rgb())
     before = pdf._cos_doc.objects[num].content
