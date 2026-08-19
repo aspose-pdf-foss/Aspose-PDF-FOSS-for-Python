@@ -1,15 +1,24 @@
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 from aspose_pdf import __version__
-
+from aspose_pdf._version import __release_version__
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_package_exposes_version() -> None:
+RELEASE_VERSION = "0.1.0"
+
+
+def test_package_declares_the_release_version() -> None:
+    """The declared version is the source of truth for a release.
+
+    ``__version__`` reports whatever distribution is *installed*, which lags an
+    edited checkout until the package is reinstalled — so asserting on it would
+    silently pass over a version bump.
+    """
+    assert __release_version__ == RELEASE_VERSION
     assert isinstance(__version__, str)
-    assert __version__ == "0.1.0a0"
 
 
 def test_release_metadata_contract() -> None:
@@ -20,7 +29,7 @@ def test_release_metadata_contract() -> None:
     assert project["license"] == "MIT"
     assert project["requires-python"] == ">=3.11"
     assert project["authors"] == [{"name": "Aspose Pty Ltd"}]
-    assert "Development Status :: 3 - Alpha" in project["classifiers"]
+    assert "Development Status :: 4 - Beta" in project["classifiers"]
     assert "Programming Language :: Python :: 3.11" in project["classifiers"]
     assert "Programming Language :: Python :: 3.12" in project["classifiers"]
     assert "Programming Language :: Python :: 3.13" in project["classifiers"]
@@ -41,3 +50,20 @@ def test_readme_documents_public_project_contract() -> None:
     assert "## Quick Start" in readme
     assert "supported-features.md" in readme
     assert "Aspose Pty Ltd" in readme
+
+
+def test_changelog_documents_the_declared_version() -> None:
+    """A release must carry its own changelog section and link reference.
+
+    This ties the version bump and the changelog together, so neither can move
+    without the other.
+    """
+    changelog = (ROOT / "CHANGELOG.md").read_text()
+
+    assert f"## [{RELEASE_VERSION}] - " in changelog
+    assert f"[{RELEASE_VERSION}]: https://" in changelog
+    # A released section is never left labelled Unreleased.
+    unreleased = changelog.split("## [Unreleased]", 1)[1]
+    assert unreleased.lstrip().startswith("## ["), (
+        "entries were left under [Unreleased]"
+    )

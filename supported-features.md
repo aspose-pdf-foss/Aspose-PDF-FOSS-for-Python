@@ -1,7 +1,7 @@
 # Supported Features
 
-This document describes the implemented and tested feature set for the
-`aspose-pdf-foss-for-python` prerelease package. The authoritative release
+This document describes the implemented and tested feature set of the
+`aspose-pdf-foss-for-python` package. The authoritative release
 contract is the active `tests/test_*.py` suite; compatibility modules may expose
 additional names, but unsupported operations should fail explicitly.
 
@@ -370,7 +370,7 @@ Boundaries:
   extraction. **Vertical CMaps** (`WMode 1`, bundled or embedded) now position
   correctly: each glyph is offset by its `/W2` (or `/DW2`) position vector and
   the text advances downward by the vertical displacement.
-- Layout reflow remains out of scope in this prerelease.
+- Layout reflow remains out of scope.
 
 ## Text
 
