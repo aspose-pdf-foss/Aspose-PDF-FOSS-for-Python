@@ -301,6 +301,7 @@ class Page:
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
         shape_substitute_text: bool = True,
+        draw_annotations: bool = True,
     ) -> RasterizedPage:
         """Render this page to an RGB raster image.
 
@@ -313,6 +314,8 @@ class Page:
         ``shape_substitute_text`` (default on) joins complex-script runs drawn
         with a bundled substitute face; it needs the optional ``text-layout``
         extra and only affects non-embedded fonts.
+        ``draw_annotations`` (default on) composites each visible annotation's
+        normal appearance over the page, the way a viewer shows it.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -328,6 +331,7 @@ class Page:
             background=background,
             antialias=antialias,
             shape_substitute_text=shape_substitute_text,
+            draw_annotations=draw_annotations,
         )
 
     def save_as_image(

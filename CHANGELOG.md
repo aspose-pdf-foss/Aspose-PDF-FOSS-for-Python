@@ -9,6 +9,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The page rasterizer draws annotations.** It rendered page content only, so
+  every highlight, stamp, sticky note and form-field widget was missing from a
+  rendered page even with its `/AP` present. Each visible annotation's normal
+  appearance is now composited, placed by fitting its `/Matrix`-transformed
+  `/BBox` to `/Rect` (ISO 32000-1 12.5.5), with `/AS` selecting among appearance
+  states and Hidden/NoView annotations and `Popup` subtypes skipped. A malformed
+  annotation is skipped rather than allowed to abort the page.
+  `Page.render(draw_annotations=False)` (also on `Document.render_page`) keeps
+  the old content-only behaviour.
+
 - **Standard icons for `Text` and `FileAttachment` annotations.** Two of the
   most common annotations in a reviewed document could not synthesise an
   appearance at all — `generate_appearances()` declined and left them with no

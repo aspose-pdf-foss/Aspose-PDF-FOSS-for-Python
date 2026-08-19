@@ -847,8 +847,14 @@ Boundaries:
   unknown name falling back to the subtype's default as a viewer does. Other
   subtypes (`Sound`, `3D`, …) still need an appearance supplied via
   `appearance_normal`.
-- Annotation appearances are built for viewers; the page rasterizer draws page
-  content only and does not composite annotations.
+- The page rasterizer **composites annotation appearances** over the page
+  content, the way a viewer shows them: each annotation's `/AP` `/N` is placed
+  by fitting its `/Matrix`-transformed `/BBox` to `/Rect` (ISO 32000-1 12.5.5),
+  an appearance-state subdictionary is resolved through `/AS`, and annotations
+  flagged Hidden or NoView — and `Popup` subtypes — are skipped. Pass
+  `draw_annotations=False` to `Page.render` / `Document.render_page` for the
+  page content alone. An annotation with no appearance draws nothing: the
+  renderer never invents one, so call `generate_appearances()` first.
 
 ## Attachments
 

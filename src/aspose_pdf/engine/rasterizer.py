@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from aspose_pdf.exceptions import (
+    PDF_OPERATION_ERRORS,
     AsposePdfException,
     PdfResourceLimitException,
     PdfValidationException,
@@ -427,6 +428,29 @@ def _normalize_antialias(antialias: Any) -> int:
     return factor
 
 
+def _annotation_placement(
+    bbox: tuple[float, float, float, float],
+    matrix: Matrix,
+    rect: tuple[float, float, float, float],
+) -> Matrix | None:
+    """Map a form's ``/Matrix``-transformed ``/BBox`` onto *rect* (ISO 12.5.5)."""
+    corners = [
+        _transform_point(matrix, bbox[0], bbox[1]),
+        _transform_point(matrix, bbox[2], bbox[1]),
+        _transform_point(matrix, bbox[2], bbox[3]),
+        _transform_point(matrix, bbox[0], bbox[3]),
+    ]
+    xs = [p[0] for p in corners]
+    ys = [p[1] for p in corners]
+    if not all(math.isfinite(v) for v in xs + ys):
+        return None
+    bw, bh = max(xs) - min(xs), max(ys) - min(ys)
+    # A zero-area transformed box has no scale to derive; place it unscaled.
+    sx = (rect[2] - rect[0]) / bw if bw > 1e-9 else 1.0
+    sy = (rect[3] - rect[1]) / bh if bh > 1e-9 else 1.0
+    return (sx, 0.0, 0.0, sy, rect[0] - min(xs) * sx, rect[1] - min(ys) * sy)
+
+
 def render_page(
     pdf: Any,
     page_index: int,
@@ -436,6 +460,7 @@ def render_page(
     background: Sequence[int] = (255, 255, 255),
     antialias: bool | int = True,
     shape_substitute_text: bool = True,
+    draw_annotations: bool = True,
 ) -> RasterizedPage:
     """Render ``page_index`` from a ``SimplePdf`` into an RGB raster.
 
@@ -446,6 +471,10 @@ def render_page(
     ``shape_substitute_text`` (default on) draws complex-script runs that fall
     back to a bundled substitute face with cursive-joined forms instead of
     isolated glyphs, when the optional ``text-layout`` extra is present.
+
+    ``draw_annotations`` (default on) composites each visible annotation's
+    normal appearance over the page content, the way a viewer shows it. Turn it
+    off to render the page content alone.
     """
     if pdf is None:
         raise AsposePdfException("No document loaded")
@@ -459,6 +488,7 @@ def render_page(
         background=background,
         antialias=antialias,
         shape_substitute_text=shape_substitute_text,
+        draw_annotations=draw_annotations,
     )
     return renderer.render()
 
@@ -474,8 +504,10 @@ class _PageRasterizer:
         background: Sequence[int],
         antialias: bool | int = True,
         shape_substitute_text: bool = True,
+        draw_annotations: bool = True,
     ):
         self.shape_substitute_text = bool(shape_substitute_text)
+        self.draw_annotations = bool(draw_annotations)
         try:
             dpi_value = float(dpi)
             scale_value = float(scale)
@@ -557,6 +589,8 @@ class _PageRasterizer:
         content = self._page_content()
         if content:
             self._interpret(content, self.resources_cos, self.resources_plain, depth=0)
+        if self.draw_annotations:
+            self._paint_annotations()
         pixels = (
             self._downsample() if self._ss > 1 else bytes(self.canvas.pixels)
         )
@@ -566,6 +600,117 @@ class _PageRasterizer:
             pixels=pixels,
             dpi=self.dpi,
         )
+
+    # Annotation flags (ISO 32000-1 table 165), 1-based bit positions.
+    _ANNOT_HIDDEN = 1 << 1
+    _ANNOT_NOVIEW = 1 << 5
+    # A Popup is shown only while its parent is open, so it is not painted.
+    _ANNOT_SKIP_SUBTYPES = frozenset({"Popup"})
+
+    def _paint_annotations(self) -> None:
+        """Composite each visible annotation's normal appearance onto the page.
+
+        An appearance is a form XObject in its own space; ISO 32000-1 12.5.5
+        maps it onto the annotation by fitting its ``/Matrix``-transformed
+        ``/BBox`` to ``/Rect``. A malformed annotation is skipped rather than
+        allowed to abort the page.
+        """
+        page = self._page_dict()
+        if not isinstance(page, PdfDictionary):
+            return
+        annots = self._resolve(page.mapping.get(PdfName("Annots")))
+        if not isinstance(annots, PdfArray):
+            return
+        for ref in list(annots.items):
+            annot = self._resolve(ref)
+            if not isinstance(annot, PdfDictionary):
+                continue
+            try:
+                self._paint_one_annotation(annot)
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                continue
+
+    def _page_dict(self) -> Any:
+        getter = getattr(self.pdf, "_get_page_dict", None)
+        return getter(self.page_index) if callable(getter) else None
+
+    def _paint_one_annotation(self, annot: PdfDictionary) -> None:
+        subtype = self._cos_name(annot.mapping.get(PdfName("Subtype")))
+        if subtype in self._ANNOT_SKIP_SUBTYPES:
+            return
+        flags = self._cos_number(annot.mapping.get(PdfName("F")))
+        if flags is not None:
+            bits = int(flags)
+            if bits & (self._ANNOT_HIDDEN | self._ANNOT_NOVIEW):
+                return
+
+        stream = self._annotation_normal_appearance(annot)
+        if stream is None:
+            return
+        rect = self._cos_rect(annot.mapping.get(PdfName("Rect")))
+        if rect is None:
+            return
+
+        matrix = (
+            _cos_matrix(self._resolve(stream.mapping.get(PdfName("Matrix"))))
+            or IDENTITY
+        )
+        bbox = self._cos_rect(stream.mapping.get(PdfName("BBox")))
+        if bbox is None:
+            return
+        placement = _annotation_placement(bbox, matrix, rect)
+        if placement is None:
+            return
+
+        saved_state, saved_stack = self.state, self.state_stack
+        self.state = _GraphicsState(ctm=_multiply(placement, matrix))
+        self.state_stack = []
+        try:
+            self._paint_form(
+                stream,
+                None,
+                self.resources_cos,
+                self.resources_plain,
+                0,
+                apply_matrix=False,
+            )
+        finally:
+            self.state, self.state_stack = saved_state, saved_stack
+
+    def _annotation_normal_appearance(self, annot: PdfDictionary) -> Any:
+        """Return the ``/AP /N`` stream, resolving an appearance-state subdictionary."""
+        ap = self._resolve(annot.mapping.get(PdfName("AP")))
+        if not isinstance(ap, PdfDictionary):
+            return None
+        normal = self._resolve(ap.mapping.get(PdfName("N")))
+        if isinstance(normal, PdfStream):
+            return normal
+        if not isinstance(normal, PdfDictionary):
+            return None
+        # A states dictionary: /AS names the one in effect.
+        state = self._cos_name(annot.mapping.get(PdfName("AS")))
+        if state is not None:
+            candidate = self._resolve(normal.mapping.get(PdfName(state)))
+            if isinstance(candidate, PdfStream):
+                return candidate
+            return None
+        if len(normal.mapping) == 1:
+            only = self._resolve(next(iter(normal.mapping.values())))
+            if isinstance(only, PdfStream):
+                return only
+        return None
+
+    def _cos_rect(self, value: Any) -> tuple[float, float, float, float] | None:
+        array = self._resolve(value)
+        if not isinstance(array, PdfArray) or len(array.items) < 4:
+            return None
+        numbers = [self._cos_number(item) for item in array.items[:4]]
+        if any(n is None or not math.isfinite(float(n)) for n in numbers):
+            return None
+        x0, y0, x1, y1 = (float(n) for n in numbers)
+        return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
     def _downsample(self) -> bytes:
         """Box-average each ``ss x ss`` block of the supersampled canvas."""
@@ -2739,11 +2884,16 @@ class _PageRasterizer:
         depth: int,
         *,
         as_group_content: bool = False,
+        apply_matrix: bool = True,
     ) -> None:
         matrix = (
             _cos_matrix(self._resolve(stream.mapping.get(PdfName("Matrix"))))
             or IDENTITY
         )
+        # An annotation composes /Matrix into its placement itself (12.5.5), so
+        # it hands over a CTM that already carries it.
+        if not apply_matrix:
+            matrix = IDENTITY
         # Transparency groups are always rendered as a unit so their isolated
         # and knockout attributes affect internal blend and backdrop semantics.
         if (
