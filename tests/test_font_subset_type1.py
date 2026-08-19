@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import struct
 
+import pytest
+
 from aspose_pdf.engine.font_subset_type1 import (
     _encrypt,
     _encrypt_charstring,
@@ -213,10 +215,29 @@ def test_type1_differences_resolve_without_a_table():
     assert _charstring_points(stream.content, l1, new_l2, "A") == 0
 
 
-def test_type1_with_named_base_encoding_is_not_subset():
-    # A predefined base encoding needs a code->name table we do not ship, so the
-    # font is kept whole (never erase a used glyph).
-    pdf, ff_num, _ = _embed_type1(shown_codes=[0x41], pdf_encoding="WinAnsiEncoding")
+def test_type1_with_named_base_encoding_is_subset():
+    # WinAnsiEncoding maps 0x41 to the glyph name "A" through the bundled table,
+    # so the font can be subset instead of kept whole.
+    pdf, ff_num, (l1, _l2, l3) = _embed_type1(
+        shown_codes=[0x41], pdf_encoding="WinAnsiEncoding"
+    )
+    original = pdf._cos_doc.objects[ff_num].content
+    pdf.optimize(_subset_opts())
+    subset = pdf._cos_doc.objects[ff_num].content
+    assert len(subset) < len(original)
+
+    reparsed = Type1Outlines(subset, l1, len(subset) - l1 - l3)
+    assert reparsed.ok
+    assert _outline_points(reparsed, "A") > 0  # the used glyph survives
+    for name in ("B", "C", "D"):
+        assert _outline_points(reparsed, name) == 0
+
+
+@pytest.mark.parametrize("encoding", ["MacExpertEncoding", "NotAnEncoding"])
+def test_type1_with_unbundled_base_encoding_is_not_subset(encoding):
+    # A base encoding we do not bundle gives no code->name table, so the font is
+    # kept whole rather than risk erasing a used glyph.
+    pdf, ff_num, _ = _embed_type1(shown_codes=[0x41], pdf_encoding=encoding)
     original = pdf._cos_doc.objects[ff_num].content
     pdf.optimize(_subset_opts())
     assert pdf._cos_doc.objects[ff_num].content == original

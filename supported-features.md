@@ -211,23 +211,24 @@ Boundaries:
   CFF (CIDs are glyph ids per PDF 32000 9.7.4.2) or a **CID-keyed CFF**
   (`/CIDFontType0C` — the `FDArray`/`FDSelect`/charset and each Font DICT's
   `Private` are relocated, and CIDs are mapped to glyph ids through the CFF
-  charset). A simple `/TrueType` font is subset via its symbol `cmap`, or via the
-  PDF `/Encoding` (a WinAnsi/MacRoman base plus `uniXXXX` `/Differences`) resolved
-  against the font's Unicode `cmap`. A simple `/Type1` font backed by a name-keyed
-  CFF (`/FontFile3`) is subset using the CFF's own **built-in encoding** (code →
-  glyph id), applied only when the font has no PDF `/Encoding` override (an
-  override would need name→glyph resolution through the CFF charset and standard
-  strings). A simple **Type 1** font (`/FontFile`, eexec-encrypted) is subset by
-  re-encrypting its Private dict with each unused glyph's charstring emptied
-  (``0 0 hsbw endchar``); the kept glyph names come from the PDF `/Differences`
-  (which name Type 1 glyphs directly) over the font's own built-in encoding, so
-  no external table is needed. **Not** subset (left whole): CFF2, CID-keyed CFF
-  in a simple font, simple CFF with a predefined (Standard/Expert) encoding or a
-  PDF `/Encoding`, and Type 1 fonts whose used codes need a predefined base
-  encoding (a `/Encoding` name or a dict with `/BaseEncoding`). Simple-font
-  `/Encoding` resolution falls back to leaving the font whole for any used code
-  it cannot map exactly (e.g. StandardEncoding or non-algorithmic glyph names),
-  so a used glyph is never erased.
+  charset). Simple fonts of every embedded flavour resolve their used codes
+  through one shared step: `/Differences`, then the predefined base encoding
+  (`Standard`, `WinAnsi`, `MacRoman` — the **bundled Adobe tables**, not the
+  stdlib codecs, which disagree on real codes such as WinAnsi `0xA0`/`0xAD` and
+  MacRoman `0xDB`), then the font program's own built-in encoding. A simple
+  `/TrueType` font is subset via its symbol `cmap`, or by mapping that glyph name
+  to a scalar through the Adobe Glyph List and looking it up in the font's
+  Unicode `cmap`. A simple `/Type1` font backed by a name-keyed CFF
+  (`/FontFile3`) maps the glyph name to a glyph id through the **CFF charset**,
+  falling back to the CFF's own built-in encoding and then to StandardEncoding —
+  which is what a CFF carrying a predefined encoding means. A simple **Type 1**
+  font (`/FontFile`, eexec-encrypted) is subset by re-encrypting its Private dict
+  with each unused glyph's charstring emptied (``0 0 hsbw endchar``), keeping the
+  glyph names the same resolution produces. **Not** subset (left whole): CFF2,
+  CID-keyed CFF in a simple font, and any font whose used codes need an encoding
+  outside the bundled tables (`MacExpertEncoding` and other unrecognised base
+  names). Resolution falls back to leaving the font whole for any used code it
+  cannot map exactly, so a used glyph is never erased.
 
 ## Pages
 

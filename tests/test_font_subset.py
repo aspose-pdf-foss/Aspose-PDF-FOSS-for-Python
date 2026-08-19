@@ -633,14 +633,31 @@ def test_simple_truetype_subset_via_encoding_differences():
     assert offsets[4] - offsets[3] == 0  # gid 3 ('C') erased
 
 
-def test_simple_truetype_unresolved_encoding_left_whole():
-    # An unsupported base (StandardEncoding, no codec) cannot resolve the used
-    # code, so the subsetter must keep the font intact rather than risk erasing
-    # a used glyph.
+def test_simple_truetype_subset_via_standard_encoding():
+    # StandardEncoding is one of the bundled tables, so 0x41 resolves to "A".
     from aspose_pdf.engine.cos import PdfName
 
     pdf, ff_num = _embed_simple_tt(
         _latin_font(), b"A", encoding=PdfName("StandardEncoding")
+    )
+    original = pdf._cos_doc.objects[ff_num].content
+
+    pdf.optimize(_subset_opts(subset_fonts=True))
+
+    new_program = pdf._cos_doc.objects[ff_num].content
+    assert len(new_program) < len(original)
+    offsets = _loca_offsets(new_program)
+    assert offsets[2] - offsets[1] > 0  # gid 1 ('A') kept
+    assert offsets[3] - offsets[2] == 0  # gid 2 ('B') erased
+
+
+def test_simple_truetype_unbundled_base_encoding_left_whole():
+    # MacExpertEncoding is not bundled, so the used code cannot be resolved and
+    # the subsetter keeps the font intact rather than risk erasing a used glyph.
+    from aspose_pdf.engine.cos import PdfName
+
+    pdf, ff_num = _embed_simple_tt(
+        _latin_font(), b"A", encoding=PdfName("MacExpertEncoding")
     )
     before = pdf._cos_doc.objects[ff_num].content
 
@@ -665,3 +682,63 @@ def test_simple_truetype_unknown_difference_name_left_whole():
     pdf.optimize(_subset_opts(subset_fonts=True))
 
     assert pdf._cos_doc.objects[ff_num].content == before
+
+
+def test_macroman_uses_the_pdf_table_not_the_stdlib_codec():
+    """PDF MacRomanEncoding 0xDB is ``currency``; mac_roman decodes it as euro.
+
+    Resolving through the stdlib codec picked U+20AC, so the subsetter reasoned
+    about the euro glyph rather than the currency glyph the page actually draws.
+    """
+    from aspose_pdf.engine.agl import base_encoding_table, glyph_name_to_unicode
+
+    table = base_encoding_table("MacRomanEncoding")
+    assert table is not None
+    assert table[0xDB] == "currency"
+    assert glyph_name_to_unicode(table[0xDB]) == "¤"
+    assert bytes([0xDB]).decode("mac_roman") == "€"  # what the codec claims
+
+
+def test_winansi_uses_the_pdf_table_not_the_stdlib_codec():
+    """0xA0/0xAD are ``space``/``hyphen`` in PDF, NBSP/soft hyphen in cp1252.
+
+    The codec's scalars are absent from most fonts' cmaps, which made the
+    subsetter bail and leave the whole font embedded.
+    """
+    from aspose_pdf.engine.agl import base_encoding_table, glyph_name_to_unicode
+
+    table = base_encoding_table("WinAnsiEncoding")
+    assert (table[0xA0], table[0xAD]) == ("space", "hyphen")
+    assert glyph_name_to_unicode(table[0xA0]) == " "
+    assert glyph_name_to_unicode(table[0xAD]) == "-"
+
+
+def test_simple_truetype_subset_via_macroman_currency_code():
+    """A used 0xDB under MacRomanEncoding keeps the glyph the page draws.
+
+    Under the old stdlib-codec resolution this code mapped to the euro instead,
+    so the currency glyph was not the one kept.
+    """
+    from aspose_pdf.engine.cos import PdfName
+
+    # Map gid 1 to U+00A4 (currency) and gid 2 to U+20AC (euro) so picking the
+    # wrong scalar erases the glyph the content stream shows. Segments must be
+    # ordered by code, and the delta carries each code to its gid. No
+    # /Differences here: the base encoding alone has to resolve the code.
+    glyphs = [b"", _simple_glyph(40), _simple_glyph(80)]
+    cmap = _cmap_format4_unicode(
+        [(0x00A4, 0x00A4, 1 - 0x00A4), (0x20AC, 0x20AC, 2 - 0x20AC)]
+    )
+    font = _build_ttf(glyphs, extra_tables={"cmap": cmap})
+    pdf, ff_num = _embed_simple_tt(
+        font, bytes([0xDB]), encoding=PdfName("MacRomanEncoding")
+    )
+    original = pdf._cos_doc.objects[ff_num].content
+
+    pdf.optimize(_subset_opts(subset_fonts=True))
+
+    new_program = pdf._cos_doc.objects[ff_num].content
+    assert len(new_program) < len(original)
+    offsets = _loca_offsets(new_program)
+    assert offsets[2] - offsets[1] > 0  # gid 1 (currency) kept
+    assert offsets[3] - offsets[2] == 0  # gid 2 (euro) erased

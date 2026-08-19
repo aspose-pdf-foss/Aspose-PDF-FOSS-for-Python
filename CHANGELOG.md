@@ -24,6 +24,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   both U+2F47 and U+65E5 to Japan1 CID 3284, which previously made such
   characters extractable but not replaceable under those names.
 
+- **Font subsetting covers predefined encodings.** Simple fonts now resolve a
+  used code through `/Differences`, then the predefined base encoding, then the
+  font program's own built-in encoding — one shared step for TrueType, CFF and
+  Type 1. This lifts three limitations: a simple CFF with a PDF `/Encoding`
+  override, a simple CFF carrying a predefined (Standard) encoding, and a Type 1
+  font whose codes need a predefined base encoding were all left whole before.
+  A base encoding outside the bundled tables (`MacExpertEncoding`, unrecognised
+  names) still bails, so a used glyph is never erased.
+
 ### Changed
 
 - **The bundled CMap tables are split one file per character collection**,
@@ -72,6 +81,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Subsetting resolved base encodings through the stdlib codecs**, which
+  disagree with PDF's tables on real codes. MacRomanEncoding `0xDB` is
+  `currency`, but `mac_roman` decodes it as the euro sign — so the subsetter
+  reasoned about the wrong glyph. WinAnsiEncoding `0xA0`/`0xAD` are `space` and
+  `hyphen`, where `cp1252` gives NBSP and a soft hyphen, whose scalars are absent
+  from most fonts and made the subsetter give up and embed the whole font.
+  Resolution now goes through the bundled Adobe tables and the Adobe Glyph List.
 - **PDF/A conversion never reached form XObjects.** The CMYK content walker
   tested `_get_page_resources()` — which returns a converted plain `dict` — with
   `isinstance(..., PdfDictionary)`, a condition that can never hold, so DeviceCMYK

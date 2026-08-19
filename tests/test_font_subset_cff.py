@@ -462,8 +462,11 @@ def _build_encoded_cff() -> bytes:
     return TTFont(buf)["CFF "].compile(TTFont(buf))
 
 
-def _embed_simple_type1(cff_bytes: bytes, shown_codes, *, pdf_encoding=None):
+def _embed_simple_type1(
+    cff_bytes: bytes, shown_codes, *, pdf_encoding=None, differences=None
+):
     from aspose_pdf.engine.cos import (
+        PdfArray,
         PdfDictionary,
         PdfName,
         PdfNumber,
@@ -498,7 +501,20 @@ def _embed_simple_type1(cff_bytes: bytes, shown_codes, *, pdf_encoding=None):
         PdfName("BaseFont"): PdfName("AAAAAA+SubTest"),
         PdfName("FontDescriptor"): descriptor,
     }
-    if pdf_encoding is not None:
+    if differences is not None:
+        code, glyph = differences
+        encoding_map = {
+            PdfName("Type"): PdfName("Encoding"),
+            PdfName("Differences"): PdfArray(
+                [PdfNumber(code), PdfName(glyph)]
+            ),
+        }
+        if pdf_encoding is not None:
+            encoding_map[PdfName("BaseEncoding")] = PdfName(pdf_encoding)
+        font_map[PdfName("Encoding")] = cos.register_object(
+            PdfDictionary(encoding_map)
+        )
+    elif pdf_encoding is not None:
         font_map[PdfName("Encoding")] = PdfName(pdf_encoding)
     font_obj = cos.register_object(PdfDictionary(font_map))
     pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
@@ -522,20 +538,52 @@ def test_optimize_subsets_simple_cff_via_builtin_encoding():
         assert got[name].bytecode == b"\x0e"  # unused glyphs erased
 
 
-def test_simple_cff_with_pdf_encoding_is_not_subset():
-    # A PDF /Encoding override cannot be resolved without the CFF charset and
-    # standard strings, so the font is kept whole (never erase a used glyph).
+def test_simple_cff_with_pdf_encoding_is_subset():
+    # WinAnsiEncoding leaves 0x81 undefined, so the CFF's own built-in encoding
+    # still governs that code and the font can be subset.
     cff = _build_encoded_cff()
     pdf, ff_num = _embed_simple_type1(cff, [0x81], pdf_encoding="WinAnsiEncoding")
     original = pdf._cos_doc.objects[ff_num].content
     pdf.optimize(_subset_opts(subset_fonts=True))
-    assert pdf._cos_doc.objects[ff_num].content == original
+    assert len(pdf._cos_doc.objects[ff_num].content) < len(original)
 
 
-def test_simple_cff_standard_encoding_is_not_subset():
-    # A predefined (Standard) CFF encoding yields no code->gid map -> keep whole.
+def test_simple_cff_pdf_encoding_differences_resolve_through_the_charset():
+    # /Differences names a glyph directly; the CFF charset maps it to a gid.
+    cff = _build_cff()
+    pdf, ff_num = _embed_simple_type1(
+        cff, [0x30], pdf_encoding="WinAnsiEncoding", differences=(0x30, "C")
+    )
+    original = pdf._cos_doc.objects[ff_num].content
+    pdf.optimize(_subset_opts(subset_fonts=True))
+    subset = pdf._cos_doc.objects[ff_num].content
+    assert len(subset) < len(original)
+    got = _charstrings(subset)
+    assert got["C"].bytecode != b"\x0e"  # the named glyph survives
+    for name in ("A", "B", "D"):
+        assert got[name].bytecode == b"\x0e"  # the rest are erased
+
+
+def test_simple_cff_standard_encoding_is_subset():
+    # A predefined (Standard) CFF encoding means StandardEncoding: 0x41 -> "A",
+    # resolved to a gid through the charset.
     cff = _build_cff()  # StandardEncoding
     pdf, ff_num = _embed_simple_type1(cff, [0x41])
+    original = pdf._cos_doc.objects[ff_num].content
+    pdf.optimize(_subset_opts(subset_fonts=True))
+    subset = pdf._cos_doc.objects[ff_num].content
+    assert len(subset) < len(original)
+    got = _charstrings(subset)
+    assert got["A"].bytecode != b"\x0e"
+    for name in ("B", "C", "D"):
+        assert got[name].bytecode == b"\x0e"
+
+
+def test_simple_cff_with_unbundled_base_encoding_is_not_subset():
+    # MacExpertEncoding is not bundled, so there is no code->name table and the
+    # font is kept whole rather than risk erasing a used glyph.
+    cff = _build_cff()
+    pdf, ff_num = _embed_simple_type1(cff, [0x41], pdf_encoding="MacExpertEncoding")
     original = pdf._cos_doc.objects[ff_num].content
     pdf.optimize(_subset_opts(subset_fonts=True))
     assert pdf._cos_doc.objects[ff_num].content == original

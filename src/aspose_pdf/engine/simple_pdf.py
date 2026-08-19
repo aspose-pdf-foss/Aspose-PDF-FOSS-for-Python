@@ -7991,6 +7991,49 @@ class SimplePdf:
             return self._plan_simple_cff_subset(font, codes)
         return None
 
+    def _simple_encoding_names(self, font: Any):
+        """Resolve a simple font's ``/Encoding`` to code -> glyph name tables.
+
+        Returns ``(base_map, diff_map)``: the predefined base encoding's names
+        and the ``/Differences`` overlay. ``base_map`` is empty when the font
+        names no base, in which case the caller falls back to the font program's
+        own built-in encoding. Returns ``None`` when a base *is* named but is not
+        one of the bundled tables (Expert/MacExpert), so the caller keeps the
+        font whole rather than guess.
+        """
+        from .agl import base_encoding_table
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber
+
+        enc = self._resolve(font.mapping.get(PdfName("Encoding")))
+        base_name = None
+        differences = None
+        if isinstance(enc, PdfName):
+            base_name = enc.name.lstrip("/")
+        elif isinstance(enc, PdfDictionary):
+            base_name = self._get_name(enc.mapping.get(PdfName("BaseEncoding")))
+            differences = self._resolve(enc.mapping.get(PdfName("Differences")))
+
+        base_map: dict[int, str] = {}
+        if base_name is not None:
+            table = base_encoding_table(base_name)
+            if table is None:
+                return None
+            for code, glyph in enumerate(table):
+                if glyph:
+                    base_map[code] = glyph
+
+        diff_map: dict[int, str] = {}
+        if isinstance(differences, PdfArray):
+            current = 0
+            for item in differences.items:
+                item = self._resolve(item)
+                if isinstance(item, PdfNumber):
+                    current = int(item.value)
+                elif isinstance(item, PdfName):
+                    diff_map[current] = item.name.lstrip("/")
+                    current += 1
+        return base_map, diff_map
+
     def _plan_type1_subset(self, font: Any, codes: set):
         """Plan a subset for a simple Type 1 (``/FontFile``) font.
 
@@ -8034,36 +8077,20 @@ class SimplePdf:
         return ff_stream, keep_names, program, subsetter
 
     def _type1_used_names(self, font: Any, outlines: Any, codes: set):
-        """Resolve the used glyph names of a simple Type 1 font, or ``None``."""
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber
+        """Resolve the used glyph names of a simple Type 1 font, or ``None``.
 
-        enc = self._resolve(font.mapping.get(PdfName("Encoding")))
-        base_name = None
-        differences = None
-        if isinstance(enc, PdfName):
-            base_name = enc.name.lstrip("/")
-        elif isinstance(enc, PdfDictionary):
-            base_name = self._get_name(enc.mapping.get(PdfName("BaseEncoding")))
-            differences = self._resolve(enc.mapping.get(PdfName("Differences")))
-        diff_map: dict[int, str] = {}
-        if isinstance(differences, PdfArray):
-            current = 0
-            for item in differences.items:
-                item = self._resolve(item)
-                if isinstance(item, PdfNumber):
-                    current = int(item.value)
-                elif isinstance(item, PdfName):
-                    diff_map[current] = item.name.lstrip("/")
-                    current += 1
+        Names come from ``/Differences``, then the predefined base encoding, then
+        the font's own built-in encoding.
+        """
+        resolved = self._simple_encoding_names(font)
+        if resolved is None:
+            return None  # base encoding we do not bundle -> bail.
+        base_map, diff_map = resolved
         builtin = outlines.builtin_encoding
         keep = {".notdef"}
         for code_bytes in codes:
             for b in code_bytes:
-                name = diff_map.get(b)
-                if name is None:
-                    if base_name is not None:
-                        return None  # predefined base -> needs a table -> bail.
-                    name = builtin.get(b)
+                name = diff_map.get(b) or base_map.get(b) or builtin.get(b)
                 if name is None or name not in outlines.name_to_gid:
                     return None  # unresolved/absent used glyph -> bail (no erase).
                 keep.add(name)
@@ -8078,20 +8105,19 @@ class SimplePdf:
     def _plan_simple_cff_subset(self, font: Any, codes: set):
         """Plan a subset for a simple Type1 font backed by a name-keyed CFF.
 
-        The kept glyphs are read straight from the CFF's own built-in encoding
-        (code -> gid). This is applied only when the font carries no PDF
-        ``/Encoding`` override -- an override remaps codes to glyphs we cannot
-        resolve without the CFF charset and standard strings, so we keep the
-        font whole rather than risk erasing a used glyph. A predefined
-        (Standard/Expert) CFF encoding, a CID-keyed CFF, a ``/FontFile`` (Type1,
-        not CFF), or any unresolved used code likewise bails.
+        A used code is resolved to a glyph name through ``/Differences`` and the
+        predefined base encoding, then to a glyph id through the CFF charset;
+        failing that, through the CFF's own built-in encoding (code -> gid), and
+        finally through StandardEncoding, which is what a CFF with a predefined
+        encoding means. A CID-keyed CFF, a ``/FontFile`` (Type1, not CFF), a base
+        encoding we do not bundle, or any unresolved used code bails, keeping the
+        font whole rather than risk erasing a used glyph.
         """
+        from .agl import base_encoding_table
         from .cff_outlines import CffOutlines
         from .cos import PdfName
         from .font_subset_cff import subset_cff
 
-        if font.mapping.get(PdfName("Encoding")) is not None:
-            return None
         descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
         located = self._fontfile3(descriptor)
         if located is None:
@@ -8106,13 +8132,24 @@ class SimplePdf:
         outlines = CffOutlines(program)
         if not outlines.ok or outlines._is_cid:
             return None  # CID-keyed CFF is subset through the Type0 path only.
+        resolved = self._simple_encoding_names(font)
+        if resolved is None:
+            return None  # base encoding we do not bundle -> bail.
+        base_map, diff_map = resolved
         code_to_gid = outlines.encoding_code_to_gid()
-        if not code_to_gid:
-            return None  # predefined Standard/Expert encoding -> cannot resolve.
+        name_to_gid = outlines.name_to_gid()
+        # A CFF with a predefined encoding exposes no custom code -> gid table;
+        # StandardEncoding is what that means, so resolve through names instead.
+        standard = () if code_to_gid else (base_encoding_table("StandardEncoding") or ())
         keep = {0}
         for code_bytes in codes:
             for b in code_bytes:
-                gid = code_to_gid.get(b)
+                name = diff_map.get(b) or base_map.get(b)
+                if name is None and standard and b < len(standard):
+                    name = standard[b] or None
+                gid = name_to_gid.get(name) if name else None
+                if gid is None:
+                    gid = code_to_gid.get(b)
                 if gid is None:
                     return None  # unresolved used code -> bail (never erase it).
                 keep.add(gid)
@@ -8245,46 +8282,30 @@ class SimplePdf:
     def _simple_code_to_unicode(self, font: Any):
         """Build a ``byte code -> unicode`` map from a simple font's /Encoding.
 
-        Only the encodings we can resolve exactly are honoured: a
-        WinAnsi/MacRoman base (via the stdlib codecs) overlaid with /Differences
-        whose glyph names are ``uniXXXX`` / ``uXXXXXX`` forms.  Anything else is
-        left unmapped so the caller bails rather than risk a wrong glyph.
+        Codes are resolved to glyph names through the bundled Standard/WinAnsi/
+        MacRoman tables and the ``/Differences`` overlay, then to a scalar
+        through the Adobe Glyph List. The bundled tables are the authority here,
+        not the stdlib codecs: PDF's WinAnsiEncoding maps 0xA0 and 0xAD to
+        ``space`` and ``hyphen`` where cp1252 gives NBSP and a soft hyphen, and
+        MacRomanEncoding maps 0xDB to ``currency`` where mac_roman gives the euro
+        sign — which would keep the wrong glyph and erase the used one. A code
+        that cannot be resolved is left unmapped so the caller bails.
         """
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber
-
-        enc = self._resolve(font.mapping.get(PdfName("Encoding")))
-        base_name = None
-        differences = None
-        if isinstance(enc, PdfName):
-            base_name = enc.name.lstrip("/")
-        elif isinstance(enc, PdfDictionary):
-            base_name = self._get_name(enc.mapping.get(PdfName("BaseEncoding")))
-            differences = self._resolve(enc.mapping.get(PdfName("Differences")))
-
-        codec = {
-            "WinAnsiEncoding": "cp1252",
-            "MacRomanEncoding": "mac_roman",
-        }.get(base_name)
+        resolved = self._simple_encoding_names(font)
+        if resolved is None:
+            return {}
+        base_map, diff_map = resolved
         mapping: dict[int, int] = {}
-        if codec:
-            for code in range(256):
-                try:
-                    mapping[code] = ord(bytes([code]).decode(codec))
-                except (UnicodeDecodeError, TypeError):
-                    pass
-
-        if isinstance(differences, PdfArray):
-            current = 0
-            for item in differences.items:
-                if isinstance(item, PdfNumber):
-                    current = int(item.value)
-                elif isinstance(item, PdfName):
-                    uni = _glyph_name_to_unicode(item.name.lstrip("/"))
-                    if uni is None:
-                        mapping.pop(current, None)  # force a bail if this is used.
-                    else:
-                        mapping[current] = uni
-                    current += 1
+        for code, glyph in base_map.items():
+            uni = _glyph_name_to_unicode(glyph)
+            if uni is not None:
+                mapping[code] = uni
+        for code, glyph in diff_map.items():
+            uni = _glyph_name_to_unicode(glyph)
+            if uni is None:
+                mapping.pop(code, None)  # force a bail if this code is used.
+            else:
+                mapping[code] = uni
         return mapping
 
     def _fontfile2(self, descriptor: Any):
