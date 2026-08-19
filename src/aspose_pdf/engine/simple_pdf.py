@@ -6424,11 +6424,28 @@ class SimplePdf:
         ap_dict = PdfDictionary({PdfName("N"): stream_ref})
         return self._cos_doc.register_object(ap_dict)
 
+    def _button_icon_spec(self, mk: PdfDictionary):
+        """Return ``(name, ref, width, height)`` for a widget's ``/MK /I``."""
+        ref = mk.mapping.get(PdfName("I"))
+        form = self._resolve(ref)
+        if not isinstance(form, PdfStream):
+            return None
+        bbox = self._cos_number_list(form.mapping.get(PdfName("BBox")))
+        if not bbox or len(bbox) != 4:
+            return None
+        width = abs(float(bbox[2]) - float(bbox[0]))
+        height = abs(float(bbox[3]) - float(bbox[1]))
+        if width <= 0 or height <= 0:
+            return None
+        return ("Icon", ref, width, height)
+
     def _register_form_xobject(
         self, w: float, h: float, gen: Any
     ) -> PdfIndirectReference:
         """Register a form XObject (``BBox [0 0 w h]``) from a GeneratedAppearance."""
-        resources = self._build_appearance_resources(gen.ext_gstates, gen.fonts)
+        resources = self._build_appearance_resources(
+            gen.ext_gstates, gen.fonts, getattr(gen, "xobjects", None)
+        )
         mapping = {
             PdfName("Type"): PdfName("XObject"),
             PdfName("Subtype"): PdfName("Form"),
@@ -6447,11 +6464,16 @@ class SimplePdf:
         self,
         ext_gstates: dict[str, dict[str, Any]],
         fonts: dict[str, dict[str, Any]] | None = None,
+        xobjects: dict[str, Any] | None = None,
     ) -> PdfDictionary | None:
-        """Build a form ``/Resources`` dict for generated ``/ExtGState``/``/Font``."""
-        if not ext_gstates and not fonts:
+        """Build a form ``/Resources`` for generated ExtGState/Font/XObject."""
+        if not ext_gstates and not fonts and not xobjects:
             return None
         resources = PdfDictionary({})
+        if xobjects:
+            resources.mapping[PdfName("XObject")] = PdfDictionary(
+                {PdfName(name): ref for name, ref in xobjects.items()}
+            )
         if ext_gstates:
             gs_dict = PdfDictionary({})
             for name, params in ext_gstates.items():
@@ -6890,6 +6912,15 @@ class SimplePdf:
                     )
                 else:
                     mapping[pdf_key] = self._destination_cos(value, self._make_page_ref)
+            elif isinstance(value, bool):
+                mapping[pdf_key] = PdfBoolean(value)
+            elif isinstance(value, int):
+                mapping[pdf_key] = PdfNumber(value)
+            elif isinstance(value, (list, tuple)):
+                # /Fields on a submit/reset action: fully qualified field names.
+                mapping[pdf_key] = PdfArray(
+                    [_pdf_text_string(str(item)) for item in value]
+                )
             else:
                 mapping[pdf_key] = PdfString(str(value))
         return PdfDictionary(mapping)
@@ -6903,6 +6934,62 @@ class SimplePdf:
         if isinstance(target, Action):
             return self._action_cos(target), "A"
         raise TypeError("target must be an Action or a Destination")
+
+    def _build_button_icon(self, data: bytes) -> tuple[Any, int, int]:
+        """Wrap image *data* in a form XObject usable as ``/MK /I``.
+
+        A button icon must be a *form* XObject (ISO 32000-1 table 189), so the
+        image is registered on its own and drawn by a one-operator form whose
+        BBox is the image's pixel box. Returns ``(form_ref, width, height)``.
+        """
+        from .content_authoring import prepare_image
+
+        image = prepare_image(
+            bytes(data), limits=self._load_limits, budget=self._load_budget
+        )
+        image_map = {
+            PdfName("Type"): PdfName("XObject"),
+            PdfName("Subtype"): PdfName("Image"),
+            PdfName("Width"): PdfNumber(image.width),
+            PdfName("Height"): PdfNumber(image.height),
+            PdfName("ColorSpace"): PdfName(image.color_space),
+            PdfName("BitsPerComponent"): PdfNumber(image.bits_per_component),
+            PdfName("Length"): PdfNumber(len(image.stream_data)),
+        }
+        if image.filter_name:
+            image_map[PdfName("Filter")] = PdfName(image.filter_name)
+        image_ref = self._cos_doc.register_object(
+            PdfStream(content=image.stream_data, mapping=image_map)
+        )
+
+        content = (
+            f"q {image.width} 0 0 {image.height} 0 0 cm /Icon Do Q\n"
+        ).encode("ascii")
+        form = PdfStream(
+            content=content,
+            mapping={
+                PdfName("Type"): PdfName("XObject"),
+                PdfName("Subtype"): PdfName("Form"),
+                PdfName("FormType"): PdfNumber(1),
+                PdfName("BBox"): PdfArray(
+                    [
+                        PdfNumber(0),
+                        PdfNumber(0),
+                        PdfNumber(image.width),
+                        PdfNumber(image.height),
+                    ]
+                ),
+                PdfName("Resources"): PdfDictionary(
+                    {
+                        PdfName("XObject"): PdfDictionary(
+                            {PdfName("Icon"): image_ref}
+                        )
+                    }
+                ),
+                PdfName("Length"): PdfNumber(len(content)),
+            },
+        )
+        return self._cos_doc.register_object(form), image.width, image.height
 
     def _widget_action_cos(self, target: Any) -> PdfDictionary:
         """Return an ``/A`` action dict for a widget; a Destination becomes GoTo."""
@@ -9312,6 +9399,7 @@ class SimplePdf:
         border_color: Sequence[float] | None = None,
         background: Sequence[float] | None = None,
         font: Any = None,
+        icon: bytes | None = None,
         seed_value: Mapping[str, Any] | None = None,
         field_lock: Mapping[str, Any] | None = None,
     ) -> None:
@@ -9501,6 +9589,23 @@ class SimplePdf:
                     )
                 if action is not None:
                     widget_map[PdfName("A")] = self._widget_action_cos(action)
+                if icon is not None:
+                    icon_ref, _icon_w, _icon_h = self._build_button_icon(icon)
+                    mk_map[PdfName("I")] = icon_ref
+                    # Proportional, always-scale, centred — the /IF default,
+                    # written out so a viewer that re-renders agrees with the
+                    # appearance baked below.
+                    mk_map[PdfName("IF")] = PdfDictionary(
+                        {
+                            PdfName("SW"): PdfName("A"),
+                            PdfName("S"): PdfName("P"),
+                            PdfName("A"): PdfArray(
+                                [PdfNumber(0.5), PdfNumber(0.5)]
+                            ),
+                        }
+                    )
+                    # /TP: 1 = icon only, 2 = caption below the icon.
+                    mk_map[PdfName("TP")] = PdfNumber(2 if caption else 1)
             widget_map[PdfName("MK")] = PdfDictionary(mk_map)
             if authored_field_font is not None:
                 encoded = (
@@ -10193,6 +10298,8 @@ class SimplePdf:
 
         caption = ""
         border_color = background = None
+        icon = None
+        caption_position = 0
         mk = self._resolve(widget.mapping.get(PdfName("MK")))
         if isinstance(mk, PdfDictionary):
             ca = self._resolve(mk.mapping.get(PdfName("CA")))
@@ -10200,6 +10307,9 @@ class SimplePdf:
                 caption = decode_pdf_text_string(ca)
             border_color = self._cos_number_list(mk.mapping.get(PdfName("BC")))
             background = self._cos_number_list(mk.mapping.get(PdfName("BG")))
+            icon = self._button_icon_spec(mk)
+            tp = self._get_number(mk.mapping.get(PdfName("TP")))
+            caption_position = int(tp) if tp is not None else 0
 
         from .appearance import build_push_button_appearance
 
@@ -10222,6 +10332,8 @@ class SimplePdf:
                 border_color=border_color,
                 bg_color=bg_color,
                 border_width=border_width,
+                icon=icon,
+                caption_position=caption_position,
             )
             ap_dict.mapping[PdfName(key)] = self._register_form_xobject(
                 w, h, generated

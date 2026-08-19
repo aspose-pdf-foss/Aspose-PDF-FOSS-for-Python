@@ -9,7 +9,9 @@ in-document page); ``GoToRAction`` targets a page *number* in a remote file.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import ClassVar
 
 
 class Destination:
@@ -191,6 +193,69 @@ class LaunchAction(Action):
         return {"S": "Launch", "F": self.file}
 
 
+@dataclass(frozen=True)
+class SubmitFormAction(Action):
+    """Send the form's field values to *url*.
+
+    *fields* names the fully qualified fields to send; ``None`` sends them all.
+    With *exclude* the named fields are the ones left out instead. *submit_format*
+    is ``"fdf"`` (the default), ``"html"``, ``"xfdf"`` or ``"pdf"``.
+    """
+
+    url: str
+    fields: Sequence[str] | None = None
+    exclude: bool = False
+    submit_format: str = "fdf"
+
+    # ISO 32000-1 table 237, 1-based bit positions.
+    _FORMAT_FLAGS: ClassVar[dict[str, int]] = {
+        "fdf": 0,
+        "html": 1 << 2,  # ExportFormat
+        "xfdf": 1 << 5,  # XFDF
+        "pdf": 1 << 8,  # SubmitPDF
+    }
+
+    def _spec(self) -> dict:
+        try:
+            flags = self._FORMAT_FLAGS[self.submit_format.lower()]
+        except (AttributeError, KeyError):
+            raise ValueError(
+                "submit_format must be one of 'fdf', 'html', 'xfdf', 'pdf'; "
+                f"got {self.submit_format!r}"
+            ) from None
+        if self.exclude:
+            if self.fields is None:
+                raise ValueError("exclude=True needs the fields to exclude")
+            flags |= 1 << 0  # Include/Exclude
+        spec: dict = {"S": "SubmitForm", "F": self.url, "Flags": flags}
+        if self.fields is not None:
+            spec["Fields"] = list(self.fields)
+        return spec
+
+
+@dataclass(frozen=True)
+class ResetFormAction(Action):
+    """Reset the form's fields to their default values.
+
+    *fields* names the fully qualified fields to reset; ``None`` resets them all.
+    With *exclude* the named fields are the ones left untouched instead.
+    """
+
+    fields: Sequence[str] | None = None
+    exclude: bool = False
+
+    def _spec(self) -> dict:
+        if self.exclude and self.fields is None:
+            raise ValueError("exclude=True needs the fields to exclude")
+        spec: dict = {"S": "ResetForm"}
+        if self.fields is not None:
+            spec["Fields"] = list(self.fields)
+        # ISO 32000-1 table 239: bit 1 flips /Fields from include to exclude.
+        if self.exclude:
+            spec["Flags"] = 1
+        return spec
+
+
 __all__ = [
     "Action",
     "Destination",
@@ -206,6 +271,8 @@ __all__ = [
     "JavaScriptAction",
     "LaunchAction",
     "NamedAction",
+    "ResetFormAction",
+    "SubmitFormAction",
     "URIAction",
     "XYZDestination",
 ]

@@ -85,11 +85,15 @@ class GeneratedAppearance:
     ``{"Helv": {"Subtype": "Type1", "BaseFont": "Helvetica"}}``) for text-bearing
     subtypes; the caller materialises these into ``/Resources /Font``. It is
     empty for shape-only appearances.
+
+    *xobjects* maps a resource name to an already-registered XObject reference
+    (a push-button icon), which the caller places in ``/Resources /XObject``.
     """
 
     content: bytes
     ext_gstates: dict[str, dict[str, Any]] = field(default_factory=dict)
     fonts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    xobjects: dict[str, Any] = field(default_factory=dict)
 
 
 def _fmt(value: float) -> str:
@@ -992,8 +996,16 @@ def build_push_button_appearance(
     bg_color: Any | None = None,
     text_color: Any | None = None,
     border_width: float = 1.0,
+    icon: tuple[str, Any, float, float] | None = None,
+    caption_position: int = 0,
 ) -> GeneratedAppearance:
-    """Build a normal appearance for a caption-only push-button widget."""
+    """Build a normal appearance for a push-button widget.
+
+    *icon* is ``(resource_name, xobject_ref, width, height)`` for an already
+    registered form XObject; it is drawn scaled proportionally to fit and
+    centred, matching the ``/IF`` the caller writes. *caption_position* follows
+    ``/MK /TP``: 1 draws the icon alone, 2 puts the caption below it.
+    """
     if w <= 0 or h <= 0:
         return GeneratedAppearance(b"")
 
@@ -1015,16 +1027,46 @@ def build_push_button_appearance(
             ]
 
     fonts: dict[str, dict[str, Any]] = {}
+    xobjects: dict[str, Any] = {}
+    pad = max(3.0, bw + 2.0)
     label = str(caption or "")
+    caption_band = 0.0
+
+    if icon is not None:
+        icon_name, icon_ref, icon_w, icon_h = icon
+        xobjects = {icon_name: icon_ref}
+        # With the caption below the icon (/TP 2) the icon keeps the upper band.
+        if label and caption_position == 2:
+            caption_band = min(h * 0.35, max(6.0, h * 0.25))
+        box_w = max(0.0, w - 2.0 * pad)
+        box_h = max(0.0, h - 2.0 * pad - caption_band)
+        if box_w > 0 and box_h > 0 and icon_w > 0 and icon_h > 0:
+            scale = min(box_w / icon_w, box_h / icon_h)
+            draw_w, draw_h = icon_w * scale, icon_h * scale
+            ix = (w - draw_w) / 2.0
+            iy = caption_band + (h - caption_band - draw_h) / 2.0
+            lines += [
+                "q",
+                f"{_fmt(draw_w)} 0 0 {_fmt(draw_h)} {_fmt(ix)} {_fmt(iy)} cm",
+                f"/{icon_name} Do",
+                "Q",
+            ]
+        if caption_position == 1:
+            label = ""  # icon only
+
     if label:
-        pad = max(3.0, bw + 2.0)
         width_fn = _annot_width_fn()
         unit_width = _text_width(label, 1.0, width_fn)
         size_for_width = max(1.0, w - 2.0 * pad) / max(unit_width, 1e-6)
-        font_size = max(4.0, min(h * 0.55, size_for_width))
+        band = caption_band if caption_band else h
+        font_size = max(4.0, min(band * 0.55 if caption_band else h * 0.55,
+                                 size_for_width))
         text_width = _text_width(label, font_size, width_fn)
         tx = max(pad, (w - text_width) / 2.0)
-        ty = (h - font_size) / 2.0 + font_size * 0.2
+        if caption_band:
+            ty = (caption_band - font_size) / 2.0 + font_size * 0.2
+        else:
+            ty = (h - font_size) / 2.0 + font_size * 0.2
         fill = _color_op(text_color, stroke=False) or "0 g"
         lines += [
             "BT",
@@ -1038,7 +1080,9 @@ def build_push_button_appearance(
 
     lines.append("Q")
     return GeneratedAppearance(
-        ("\n".join(lines) + "\n").encode("latin-1", "replace"), fonts=fonts
+        ("\n".join(lines) + "\n").encode("latin-1", "replace"),
+        fonts=fonts,
+        xobjects=xobjects,
     )
 
 

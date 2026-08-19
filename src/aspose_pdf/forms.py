@@ -435,6 +435,7 @@ class Form:
         *,
         caption: str = "",
         action: Any = None,
+        icon: bytes | None = None,
         border_color: Sequence[float] | None = None,
         background: Sequence[float] | None = None,
         read_only: bool = False,
@@ -447,6 +448,12 @@ class Form:
         *border_color* and *background* are DeviceRGB/Gray/CMYK component lists
         for the widget ``/MK`` border and background; the rollover and down
         faces are shaded variants of the background.
+
+        *icon* is raw image bytes (JPEG or non-interlaced 8-bit PNG) used as the
+        button's ``/MK /I`` icon. It is wrapped in a form XObject, scaled
+        proportionally to fit and centred; with a *caption* the icon takes the
+        upper band and the caption sits below it (``/MK /TP 2``), otherwise the
+        icon fills the face alone (``/TP 1``).
         """
         if not isinstance(caption, str):
             raise TypeError("caption must be a string")
@@ -458,6 +465,7 @@ class Form:
             flags=flags,
             caption=caption,
             action=action,
+            icon=icon,
             border_color=border_color,
             background=background,
         )

@@ -9,6 +9,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Push-button icons.** `Form.add_push_button(icon=…)` takes JPEG or
+  non-interlaced 8-bit PNG bytes, wraps them in a form XObject as `/MK /I` (an
+  icon must be a *form*, not an image), and draws it into the normal, rollover
+  and down faces scaled proportionally and centred. `/MK /IF` is written to
+  match the baked appearance, and `/MK /TP` is 1 for an icon alone or 2 with the
+  caption below it.
+- **Submit and reset form actions.** `SubmitFormAction` and `ResetFormAction`
+  join the typed action API, covering the `/Fields` name list, the
+  include/exclude flag, and the FDF / HTML / XFDF / PDF submit format. Action
+  serialization now emits arrays and integers, not only strings.
+
 - **The optimizer's DPI target follows form XObjects.** Display size was
   measured from page-level placements only, so an image drawn inside a form was
   invisible to `image_target_dpi` and kept its full resolution. Forms are now

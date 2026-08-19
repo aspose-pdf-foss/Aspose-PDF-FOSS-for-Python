@@ -768,9 +768,15 @@ Boundaries:
   the AcroForm `/DR`, `/DA` points at it, and a CID-encoded `/AP` is baked at
   authoring time so a non-Latin value renders (this baked appearance is left
   intact by later `generate_appearances`, which cannot re-encode a Type0 value).
-  Button **icons** (`/MK /I`), Type0 field **rich text** (`/RC` values fall back
-  to the plain `/DA` appearance), submit/reset behavior, and XFA authoring are
-  not implemented. Signature fields can be authored *and* signed (see above and
+  A push button can carry an **icon** (`add_push_button(icon=…)`, JPEG or
+  non-interlaced 8-bit PNG): the image is wrapped in a form XObject as `/MK /I`,
+  drawn into all three faces scaled proportionally and centred, with a `/MK /IF`
+  that matches what is baked and `/MK /TP` 1 (icon only) or 2 (caption below).
+  **Submit and reset** are available through the typed action API
+  (`SubmitFormAction`, `ResetFormAction`), including the `/Fields` list, its
+  include/exclude flag, and the FDF/HTML/XFDF/PDF submit format.
+  Type0 field **rich text** (`/RC` values fall back to the plain `/DA`
+  appearance) and XFA authoring are not implemented. Signature fields can be authored *and* signed (see above and
   [Security](#security-encryption-and-signatures)); XFA authoring is not.
 
 ## Annotations
@@ -820,7 +826,9 @@ Boundaries:
   with the bundled substitute's real glyph metrics. Rich text (`/RC`, `/RV`)
   renders a subset — `<p>`/`<span>`/`<b>`/`<i>` with `font-size`, `color`,
   `font-weight`, `font-style` and `text-align` — in the Helvetica family only
-  (no embedded/other fonts, backgrounds, or nested block layout), and `Stamp` is
+  (no embedded/other fonts — a Type0/CID field font therefore falls back to the
+  plain `/DA` appearance rather than styled spans — backgrounds, or nested block
+  layout), and `Stamp` is
   a captioned box rather than the standard rubber-stamp artwork. Dash patterns, `/LE` line endings and `/BE` cloud borders
   are drawn (see above); the cloud is a uniform scallop approximation and line
   endings are sized heuristically from the border width. Check-box/radio *widget*
