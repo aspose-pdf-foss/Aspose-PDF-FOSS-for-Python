@@ -401,9 +401,14 @@ def _prepare_jpeg(data: bytes, budget: _LoadBudget) -> AuthoredImage:
 
 
 def _prepare_png(data: bytes, budget: _LoadBudget) -> AuthoredImage:
-    width, height, bit_depth, color_type, pixels = _decode_png(data, budget)
-    if bit_depth != 8:
-        raise PdfValidationException("Only 8-bit PNG images are supported.")
+    """Decode a PNG to 8-bit samples for embedding.
+
+    ``_decode_png`` already normalises every allowed bit depth to 8 bits per
+    sample (16-bit keeps the high byte, sub-byte depths are scaled, palette
+    indices are left as indices) and reassembles Adam7 passes, so the colour
+    type is all that is left to map.
+    """
+    width, height, _bit_depth, color_type, pixels = _decode_png(data, budget)
     if color_type == 0:
         decoded = pixels
         cs = "DeviceGray"
@@ -515,6 +520,63 @@ def _jpeg_geometry(data: bytes) -> tuple[int, int, int, int]:
     raise PdfValidationException("Could not read JPEG dimensions.")
 
 
+# Adam7 interlacing: (x_start, y_start, x_step, y_step) per pass.
+_ADAM7_PASSES = (
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+)
+_PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+_PNG_OUTPUT_COMPONENTS = {0: 1, 2: 3, 3: 3, 4: 1, 6: 3}
+# ISO/IEC 15948 table 11: which bit depths each colour type allows.
+_PNG_ALLOWED_DEPTHS = {
+    0: (1, 2, 4, 8, 16),
+    2: (8, 16),
+    3: (1, 2, 4, 8),
+    4: (8, 16),
+    6: (8, 16),
+}
+
+
+def _adam7_geometry(width: int, height: int):
+    """Yield ``(x0, y0, dx, dy, pass_width, pass_height)`` for non-empty passes."""
+    for x0, y0, dx, dy in _ADAM7_PASSES:
+        pass_w = (width - x0 + dx - 1) // dx if width > x0 else 0
+        pass_h = (height - y0 + dy - 1) // dy if height > y0 else 0
+        if pass_w > 0 and pass_h > 0:
+            yield x0, y0, dx, dy, pass_w, pass_h
+
+
+def _png_row_bytes(pixels_per_row: int, channels: int, bit_depth: int) -> int:
+    return (pixels_per_row * channels * bit_depth + 7) // 8
+
+
+def _unpack_png_row(
+    row: bytes, pixels: int, channels: int, bit_depth: int, scale: bool
+) -> list[int]:
+    """Return one row's samples as 8-bit values (indices are left unscaled)."""
+    count = pixels * channels
+    if bit_depth == 8:
+        return list(row[:count])
+    if bit_depth == 16:
+        # Keep the high byte; PDF images here are 8 bits per component.
+        return [row[i * 2] for i in range(count)]
+    mask = (1 << bit_depth) - 1
+    maxval = mask
+    out: list[int] = []
+    for index in range(count):
+        bit = index * bit_depth
+        byte = row[bit >> 3]
+        shift = 8 - bit_depth - (bit & 7)
+        value = (byte >> shift) & mask
+        out.append(value * 255 // maxval if scale else value)
+    return out
+
+
 def _decode_png(data: bytes, budget: _LoadBudget):
     pos = len(_PNG_MAGIC)
     width = height = bit_depth = color_type = None
@@ -544,6 +606,8 @@ def _decode_png(data: bytes, budget: _LoadBudget):
             ) = struct.unpack(">IIBBBBB", payload)
             if compression != 0 or filter_method != 0:
                 raise PdfValidationException("Unsupported PNG compression/filter.")
+            if interlace not in (0, 1):
+                raise PdfValidationException("Unsupported PNG interlace method.")
         elif tag == b"PLTE":
             palette = payload
         elif tag == b"IDAT":
@@ -552,22 +616,32 @@ def _decode_png(data: bytes, budget: _LoadBudget):
             break
     if width is None or height is None or bit_depth is None or color_type is None:
         raise PdfValidationException("PNG image is missing IHDR.")
-    if interlace:
-        raise PdfValidationException("Interlaced PNG images are not supported.")
     if width <= 0 or height <= 0:
         raise PdfValidationException("PNG width and height must be positive.")
-    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color_type)
+    channels = _PNG_CHANNELS.get(color_type)
     if channels is None:
         raise PdfValidationException(f"Unsupported PNG color type: {color_type}.")
-    if bit_depth != 8:
-        raise PdfValidationException("Only 8-bit PNG images are supported.")
+    if bit_depth not in _PNG_ALLOWED_DEPTHS[color_type]:
+        raise PdfValidationException(
+            f"PNG bit depth {bit_depth} is not allowed for color type "
+            f"{color_type}."
+        )
     budget.check_image_pixels(width, height, "authored PNG image")
-    row_len = width * channels
-    bpp = max(1, channels)
-    filtered_size = height * (row_len + 1)
-    output_components = {0: 1, 2: 3, 3: 3, 4: 1, 6: 3}[color_type]
+
+    if interlace:
+        geometry = list(_adam7_geometry(width, height))
+        filtered_size = sum(
+            pass_h * (_png_row_bytes(pass_w, channels, bit_depth) + 1)
+            for _x0, _y0, _dx, _dy, pass_w, pass_h in geometry
+        )
+    else:
+        geometry = [(0, 0, 1, 1, width, height)]
+        filtered_size = height * (_png_row_bytes(width, channels, bit_depth) + 1)
+
+    output_components = _PNG_OUTPUT_COMPONENTS[color_type]
     output_size = width * height * output_components
-    work_size = len(data) + filtered_size + row_len * height + output_size * 2
+    samples_size = width * height * channels
+    work_size = len(data) + filtered_size + samples_size + output_size * 2
     budget.check(
         filtered_size,
         "max_decoded_stream_bytes",
@@ -585,7 +659,31 @@ def _decode_png(data: bytes, budget: _LoadBudget):
         )
     except zlib.error as exc:
         raise PdfValidationException("PNG image data cannot be decompressed.") from exc
-    pixels = _png_unfilter(raw, width, height, row_len, bpp)
+
+    # Filtering works on whole bytes; sub-byte depths use a 1-byte step.
+    bpp = max(1, channels * bit_depth // 8)
+    scale = color_type != 3  # palette indices must not be rescaled.
+    samples = bytearray(width * height * channels)
+    offset = 0
+    for x0, y0, dx, dy, pass_w, pass_h in geometry:
+        row_len = _png_row_bytes(pass_w, channels, bit_depth)
+        chunk = raw[offset : offset + pass_h * (row_len + 1)]
+        offset += pass_h * (row_len + 1)
+        unfiltered = _png_unfilter(chunk, pass_w, pass_h, row_len, bpp)
+        for row_index in range(pass_h):
+            row = unfiltered[row_index * row_len : (row_index + 1) * row_len]
+            values = _unpack_png_row(row, pass_w, channels, bit_depth, scale)
+            y = y0 + row_index * dy
+            base = y * width * channels
+            for column in range(pass_w):
+                x = x0 + column * dx
+                target = base + x * channels
+                source = column * channels
+                samples[target : target + channels] = bytes(
+                    values[source : source + channels]
+                )
+
+    pixels = bytes(samples)
     if color_type == 3:
         if palette is None:
             raise PdfValidationException("Indexed PNG image is missing a palette.")

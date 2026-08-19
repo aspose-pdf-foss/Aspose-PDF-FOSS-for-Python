@@ -615,7 +615,8 @@ Supported:
 
 - Extract image XObjects from parsed PDFs.
 - Place raw 8-bit DeviceGray/DeviceRGB/DeviceCMYK images, JPEG images, and
-  simple non-interlaced 8-bit PNG images on pages as image XObjects.
+  PNG images on pages as image XObjects, at any allowed bit depth and with or
+  without Adam7 interlacing.
 - Mark newly authored images as tagged `/Figure` content by passing `alt=...`
   (or an explicit `tag=...`), producing MCID-backed structure elements.
 - Track images by resource name and page association where the page/resource map
@@ -679,7 +680,12 @@ Supported:
 
 Boundaries:
 
-- `Page.add_image()` accepts raw samples, JPEG, and non-interlaced 8-bit PNG.
+- `Page.add_image()` accepts raw samples, JPEG, and **PNG** at every bit depth
+  and colour type ISO 15948 allows — 1/2/4/8/16 bits, greyscale, truecolour,
+  palette and their alpha forms — progressive or **Adam7 interlaced**. Samples
+  are normalised to 8 bits (16-bit keeps the high byte, sub-byte greyscale is
+  scaled, palette indices are looked up rather than scaled) and an alpha
+  channel is dropped.
   PNG input bytes, dimensions, filtered output, compression ratio, and working
   memory are bounded before large decode allocations. The JPEG encoder has
   optimized Huffman tables and baseline or progressive output; baseline RGB
@@ -769,7 +775,7 @@ Boundaries:
   authoring time so a non-Latin value renders (this baked appearance is left
   intact by later `generate_appearances`, which cannot re-encode a Type0 value).
   A push button can carry an **icon** (`add_push_button(icon=…)`, JPEG or
-  non-interlaced 8-bit PNG): the image is wrapped in a form XObject as `/MK /I`,
+  PNG): the image is wrapped in a form XObject as `/MK /I`,
   drawn into all three faces scaled proportionally and centred, with a `/MK /IF`
   that matches what is baked and `/MK /TP` 1 (icon only) or 2 (caption below).
   **Submit and reset** are available through the typed action API

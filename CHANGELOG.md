@@ -9,6 +9,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`Page.add_image()` accepts every PNG form.** Adam7 **interlacing** and bit
+  depths **1/2/4/16** were hard rejections; an ordinary interlaced or 16-bit PNG
+  could not be embedded at all. The decoder now reassembles the seven interlace
+  passes and normalises each allowed depth to 8 bits per sample — 16-bit keeps
+  the high byte, sub-byte greyscale is scaled to full range, and palette indices
+  are looked up rather than scaled, which would have corrupted the colour. Bit
+  depths a colour type does not allow (ISO 15948 table 11) are now rejected with
+  a specific message instead of being decoded as garbage.
+
 - **PDF/A-1 conversion drops inert transparency groups.** A `/Group /S
   /Transparency` on a page or form XObject is removed when nothing it reaches
   actually uses transparency — no ExtGState soft mask, non-Normal blend or alpha
