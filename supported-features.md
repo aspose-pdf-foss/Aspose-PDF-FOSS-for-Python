@@ -1012,7 +1012,12 @@ Supported:
   Type 0 (sampled) function over DeviceRGB. The space keeps its kind, colorant
   names and component count, so content streams that select it are untouched,
   and a Separation/DeviceN *image* keeps its tint samples — only the space
-  changes. Transparency is still not converted and remains reported.
+  changes. For PDF/A-1, a **transparency group** (`/Group /S /Transparency`) on
+  a page or form XObject is dropped when nothing it reaches actually uses
+  transparency — no ExtGState soft mask, non-Normal blend mode or alpha below 1,
+  no image `/SMask`/`/Mask`, no nested group. Producers stamp such groups
+  routinely, and removing an inert one cannot change the rendered result.
+  Transparency that *is* used stays and is reported.
 - Run heuristic PDF/UA checks. The catalog-level prerequisites
   (`/StructTreeRoot`, `/MarkInfo /Marked true`, ViewerPreferences
   `/DisplayDocTitle true`, a document title, and an XMP `pdfuaid:part`
@@ -1106,6 +1111,14 @@ Supported:
 
 Boundaries:
 
+- Real transparency is reported, never flattened. Flattening it correctly means
+  compositing each page against its actual backdrop, which is page
+  rasterization: it would replace live text and vectors with an image, making
+  the text unsearchable and a PDF/A-1a tag tree meaningless. That is a
+  conversion of the document, not a repair of it, so it is left to the caller.
+  The inert-group removal above is deliberately conservative — every ExtGState
+  in a resource dictionary counts, not only the ones the content selects — so a
+  group is kept whenever transparency cannot be ruled out.
 - Tint-transform resampling is a grid, not an exact composition: a linear
   transform round-trips exactly, while a curved one is reproduced to within a
   step or two per channel. The grid is one axis per colorant, sized to a fixed

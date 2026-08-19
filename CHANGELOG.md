@@ -9,6 +9,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **PDF/A-1 conversion drops inert transparency groups.** A `/Group /S
+  /Transparency` on a page or form XObject is removed when nothing it reaches
+  actually uses transparency — no ExtGState soft mask, non-Normal blend or alpha
+  below 1, no image `/SMask`/`/Mask`, no nested group. Producers stamp such
+  groups routinely, so this converts a real class of documents losslessly. The
+  scan is conservative (every ExtGState in a resource dictionary counts, not just
+  the ones the content selects), and transparency that is genuinely used stays
+  and is reported: flattening it correctly requires compositing the page against
+  its backdrop — rasterizing away live text and vectors — which is the caller's
+  decision, not a silent repair.
 - **Push-button icons.** `Form.add_push_button(icon=…)` takes JPEG or
   non-interlaced 8-bit PNG bytes, wraps them in a form XObject as `/MK /I` (an
   icon must be a *form*, not an image), and draws it into the normal, rollover

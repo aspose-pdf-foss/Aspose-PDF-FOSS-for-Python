@@ -10702,6 +10702,11 @@ class SimplePdf:
         self._embed_standard14_fonts()
         # Normalize DeviceCMYK content color to RGB under the sRGB OutputIntent.
         self._normalize_cmyk_content()
+        # PDF/A-1 forbids transparency groups; drop the ones that are inert.
+        if level_norm.startswith("1"):
+            dropped = self._drop_inert_transparency_groups()
+            if dropped:
+                logger.info("Removed %d inert transparency group(s).", dropped)
 
         logger.info(
             "PDF/A conversion complete for level %s. Checking remaining issues.", level
@@ -11226,6 +11231,143 @@ class SimplePdf:
             resources = self._cos_page_resources(i)
             if isinstance(resources, PdfDictionary):
                 self._normalize_cmyk_xobjects(resources, seen, 0, extractor, spaces)
+
+    # How deep to follow form XObjects when deciding whether a transparency
+    # group is inert.
+    _TRANSPARENCY_SCAN_MAX_DEPTH = 8
+
+    def _resources_use_transparency(
+        self, resources: Any, seen: set[int], depth: int
+    ) -> bool:
+        """True if anything reachable from *resources* actually uses transparency.
+
+        Deliberately conservative: every ``/ExtGState`` in the dictionary counts,
+        not only the ones the content stream selects with ``gs``. Over-reporting
+        merely keeps a group that could have been removed; under-reporting would
+        silently change the page.
+        """
+        if not isinstance(resources, PdfDictionary):
+            return False
+        if depth > self._TRANSPARENCY_SCAN_MAX_DEPTH:
+            return True  # too deep to prove inert; assume it matters.
+        self._load_budget.check(
+            depth + 1, "max_nesting_depth", "transparency scan nesting"
+        )
+
+        gs_dict = self._resolve(resources.mapping.get(PdfName("ExtGState")))
+        if isinstance(gs_dict, PdfDictionary):
+            for ref in gs_dict.mapping.values():
+                if self._extgstate_is_transparent(self._resolve(ref)):
+                    return True
+
+        xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
+        if isinstance(xobjects, PdfDictionary):
+            for ref in xobjects.mapping.values():
+                target = self._resolve(ref)
+                if not isinstance(target, PdfStream):
+                    continue
+                marker = id(target)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                subtype = self._get_name(target.mapping.get(PdfName("Subtype")))
+                if subtype == "Image":
+                    if isinstance(
+                        self._resolve(target.mapping.get(PdfName("SMask"))),
+                        PdfStream,
+                    ) or target.mapping.get(PdfName("Mask")) is not None:
+                        return True
+                    continue
+                if subtype != "Form":
+                    continue
+                # A nested group is itself transparency, whether or not its own
+                # content uses any.
+                group = self._resolve(target.mapping.get(PdfName("Group")))
+                if isinstance(group, PdfDictionary) and (
+                    self._get_name(group.mapping.get(PdfName("S"))) == "Transparency"
+                ):
+                    return True
+                inner = self._resolve(target.mapping.get(PdfName("Resources")))
+                if self._resources_use_transparency(inner, seen, depth + 1):
+                    return True
+
+        patterns = self._resolve(resources.mapping.get(PdfName("Pattern")))
+        if isinstance(patterns, PdfDictionary):
+            for ref in patterns.mapping.values():
+                target = self._resolve(ref)
+                if not isinstance(target, (PdfStream, PdfDictionary)):
+                    continue
+                marker = id(target)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                inner = self._resolve(target.mapping.get(PdfName("Resources")))
+                if self._resources_use_transparency(inner, seen, depth + 1):
+                    return True
+        return False
+
+    def _extgstate_is_transparent(self, gs: Any) -> bool:
+        """True if an ExtGState sets a soft mask, a real blend, or alpha < 1."""
+        if not isinstance(gs, PdfDictionary):
+            return False
+        if isinstance(self._resolve(gs.mapping.get(PdfName("SMask"))), PdfDictionary):
+            return True
+        blend = self._resolve(gs.mapping.get(PdfName("BM")))
+        names = (
+            [self._get_name(item) for item in blend.items]
+            if isinstance(blend, PdfArray)
+            else [self._get_name(blend)]
+        )
+        if any(name not in (None, "Normal", "Compatible") for name in names):
+            return True
+        for key in ("CA", "ca"):
+            alpha = self._get_number(gs.mapping.get(PdfName(key)))
+            if alpha is not None and float(alpha) < 1.0 - 1e-9:
+                return True
+        return False
+
+    def _drop_inert_transparency_groups(self) -> int:
+        """Remove ``/Group /S /Transparency`` where nothing is actually transparent.
+
+        PDF/A-1 forbids transparency groups outright, but a great many producers
+        stamp one on every page and form whether or not anything inside uses
+        transparency. Such a group has no effect on the rendered result, so
+        dropping it is lossless — unlike flattening real transparency, which
+        needs the page composited against its actual backdrop.
+
+        Returns the number of groups removed.
+        """
+        if self._cos_doc is None:
+            return 0
+        removed = 0
+
+        def is_group(obj: Any) -> bool:
+            group = self._resolve(obj.mapping.get(PdfName("Group")))
+            return isinstance(group, PdfDictionary) and (
+                self._get_name(group.mapping.get(PdfName("S"))) == "Transparency"
+            )
+
+        for index in range(len(self.pages)):
+            page = self._get_page_dict(index)
+            if not isinstance(page, PdfDictionary) or not is_group(page):
+                continue
+            resources = self._cos_page_resources(index)
+            if not self._resources_use_transparency(resources, set(), 0):
+                page.mapping.pop(PdfName("Group"), None)
+                removed += 1
+
+        for obj in list(self._cos_doc.objects.values()):
+            if not isinstance(obj, PdfStream):
+                continue
+            if self._get_name(obj.mapping.get(PdfName("Subtype"))) != "Form":
+                continue
+            if not is_group(obj):
+                continue
+            inner = self._resolve(obj.mapping.get(PdfName("Resources")))
+            if not self._resources_use_transparency(inner, set(), 0):
+                obj.mapping.pop(PdfName("Group"), None)
+                removed += 1
+        return removed
 
     def _cos_page_resources(self, page_index: int) -> PdfDictionary | None:
         """Return a page's ``/Resources`` as the live COS dictionary.
