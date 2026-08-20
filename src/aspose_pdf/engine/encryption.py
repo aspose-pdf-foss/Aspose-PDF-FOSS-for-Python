@@ -64,6 +64,50 @@ PDF_PADDING = bytes(
 )
 
 
+# Salt appended to the per-object key input by an AES crypt filter
+# (ISO 32000-1 7.6.2, Algorithm 1, step b).
+AES_OBJECT_KEY_SALT = b"sAlT"
+
+# Canonical standard-security-handler algorithm names used across the engine.
+RC4_ALGORITHM = "RC4"
+AES_128_ALGORITHM = "AES-128"
+AES_256_ALGORITHM = "AES-256"
+IDENTITY_ALGORITHM = "Identity"
+
+ENCRYPTION_ALGORITHMS = (RC4_ALGORITHM, AES_128_ALGORITHM, AES_256_ALGORITHM)
+
+_ALGORITHM_ALIASES = {
+    "RC4": RC4_ALGORITHM,
+    "RC4128": RC4_ALGORITHM,
+    "ARC4": RC4_ALGORITHM,
+    "AES128": AES_128_ALGORITHM,
+    "AES256": AES_256_ALGORITHM,
+    "IDENTITY": IDENTITY_ALGORITHM,
+    "NONE": IDENTITY_ALGORITHM,
+}
+
+
+def normalize_encryption_algorithm(value: str) -> str:
+    """Return the canonical name for an encryption algorithm.
+
+    Accepts the canonical names (``"RC4"``, ``"AES-128"``, ``"AES-256"``) and
+    common spellings such as ``"aes256"`` or ``"rc4-128"``. Anything else
+    raises rather than silently falling back to a weaker cipher.
+    """
+    if not isinstance(value, str):
+        raise PdfSecurityException(
+            f"Encryption algorithm must be a string, got {type(value).__name__}"
+        )
+    key = value.strip().upper().replace("-", "").replace("_", "").replace(" ", "")
+    normalized = _ALGORITHM_ALIASES.get(key)
+    if normalized is None:
+        supported = ", ".join(ENCRYPTION_ALGORITHMS)
+        raise PdfSecurityException(
+            f"Unsupported encryption algorithm {value!r}; supported: {supported}"
+        )
+    return normalized
+
+
 class EncryptionUtils:
     """Utility class for PDF-compliant AES-CBC, RC4 encryption, and key derivation.
 
@@ -151,27 +195,98 @@ class EncryptionUtils:
         # RC4 is symmetric; decryption is same as encryption
         return EncryptionUtils.encrypt_rc4(key, data)
 
+    # -------------------------------------------------------------------------
+    # Per-object keys and object data (ISO 32000-1 7.6.2, Algorithm 1)
+    # -------------------------------------------------------------------------
     @staticmethod
-    def decrypt_writer_encrypted_stream(
+    def compute_object_key(
+        file_key: bytes,
+        obj_num: int,
+        gen_num: int = 0,
+        *,
+        aes: bool,
+    ) -> bytes:
+        """Return the per-object key for *obj_num*/*gen_num* (Algorithm 1).
+
+        The file key is extended with the low three bytes of the object number
+        and the low two bytes of the generation number, plus the four-byte
+        ``sAlT`` suffix for an AES crypt filter, hashed with MD5 and truncated
+        to ``min(len(file_key) + 5, 16)`` bytes.
+
+        A 256-bit file key (V5/R6, AES-256) is used directly: revision 5 and
+        later derive no per-object key at all.
+        """
+        if len(file_key) >= 32:
+            return file_key
+        extended = file_key + bytes(
+            [
+                obj_num & 0xFF,
+                (obj_num >> 8) & 0xFF,
+                (obj_num >> 16) & 0xFF,
+                gen_num & 0xFF,
+                (gen_num >> 8) & 0xFF,
+            ]
+        )
+        if aes:
+            extended += AES_OBJECT_KEY_SALT
+        return hashlib.md5(extended).digest()[: min(len(file_key) + 5, 16)]
+
+    @staticmethod
+    def encrypt_object_data(
         file_key: bytes,
         algorithm: str,
-        obj_id: int,
+        obj_num: int,
         data: bytes,
+        gen_num: int = 0,
     ) -> bytes:
-        """Decrypt stream bytes produced by :meth:`PdfWriterV0._encrypt_data`.
+        """Encrypt one object's stream or string bytes for the standard handler."""
+        if not data or not file_key:
+            return data
+        algorithm = normalize_encryption_algorithm(algorithm)
+        if algorithm == IDENTITY_ALGORITHM:
+            return data
+        aes = algorithm.startswith("AES")
+        key = EncryptionUtils.compute_object_key(
+            file_key, obj_num, gen_num, aes=aes
+        )
+        if aes:
+            return EncryptionUtils.encrypt_aes_cbc(key, data)
+        return EncryptionUtils.encrypt_rc4(key, data)
 
-        Matches the native writer: AES uses ``encrypt_aes_cbc`` on the file key;
-        RC4 derives a per-object key with MD5.
+    @staticmethod
+    def decrypt_object_data(
+        file_key: bytes,
+        algorithm: str,
+        obj_num: int,
+        data: bytes,
+        gen_num: int = 0,
+    ) -> bytes:
+        """Decrypt one object's stream or string bytes.
+
+        Raises :class:`~aspose_pdf.exceptions.PdfSecurityException` when the
+        payload cannot be decrypted with this key, so a wrong key or a damaged
+        object surfaces as a library error rather than a raw cipher failure.
         """
         if not data or not file_key:
             return data
-        if algorithm.startswith("AES"):
-            return EncryptionUtils.decrypt_aes_cbc(file_key, data)
-        key = file_key + bytes(
-            [obj_id & 0xFF, (obj_id >> 8) & 0xFF, (obj_id >> 16) & 0xFF, 0, 0]
+        algorithm = normalize_encryption_algorithm(algorithm)
+        if algorithm == IDENTITY_ALGORITHM:
+            return data
+        aes = algorithm.startswith("AES")
+        key = EncryptionUtils.compute_object_key(
+            file_key, obj_num, gen_num, aes=aes
         )
-        real_key = hashlib.md5(key).digest()[:10]
-        return EncryptionUtils.decrypt_rc4(real_key, data)
+        try:
+            if aes:
+                return EncryptionUtils.decrypt_aes_cbc(key, data)
+            return EncryptionUtils.decrypt_rc4(key, data)
+        except PdfSecurityException:
+            raise
+        except Exception as exc:  # cipher/padding failures
+            raise PdfSecurityException(
+                f"Cannot decrypt object {obj_num} with the {algorithm} "
+                "standard security handler key"
+            ) from exc
 
     # -------------------------------------------------------------------------
     # PDF V2/V3 (40-bit RC4) and V4 (128-bit AES) Key Derivation
@@ -606,12 +721,30 @@ class EncryptionUtils:
         return u_value, o_value, ue_value, oe_value, file_key
 
     @staticmethod
+    def password_hash_v5(
+        password: bytes,
+        salt: bytes,
+        user_key: bytes = b"",
+        revision: int = 6,
+    ) -> bytes:
+        """Return the password hash for a revision 5 or 6 security handler.
+
+        Revision 6 (ISO 32000-2, Algorithm 2.B) is the hardened iterative hash
+        :meth:`compute_hash_v5` implements. Revision 5 -- the deprecated Adobe
+        extension level 3 -- is a single SHA-256 over the same input.
+        """
+        if revision <= 5:
+            return hashlib.sha256(password + salt + user_key).digest()
+        return EncryptionUtils.compute_hash_v5(password, salt, user_key)
+
+    @staticmethod
     def verify_password_v6(
         password: str,
         u_value: bytes,
         o_value: bytes,
         ue_value: bytes,
         oe_value: bytes,
+        revision: int = 6,
     ) -> bytes | None:
         """Verify user or owner password for PDF V5 revision 5/6; return file key or None."""
         from cryptography.hazmat.primitives import padding
@@ -639,9 +772,13 @@ class EncryptionUtils:
         if len(u_value) >= 48 and ue_value:
             u_val_salt = u_value[32:40]
             u_key_salt = u_value[40:48]
-            u_hash = EncryptionUtils.compute_hash_v5(pwd, u_val_salt)
+            u_hash = EncryptionUtils.password_hash_v5(
+                pwd, u_val_salt, revision=revision
+            )
             if u_hash == u_value[:32]:
-                u_inter_key = EncryptionUtils.compute_hash_v5(pwd, u_key_salt)
+                u_inter_key = EncryptionUtils.password_hash_v5(
+                    pwd, u_key_salt, revision=revision
+                )
                 key = _try_decrypt_ue_oe(u_inter_key, ue_value)
                 if key is not None:
                     return key
@@ -649,9 +786,13 @@ class EncryptionUtils:
         if len(o_value) >= 48 and oe_value:
             o_val_salt = o_value[32:40]
             o_key_salt = o_value[40:48]
-            o_hash = EncryptionUtils.compute_hash_v5(pwd, o_val_salt, u_value)
+            o_hash = EncryptionUtils.password_hash_v5(
+                pwd, o_val_salt, u_value, revision=revision
+            )
             if o_hash == o_value[:32]:
-                o_inter_key = EncryptionUtils.compute_hash_v5(pwd, o_key_salt, u_value)
+                o_inter_key = EncryptionUtils.password_hash_v5(
+                    pwd, o_key_salt, u_value, revision=revision
+                )
                 key = _try_decrypt_ue_oe(o_inter_key, oe_value)
                 if key is not None:
                     return key
@@ -662,21 +803,26 @@ class EncryptionUtils:
     def encrypt_perms_v6(
         file_key: bytes, p_value: int, encrypt_metadata: bool = True
     ) -> bytes:
-        """Encrypt permissions and metadata flag for R6.
+        """Encrypt the permissions block for revision 6 (ISO 32000-2 7.6.4.4.10).
 
-        Perms = 16 bytes:
-        - Bytes 0-3: P value (little endian)
-        - Byte 4: 0xFF if encrypt_metadata else 0xF0
-        - Bytes 5-8: 'adb '
-        - Bytes 9-11: random
+        The 16-byte plaintext is laid out exactly as a revision 6 reader
+        validates it:
+
+        - bytes 0-3: the /P value, little endian, signed
+        - bytes 4-7: ``0xFF`` filler
+        - byte 8: ``T`` when metadata is encrypted, ``F`` when it is not
+        - bytes 9-11: the literal ``adb``
+        - bytes 12-15: arbitrary padding
+
+        The block is then encrypted with AES-256 in ECB mode without padding.
         """
         import os
 
         perms = p_value.to_bytes(4, "little", signed=True)
-        perms += b"\xff" if encrypt_metadata else b"\xf0"
-        perms += b"adb "
-        perms += os.urandom(3)
-        perms += b"\xff\xff\xff\xff"[:4]  # ensure 16 bytes
+        perms += b"\xff\xff\xff\xff"
+        perms += b"T" if encrypt_metadata else b"F"
+        perms += b"adb"
+        perms += os.urandom(4)
 
         cipher = Cipher(algorithms.AES(file_key), modes.ECB())
         enc = cipher.encryptor()

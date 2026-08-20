@@ -40,13 +40,17 @@ from .cos import (
 )
 from .glyph_outlines import TrueTypeOutlines
 from .image_export import (
+    TiffPage,
     cmyk_to_rgb,
     ext_from_magic,
     gray_to_rgb,
     indexed_to_rgb,
+    rgb_to_gray,
     to_8bpc_bytes,
     write_png,
+    write_tiff,
 )
+from .jpeg_encoder import encode as jpeg_encode
 from .shading import Shading, build_color_converter, build_function, build_shading
 from .std_font_data import load_substitute_sfnt, resolve_substitute_key
 from .type1_outlines import Type1Outlines
@@ -94,27 +98,148 @@ class RasterizedPage:
         i = (y * self.width + x) * 3
         return (self.pixels[i], self.pixels[i + 1], self.pixels[i + 2])
 
-    def to_png(self) -> bytes:
-        """Encode this raster as a PNG file."""
-        return write_png(self.width, self.height, "RGB", self.pixels)
+    def to_gray(self) -> bytes:
+        """Return this raster as one 8-bit luminance byte per pixel (Rec. 601)."""
+        return rgb_to_gray(self.pixels)
 
-    def to_tiff(self) -> bytes:
-        """Encode this raster as an uncompressed baseline RGB TIFF file."""
-        return _write_tiff_rgb(self.width, self.height, self.pixels, self.dpi)
+    def to_bilevel(self, threshold: int = 128) -> bytes:
+        """Return this raster as packed 1-bit rows, ``1`` = white.
 
-    def save(self, path: str | Path) -> Path:
-        """Save the raster to ``.png`` or ``.tif/.tiff`` and return the path."""
+        Pixels are thresholded on luminance -- above *threshold* is white --
+        with each row padded to a byte boundary. Thresholding is a plain cut,
+        not a dithering pass, which is what scanned-document-style output of
+        text and line art wants.
+        """
+        gray = self.to_gray()
+        limit = _byte(threshold)
+        # Map each luminance byte to the ASCII digit of its bit, then let the
+        # big-integer parser pack a whole row at C speed.
+        digits = bytes(0x30 if value < limit else 0x31 for value in range(256))
+        row_bytes = (self.width + 7) // 8
+        padding = b"0" * (row_bytes * 8 - self.width)
+        out = bytearray()
+        for y in range(self.height):
+            row = gray[y * self.width : (y + 1) * self.width].translate(digits)
+            out += int(row + padding, 2).to_bytes(row_bytes, "big")
+        return bytes(out)
+
+    def _samples(self, mode: str, threshold: int) -> tuple[str, bytes]:
+        """Return ``(encoder mode, samples)`` for a public colour *mode*."""
+        normalized = str(mode).strip().lower()
+        if normalized in ("rgb", "color", "colour"):
+            return "RGB", self.pixels
+        if normalized in ("gray", "grey", "grayscale", "greyscale", "l"):
+            return "L", self.to_gray()
+        if normalized in ("bilevel", "bw", "1"):
+            return "1", self.to_bilevel(threshold)
+        raise PdfValidationException(
+            f"Unsupported raster colour mode {mode!r}; use 'rgb', 'gray' or 'bilevel'"
+        )
+
+    def to_png(self, *, mode: str = "rgb", threshold: int = 128) -> bytes:
+        """Encode this raster as a PNG file.
+
+        ``mode`` is ``"rgb"`` (the default), ``"gray"`` (8-bit luminance) or
+        ``"bilevel"`` (1 bit per pixel, thresholded at *threshold*), which for
+        text pages is a fraction of the size.
+        """
+        encoder_mode, samples = self._samples(mode, threshold)
+        if encoder_mode == "1":
+            return write_png(self.width, self.height, "L", samples, bit_depth=1)
+        return write_png(self.width, self.height, encoder_mode, samples)
+
+    def to_tiff(
+        self,
+        *,
+        mode: str = "rgb",
+        compression: str = "deflate",
+        threshold: int = 128,
+    ) -> bytes:
+        """Encode this raster as a baseline TIFF file.
+
+        ``compression`` defaults to ``"deflate"``: an uncompressed A4 page at
+        300 dpi is about 25 MB, which is rarely what a caller wants. Pass
+        ``"none"`` for the raw strip. ``mode`` behaves as in :meth:`to_png`.
+        """
+        encoder_mode, samples = self._samples(mode, threshold)
+        try:
+            return write_tiff(
+                [
+                    TiffPage(
+                        width=self.width,
+                        height=self.height,
+                        mode=encoder_mode,
+                        data=samples,
+                        dpi=self.dpi,
+                    )
+                ],
+                compression=compression,
+            )
+        except ValueError as exc:
+            raise PdfValidationException(str(exc)) from exc
+
+    def to_jpeg(
+        self,
+        *,
+        quality: int = 85,
+        mode: str = "rgb",
+        progressive: bool = False,
+    ) -> bytes:
+        """Encode this raster as a JPEG file at *quality* (1-100).
+
+        ``mode`` is ``"rgb"`` or ``"gray"``; JPEG has no bilevel form, so
+        ``"bilevel"`` is rejected rather than silently producing a grey image
+        with ringing around every glyph. The page DPI is written to the JFIF
+        header.
+        """
+        encoder_mode, samples = self._samples(mode, 128)
+        if encoder_mode == "1":
+            raise PdfValidationException(
+                "JPEG has no bilevel mode; use 'gray', or write PNG/TIFF"
+            )
+        components = 3 if encoder_mode == "RGB" else 1
+        return jpeg_encode(
+            self.width,
+            self.height,
+            components,
+            samples,
+            int(quality),
+            progressive=progressive,
+            dpi=self.dpi,
+        )
+
+    def save(
+        self,
+        path: str | Path,
+        *,
+        mode: str = "rgb",
+        compression: str = "deflate",
+        quality: int = 85,
+        threshold: int = 128,
+    ) -> Path:
+        """Save the raster and return the path it was written to.
+
+        The format follows the suffix: ``.png``, ``.tif``/``.tiff``,
+        ``.jpg``/``.jpeg``, or PNG when there is no suffix at all. ``mode``,
+        ``compression`` (TIFF) and ``quality`` (JPEG) are passed through to the
+        matching encoder.
+        """
         out = Path(path)
         suffix = out.suffix.lower()
         if suffix in ("", ".png"):
             if suffix == "":
                 out = out.with_suffix(".png")
-            data = self.to_png()
+            data = self.to_png(mode=mode, threshold=threshold)
         elif suffix in (".tif", ".tiff"):
-            data = self.to_tiff()
+            data = self.to_tiff(
+                mode=mode, compression=compression, threshold=threshold
+            )
+        elif suffix in (".jpg", ".jpeg"):
+            data = self.to_jpeg(quality=quality, mode=mode)
         else:
             raise PdfValidationException(
-                "Unsupported raster output format; use .png, .tif, or .tiff"
+                "Unsupported raster output format; use .png, .tif, .tiff, "
+                ".jpg, or .jpeg"
             )
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(data)
@@ -3297,55 +3422,6 @@ def _decode_image_to_rgb(
         return (width, height, cmyk_to_rgb(cmyk))
     rgb = to_8bpc_bytes(data, bpc, width, height, 3)
     return (width, height, rgb)
-
-
-def _write_tiff_rgb(width: int, height: int, pixels: bytes, dpi: float) -> bytes:
-    data = bytearray()
-    ifd_offset = 8
-    num_entries = 13
-    extra_offset = ifd_offset + 2 + num_entries * 12 + 4
-
-    def add_extra(blob: bytes) -> int:
-        off = extra_offset + len(data)
-        data.extend(blob)
-        if len(data) % 2:
-            data.append(0)
-        return off
-
-    bits_off = add_extra(struct.pack("<3H", 8, 8, 8))
-    xres_off = add_extra(struct.pack("<II", max(1, round(dpi)), 1))
-    yres_off = add_extra(struct.pack("<II", max(1, round(dpi)), 1))
-    pixel_off = extra_offset + len(data)
-    byte_count = len(pixels)
-
-    entries = [
-        _tiff_entry(256, 4, 1, width),
-        _tiff_entry(257, 4, 1, height),
-        _tiff_entry(258, 3, 3, bits_off),
-        _tiff_entry(259, 3, 1, 1),
-        _tiff_entry(262, 3, 1, 2),
-        _tiff_entry(273, 4, 1, pixel_off),
-        _tiff_entry(277, 3, 1, 3),
-        _tiff_entry(278, 4, 1, height),
-        _tiff_entry(279, 4, 1, byte_count),
-        _tiff_entry(282, 5, 1, xres_off),
-        _tiff_entry(283, 5, 1, yres_off),
-        _tiff_entry(284, 3, 1, 1),
-        _tiff_entry(296, 3, 1, 2),
-    ]
-
-    out = bytearray(b"II")
-    out.extend(struct.pack("<HI", 42, ifd_offset))
-    out.extend(struct.pack("<H", len(entries)))
-    out.extend(b"".join(entries))
-    out.extend(struct.pack("<I", 0))
-    out.extend(data)
-    out.extend(pixels)
-    return bytes(out)
-
-
-def _tiff_entry(tag: int, typ: int, count: int, value: int) -> bytes:
-    return struct.pack("<HHII", tag, typ, count, value)
 
 
 def _coerce_rgb(value: Sequence[int]) -> Color:

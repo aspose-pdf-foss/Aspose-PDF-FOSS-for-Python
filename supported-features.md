@@ -263,12 +263,21 @@ Supported:
   `alt=...`, and `actual_text=...`; the writer emits `BDC`/`EMC` marked
   content and maintains `/StructTreeRoot`, page `/StructParents`, and the
   `/ParentTree`.
+- Collect the **graphic elements** of a page or document with
+  `aspose_pdf.graphics.GraphicsAbsorber`: every painted path and placed image
+  comes back as a `GraphicElement` with its bounding box in page (user) space,
+  the paint operation (`fill`, `stroke`, `fill_stroke`, `clip`), the image's
+  XObject name, the device fill/stroke colour and the stroke width in page
+  space. The walk tracks `q`/`Q`/`cm`, descends into form XObjects composing
+  each `/Matrix` (bounded depth, a form that draws itself terminates), and
+  bounds curves exactly rather than by their control points.
 - Iterate pages with `Document.iter_pages()`.
 - Iterate decoded page content streams with `Document.iter_page_content_streams()`.
 - Render a page to a dependency-free RGB raster with `Page.render()` or
-  `Document.render_page()`, then save it as PNG or TIFF through
+  `Document.render_page()`, then save it as PNG, TIFF or JPEG through
   `RasterizedPage.save()` / `Page.save_as_image()` /
-  `Document.save_page_as_image()`. The renderer covers common content stream
+  `Document.save_page_as_image()`; the format follows the file suffix
+  (`.png`, `.tif`/`.tiff`, `.jpg`/`.jpeg`). The renderer covers common content stream
   operators for graphics state, paths, fills/strokes, clipping, image XObjects,
   form XObjects, and text. Text shown with an embedded font is filled from its
   real glyph outlines for all three program formats -- TrueType `glyf`
@@ -291,6 +300,18 @@ Supported:
   Vera license) for Symbol and ZapfDingbats, indexed through those fonts'
   built-in encodings -- so common text, Greek/math symbols and dingbats all
   render as real glyphs.
+- Choose the output colour form with `mode=`: `"rgb"` (default), `"gray"`
+  (Rec. 601 luminance) or `"bilevel"` (1 bit per pixel, thresholded at
+  `threshold=`, default 128 -- a plain cut, not dithering). JPEG has no bilevel
+  form and rejects it rather than emitting a grey image with ringing.
+- TIFF output is **Deflate-compressed by default** (`compression="deflate"`,
+  or `"none"` for a raw strip): an uncompressed A4 page at 300 dpi is about
+  25 MB. The encoder is pure Python, writes the render resolution into the
+  file, and `Document.save_as_tiff()` writes several pages into one
+  **multi-page TIFF**, rendering and encoding them one at a time rather than
+  holding every raster in memory.
+- JPEG output uses the bundled encoder (`quality=`, default 85) and records the
+  render resolution as the JFIF pixel density.
 - Anti-alias the raster by supersampling: `antialias=True` (the default) renders
   at 3x and box-downsamples for smooth text, fill, stroke, and image edges; an
   integer 1-8 sets the factor, and `False` (or `1`) renders hard-edged.
@@ -376,6 +397,13 @@ Boundaries:
   extraction. **Vertical CMaps** (`WMode 1`, bundled or embedded) now position
   correctly: each glyph is offset by its `/W2` (or `/DW2`) position vector and
   the text advances downward by the vertical displacement.
+- `GraphicsAbsorber` reports geometry, not paint: text runs (use
+  `TextFragmentAbsorber`), inline images (`BI`/`ID`/`EI`) and `sh` shading
+  fills are not collected, a path's box covers its geometry without the stroke
+  width, and a colour set through a pattern, ICCBased, Separation or Indexed
+  space is reported as `None` rather than approximated. The collection it
+  returns is an in-memory container: adding or removing elements never changes
+  the page.
 - Layout reflow remains out of scope.
 
 ## Text
@@ -904,8 +932,28 @@ Boundaries:
 Supported:
 
 - Encrypt and decrypt documents with user and owner passwords.
+- **Open every standard security handler flavour**, whichever tool wrote it:
+  40-bit RC4 (`/V 1 /R 2`), 128-bit RC4 (`/V 2 /R 3`, and `/V 4` with a `/V2`
+  crypt filter), AES-128 (`/V 4 /R 4`, `AESV2`) and AES-256 (`/V 5`, both the
+  deprecated revision 5 and revision 6). The cipher is taken from `/V` and from
+  the crypt filter `/StmF` selects, and the per-object key follows Algorithm 1
+  (MD5 over the file key, object and generation number, plus the `sAlT` suffix
+  for AES) so streams *and* strings decrypt.
+- Decode an encrypted document's **images, form XObjects and appearance
+  streams** on demand: the key stays available for the COS graph after load,
+  so a rendered page of an encrypted PDF looks like the same page unencrypted.
+- Open a document protected by an **owner password only**: an empty user
+  password is tried before one is demanded, as every reader does.
+- Choose the cipher when encrypting with `Document.encrypt(..., algorithm=...)`:
+  `"AES-256"` (the default, written as `/V 5 /R 6` with `/UE`, `/OE` and the
+  encrypted `/Perms` revision 6 validates), `"AES-128"` (`/V 4 /R 4`, `AESV2`)
+  or `"RC4"` (128-bit, `/V 2 /R 3`). Names are normalised (`aes256`, `AES_128`,
+  `rc4-128`); anything else raises instead of quietly using a weaker cipher.
+  The declared revision always matches the key derivation actually used, and
+  the key is bound to the `/ID` the file carries, so other readers open what
+  this library writes.
 - Change passwords and read permission flags.
-- Reject missing, empty, whitespace-only, and wrong passwords for encrypted PDFs.
+- Reject missing, whitespace-only, and wrong passwords for encrypted PDFs.
 - Exercise RC4 and AES-CBC primitives, AES-256 setup, and PDF 2.0 V5/R6 key
   derivation helpers.
 - Validate PDF signature ByteRange structure, and verify the signature itself
@@ -968,6 +1016,13 @@ Supported:
 
 Boundaries:
 
+- Encryption covers the **standard** security handler only. A public-key
+  (`Adobe.PubSec`, `/Recipients`) document is not decrypted, and there is no
+  API to produce one.
+- A crypt filter that is neither `V2`, `AESV2` nor `AESV3` -- a custom handler's
+  own filter -- is not decrypted. `/StmF /Identity` (streams left in the clear)
+  is honoured as written, and a document that leaves streams in the clear while
+  encrypting only its strings through `/StrF` keeps those strings as stored.
 - PAdES baseline levels (B/T/LT/LTA) are produced and validated against trust
   anchors, but this is not a formally certified eIDAS-grade implementation:
   conformance to ETSI EN 319 142 / final certification is deferred to external

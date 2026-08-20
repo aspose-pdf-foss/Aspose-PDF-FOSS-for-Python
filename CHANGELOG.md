@@ -9,6 +9,33 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Rendered pages encode to compressed TIFF, JPEG, greyscale and bilevel.** A
+  raster could only be written as PNG or as an *uncompressed* RGB TIFF — an A4
+  page at 300 dpi came to about 25 MB of file for a page of text. `to_tiff()`
+  now Deflate-compresses by default (`compression="none"` keeps the raw strip),
+  `to_jpeg(quality=…)` uses the bundled encoder, and `mode="gray"`/`"bilevel"`
+  (with a `threshold=`) cut a text page down further; `save()` picks the format
+  from the suffix, `.jpg`/`.jpeg` included. Both encoders record the render
+  resolution — TIFF in its resolution tags, JPEG as the JFIF pixel density.
+- **`Document.save_as_tiff()` writes a multi-page TIFF.** Every page becomes one
+  image in a single file (`pages=` selects and orders them), rendered and
+  encoded one at a time so only the compressed result accumulates.
+- **`GraphicsAbsorber` actually absorbs graphics.** `visit()` cleared its
+  collection and returned nothing at all, while the documentation described it
+  as collecting a page's graphic elements. It now walks the content stream the
+  way the rasterizer does — tracking `q`/`Q`/`cm`, descending into form
+  XObjects with each `/Matrix` composed, bounded in depth and terminating on a
+  form that draws itself — and reports each painted path and placed image as a
+  `GraphicElement`: bounding box in page space (curves bounded exactly, not by
+  their control points), paint operation, image resource name, device fill and
+  stroke colour, and stroke width in page space. Text, inline images and `sh`
+  fills are out of scope and documented as such.
+- **`Document.encrypt(..., algorithm=…)`.** The engine has always supported
+  AES-256, AES-128 and RC4, but the public API could only reach the default.
+  Names are normalised (`aes256`, `AES_128`, `rc4-128`), and an unrecognised
+  one raises `PdfSecurityException` instead of silently falling back to a
+  weaker cipher.
+
 - **The page rasterizer draws annotations.** It rendered page content only, so
   every highlight, stamp, sticky note and form-field widget was missing from a
   rendered page even with its `/AP` present. Each visible annotation's normal
@@ -75,6 +102,47 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Masks now follow the image's display size but are never JPEG-encoded.
 
 ### Fixed
+
+- **Encrypted PDFs written by other tools could not be opened.** Only AES-256
+  worked. A 128-bit RC4 document (`/V 2 /R 3`) was misread as AES-128 because
+  the cipher was guessed from `/V`/`/R` alone instead of the crypt filter
+  `/StmF` selects, and AES-128 (`AESV2`) failed because the file key was used
+  directly as the object key: ISO 32000-1 Algorithm 1 derives a per-object key
+  from the object and generation number, with a `sAlT` suffix for AES. Both are
+  implemented now, and qpdf-produced fixtures for every standard-handler
+  flavour — RC4-40, RC4-128, AES-128, AES-256 revision 5 and 6 — are part of
+  the test suite. A failure to decrypt raises `PdfSecurityException` rather
+  than a bare cipher `ValueError`.
+- **Encrypted documents this library wrote were readable only by this library.**
+  Three defects compounded: the `/Encrypt` dictionary declared a revision whose
+  key derivation was not the one used (`/V 5 /R 5` for keys built with the
+  revision 6 algorithm 2.B, `/V 1 /R 2` for a 128-bit RC4 key), `/Perms` and
+  `/Length` were missing, and — worst — the trailer `/ID` was regenerated at
+  save time while the key had been derived from a different one, so every
+  conforming reader computed a different key and rejected the correct password.
+  The dictionary is now written to match the keys, the `/ID` is bound to the
+  derivation, and `/Perms` follows the revision 6 layout. Output opens in qpdf
+  with either password for all three algorithms.
+- **Strings in an encrypted document.** They were neither encrypted on write
+  nor decrypted on read, so a title or annotation text sat in the clear inside
+  an otherwise encrypted file. Strings are now encrypted with their object's
+  key (a signature's `/Contents` and the `/Encrypt` dictionary excepted) and
+  decrypted as objects are materialised, including for documents produced
+  elsewhere.
+- **Images and form XObjects vanished from an encrypted document.** Loading with
+  a password decrypts the page contents and then cleared the key, but every
+  other stream -- images, form XObjects, appearance streams -- is decoded on
+  demand from the COS graph and still needed it, so a rendered page of an
+  encrypted PDF came out with its images missing. The key the graph needs is
+  now kept for as long as those bytes are around, separately from the
+  writer-facing one.
+- **A document protected by an owner password only would not open.** An empty
+  user password is a valid password that every reader tries before asking for
+  one; loading demanded a password and raised instead.
+- **AES-256 revision 5 documents were rejected.** Password verification always
+  used the revision 6 hardened hash; revision 5 — the deprecated Adobe
+  extension, still found in the wild — is a single SHA-256 and is now handled
+  by revision.
 
 - **The PDF/A checker accepted DeviceCMYK under an sRGB output intent.** It only
   required *some* structurally valid ICC profile, where ISO 19005-1 6.2.3.3 ties

@@ -22,7 +22,7 @@ import logging
 import mmap
 import re
 import zlib
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Callable, Iterable, Iterator, MutableMapping
 from typing import Any
 
 from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
@@ -1145,6 +1145,45 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
         self._xref_offsets = dict(xref_offsets)
         self._compressed = dict(compressed)
         self._cache: dict[int, Any] = {}
+        # Decrypts the strings of a freshly materialized object, installed once
+        # the document password has been verified. Objects that come out of an
+        # object stream are skipped: the stream they lived in was decrypted as
+        # a whole, so their strings are already plain (ISO 32000-1 7.5.7).
+        self._string_decryptor: Callable[[int, int, Any], None] | None = None
+        self._decrypted: set[int] = set()
+
+    def attach_string_decryptor(
+        self,
+        decryptor: Callable[[int, int, Any], None],
+        *,
+        skip: Iterable[int] = (),
+    ) -> None:
+        """Install *decryptor* and apply it to already-materialized objects.
+
+        *decryptor* receives ``(object_number, generation, object)`` and
+        decrypts that object's strings in place. Objects in *skip* -- the
+        ``/Encrypt`` dictionary, whose strings are never encrypted -- are left
+        alone.
+        """
+        self._string_decryptor = decryptor
+        self._decrypted.update(int(n) for n in skip)
+        for obj_num in list(self._cache):
+            if obj_num in self._compressed:
+                continue
+            self._decrypt_object(int(obj_num), self._cache[obj_num])
+
+    def _decrypt_object(self, obj_num: int, obj: Any) -> None:
+        """Run the installed string decryptor over *obj* exactly once."""
+        if self._string_decryptor is None or obj_num in self._decrypted:
+            return
+        self._decrypted.add(obj_num)
+        gen = 0
+        offset = self._xref_offsets.get(obj_num)
+        if offset is not None:
+            header = _OBJECT_HEADER_RE.match(self._parser._data, offset)
+            if header is not None:
+                gen = int(header.group(2))
+        self._string_decryptor(obj_num, gen, obj)
 
     @property
     def materialized_count(self) -> int:
@@ -1179,6 +1218,7 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
                 f"Failed to parse PDF object {obj_num} at byte offset {off}"
             ) from e
         self._cache[obj_num] = obj
+        self._decrypt_object(obj_num, obj)
         return obj
 
     def _load_compressed(self, obj_num: int) -> Any:
@@ -1193,6 +1233,8 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
         extracted = self._parser._parse_object_stream(stm)
         for k, v in extracted.items():
             self._cache[int(k)] = v
+            # Already covered by the object stream's own decryption.
+            self._decrypted.add(int(k))
         if obj_num not in self._cache:
             raise KeyError(obj_num)
         return self._cache[obj_num]

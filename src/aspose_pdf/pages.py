@@ -342,11 +342,27 @@ class Page:
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
+        mode: str = "rgb",
+        compression: str = "deflate",
+        quality: int = 85,
+        threshold: int = 128,
     ) -> Path:
-        """Render this page and save it as ``.png`` or ``.tif/.tiff``."""
+        """Render this page and save it as PNG, TIFF or JPEG.
+
+        The format follows the suffix (``.png``, ``.tif``/``.tiff``,
+        ``.jpg``/``.jpeg``). ``mode`` selects ``"rgb"``, ``"gray"`` or
+        ``"bilevel"`` output, ``compression`` applies to TIFF (``"deflate"`` by
+        default, or ``"none"``) and ``quality`` to JPEG.
+        """
         return self.render(
             dpi=dpi, scale=scale, background=background, antialias=antialias
-        ).save(path)
+        ).save(
+            path,
+            mode=mode,
+            compression=compression,
+            quality=quality,
+            threshold=threshold,
+        )
 
     def replace_text(
         self,

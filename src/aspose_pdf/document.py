@@ -28,7 +28,7 @@ from aspose_pdf.engine.simple_pdf import (
     _effective_encryption_password,
     _parse_pdf_date,
 )
-from aspose_pdf.exceptions import AsposePdfException
+from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
     _coerce_limits,
@@ -606,15 +606,94 @@ class Document:
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
+        mode: str = "rgb",
+        compression: str = "deflate",
+        quality: int = 85,
+        threshold: int = 128,
     ) -> Path:
-        """Render a page and save it as ``.png`` or ``.tif/.tiff``."""
+        """Render one page and save it as PNG, TIFF or JPEG.
+
+        The format follows the suffix of *destination*. ``mode`` selects
+        ``"rgb"``, ``"gray"`` or ``"bilevel"`` output, ``compression`` applies
+        to TIFF and ``quality`` to JPEG.
+        """
         return self.render_page(
             page_index,
             dpi=dpi,
             scale=scale,
             background=background,
             antialias=antialias,
-        ).save(destination)
+        ).save(
+            destination,
+            mode=mode,
+            compression=compression,
+            quality=quality,
+            threshold=threshold,
+        )
+
+    def save_as_tiff(
+        self,
+        destination: str | Path,
+        *,
+        pages: Sequence[int] | None = None,
+        dpi: float = 72.0,
+        scale: float = 1.0,
+        background: tuple[int, int, int] = (255, 255, 255),
+        antialias: bool | int = True,
+        mode: str = "rgb",
+        compression: str = "deflate",
+        threshold: int = 128,
+    ) -> Path:
+        """Render pages into a single multi-page TIFF file.
+
+        Every page becomes one image in the file, in the order given by
+        *pages* (all pages, in document order, when omitted). Pages are
+        rendered one at a time and encoded as they go, so only the compressed
+        result accumulates rather than every raster at once.
+
+        ``mode`` selects ``"rgb"``, ``"gray"`` or ``"bilevel"`` output and
+        ``compression`` is ``"deflate"`` (the default) or ``"none"``.
+
+        Returns
+        -------
+        Path
+            The path written.
+        """
+        from aspose_pdf.engine.image_export import TiffPage, write_tiff
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        indexes = list(range(self.page_count)) if pages is None else [int(i) for i in pages]
+        if not indexes:
+            raise PdfValidationException("A TIFF file needs at least one page")
+
+        def rendered() -> Iterator[Any]:
+            for index in indexes:
+                raster = self.render_page(
+                    index,
+                    dpi=dpi,
+                    scale=scale,
+                    background=background,
+                    antialias=antialias,
+                )
+                encoder_mode, samples = raster._samples(mode, threshold)
+                yield TiffPage(
+                    width=raster.width,
+                    height=raster.height,
+                    mode=encoder_mode,
+                    data=samples,
+                    dpi=raster.dpi,
+                )
+
+        try:
+            data = write_tiff(rendered(), compression=compression)
+        except ValueError as exc:
+            raise PdfValidationException(str(exc)) from exc
+        out = Path(destination)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+        return out
 
     def replace_text(
         self,
@@ -1146,8 +1225,9 @@ class Document:
         owner_password: str | None = None,
         *,
         permissions: int = -4,
+        algorithm: str = "AES-256",
     ) -> Document:
-        """Encrypt the PDF document.
+        """Encrypt the PDF document with the standard security handler.
 
         Parameters
         ----------
@@ -1159,12 +1239,27 @@ class Document:
         permissions : int
             PDF access-permission flags (signed 32-bit, see PDF spec Table 22).
             Defaults to ``-4`` (all standard permissions granted).
+        algorithm : str
+            ``"AES-256"`` (the default, ``/V 5 /R 6``), ``"AES-128"``
+            (``/V 4 /R 4``, AESV2) or ``"RC4"`` (128-bit, ``/V 2 /R 3``).
+            RC4 is offered for readers that predate AES and is weak; prefer a
+            default AES-256 document. An unrecognised name raises
+            :class:`~aspose_pdf.exceptions.PdfSecurityException` rather than
+            quietly encrypting with a different cipher.
+
+        Raises
+        ------
+        PdfSecurityException
+            If *algorithm* is not one of the supported names.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
         self._engine_pdf.encrypt(
-            user_password, owner_password or user_password, permissions=permissions
+            user_password,
+            owner_password or user_password,
+            permissions=permissions,
+            algorithm=algorithm,
         )
         self._encrypted = True
         return self

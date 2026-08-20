@@ -16,6 +16,7 @@ scales the quantization tables exactly as libjpeg does.
 from __future__ import annotations
 
 import math
+import struct
 
 __all__ = ["encode"]
 
@@ -357,6 +358,19 @@ def _extract_block(plane, pw, ph, bx, by):
     return block
 
 
+def _jfif_app0(dpi: float | None = None) -> bytes:
+    """Return the JFIF APP0 segment, carrying *dpi* as the pixel density."""
+    if dpi is None or dpi <= 0:
+        units, x_density, y_density = 0, 1, 1
+    else:
+        units = 1  # dots per inch
+        x_density = y_density = max(1, min(65535, round(dpi)))
+    payload = b"JFIF\x00" + bytes([1, 1, units]) + struct.pack(
+        ">HH", x_density, y_density
+    ) + bytes([0, 0])
+    return _marker_segment(0xE0, payload)
+
+
 def _marker_segment(marker: int, payload: bytes) -> bytes:
     return bytes([0xFF, marker]) + ((len(payload) + 2).to_bytes(2, "big")) + payload
 
@@ -389,6 +403,7 @@ def encode(
     *,
     optimize: bool = True,
     progressive: bool = False,
+    dpi: float | None = None,
 ) -> bytes:
     """Encode interleaved 8-bit *samples* as a JPEG.
 
@@ -403,6 +418,8 @@ def encode(
     cost; pass ``optimize=False`` for the standard tables. With *progressive*,
     a spectral-selection progressive stream (SOF2: one DC scan then one AC scan
     per component, full resolution) is produced instead of a baseline one.
+    With *dpi*, the JFIF header records that pixel density in dots per inch so
+    a rendered page keeps its scale outside the PDF.
     """
     if components not in (1, 3, 4):
         raise ValueError("jpeg_encoder supports 1, 3 or 4 components only")
@@ -412,13 +429,15 @@ def encode(
         raise ValueError("sample buffer too small for the given dimensions")
 
     if progressive:
-        return _encode_progressive(width, height, components, samples, quality, optimize)
+        return _encode_progressive(
+            width, height, components, samples, quality, optimize, dpi
+        )
 
     luma_qt = _scaled_qt(_STD_LUMA_QT, quality)
     chroma_qt = _scaled_qt(_STD_CHROMA_QT, quality)
 
     freq = {k: [0] * 256 for k in ("dl", "al", "dc", "ac")}
-    app = _marker_segment(0xE0, b"JFIF\x00" + bytes([1, 1, 0, 0, 1, 0, 1, 0, 0]))
+    app = _jfif_app0(dpi)
     if components == 1:
         tokens = _tokenize_gray(width, height, samples, luma_qt, freq)
         keys = [(0, 0, "dl"), (1, 0, "al")]
@@ -464,13 +483,15 @@ def encode(
 # ---------------------------------------------------------------------------
 
 
-def _progressive_planes(width, height, components, samples, luma_qt, chroma_qt):
+def _progressive_planes(
+    width, height, components, samples, luma_qt, chroma_qt, dpi=None
+):
     """Return ``(planes, comp_spec, dqt, app)`` for a progressive stream.
 
     *planes* is a list of ``(byte_plane, quant_table)`` per component at full
     resolution; *comp_spec* is ``(component_id, qt_id, dc_table_id, ac_table_id)``.
     """
-    app = _marker_segment(0xE0, b"JFIF\x00" + bytes([1, 1, 0, 0, 1, 0, 1, 0, 0]))
+    app = _jfif_app0(dpi)
     if components == 1:
         planes = [(samples, luma_qt)]
         comp_spec = [(1, 0, 0, 0)]
@@ -539,11 +560,13 @@ def _scan_bits(tokens, tables) -> bytes:
     return bytes(writer.out)
 
 
-def _encode_progressive(width, height, components, samples, quality, optimize) -> bytes:
+def _encode_progressive(
+    width, height, components, samples, quality, optimize, dpi=None
+) -> bytes:
     luma_qt = _scaled_qt(_STD_LUMA_QT, quality)
     chroma_qt = _scaled_qt(_STD_CHROMA_QT, quality)
     planes, comp_spec, dqt, app = _progressive_planes(
-        width, height, components, samples, luma_qt, chroma_qt
+        width, height, components, samples, luma_qt, chroma_qt, dpi
     )
 
     blocks_x = (width + 7) // 8

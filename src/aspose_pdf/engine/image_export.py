@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import struct
 import zlib
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from aspose_pdf.exceptions import PdfResourceLimitException
@@ -161,6 +163,138 @@ def write_png(
         out += _png_chunk(b"PLTE", bytes(palette))
     out += _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
     out += _png_chunk(b"IEND", b"")
+    return bytes(out)
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python TIFF encoder (single page and multi-page)
+# ---------------------------------------------------------------------------
+# mode -> (samples per pixel, bits per sample, photometric interpretation)
+_TIFF_MODES = {
+    "RGB": (3, 8, 2),
+    "L": (1, 8, 1),
+    "1": (1, 1, 1),
+}
+
+_TIFF_COMPRESSION = {"none": 1, "deflate": 8}
+
+
+@dataclass(frozen=True)
+class TiffPage:
+    """One image in a TIFF file.
+
+    ``data`` holds packed row-major samples with each row padded to a byte
+    boundary, matching what :func:`write_png` accepts. ``mode`` is ``"RGB"``,
+    ``"L"`` (8-bit grey) or ``"1"`` (1 bit per pixel, 0 = black).
+    """
+
+    width: int
+    height: int
+    mode: str
+    data: bytes
+    dpi: float = 72.0
+
+
+def _tiff_entry(tag: int, typ: int, count: int, value: int) -> bytes:
+    return struct.pack("<HHII", tag, typ, count, value)
+
+
+def write_tiff(
+    pages: Sequence[TiffPage] | Iterable[TiffPage],
+    *,
+    compression: str = "deflate",
+) -> bytes:
+    """Encode one or more rasters as a little-endian baseline TIFF.
+
+    Every page becomes one strip in its own IFD, chained through the next-IFD
+    pointer, so a multi-page file is simply a longer chain. ``compression`` is
+    ``"deflate"`` (tag 8, Adobe Deflate -- what a rendered page wants, since an
+    uncompressed 300 dpi page runs to tens of megabytes) or ``"none"``.
+
+    Pages are consumed lazily: only the compressed bytes accumulate, not every
+    raster at once.
+    """
+    codec = _TIFF_COMPRESSION.get(compression)
+    if codec is None:
+        raise ValueError(
+            f"unsupported TIFF compression {compression!r}; use 'deflate' or 'none'"
+        )
+
+    out = bytearray(b"II")
+    out += struct.pack("<HI", 42, 0)  # magic, first-IFD offset (patched below)
+    next_ifd_field = 4
+    page_list = list(pages)
+    if not page_list:
+        raise ValueError("a TIFF file needs at least one page")
+    total = len(page_list)
+
+    for index, page in enumerate(page_list):
+        spec = _TIFF_MODES.get(page.mode)
+        if spec is None:
+            raise ValueError(f"unsupported TIFF mode: {page.mode!r}")
+        channels, bits, photometric = spec
+        if page.width <= 0 or page.height <= 0:
+            raise ValueError("TIFF page dimensions must be positive")
+        row_bytes = (page.width * channels * bits + 7) // 8
+        expected = row_bytes * page.height
+        data = page.data
+        if len(data) < expected:
+            data = data + b"\x00" * (expected - len(data))
+        elif len(data) > expected:
+            data = data[:expected]
+        payload = zlib.compress(data, 6) if codec == 8 else data
+
+        if len(out) % 2:
+            out.append(0)
+        data_offset = len(out)
+        out += payload
+
+        def add_extra(blob: bytes) -> int:
+            if len(out) % 2:
+                out.append(0)
+            offset = len(out)
+            out.extend(blob)
+            return offset
+
+        bits_value = bits
+        bits_offset = None
+        if channels > 1:
+            bits_offset = add_extra(
+                struct.pack(f"<{channels}H", *([bits] * channels))
+            )
+        resolution = max(1, round(page.dpi))
+        xres_offset = add_extra(struct.pack("<II", resolution, 1))
+        yres_offset = add_extra(struct.pack("<II", resolution, 1))
+
+        entries = [
+            _tiff_entry(254, 4, 1, 2 if total > 1 else 0),  # NewSubfileType
+            _tiff_entry(256, 4, 1, page.width),
+            _tiff_entry(257, 4, 1, page.height),
+            _tiff_entry(
+                258, 3, channels, bits_offset if bits_offset is not None else bits_value
+            ),
+            _tiff_entry(259, 3, 1, codec),
+            _tiff_entry(262, 3, 1, photometric),
+            _tiff_entry(273, 4, 1, data_offset),  # StripOffsets
+            _tiff_entry(277, 3, 1, channels),  # SamplesPerPixel
+            _tiff_entry(278, 4, 1, page.height),  # RowsPerStrip
+            _tiff_entry(279, 4, 1, len(payload)),  # StripByteCounts
+            _tiff_entry(282, 5, 1, xres_offset),
+            _tiff_entry(283, 5, 1, yres_offset),
+            _tiff_entry(284, 3, 1, 1),  # PlanarConfiguration: chunky
+            _tiff_entry(296, 3, 1, 2),  # ResolutionUnit: inch
+            _tiff_entry(297, 3, 2, index + 1 | (total << 16)),  # PageNumber
+        ]
+
+        if len(out) % 2:
+            out.append(0)
+        ifd_offset = len(out)
+        struct.pack_into("<I", out, next_ifd_field, ifd_offset)
+        out += struct.pack("<H", len(entries))
+        out += b"".join(entries)
+        next_ifd_field = len(out)
+        out += struct.pack("<I", 0)
+
     return bytes(out)
 
 

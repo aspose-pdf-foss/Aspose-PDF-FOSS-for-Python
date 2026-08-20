@@ -82,17 +82,21 @@ flowchart TD
 - `Document.replace_text()` and `Document.redact_text()` rewrite or remove matched text directly
   inside existing content streams; `redact_text(..., overlay=True)` also draws a filled bar over
   each removed run's location.
-- `Page.render()` and `Page.save_as_image()` rasterize a page to PNG or TIFF through a bundled
-  renderer — no third-party rasterization library required for the core path — that fills real
-  glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh shadings.
+- `Page.render()` and `Page.save_as_image()` rasterize a page to PNG, TIFF, or JPEG through a
+  bundled renderer — no third-party rasterization library required for the core path — that fills
+  real glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh
+  shadings. Output can be RGB, greyscale, or 1-bit bilevel; TIFF is Deflate-compressed by default,
+  and `Document.save_as_tiff()` writes every page into one multi-page TIFF.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content.
 - `Annotation` and `AnnotationCollection` read, add, and auto-generate `/AP /N` appearance
   streams for the standard shape and text-markup annotation subtypes.
-- `Document.encrypt()` and `Document.decrypt()` apply RC4 or AES password protection, and
-  `PdfSignature.validate()` cryptographically verifies a signer's identity, trust chain,
-  revocation status, and PAdES conformance level.
+- `Document.encrypt(..., algorithm=...)` and `Document.decrypt()` apply standard-handler password
+  protection — AES-256 (`/V 5 /R 6`) by default, AES-128 or 128-bit RC4 on request — and every
+  standard-handler flavour, including 40-bit RC4 and owner-password-only documents, can be opened;
+  `PdfSignature.validate()` cryptographically verifies a signer's identity, trust chain, revocation
+  status, and PAdES conformance level.
 - `Document.validate_pdfa()`, `Document.convert_to_pdfa()`, `Document.validate_pdfua()`, and
   `Document.auto_tag()` run heuristic PDF/A and PDF/UA compliance checks and generate a structure
   tree for existing content.
@@ -327,8 +331,9 @@ and delete workflows. 235 public types are organized by module below.
 | `FontSource` | Base class for external font providers. |
 | `Form` | Represents an interactive form (AcroForm) within a PDF document. |
 | `GradientAxialShading` | Represents axial (linear) gradient shading. |
-| `GraphicElementCollection` | Collection of graphic elements that can be added to or removed from a page. |
-| `GraphicsAbsorber` | Absorbs graphic elements from PDF pages. |
+| `GraphicElement` | A painted path or placed image read from a page, with its bounding box in page space. |
+| `GraphicElementCollection` | In-memory collection of absorbed graphic elements. |
+| `GraphicsAbsorber` | Collects the painted paths and placed images of a page or document. |
 | `HtmlLoadOptions` | Options for loading HTML documents. |
 | `HtmlSaveOptions` | Options for saving PDF documents as HTML. |
 | `ImagePlacement-images` | Represent an image placed on a PDF page. |
@@ -536,7 +541,7 @@ and delete workflows. 235 public types are organized by module below.
 | `PdfWriterV0` | Writes SimplePdf to PDF 1.7 format. |
 | `PredefinedCMap` | A resolved predefined CMap and its semantic Unicode mapping. |
 | `PredefinedCMapEncoding` | Compact code-to-CID view of a predefined CMap. |
-| `RasterizedPage` | A rendered PDF page in packed RGB format. |
+| `RasterizedPage` | A rendered PDF page in packed RGB format; encodes to PNG, TIFF, or JPEG. |
 | `RevocationResult` | Class with 3 properties. |
 | `RichRun` | Class with 2 properties. |
 | `RichStyle` | The resolved style of a text run. |
@@ -610,7 +615,8 @@ and delete workflows. 235 public types are organized by module below.
   - `replace_text(search, replacement, page_index, case_sensitive, max_count) -> int` /
     `redact_text(search, page_index, case_sensitive, max_count, overlay, overlay_color) -> int`
   - `render_page(page_index, dpi, scale, background, antialias) -> RasterizedPage` /
-    `save_page_as_image(page_index, destination, dpi, scale, background, antialias) -> Path`
+    `save_page_as_image(page_index, destination, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path` /
+    `save_as_tiff(destination, pages, dpi, scale, background, antialias, mode, compression, threshold) -> Path`
   - `flatten() -> Document` / `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
@@ -625,8 +631,8 @@ and delete workflows. 235 public types are organized by module below.
   - `add_image(image, x, y, width, height, pixel_width, pixel_height, color_space, bits_per_component, name, tag, alt, actual_text) -> str`
   - `draw_rectangle(x, y, width, height, stroke_color, fill_color, line_width, tag, alt, actual_text) -> Page` /
     `draw_line(x1, y1, x2, y2, stroke_color, line_width, tag, alt, actual_text) -> Page`
-  - `render(dpi, scale, background, antialias) -> RasterizedPage` /
-    `save_as_image(path, dpi, scale, background, antialias) -> Path`
+  - `render(dpi, scale, background, antialias, shape_substitute_text, draw_annotations) -> RasterizedPage` /
+    `save_as_image(path, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path`
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - properties: `index`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`,
@@ -667,7 +673,8 @@ and delete workflows. 235 public types are organized by module below.
 
 ### Security And Signatures
 
-- `Document.encrypt(user_password, owner_password, permissions)` / `Document.decrypt(password)` /
+- `Document.encrypt(user_password, owner_password, permissions, algorithm)` — `algorithm` is
+  `"AES-256"` (default), `"AES-128"`, or `"RC4"` / `Document.decrypt(password)` /
   `Document.change_passwords(...)`
 - `PdfSignature.validate(options) -> ValidationResult`; properties `valid`, `name`, `date`, `docmdp_level`
 - `ValidationResult` — properties `is_valid`, `status`, `trust_status`, `revocation_status`,
