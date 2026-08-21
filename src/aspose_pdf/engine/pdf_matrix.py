@@ -52,10 +52,17 @@ def affine_decimal_to_float(m: tuple[Decimal, ...]) -> tuple[float, ...]:
 
 def image_placement_bbox(
     m: tuple[Decimal, ...],
-    width: int,
-    height: int,
+    width: float = 1,
+    height: float = 1,
 ) -> tuple[float, float, float, float]:
-    """Return (llx, lly, width, height) from affine (a,b,c,d,e,f) and raster size."""
+    """Return (llx, lly, width, height) of the box ``m`` maps ``width`` x ``height`` to.
+
+    An image XObject is always painted into the unit square of its own space
+    (ISO 32000-1 8.9.5.2) -- the ``cm`` matrix carries the size on the page --
+    so image placement uses the 1 x 1 default. The raster's pixel dimensions
+    are *not* the box: scaling by them inflates every placement by the image's
+    resolution.
+    """
     a, b, c, d, e, f = m
     w_d = Decimal(width)
     h_d = Decimal(height)

@@ -638,6 +638,7 @@ class ContentStreamParser:
         *,
         limits: PdfLoadLimits | None = None,
         budget: _LoadBudget | None = None,
+        hidden_oc_names: frozenset[str] | None = None,
     ):
         if budget is None:
             self._limits = _coerce_limits(limits)
@@ -674,6 +675,12 @@ class ContentStreamParser:
         self._opaque_composite = False
         self._buffer: list[str] = []
         self._marked_actual_text: list[str | None] = []
+        # Names in /Resources /Properties whose optional content group the
+        # document's default configuration turns off: text inside
+        # ``/OC /name BDC ... EMC`` for one of them is not extracted, because a
+        # viewer does not show it.
+        self._hidden_oc_names = frozenset(hidden_oc_names or ())
+        self._oc_hidden_depth = 0
         self._font_size: float = 12.0
         self._last_glyph_width: int = (
             500  # thousandths of text space unit (em fraction)
@@ -851,6 +858,8 @@ class ContentStreamParser:
 
     def _handle_marked_content(self, op: str, operands: list[Any]) -> None:
         if op == "EMC":
+            if self._oc_hidden_depth:
+                self._oc_hidden_depth -= 1
             if not self._marked_actual_text:
                 return
             actual_text = self._marked_actual_text.pop()
@@ -859,6 +868,19 @@ class ContentStreamParser:
             ):
                 self._buffer.append(actual_text)
             return
+        if self._oc_hidden_depth:
+            self._oc_hidden_depth += 1
+        elif op == "BDC" and self._hidden_oc_names and len(operands) >= 2:
+            tag = operands[0]
+            name = operands[-1]
+            if (
+                isinstance(tag, str)
+                and tag.lstrip("/") == "OC"
+                and isinstance(name, str)
+                and name.lstrip("/") in self._hidden_oc_names
+            ):
+                self._oc_hidden_depth = 1
+
         actual_text = None
         if op == "BDC" and len(operands) >= 2:
             property_name = operands[-1]
@@ -872,6 +894,10 @@ class ContentStreamParser:
 
     def _inside_actual_text(self) -> bool:
         return any(item is not None for item in self._marked_actual_text)
+
+    def _text_suppressed(self) -> bool:
+        """True when the current run must not reach the output buffer."""
+        return self._oc_hidden_depth > 0 or self._inside_actual_text()
 
     def _top_gs(self) -> dict[str, str | None]:
         return self._gs_stack[-1]
@@ -962,7 +988,7 @@ class ContentStreamParser:
             return
 
         if op in {"Td", "TD", "Tm", "T*"}:
-            if not self._inside_actual_text():
+            if not self._text_suppressed():
                 self._buffer.append(" ")
             return
 
@@ -972,7 +998,7 @@ class ContentStreamParser:
                 return
             raw = ops[0]
             self._note_glyph_widths_from_bytes(raw)
-            if not self._inside_actual_text():
+            if not self._text_suppressed():
                 self._buffer.append(self._decode_bytes(raw))
             return
 
@@ -987,7 +1013,7 @@ class ContentStreamParser:
             for element in array:
                 if isinstance(element, bytes):
                     self._note_glyph_widths_from_bytes(element)
-                    if not self._inside_actual_text():
+                    if not self._text_suppressed():
                         self._buffer.append(self._decode_bytes(element))
                 elif isinstance(element, (int, float)):
                     # TJ numbers: thousandths of a text space unit; large negative
@@ -996,25 +1022,25 @@ class ContentStreamParser:
                     if adj < 0:
                         lw = max(self._last_glyph_width, 1)
                         if (
-                            not self._inside_actual_text()
+                            not self._text_suppressed()
                             and -adj > max(100.0, 0.3 * float(lw))
                         ):
                             self._buffer.append(" ")
             return
 
         if op == "'":
-            if not self._inside_actual_text():
+            if not self._text_suppressed():
                 self._buffer.append("\n")
-            if len(ops) >= 1 and not self._inside_actual_text():
+            if len(ops) >= 1 and not self._text_suppressed():
                 self._buffer.append(
                     self._decode_bytes(ops[-1])
                 )  # Last operand is string
             return
 
         if op == '"':
-            if not self._inside_actual_text():
+            if not self._text_suppressed():
                 self._buffer.append("\n")
-            if len(ops) >= 1 and not self._inside_actual_text():
+            if len(ops) >= 1 and not self._text_suppressed():
                 self._buffer.append(
                     self._decode_bytes(ops[-1])
                 )  # Last operand is string

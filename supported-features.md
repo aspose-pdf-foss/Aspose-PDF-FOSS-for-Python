@@ -406,6 +406,48 @@ Boundaries:
   the page.
 - Layout reflow remains out of scope.
 
+## Optional Content (Layers)
+
+Supported:
+
+- List the document's optional content groups through `Document.layers`: each
+  `Layer` reports its `/Name`, its `/Intent`, its COS object number, and
+  whether the default configuration (`/OCProperties /D`) shows it.
+- Switch a layer on or off (`layer.visible = False`). The change is written
+  into the default configuration's `/ON` / `/OFF` arrays, so it survives a
+  save and is what every consumer below reads.
+- **Rendering skips hidden content**: a `/OC ... BDC` marked-content section
+  whose group is off is not painted (nested `BDC`/`BMC` are tracked so the
+  matching `EMC` ends it), and neither is an image or form XObject carrying its
+  own `/OC`, nor an annotation with one. The content still runs, so graphics
+  state, transformations and clipping inside a hidden section apply exactly as
+  in a viewer.
+- **Text extraction skips hidden content** the same way: text inside a hidden
+  layer is not returned by `PdfExtractor` or `Document`-level extraction.
+- **Graphics absorption skips hidden content**: `GraphicsAbsorber` reports the
+  elements a viewer would show.
+- Resolve an `/OCMD`: the `/OCGs` list under the `/P` policy (`AnyOn` -- the
+  default -- `AllOn`, `AnyOff`, `AllOff`), and a `/VE` visibility expression
+  built from `/Not`, `/And` and `/Or` over group references.
+- Honour `/BaseState` in the default configuration, with `/ON` and `/OFF`
+  overriding it per group.
+
+Boundaries:
+
+- Only the **default** configuration (`/D`) is applied. Alternate
+  configurations in `/Configs` are neither applied nor exposed.
+- Usage application dictionaries (`/AS`) are not evaluated, so a group whose
+  state a viewer would derive from zoom level, print or export usage keeps the
+  configured state. Everything is resolved for the on-screen (`View`) case.
+- Layers are read and switched, not authored: there is no API to create a
+  group, tag content with one, or remove a group.
+- Hiding a layer changes what is drawn and extracted, not what the file
+  contains -- the content stays in the PDF and reappears when the layer is
+  switched back on. There is no "flatten to visible content" operation.
+- PDF/A-1 prohibits optional content entirely; conversion removes
+  `/OCProperties` (see [PDF/A And PDF/UA](#pdfa-and-pdfua)), which makes every
+  group's content unconditionally visible.
+
 ## Text
 
 Supported:
@@ -689,6 +731,14 @@ Supported:
 - Replace or hide an `ImagePlacement` payload in memory.
 - Save, replace, hide, and enumerate images through the lower-level `SimplePdf`
   image helpers.
+- Collect image placements with `ImagePlacementAbsorber.visit(...)`, which
+  accepts a `Page` (that page alone), a `Document`, or an engine PDF. Each
+  `ImagePlacement` carries the image bytes, the rectangle it occupies on the
+  page (the unit square through the placement matrix, ISO 32000-1 8.9.5.2), the
+  placement matrix, the raster's pixel size, and the effective resolution --
+  pixels over the size actually drawn. Images are keyed uniquely per document,
+  so two pages that both call their image `/Im0` keep both, while one XObject
+  shared by several pages is stored once and reported at each placement.
 - Compose whole pages into RGB raster output via the page renderer. Image
   XObjects backed by raw/Flate samples, indexed/gray/RGB/CMYK colour spaces, and
   baseline/progressive DCT/JPEG streams are painted into the page raster,

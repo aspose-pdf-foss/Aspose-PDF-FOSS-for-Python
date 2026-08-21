@@ -87,6 +87,9 @@ flowchart TD
   real glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh
   shadings. Output can be RGB, greyscale, or 1-bit bilevel; TIFF is Deflate-compressed by default,
   and `Document.save_as_tiff()` writes every page into one multi-page TIFF.
+- `Document.layers` lists the document's optional content groups and switches them on or off;
+  rendering, text extraction, and graphics absorption all skip a hidden layer, the way a viewer
+  does, and the new state is saved back into the document's default configuration.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content.
@@ -337,11 +340,13 @@ and delete workflows. 235 public types are organized by module below.
 | `HtmlLoadOptions` | Options for loading HTML documents. |
 | `HtmlSaveOptions` | Options for saving PDF documents as HTML. |
 | `ImagePlacement-images` | Represent an image placed on a PDF page. |
-| `ImagePlacementAbsorber-images` | Absorber to collect image placements from PDF pages. |
+| `ImagePlacementAbsorber-images` | Collect image placements — bytes, page rectangle, matrix, and effective DPI — from a page or document. |
 | `IncorrectCMapUsageException` | Raised when there is an incorrect usage of CMap. |
 | `InvalidFormTypeOperationException` | Exception thrown when an invalid form type operation is attempted. |
 | `InvalidOperationException` | Raised when a graphics element is attached to the wrong parent. |
 | `InvalidPasswordException` | Raised when an incorrect password is provided for an encrypted document. |
+| `Layer` | One optional content group: its name, intent, and whether it is shown. |
+| `LayerCollection` | The document's layers, indexable by position or by name. |
 | `InvalidPdfFileFormatException` | Raised when the PDF file format is invalid or corrupted. |
 | `InvalidValueFormatException` | Raised when an invalid value is encountered during parsing or conversion. |
 | `LatexFragment` | Small value object that stores LaTeX source text. |
@@ -621,8 +626,9 @@ and delete workflows. 235 public types are organized by module below.
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
-  - properties: `pages`, `form`, `outlines`, `tagged_content`, `load_limits`, `xmp_metadata`,
-    `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`, `is_pdfua_compliant`
+  - properties: `pages`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
+    `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
+    `is_pdfua_compliant`
 
 ### Pages And Content
 

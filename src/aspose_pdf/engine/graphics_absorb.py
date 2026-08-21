@@ -29,6 +29,7 @@ from .cos import (
     PdfNumber,
     PdfStream,
 )
+from .optional_content import OptionalContent
 
 Matrix = tuple[float, float, float, float, float, float]
 Point = tuple[float, float]
@@ -160,6 +161,10 @@ class _GraphicsWalker:
         self.bbox: list[float] | None = None
         self.pending_clip = False
         self._active_forms: set[int] = set()
+        # Optional content: elements inside a hidden layer are not collected,
+        # for the same reason the renderer does not paint them.
+        self._optional_content: OptionalContent | None = None
+        self._oc_hidden_depth = 0
 
     # -- entry point ------------------------------------------------------
     def run(self) -> list[AbsorbedElement]:
@@ -216,6 +221,42 @@ class _GraphicsWalker:
             return float(obj)
         return None
 
+    def _oc_visible(self, oc: Any) -> bool:
+        """True when content tagged with an ``/OC`` value is shown."""
+        if oc is None:
+            return True
+        if self._optional_content is None:
+            self._optional_content = OptionalContent(self.pdf)
+        if not self._optional_content.present:
+            return True
+        try:
+            return self._optional_content.is_visible(oc)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return True
+
+    def _marked_content_hidden(
+        self, operands: list[Any], resources: PdfDictionary | None
+    ) -> bool:
+        """True for ``/OC ... BDC`` naming a group the configuration turns off."""
+        if len(operands) < 2:
+            return False
+        if self._name(operands[0]) != "OC":
+            return False
+        target = operands[-1]
+        name = self._name(target)
+        if name is not None:
+            if not isinstance(resources, PdfDictionary):
+                return False
+            properties = self._resolve(resources.mapping.get(PdfName("Properties")))
+            if not isinstance(properties, PdfDictionary):
+                return False
+            target = properties.mapping.get(PdfName(name))
+            if target is None:
+                return False
+        return not self._oc_visible(target)
+
     # -- interpretation ---------------------------------------------------
     def _interpret(
         self, content: bytes, resources: PdfDictionary | None, *, depth: int
@@ -266,6 +307,24 @@ class _GraphicsWalker:
         depth: int,
     ) -> None:
         numbers = [n for n in (_as_float(v) for v in operands) if n is not None]
+
+        if op in ("BDC", "BMC"):
+            if self._oc_hidden_depth:
+                self._oc_hidden_depth += 1
+            elif op == "BDC" and self._marked_content_hidden(operands, resources):
+                self._oc_hidden_depth = 1
+            return
+        if op == "EMC":
+            if self._oc_hidden_depth:
+                self._oc_hidden_depth -= 1
+            return
+        if self._oc_hidden_depth and op in _PAINT_OPERATORS:
+            # The path is consumed but produces no element, exactly as the
+            # renderer consumes it without painting.
+            self._paint(None if op == "n" else "hidden")
+            return
+        if self._oc_hidden_depth and op == "Do":
+            return
 
         if op == "q":
             self.stack.append(
@@ -391,6 +450,8 @@ class _GraphicsWalker:
         self.pending_clip = False
         if bbox is None:
             return
+        if operation == "hidden":
+            return
         if operation is None:
             if not clipping:
                 return
@@ -480,6 +541,8 @@ class _GraphicsWalker:
         ref = xobjects.mapping.get(PdfName(name))
         stream = self._resolve(ref)
         if not isinstance(stream, PdfStream):
+            return
+        if not self._oc_visible(stream.mapping.get(PdfName("OC"))):
             return
         subtype = self._name(stream.mapping.get(PdfName("Subtype")))
         if subtype == "Image":

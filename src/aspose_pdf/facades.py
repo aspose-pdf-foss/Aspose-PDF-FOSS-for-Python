@@ -121,8 +121,15 @@ class PdfExtractor:
             if hasattr(self._bound_pdf, "_get_page_resources"):
                 resources = self._bound_pdf._get_page_resources(i)
 
+            hidden = frozenset()
+            hidden_names = getattr(self._bound_pdf, "hidden_oc_property_names", None)
+            if callable(hidden_names):
+                hidden = hidden_names(i)
             parser = ContentStreamParser(
-                stream, resources, **self._content_parser_options()
+                stream,
+                resources,
+                hidden_oc_names=hidden,
+                **self._content_parser_options(),
             )
             text = parser.extract_text()
             self._page_texts.append(text)

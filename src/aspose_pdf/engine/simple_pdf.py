@@ -2358,6 +2358,40 @@ class SimplePdf:
         self._xmp_loaded = True
         self._xmp_dirty = True
 
+    def hidden_oc_property_names(self, page_index: int) -> frozenset[str]:
+        """Return the page's ``/Properties`` names that name a hidden layer.
+
+        Content inside ``/OC /name BDC ... EMC`` for one of these names is not
+        shown by a viewer, so it is not extracted either.
+        """
+        if self._cos_doc is None:
+            return frozenset()
+        from .optional_content import OptionalContent
+
+        try:
+            state = OptionalContent(self)
+            if not state.present:
+                return frozenset()
+            page = self._get_page_dict(page_index)
+            if page is None:
+                return frozenset()
+            resources = self._resolve_resources_cos(page)
+            if not isinstance(resources, PdfDictionary):
+                return frozenset()
+            properties = self._resolve(resources.mapping.get(PdfName("Properties")))
+            if not isinstance(properties, PdfDictionary):
+                return frozenset()
+            hidden = {
+                key.name.lstrip("/")
+                for key, value in properties.mapping.items()
+                if not state.is_visible(value)
+            }
+            return frozenset(hidden)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return frozenset()
+
     def _decode_cos_stream(self, stream: Any, source_ref: Any = None) -> bytes:
         """Decode a COS stream (decryption + filters) via a ``CosExtractor``."""
         key = self._cos_decrypt_key or self.encryption_key
@@ -6169,6 +6203,7 @@ class SimplePdf:
                     resources,
                     limits=self._load_limits,
                     budget=self._load_budget,
+                    hidden_oc_names=self.hidden_oc_property_names(i),
                 )
                 text = parser.extract_text()
                 if not text:
@@ -6184,6 +6219,7 @@ class SimplePdf:
                         resources,
                         limits=self._load_limits,
                         budget=self._load_budget,
+                        hidden_oc_names=self.hidden_oc_property_names(i),
                     )
                     texts.append(parser.best_effort_extract_text())
                 except PdfResourceLimitException:
@@ -6226,6 +6262,9 @@ class SimplePdf:
                 resources,
                 limits=self._load_limits,
                 budget=self._load_budget,
+                hidden_oc_names=self.hidden_oc_property_names(
+                    self._page_text_cursor - 1
+                ),
             )
             text = parser.extract_text()
             if not text:
@@ -6240,6 +6279,9 @@ class SimplePdf:
                     resources,
                     limits=self._load_limits,
                     budget=self._load_budget,
+                    hidden_oc_names=self.hidden_oc_property_names(
+                        self._page_text_cursor - 1
+                    ),
                 )
                 return parser.best_effort_extract_text()
             except PdfResourceLimitException:
@@ -11782,6 +11824,11 @@ class CosExtractor:
         self._N = PdfName
         self._image_sizes: dict[str, tuple[int, int]] = {}
         self._image_meta: dict[str, dict[str, Any]] = {}
+        # Resource names are page-local -- two pages routinely both call their
+        # image /Im0 -- so images are stored under a key that is unique across
+        # the document, and each page's own names map to it.
+        self._image_key_by_object: dict[int, str] = {}
+        self._image_key_by_page: dict[tuple[int, str], str] = {}
         self._page_obj_ids: list[int] = []
         self._content_obj_ids: list[int] = []
         self._seen_page_nodes: set[tuple[str, int]] = set()
@@ -12039,7 +12086,9 @@ class CosExtractor:
                                 img_obj.mapping.get(PdfName("Subtype"))
                             )
                             if subtype == "Image":
-                                img_name = name_key.name.lstrip("/")
+                                img_name = self._image_key(
+                                    name_key.name.lstrip("/"), ref, page_idx
+                                )
                                 dimensions = self._image_dimensions(
                                     img_obj, img_name
                                 )
@@ -12391,7 +12440,9 @@ class CosExtractor:
                                 img_obj.mapping.get(PdfName("Subtype"))
                             )
                             if subtype == "Image":
-                                img_name = name_key.name.lstrip("/")
+                                img_name = self._image_key(
+                                    name_key.name.lstrip("/"), ref, page_idx
+                                )
                                 dimensions = self._image_dimensions(
                                     img_obj, img_name
                                 )
@@ -12531,6 +12582,30 @@ class CosExtractor:
         """Return per-image reconstruction metadata gathered during traversal."""
         return dict(self._image_meta)
 
+    def _image_key(self, name: str, ref: Any, page_index: int) -> str:
+        """Return the document-wide key image *name* on *page_index* is stored under.
+
+        The same XObject reused on several pages keeps one key (and one copy of
+        its bytes). A *different* object that wants a name already taken gets a
+        numbered suffix, so neither image is silently lost -- which is what
+        happened when both were stored under the bare resource name.
+        """
+        obj_number = (
+            ref.object_number if isinstance(ref, PdfIndirectReference) else None
+        )
+        key = self._image_key_by_object.get(obj_number) if obj_number else None
+        if key is None:
+            key = name
+            if key in self._image_sizes or key in self._image_meta:
+                index = 2
+                while f"{name}#{index}" in self._image_meta:
+                    index += 1
+                key = f"{name}#{index}"
+            if obj_number is not None:
+                self._image_key_by_object[obj_number] = key
+        self._image_key_by_page[(page_index, name)] = key
+        return key
+
     def _resolve_image_meta(self, img_obj: Any) -> dict[str, Any]:
         """Resolve reconstruction metadata for an image XObject stream.
 
@@ -12664,8 +12739,8 @@ class CosExtractor:
         page_image_map = getattr(self, "_cached_pmap", {})
 
         for page_idx, content in enumerate(contents):
-            image_names = set(page_image_map.get(page_idx, ()))
-            if not image_names:
+            image_keys = set(page_image_map.get(page_idx, ()))
+            if not image_keys:
                 continue
             placements = parse_image_placements_from_content(
                 content,
@@ -12673,13 +12748,15 @@ class CosExtractor:
                 budget=self._budget,
             )
             for name, matrix_dec in placements:
-                if name not in image_names:
+                # The content stream names a page-local resource; the image is
+                # stored under a document-wide key.
+                image_key = self._image_key_by_page.get((page_idx, name), name)
+                if image_key not in image_keys:
                     continue
-                key = (page_idx, name)
+                key = (page_idx, image_key)
                 if key not in matrix_map:
                     matrix_map[key] = affine_decimal_to_float(matrix_dec)
-                    w, h = self._image_sizes.get(name, (1, 1))
-                    rect_map[key] = image_placement_bbox(matrix_dec, w, h)
+                    rect_map[key] = image_placement_bbox(matrix_dec)
         return matrix_map, rect_map
 
     def extract_metadata(self) -> dict[str, str]:

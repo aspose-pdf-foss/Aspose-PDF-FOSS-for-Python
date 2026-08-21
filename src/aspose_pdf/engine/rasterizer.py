@@ -51,6 +51,7 @@ from .image_export import (
     write_tiff,
 )
 from .jpeg_encoder import encode as jpeg_encode
+from .optional_content import OptionalContent
 from .shading import Shading, build_color_converter, build_function, build_shading
 from .std_font_data import load_substitute_sfnt, resolve_substitute_key
 from .type1_outlines import Type1Outlines
@@ -708,6 +709,11 @@ class _PageRasterizer:
         self._pattern_depth = 0
         # Guards against a soft-mask group that itself sets a soft mask.
         self._in_soft_mask = False
+        # Optional content (layers): hidden marked-content sections are not
+        # painted. The depth counts nested BDC/BMC inside a hidden section so
+        # the matching EMC ends it.
+        self._optional_content: OptionalContent | None = None
+        self._oc_hidden_depth = 0
         self._offscreen_work_bytes = 0
 
     def render(self) -> RasterizedPage:
@@ -770,6 +776,8 @@ class _PageRasterizer:
             bits = int(flags)
             if bits & (self._ANNOT_HIDDEN | self._ANNOT_NOVIEW):
                 return
+        if not self._oc_visible(annot.mapping.get(PdfName("OC"))):
+            return
 
         stream = self._annotation_normal_appearance(annot)
         if stream is None:
@@ -955,6 +963,58 @@ class _PageRasterizer:
             finally:
                 operands.clear()
 
+    def _optional_content_state(self) -> OptionalContent:
+        if self._optional_content is None:
+            self._optional_content = OptionalContent(self.pdf)
+        return self._optional_content
+
+    def _oc_visible(self, oc: Any) -> bool:
+        """True when content tagged with an ``/OC`` value is shown."""
+        if oc is None:
+            return True
+        state = self._optional_content_state()
+        if not state.present:
+            return True
+        try:
+            return state.is_visible(oc)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return True
+
+    def _marked_content_hidden(
+        self, operands: list[Any], resources_cos: PdfDictionary | None
+    ) -> bool:
+        """True for ``/OC ... BDC`` naming a group the configuration turns off."""
+        if len(operands) < 2:
+            return False
+        tag = operands[0]
+        tag_name = tag.name if isinstance(tag, PdfName) else str(tag)
+        if tag_name.lstrip("/") != "OC":
+            return False
+        target = operands[1]
+        if isinstance(target, (PdfName, str)):
+            name = (
+                target.name if isinstance(target, PdfName) else str(target)
+            ).lstrip("/")
+            if not isinstance(resources_cos, PdfDictionary):
+                return False
+            properties = self._resource_dict(resources_cos, "Properties")
+            if properties is None:
+                return False
+            target = properties.mapping.get(PdfName(name))
+            if target is None:
+                return False
+        return not self._oc_visible(target)
+
+    # Operators that put marks on the page; suppressed inside hidden content.
+    _OC_SUPPRESSED = frozenset(
+        {"Do", "sh", "Tj", "TJ", "'", '"', "EI", "BI", "ID"}
+    )
+    _OC_PATH_PAINTING = frozenset(
+        {"S", "s", "f", "F", "f*", "B", "B*", "b", "b*"}
+    )
+
     def _handle_operator(
         self,
         op: str,
@@ -963,6 +1023,24 @@ class _PageRasterizer:
         resources_plain: dict,
         depth: int,
     ) -> None:
+        if op in ("BDC", "BMC"):
+            if self._oc_hidden_depth:
+                self._oc_hidden_depth += 1
+            elif op == "BDC" and self._marked_content_hidden(operands, resources_cos):
+                self._oc_hidden_depth = 1
+            return
+        if op == "EMC":
+            if self._oc_hidden_depth:
+                self._oc_hidden_depth -= 1
+            return
+        if self._oc_hidden_depth:
+            # The content still runs -- graphics state, matrices and clipping
+            # apply -- but nothing is drawn. A painting operator becomes the
+            # no-op path painter so a pending clip is still honoured.
+            if op in self._OC_SUPPRESSED:
+                return
+            if op in self._OC_PATH_PAINTING:
+                op = "n"
         if op == "q":
             self.state_stack.append(copy.deepcopy(self.state))
             return
@@ -2760,6 +2838,8 @@ class _PageRasterizer:
                 ref = xobjects.mapping.get(PdfName(name))
                 entry = self._resolve(ref)
         if isinstance(entry, PdfStream):
+            if not self._oc_visible(entry.mapping.get(PdfName("OC"))):
+                return
             subtype = self._cos_name(entry.mapping.get(PdfName("Subtype")))
             if subtype == "Image":
                 self._paint_image_stream(name, entry, ref)

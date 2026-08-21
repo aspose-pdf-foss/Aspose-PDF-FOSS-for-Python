@@ -277,12 +277,15 @@ class ImagePlacementAbsorber:
         self.image_placements.append(placement)
 
     def visit(self, page_or_pdf) -> None:
-        """Visit a page or PDF and collect all image placements.
+        """Visit a page, a document or an engine PDF and collect image placements.
 
         Parameters
         ----------
         page_or_pdf
-            A page object or SimplePdf instance to extract images from.
+            A :class:`~aspose_pdf.pages.Page` (only that page's images), a
+            :class:`~aspose_pdf.document.Document` or engine ``SimplePdf``
+            (every page), or any object exposing ``image_placements``,
+            ``images`` or ``resources`` directly.
         """
         self.image_placements.clear()
         limits = getattr(page_or_pdf, "load_limits", None)
@@ -290,90 +293,127 @@ class ImagePlacementAbsorber:
             limits = getattr(page_or_pdf._document, "load_limits", None)
         self._load_limits = _coerce_limits(limits)
 
-        # 1. Handle SimplePdf directly (Engine level)
-        is_engine = hasattr(page_or_pdf, "_is_engine_pdf") or (
-            hasattr(page_or_pdf, "images") and hasattr(page_or_pdf, "pages")
-        )
+        engine, page_filter = _resolve_engine(page_or_pdf)
+        if engine is not None:
+            self._absorb_engine(engine, page_filter)
+            return
 
-        if is_engine:
-            # LZY-01 fix: If the document is lazy-loaded and doesn't have image info yet, hydrate it.
-            if getattr(page_or_pdf, "_lazy", False) and not getattr(
-                page_or_pdf, "_page_image_map", {}
-            ):
-                if hasattr(page_or_pdf, "_hydrate_image_info"):
-                    page_or_pdf._hydrate_image_info()
+        # Objects that carry image data directly (test doubles and simple
+        # page-like objects) are still supported.
+        if hasattr(page_or_pdf, "image_placements"):
+            placements = page_or_pdf.image_placements
+            if isinstance(placements, (list, tuple)):
+                for placement in placements:
+                    if isinstance(placement, ImagePlacement):
+                        self.image_placements.append(placement)
 
-            images = page_or_pdf.images
-            page_map = getattr(page_or_pdf, "_page_image_map", {})
-            matrix_map = getattr(page_or_pdf, "_image_matrix_map", {})
-            rect_map = getattr(page_or_pdf, "_image_rect_map", {})
-            meta_map = getattr(page_or_pdf, "_image_meta", {})
+        if isinstance(getattr(page_or_pdf, "images", None), dict):
+            for name, data in page_or_pdf.images.items():
+                if isinstance(data, (bytes, bytearray)):
+                    self._add_image(str(name), data)
 
-            def _to_rect(val):
-                if val is None:
-                    return None
-                if isinstance(val, Rectangle):
-                    return val
-                if isinstance(val, (tuple, list)) and len(val) >= 4:
-                    return Rectangle(val[0], val[1], val[2], val[3])
-                return None
+        resources = getattr(page_or_pdf, "resources", None)
+        if isinstance(resources, dict):
+            xobjects = resources.get("XObject")
+            if isinstance(xobjects, dict):
+                for name, obj in xobjects.items():
+                    if isinstance(obj, (bytes, bytearray)):
+                        self._add_image(str(name), obj)
+                    else:
+                        data = getattr(obj, "image_data", None)
+                        if isinstance(data, (bytes, bytearray)):
+                            self._add_image(str(name), data)
 
-            if page_map:
-                for page_idx, img_names in page_map.items():
-                    for name in img_names:
-                        if name in images:
-                            rect = _to_rect(rect_map.get((page_idx, name)))
-                            matrix = matrix_map.get((page_idx, name))
-                            self._add_image(
-                                name,
-                                images[name],
-                                page_idx,
-                                rect=rect,
-                                matrix=matrix,
-                                resolution=(DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI),
-                                meta=meta_map.get(name),
-                            )
-            else:
-                # No page map, assign all to page 0
-                for name, data in images.items():
-                    rect = _to_rect(rect_map.get((0, name)))
-                    matrix = matrix_map.get((0, name))
-                    self._add_image(
-                        name,
-                        data,
-                        0,
-                        rect=rect,
-                        matrix=matrix,
-                        resolution=(DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI),
-                        meta=meta_map.get(name),
-                    )
-        else:
-            # 2. Handle Page or other objects (if not handled by engine)
-            # Multiple if statements allowed here as a page can have images in multiple ways.
-            if hasattr(page_or_pdf, "image_placements"):
-                placements = getattr(page_or_pdf, "image_placements")
-                if isinstance(placements, (list, tuple)):
-                    for p in placements:
-                        if isinstance(p, ImagePlacement):
-                            self.image_placements.append(p)
+    def _absorb_engine(self, engine, page_filter: int | None) -> None:
+        """Collect placements recorded by the engine for one page or all pages."""
+        # A lazily loaded document has not scanned its images yet.
+        if getattr(engine, "_lazy", False) and not getattr(
+            engine, "_page_image_map", {}
+        ):
+            hydrate = getattr(engine, "_hydrate_image_info", None)
+            if callable(hydrate):
+                hydrate()
 
-            if hasattr(page_or_pdf, "images") and isinstance(
-                getattr(page_or_pdf, "images"), dict
-            ):
-                imgs = getattr(page_or_pdf, "images")
-                for name, data in imgs.items():
-                    if isinstance(data, (bytes, bytearray)):
-                        self._add_image(str(name), data)
+        images = engine.images
+        page_map = getattr(engine, "_page_image_map", {})
+        matrix_map = getattr(engine, "_image_matrix_map", {})
+        rect_map = getattr(engine, "_image_rect_map", {})
+        meta_map = getattr(engine, "_image_meta", {})
 
-            if hasattr(page_or_pdf, "resources"):
-                res = getattr(page_or_pdf, "resources")
-                if isinstance(res, dict):
-                    xobj = res.get("XObject")
-                    if isinstance(xobj, dict):
-                        for name, obj in xobj.items():
-                            if isinstance(obj, (bytes, bytearray)):
-                                self._add_image(str(name), obj)
-                            elif hasattr(obj, "image_data"):
-                                data = getattr(obj, "image_data")
-                                if isinstance(data, (bytes, bytearray)):
-                                    self._add_image(str(name), data)
+        sizes = getattr(engine, "_image_sizes", {})
+
+        def to_rect(value):
+            if isinstance(value, Rectangle):
+                return value
+            if isinstance(value, (tuple, list)) and len(value) >= 4:
+                return Rectangle(value[0], value[1], value[2], value[3])
+            return None
+
+        def resolution_for(name: str, rect: Rectangle | None):
+            """Effective DPI: raster pixels over the size drawn on the page."""
+            pixels = sizes.get(name)
+            if rect is None or not pixels:
+                return (DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI)
+            pixel_width, pixel_height = pixels
+            if rect.width <= 0 or rect.height <= 0:
+                return (DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI)
+            return (
+                pixel_width * DEFAULT_IMAGE_DPI / rect.width,
+                pixel_height * DEFAULT_IMAGE_DPI / rect.height,
+            )
+
+        if not page_map:
+            # No per-page mapping: everything belongs to the first page.
+            if page_filter not in (None, 0):
+                return
+            for name, data in images.items():
+                rect = to_rect(rect_map.get((0, name)))
+                self._add_image(
+                    name,
+                    data,
+                    0,
+                    rect=rect,
+                    matrix=matrix_map.get((0, name)),
+                    resolution=resolution_for(name, rect),
+                    meta=meta_map.get(name),
+                )
+            return
+
+        for page_index, names in page_map.items():
+            if page_filter is not None and page_index != page_filter:
+                continue
+            for name in names:
+                if name not in images:
+                    continue
+                rect = to_rect(rect_map.get((page_index, name)))
+                self._add_image(
+                    name,
+                    images[name],
+                    page_index,
+                    rect=rect,
+                    matrix=matrix_map.get((page_index, name)),
+                    resolution=resolution_for(name, rect),
+                    meta=meta_map.get(name),
+                )
+
+
+
+def _resolve_engine(source) -> tuple[object | None, int | None]:
+    """Return ``(engine, page index)`` for *source*, or ``(None, None)``.
+
+    A :class:`~aspose_pdf.pages.Page` narrows the result to its own page; a
+    :class:`~aspose_pdf.document.Document` or an engine ``SimplePdf`` covers
+    every page. Anything else is left to the caller's direct-attribute path.
+    """
+    index = getattr(source, "_index", None)
+    document = getattr(source, "_document", None)
+    if index is not None and document is not None:  # Page
+        return getattr(document, "_engine_pdf", None), int(index)
+    engine = getattr(source, "_engine_pdf", None)
+    if engine is not None:  # Document
+        return engine, None
+    if hasattr(source, "_is_engine_pdf") or (
+        hasattr(source, "images") and hasattr(source, "pages")
+    ):  # SimplePdf
+        return source, None
+    return None, None

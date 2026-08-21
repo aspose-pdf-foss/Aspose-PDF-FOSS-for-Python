@@ -29,6 +29,7 @@ from aspose_pdf.engine.simple_pdf import (
     _parse_pdf_date,
 )
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.layers import LayerCollection
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
     _coerce_limits,
@@ -432,6 +433,31 @@ class Document:
         self._ensure_not_disposed()
         if self._engine_pdf is not None:
             self._engine_pdf.pdf_version = str(value)
+
+    @property
+    def layers(self) -> LayerCollection:
+        """The document's optional content groups (layers).
+
+        Each :class:`~aspose_pdf.layers.Layer` reports its name and whether the
+        default configuration shows it; setting ``visible`` updates the
+        document's ``/OCProperties /D`` configuration, so rendering, graphics
+        absorption and a later :meth:`save` all follow it. A document without
+        optional content returns an empty collection.
+
+        Example
+        -------
+        ::
+
+            for layer in document.layers:
+                if layer.name == "Watermark":
+                    layer.visible = False
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine.optional_content import OptionalContent
+
+        return LayerCollection(OptionalContent(self._engine_pdf))
 
     @property
     def outlines(self) -> OutlineCollection:

@@ -9,6 +9,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Optional content (layers) is honoured.** Nothing in the package looked at
+  `/OC`, so a hidden layer — a draft watermark, an alternate language, a CAD
+  overlay — was painted and extracted like any other content. Rendering, text
+  extraction and `GraphicsAbsorber` now skip content in a group the default
+  configuration turns off: marked-content sections (with nested `BDC`/`BMC`
+  tracked to the matching `EMC`), image and form XObjects carrying their own
+  `/OC`, and annotations. `/OCMD` is resolved under its `/P` policy and simple
+  `/VE` expressions, and `/BaseState` is honoured.
+- **`Document.layers`.** Lists the document's optional content groups with
+  their names and state; setting `layer.visible` rewrites the default
+  configuration's `/ON`/`/OFF`, which the renderer, the extractor and a later
+  `save()` all follow.
 - **Rendered pages encode to compressed TIFF, JPEG, greyscale and bilevel.** A
   raster could only be written as PNG or as an *uncompressed* RGB TIFF — an A4
   page at 300 dpi came to about 25 MB of file for a page of text. `to_tiff()`
@@ -103,6 +115,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`ImagePlacementAbsorber` found nothing when handed a page.** It understood
+  only the internal engine object, so `visit(document.pages[0])` — the obvious
+  call, and the one the docs describe — returned an empty list. It now accepts a
+  `Page` (that page's images), a `Document`, or the engine object, and still
+  accepts objects that carry image data directly.
+- **Image placement rectangles were scaled by the raster's pixel size.** An
+  image is painted into the unit square of its own space (ISO 32000-1 8.9.5.2),
+  so a 200×100 image drawn 100pt wide reported a 20000×5000pt rectangle.
+  `ImagePlacement.resolution` now reports real DPI — pixels over the size drawn
+  on the page — instead of a hardcoded 72.
+- **Pages that reuse a resource name lost all but the last image.** Resource
+  names are page-local and most producers restart at `/Im0` on every page, but
+  images were stored under the bare name, so each collision overwrote the
+  previous image's bytes, size and metadata. Images are now keyed uniquely per
+  document (a name taken by a different object gets a numbered suffix) while a
+  single XObject shared by several pages still stores one copy.
 - **Encrypted PDFs written by other tools could not be opened.** Only AES-256
   worked. A 128-bit RC4 document (`/V 2 /R 3`) was misread as AES-128 because
   the cipher was guessed from `/V`/`/R` alone instead of the crypt filter
