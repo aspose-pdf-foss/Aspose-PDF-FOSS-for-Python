@@ -80,6 +80,7 @@ from .incremental_update import IncrementalUpdate
 from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
 from .pdf_parser_cos import PdfCosParser
 from .pdf_writer_cos import PdfCosWriter
+from .pubsec import PUBSEC_FILTER, subfilter_for
 from .rename_resources import safe_rename_names
 from .signing import SigningUtils
 from .text_edit import redact_text_in_content, replace_text_in_content
@@ -980,6 +981,14 @@ class SimplePdf:
     # images and form XObjects are decoded on demand, long after load.
     _cos_decrypt_key: bytes | None = None
     _cos_decrypt_algorithm: str = "AES-256"
+    # (certificate, private_key) the document was opened with, for a
+    # public-key (/Adobe.PubSec) file. Kept so decrypt() can re-derive the key.
+    _credential: tuple[Any, Any] | None = None
+    # Recipients to encrypt for on the next save: [(certificate, /P)].
+    _recipients: list[tuple[Any, int]] | None = None
+    # The CMS envelopes those recipients produced. The file key is a hash over
+    # them, so /Recipients must carry these exact bytes.
+    _recipient_envelopes: list[bytes] | None = None
     signature: dict[str, str] | None = None
     signing_creds: tuple[Any, Any] | None = None
     pades: bool = False  # emit a CAdES/PAdES signature (ETSI.CAdES.detached)
@@ -1512,6 +1521,7 @@ class SimplePdf:
         path: str | Path,
         password: str | None = None,
         *,
+        credential: tuple[Any, Any] | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> SimplePdf:
         """Load PDF from file path, using memory-mapping for large files."""
@@ -1536,6 +1546,7 @@ class SimplePdf:
                 return cls.from_bytes(
                     mm,
                     password,
+                    credential=credential,
                     limits=resolved_limits,
                     _budget=budget,
                 )
@@ -1548,6 +1559,7 @@ class SimplePdf:
             return cls.from_bytes(
                 data,
                 password,
+                credential=credential,
                 limits=resolved_limits,
                 _budget=budget,
             )
@@ -1558,6 +1570,7 @@ class SimplePdf:
         data: bytes | bytearray,
         password: str | None = None,
         *,
+        credential: tuple[Any, Any] | None = None,
         limits: PdfLoadLimits | None = None,
         _budget: _LoadBudget | None = None,
     ) -> SimplePdf:
@@ -1579,28 +1592,17 @@ class SimplePdf:
             data,
             limits=resolved_limits,
             budget=budget,
+            credential=credential,
         )
 
-        eff_pwd = _effective_encryption_password(password)
-        if extractor.detect_encryption():
-            if eff_pwd is None:
-                if not extractor.empty_user_password_opens():
-                    raise PdfSecurityException(
-                        "Password required for encrypted document"
-                    )
-                eff_pwd = ""
-            elif not extractor.encryption_password_allows_access(eff_pwd):
-                raise PdfSecurityException("Incorrect password")
-            password = eff_pwd
-
-        if extractor.detect_encryption():
-            extractor.attach_stream_decryption(password)
+        password = extractor.unlock(password)
 
         pdf = cls()
         pdf._load_limits = resolved_limits
         pdf._load_budget = budget
         pdf._cos_doc = cos_doc
         pdf._raw_bytes = data
+        pdf._credential = credential
 
         pdf.pages = extractor.extract_pages()
         pdf.page_contents = extractor.extract_page_contents()
@@ -1690,6 +1692,7 @@ class SimplePdf:
         path: str | Path,
         password: str | None = None,
         *,
+        credential: tuple[Any, Any] | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> SimplePdf:
         """Open a PDF in streaming/lazy mode for memory-efficient page processing.
@@ -1753,22 +1756,10 @@ class SimplePdf:
             mm,
             limits=resolved_limits,
             budget=budget,
+            credential=credential,
         )
         try:
-            eff_pwd = _effective_encryption_password(password)
-            if extractor.detect_encryption():
-                if eff_pwd is None:
-                    if not extractor.empty_user_password_opens():
-                        raise PdfSecurityException(
-                            "Password required for encrypted document"
-                        )
-                    eff_pwd = ""
-                elif not extractor.encryption_password_allows_access(eff_pwd):
-                    raise PdfSecurityException("Incorrect password")
-                password = eff_pwd
-
-            if extractor.detect_encryption():
-                extractor.attach_stream_decryption(password)
+            password = extractor.unlock(password)
         except BaseException:
             mm.close()
             raise
@@ -1779,6 +1770,7 @@ class SimplePdf:
         pdf._cos_doc = cos_doc
         pdf._raw_bytes = mm
         pdf._lazy = True
+        pdf._credential = credential
 
         # Discovered resource containers
         pdf.images = LazyImageDict()
@@ -2925,6 +2917,63 @@ class SimplePdf:
         self._encryption_revision = revision
         self._encryption_key_length = key_length
 
+    def encrypt_for_recipients(
+        self,
+        recipients: list[tuple[Any, int]],
+        *,
+        algorithm: str = "AES-256",
+        ignore_key_usage: bool = False,
+    ) -> None:
+        """Encrypt for certificate *recipients* with the public-key handler.
+
+        Each entry pairs an ``x509.Certificate`` with the ``/P`` flags that
+        recipient gets. Unlike the standard handler there is no password and no
+        owner/user split: possession of a listed private key is what opens the
+        document, and each recipient's permissions travel inside its own
+        envelope.
+
+        The file key is a hash of the shared seed and *all* recipient
+        envelopes, so the envelopes written to ``/Recipients`` must be the exact
+        bytes hashed here -- they are kept and written verbatim.
+        """
+        self._ensure_not_disposed()
+        from .pubsec import build_envelopes, compute_file_key, normalize_permissions
+
+        algorithm = normalize_encryption_algorithm(algorithm)
+        if not recipients:
+            raise PdfSecurityException(
+                "Public-key encryption needs at least one recipient certificate"
+            )
+        logger.info(
+            f"Encrypting document for {len(recipients)} recipient(s) "
+            f"with algorithm {algorithm}"
+        )
+        seed, envelopes = build_envelopes(
+            recipients, algorithm=algorithm, ignore_key_usage=ignore_key_usage
+        )
+        key_length = {"AES-256": 32, "AES-128": 16}.get(algorithm, 16)
+        self.encryption_key = compute_file_key(
+            seed,
+            envelopes,
+            key_length=key_length,
+            sha256=algorithm == "AES-256",
+            encrypt_metadata=True,
+        )
+        self._recipients = [
+            (certificate, normalize_permissions(permissions))
+            for certificate, permissions in recipients
+        ]
+        self._recipient_envelopes = envelopes
+        self.encrypted = True
+        self.password = ""
+        self.encryption_algorithm = algorithm
+        self._encryption_algorithm = algorithm
+        self._encryption_key_length = key_length
+        self._encryption_revision = 6 if algorithm == "AES-256" else 4
+        # A public-key document states no document-wide /P; report the first
+        # recipient's flags so `permissions` still answers something truthful.
+        self.P = self._recipients[0][1]
+
     def check_pdfa_compliance(self, level: str = "1b") -> list[str]:
         """Return the list of PDF/A compliance **errors** (heuristic).
 
@@ -3316,11 +3365,12 @@ class SimplePdf:
                 self._raw_bytes or b"",
                 limits=self._load_limits,
                 budget=self._load_budget,
+                credential=self._credential,
             )
             self.encryption_key = probe.extract_decryption_key(password)
             if self.encryption_key is not None:
                 self.encryption_algorithm = (
-                    probe.standard_handler_encryption_algorithm()
+                    probe.encryption_algorithm_name()
                 )
                 self._cos_decrypt_key = self.encryption_key
                 self._cos_decrypt_algorithm = self.encryption_algorithm
@@ -11811,6 +11861,7 @@ class CosExtractor:
         stream_decrypt_algorithm: str = "AES-256",
         limits: PdfLoadLimits | None = None,
         budget: _LoadBudget | None = None,
+        credential: tuple[Any, Any] | None = None,
     ) -> None:
         self._doc = doc
         self._raw = raw_data
@@ -11818,6 +11869,10 @@ class CosExtractor:
         self._budget = budget or _LoadBudget(self._limits)
         self._stream_decrypt_key = stream_decrypt_key
         self._stream_decrypt_algorithm = stream_decrypt_algorithm
+        # (certificate, private_key) for an /Adobe.PubSec document; the
+        # standard handler ignores it.
+        self._credential = credential
+        self._pubsec_permissions: int | None = None
         from .cos import PdfName
 
         # cache frequently used names
@@ -11842,12 +11897,50 @@ class CosExtractor:
         actually succeed -- a dictionary too incomplete to verify is not
         treated as open.
         """
-        if not self.detect_encryption():
+        if not self.detect_encryption() or self.uses_public_key_security():
             return False
         try:
             return self.extract_decryption_key("") is not None
         except PdfSecurityException:
             return False
+
+    def unlock(self, password: str | None) -> str:
+        """Verify the document's credentials, attach decryption, return the password.
+
+        Both handlers converge here so the two load paths (eager and lazy) share
+        one policy. The standard handler accepts the password -- with an absent
+        one meaning "try the empty user password", which is how an
+        owner-password-only document opens. The public-key handler ignores the
+        password entirely and needs the recipient's certificate and private key
+        instead; a missing credential and a wrong one are reported apart, since
+        only one of them is the caller's mistake to fix by supplying something.
+        """
+        if not self.detect_encryption():
+            return password or ""
+        if self.uses_public_key_security():
+            if self._credential is None:
+                raise PdfSecurityException(
+                    "This document is encrypted for certificate recipients "
+                    "(/Adobe.PubSec); supply the recipient certificate and "
+                    "private key rather than a password"
+                )
+            self.attach_stream_decryption("")
+            if self._stream_decrypt_key is None:
+                raise PdfSecurityException(
+                    "The supplied certificate did not yield a usable file key"
+                )
+            return ""
+        effective = _effective_encryption_password(password)
+        if effective is None:
+            if not self.empty_user_password_opens():
+                raise PdfSecurityException(
+                    "Password required for encrypted document"
+                )
+            effective = ""
+        elif not self.encryption_password_allows_access(effective):
+            raise PdfSecurityException("Incorrect password")
+        self.attach_stream_decryption(effective)
+        return effective
 
     def attach_stream_decryption(self, password: str) -> None:
         """Configure per-object decryption after the password is verified."""
@@ -11857,7 +11950,7 @@ class CosExtractor:
         if key is not None:
             self._stream_decrypt_key = key
             self._stream_decrypt_algorithm = (
-                self.standard_handler_encryption_algorithm()
+                self.encryption_algorithm_name()
             )
             self._attach_string_decryption()
 
@@ -12782,8 +12875,8 @@ class CosExtractor:
                 metadata[key] = str(v_resolved) if v_resolved else ""
         return metadata
 
-    def standard_handler_encryption_algorithm(self) -> str:
-        """Return the crypt algorithm the standard security handler uses.
+    def encryption_algorithm_name(self) -> str:
+        """Return the crypt algorithm the document's security handler uses.
 
         One of ``RC4``, ``AES-128``, ``AES-256`` or ``Identity``. ``/V`` 1 and 2
         are RC4 (40-bit and 128-bit). ``/V`` 4 and 5 name a crypt filter in
@@ -12791,6 +12884,10 @@ class CosExtractor:
         ``AESV2`` is AES-128, ``AESV3`` is AES-256 and ``None`` means the
         streams are not encrypted at all. A ``/V`` 4+ dictionary with no usable
         crypt filter falls back to the revision's usual cipher.
+
+        The standard and public-key handlers share this machinery -- they
+        differ only in how the file key is derived -- so both are read here. A
+        third-party handler is not, and reports the modern default.
         """
         from .cos import PdfDictionary, PdfName, PdfNumber
 
@@ -12799,7 +12896,7 @@ class CosExtractor:
         if not isinstance(enc, PdfDictionary):
             return "AES-256"
         filt = self._get_name(enc.mapping.get(PdfName("Filter")))
-        if filt is not None and filt != "Standard":
+        if filt is not None and filt not in ("Standard", PUBSEC_FILTER):
             return "AES-256"
         v = self._get_number(enc.mapping.get(PdfName("V")))
         r_obj = self._resolve(enc.mapping.get(PdfName("R")))
@@ -12812,6 +12909,10 @@ class CosExtractor:
             # with the key length taken from /Length.
             return "RC4"
         cfm = self._stream_crypt_filter_method(enc)
+        if cfm is None or (cfm == "None" and filt == PUBSEC_FILTER):
+            crypt_filter = self._public_key_crypt_filter(enc)
+            if crypt_filter is not None:
+                cfm = self._get_name(crypt_filter.mapping.get(PdfName("CFM"))) or cfm
         if cfm == "V2":
             return "RC4"
         if cfm == "AESV2":
@@ -12867,8 +12968,140 @@ class CosExtractor:
             value //= 8
         return max(5, min(32, value)) if value > 0 else None
 
+    def _public_key_crypt_filter(self, enc: Any) -> Any:
+        """The crypt filter holding ``/Recipients``, or ``None`` for /V < 4.
+
+        ``/V`` 4 and 5 move the recipient list into the crypt filter that
+        ``/StmF`` names. Producers do not agree on the name (``DefaultCryptFilter``
+        and ``DEF`` both occur), so a ``/StmF`` that names nothing usable falls
+        back to whichever ``/CF`` entry actually carries ``/Recipients``.
+        """
+        from .cos import PdfDictionary, PdfName
+
+        cf = self._resolve(enc.mapping.get(PdfName("CF")))
+        if not isinstance(cf, PdfDictionary):
+            return None
+        stmf = self._get_name(enc.mapping.get(PdfName("StmF")))
+        if stmf and stmf != "Identity":
+            candidate = self._resolve(cf.mapping.get(PdfName(stmf)))
+            if isinstance(candidate, PdfDictionary) and (
+                candidate.mapping.get(PdfName("Recipients")) is not None
+            ):
+                return candidate
+        for value in cf.mapping.values():
+            candidate = self._resolve(value)
+            if isinstance(candidate, PdfDictionary) and (
+                candidate.mapping.get(PdfName("Recipients")) is not None
+            ):
+                return candidate
+        return None
+
+    def _recipient_blobs(self, container: Any) -> list[bytes]:
+        """The raw ``/Recipients`` entries, in the array's own order."""
+        from .cos import PdfArray, PdfDictionary, PdfName, PdfString
+
+        if not isinstance(container, PdfDictionary):
+            return []
+        recipients = self._resolve(container.mapping.get(PdfName("Recipients")))
+        if isinstance(recipients, PdfString):
+            # A single recipient may be written as a bare string.
+            recipients = PdfArray([recipients])
+        if not isinstance(recipients, PdfArray):
+            return []
+        blobs: list[bytes] = []
+        for item in recipients.items:
+            value = self._resolve(item)
+            if isinstance(value, PdfString):
+                raw = value.value
+                blobs.append(
+                    raw if isinstance(raw, bytes) else raw.encode("latin-1")
+                )
+        return blobs
+
+    def _public_key_decryption_key(self, enc: Any) -> bytes | None:
+        """Derive the file key from the recipient envelope we can open.
+
+        Returns ``None`` when no credential was supplied -- the caller turns
+        that into "this document needs a certificate". A credential that is
+        present but wrong raises, so a mistyped key is never mistaken for a
+        missing one.
+        """
+        from .cos import PdfBoolean, PdfName, PdfNumber
+        from .pubsec import compute_file_key, open_envelopes
+
+        crypt_filter = self._public_key_crypt_filter(enc)
+        container = crypt_filter if crypt_filter is not None else enc
+        blobs = self._recipient_blobs(container)
+        if not blobs:
+            raise PdfSecurityException(
+                "The public-key /Encrypt dictionary carries no /Recipients"
+            )
+        if self._credential is None:
+            return None
+
+        cfm = None
+        if crypt_filter is not None:
+            cfm = self._get_name(crypt_filter.mapping.get(PdfName("CFM")))
+        if cfm == "AESV3":
+            key_length, sha256 = 32, True
+        elif cfm == "AESV2":
+            key_length, sha256 = 16, False
+        else:
+            key_length, sha256 = 5, False
+            length_obj = self._resolve(enc.mapping.get(PdfName("Length")))
+            if isinstance(length_obj, PdfNumber):
+                key_length = max(5, min(32, int(length_obj.value) // 8))
+            cf_length = None
+            if crypt_filter is not None:
+                cf_length = self._resolve(
+                    crypt_filter.mapping.get(PdfName("Length"))
+                )
+            if isinstance(cf_length, PdfNumber):
+                value = int(cf_length.value)
+                if value > 40:  # producers write bits here as well as bytes
+                    value //= 8
+                key_length = max(5, min(32, value))
+
+        encrypt_metadata = True
+        for source in (crypt_filter, enc):
+            if source is None:
+                continue
+            flag = self._resolve(source.mapping.get(PdfName("EncryptMetadata")))
+            if isinstance(flag, PdfBoolean):
+                encrypt_metadata = bool(flag.value)
+                break
+
+        certificate, private_key = self._credential
+        payload = open_envelopes(blobs, certificate, private_key)
+        self._pubsec_permissions = payload.permissions
+        return compute_file_key(
+            payload.seed,
+            blobs,
+            key_length=key_length,
+            sha256=sha256,
+            encrypt_metadata=encrypt_metadata,
+        )
+
+    def encryption_filter(self) -> str | None:
+        """Return the ``/Encrypt /Filter`` name (the security handler), or None."""
+        from .cos import PdfDictionary, PdfName
+
+        enc = self._resolve(self._doc.trailer.mapping.get(PdfName("Encrypt")))
+        if not isinstance(enc, PdfDictionary):
+            return None
+        return self._get_name(enc.mapping.get(PdfName("Filter")))
+
+    def uses_public_key_security(self) -> bool:
+        """True when the document is encrypted for certificate recipients."""
+        return self.encryption_filter() == PUBSEC_FILTER
+
     def extract_decryption_key(self, password: str) -> bytes | None:
-        """Derive the file encryption key if *password* unlocks Standard encryption."""
+        """Derive the file encryption key from *password* or a certificate.
+
+        The standard handler derives it from the password; ``/Adobe.PubSec``
+        ignores the password entirely and derives it from the recipient
+        envelope this extractor's credential can open.
+        """
         if not self.detect_encryption():
             return None
         from .cos import PdfBoolean, PdfDictionary, PdfName, PdfNumber, PdfString
@@ -12877,6 +13110,9 @@ class CosExtractor:
         enc = self._resolve(enc_ref)
         if not isinstance(enc, PdfDictionary):
             return None
+
+        if self._get_name(enc.mapping.get(PdfName("Filter"))) == PUBSEC_FILTER:
+            return self._public_key_decryption_key(enc)
 
         def as_bytes(obj: Any) -> bytes | None:
             o = self._resolve(obj)
@@ -12993,9 +13229,16 @@ class CosExtractor:
         return result
 
     def extract_permissions(self) -> int:
-        """Return the /P integer from the /Encrypt dictionary, or -4."""
+        """Return the effective ``/P`` flags, or ``-4`` when none are stated.
+
+        A public-key document has no document-wide ``/P``: each recipient's
+        envelope carries its own, so once one has been opened those flags are
+        what apply to this reader.
+        """
         from .cos import PdfDictionary, PdfName, PdfNumber
 
+        if self._pubsec_permissions is not None:
+            return self._pubsec_permissions
         enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
         enc = self._resolve(enc_ref)
         if isinstance(enc, PdfDictionary):
@@ -13779,6 +14022,8 @@ class PdfWriterV0:
         validate. Writing a revision whose key derivation differs from the one
         used here would leave the file readable only by this library.
         """
+        if self.pdf._recipient_envelopes:
+            return self._public_key_encrypt_dictionary()
         algorithm = normalize_encryption_algorithm(self.pdf.encryption_algorithm)
         o_val = (self.pdf.O or b"").hex()
         u_val = (self.pdf.U or b"").hex()
@@ -13811,6 +14056,44 @@ class PdfWriterV0:
             )
             parts.append("/StmF /StdCF /StrF /StdCF /EncryptMetadata true")
         parts.append(">>")
+        return " ".join(parts).encode()
+
+    def _public_key_encrypt_dictionary(self) -> bytes:
+        """Serialize the public-key (``/Adobe.PubSec``) security dictionary.
+
+        There is no ``/O``, ``/U`` or ``/P`` here: the seed and each
+        recipient's permissions live inside the CMS envelopes, and the file key
+        is a hash over the seed and every envelope. The envelopes are written
+        as hexadecimal strings so their bytes survive exactly -- a re-encoded
+        byte would change the hash and lock every reader out, this library
+        included.
+
+        ``/V 4`` and ``/V 5`` carry ``/Recipients`` inside the crypt filter
+        rather than at the dictionary level (ISO 32000-2, 7.6.5.2), which is
+        why the entry sits under ``/CF``.
+        """
+        algorithm = normalize_encryption_algorithm(self.pdf.encryption_algorithm)
+        envelopes = self.pdf._recipient_envelopes or []
+        recipients = " ".join(f"<{blob.hex()}>" for blob in envelopes)
+        if algorithm == "AES-256":
+            version, revision, bits, cfm, cf_length = 5, 6, 256, "AESV3", 32
+        elif algorithm == "AES-128":
+            version, revision, bits, cfm, cf_length = 4, 4, 128, "AESV2", 16
+        else:  # RC4-128 through a crypt filter
+            version, revision, bits, cfm, cf_length = 4, 4, 128, "V2", 16
+        sub_filter = subfilter_for(algorithm)
+        parts = [
+            "<< /Filter /Adobe.PubSec",
+            f"/SubFilter /{sub_filter}",
+            f"/V {version} /R {revision} /Length {bits}",
+            (
+                "/CF << /DefaultCryptFilter << /Type /CryptFilter "
+                f"/CFM /{cfm} /AuthEvent /DocOpen /Length {cf_length} "
+                f"/Recipients [ {recipients} ] /EncryptMetadata true >> >>"
+            ),
+            "/StmF /DefaultCryptFilter /StrF /DefaultCryptFilter",
+            ">>",
+        ]
         return " ".join(parts).encode()
 
     def _string_literal(self, value: Any) -> str:

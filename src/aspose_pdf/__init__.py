@@ -79,6 +79,7 @@ from .optimization import OptimizationOptions
 from .pages import Page, PageCollection
 from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from .pdfua import PdfUaValidateOptions, PdfUaValidationResult, PdfUaValidator
+from .recipients import Recipient
 from .signature import PdfSignature
 from .tagged import StructureElement, TaggedContent
 from .text_layout import TextLayoutOptions
@@ -172,6 +173,7 @@ __all__ = [
     "Plugin",
     "PluginOptions",
     "RasterizedPage",
+    "Recipient",
     "ResetFormAction",
     "ResultContainer",
     "RevocationStatus",

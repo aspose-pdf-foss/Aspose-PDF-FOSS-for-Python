@@ -87,6 +87,10 @@ flowchart TD
   real glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh
   shadings. Output can be RGB, greyscale, or 1-bit bilevel; TIFF is Deflate-compressed by default,
   and `Document.save_as_tiff()` writes every page into one multi-page TIFF.
+- `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
+  shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
+  opens one. Each recipient gets its own permissions — one may print, another only read the same
+  file — which a password cannot express.
 - `Document.font_substitution` lets the renderer draw fonts the PDF references but does not
   embed — the East Asian case, where the producer assumes the reader has the face — using font
   directories you name, programs you supply, or the machine's own fonts. A composite font's CIDs
@@ -225,6 +229,27 @@ with Document() as document:
 
 <details>
 <summary>View Additional Examples</summary>
+
+### Encrypt for Certificate Recipients
+
+```python
+from cryptography import x509
+from aspose_pdf import Document, Recipient
+
+auditor = x509.load_pem_x509_certificate(Path("auditor.pem").read_bytes())
+reviewer = x509.load_pem_x509_certificate(Path("reviewer.pem").read_bytes())
+
+with Document("report.pdf") as document:
+    document.encrypt_for_recipients([
+        Recipient(auditor),                      # every permission
+        Recipient(reviewer, permissions=-3844),  # read and print only
+    ])
+    document.save("report-sealed.pdf")
+
+# Opening needs the certificate and its private key, not a password.
+with Document("report-sealed.pdf", certificate=auditor, private_key=key) as doc:
+    print(doc.page_count, doc.permissions)
+```
 
 ### Render a Page Whose Fonts Are Not Embedded
 
@@ -631,6 +656,7 @@ and delete workflows. 235 public types are organized by module below.
   - `save(destination, save_format, overwrite) -> Document` / `merge() -> Document`
   - `optimize(options, compress_streams) -> Document` (alias `optimize_resources(options) -> Document`)
   - `encrypt(user_password, owner_password, permissions) -> Document` / `decrypt(password) -> Document` /
+    `encrypt_for_recipients(recipients, algorithm, permissions, ignore_key_usage) -> Document` /
     `change_passwords(old_password, new_user_password, new_owner_password) -> Document`
   - `validate() -> bool` / `check() -> bool` / `repair() -> Document`
   - `validate_pdfa(level) -> PdfAValidationResult` / `convert_to_pdfa(level, font_lookup_directory) -> list[str]`
@@ -701,6 +727,10 @@ and delete workflows. 235 public types are organized by module below.
 - `Document.encrypt(user_password, owner_password, permissions, algorithm)` — `algorithm` is
   `"AES-256"` (default), `"AES-128"`, or `"RC4"` / `Document.decrypt(password)` /
   `Document.change_passwords(...)`
+- `Document.encrypt_for_recipients(recipients, algorithm, permissions, ignore_key_usage)` —
+  public-key (`/Adobe.PubSec`) encryption for certificate holders;
+  `Recipient(certificate, permissions)` pairs a recipient with its own access flags, and
+  `Document(source, certificate=..., private_key=...)` opens the result
 - `PdfSignature.validate(options) -> ValidationResult`; properties `valid`, `name`, `date`, `docmdp_level`
 - `ValidationResult` — properties `is_valid`, `status`, `trust_status`, `revocation_status`,
   `certification_level`, `pades_level`
@@ -749,6 +779,9 @@ and delete workflows. 235 public types are organized by module below.
   formal compliance.
 - OCR and layout reflow are not implemented; `Document.replace_text()` and `Document.redact_text()`
   rewrite matched runs in place but never reflow the surrounding layout.
+- Public-key encryption covers RSA recipients only; key-agreement, password and KEK recipient
+  types, and RC2-encrypted envelopes, are rejected explicitly. No PDF 2.0 message authentication
+  code (`/AuthCode`) is produced or checked for either security handler.
 - Substituting a face for a non-embedded font is opt-in (`Document.font_substitution`) and affects
   **rendering only** — text extraction, editing, and PDF/A font embedding are unchanged, and no
   substituted program is written into the document. Without it the renderer uses only the bundled

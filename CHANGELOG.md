@@ -9,6 +9,23 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Public-key encryption (`/Adobe.PubSec`).** A document encrypted for
+  certificate recipients could not be opened at all -- not a degraded read, a
+  hard failure -- and there was no way to produce one.
+  `Document.encrypt_for_recipients([Recipient(cert), ...])` now writes one and
+  `Document(source, certificate=..., private_key=...)` opens one. There is no
+  password: a random seed is wrapped in a CMS `EnvelopedData` per recipient and
+  the file key is a hash over that seed and every recipient blob. Each
+  recipient carries its **own** permissions -- one reader may print and another
+  only read the same file -- which no password scheme can express. AES-256
+  (`adbe.pkcs7.s5`), AES-128 and RC4-128 (`adbe.pkcs7.s4`) are written; on read,
+  `/Recipients` is found in the crypt filter or the dictionary depending on
+  `/V`, and PKCS#1 v1.5 or OAEP key transport over AES-CBC or 3DES-CBC content
+  encryption is accepted. Encrypting to a certificate whose `keyUsage` forbids
+  key transport is refused rather than producing a file the recipient cannot
+  open. Verified in both directions against pyHanko and, for the CMS layer,
+  OpenSSL.
+
 - **Non-embedded fonts can be drawn with real faces.** The renderer only ever
   had the bundled Latin and symbol substitutes, so a font with no embedded
   program that was not one of the Standard 14 drew glyph boxes -- and a

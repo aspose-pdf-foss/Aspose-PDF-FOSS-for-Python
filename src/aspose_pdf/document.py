@@ -40,6 +40,7 @@ from aspose_pdf.load_limits import (
 from aspose_pdf.outlines import OutlineCollection
 from aspose_pdf.pdfa import PdfAValidationResult
 from aspose_pdf.pdfua import PdfUaValidationResult
+from aspose_pdf.recipients import ALL_PERMISSIONS, Recipient
 
 if TYPE_CHECKING:
     import datetime as _datetime
@@ -52,6 +53,18 @@ if TYPE_CHECKING:
     from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.xmp import XmpPacket
+
+
+def _coerce_credential(certificate: Any, private_key: Any) -> tuple[Any, Any] | None:
+    """Validate a recipient credential pair for a public-key document."""
+    if certificate is None and private_key is None:
+        return None
+    if certificate is None or private_key is None:
+        raise PdfValidationException(
+            "certificate and private_key must be supplied together to open a "
+            "public-key encrypted document"
+        )
+    return certificate, private_key
 
 
 def _coerce_date(value: Any) -> _datetime.datetime | None:
@@ -79,6 +92,8 @@ class Document:
         options: Any = None,
         *,
         password: str | None = None,
+        certificate: Any = None,
+        private_key: Any = None,
         limits: PdfLoadLimits | None = None,
     ) -> None:
         """Create an empty document, or load *source* when one is supplied.
@@ -95,6 +110,11 @@ class Document:
             :exc:`~aspose_pdf.exceptions.UnsupportedFeatureException`.
         password : str, optional
             Password for an encrypted *source*.
+        certificate, private_key : optional
+            Recipient credentials for a *source* encrypted with the public-key
+            handler (``/Adobe.PubSec``), which has no password. Both are
+            ``cryptography`` objects and both are required together. See
+            :class:`~aspose_pdf.Recipient`.
         limits : PdfLoadLimits, optional
             Resource policy for this document. Defaults to the standard policy.
 
@@ -127,8 +147,19 @@ class Document:
                     "password requires a load source; open an existing PDF with "
                     "Document(path, password=...) or Document().load_from(...)"
                 )
+            if certificate is not None or private_key is not None:
+                raise TypeError(
+                    "certificate/private_key require a load source; open an "
+                    "existing PDF with Document(path, certificate=..., "
+                    "private_key=...)"
+                )
             return
-        self.load_from(source, password=password)
+        self.load_from(
+            source,
+            password=password,
+            certificate=certificate,
+            private_key=private_key,
+        )
 
     @property
     def load_limits(self) -> PdfLoadLimits:
@@ -831,6 +862,8 @@ class Document:
         source: str | bytes | bytearray | Path | BinaryIO,
         *,
         password: str | None = None,
+        certificate: Any = None,
+        private_key: Any = None,
         limits: PdfLoadLimits | None = None,
     ) -> Document:
         """Load a PDF from a file path, raw bytes, or a binary stream.
@@ -868,13 +901,17 @@ class Document:
         resolved_limits = self._load_limits
         eff_pwd = _effective_encryption_password(password)
         self._password = eff_pwd if eff_pwd is not None else password
+        credential = _coerce_credential(certificate, private_key)
 
         if isinstance(source, (str, Path)):
             path = Path(source)
             if not path.is_file():
                 raise FileNotFoundError(f"File not found: {path}")
             self._engine_pdf = SimplePdf.from_file(
-                path, password=password, limits=resolved_limits
+                path,
+                password=password,
+                credential=credential,
+                limits=resolved_limits,
             )
             self.file_name = str(path)
         elif isinstance(source, (bytes, bytearray)):
@@ -886,6 +923,7 @@ class Document:
             self._engine_pdf = SimplePdf.from_bytes(
                 data,
                 password=password,
+                credential=credential,
                 limits=resolved_limits,
                 _budget=budget,
             )
@@ -897,6 +935,7 @@ class Document:
             self._engine_pdf = SimplePdf.from_bytes(
                 data,
                 password=password,
+                credential=credential,
                 limits=resolved_limits,
                 _budget=budget,
             )
@@ -910,6 +949,13 @@ class Document:
 
         if eff_pwd and self._engine_pdf:
             self._engine_pdf.decrypt(eff_pwd)
+        elif credential is not None and self._engine_pdf:
+            # A public-key document has no password to hand to decrypt(); the
+            # credential already unlocked it during load. Running the same
+            # post-load decrypt keeps it on the COS writer's path, which
+            # preserves the original /Encrypt dictionary (and its /Recipients)
+            # on a re-save, exactly as for a password-protected file.
+            self._engine_pdf.decrypt("")
 
         self._encrypted = self._engine_pdf.encrypted if self._engine_pdf else False
         return self
@@ -1321,6 +1367,61 @@ class Document:
             owner_password or user_password,
             permissions=permissions,
             algorithm=algorithm,
+        )
+        self._encrypted = True
+        return self
+
+    def encrypt_for_recipients(
+        self,
+        recipients: Sequence[Recipient | Any],
+        *,
+        algorithm: str = "AES-256",
+        permissions: int = ALL_PERMISSIONS,
+        ignore_key_usage: bool = False,
+    ) -> Document:
+        """Encrypt for certificate *recipients* with the public-key handler.
+
+        Where :meth:`encrypt` gates the document behind a shared password, this
+        gates it behind certificates: each recipient opens the file with the
+        private key it already holds, and each one carries its own permissions.
+        There is no user/owner split and no password to distribute.
+
+        Parameters
+        ----------
+        recipients:
+            :class:`~aspose_pdf.Recipient` objects, or bare ``cryptography``
+            certificates, which then all receive *permissions*. At least one is
+            required, and each needs an RSA public key.
+        algorithm:
+            ``"AES-256"`` (the default, ``/V 5 /R 6``, ``/SubFilter
+            adbe.pkcs7.s5``), ``"AES-128"`` or ``"RC4"`` (128-bit), the latter
+            two ``/V 4 /R 4`` with ``adbe.pkcs7.s4``.
+        permissions:
+            Flags for recipients given as bare certificates. Defaults to
+            granting everything; see :class:`~aspose_pdf.Recipient` for the bit
+            layout, which is *not* quite the standard handler's ``/P``.
+        ignore_key_usage:
+            Encrypt to a certificate whose ``keyUsage`` extension forbids key
+            transport. Off by default, because a reader that enforces the
+            extension would reject the result.
+
+        Raises
+        ------
+        PdfSecurityException
+            If *recipients* is empty, a certificate cannot transport a key, or
+            *algorithm* is not a supported name.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        pairs: list[tuple[Any, int]] = []
+        for entry in recipients:
+            if isinstance(entry, Recipient):
+                pairs.append(entry.as_pair())
+            else:
+                pairs.append((entry, int(permissions)))
+        self._engine_pdf.encrypt_for_recipients(
+            pairs, algorithm=algorithm, ignore_key_usage=ignore_key_usage
         )
         self._encrypted = True
         return self
