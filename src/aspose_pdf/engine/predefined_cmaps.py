@@ -423,6 +423,18 @@ def _expand_cmap(
     return mapping, codespaces, entry
 
 
+def cid_to_unicode_text(ordering: str, cid: int) -> str | None:
+    """Return the Unicode text Adobe maps *cid* to in *ordering*, or ``None``.
+
+    Reads the bundled ``<Ordering>-UCS2`` mapping for the character collection,
+    which is what lets a composite font with no embedded program be drawn (or
+    searched) through a substitute face indexed by Unicode.
+    """
+    if not ordering or cid < 0:
+        return None
+    return _lookup_collection_text(ordering, cid)
+
+
 def _lookup_collection_text(ordering: str, cid: int) -> str | None:
     try:
         entry = _collection_bundle(ordering)["collection"]

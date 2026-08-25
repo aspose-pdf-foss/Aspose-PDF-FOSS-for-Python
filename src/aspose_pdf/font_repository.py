@@ -219,6 +219,9 @@ class SystemFontSource(FontSource):
             "/usr/local/share/fonts",
             "/Library/Fonts",
             "/System/Library/Fonts",
+            # macOS keeps downloadable system fonts (PingFang, Hiragino and
+            # the rest of the CJK families) here once the user installs them.
+            "/System/Library/AssetsV2",
             os.path.expanduser("~/.fonts"),
             os.path.expanduser("~/.local/share/fonts"),
             os.path.expanduser("~/Library/Fonts"),

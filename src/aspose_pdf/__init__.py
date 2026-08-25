@@ -26,6 +26,7 @@ from .font_repository import (
     MemoryFontSource,
     SystemFontSource,
 )
+from .font_substitution import FontSubstitutionOptions
 from .forms import (
     Field,
     FieldType,
@@ -136,6 +137,7 @@ __all__ = [
     "FontEmbeddingException",
     "FontRepository",
     "FontSource",
+    "FontSubstitutionOptions",
     "Form",
     "FormType",
     "GoToAction",

@@ -376,7 +376,10 @@ Boundaries:
   `seac` accent composites). Fonts with no embedded program are filled from
   bundled substitutes (the Standard 14 families plus Symbol/ZapfDingbats, and
   unknown non-embedded fonts routed to a sans/serif/mono substitute by their
-  FontDescriptor flags). The Latin substitutes are Latin-subset Liberation
+  FontDescriptor flags), or, when the caller supplies font sources through
+  `FontSubstitutionOptions`, from a real face resolved out of those (see
+  [Fonts](#fonts)) -- which is what lets a non-embedded CJK font draw glyphs
+  rather than boxes. The Latin substitutes are Latin-subset Liberation
   faces and the symbolic ones DejaVu subsets, so glyphs outside that coverage
   (including Symbol's private-use bracket-extender pieces), a simple CFF or
   Type 1 font under an Expert/MacExpert encoding, and unknown symbolic fonts
@@ -388,6 +391,9 @@ Boundaries:
   (ligatures, kerning) through a substitute face is not applied; complex-script
   substitute runs are cursively joined when the face covers the script
   (`shape_substitute_text`, a no-op for the bundled Latin/symbol faces).
+- A composite font whose descendant carries **no** embedded program draws
+  boxes unless font sources are configured; with them it resolves a face and
+  maps each CID to Unicode and on to that face's glyphs (see [Fonts](#fonts)).
 - Composite-font glyph rendering covers Identity encodings, every bundled
   predefined CJK CMap, and **embedded (stream) CMaps** (decoded through the same
   parser extraction uses, so a font that ships its own CMap renders real glyphs).
@@ -615,6 +621,27 @@ Supported:
   calls on the same page. The embedded subset, `/ToUnicode`, widths, and
   CID-to-glyph stream are refreshed together.
 - Decode `ToUnicode` / CMap mappings for accurate text extraction.
+- **Draw non-embedded fonts with faces the caller makes available.** Pass a
+  `FontSubstitutionOptions` (as `Document.font_substitution`, or per call to
+  `Page.render` / `Document.render_page`) naming font directories, font
+  programs supplied as bytes, and/or the platform's own font directories
+  (`FontSubstitutionOptions.system()`). A font with no embedded program then
+  draws real glyphs instead of glyph boxes, including composite (Type0/CID)
+  fonts, which previously had no substitute path at all. Resolution runs in
+  three steps: the document's `/BaseFont` name against the real `name` tables
+  of the indexed faces (refined by bold/italic); then, for a composite font,
+  the well-known families of its character collection, so a PDF naming
+  `SimSun` renders on a machine that only has `PingFang SC`; then any indexed
+  face whose `cmap` covers the text, pre-filtered on `OS/2 ulUnicodeRange` and
+  confirmed against the real `cmap`. CIDs reach Unicode through the font's own
+  `/ToUnicode` first and Adobe's bundled CID-to-Unicode table for the
+  collection second. Advances come from the PDF's `/Widths` or `/W`, so a
+  substituted face changes which glyphs are drawn, never where they sit; a
+  composite font always has `/W` (or `/DW`), and a simple font that omits
+  `/Widths` for a code -- only legal for the Standard 14 -- falls back to the
+  face's own advance, as it already did for the bundled substitutes.
+  Discovery is **opt-in**: with no options the renderer uses only the bundled
+  substitute faces, exactly as before, and stays identical across machines.
 - Discover fonts through `FontRepository` and the `FontSource` hierarchy:
   `FolderFontSource` (optionally recursive), `FileFontSource`,
   `MemoryFontSource`, and `SystemFontSource`.
@@ -661,6 +688,15 @@ Boundaries:
   rejected; CFF 1 mappings that alias different Unicode scalars to one native
   CID are rejected because they cannot provide an exact `/ToUnicode` round
   trip.
+- Font substitution indexes a face's SFNT directory, `name` table and 16 bytes
+  of `OS/2`, so a directory of large CJK fonts costs a few small reads each;
+  whole programs are read (and a TrueType Collection face lifted out of the
+  collection) only for a face that wins, and are cached per options object.
+  Indexing is bounded in files scanned, file size and cached bytes. A face is
+  matched by the names its own `name` table declares, falling back to the file
+  stem (or the caller's label) for a stripped subset that has none. It affects
+  **rendering only**: text extraction, editing and PDF/A font embedding are
+  unchanged, and no substituted program is written into the document.
 - Embedded glyph outlines are rasterized by the page renderer (see
   [Pages](#pages)) for all three program formats: TrueType (`glyf`), CFF
   (`/FontFile3`, name-keyed and CID-keyed), and Type 1 (`/FontFile`, including

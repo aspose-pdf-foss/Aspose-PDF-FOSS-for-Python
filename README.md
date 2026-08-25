@@ -87,6 +87,13 @@ flowchart TD
   real glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh
   shadings. Output can be RGB, greyscale, or 1-bit bilevel; TIFF is Deflate-compressed by default,
   and `Document.save_as_tiff()` writes every page into one multi-page TIFF.
+- `Document.font_substitution` lets the renderer draw fonts the PDF references but does not
+  embed — the East Asian case, where the producer assumes the reader has the face — using font
+  directories you name, programs you supply, or the machine's own fonts. A composite font's CIDs
+  are mapped to Unicode and on to a real face, so a PDF naming `SimSun` renders even where only
+  `PingFang SC` is installed, instead of a row of glyph boxes. Advances still come from the PDF's
+  own `/Widths` / `/W`, so the substitute changes which glyphs are drawn, not where they sit. Off
+  by default, so rendering stays identical across machines unless you ask for it.
 - `Document.layers` lists the document's optional content groups and switches them on or off;
   rendering, text extraction, and graphics absorption all skip a hidden layer, the way a viewer
   does, and the new state is saved back into the document's default configuration.
@@ -218,6 +225,18 @@ with Document() as document:
 
 <details>
 <summary>View Additional Examples</summary>
+
+### Render a Page Whose Fonts Are Not Embedded
+
+```python
+from aspose_pdf import Document, FontSubstitutionOptions
+
+with Document("report-cjk.pdf") as document:
+    # Use the machine's own fonts; FontSubstitutionOptions(["/opt/fonts"]) or
+    # FontSubstitutionOptions(fonts={"SimSun": data}) keep it reproducible.
+    document.font_substitution = FontSubstitutionOptions.system()
+    document.save_page_as_image(0, "page-1.png", dpi=144)
+```
 
 ### Author Multi-Script Unicode Text
 
@@ -619,7 +638,7 @@ and delete workflows. 235 public types are organized by module below.
     `auto_tag(image_alt) -> int`
   - `replace_text(search, replacement, page_index, case_sensitive, max_count) -> int` /
     `redact_text(search, page_index, case_sensitive, max_count, overlay, overlay_color) -> int`
-  - `render_page(page_index, dpi, scale, background, antialias) -> RasterizedPage` /
+  - `render_page(page_index, dpi, scale, background, antialias, shape_substitute_text, draw_annotations, font_substitution) -> RasterizedPage` /
     `save_page_as_image(page_index, destination, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path` /
     `save_as_tiff(destination, pages, dpi, scale, background, antialias, mode, compression, threshold) -> Path`
   - `flatten() -> Document` / `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
@@ -628,7 +647,7 @@ and delete workflows. 235 public types are organized by module below.
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
   - properties: `pages`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
-    `is_pdfua_compliant`
+    `is_pdfua_compliant`, `font_substitution`
 
 ### Pages And Content
 
@@ -637,7 +656,7 @@ and delete workflows. 235 public types are organized by module below.
   - `add_image(image, x, y, width, height, pixel_width, pixel_height, color_space, bits_per_component, name, tag, alt, actual_text) -> str`
   - `draw_rectangle(x, y, width, height, stroke_color, fill_color, line_width, tag, alt, actual_text) -> Page` /
     `draw_line(x1, y1, x2, y2, stroke_color, line_width, tag, alt, actual_text) -> Page`
-  - `render(dpi, scale, background, antialias, shape_substitute_text, draw_annotations) -> RasterizedPage` /
+  - `render(dpi, scale, background, antialias, shape_substitute_text, draw_annotations, font_substitution) -> RasterizedPage` /
     `save_as_image(path, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path`
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - properties: `index`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
@@ -703,6 +722,9 @@ and delete workflows. 235 public types are organized by module below.
 - `FontRepository` — `add_source(source) -> None`, `get_available_fonts() -> list[FontDescriptor]`,
   `find_font(font_name) -> FontDescriptor | None`, `open_font(font_name) -> bytes | None`
 - `FontSource` hierarchy — `FolderFontSource`, `FileFontSource`, `MemoryFontSource`, `SystemFontSource`
+- `FontSubstitutionOptions(directories, fonts, use_system_fonts)` / `FontSubstitutionOptions.system()` —
+  font sources the renderer may draw non-embedded fonts from; assign to `Document.font_substitution`
+  or pass as `font_substitution=` to `Page.render` / `Document.render_page`
 
 </details>
 
@@ -727,6 +749,11 @@ and delete workflows. 235 public types are organized by module below.
   formal compliance.
 - OCR and layout reflow are not implemented; `Document.replace_text()` and `Document.redact_text()`
   rewrite matched runs in place but never reflow the surrounding layout.
+- Substituting a face for a non-embedded font is opt-in (`Document.font_substitution`) and affects
+  **rendering only** — text extraction, editing, and PDF/A font embedding are unchanged, and no
+  substituted program is written into the document. Without it the renderer uses only the bundled
+  substitute faces (the Standard 14 plus Symbol/ZapfDingbats), so a non-embedded CJK or symbol font
+  draws glyph boxes.
 - Several compatibility surfaces exist only to keep ported code importable and carry no
   implementation: `CdrLoadOptions`, `CgmLoadOptions`, `HtmlLoadOptions`, `OfdLoadOptions`, and
   `SvgLoadOptions` are rejected as a load source, and `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`/`SVG`,

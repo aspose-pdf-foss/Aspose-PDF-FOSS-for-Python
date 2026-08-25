@@ -38,6 +38,7 @@ from .cos import (
     PdfStream,
     PdfString,
 )
+from .font_resolver import ResolvedFace, resolver_for
 from .glyph_outlines import TrueTypeOutlines
 from .image_export import (
     TiffPage,
@@ -577,6 +578,28 @@ def _annotation_placement(
     return (sx, 0.0, 0.0, sy, rect[0] - min(xs) * sx, rect[1] - min(ys) * sy)
 
 
+def _wanted_style(
+    base_font: str | None,
+    flags: int,
+    italic_angle: float,
+    font_weight: float | None,
+) -> tuple[bool, bool]:
+    """Bold/italic intent from a ``/BaseFont`` name and FontDescriptor."""
+    name = (base_font or "").lower()
+    bold = (
+        any(word in name for word in ("bold", "black", "heavy"))
+        or bool(flags & (1 << 18))
+        or (font_weight is not None and font_weight >= 600)
+    )
+    italic = (
+        "italic" in name
+        or "oblique" in name
+        or bool(flags & (1 << 6))
+        or abs(italic_angle) > 1e-6
+    )
+    return bold, italic
+
+
 def render_page(
     pdf: Any,
     page_index: int,
@@ -587,6 +610,7 @@ def render_page(
     antialias: bool | int = True,
     shape_substitute_text: bool = True,
     draw_annotations: bool = True,
+    font_substitution: Any = None,
 ) -> RasterizedPage:
     """Render ``page_index`` from a ``SimplePdf`` into an RGB raster.
 
@@ -601,6 +625,12 @@ def render_page(
     ``draw_annotations`` (default on) composites each visible annotation's
     normal appearance over the page content, the way a viewer shows it. Turn it
     off to render the page content alone.
+
+    ``font_substitution`` is an optional
+    :class:`~aspose_pdf.font_substitution.FontSubstitutionOptions` naming font
+    directories, font programs or the platform fonts to draw non-embedded
+    fonts with; it defaults to the document's own setting. Without one only the
+    bundled substitute faces are used, exactly as before.
     """
     if pdf is None:
         raise AsposePdfException("No document loaded")
@@ -615,6 +645,7 @@ def render_page(
         antialias=antialias,
         shape_substitute_text=shape_substitute_text,
         draw_annotations=draw_annotations,
+        font_substitution=font_substitution,
     )
     return renderer.render()
 
@@ -631,9 +662,13 @@ class _PageRasterizer:
         antialias: bool | int = True,
         shape_substitute_text: bool = True,
         draw_annotations: bool = True,
+        font_substitution: Any = None,
     ):
         self.shape_substitute_text = bool(shape_substitute_text)
         self.draw_annotations = bool(draw_annotations)
+        if font_substitution is None:
+            font_substitution = getattr(pdf, "_font_substitution", None)
+        self._font_resolver = resolver_for(font_substitution)
         try:
             dpi_value = float(dpi)
             scale_value = float(scale)
@@ -2225,11 +2260,15 @@ class _PageRasterizer:
             font = self._build_substitute_font(font_dict)
         return font
 
-    def _build_substitute_font(
-        self, font_dict: PdfDictionary
-    ) -> _GlyphFont | None:
+    def _descriptor_signals(
+        self, font_dict: PdfDictionary, descriptor: Any = None
+    ) -> tuple[str | None, int, float, float | None]:
+        """Return ``(base_font, flags, italic_angle, font_weight)``."""
         base = self._cos_name(font_dict.mapping.get(PdfName("BaseFont")))
-        descriptor = self._resolve(font_dict.mapping.get(PdfName("FontDescriptor")))
+        if descriptor is None:
+            descriptor = self._resolve(
+                font_dict.mapping.get(PdfName("FontDescriptor"))
+            )
         flags = 0
         italic_angle = 0.0
         font_weight: float | None = None
@@ -2243,6 +2282,127 @@ class _PageRasterizer:
             fw = self._cos_number(descriptor.mapping.get(PdfName("FontWeight")))
             if fw is not None:
                 font_weight = float(fw)
+        return base, flags, italic_angle, font_weight
+
+    def _external_face(
+        self,
+        base: str | None,
+        *,
+        flags: int = 0,
+        italic_angle: float = 0.0,
+        font_weight: float | None = None,
+    ) -> ResolvedFace | None:
+        """Resolve *base* through the caller's font sources, or ``None``."""
+        resolver = self._font_resolver
+        if resolver is None:
+            return None
+        try:
+            return resolver.by_name(
+                base,
+                flags=flags,
+                italic_angle=italic_angle,
+                font_weight=font_weight,
+            )
+        except PdfResourceLimitException:
+            raise
+        except (OSError, struct.error, ValueError, TypeError, KeyError):
+            return None
+
+    def _face_outlines(self, face: ResolvedFace) -> Any:
+        """Build an outline source for *face*, or ``None`` when unusable."""
+        outlines: Any
+        if face.is_cff:
+            outlines = CffOutlines(face.data)
+        else:
+            outlines = TrueTypeOutlines(face.data)
+        return outlines if outlines.ok else None
+
+    def _build_external_simple_font(
+        self, font_dict: PdfDictionary, face: ResolvedFace
+    ) -> _GlyphFont | None:
+        """Draw a simple font with an external face, keeping the PDF widths."""
+        outlines = self._face_outlines(face)
+        if outlines is None:
+            return None
+        code_to_gid, code_to_unicode = self._external_code_to_gid(font_dict, face)
+        width_1000 = self._simple_widths(font_dict, outlines, code_to_gid)
+        return _GlyphFont(
+            outlines,
+            code_to_gid,
+            width_1000,
+            bytes_per_code=1,
+            shaping_program=face.data,
+            code_to_unicode=lambda code, _m=code_to_unicode: _m.get(code),
+        )
+
+    def _external_code_to_gid(
+        self, font_dict: PdfDictionary, face: ResolvedFace
+    ) -> tuple[Callable[[int], int | None], dict[int, int]]:
+        """``code -> gid`` and ``code -> unicode`` for an external simple face."""
+        from .font_subset import read_symbol_code_to_gid, read_unicode_cmap
+
+        symbol = read_symbol_code_to_gid(face.data)
+        unicode_map = read_unicode_cmap(face.data)
+        explicit: dict[int, int] = {}
+        if hasattr(self.pdf, "_simple_code_to_unicode"):
+            try:
+                explicit = self.pdf._simple_code_to_unicode(font_dict) or {}
+            except PdfResourceLimitException:
+                raise
+            except Exception:
+                explicit = {}
+        code_to_unicode: dict[int, int] = {}
+        for code in range(256):
+            try:
+                code_to_unicode[code] = ord(bytes([code]).decode("cp1252"))
+            except (UnicodeDecodeError, TypeError):
+                pass
+        code_to_unicode.update(explicit)
+        # A symbolic font with no /Encoding of its own is addressed through its
+        # (3,0) cmap, where cp1252 would silently pick the wrong glyphs.
+        symbol_first = not explicit
+
+        def resolve(
+            code: int,
+            _sym=symbol,
+            _uni=unicode_map,
+            _c2u=code_to_unicode,
+            _sym_first=symbol_first,
+        ) -> int | None:
+            if _sym_first and _sym:
+                gid = _sym.get(code) or _sym.get(0xF000 + code)
+                if gid:
+                    return gid
+            cp = _c2u.get(code)
+            if cp is not None and _uni:
+                gid = _uni.get(cp)
+                if gid:
+                    return gid
+            if _sym:
+                gid = _sym.get(code) or _sym.get(0xF000 + code)
+                if gid:
+                    return gid
+            if _uni:
+                gid = _uni.get(code)
+                if gid:
+                    return gid
+            return None
+
+        return resolve, code_to_unicode
+
+    def _build_substitute_font(
+        self, font_dict: PdfDictionary
+    ) -> _GlyphFont | None:
+        base, flags, italic_angle, font_weight = self._descriptor_signals(font_dict)
+        # A caller-supplied or system face named by the document wins: it is the
+        # font the producer meant, where a bundled substitute is a stand-in.
+        face = self._external_face(
+            base, flags=flags, italic_angle=italic_angle, font_weight=font_weight
+        )
+        if face is not None:
+            font = self._build_external_simple_font(font_dict, face)
+            if font is not None:
+                return font
         key = resolve_substitute_key(
             base, flags=flags, italic_angle=italic_angle, font_weight=font_weight
         )
@@ -2331,21 +2491,32 @@ class _PageRasterizer:
         cid_subtype = self._cos_name(cidfont.mapping.get(PdfName("Subtype")))
         descriptor = self._resolve(cidfont.mapping.get(PdfName("FontDescriptor")))
         width_1000 = self._cid_widths(cidfont)
+        outlines: Any = None
+        cid_to_gid: Callable[[int], int | None] | None = None
         if cid_subtype == "CIDFontType2":
             outlines = self._load_truetype_outlines(descriptor)
-            if outlines is None:
-                return None
-            cid_to_gid = self._cid_to_gid(cidfont)
+            if outlines is not None:
+                cid_to_gid = self._cid_to_gid(cidfont)
         elif cid_subtype == "CIDFontType0":
             program = self._load_fontfile3(descriptor)
-            if not program:
-                return None
-            outlines = CffOutlines(program)
-            if not outlines.ok:
-                return None
-            cid_to_gid = self._cff_cid_to_gid(program)
+            if program:
+                candidate = CffOutlines(program)
+                if candidate.ok:
+                    outlines = candidate
+                    cid_to_gid = self._cff_cid_to_gid(program)
         else:
             return None
+        if outlines is None or cid_to_gid is None:
+            # No embedded program. Draw through an external face indexed by
+            # Unicode (Adobe's CID-to-Unicode table for a predefined
+            # collection, or the font's own /ToUnicode), keeping the PDF's /W
+            # advances so glyphs land exactly where the producer placed them.
+            substitute = self._build_type0_substitute(
+                font_dict, cidfont, cmap, descriptor
+            )
+            if substitute is None:
+                return None
+            outlines, cid_to_gid = substitute
         dw = self._cos_number(cidfont.mapping.get(PdfName("DW")))
         default_width = float(dw) if dw is not None else 1000.0
         vertical = bool(getattr(cmap, "vertical", False))
@@ -2363,6 +2534,142 @@ class _PageRasterizer:
             vertical=vertical,
             vertical_metrics_1000=vertical_metrics,
         )
+
+    def _build_type0_substitute(
+        self,
+        font_dict: PdfDictionary,
+        cidfont: PdfDictionary,
+        cmap: Any,
+        descriptor: Any,
+    ) -> tuple[Any, Callable[[int], int | None]] | None:
+        """Outline source and ``cid -> gid`` for a non-embedded composite font.
+
+        Returns ``None`` -- leaving the caller's glyph-box fallback in place --
+        when no font sources are configured, the CIDs cannot be mapped to
+        Unicode, or nothing available covers the text.
+        """
+        from .font_subset import read_unicode_cmap
+
+        resolver = self._font_resolver
+        if resolver is None:
+            return None
+        lookup = self._cid_to_unicode_lookup(font_dict, cidfont, cmap)
+        if lookup is None:
+            return None
+        cid_text, samples = lookup
+        base, flags, italic_angle, font_weight = self._descriptor_signals(
+            font_dict, descriptor
+        )
+        face = self._external_face(
+            base, flags=flags, italic_angle=italic_angle, font_weight=font_weight
+        )
+        if face is None:
+            bold, italic = _wanted_style(base, flags, italic_angle, font_weight)
+            try:
+                face = resolver.by_ordering(
+                    self._cid_ordering(cidfont),
+                    serif=bool(flags & 2),
+                    bold=bold,
+                    italic=italic,
+                    probe_scalars=samples,
+                )
+            except PdfResourceLimitException:
+                raise
+            except (OSError, struct.error, ValueError, TypeError, KeyError):
+                face = None
+        if face is None:
+            return None
+        outlines = self._face_outlines(face)
+        if outlines is None:
+            return None
+        unicode_map = read_unicode_cmap(face.data)
+        if not unicode_map:
+            return None
+
+        def cid_to_gid(
+            cid: int, _text=cid_text, _uni=unicode_map
+        ) -> int | None:
+            text = _text(cid)
+            if not text:
+                return None
+            return _uni.get(ord(text[0])) or None
+
+        return outlines, cid_to_gid
+
+    def _cid_to_unicode_lookup(
+        self, font_dict: PdfDictionary, cidfont: PdfDictionary, cmap: Any
+    ) -> tuple[Callable[[int], str | None], tuple[int, ...]] | None:
+        """Return ``(cid -> text, sample scalars)`` for a composite font.
+
+        The font's own ``/ToUnicode`` wins where it maps a code, since it is
+        written for this document; Adobe's CID-to-Unicode table for the
+        descendant's character collection fills in the rest.
+        """
+        from .predefined_cmaps import cid_to_unicode_text
+
+        ordering = self._cid_ordering(cidfont)
+        table: dict[int, str] = {}
+        to_unicode = None
+        if hasattr(self.pdf, "_font_to_unicode_map"):
+            try:
+                to_unicode = self.pdf._font_to_unicode_map(font_dict)
+            except PdfResourceLimitException:
+                raise
+            except Exception:
+                to_unicode = None
+        if to_unicode:
+            for code, text in to_unicode.items():
+                if not text:
+                    continue
+                cid = self._code_to_cid(code, cmap)
+                if cid is not None:
+                    table.setdefault(cid, text)
+        if not table and not ordering:
+            return None
+
+        def lookup(cid: int, _table=table, _ordering=ordering) -> str | None:
+            text = _table.get(cid)
+            if text:
+                return text
+            return cid_to_unicode_text(_ordering, cid) if _ordering else None
+
+        samples = tuple(
+            dict.fromkeys(
+                ord(text[0]) for text in list(table.values())[:32] if text
+            )
+        )
+        return lookup, samples
+
+    def _code_to_cid(self, code: bytes, cmap: Any) -> int | None:
+        """Map raw code bytes to a CID under *cmap* (``None`` = Identity)."""
+        if cmap is None:
+            return int.from_bytes(code, "big") if code else None
+        resolver = getattr(cmap, "cid_for", None)
+        if callable(resolver):
+            try:
+                return resolver(code)
+            except PdfResourceLimitException:
+                raise
+            except Exception:
+                return None
+        mapping = getattr(cmap, "code_to_cid", None)
+        if isinstance(mapping, dict):
+            return mapping.get(code)
+        return None
+
+    def _cid_ordering(self, cidfont: PdfDictionary) -> str:
+        """The descendant's ``/CIDSystemInfo /Ordering``, or ``""``."""
+        info = self._resolve(cidfont.mapping.get(PdfName("CIDSystemInfo")))
+        if not isinstance(info, PdfDictionary):
+            return ""
+        value = self._resolve(info.mapping.get(PdfName("Ordering")))
+        raw = getattr(value, "value", value)
+        if isinstance(raw, bytes):
+            try:
+                return raw.decode("ascii")
+            except UnicodeDecodeError:
+                return ""
+        return raw if isinstance(raw, str) else ""
 
     def _cid_vertical_metrics(
         self, cidfont: PdfDictionary, width_1000: Callable[[int], float]

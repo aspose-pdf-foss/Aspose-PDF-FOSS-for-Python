@@ -9,6 +9,32 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Non-embedded fonts can be drawn with real faces.** The renderer only ever
+  had the bundled Latin and symbol substitutes, so a font with no embedded
+  program that was not one of the Standard 14 drew glyph boxes -- and a
+  composite (Type0/CID) font had no substitute path at all, which is every
+  East Asian PDF that leaves the system fonts unembedded. Assigning a
+  `FontSubstitutionOptions` (to `Document.font_substitution`, or per call to
+  `Page.render` / `Document.render_page`) points the renderer at font
+  directories, font programs supplied as bytes, or the platform's own fonts
+  (`FontSubstitutionOptions.system()`). A face is resolved by the document's
+  `/BaseFont` name against the real `name` tables of the indexed fonts, then --
+  for a composite font -- by the well-known families of its character
+  collection, so a PDF naming `SimSun` renders on a machine that only has
+  `PingFang SC`, and finally by `cmap` coverage of the text itself. CIDs reach
+  Unicode through the font's own `/ToUnicode` and Adobe's bundled
+  CID-to-Unicode table for the collection. Advances still come from the PDF's
+  `/Widths` / `/W`, so a substitute changes which glyphs are drawn, never where
+  they sit (a simple font that omits `/Widths` for a code still falls back to
+  the face's own advance, as it did for the bundled substitutes). Indexing reads only each face's table directory, `name` table and
+  `OS/2` ranges -- about 1200 system faces in under a second -- and pulls a
+  whole program (lifting a TrueType Collection face out of its collection) only
+  for a face that wins. Discovery is opt-in: without options rendering is
+  byte-for-byte what it was, and independent of what the machine has installed.
+  `SystemFontSource` also now looks in macOS's `/System/Library/AssetsV2`,
+  where downloadable system fonts (PingFang, Hiragino and the other CJK
+  families) are installed.
+
 - **Optional content (layers) is honoured.** Nothing in the package looked at
   `/OC`, so a hidden layer — a draft watermark, an alternate language, a CAD
   overlay — was painted and extracted like any other content. Rendering, text

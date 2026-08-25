@@ -302,6 +302,7 @@ class Page:
         antialias: bool | int = True,
         shape_substitute_text: bool = True,
         draw_annotations: bool = True,
+        font_substitution: Any = None,
     ) -> RasterizedPage:
         """Render this page to an RGB raster image.
 
@@ -316,6 +317,9 @@ class Page:
         extra and only affects non-embedded fonts.
         ``draw_annotations`` (default on) composites each visible annotation's
         normal appearance over the page, the way a viewer shows it.
+        ``font_substitution`` overrides the document's
+        :attr:`~aspose_pdf.Document.font_substitution` for this call, naming
+        the font sources non-embedded fonts may be drawn with.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -332,6 +336,7 @@ class Page:
             antialias=antialias,
             shape_substitute_text=shape_substitute_text,
             draw_annotations=draw_annotations,
+            font_substitution=font_substitution,
         )
 
     def save_as_image(

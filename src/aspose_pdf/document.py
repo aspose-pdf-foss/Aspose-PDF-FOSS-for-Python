@@ -29,6 +29,7 @@ from aspose_pdf.engine.simple_pdf import (
     _parse_pdf_date,
 )
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.font_substitution import FontSubstitutionOptions
 from aspose_pdf.layers import LayerCollection
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
@@ -584,6 +585,37 @@ class Document:
             return
         yield from self._engine_pdf.iter_page_content_streams()
 
+    @property
+    def font_substitution(self) -> FontSubstitutionOptions | None:
+        """Font sources the renderer may substitute non-embedded fonts from.
+
+        ``None`` (the default) keeps rendering to the bundled substitute faces,
+        which cover the Standard 14 plus Symbol and ZapfDingbats. Assign a
+        :class:`~aspose_pdf.font_substitution.FontSubstitutionOptions` to let
+        the renderer also draw with fonts from directories you name, programs
+        you supply, or the machine's installed fonts::
+
+            document.font_substitution = FontSubstitutionOptions.system()
+
+        The setting applies to every render path on the document -- including
+        :meth:`save_page_as_image` and :meth:`save_as_tiff` -- and a single
+        options object keeps its font index across pages.
+        """
+        self._ensure_not_disposed()
+        return getattr(self._engine_pdf, "_font_substitution", None)
+
+    @font_substitution.setter
+    def font_substitution(self, value: FontSubstitutionOptions | None) -> None:
+        self._ensure_not_disposed()
+        if value is not None and not isinstance(value, FontSubstitutionOptions):
+            raise PdfValidationException(
+                "font_substitution must be a FontSubstitutionOptions or None, "
+                f"not {type(value).__name__}."
+            )
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        self._engine_pdf._font_substitution = value
+
     def render_page(
         self,
         page_index: int,
@@ -594,6 +626,7 @@ class Document:
         antialias: bool | int = True,
         shape_substitute_text: bool = True,
         draw_annotations: bool = True,
+        font_substitution: FontSubstitutionOptions | None = None,
     ) -> RasterizedPage:
         """Render a page to an RGB raster image.
 
@@ -606,6 +639,7 @@ class Document:
         ``text-layout`` extra and only affects non-embedded fonts.
         ``draw_annotations`` (default on) composites each visible annotation's
         normal appearance over the page, the way a viewer shows it.
+        ``font_substitution`` overrides :attr:`font_substitution` for this call.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -621,6 +655,7 @@ class Document:
             antialias=antialias,
             shape_substitute_text=shape_substitute_text,
             draw_annotations=draw_annotations,
+            font_substitution=font_substitution,
         )
 
     def save_page_as_image(
