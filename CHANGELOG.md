@@ -9,6 +9,23 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **JPEG 2000 decodes without Pillow.** `/JPXDecode` needed the optional
+  `images` extra, and without it the filter raised, the stream decoder fell
+  back to handing the *raw codestream* to its caller, and the rasterizer
+  painted those compressed bytes as if they were samples -- a page of noise
+  where the scan should be. `aspose_pdf.engine.jpeg2000` is a pure-Python
+  decoder covering the JP2 container and the bare codestream, tier-2 packet
+  decoding (tag trees, all five progression orders, precincts, quality layers,
+  tiles, SOP/EPH markers), the EBCOT tier-1 block decoder over the MQ
+  arithmetic coder, the 5/3 and 9/7 wavelets, both colour transforms and
+  component subsampling. The reversible path is lossless -- it reproduces the
+  encoder's input exactly -- and the irreversible path agrees with OpenJPEG to
+  within a step or two per channel; both were cross-checked against it over
+  tiles, precincts, progression orders, code-block sizes, layers and bit depths.
+  Pillow is still preferred when installed, being several hundred times faster
+  on a full-size scan, and an image that neither decoder can read is now left
+  undrawn rather than painted as noise.
+
 - **Public-key encryption (`/Adobe.PubSec`).** A document encrypted for
   certificate recipients could not be opened at all -- not a degraded read, a
   hard failure -- and there was no way to produce one.

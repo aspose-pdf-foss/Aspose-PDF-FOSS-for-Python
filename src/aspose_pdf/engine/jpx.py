@@ -1,4 +1,12 @@
-# JPEG 2000 (JPX) Decoder using Pillow
+"""``/JPXDecode`` support: the bundled JPEG 2000 decoder, or Pillow when present.
+
+The pure-Python decoder in :mod:`aspose_pdf.engine.jpeg2000` makes JPEG 2000 work
+in a default install, which matters because scanners emit it constantly. Pillow
+(OpenJPEG) is still preferred when it is installed: it is the same picture
+several hundred times faster, which is the difference between a page and a
+coffee break on a full-size scan.
+"""
+
 from __future__ import annotations
 
 import io
@@ -17,6 +25,8 @@ try:
     HAS_PILLOW = True
 except ImportError:
     HAS_PILLOW = False
+
+__all__ = ["Decoder", "decode_to_rgb"]
 
 
 def _raise_limit(context: str, value: int, name: str, limit: int) -> None:
@@ -84,20 +94,15 @@ class Decoder:
         *,
         limits: PdfLoadLimits | None = None,
     ) -> bytes:
-        """Decode JPEG 2000 data using Pillow.
+        """Decode JPEG 2000 data to raw interleaved samples.
 
-        Args:
-            data: JPX encoded bytes
-            parms: Optional DecodeParms (usually ignored for JPX in PDF)
-
-        Returns:
-            Decoded raw pixel data
+        Uses Pillow when it is installed and falls back to the bundled
+        pure-Python decoder otherwise, so a default install still reads the
+        image. Both paths honour *limits*.
         """
         resolved_limits = _coerce_limits(limits)
         if not HAS_PILLOW:
-            raise PdfValidationException(
-                "JPXDecode requires Pillow (JPEG 2000 decode is not available)"
-            )
+            return _decode_builtin(data, limits=resolved_limits).samples
 
         try:
             with io.BytesIO(data) as bio:
@@ -120,3 +125,87 @@ class Decoder:
             raise PdfValidationException(
                 "JPXDecode failed while decoding the image stream"
             ) from exc
+
+
+def _decode_builtin(data: bytes, *, limits: PdfLoadLimits):
+    from .jpeg2000 import decode as decode_jpeg2000
+
+    return decode_jpeg2000(data, limits=limits)
+
+
+def decode_to_rgb(
+    data: bytes,
+    meta: dict[str, Any] | None = None,
+    *,
+    limits: PdfLoadLimits | None = None,
+) -> tuple[int, int, bytes] | None:
+    """Decode to ``(width, height, rgb_bytes)`` for the renderer, or ``None``.
+
+    Returning ``None`` rather than raising lets the rasterizer skip an image it
+    cannot decode. That matters more than it sounds: the stream decoder hands
+    undecodable filters back as their *raw* bytes, and a JPEG 2000 codestream
+    painted as if it were samples is a page of noise.
+    """
+    resolved = _coerce_limits(limits)
+    meta = meta or {}
+    try:
+        if HAS_PILLOW:
+            width, height, components, samples = _pillow_samples(data, resolved)
+        else:
+            image = _decode_builtin(data, limits=resolved)
+            width, height = image.width, image.height
+            components, samples = image.components, image.samples
+    except PdfResourceLimitException:
+        raise
+    except Exception:
+        return None
+    if width <= 0 or height <= 0 or not samples:
+        return None
+    return width, height, _to_rgb(samples, width, height, components, meta)
+
+
+def _pillow_samples(
+    data: bytes, limits: PdfLoadLimits
+) -> tuple[int, int, int, bytes]:
+    with io.BytesIO(data) as bio:
+        with Image.open(bio) as img:
+            _validate_layout(img, limits)
+            if img.mode not in ("L", "RGB", "RGBA", "CMYK"):
+                img = img.convert("RGB")
+            return img.width, img.height, len(img.getbands()), img.tobytes()
+
+
+def _to_rgb(
+    samples: bytes,
+    width: int,
+    height: int,
+    components: int,
+    meta: dict[str, Any],
+) -> bytes:
+    """Turn interleaved samples into packed RGB, honouring the PDF colour space."""
+    from .image_export import cmyk_to_rgb, gray_to_rgb
+
+    expected = width * height * components
+    if len(samples) < expected:
+        samples = samples + bytes(expected - len(samples))
+    if components == 1:
+        return gray_to_rgb(samples[:expected])
+    if components == 3:
+        return bytes(samples[:expected])
+    if components == 4:
+        # A four-component JPEG 2000 is CMYK when the PDF says so, and RGB with
+        # an alpha channel otherwise -- the common scanner/camera case.
+        if str(meta.get("cs_kind") or "").lower() == "cmyk":
+            return cmyk_to_rgb(samples[:expected])
+        out = bytearray(width * height * 3)
+        for pixel in range(width * height):
+            source = pixel * 4
+            target = pixel * 3
+            out[target : target + 3] = samples[source : source + 3]
+        return bytes(out)
+    if components == 2:  # grey plus alpha
+        out = bytearray(width * height)
+        for pixel in range(width * height):
+            out[pixel] = samples[pixel * 2]
+        return gray_to_rgb(bytes(out))
+    return gray_to_rgb(samples[: width * height])

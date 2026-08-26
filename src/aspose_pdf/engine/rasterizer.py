@@ -3788,6 +3788,15 @@ def _decode_image_to_rgb(
         elif decoded.mode == "CMYK":
             pixels = cmyk_to_rgb(pixels)
         return (decoded.width, decoded.height, pixels)
+    if sniff == "jp2":
+        # A JPEG 2000 codestream still in its compressed form: the stream
+        # decoder hands undecodable filters back as their raw bytes, and those
+        # bytes painted as samples are a page of noise. Decode here, or draw
+        # nothing. (When the filter *did* run, ``data`` is already samples and
+        # no longer sniffs as JPEG 2000, so it takes the plain path below.)
+        from .jpx import decode_to_rgb
+
+        return decode_to_rgb(data, meta, limits=resolved_limits)
     bpc = int(meta.get("bpc") or 8)
     kind = meta.get("cs_kind") or "rgb"
     comps = int(meta.get("n_comps") or (1 if kind == "gray" else 3))

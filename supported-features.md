@@ -736,8 +736,8 @@ Supported:
 - Encode bytes back into stream data with the matching `StreamEncoder`
   (`aspose_pdf.engine.filters`): Flate, LZW, ASCII85, ASCIIHex and RunLength
   round-trip exactly with the decoder; image codecs are not re-encoded.
-- Decode JPX/JPEG 2000 when Pillow is installed; otherwise JPX decoding fails
-  explicitly.
+- Decode JPX/JPEG 2000 with the bundled pure-Python decoder, or with Pillow
+  (much faster) when the `images` extra is installed.
 - Preserve image dimensions (`/Width`, `/Height`) through save/load round trips.
 - Lazily load image payloads in streaming/lazy document workflows.
 - Use `ImagePlacementAbsorber` to collect image placements from a `SimplePdf`,
@@ -758,10 +758,10 @@ Supported:
   **dependency-free** decoder (`aspose_pdf.engine.dct`): grayscale, YCbCr/RGB and
   CMYK/YCCK (4-component, with Adobe de-inversion), any chroma subsampling, and
   restart intervals. Image export uses it to produce a real PNG from such JPEGs
-  even when Pillow is absent. Only JPX/JPEG 2000 still needs the optional
-  `images` extra (`pip install aspose-pdf-foss-for-python[images]`, Pillow);
-  without Pillow a JPX image keeps its original encoded bytes (`.jp2`).
-  Arithmetic-coded JPEG is also Pillow-only.
+  even when Pillow is absent. **JPEG 2000 is decoded without Pillow too**
+  (`aspose_pdf.engine.jpeg2000`); the optional `images` extra
+  (`pip install aspose-pdf-foss-for-python[images]`) is now a speed choice
+  rather than a capability one. Arithmetic-coded JPEG remains Pillow-only.
 - Read reconstruction metadata from an `ImagePlacement`: `width`, `height`,
   `bits_per_component`, and `color_space`.
 - Replace or hide an `ImagePlacement` payload in memory.
@@ -794,6 +794,10 @@ Supported:
 
 Boundaries:
 
+- A JPEG 2000 image the decoder cannot read is **not drawn**. An undecodable
+  filter leaves the compressed bytes in the stream, and painting those as if
+  they were samples produces a page of noise; the renderer decodes the
+  codestream itself or leaves the area untouched.
 - `Page.add_image()` accepts raw samples, JPEG, and **PNG** at every bit depth
   and colour type ISO 15948 allows — 1/2/4/8/16 bits, greyscale, truecolour,
   palette and their alpha forms — progressive or **Adam7 interlaced**. Samples
@@ -807,11 +811,17 @@ Boundaries:
   (progressive is spectral-selection only, without successive approximation);
   resampling is box-average downscaling (no upscaling), with an optional DPI
   target driven by on-page placement size (see Optimization).
-- JPX/JPEG 2000 page-render painting still depends on optional Pillow decode
-  availability; arithmetic-coded JPEG remains unsupported by the pure-Python
-  raster path.
-- JPX/JPEG 2000 decoding requires the optional Pillow extra; there is no
-  pure-Python JPX decoder.
+- **JPEG 2000 (`/JPXDecode`) decodes without any optional dependency.** The
+  bundled decoder covers the JP2 container and the bare codestream, tier-2
+  packet decoding (tag trees, every progression order, precincts, multiple
+  quality layers, tiles), the EBCOT tier-1 block decoder over the MQ arithmetic
+  coder, both wavelets (5/3 reversible and 9/7 irreversible), the reversible
+  and irreversible colour transforms, and component subsampling. The reversible
+  path is lossless and reproduces the encoder's input exactly; the irreversible
+  path is floating point and agrees with OpenJPEG to within a step or two per
+  channel. Pillow is still used when installed, being several hundred times
+  faster on a full-page scan.
+- Arithmetic-coded JPEG remains unsupported by the pure-Python raster path.
 
 ## Forms
 
@@ -1124,6 +1134,15 @@ Supported:
 
 Boundaries:
 
+- The bundled JPEG 2000 decoder is pure Python and therefore slow: roughly a
+  second per 100k pixels, so a 300 dpi A4 scan takes minutes. Install the
+  `images` extra (Pillow/OpenJPEG) for anything larger than a thumbnail; the
+  built-in decoder is what makes the default install *work*, not what makes it
+  fast. It also declines rather than guesses on the parts of ISO 15444-1 it
+  does not implement: packed packet headers (`PPM`/`PPT`), progression order
+  changes (`POC`) and regions of interest (`RGN`) each raise. Output is
+  normalised to 8 bits per component, so a 12- or 16-bit codestream is scaled
+  down rather than returned at its own depth.
 - Public-key encryption covers **RSA** recipients. A certificate carrying an
   EC or DSA key cannot transport a wrapped key and is rejected; key-agreement
   recipients (`kari`), password recipients (`pwri`) and `kekri` are not opened,

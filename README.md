@@ -82,6 +82,9 @@ flowchart TD
 - `Document.replace_text()` and `Document.redact_text()` rewrite or remove matched text directly
   inside existing content streams; `redact_text(..., overlay=True)` also draws a filled bar over
   each removed run's location.
+- JPEG 2000 (`/JPXDecode`) images — what scanners emit — decode with a bundled pure-Python
+  decoder, so a default install reads them. Pillow is used when present because it is far faster;
+  an image neither can decode is left undrawn rather than painted as noise.
 - `Page.render()` and `Page.save_as_image()` rasterize a page to PNG, TIFF, or JPEG through a
   bundled renderer — no third-party rasterization library required for the core path — that fills
   real glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh
@@ -145,7 +148,8 @@ Optional extras add:
 python -m pip install -e '.[images,woff2,text-layout]'
 ```
 
-- `images` — Pillow-based image support (JPX/JPEG 2000 decoding, arithmetic-coded JPEG).
+- `images` — Pillow-accelerated JPEG 2000 decoding (the bundled decoder handles it without
+  Pillow, just far more slowly) and arithmetic-coded JPEG.
 - `woff2` — Brotli-based WOFF2 web-font decoding.
 - `text-layout` — HarfBuzz/`python-bidi`/`fonttools`-based complex-text shaping for
   `TextLayoutOptions`.
@@ -159,7 +163,7 @@ python -m pip install -e '.[images,woff2,text-layout]'
 
 ### Optional Dependencies
 
-- `Pillow` >=10 — enables the `images` extra (JPX/JPEG 2000 decoding, arithmetic-coded JPEG).
+- `Pillow` >=10 — enables the `images` extra (fast JPEG 2000 decoding, arithmetic-coded JPEG).
 - `Brotli` >=1.0 — enables the `woff2` extra (WOFF2 web-font decoding).
 - `uharfbuzz` >=0.37 — enables the `text-layout` extra (HarfBuzz-driven complex-text shaping).
 - `python-bidi` >=0.6 — enables the `text-layout` extra (Unicode bidi runs).
@@ -792,9 +796,13 @@ and delete workflows. 235 public types are organized by module below.
   `SvgLoadOptions` are rejected as a load source, and `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`/`SVG`,
   `HtmlSaveOptions`, and `MarkdownSaveOptions` are rejected by `Document.save()` — both raise
   `UnsupportedFeatureException` rather than silently doing nothing.
-- WOFF2 decoding, JPX/JPEG 2000 decoding, and complex-text shaping each need an optional extra
-  (`woff2`, `images`, and `text-layout` respectively); without them these paths fall back to
-  file-name metadata or fail explicitly.
+- WOFF2 decoding and complex-text shaping each need an optional extra (`woff2` and
+  `text-layout`); without them these paths fall back to file-name metadata or fail explicitly.
+- The bundled JPEG 2000 decoder is pure Python and slow — roughly a second per 100k pixels, so a
+  300 dpi page takes minutes. Install the `images` extra for anything larger than a thumbnail. It
+  raises rather than guesses on the parts of ISO 15444-1 it does not implement (packed packet
+  headers, progression order changes, regions of interest) and normalises output to 8 bits per
+  component.
 - The same `limits=` argument accepted by `Document()` is also accepted by
   `Document.load_from()` and `Document.open_streaming()`, and `PdfLoadLimits.unlimited()`
   disables every safeguard — reserve it for trusted input backed by external process, memory,
