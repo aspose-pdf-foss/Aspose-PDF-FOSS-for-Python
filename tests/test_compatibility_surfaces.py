@@ -55,7 +55,8 @@ _SAVE_PLACEHOLDERS: tuple[tuple[Callable[[], Any], str], ...] = (
     (lambda: SaveFormat.PPTX, "PPTX export"),
     (lambda: DocFormat.HTML, "HTML export"),
     (lambda: DocFormat.MARKDOWN, "Markdown export"),
-    (lambda: DocFormat.SVG, "SVG export"),
+    # DocFormat.SVG is no longer a placeholder -- it writes real SVG; see
+    # tests/test_svg_export.py.
     (HtmlSaveOptions, "HTML export"),
     (MarkdownSaveOptions, "Markdown export"),
     (PrinterSettings, "printing"),

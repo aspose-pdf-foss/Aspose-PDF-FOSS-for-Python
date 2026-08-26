@@ -403,6 +403,14 @@ Boundaries:
   extraction. **Vertical CMaps** (`WMode 1`, bundled or embedded) now position
   correctly: each glyph is offset by its `/W2` (or `/DW2`) position vector and
   the text advances downward by the vertical displacement.
+- SVG export writes **polylines, not curves**: the renderer flattens Béziers
+  while building a path, so that is what reaches the exporter. Text is glyph
+  outlines, which renders exactly and needs no embedded font, but is not
+  selectable or searchable. A shading SVG has no gradient for -- function-based
+  and mesh -- is sampled into an embedded image rather than dropped, as are
+  soft-masked images (through an SVG `<mask>`). Blend modes, transparency
+  groups and knockout are not expressed; the affected content is drawn without
+  them. SVG has no multi-page model, so a document becomes one file per page.
 - `GraphicsAbsorber` reports geometry, not paint: text runs (use
   `TextFragmentAbsorber`), inline images (`BI`/`ID`/`EI`) and `sh` shading
   fills are not collected, a path's box covers its geometry without the stroke
@@ -410,6 +418,14 @@ Boundaries:
   space is reported as `None` rather than approximated. The collection it
   returns is an in-memory container: adding or removing elements never changes
   the page.
+- **Export a page as SVG** with `Page.to_svg()` / `Page.save_as_svg()`,
+  `Document.save_as_svg()` or `Document.save(path, DocFormat.SVG)`. The
+  exporter *is* the renderer: it subclasses the rasterizer and replaces only
+  the places that put marks on a canvas, so the two agree on geometry by
+  construction. Paths keep their fill rule (including even-odd, which the
+  raster path drops), strokes carry width, dash pattern, cap and join, clips
+  become `<clipPath>`, text becomes glyph outlines, images become embedded
+  PNGs placed by their matrix, and axial/radial shadings become SVG gradients.
 - Layout reflow remains out of scope.
 
 ## Optional Content (Layers)
@@ -1431,14 +1447,14 @@ with Document("input.pdf") as document:
 | Surface | Names | Behaviour |
 | --- | --- | --- |
 | Non-PDF import | `CdrLoadOptions`, `CgmLoadOptions`, `HtmlLoadOptions`, `OfdLoadOptions`, `SvgLoadOptions` (both `aspose_pdf.load_options` and `aspose_pdf.svg`) | Rejected as the `source` or `options` argument of `Document(...)` and `Document.load_from(...)`. |
-| Non-PDF export | `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`/`SVG`, `HtmlSaveOptions`, `MarkdownSaveOptions` | Rejected by `Document.save(destination, save_format)` before anything is written to the path or stream. |
+| Non-PDF export | `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`, `HtmlSaveOptions`, `MarkdownSaveOptions` | Rejected by `Document.save(destination, save_format)` before anything is written to the path or stream. (`DocFormat.SVG` is implemented — see [Pages](#pages).) |
 | Printing | `Duplex`, `PrintRange`, `PrinterSettings` | No print operation exists; `PrinterSettings` is rejected by `Document.save`. |
 | LaTeX | `LatexFragment` | Rejected as a load source; no LaTeX authoring or import path exists. |
 | Presentation drawing model | `FillMode`, `IMatrix`, `IPath` in `aspose_pdf.presentation` | Inert value objects. They accumulate path data that nothing consumes and are not connected to page authoring or rendering. |
 | Instrumentation | `PerformanceLogger`, `VirtualizationPerformance` in `aspose_pdf.visualization` | Working stopwatch helpers, but nothing in the package feeds them and they do not virtualise or accelerate rendering. (`RasterizedPage`, re-exported from the same module, is the real render result.) |
 
-`Document.save` accepts `None` (the default), `SaveFormat.PDF`, or
-`DocFormat.PDF`. `aspose_pdf.clustering` is a self-contained hierarchical
+`Document.save` accepts `None` (the default), `SaveFormat.PDF`,
+`DocFormat.PDF`, or `DocFormat.SVG`. `aspose_pdf.clustering` is a self-contained hierarchical
 clustering utility, not a PDF feature.
 
 - Runtime package code does not use LLM services, API keys, or `.env` secrets.

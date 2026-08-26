@@ -9,6 +9,28 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Pages export as SVG.** `DocFormat.SVG` was a placeholder that raised.
+  `Page.to_svg()`, `Page.save_as_svg()`, `Document.save_as_svg()` and
+  `Document.save(path, DocFormat.SVG)` now write real vectors. The exporter
+  subclasses the rasterizer and replaces only its paint sinks, so every
+  operator, transform and resource lookup is the same code that renders the
+  page -- which is what keeps the two outputs agreeing. Paths carry their fill
+  rule, strokes their width, dash pattern, cap and join, clips become
+  `<clipPath>`, text becomes glyph outlines, images embedded PNGs placed by
+  their matrix, and axial/radial shadings SVG gradients; a mesh or
+  function shading is sampled into an image rather than dropped. Verified by
+  rendering the output with cairo and comparing against this library's own
+  raster.
+
+### Fixed
+
+- **`Q` restores the clipping path.** The renderer intersected one global mask
+  and never gave it back, so everything after a `q … W n … Q` stayed clipped to
+  a region that had already ended -- which is most documents with a figure in
+  them. The clip is graphics state (ISO 32000-1 8.4.4) and is now saved and
+  restored with it, at no copying cost: `q` stacks a reference and the clip
+  builder makes a new mask instead of editing in place.
+
 - **JPEG 2000 decodes without Pillow.** `/JPXDecode` needed the optional
   `images` extra, and without it the filter raised, the stream decoder fell
   back to handing the *raw codestream* to its caller, and the rasterizer

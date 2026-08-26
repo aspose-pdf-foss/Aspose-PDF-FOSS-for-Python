@@ -733,6 +733,8 @@ class _PageRasterizer:
         self.page_height_pts = page_h
         self.background = _coerce_rgb(background)
         self.canvas = _Canvas(self.width, self.height, self.background)
+        # Clip masks saved by ``q`` and restored by ``Q``.
+        self._clip_stack: list[bytearray] = []
         self.state = _GraphicsState()
         self.state_stack: list[_GraphicsState] = []
         self.path = _Path()
@@ -1078,10 +1080,17 @@ class _PageRasterizer:
                 op = "n"
         if op == "q":
             self.state_stack.append(copy.deepcopy(self.state))
+            # The clipping path is part of the graphics state (ISO 32000-1
+            # 8.4.4), so it has to come back at the matching Q. Only the
+            # reference is stacked: ``_apply_clip`` builds a new mask rather
+            # than mutating this one, so nothing is copied here.
+            self._clip_stack.append(self.canvas.clip)
             return
         if op == "Q":
             if self.state_stack:
                 self.state = self.state_stack.pop()
+            if self._clip_stack:
+                self.canvas.clip = self._clip_stack.pop()
             return
         if op == "cm" and len(operands) >= 6:
             vals = _last_numbers(operands, 6)
@@ -1872,8 +1881,12 @@ class _PageRasterizer:
         for subpath in subpaths:
             polygon = [self._user_to_pixel(x, y) for x, y in subpath]
             self._rasterize_clip_polygon(polygon, next_clip)
-        for i, val in enumerate(next_clip):
-            self.canvas.clip[i] = 1 if self.canvas.clip[i] and val else 0
+        # A *new* mask, never an in-place edit: the outer graphics states on
+        # the stack still hold the previous one and must keep seeing it.
+        current = self.canvas.clip
+        self.canvas.clip = bytearray(
+            1 if current[i] and val else 0 for i, val in enumerate(next_clip)
+        )
 
     def _rasterize_clip_polygon(self, polygon: list[Point], mask: bytearray) -> None:
         if len(polygon) < 3:

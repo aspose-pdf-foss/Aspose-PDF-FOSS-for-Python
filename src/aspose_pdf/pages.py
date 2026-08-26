@@ -339,6 +339,64 @@ class Page:
             font_substitution=font_substitution,
         )
 
+    def to_svg(
+        self,
+        *,
+        background: tuple[int, int, int] | None = (255, 255, 255),
+        draw_annotations: bool = True,
+        font_substitution: Any = None,
+        precision: int = 3,
+    ) -> str:
+        """Return this page as an SVG document.
+
+        The page is interpreted by the same code that renders it, so what the
+        SVG says and what :meth:`render` draws agree. Paths, clips, text (as
+        glyph outlines), images and axial/radial shadings become vector
+        elements; a construct SVG cannot express -- a mesh or function shading
+        -- is sampled into an embedded image rather than dropped.
+
+        ``background`` paints an opaque page behind the content; pass ``None``
+        for a transparent SVG. ``precision`` is the number of decimal places
+        coordinates are written with, trading file size against exactness.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine.svg_export import page_to_svg
+
+        return page_to_svg(
+            eng,
+            self._index,
+            background=background,
+            draw_annotations=draw_annotations,
+            font_substitution=font_substitution,
+            precision=precision,
+        )
+
+    def save_as_svg(
+        self,
+        path: str | Path,
+        *,
+        background: tuple[int, int, int] | None = (255, 255, 255),
+        draw_annotations: bool = True,
+        font_substitution: Any = None,
+        precision: int = 3,
+    ) -> Path:
+        """Write this page to *path* as SVG and return the path."""
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            self.to_svg(
+                background=background,
+                draw_annotations=draw_annotations,
+                font_substitution=font_substitution,
+                precision=precision,
+            ),
+            encoding="utf-8",
+        )
+        return target
+
     def save_as_image(
         self,
         path: str | Path,

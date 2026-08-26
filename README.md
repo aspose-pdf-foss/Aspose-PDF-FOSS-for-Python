@@ -82,6 +82,10 @@ flowchart TD
 - `Document.replace_text()` and `Document.redact_text()` rewrite or remove matched text directly
   inside existing content streams; `redact_text(..., overlay=True)` also draws a filled bar over
   each removed run's location.
+- `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
+  fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. The
+  exporter is the renderer with its paint sinks replaced, so the SVG and the rasterized page agree
+  on geometry by construction.
 - JPEG 2000 (`/JPXDecode`) images — what scanners emit — decode with a bundled pure-Python
   decoder, so a default install reads them. Pillow is used when present because it is far faster;
   an image neither can decode is left undrawn rather than painted as noise.
@@ -253,6 +257,16 @@ with Document("report.pdf") as document:
 # Opening needs the certificate and its private key, not a password.
 with Document("report-sealed.pdf", certificate=auditor, private_key=key) as doc:
     print(doc.page_count, doc.permissions)
+```
+
+### Export a Page as SVG
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    document.pages[0].save_as_svg("page-1.svg")
+    document.save_as_svg("report.svg")  # one file per page: report-1.svg, ...
 ```
 
 ### Render a Page Whose Fonts Are Not Embedded
@@ -670,7 +684,8 @@ and delete workflows. 235 public types are organized by module below.
     `redact_text(search, page_index, case_sensitive, max_count, overlay, overlay_color) -> int`
   - `render_page(page_index, dpi, scale, background, antialias, shape_substitute_text, draw_annotations, font_substitution) -> RasterizedPage` /
     `save_page_as_image(page_index, destination, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path` /
-    `save_as_tiff(destination, pages, dpi, scale, background, antialias, mode, compression, threshold) -> Path`
+    `save_as_tiff(destination, pages, dpi, scale, background, antialias, mode, compression, threshold) -> Path` /
+    `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision) -> list[Path]`
   - `flatten() -> Document` / `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
@@ -688,6 +703,8 @@ and delete workflows. 235 public types are organized by module below.
     `draw_line(x1, y1, x2, y2, stroke_color, line_width, tag, alt, actual_text) -> Page`
   - `render(dpi, scale, background, antialias, shape_substitute_text, draw_annotations, font_substitution) -> RasterizedPage` /
     `save_as_image(path, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path`
+  - `to_svg(background, draw_annotations, font_substitution, precision) -> str` /
+    `save_as_svg(path, ...) -> Path`
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - properties: `index`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`,
@@ -793,9 +810,14 @@ and delete workflows. 235 public types are organized by module below.
   draws glyph boxes.
 - Several compatibility surfaces exist only to keep ported code importable and carry no
   implementation: `CdrLoadOptions`, `CgmLoadOptions`, `HtmlLoadOptions`, `OfdLoadOptions`, and
-  `SvgLoadOptions` are rejected as a load source, and `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`/`SVG`,
+  `SvgLoadOptions` are rejected as a load source, and `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`,
   `HtmlSaveOptions`, and `MarkdownSaveOptions` are rejected by `Document.save()` — both raise
-  `UnsupportedFeatureException` rather than silently doing nothing.
+  `UnsupportedFeatureException` rather than silently doing nothing. (`DocFormat.SVG` is no longer
+  among them; SVG export is implemented.)
+- SVG export writes polylines rather than curves (the renderer flattens Béziers as it builds a
+  path) and text as glyph outlines, which renders exactly but is not selectable. Blend modes and
+  transparency groups are not expressed; mesh and function shadings are sampled into an embedded
+  image.
 - WOFF2 decoding and complex-text shaping each need an optional extra (`woff2` and
   `text-layout`); without them these paths fall back to file-name metadata or fail explicitly.
 - The bundled JPEG 2000 decoder is pure Python and slow — roughly a second per 100k pixels, so a

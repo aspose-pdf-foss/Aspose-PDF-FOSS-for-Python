@@ -55,6 +55,14 @@ if TYPE_CHECKING:
     from aspose_pdf.xmp import XmpPacket
 
 
+def _is_svg_save_format(value: Any) -> bool:
+    """True when *value* asks for SVG output rather than PDF."""
+    if value is None:
+        return False
+    name = getattr(value, "name", None) or getattr(value, "value", None)
+    return isinstance(name, str) and name.upper() == "SVG"
+
+
 def _coerce_credential(certificate: Any, private_key: Any) -> tuple[Any, Any] | None:
     """Validate a recipient credential pair for a public-key document."""
     if certificate is None and private_key is None:
@@ -723,6 +731,61 @@ class Document:
             threshold=threshold,
         )
 
+    def save_as_svg(
+        self,
+        destination: str | Path,
+        *,
+        pages: Sequence[int] | None = None,
+        background: tuple[int, int, int] | None = (255, 255, 255),
+        draw_annotations: bool = True,
+        font_substitution: FontSubstitutionOptions | None = None,
+        precision: int = 3,
+    ) -> list[Path]:
+        """Write pages as SVG and return the files written.
+
+        SVG has no notion of a multi-page document, so each page becomes its
+        own file. One page writes exactly *destination*; several write
+        ``name-1.svg``, ``name-2.svg`` … beside it, numbered by the page's
+        position in the document rather than in *pages*, so the file names
+        still say which page they came from.
+
+        See :meth:`~aspose_pdf.pages.Page.to_svg` for what the conversion does
+        and does not turn into vectors.
+
+        Returns
+        -------
+        list[Path]
+            The files written, in the order the pages were selected.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        indexes = (
+            list(range(self.page_count)) if pages is None else [int(i) for i in pages]
+        )
+        if not indexes:
+            raise PdfValidationException("Saving SVG needs at least one page")
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        written: list[Path] = []
+        for index in indexes:
+            if len(indexes) == 1:
+                path = target
+            else:
+                path = target.with_name(
+                    f"{target.stem}-{index + 1}{target.suffix or '.svg'}"
+                )
+            written.append(
+                self.pages[index].save_as_svg(
+                    path,
+                    background=background,
+                    draw_annotations=draw_annotations,
+                    font_substitution=font_substitution,
+                    precision=precision,
+                )
+            )
+        return written
+
     def save_as_tiff(
         self,
         destination: str | Path,
@@ -1264,6 +1327,14 @@ class Document:
             Nothing is written to *destination* in that case.
         """
         self._ensure_not_disposed()
+        if _is_svg_save_format(save_format):
+            if hasattr(destination, "write"):
+                raise PdfValidationException(
+                    "SVG output needs a file path, not a stream: a document "
+                    "with several pages becomes several files"
+                )
+            self.save_as_svg(destination)
+            return self
         _require_pdf_save_format(save_format)
 
         # Sync the in-memory outline collection back to the engine before writing

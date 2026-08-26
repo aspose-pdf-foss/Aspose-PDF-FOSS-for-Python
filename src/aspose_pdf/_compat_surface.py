@@ -45,7 +45,6 @@ _UNSUPPORTED_TYPES: dict[str, str] = {
 _UNSUPPORTED_MEMBERS: dict[tuple[str, str], str] = {
     ("DocFormat", "HTML"): "HTML export",
     ("DocFormat", "MARKDOWN"): "Markdown export",
-    ("DocFormat", "SVG"): "SVG export",
     ("SaveFormat", "PPTX"): "PPTX export",
 }
 
