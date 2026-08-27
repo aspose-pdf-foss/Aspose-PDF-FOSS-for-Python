@@ -45,12 +45,17 @@ class GraphicElement:
 
     @property
     def kind(self) -> str:
-        """``"path"`` for a painted path, ``"image"`` for a placed image."""
+        """What put the mark on the page.
+
+        ``"path"`` for a painted path, ``"image"`` for a placed image (an
+        XObject or an inline ``BI``/``EI`` one), ``"text"`` for a shown run,
+        and ``"shading"`` for an ``sh`` fill.
+        """
         return self._element.kind
 
     @property
     def operation(self) -> str | None:
-        """How a path was painted: ``fill``, ``stroke``, ``fill_stroke`` or ``clip``.
+        """How the mark was made: ``fill``, ``stroke``, ``fill_stroke`` or ``clip``.
 
         ``None`` for an image.
         """
@@ -174,11 +179,14 @@ class GraphicsAbsorber:
 
     Visiting a page (or a whole document) walks the content stream, tracking
     the graphics state through ``q``/``Q``/``cm`` and descending into form
-    XObjects, and collects one element per painted path and per placed image.
+    XObjects, and collects one element per mark it puts on the page: painted
+    paths, placed images (XObject and inline alike), shown text runs and ``sh``
+    shading fills.
 
-    Text is not collected -- :class:`~aspose_pdf.text.TextFragmentAbsorber`
-    covers that -- and neither are inline images (``BI``/``ID``/``EI``) or
-    shading fills painted with ``sh``.
+    A text element carries the box the glyphs occupy, measured with the
+    renderer's own font metrics, and its resource name -- for the text
+    *itself*, use :class:`~aspose_pdf.text.TextFragmentAbsorber`. Text in
+    rendering mode 3 or 7 puts nothing on the page and is not collected.
 
     Example
     -------

@@ -16,7 +16,7 @@ from typing import Any
 from aspose_pdf.exceptions import PdfParseException, PdfResourceLimitException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
-from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
+from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream, PdfString
 
 __all__ = ["Shading", "build_color_converter", "build_shading"]
 
@@ -126,6 +126,28 @@ def _color_converter(
             return lambda comps, _c=count: _components_to_rgb(
                 comps[:_c] if len(comps) >= _c else comps
             )
+        if head_name in ("Indexed", "I") and len(cs.items) >= 4:
+            # Indexed is not a shading space, but it *is* a fill space: an
+            # `scn` operand is a palette index, not a colour component, and
+            # feeding it to the generic path reads it as a grey level.
+            base = _color_converter(
+                pdf, cs.items[1], limits=limits, budget=budget, seen=nested_seen
+            )
+            base_count = _color_component_count(pdf, cs.items[1])
+            palette = _indexed_palette(pdf, cs.items[3])
+            hival = int(_num(pdf, cs.items[2]) or 0)
+
+            def indexed(comps, _base=base, _n=base_count, _p=palette, _h=hival):
+                if not comps or not _p:
+                    return (0, 0, 0)
+                index = int(max(0, min(_h, round(comps[0]))))
+                start = index * _n
+                entry = _p[start : start + _n]
+                if len(entry) < _n:
+                    return (0, 0, 0)
+                return _base([value / 255.0 for value in entry])
+
+            return indexed
         if head_name == "Separation" and len(cs.items) >= 4:
             alternate = _color_converter(
                 pdf,
@@ -206,6 +228,25 @@ def build_color_converter(
 ):
     """Build a bounded converter from PDF colour components to device RGB."""
     return _color_converter(pdf, cs_obj, limits=limits, budget=budget)
+
+
+def _indexed_palette(pdf: Any, lookup_obj: Any) -> bytes:
+    """The lookup table of an ``/Indexed`` space, as raw bytes."""
+    lookup = pdf._resolve(lookup_obj)
+    if isinstance(lookup, PdfString):
+        raw = lookup.value
+        return raw if isinstance(raw, bytes) else str(raw).encode("latin-1")
+    if isinstance(lookup, PdfStream):
+        decoder = getattr(pdf, "_decode_cos_stream", None)
+        if callable(decoder):
+            try:
+                return decoder(lookup, lookup_obj)
+            except PdfResourceLimitException:
+                raise
+            except Exception:
+                return lookup.content
+        return lookup.content
+    return b""
 
 
 def _color_component_count(pdf: Any, cs_obj: Any) -> int:

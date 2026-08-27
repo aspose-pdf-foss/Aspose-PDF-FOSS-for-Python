@@ -118,20 +118,47 @@ def test_authored_shapes_are_absorbed_with_their_geometry() -> None:
     assert _rect(elements[0]) == (100.0, 100.0, 200.0, 50.0)
     assert elements[0].fill_color == (1.0, 0.0, 0.0)
     assert elements[0].line_width is None
-    assert _rect(elements[1]) == (50.0, 700.0, 450.0, 0.0)
+    # A 3pt stroke straddles the line: the box grows by half its width on
+    # every side, so it covers the ink rather than the bare geometry.
+    assert _rect(elements[1]) == (48.5, 698.5, 453.0, 3.0)
     assert elements[1].stroke_color == (0.0, 0.0, 1.0)
     assert elements[1].line_width == pytest.approx(3.0)
 
 
-def test_text_is_not_collected() -> None:
-    """Text belongs to TextFragmentAbsorber; the graphics absorber ignores it."""
+def test_text_is_collected_with_the_box_the_glyphs_occupy() -> None:
+    """Text runs are elements too, measured with the renderer's own metrics."""
     document = Document()
     page = document.pages.add()
-    page.add_text("nothing to absorb here", 72, 400)
+    page.add_text("Hi", 72, 400, font_size=20)
 
     elements = _absorb(page)
     document.dispose()
-    assert elements == []
+
+    assert [element.kind for element in elements] == ["text"]
+    element = elements[0]
+    assert element.resource_name == "F1"
+    assert element.fill_color == (0.0, 0.0, 0.0)
+    x, y, width, height = _rect(element)
+    assert x == 72.0
+    # Helvetica ascent/descent put the box around the baseline at y=400.
+    assert y == pytest.approx(395.0, abs=0.5)
+    assert height == pytest.approx(20.0, abs=0.5)
+    assert 10.0 < width < 30.0
+
+
+def test_text_width_comes_from_real_glyph_advances() -> None:
+    """Ten narrow glyphs and ten wide ones must not measure the same."""
+    document = Document()
+    page = document.pages.add()
+    page.add_text("iiiiiiiiii", 72, 700, font_size=20)
+    page.add_text("MMMMMMMMMM", 72, 650, font_size=20)
+
+    narrow, wide = _absorb(page)
+    document.dispose()
+
+    # Helvetica: 'i' is 222/1000 em, 'M' is 833/1000.
+    assert narrow.rectangle.width == pytest.approx(44.4, abs=0.2)
+    assert wide.rectangle.width == pytest.approx(166.6, abs=0.2)
 
 
 def test_placed_image_reports_its_placement(tmp_path: Path) -> None:
@@ -169,9 +196,10 @@ def test_curve_bounds_are_exact_not_the_control_hull() -> None:
 
     assert len(elements) == 1
     x, y, width, height = _rect(elements[0])
-    assert (x, width) == (0.0, 300.0)
-    assert y == pytest.approx(-86.603, abs=0.01)
-    assert height == pytest.approx(173.205, abs=0.01)
+    # The default 1pt stroke adds half a point on each side of the curve's box.
+    assert (x, width) == (-0.5, 301.0)
+    assert y == pytest.approx(-87.103, abs=0.01)
+    assert height == pytest.approx(174.205, abs=0.01)
 
 
 def test_form_xobject_composes_its_matrix_with_the_placement() -> None:
@@ -276,12 +304,153 @@ def test_device_components_through_scn_are_reported() -> None:
     assert elements[0].fill_color == pytest.approx((1.0, 0.0, 0.0))
 
 
-def test_non_device_colour_is_reported_as_unknown() -> None:
-    """A pattern or Separation colour is not guessed at."""
+def test_a_pattern_colour_is_still_reported_as_unknown() -> None:
+    """A pattern has no single colour, so none is invented."""
     content = b"/Pattern cs /P1 scn 0 0 1 1 re f"
     with Document(io.BytesIO(_page_with_content(content))) as document:
         elements = _absorb(document.pages[0])
     assert elements[0].fill_color is None
+
+
+def test_an_iccbased_colour_is_resolved_through_its_component_count() -> None:
+    """ICCBased used to report nothing; its N says how to read the components."""
+    resources = (
+        b"<< /ColorSpace << /CS0 [/ICCBased 5 0 R] >> >>"
+    )
+    data = _raw_pdf(
+        {
+            1: b"<< /Type /Catalog /Pages 2 0 R >>",
+            2: b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources "
+            + resources
+            + b" /Contents 4 0 R >>",
+            4: _stream_object(b"<< >>", b"/CS0 cs 1 0 0 scn 0 0 10 10 re f"),
+            5: _stream_object(b"<< /N 3 >>", b""),
+        }
+    )
+    with Document(io.BytesIO(data)) as document:
+        elements = _absorb(document.pages[0])
+
+    assert elements[0].fill_color == pytest.approx((1.0, 0.0, 0.0), abs=0.01)
+
+
+def test_an_indexed_colour_is_looked_up_in_its_palette() -> None:
+    palette = b"\xff\x00\x00\x00\x00\xff"  # entry 0 red, entry 1 blue
+    resources = b"<< /ColorSpace << /CS0 [/Indexed /DeviceRGB 1 5 0 R] >> >>"
+    data = _raw_pdf(
+        {
+            1: b"<< /Type /Catalog /Pages 2 0 R >>",
+            2: b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources "
+            + resources
+            + b" /Contents 4 0 R >>",
+            4: _stream_object(b"<< >>", b"/CS0 cs 1 scn 0 0 10 10 re f"),
+            5: _stream_object(b"<< >>", palette),
+        }
+    )
+    with Document(io.BytesIO(data)) as document:
+        elements = _absorb(document.pages[0])
+
+    assert elements[0].fill_color == pytest.approx((0.0, 0.0, 1.0), abs=0.01)
+
+
+def test_the_renderer_paints_an_indexed_fill_with_its_palette_colour() -> None:
+    """The same gap, seen through the renderer the absorber borrows metrics from.
+
+    ``/Indexed`` is not a shading space, so the shared converter had no branch
+    for it and read the palette *index* as a grey level -- index 1 came out
+    white instead of the colour it names.
+    """
+    palette = b"\xff\x00\x00\x00\x00\xff"  # entry 0 red, entry 1 blue
+    data = _raw_pdf(
+        {
+            1: b"<< /Type /Catalog /Pages 2 0 R >>",
+            2: b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 40] /Resources "
+            b"<< /ColorSpace << /CS0 [/Indexed /DeviceRGB 1 5 0 R] >> >> "
+            b"/Contents 4 0 R >>",
+            4: _stream_object(b"<< >>", b"/CS0 cs 1 scn 0 0 40 40 re f"),
+            5: _stream_object(b"<< >>", palette),
+        }
+    )
+    with Document(io.BytesIO(data)) as document:
+        raster = document.pages[0].render(antialias=False)
+
+    assert raster.get_pixel(20, 20) == (0, 0, 255)
+
+
+# ---------------------------------------------------------------------------
+# Everything else that puts marks on the page
+# ---------------------------------------------------------------------------
+def test_an_sh_shading_covers_the_clip_it_paints() -> None:
+    """``sh`` fills the current clip region; that is its extent."""
+    shading = (
+        b"<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] "
+        b"/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] "
+        b"/N 1 >> >>"
+    )
+    data = _raw_pdf(
+        {
+            1: b"<< /Type /Catalog /Pages 2 0 R >>",
+            2: b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources "
+            b"<< /Shading << /Sh0 5 0 R >> >> /Contents 4 0 R >>",
+            4: _stream_object(b"<< >>", b"q 20 30 100 40 re W n /Sh0 sh Q"),
+            5: shading,
+        }
+    )
+    with Document(io.BytesIO(data)) as document:
+        elements = _absorb(document.pages[0])
+
+    shading_elements = [e for e in elements if e.kind == "shading"]
+    assert len(shading_elements) == 1
+    assert shading_elements[0].resource_name == "Sh0"
+    assert _rect(shading_elements[0]) == (20.0, 30.0, 100.0, 40.0)
+
+
+def test_an_sh_without_a_clip_covers_the_page() -> None:
+    shading = (
+        b"<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] "
+        b"/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] "
+        b"/N 1 >> >>"
+    )
+    data = _raw_pdf(
+        {
+            1: b"<< /Type /Catalog /Pages 2 0 R >>",
+            2: b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources "
+            b"<< /Shading << /Sh0 5 0 R >> >> /Contents 4 0 R >>",
+            4: _stream_object(b"<< >>", b"/Sh0 sh"),
+            5: shading,
+        }
+    )
+    with Document(io.BytesIO(data)) as document:
+        elements = _absorb(document.pages[0])
+
+    assert _rect(elements[0]) == (0.0, 0.0, 300.0, 300.0)
+
+
+def test_an_inline_image_is_collected_like_a_placed_one() -> None:
+    """``BI`` … ``EI`` puts an image on the page without any XObject."""
+    content = (
+        b"q 60 0 0 40 20 30 cm BI /W 2 /H 2 /CS /G /BPC 8 ID \x00\xff\x80\x40 EI Q"
+    )
+    with Document(io.BytesIO(_page_with_content(content))) as document:
+        elements = _absorb(document.pages[0])
+
+    images = [e for e in elements if e.kind == "image"]
+    assert len(images) == 1
+    assert images[0].resource_name is None
+    assert _rect(images[0]) == (20.0, 30.0, 60.0, 40.0)
+
+
+def test_invisible_text_puts_nothing_on_the_page() -> None:
+    """Rendering mode 3 shows nothing, so there is no mark to report."""
+    content = b"BT /F1 12 Tf 3 Tr 10 10 Td (hidden) Tj ET"
+    with Document(io.BytesIO(_page_with_content(content))) as document:
+        elements = _absorb(document.pages[0])
+
+    assert elements == []
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +466,8 @@ def test_visiting_a_document_covers_every_page() -> None:
     document.dispose()
 
     assert [element.page_index for element in elements] == [0, 1, 2]
-    assert _rect(elements[2])[0] == 30.0
+    # draw_rectangle strokes by default, so the box includes the stroke width.
+    assert _rect(elements[2])[0] == 29.5
 
 
 def test_visit_replaces_the_previous_result() -> None:

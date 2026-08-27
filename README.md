@@ -429,9 +429,9 @@ and delete workflows. 235 public types are organized by module below.
 | `FontSource` | Base class for external font providers. |
 | `Form` | Represents an interactive form (AcroForm) within a PDF document. |
 | `GradientAxialShading` | Represents axial (linear) gradient shading. |
-| `GraphicElement` | A painted path or placed image read from a page, with its bounding box in page space. |
+| `GraphicElement` | One mark read from a page — a path, image, text run or shading — with its bounding box in page space. |
 | `GraphicElementCollection` | In-memory collection of absorbed graphic elements. |
-| `GraphicsAbsorber` | Collects the painted paths and placed images of a page or document. |
+| `GraphicsAbsorber` | Collects every mark a page or document makes: paths, images, text runs and `sh` shadings. |
 | `HtmlLoadOptions` | Options for loading HTML documents. |
 | `HtmlSaveOptions` | Options for saving PDF documents as HTML. |
 | `ImagePlacement-images` | Represent an image placed on a PDF page. |

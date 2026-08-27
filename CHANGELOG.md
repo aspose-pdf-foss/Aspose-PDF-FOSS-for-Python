@@ -9,6 +9,25 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`GraphicsAbsorber` collects every mark a page makes.** It reported painted
+  paths and placed XObject images and nothing else: text runs, inline
+  (`BI`/`ID`/`EI`) images and `sh` shading fills were simply missing, a stroked
+  path's box stopped at the geometry rather than covering the ink, and any
+  colour set through a non-device space came back as `None`. All four are now
+  covered. A text element carries the box its glyphs occupy, measured with the
+  renderer's own font metrics -- so the reported box and the ink agree -- and
+  invisible text (rendering mode 3 or 7) is still left out, because it puts
+  nothing on the page. Only a pattern, which has no single colour, still
+  reports no colour.
+
+### Fixed
+
+- **An `/Indexed` fill colour was read as a grey level.** `Indexed` is not a
+  shading colour space, so the shared converter had no branch for it and passed
+  the palette *index* through as a colour component: `1 scn` in a two-entry
+  palette painted white instead of the colour it names. The renderer and the
+  graphics absorber both take the fix.
+
 - **Layers can be created, written to and resolved.** Optional content was
   read-only: the layers a document declared could be listed and switched, but
   not created, not written to and never resolved. `Document.layers.add(name)`

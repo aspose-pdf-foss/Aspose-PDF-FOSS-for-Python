@@ -417,13 +417,18 @@ Boundaries:
   soft-masked images (through an SVG `<mask>`). Blend modes, transparency
   groups and knockout are not expressed; the affected content is drawn without
   them. SVG has no multi-page model, so a document becomes one file per page.
-- `GraphicsAbsorber` reports geometry, not paint: text runs (use
-  `TextFragmentAbsorber`), inline images (`BI`/`ID`/`EI`) and `sh` shading
-  fills are not collected, a path's box covers its geometry without the stroke
-  width, and a colour set through a pattern, ICCBased, Separation or Indexed
-  space is reported as `None` rather than approximated. The collection it
-  returns is an in-memory container: adding or removing elements never changes
-  the page.
+- `GraphicsAbsorber` collects every mark a page makes: painted paths, placed
+  images (XObject and inline `BI`/`ID`/`EI` alike), shown **text runs** and
+  `sh` shading fills. A text element carries the box its glyphs occupy,
+  measured with the renderer's own font metrics rather than a second set, and
+  its font resource name; for the text itself use `TextFragmentAbsorber`. A
+  stroked path's box includes the stroke width, which straddles the geometry.
+  An `sh` element covers the clip region it paints. Colour set through an
+  ICCBased, Indexed, Lab, Separation or DeviceN space is resolved to RGB; only
+  a **pattern**, which has no single colour, still reports `None`. Text in
+  rendering mode 3 or 7 puts nothing on the page and is not collected. The
+  collection it returns is an in-memory container: adding or removing elements
+  never changes the page.
 - **Export a document as HTML or Markdown** with `Document.to_html()` /
   `to_markdown()`, `save_as_html()` / `save_as_markdown()`, or
   `Document.save(path, DocFormat.HTML)` / `DocFormat.MARKDOWN` (the

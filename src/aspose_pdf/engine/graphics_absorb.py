@@ -55,6 +55,19 @@ _PAINT_OPERATORS = {
 }
 
 _DEVICE_SPACES = {"DeviceGray", "DeviceRGB", "DeviceCMYK", "G", "RGB", "CMYK"}
+# A zero-width stroke is still one device pixel wide (ISO 32000-1 8.4.3.2).
+_MIN_STROKE_WIDTH = 1.0
+# Fallback vertical extents when a font declares none, as fractions of the size.
+_DEFAULT_ASCENT = 0.75
+_DEFAULT_DESCENT = -0.25
+_IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+_TEXT_OPERATORS = frozenset(
+    {
+        "BT", "ET", "Tf", "Tm", "Td", "TD", "T*", "TL", "Tc", "Tw", "Tz",
+        "Ts", "Tr", "Tj", "TJ", "'", '"',
+    }
+)
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -154,6 +167,26 @@ class _GraphicsWalker:
         self.stroke_color: tuple[float, float, float] | None = (0.0, 0.0, 0.0)
         self.fill_space = "DeviceGray"
         self.stroke_space = "DeviceGray"
+        # Converters for a named, non-device colour space (ICCBased, Indexed,
+        # Lab, Separation, DeviceN); ``None`` while a device space is current.
+        self.fill_converter = None
+        self.stroke_converter = None
+        # The clip in force, as a page-space box. ``sh`` paints the whole of it,
+        # so it is the only way to say how much of the page a shading covers.
+        self.clip_box: list[float] | None = None
+        # Text state, tracked so a shown run can be measured and placed.
+        self.text_matrix: Matrix = _IDENTITY
+        self.text_line_matrix: Matrix = _IDENTITY
+        self.text_font: str | None = None
+        self.text_size = 0.0
+        self.text_leading = 0.0
+        self.text_char_spacing = 0.0
+        self.text_word_spacing = 0.0
+        self.text_hscale = 1.0
+        self.text_rise = 0.0
+        self.text_render_mode = 0
+        self._font_cache: dict[str, Any] = {}
+        self._resolver: Any = _MISSING
         self.line_width = 1.0
         self.points: list[Point] = []
         self.current: Point | None = None
@@ -335,6 +368,9 @@ class _GraphicsWalker:
                     self.line_width,
                     self.fill_space,
                     self.stroke_space,
+                    self.fill_converter,
+                    self.stroke_converter,
+                    self.clip_box,
                 )
             )
             return
@@ -347,6 +383,9 @@ class _GraphicsWalker:
                     self.line_width,
                     self.fill_space,
                     self.stroke_space,
+                    self.fill_converter,
+                    self.stroke_converter,
+                    self.clip_box,
                 ) = self.stack.pop()
             return
         if op == "cm" and len(numbers) >= 6:
@@ -396,10 +435,23 @@ class _GraphicsWalker:
             return
         if op in ("cs", "CS"):
             space = self._name(operands[-1]) if operands else None
-            self._set_space(op == "cs", space)
+            self._set_space(op == "cs", space, resources)
             return
         if op in ("sc", "scn", "SC", "SCN"):
             self._set_components(op.islower(), numbers)
+            return
+
+        if op in _TEXT_OPERATORS:
+            self._text_operator(op, operands, numbers, resources)
+            return
+
+        if op == "sh" and operands and not self._oc_hidden_depth:
+            name = self._name(operands[-1])
+            if name:
+                self._shading_element(name)
+            return
+        if op == "EI" and not self._oc_hidden_depth:
+            self._inline_image_element()
             return
 
         if op == "Do" and operands:
@@ -457,6 +509,13 @@ class _GraphicsWalker:
                 return
             operation = "clip"
         scale = math.sqrt(abs(self.ctm[0] * self.ctm[3] - self.ctm[1] * self.ctm[2]))
+        if clipping:
+            self._narrow_clip(bbox)
+        if operation in ("stroke", "fill_stroke"):
+            # A stroke straddles the path: half its width falls outside the
+            # geometry, and a box that ignores that misses the ink.
+            half = max(self.line_width * scale, _MIN_STROKE_WIDTH) / 2.0
+            bbox = [bbox[0] - half, bbox[1] - half, bbox[2] + half, bbox[3] + half]
         self.elements.append(
             AbsorbedElement(
                 kind="path",
@@ -478,6 +537,278 @@ class _GraphicsWalker:
             )
         )
 
+    # -- text -------------------------------------------------------------
+    def _glyph_font(self, name: str | None, resources: PdfDictionary | None):
+        """A ``_GlyphFont`` for the current ``Tf``, or ``None``.
+
+        Font metrics are the renderer's, not a second set: the same resolution
+        that decides which glyphs get painted decides how wide the run is, so a
+        reported box and the ink agree.
+        """
+        if not name or not isinstance(resources, PdfDictionary):
+            return None
+        cached = self._font_cache.get(name, _MISSING)
+        if cached is not _MISSING:
+            return cached
+        font = None
+        resolver = self._font_resolver()
+        if resolver is not None:
+            try:
+                font = resolver._resolve_glyph_font(name, resources)
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                font = None
+        self._font_cache[name] = font
+        return font
+
+    def _font_resolver(self):
+        """A renderer for this page, created only if the page shows text."""
+        if self._resolver is not _MISSING:
+            return self._resolver
+        self._resolver = None
+        try:
+            from .rasterizer import _PageRasterizer
+
+            self._resolver = _PageRasterizer(
+                self.pdf,
+                self.page_index,
+                dpi=72.0,
+                scale=1.0,
+                background=(255, 255, 255),
+                antialias=False,
+                draw_annotations=False,
+            )
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            self._resolver = None
+        return self._resolver
+
+    def _font_extents(self, name: str | None, resources: PdfDictionary | None):
+        """``(ascent, descent)`` in text-space units, from the FontDescriptor."""
+        if not name or not isinstance(resources, PdfDictionary):
+            return _DEFAULT_ASCENT, _DEFAULT_DESCENT
+        fonts = self._resolve(resources.mapping.get(PdfName("Font")))
+        if not isinstance(fonts, PdfDictionary):
+            return _DEFAULT_ASCENT, _DEFAULT_DESCENT
+        font = self._resolve(fonts.mapping.get(PdfName(name)))
+        if not isinstance(font, PdfDictionary):
+            return _DEFAULT_ASCENT, _DEFAULT_DESCENT
+        descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+        if not isinstance(descriptor, PdfDictionary):
+            descendants = self._resolve(font.mapping.get(PdfName("DescendantFonts")))
+            if isinstance(descendants, PdfArray) and descendants.items:
+                child = self._resolve(descendants.items[0])
+                if isinstance(child, PdfDictionary):
+                    descriptor = self._resolve(
+                        child.mapping.get(PdfName("FontDescriptor"))
+                    )
+        if not isinstance(descriptor, PdfDictionary):
+            return _DEFAULT_ASCENT, _DEFAULT_DESCENT
+        ascent = self._number(descriptor.mapping.get(PdfName("Ascent")))
+        descent = self._number(descriptor.mapping.get(PdfName("Descent")))
+        return (
+            (ascent / 1000.0) if ascent else _DEFAULT_ASCENT,
+            (descent / 1000.0) if descent else _DEFAULT_DESCENT,
+        )
+
+    def _show_text(self, operands: list[Any], resources: PdfDictionary | None) -> None:
+        """Measure one text-showing operator and record it, then advance the pen."""
+        parts = operands[-1] if operands else None
+        items = parts if isinstance(parts, list) else [parts]
+        font = self._glyph_font(self.text_font, resources)
+        size = self.text_size
+        advance = 0.0
+        shown = False
+        for item in items:
+            if isinstance(item, (int, float)) and not isinstance(item, bool):
+                advance -= (float(item) / 1000.0) * size * self.text_hscale
+                continue
+            if not isinstance(item, (bytes, bytearray)):
+                continue
+            raw = bytes(item)
+            shown = shown or bool(raw)
+            advance += self._run_advance(raw, font, size)
+        if not shown and advance == 0.0:
+            return
+        if self.text_render_mode in (3, 7) or self._oc_hidden_depth:
+            self._advance_pen(advance)
+            return
+        ascent, descent = self._font_extents(self.text_font, resources)
+        trm = _multiply(self.text_matrix, self.ctm)
+        corners = [
+            _apply(trm, 0.0, descent * size + self.text_rise),
+            _apply(trm, advance, descent * size + self.text_rise),
+            _apply(trm, advance, ascent * size + self.text_rise),
+            _apply(trm, 0.0, ascent * size + self.text_rise),
+        ]
+        xs = [point[0] for point in corners]
+        ys = [point[1] for point in corners]
+        self.elements.append(
+            AbsorbedElement(
+                kind="text",
+                llx=min(xs),
+                lly=min(ys),
+                urx=max(xs),
+                ury=max(ys),
+                page_index=self.page_index,
+                operation="stroke" if self.text_render_mode == 1 else "fill",
+                resource_name=self.text_font,
+                fill_color=self.fill_color if self.text_render_mode != 1 else None,
+                stroke_color=(
+                    self.stroke_color if self.text_render_mode in (1, 2) else None
+                ),
+            )
+        )
+        self._advance_pen(advance)
+
+    def _run_advance(self, raw: bytes, font: Any, size: float) -> float:
+        """Text-space width of one show string, spacing included."""
+        if font is None:
+            # No usable metrics: half an em per byte is the standard rough
+            # stand-in, and a box that is roughly right beats none at all.
+            return len(raw) * size * 0.5 * self.text_hscale
+        total = 0.0
+        try:
+            glyphs = list(font.iter_glyphs(raw))
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return len(raw) * size * 0.5 * self.text_hscale
+        for _gid, width_1000, applies_word, _cid in glyphs:
+            step = (width_1000 / 1000.0) * size + self.text_char_spacing
+            if applies_word:
+                step += self.text_word_spacing
+            total += step
+        return total * self.text_hscale
+
+    def _advance_pen(self, advance: float) -> None:
+        self.text_matrix = _multiply(
+            (1.0, 0.0, 0.0, 1.0, advance, 0.0), self.text_matrix
+        )
+
+    def _text_operator(self, op: str, operands: list[Any], numbers: list[float],
+                       resources: PdfDictionary | None) -> None:
+        if op == "BT":
+            self.text_matrix = _IDENTITY
+            self.text_line_matrix = _IDENTITY
+            return
+        if op == "ET":
+            return
+        if op == "Tf":
+            if len(operands) >= 2:
+                self.text_font = self._name(operands[-2])
+            if numbers:
+                self.text_size = numbers[-1]
+            return
+        if op == "Tm" and len(numbers) >= 6:
+            self.text_matrix = tuple(numbers[-6:])  # type: ignore[assignment]
+            self.text_line_matrix = self.text_matrix
+            return
+        if op in ("Td", "TD") and len(numbers) >= 2:
+            if op == "TD":
+                self.text_leading = -numbers[-1]
+            self.text_line_matrix = _multiply(
+                (1.0, 0.0, 0.0, 1.0, numbers[-2], numbers[-1]), self.text_line_matrix
+            )
+            self.text_matrix = self.text_line_matrix
+            return
+        if op == "T*":
+            self.text_line_matrix = _multiply(
+                (1.0, 0.0, 0.0, 1.0, 0.0, -self.text_leading), self.text_line_matrix
+            )
+            self.text_matrix = self.text_line_matrix
+            return
+        if op == "TL" and numbers:
+            self.text_leading = numbers[-1]
+            return
+        if op == "Tc" and numbers:
+            self.text_char_spacing = numbers[-1]
+            return
+        if op == "Tw" and numbers:
+            self.text_word_spacing = numbers[-1]
+            return
+        if op == "Tz" and numbers:
+            self.text_hscale = numbers[-1] / 100.0
+            return
+        if op == "Ts" and numbers:
+            self.text_rise = numbers[-1]
+            return
+        if op == "Tr" and numbers:
+            self.text_render_mode = int(numbers[-1])
+            return
+        if op in ("'", '"'):
+            if op == '"' and len(numbers) >= 2:
+                self.text_word_spacing = numbers[-2]
+                self.text_char_spacing = numbers[-1]
+            self._text_operator("T*", [], [], resources)
+            self._show_text(operands, resources)
+            return
+        if op in ("Tj", "TJ"):
+            self._show_text(operands, resources)
+
+    def _narrow_clip(self, bbox: list[float]) -> None:
+        """Intersect the running clip box with a newly applied clipping path."""
+        if self.clip_box is None:
+            self.clip_box = list(bbox)
+            return
+        self.clip_box = [
+            max(self.clip_box[0], bbox[0]),
+            max(self.clip_box[1], bbox[1]),
+            min(self.clip_box[2], bbox[2]),
+            min(self.clip_box[3], bbox[3]),
+        ]
+
+    def _shading_element(self, name: str) -> None:
+        """``sh`` paints the current clip region; that box is its extent."""
+        box = self.clip_box if self.clip_box is not None else self._page_box()
+        if box is None or box[2] <= box[0] or box[3] <= box[1]:
+            return
+        self.elements.append(
+            AbsorbedElement(
+                kind="shading",
+                llx=box[0],
+                lly=box[1],
+                urx=box[2],
+                ury=box[3],
+                page_index=self.page_index,
+                operation="fill",
+                resource_name=name,
+            )
+        )
+
+    def _page_box(self) -> list[float] | None:
+        try:
+            rect = self.pdf.pages[self.page_index]
+        except (AttributeError, IndexError, TypeError):
+            return None
+        if not isinstance(rect, (tuple, list)) or len(rect) < 4:
+            return None
+        return [float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])]
+
+    def _inline_image_element(self) -> None:
+        """``BI`` … ``EI`` places an image in the unit square, like ``Do``."""
+        corners = [
+            _apply(self.ctm, 0.0, 0.0),
+            _apply(self.ctm, 1.0, 0.0),
+            _apply(self.ctm, 1.0, 1.0),
+            _apply(self.ctm, 0.0, 1.0),
+        ]
+        xs = [point[0] for point in corners]
+        ys = [point[1] for point in corners]
+        self.elements.append(
+            AbsorbedElement(
+                kind="image",
+                llx=min(xs),
+                lly=min(ys),
+                urx=max(xs),
+                ury=max(ys),
+                page_index=self.page_index,
+                resource_name=None,
+            )
+        )
+
     # -- colour -----------------------------------------------------------
     def _set_device_color(self, op: str, numbers: list[float]) -> None:
         nonstroking = op.islower()
@@ -492,42 +823,92 @@ class _GraphicsWalker:
             return
         if nonstroking:
             self.fill_color = color
+            self.fill_converter = None
             self.fill_space = {"g": "DeviceGray", "rg": "DeviceRGB", "k": "DeviceCMYK"}[
                 lowered
             ]
         else:
             self.stroke_color = color
+            self.stroke_converter = None
             self.stroke_space = {
                 "g": "DeviceGray",
                 "rg": "DeviceRGB",
                 "k": "DeviceCMYK",
             }[lowered]
 
-    def _set_space(self, nonstroking: bool, space: str | None) -> None:
+    def _set_space(
+        self, nonstroking: bool, space: str | None, resources: PdfDictionary | None
+    ) -> None:
         name = space or ""
+        converter = None
+        if name not in _DEVICE_SPACES and name != "Pattern":
+            converter = self._converter_for(name, resources)
         if nonstroking:
             self.fill_space = name
+            self.fill_converter = converter
             self.fill_color = (0.0, 0.0, 0.0) if name in _DEVICE_SPACES else None
         else:
             self.stroke_space = name
+            self.stroke_converter = converter
             self.stroke_color = (0.0, 0.0, 0.0) if name in _DEVICE_SPACES else None
+
+    def _converter_for(self, name: str, resources: PdfDictionary | None):
+        """A ``components -> RGB`` converter for a named colour space, or ``None``.
+
+        The space is looked up in the page's ``/ColorSpace`` resources and built
+        by the same code the renderer uses, so an ICCBased, Indexed, Lab,
+        Separation or DeviceN fill reports the colour that is actually painted
+        rather than nothing at all.
+        """
+        if not isinstance(resources, PdfDictionary):
+            return None
+        spaces = self._resolve(resources.mapping.get(PdfName("ColorSpace")))
+        if not isinstance(spaces, PdfDictionary):
+            return None
+        entry = spaces.mapping.get(PdfName(name))
+        if entry is None:
+            return None
+        from .shading import build_color_converter
+
+        try:
+            return build_color_converter(
+                self.pdf, entry, limits=self._limits, budget=self._budget
+            )
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return None
 
     def _set_components(self, nonstroking: bool, numbers: list[float]) -> None:
         space = self.fill_space if nonstroking else self.stroke_space
+        converter = self.fill_converter if nonstroking else self.stroke_converter
         if space in ("DeviceGray", "G") and numbers:
             color = _gray_rgb(numbers[-1])
         elif space in ("DeviceRGB", "RGB") and len(numbers) >= 3:
             color = _clamp_rgb(numbers[-3], numbers[-2], numbers[-1])
         elif space in ("DeviceCMYK", "CMYK") and len(numbers) >= 4:
             color = _cmyk_rgb(*numbers[-4:])
+        elif converter is not None and numbers:
+            color = self._convert(converter, numbers)
         else:
-            # A pattern, ICCBased, Separation or Indexed value: the element
+            # A pattern, or a space that could not be resolved: the element
             # reports no colour rather than an invented one.
             color = None
         if nonstroking:
             self.fill_color = color
         else:
             self.stroke_color = color
+
+    def _convert(self, converter, numbers: list[float]):
+        try:
+            red, green, blue = converter(list(numbers))
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return None
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+        return _clamp_rgb(red / 255.0, green / 255.0, blue / 255.0)
 
     # -- XObjects ---------------------------------------------------------
     def _do_xobject(
