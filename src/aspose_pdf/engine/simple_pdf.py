@@ -3514,6 +3514,39 @@ class SimplePdf:
         page.mapping[resources_key] = resources
         return resources
 
+    def begin_page_layer(self, page_index: int, object_number: int) -> None:
+        """Open an optional content section on a page for *object_number*.
+
+        Registers the group in the page's ``/Resources /Properties`` (reusing
+        the name if it is already there) and appends the ``BDC`` that opens the
+        section. Content appended afterwards belongs to the layer until
+        :meth:`end_page_layer` closes it.
+        """
+        self._ensure_not_disposed()
+        self._validate_page_index(page_index)
+        properties = self._ensure_resource_subdict(page_index, "Properties")
+        reference = PdfIndirectReference(object_number, 0)
+        name: str | None = None
+        for key, value in properties.mapping.items():
+            if (
+                isinstance(value, PdfIndirectReference)
+                and value.object_number == object_number
+            ):
+                name = key.name.lstrip("/")
+                break
+        if name is None:
+            name = self._unique_resource_name(properties, "oc")
+            properties.mapping[PdfName(name)] = reference
+        self._append_content_to_page(
+            page_index, b"/OC /" + name.encode("ascii") + b" BDC"
+        )
+
+    def end_page_layer(self, page_index: int) -> None:
+        """Close the optional content section opened by :meth:`begin_page_layer`."""
+        self._ensure_not_disposed()
+        self._validate_page_index(page_index)
+        self._append_content_to_page(page_index, b"EMC")
+
     def _ensure_resource_subdict(
         self, page_index: int, resource_kind: str
     ) -> PdfDictionary:

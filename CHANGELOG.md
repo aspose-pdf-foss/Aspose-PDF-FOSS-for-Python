@@ -9,6 +9,24 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Layers can be created, written to and resolved.** Optional content was
+  read-only: the layers a document declared could be listed and switched, but
+  not created, not written to and never resolved. `Document.layers.add(name)`
+  now creates a group (building the whole `/OCProperties` structure when the
+  document had none), `Page.layer(layer)` is a context manager that marks
+  everything authored inside it as belonging to that layer, and
+  `Document.layers.remove(layer)` drops a group while leaving its content
+  unconditionally visible.
+- **`Document.flatten_layers()` resolves optional content for good.** Switching
+  a layer off changes what is *drawn*; the content stayed in the file and came
+  back the moment somebody switched it on again -- a hidden draft watermark is
+  still a draft watermark when the file leaves your hands. Flattening deletes
+  what the configuration hides (marked content, XObject invocations and
+  annotations alike) from the page's *existing* content streams rather than
+  leaving them behind as unreferenced objects, drops every surviving `/OC`
+  reference and marked-content wrapper, and removes `/OCProperties` -- leaving
+  an ordinary PDF that renders byte-identically to what was visible.
+
 - **Documents export as HTML and Markdown.** `DocFormat.HTML` and
   `DocFormat.MARKDOWN` were placeholders that raised. `Document.to_html()`,
   `to_markdown()`, `save_as_html()`, `save_as_markdown()` and

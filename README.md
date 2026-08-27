@@ -108,9 +108,11 @@ flowchart TD
   `PingFang SC` is installed, instead of a row of glyph boxes. Advances still come from the PDF's
   own `/Widths` / `/W`, so the substitute changes which glyphs are drawn, not where they sit. Off
   by default, so rendering stays identical across machines unless you ask for it.
-- `Document.layers` lists the document's optional content groups and switches them on or off;
-  rendering, text extraction, and graphics absorption all skip a hidden layer, the way a viewer
-  does, and the new state is saved back into the document's default configuration.
+- `Document.layers` lists, creates, switches and removes optional content groups; rendering, text
+  extraction, and graphics absorption all skip a hidden layer, the way a viewer does.
+  `Page.layer(layer)` is a context manager that puts everything authored inside it on that layer,
+  and `Document.flatten_layers()` resolves the layers for good — deleting what is hidden from the
+  file rather than leaving it there for the next reader to switch back on.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content.
@@ -260,6 +262,23 @@ with Document("report.pdf") as document:
 # Opening needs the certificate and its private key, not a password.
 with Document("report-sealed.pdf", certificate=auditor, private_key=key) as doc:
     print(doc.page_count, doc.permissions)
+```
+
+### Put a Watermark on a Layer, Then Resolve It
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    draft = document.layers.add("Draft", visible=False)
+    with document.pages[0].layer(draft):
+        document.pages[0].add_text("DRAFT", 150, 400, font_size=64)
+    document.save("with-layers.pdf")
+
+    # ...and when the file has to leave: hidden means gone, not merely hidden.
+    document.layers["Draft"].visible = False
+    document.flatten_layers()
+    document.save("final.pdf")
 ```
 
 ### Convert a Document to HTML or Markdown
@@ -422,7 +441,7 @@ and delete workflows. 235 public types are organized by module below.
 | `InvalidOperationException` | Raised when a graphics element is attached to the wrong parent. |
 | `InvalidPasswordException` | Raised when an incorrect password is provided for an encrypted document. |
 | `Layer` | One optional content group: its name, intent, and whether it is shown. |
-| `LayerCollection` | The document's layers, indexable by position or by name. |
+| `LayerCollection` | The document's layers: indexable by position or by name, with `add(name, visible)` and `remove(layer)`. |
 | `InvalidPdfFileFormatException` | Raised when the PDF file format is invalid or corrupted. |
 | `InvalidValueFormatException` | Raised when an invalid value is encountered during parsing or conversion. |
 | `LatexFragment` | Small value object that stores LaTeX source text. |
@@ -703,7 +722,8 @@ and delete workflows. 235 public types are organized by module below.
   - `to_html(pages, title, embed_images) -> str` / `to_markdown(pages, title, embed_images) -> str` /
     `save_as_html(destination, pages, title, embed_images, split_into_pages) -> list[Path]` /
     `save_as_markdown(destination, pages, title, embed_images) -> Path`
-  - `flatten() -> Document` / `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
+  - `flatten() -> Document` / `flatten_layers() -> int` /
+    `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
@@ -723,6 +743,7 @@ and delete workflows. 235 public types are organized by module below.
   - `to_svg(background, draw_annotations, font_substitution, precision) -> str` /
     `save_as_svg(path, ...) -> Path`
   - `to_html(embed_images) -> str` / `to_markdown(embed_images) -> str`
+  - `layer(layer)` — context manager putting authored content on an optional content group
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - properties: `index`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`,

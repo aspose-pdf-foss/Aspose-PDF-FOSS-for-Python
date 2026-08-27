@@ -472,6 +472,26 @@ Supported:
 - Honour `/BaseState` in the default configuration, with `/ON` and `/OFF`
   overriding it per group.
 
+- **Create a layer** with `Document.layers.add(name, visible=…)`. The group is
+  registered in `/OCProperties /OCGs` and in the default configuration's
+  `/Order`, which is what a viewer's layers panel lists; a document with no
+  optional content at all gains the whole structure.
+- **Put content on a layer** with `Page.layer(layer)` as a context manager:
+  everything authored inside the block is wrapped in `/OC … BDC` … `EMC` and
+  the group is registered in the page's `/Resources /Properties` (reusing the
+  name on re-entry). Blocks nest. Switching the layer off then hides that
+  content in rendering, extraction and every export.
+- **Remove a layer** with `Document.layers.remove(layer)`. The group goes; its
+  content stays and becomes unconditionally visible, which is what a viewer
+  does with an `/OC` it cannot resolve.
+- **Flatten to visible content** with `Document.flatten_layers()`. Hidden
+  marked-content sections, hidden XObject invocations and hidden annotations
+  are deleted from the page's *existing* content streams (not merely
+  unreferenced), every surviving `/OC` reference and marked-content wrapper is
+  dropped, and `/OCProperties` is removed -- leaving an ordinary PDF that
+  renders exactly as the configuration rendered. Returns the number of pages
+  changed.
+
 Boundaries:
 
 - Only the **default** configuration (`/D`) is applied. Alternate
@@ -479,14 +499,19 @@ Boundaries:
 - Usage application dictionaries (`/AS`) are not evaluated, so a group whose
   state a viewer would derive from zoom level, print or export usage keeps the
   configured state. Everything is resolved for the on-screen (`View`) case.
-- Layers are read and switched, not authored: there is no API to create a
-  group, tag content with one, or remove a group.
-- Hiding a layer changes what is drawn and extracted, not what the file
-  contains -- the content stays in the PDF and reappears when the layer is
-  switched back on. There is no "flatten to visible content" operation.
+- A layer marks content, and only content a page's *own* stream shows: an
+  ``/OC`` on a form XObject's contents is honoured, but there is no API to tag
+  an existing image or annotation with a layer after the fact -- author it
+  inside a `Page.layer` block instead.
+- Flattening resolves the *default* configuration as it currently stands; a
+  reader cannot get the hidden content back, which is the point, so save a copy
+  first if the layers still matter. A `/OC` whose properties operand is an
+  inline dictionary rather than a name in `/Properties` is left in place rather
+  than guessed at, so its content survives flattening.
 - PDF/A-1 prohibits optional content entirely; conversion removes
   `/OCProperties` (see [PDF/A And PDF/UA](#pdfa-and-pdfua)), which makes every
-  group's content unconditionally visible.
+  group's content unconditionally visible. `flatten_layers()` first is the way
+  to convert while keeping only what was shown.
 
 ## Text
 

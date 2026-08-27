@@ -523,6 +523,28 @@ class Document:
 
         return LayerCollection(OptionalContent(self._engine_pdf))
 
+    def flatten_layers(self) -> int:
+        """Resolve optional content once and for all; return pages changed.
+
+        Switching a layer off changes what is *drawn*; the content stays in the
+        file and comes back the moment someone switches it on again. That is
+        right for a viewer and wrong for handing the document to somebody -- a
+        hidden draft watermark or an alternate-language layer is still in
+        there. Flattening deletes what the current configuration hides
+        (marked content, XObject invocations and annotations alike), drops
+        every surviving ``/OC`` reference and removes ``/OCProperties``,
+        leaving an ordinary PDF that shows exactly what was visible.
+
+        Returns the number of pages whose content changed. A document without
+        optional content is left alone and returns ``0``.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine.optional_content import flatten
+
+        return flatten(self._engine_pdf)
+
     @property
     def outlines(self) -> OutlineCollection:
         """Bookmark tree for this document.

@@ -16,6 +16,24 @@ if TYPE_CHECKING:
     from aspose_pdf.text_layout import TextLayoutOptions
 
 
+class _LayerSection:
+    """The open optional content section of :meth:`Page.layer`."""
+
+    __slots__ = ("_engine", "_object_number", "_page_index")
+
+    def __init__(self, engine: Any, page_index: int, object_number: int) -> None:
+        self._engine = engine
+        self._page_index = page_index
+        self._object_number = object_number
+
+    def __enter__(self) -> _LayerSection:
+        self._engine.begin_page_layer(self._page_index, self._object_number)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._engine.end_page_layer(self._page_index)
+
+
 class Page:
     """A page of a PDF document."""
 
@@ -396,6 +414,30 @@ class Page:
             encoding="utf-8",
         )
         return target
+
+    def layer(self, layer: Any) -> Any:
+        """Author content onto *layer*, as a context manager.
+
+        Everything added inside the block is marked as belonging to the layer,
+        so switching the layer off hides it -- in a viewer, in
+        :meth:`render`, in text extraction and in every export::
+
+            draft = document.layers.add("Draft", visible=False)
+            with page.layer(draft):
+                page.add_text("DRAFT", 200, 400, font_size=64)
+
+        Blocks may nest; each closes its own section.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        number = getattr(layer, "object_number", None)
+        if not isinstance(number, int):
+            raise PdfValidationException(
+                "layer must be a Layer from Document.layers"
+            )
+        return _LayerSection(eng, self._index, number)
 
     def to_html(self, *, embed_images: bool = True) -> str:
         """Return this page's inferred structure as an HTML fragment document.
