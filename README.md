@@ -82,6 +82,9 @@ flowchart TD
 - `Document.replace_text()` and `Document.redact_text()` rewrite or remove matched text directly
   inside existing content streams; `redact_text(..., overlay=True)` also draws a filled bar over
   each removed run's location.
+- `Document.to_html()` and `to_markdown()` convert a document to a *flowing* one — headings,
+  paragraphs, lists, tables and figures inferred by the same layout analysis `auto_tag()` uses,
+  with the text decoded the way `extract_text()` decodes it. For a facsimile, export SVG instead.
 - `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
   fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. The
   exporter is the renderer with its paint sinks replaced, so the SVG and the rasterized page agree
@@ -257,6 +260,17 @@ with Document("report.pdf") as document:
 # Opening needs the certificate and its private key, not a password.
 with Document("report-sealed.pdf", certificate=auditor, private_key=key) as doc:
     print(doc.page_count, doc.permissions)
+```
+
+### Convert a Document to HTML or Markdown
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    document.save_as_markdown("report.md")
+    document.save_as_html("report.html")
+    print(document.to_markdown(pages=[0]))
 ```
 
 ### Export a Page as SVG
@@ -686,6 +700,9 @@ and delete workflows. 235 public types are organized by module below.
     `save_page_as_image(page_index, destination, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path` /
     `save_as_tiff(destination, pages, dpi, scale, background, antialias, mode, compression, threshold) -> Path` /
     `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision) -> list[Path]`
+  - `to_html(pages, title, embed_images) -> str` / `to_markdown(pages, title, embed_images) -> str` /
+    `save_as_html(destination, pages, title, embed_images, split_into_pages) -> list[Path]` /
+    `save_as_markdown(destination, pages, title, embed_images) -> Path`
   - `flatten() -> Document` / `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
@@ -705,6 +722,7 @@ and delete workflows. 235 public types are organized by module below.
     `save_as_image(path, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path`
   - `to_svg(background, draw_annotations, font_substitution, precision) -> str` /
     `save_as_svg(path, ...) -> Path`
+  - `to_html(embed_images) -> str` / `to_markdown(embed_images) -> str`
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - properties: `index`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`,
@@ -810,10 +828,13 @@ and delete workflows. 235 public types are organized by module below.
   draws glyph boxes.
 - Several compatibility surfaces exist only to keep ported code importable and carry no
   implementation: `CdrLoadOptions`, `CgmLoadOptions`, `HtmlLoadOptions`, `OfdLoadOptions`, and
-  `SvgLoadOptions` are rejected as a load source, and `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`,
-  `HtmlSaveOptions`, and `MarkdownSaveOptions` are rejected by `Document.save()` — both raise
-  `UnsupportedFeatureException` rather than silently doing nothing. (`DocFormat.SVG` is no longer
-  among them; SVG export is implemented.)
+  `SvgLoadOptions` are rejected as a load source, and `SaveFormat.PPTX` is rejected by
+  `Document.save()` — both raise `UnsupportedFeatureException` rather than silently doing nothing.
+  (`DocFormat.SVG`/`HTML`/`MARKDOWN`, `HtmlSaveOptions` and `MarkdownSaveOptions` are no longer
+  among them; those exports are implemented.)
+- HTML and Markdown export carry structure, not appearance: positioning, colour and fonts are
+  dropped, and the structure is `auto_tag`'s, so headings come from font size alone, list nesting
+  is flat and a table needs a regular grid.
 - SVG export writes polylines rather than curves (the renderer flattens Béziers as it builds a
   path) and text as glyph outlines, which renders exactly but is not selectable. Blend modes and
   transparency groups are not expressed; mesh and function shadings are sampled into an embedded

@@ -24,7 +24,7 @@ from aspose_pdf.exceptions import (
     UnsupportedFeatureException,
 )
 from aspose_pdf.generated.document import Document as GeneratedDocument
-from aspose_pdf.html import HtmlLoadOptions, HtmlSaveOptions
+from aspose_pdf.html import HtmlLoadOptions
 from aspose_pdf.latex import LatexFragment
 from aspose_pdf.load_options import (
     CdrLoadOptions,
@@ -32,7 +32,6 @@ from aspose_pdf.load_options import (
     OfdLoadOptions,
     SvgLoadOptions,
 )
-from aspose_pdf.markdown import MarkdownSaveOptions
 from aspose_pdf.printing import PrinterSettings
 from aspose_pdf.save_format import SaveFormat
 from aspose_pdf.save_options import DocFormat
@@ -53,12 +52,9 @@ _LOAD_PLACEHOLDERS: tuple[tuple[Callable[[], Any], str], ...] = (
 
 _SAVE_PLACEHOLDERS: tuple[tuple[Callable[[], Any], str], ...] = (
     (lambda: SaveFormat.PPTX, "PPTX export"),
-    (lambda: DocFormat.HTML, "HTML export"),
-    (lambda: DocFormat.MARKDOWN, "Markdown export"),
-    # DocFormat.SVG is no longer a placeholder -- it writes real SVG; see
-    # tests/test_svg_export.py.
-    (HtmlSaveOptions, "HTML export"),
-    (MarkdownSaveOptions, "Markdown export"),
+    # DocFormat.SVG/HTML/MARKDOWN and their save-options objects are no longer
+    # placeholders -- they write real files; see tests/test_svg_export.py and
+    # tests/test_text_export.py.
     (PrinterSettings, "printing"),
 )
 

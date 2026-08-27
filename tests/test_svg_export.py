@@ -398,7 +398,7 @@ def test_saving_svg_to_a_stream_is_refused(tmp_path: Path):
     document = Document()
     document.pages.add()
 
-    with pytest.raises(PdfValidationException, match="needs a file path"):
+    with pytest.raises(PdfValidationException, match="need a file path"):
         document.save(open(tmp_path / "x.svg", "wb"), DocFormat.SVG)
 
 

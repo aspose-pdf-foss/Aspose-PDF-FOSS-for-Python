@@ -9,6 +9,29 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Documents export as HTML and Markdown.** `DocFormat.HTML` and
+  `DocFormat.MARKDOWN` were placeholders that raised. `Document.to_html()`,
+  `to_markdown()`, `save_as_html()`, `save_as_markdown()` and
+  `Document.save(path, DocFormat.HTML)` now produce real documents, as do the
+  `HtmlSaveOptions` and `MarkdownSaveOptions` containers. This is a conversion
+  to a *flowing document*, not a facsimile: the same layout analysis
+  `auto_tag()` uses infers headings, paragraphs, bulleted and numbered lists,
+  tables and figures, and the text is decoded exactly as `extract_text()`
+  decodes it -- so the export and the tag tree agree by construction rather
+  than by coincidence. Images are embedded through the same reconstruction
+  `save_image()` performs, and Markdown is GFM escaped only where a character
+  would otherwise change the meaning.
+
+### Fixed
+
+- **A widely spaced table is no longer read as page columns.** The column
+  splitter cut at the widest gap between text anchors, and a table's cells
+  leave exactly the gap a two-column page does -- so a page with a table came
+  out column-major, its prose interleaved with cell contents and the grid never
+  reaching table detection. A gutter now has to be *whitespace*: a split is
+  rejected when any line's extent runs across it, which the full-width prose
+  above and below a table always does. `auto_tag()` gets the same fix.
+
 - **Pages export as SVG.** `DocFormat.SVG` was a placeholder that raised.
   `Page.to_svg()`, `Page.save_as_svg()`, `Document.save_as_svg()` and
   `Document.save(path, DocFormat.SVG)` now write real vectors. The exporter

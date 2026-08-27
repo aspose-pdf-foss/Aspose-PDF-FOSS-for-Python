@@ -403,6 +403,12 @@ Boundaries:
   extraction. **Vertical CMaps** (`WMode 1`, bundled or embedded) now position
   correctly: each glyph is offset by its `/W2` (or `/DW2`) position vector and
   the text advances downward by the vertical displacement.
+- HTML and Markdown export carry structure, not appearance: exact positioning,
+  colour, fonts and inline styling are dropped, and a page becomes a flow
+  rather than a fixed layout (HTML pages are separated by a rule). The
+  structure is `auto_tag`'s, so it inherits its limits -- headings are inferred
+  from font size alone, list nesting is flat, a table needs a regular grid, and
+  a figure's alternate text cannot be invented. Use SVG export for a facsimile.
 - SVG export writes **polylines, not curves**: the renderer flattens Béziers
   while building a path, so that is what reaches the exporter. Text is glyph
   outlines, which renders exactly and needs no embedded font, but is not
@@ -418,6 +424,18 @@ Boundaries:
   space is reported as `None` rather than approximated. The collection it
   returns is an in-memory container: adding or removing elements never changes
   the page.
+- **Export a document as HTML or Markdown** with `Document.to_html()` /
+  `to_markdown()`, `save_as_html()` / `save_as_markdown()`, or
+  `Document.save(path, DocFormat.HTML)` / `DocFormat.MARKDOWN` (the
+  `HtmlSaveOptions` and `MarkdownSaveOptions` objects select the same exports).
+  This is a conversion to a **flowing document**, not a facsimile: the same
+  layout analysis `auto_tag()` uses infers headings (`H1`-`H3` by size tier),
+  paragraphs (wrapped lines joined), bulleted and numbered lists (markers
+  recognised and stripped), tables (aligned grids, first row as headers) and
+  figures, and the text is decoded exactly as `extract_text()` decodes it.
+  Images are embedded as data URIs through the same reconstruction
+  `save_image()` performs. Markdown output is GFM, escaped only where a
+  character would otherwise change the meaning.
 - **Export a page as SVG** with `Page.to_svg()` / `Page.save_as_svg()`,
   `Document.save_as_svg()` or `Document.save(path, DocFormat.SVG)`. The
   exporter *is* the renderer: it subclasses the rasterizer and replaces only
@@ -1372,8 +1390,10 @@ Boundaries:
   only (levels `/H1`–`/H3` by size tier), lists are recognised from leading
   markers, and regular aligned grids are tagged as tables. Image `/Figure`
   alternate text is a caller-supplied placeholder (alt text cannot be inferred),
-  column detection is a whitespace heuristic (a full-width banner over the
-  columns may be mis-assigned), list detection is marker-text based (an unmarked
+  column detection is a whitespace heuristic that requires the gutter to be
+  genuinely clear -- no line's estimated extent may cross it, which is what
+  keeps a widely-spaced table from being read column-major -- but a full-width
+  banner over the columns may still be mis-assigned, list detection is marker-text based (an unmarked
   or image-bulleted list is not recognised, and nesting is flat), and table
   detection needs a regular grid whose columns are closer than the
   column-split gutter (a wide-gutter table reads as columns, and merged/empty
@@ -1447,14 +1467,15 @@ with Document("input.pdf") as document:
 | Surface | Names | Behaviour |
 | --- | --- | --- |
 | Non-PDF import | `CdrLoadOptions`, `CgmLoadOptions`, `HtmlLoadOptions`, `OfdLoadOptions`, `SvgLoadOptions` (both `aspose_pdf.load_options` and `aspose_pdf.svg`) | Rejected as the `source` or `options` argument of `Document(...)` and `Document.load_from(...)`. |
-| Non-PDF export | `SaveFormat.PPTX`, `DocFormat.HTML`/`MARKDOWN`, `HtmlSaveOptions`, `MarkdownSaveOptions` | Rejected by `Document.save(destination, save_format)` before anything is written to the path or stream. (`DocFormat.SVG` is implemented — see [Pages](#pages).) |
+| Non-PDF export | `SaveFormat.PPTX` | Rejected by `Document.save(destination, save_format)` before anything is written to the path or stream. (`DocFormat.SVG`/`HTML`/`MARKDOWN`, `HtmlSaveOptions` and `MarkdownSaveOptions` are implemented — see [Pages](#pages).) |
 | Printing | `Duplex`, `PrintRange`, `PrinterSettings` | No print operation exists; `PrinterSettings` is rejected by `Document.save`. |
 | LaTeX | `LatexFragment` | Rejected as a load source; no LaTeX authoring or import path exists. |
 | Presentation drawing model | `FillMode`, `IMatrix`, `IPath` in `aspose_pdf.presentation` | Inert value objects. They accumulate path data that nothing consumes and are not connected to page authoring or rendering. |
 | Instrumentation | `PerformanceLogger`, `VirtualizationPerformance` in `aspose_pdf.visualization` | Working stopwatch helpers, but nothing in the package feeds them and they do not virtualise or accelerate rendering. (`RasterizedPage`, re-exported from the same module, is the real render result.) |
 
 `Document.save` accepts `None` (the default), `SaveFormat.PDF`,
-`DocFormat.PDF`, or `DocFormat.SVG`. `aspose_pdf.clustering` is a self-contained hierarchical
+`DocFormat.PDF`, `DocFormat.SVG`, `DocFormat.HTML`, `DocFormat.MARKDOWN`, and
+the `HtmlSaveOptions` / `MarkdownSaveOptions` containers. `aspose_pdf.clustering` is a self-contained hierarchical
 clustering utility, not a PDF feature.
 
 - Runtime package code does not use LLM services, API keys, or `.env` secrets.

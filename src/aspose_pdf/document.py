@@ -63,6 +63,30 @@ def _is_svg_save_format(value: Any) -> bool:
     return isinstance(name, str) and name.upper() == "SVG"
 
 
+def _text_export_format(value: Any) -> str | None:
+    """``"html"``, ``"markdown"`` or ``None`` for a structure export request.
+
+    Both the ``DocFormat`` member and the matching save-options object select
+    the export, so ported code that builds an options object reaches the same
+    place as code that names the format.
+    """
+    if value is None:
+        return None
+    name = getattr(value, "name", None) or getattr(value, "value", None)
+    if isinstance(name, str):
+        upper = name.upper()
+        if upper == "HTML":
+            return "html"
+        if upper in ("MARKDOWN", "MD"):
+            return "markdown"
+    type_name = type(value).__name__
+    if type_name == "HtmlSaveOptions":
+        return "html"
+    if type_name == "MarkdownSaveOptions":
+        return "markdown"
+    return None
+
+
 def _coerce_credential(certificate: Any, private_key: Any) -> tuple[Any, Any] | None:
     """Validate a recipient credential pair for a public-key document."""
     if certificate is None and private_key is None:
@@ -731,6 +755,129 @@ class Document:
             threshold=threshold,
         )
 
+    def to_html(
+        self,
+        *,
+        pages: Sequence[int] | None = None,
+        title: str | None = None,
+        embed_images: bool = True,
+    ) -> str:
+        """Return the document's inferred structure as one HTML document.
+
+        Headings, paragraphs, lists, tables and figures are inferred with the
+        same layout analysis :meth:`auto_tag` uses, and the text is decoded the
+        way :meth:`extract_text` decodes it. HTML has no page model, so pages
+        are separated by a rule and read as one flow. *title* defaults to the
+        document's own ``/Title``.
+
+        This is a conversion to a *flowing document*, not a facsimile: exact
+        positioning, colour and fonts are dropped. For a facsimile, use
+        :meth:`save_as_svg`.
+        """
+        from aspose_pdf.engine.text_export import to_html
+
+        return to_html(
+            self._export_blocks(pages, embed_images),
+            title=title if title is not None else self._document_title(),
+            embed_images=embed_images,
+        )
+
+    def to_markdown(
+        self,
+        *,
+        pages: Sequence[int] | None = None,
+        title: str | None = None,
+        embed_images: bool = True,
+    ) -> str:
+        """Return the document's inferred structure as Markdown (GFM).
+
+        See :meth:`to_html` for what the conversion carries over.
+        """
+        from aspose_pdf.engine.text_export import to_markdown
+
+        return to_markdown(
+            self._export_blocks(pages, embed_images),
+            title=title if title is not None else self._document_title(),
+            embed_images=embed_images,
+        )
+
+    def _document_title(self) -> str:
+        try:
+            return str(self.info.get("Title") or "")
+        except Exception:
+            return ""
+
+    def _export_blocks(
+        self, pages: Sequence[int] | None, embed_images: bool
+    ) -> list[list[Any]]:
+        from aspose_pdf.engine.text_export import page_blocks
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        indexes = (
+            list(range(self.page_count)) if pages is None else [int(i) for i in pages]
+        )
+        return [
+            page_blocks(self._engine_pdf, index, include_images=embed_images)
+            for index in indexes
+        ]
+
+    def save_as_html(
+        self,
+        destination: str | Path,
+        *,
+        pages: Sequence[int] | None = None,
+        title: str | None = None,
+        embed_images: bool = True,
+        split_into_pages: bool = False,
+    ) -> list[Path]:
+        """Write the document as HTML and return the files written.
+
+        One file by default. ``split_into_pages`` writes ``name-1.html``,
+        ``name-2.html`` … instead, one per page.
+        """
+        blocks = self._export_blocks(pages, embed_images)
+        from aspose_pdf.engine.text_export import to_html
+
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        document_title = title if title is not None else self._document_title()
+        if not split_into_pages:
+            target.write_text(
+                to_html(blocks, title=document_title, embed_images=embed_images),
+                encoding="utf-8",
+            )
+            return [target]
+        written: list[Path] = []
+        for offset, page in enumerate(blocks, 1):
+            path = target.with_name(
+                f"{target.stem}-{offset}{target.suffix or '.html'}"
+            )
+            path.write_text(
+                to_html([page], title=document_title, embed_images=embed_images),
+                encoding="utf-8",
+            )
+            written.append(path)
+        return written
+
+    def save_as_markdown(
+        self,
+        destination: str | Path,
+        *,
+        pages: Sequence[int] | None = None,
+        title: str | None = None,
+        embed_images: bool = True,
+    ) -> Path:
+        """Write the document as one Markdown (GFM) file and return its path."""
+        text = self.to_markdown(
+            pages=pages, title=title, embed_images=embed_images
+        )
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return target
+
     def save_as_svg(
         self,
         destination: str | Path,
@@ -1327,13 +1474,29 @@ class Document:
             Nothing is written to *destination* in that case.
         """
         self._ensure_not_disposed()
-        if _is_svg_save_format(save_format):
+        exporter = _text_export_format(save_format)
+        if _is_svg_save_format(save_format) or exporter is not None:
             if hasattr(destination, "write"):
                 raise PdfValidationException(
-                    "SVG output needs a file path, not a stream: a document "
-                    "with several pages becomes several files"
+                    "SVG, HTML and Markdown output need a file path, not a "
+                    "stream: a document may become several files"
                 )
-            self.save_as_svg(destination)
+            if exporter == "html":
+                options = save_format if hasattr(save_format, "split_into_pages") else None
+                self.save_as_html(
+                    destination,
+                    split_into_pages=bool(
+                        getattr(options, "split_into_pages", False)
+                    ),
+                )
+            elif exporter == "markdown":
+                options = save_format if hasattr(save_format, "extract_images") else None
+                self.save_as_markdown(
+                    destination,
+                    embed_images=bool(getattr(options, "extract_images", True)),
+                )
+            else:
+                self.save_as_svg(destination)
             return self
         _require_pdf_save_format(save_format)
 

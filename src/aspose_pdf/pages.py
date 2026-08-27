@@ -397,6 +397,42 @@ class Page:
         )
         return target
 
+    def to_html(self, *, embed_images: bool = True) -> str:
+        """Return this page's inferred structure as an HTML fragment document.
+
+        The conversion answers "what does this page *say*", not "what does it
+        look like": the same layout analysis :meth:`Document.auto_tag` uses
+        infers headings, paragraphs, lists, tables and figures, and the text is
+        decoded exactly as :meth:`Document.extract_text` decodes it. Exact
+        positioning, colour and fonts are deliberately dropped -- for a
+        facsimile, use :meth:`to_svg`.
+        """
+        from aspose_pdf.engine.text_export import to_html
+
+        return to_html(
+            [self._blocks(embed_images)], embed_images=embed_images
+        )
+
+    def to_markdown(self, *, embed_images: bool = True) -> str:
+        """Return this page's inferred structure as Markdown (GFM).
+
+        See :meth:`to_html` for what the conversion does and does not carry.
+        """
+        from aspose_pdf.engine.text_export import to_markdown
+
+        return to_markdown(
+            [self._blocks(embed_images)], embed_images=embed_images
+        )
+
+    def _blocks(self, embed_images: bool) -> list:
+        from aspose_pdf.engine.text_export import page_blocks
+
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        return page_blocks(eng, self._index, include_images=embed_images)
+
     def save_as_image(
         self,
         path: str | Path,

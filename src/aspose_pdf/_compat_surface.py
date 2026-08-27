@@ -33,9 +33,7 @@ _UNSUPPORTED_TYPES: dict[str, str] = {
     "CdrLoadOptions": "CorelDRAW (CDR) import",
     "CgmLoadOptions": "CGM import",
     "HtmlLoadOptions": "HTML import",
-    "HtmlSaveOptions": "HTML export",
     "LatexFragment": "LaTeX authoring",
-    "MarkdownSaveOptions": "Markdown export",
     "OfdLoadOptions": "OFD import",
     "PrinterSettings": "printing",
     "SvgLoadOptions": "SVG import",
@@ -43,8 +41,6 @@ _UNSUPPORTED_TYPES: dict[str, str] = {
 
 # (enum class name, member name) -> feature the member stands for.
 _UNSUPPORTED_MEMBERS: dict[tuple[str, str], str] = {
-    ("DocFormat", "HTML"): "HTML export",
-    ("DocFormat", "MARKDOWN"): "Markdown export",
     ("SaveFormat", "PPTX"): "PPTX export",
 }
 

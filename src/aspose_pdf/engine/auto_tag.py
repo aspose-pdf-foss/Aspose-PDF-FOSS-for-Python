@@ -76,6 +76,11 @@ _COL_GUTTER_MIN = 18.0    # ... and at least this many user units
 _COL_OVERLAP_RATIO = 0.5  # column bands must share this fraction of their y-span
 _COL_MIN_SPAN_EM = 0.5    # each band must span more than a single line vertically
 _MAX_COL_DEPTH = 3        # recursion cap for nested vertical cuts
+# A line's width is estimated from the bytes it shows; 0.5 em per byte is the
+# usual rough average for Latin text. It is only ever used to ask whether a
+# line *crosses* a candidate gutter, so being approximate is fine -- the answer
+# only changes for a line that ends within half an em of the gutter.
+_WIDTH_PER_BYTE_EM = 0.5
 
 # Table-detection heuristics (see :func:`detect_tables`).
 _TABLE_MIN_ROWS = 2       # a table needs at least this many aligned rows
@@ -819,6 +824,29 @@ def _side_by_side(
     return overlap >= _COL_OVERLAP_RATIO * smaller
 
 
+def _estimated_right_edge(element: LayoutElement) -> float:
+    """Where a text element probably ends, from what it shows and at what size."""
+    if element.kind != "text" or element.text_length <= 0:
+        return element.x
+    size = element.font_size if element.font_size > 0 else 10.0
+    return element.x + element.text_length * size * _WIDTH_PER_BYTE_EM
+
+
+def _gutter_is_clear(elements: list[LayoutElement], at: float) -> bool:
+    """Whether no line runs across *at*.
+
+    A gutter is *whitespace*: content on one side, content on the other, and
+    nothing spanning between. Judging that from anchors alone cannot tell a
+    two-column page from a table with widely spaced cells, because both leave a
+    gap between anchors -- but a table sits under full-width prose that runs
+    straight through the supposed gutter, and two columns never do.
+    """
+    for element in elements:
+        if element.x < at < _estimated_right_edge(element):
+            return False
+    return True
+
+
 def _split_columns(
     elements: list[LayoutElement], med_fs: float, depth: int
 ) -> list[list[LayoutElement]]:
@@ -831,6 +859,8 @@ def _split_columns(
         if hi - lo > best_gap:
             best_gap, best_at = hi - lo, (lo + hi) / 2.0
     if best_at is None or best_gap < max(_COL_GUTTER_MIN, _COL_GUTTER_EM * med_fs):
+        return [elements]
+    if not _gutter_is_clear(elements, best_at):
         return [elements]
     left = [e for e in elements if e.x < best_at]
     right = [e for e in elements if e.x >= best_at]
