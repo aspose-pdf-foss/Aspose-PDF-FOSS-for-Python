@@ -330,6 +330,19 @@ def decode_pdf_text_string(s: PdfString) -> str:
         return octets.decode("latin-1", errors="replace")
 
 
+def _pack_bilevel(samples: bytes, width: int, height: int) -> bytes:
+    """Pack 8-bit coverage back into one bit per sample, MSB first, row-padded."""
+    row_bytes = (width + 7) // 8
+    out = bytearray(row_bytes * height)
+    for y in range(height):
+        base = y * width
+        row = y * row_bytes
+        for x in range(width):
+            if samples[base + x] >= 128:
+                out[row + (x >> 3)] |= 0x80 >> (x & 7)
+    return bytes(out)
+
+
 def _pdf_text_string(value: Any) -> PdfString:
     """Encode a Python value as a PDF text string."""
     text = str(value)
@@ -8136,16 +8149,23 @@ class SimplePdf:
         display_size: tuple[float, float] | None = None,
         progressive: bool = False,
     ) -> bool:
-        from . import dct, jpeg_encoder
+        from . import jpeg_encoder
         from .cos import PdfBoolean, PdfName, PdfNumber
         from .image_resample import downscale, fit_within
 
         m = stream.mapping
         if m.get(PdfName("Subtype")) != PdfName("Image"):
             return False
+        width = self._get_number(m.get(PdfName("Width")))
+        height = self._get_number(m.get(PdfName("Height")))
+        if not width or not height:
+            return False
+        width, height = int(width), int(height)
         mask = self._resolve(m.get(PdfName("ImageMask")))
         if isinstance(mask, PdfBoolean) and mask.value:
-            return False
+            return self._recompress_stencil(
+                stream, width, height, max_dim, target_dpi, display_size
+            )
         # A /Decode array remaps samples. The inverting form ([1 0] per
         # component) is reproduced exactly by inverting the samples and dropping
         # the array; any other mapping we do not attempt.
@@ -8155,14 +8175,6 @@ class SimplePdf:
             if not self._decode_array_is_inversion(decode):
                 return False
             inverted = True
-        width = self._get_number(m.get(PdfName("Width")))
-        height = self._get_number(m.get(PdfName("Height")))
-        if not width or not height:
-            return False
-        width, height = int(width), int(height)
-        comps = self._cs_components(m.get(PdfName("ColorSpace")))
-        if comps not in (1, 3, 4):
-            return False
 
         new_w, new_h = (
             fit_within(width, height, max_dim) if max_dim else (width, height)
@@ -8186,32 +8198,11 @@ class SimplePdf:
 
         names = self._filter_names(stream)
         terminal = names[-1] if names else None
-        if terminal in self._OPAQUE_IMAGE_FILTERS - self._JPEG_FILTERS:
-            return False  # JPX/CCITT/JBIG2: cannot recover samples cheaply.
-
         is_jpeg = terminal in self._JPEG_FILTERS
-        if is_jpeg:
-            decoded = dct.decode(stream.content, limits=self._load_limits)
-            if (
-                decoded is None
-                or decoded.components != comps
-                or decoded.width != width
-                or decoded.height != height
-            ):
-                return False
-            samples = decoded.samples
-        else:
-            if self._get_number(m.get(PdfName("BitsPerComponent"))) != 8:
-                return False
-            try:
-                samples = self._decode_cos_stream(stream)
-            except PdfResourceLimitException:
-                raise
-            except PDF_OPERATION_ERRORS:
-                return False
-            if len(samples) < width * height * comps:
-                return False
-            samples = samples[: width * height * comps]
+        brought = self._image_device_samples(stream, width, height)
+        if brought is None:
+            return False
+        samples, comps, space = brought
 
         if inverted:
             samples = bytes(255 - value for value in samples)
@@ -8243,11 +8234,263 @@ class SimplePdf:
         m.pop(PdfName("DecodeParms"), None)
         if inverted:
             m.pop(PdfName("Decode"), None)  # now folded into the samples.
+        if space is not None:
+            # The samples left their original space behind -- an Indexed
+            # palette expanded, a Lab or Separation value converted -- so the
+            # dictionary has to say what they are now.
+            m[PdfName("ColorSpace")] = PdfName(space)
         m[PdfName("BitsPerComponent")] = PdfNumber(8)
         m[PdfName("Width")] = PdfNumber(new_w)
         m[PdfName("Height")] = PdfNumber(new_h)
         m[PdfName("Length")] = PdfNumber(len(new_content))
         return True
+
+    def _image_device_samples(
+        self, stream: Any, width: int, height: int
+    ) -> tuple[bytes, int, str | None] | None:
+        """Bring an image to 8-bit device samples: ``(samples, comps, space)``.
+
+        *space* is the colour space name to write when the samples no longer
+        live in the one the dictionary names -- an expanded palette, a
+        converted Lab or Separation value -- and ``None`` when they still do.
+
+        Every codec the library can read is fair game here: a CCITT, JBIG2 or
+        JPEG 2000 payload is decoded like any other, and sub-byte or 16-bit
+        samples are normalised. Returning ``None`` means the image stays
+        exactly as it was.
+        """
+        from . import dct
+        from .cos import PdfName
+        from .image_export import to_8bpc_bytes
+
+        m = stream.mapping
+        names = self._filter_names(stream)
+        terminal = names[-1] if names else None
+        cs_obj = m.get(PdfName("ColorSpace"))
+
+        if terminal in self._JPEG_FILTERS:
+            decoded = dct.decode(stream.content, limits=self._load_limits)
+            if decoded is None or decoded.width != width or decoded.height != height:
+                return None
+            if decoded.components not in (1, 3, 4):
+                return None
+            return decoded.samples, decoded.components, None
+
+        if terminal == "JPXDecode":
+            from .jpx import decode_to_rgb
+
+            try:
+                result = decode_to_rgb(stream.content, limits=self._load_limits)
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                return None
+            if result is None:
+                return None
+            jpx_w, jpx_h, rgb = result
+            if jpx_w != width or jpx_h != height:
+                return None
+            # The codestream carries its own colour space; the samples come
+            # back as RGB whatever the dictionary claimed.
+            return rgb, 3, "DeviceRGB"
+
+        bpc = int(self._get_number(m.get(PdfName("BitsPerComponent"))) or 8)
+        if bpc not in (1, 2, 4, 8, 16):
+            return None
+        source_comps = self._image_source_components(cs_obj)
+        if source_comps is None:
+            return None
+        try:
+            raw = self._decode_cos_stream(stream)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return None
+        if not raw:
+            return None
+        samples = to_8bpc_bytes(raw, bpc, width, height, source_comps)
+        need = width * height * source_comps
+        if len(samples) < need:
+            return None
+        samples = samples[:need]
+        return self._samples_to_device(cs_obj, samples, bpc, width, height)
+
+    def _image_source_components(self, cs_obj: Any) -> int | None:
+        """How many components a sample carries in the image's own space."""
+        from .cos import PdfArray
+
+        direct = self._cs_components(cs_obj)
+        if direct is not None:
+            return direct
+        cs = self._resolve(cs_obj)
+        if not isinstance(cs, PdfArray) or not cs.items:
+            return None
+        head = self._get_name(cs.items[0])
+        if head in ("Indexed", "I"):
+            return 1
+        if head == "Separation":
+            return 1
+        if head == "Lab":
+            return 3
+        if head in ("DeviceN", "NChannel") and len(cs.items) >= 2:
+            names = self._resolve(cs.items[1])
+            return len(names.items) if isinstance(names, PdfArray) else None
+        return None
+
+    def _samples_to_device(
+        self, cs_obj: Any, samples: bytes, bpc: int, width: int, height: int
+    ) -> tuple[bytes, int, str | None] | None:
+        """Convert samples out of a non-device space, or pass them through."""
+        from .cos import PdfArray, PdfStream
+        from .image_export import indexed_to_rgb
+
+        direct = self._cs_components(cs_obj)
+        if direct is not None:
+            return samples, direct, None
+
+        cs = self._resolve(cs_obj)
+        if not isinstance(cs, PdfArray) or not cs.items:
+            return None
+        head = self._get_name(cs.items[0])
+
+        if head in ("Indexed", "I") and len(cs.items) >= 4:
+            base_comps = self._cs_components(cs.items[1]) or 3
+            lookup = self._resolve(cs.items[3])
+            if isinstance(lookup, PdfStream):
+                try:
+                    palette = self._decode_cos_stream(lookup)
+                except PdfResourceLimitException:
+                    raise
+                except PDF_OPERATION_ERRORS:
+                    return None
+            else:
+                palette = self._string_bytes(lookup)
+            if not palette:
+                return None
+            # ``indexed_to_rgb`` wants the original indices, not the 8-bit
+            # widening: a 4-bit index of 3 must stay 3, not become 51.
+            indices = self._reduce_indices(samples, bpc)
+            rgb = indexed_to_rgb(indices, palette, 8, width, height, base_comps)
+            if len(rgb) < width * height * 3:
+                return None
+            return rgb[: width * height * 3], 3, "DeviceRGB"
+
+        converter = self._device_converter(cs_obj)
+        if converter is None:
+            return None
+        comps = self._image_source_components(cs_obj) or 1
+        out = bytearray(width * height * 3)
+        cache: dict[tuple, tuple[int, int, int]] = {}
+        for pixel in range(width * height):
+            start = pixel * comps
+            key = bytes(samples[start : start + comps])
+            color = cache.get(key)
+            if color is None:
+                try:
+                    color = converter([value / 255.0 for value in key])
+                except PdfResourceLimitException:
+                    raise
+                except (TypeError, ValueError, ZeroDivisionError):
+                    return None
+                if len(cache) < 4096:
+                    cache[key] = color
+            out[pixel * 3 : pixel * 3 + 3] = bytes(
+                max(0, min(255, int(value))) for value in color
+            )
+        return bytes(out), 3, "DeviceRGB"
+
+    @staticmethod
+    def _reduce_indices(samples: bytes, bpc: int) -> bytes:
+        """Undo the 8-bit widening ``to_8bpc_bytes`` applies to sub-byte data."""
+        if bpc >= 8:
+            return samples
+        peak = (1 << bpc) - 1
+        return bytes((value * peak) // 255 for value in samples)
+
+    def _device_converter(self, cs_obj: Any):
+        from .shading import build_color_converter
+
+        try:
+            return build_color_converter(
+                self,
+                cs_obj,
+                limits=self._load_limits,
+                budget=self._load_budget,
+            )
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return None
+
+    def _recompress_stencil(
+        self,
+        stream: Any,
+        width: int,
+        height: int,
+        max_dim: int | None,
+        target_dpi: int | None,
+        display_size: tuple[float, float] | None,
+    ) -> bool:
+        """Downscale a stencil mask, keeping it one bit per sample.
+
+        A ``/ImageMask`` is a shape, not a picture: JPEG would smear its edges
+        into grey, so the only safe saving is fewer samples. Coverage is
+        averaged over each destination cell and thresholded back to a bit, and
+        the result is re-packed and Flate-encoded.
+        """
+        from .cos import PdfName, PdfNumber
+        from .filters import StreamEncoder
+        from .image_export import to_8bpc_bytes
+        from .image_resample import downscale, fit_within
+
+        new_w, new_h = (
+            fit_within(width, height, max_dim) if max_dim else (width, height)
+        )
+        if target_dpi and display_size:
+            dw, dh = display_size
+            if dw > 0 and dh > 0:
+                scale = min(
+                    1.0,
+                    target_dpi * dw / (72.0 * new_w),
+                    target_dpi * dh / (72.0 * new_h),
+                )
+                if scale < 1.0:
+                    new_w = max(1, round(new_w * scale))
+                    new_h = max(1, round(new_h * scale))
+        if new_w == width and new_h == height:
+            return False
+        try:
+            raw = self._decode_cos_stream(stream)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return False
+        expanded = to_8bpc_bytes(raw, 1, width, height, 1)
+        if len(expanded) < width * height:
+            return False
+        smaller = downscale(expanded[: width * height], width, height, 1, new_w, new_h)
+        packed = _pack_bilevel(smaller, new_w, new_h)
+        new_content = StreamEncoder.encode(packed, "FlateDecode")
+        if len(new_content) >= len(stream.content):
+            return False
+        m = stream.mapping
+        stream.content = new_content
+        m[PdfName("Filter")] = PdfName("FlateDecode")
+        m.pop(PdfName("DecodeParms"), None)
+        m[PdfName("Width")] = PdfNumber(new_w)
+        m[PdfName("Height")] = PdfNumber(new_h)
+        m[PdfName("BitsPerComponent")] = PdfNumber(1)
+        m[PdfName("Length")] = PdfNumber(len(new_content))
+        return True
+
+    def _string_bytes(self, obj: Any) -> bytes:
+        from .cos import PdfString
+
+        obj = self._resolve(obj)
+        if isinstance(obj, PdfString):
+            raw = obj.value
+            return raw if isinstance(raw, bytes) else str(raw).encode("latin-1")
+        return b""
 
     def _filter_names(self, stream: Any) -> list:
         from .cos import PdfArray, PdfName

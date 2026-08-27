@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The optimizer recompresses the images it used to refuse.** Anything that
+  was not 8-bit device gray/RGB/CMYK under a raster filter kept its original
+  bytes however large: an Indexed, Lab, Separation or DeviceN image, a
+  1/2/4/16-bit one, a stencil mask, and every CCITT, JBIG2 or JPEG 2000
+  payload -- which is most of a scanned document. Each is now brought to
+  device samples first: a palette is folded into the samples (the space
+  becomes `DeviceRGB`), a non-device space is converted through the same
+  colour machinery the renderer uses, sub-byte and 16-bit samples are
+  normalised to 8, and an opaque codec is decoded like any other filter. A
+  stencil is a shape rather than a picture, so it is downscaled and re-packed
+  at one bit per sample instead of being JPEG-encoded. The never-grow guard
+  still has the last word, so an image is only rewritten when that actually
+  saves bytes.
+
 - **`GraphicsAbsorber` collects every mark a page makes.** It reported painted
   paths and placed XObject images and nothing else: text runs, inline
   (`BI`/`ID`/`EI`) images and `sh` shading fills were simply missing, a stroked

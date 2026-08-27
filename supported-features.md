@@ -202,8 +202,18 @@ Boundaries:
   (and ICCBased with N=1/3, 4:2:0 chroma) and DeviceCMYK — device or **ICCBased
   with N=4** — full-resolution and Adobe-marked. A `/Decode` array that only
   inverts (`[1 0]` per component) is folded into the samples and dropped; any
-  other sample remapping, plus Indexed, Lab and stencil (`/ImageMask`) images and
-  JPX/CCITT/JBIG2 payloads, is left untouched. **Soft/stencil masks** are never
+  other sample remapping is left untouched. Everything else is brought to
+  device samples first and then recompressed: an **Indexed** image has its
+  palette folded into the samples (the space becomes `DeviceRGB`), **Lab**,
+  **Separation**, **DeviceN** and other non-device spaces are converted through
+  the same colour machinery the renderer uses, **1/2/4/16-bit** samples are
+  normalised to 8, and a **CCITT**, **JBIG2** or **JPEG 2000** payload is
+  decoded like any other filter. A **stencil** (`/ImageMask`) is a shape rather
+  than a picture, so it is only ever downscaled -- coverage averaged per
+  destination cell and thresholded back to one bit, re-packed and Flate-encoded
+  -- never JPEG-encoded. Every rewrite still has to make the stream smaller or
+  the original is kept, so a low-bit-depth image often stays as it was: widening
+  1-bit samples to 8 costs more than it saves. **Soft/stencil masks** are never
   JPEG-encoded — ringing on a sharp mask is visible — but they *are* downscaled
   along with the image that carries them, at that image's display size.
   Resampling is box-average downscaling only (no upscaling). DPI targeting
