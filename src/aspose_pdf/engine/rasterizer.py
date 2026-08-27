@@ -2325,7 +2325,7 @@ class _PageRasterizer:
         """Build an outline source for *face*, or ``None`` when unusable."""
         outlines: Any
         if face.is_cff:
-            outlines = CffOutlines(face.data)
+            outlines = CffOutlines(face.data, variation=face.variation)
         else:
             outlines = TrueTypeOutlines(face.data)
         return outlines if outlines.ok else None

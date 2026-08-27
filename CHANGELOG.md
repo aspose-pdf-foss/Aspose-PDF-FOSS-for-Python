@@ -9,6 +9,23 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A variable CFF2 font can be drawn at a chosen instance.** The
+  ItemVariationStore's regions are read, `fvar` supplies the axes (with `avar`
+  applied) and each `blend` resolves to `default + Σ scalar x delta`, verified
+  against fontTools' own instancer. Substitute faces use it to reach a style:
+  a modern system font ships as one variable file rather than four static
+  ones, so asking for Bold now moves the `wght` axis instead of settling for
+  the default master.
+
+### Fixed
+
+- **A variable CFF2 font drew garbage, not its default master.** The CFF DICT
+  parser stopped at CFF1's operator range, so the Top DICT's `vstore`
+  (operator 24) was read as an operand and the ItemVariationStore was never
+  found. With no region counts the `blend` operator could not tell a delta from
+  a coordinate, and the deltas went on to be drawn as part of the outline. Both
+  that and the two-byte length prefix in front of the store are fixed.
+
 - **The optimizer recompresses the images it used to refuse.** Anything that
   was not 8-bit device gray/RGB/CMYK under a raster filter kept its original
   bytes however large: an Indexed, Lab, Separation or DeviceN image, a

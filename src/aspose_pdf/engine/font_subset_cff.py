@@ -572,7 +572,10 @@ def _parse_dict(data: bytes) -> list[tuple]:
     n = len(data)
     while i < n:
         b0 = data[i]
-        if b0 <= 21:  # operator
+        # 0-21 are CFF1 operators; CFF2 adds 24 (vstore) and 25 (maxstack).
+        # Neither can begin an operand, so accepting them here is safe for
+        # both -- and without it a CFF2 Top DICT loses its variation store.
+        if b0 <= 21 or b0 in (24, 25):
             op_pos = i
             if b0 == 12:
                 key = (12, data[i + 1])
@@ -598,7 +601,7 @@ def _parse_dict(data: bytes) -> list[tuple]:
         elif 247 <= b0 <= 254:
             i += 2
         else:
-            i += 1  # 22-27, 31, 255: reserved -- skip defensively.
+            i += 1  # 22-23, 26-27, 31, 255: reserved -- skip defensively.
     return entries
 
 

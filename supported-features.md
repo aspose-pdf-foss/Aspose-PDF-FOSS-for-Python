@@ -398,9 +398,13 @@ Boundaries:
   and Type 1 fonts under a Standard/WinAnsi/MacRoman predefined encoding (or a
   `/Differences` map) now resolve real glyphs through the font's charset and the
   Adobe Glyph List rather than falling back to boxes. Latin GSUB
-  (ligatures, kerning) through a substitute face is not applied; complex-script
-  substitute runs are cursively joined when the face covers the script
-  (`shape_substitute_text`, a no-op for the bundled Latin/symbol faces).
+  (ligatures, kerning) through a substitute face is deliberately **not**
+  applied: the PDF's own `/Widths` place every glyph, so kerning would move
+  text away from where the producer put it, and a ligature would merge two
+  codes that the page positions separately. Complex-script substitute runs
+  *are* cursively joined, because that changes glyph shapes without changing
+  the count or the advances (`shape_substitute_text`, a no-op for the bundled
+  Latin/symbol faces).
 - A composite font whose descendant carries **no** embedded program draws
   boxes unless font sources are configured; with them it resolves a face and
   maps each CID to Unicode and on to that face's glyphs (see [Fonts](#fonts)).
@@ -747,10 +751,17 @@ Boundaries:
 - WOFF2 decoding needs the optional `brotli` dependency. WOFF2 font
   *collections* (`ttcf` flavour) are reconstructed into a TrueType Collection,
   after which the descendant face is selected as for any TTC.
-- CFF2 outline programs are rasterized for the default instance: variable-font
-  `blend`/`vsindex` region deltas are dropped, so a variable CFF2 draws its
-  default master, not an interpolated instance. CFF2 is left whole by the
-  optimizer (not subset) and rejected for authoring new text.
+- **CFF2 outline programs are drawn at a chosen variable instance.** The
+  ItemVariationStore's regions are read, `fvar` supplies the axes (with `avar`
+  applied), and each `blend` resolves to `default + Σ scalar x delta` for the
+  requested coordinates -- so a variable CFF2 draws the instance asked for, not
+  only its default master. Without a request the deltas are dropped, which *is*
+  the default master. Substitute faces use this to reach a style: a modern
+  system font ships as one variable file rather than four static ones, so
+  `wght` (and `ital`/`slnt`) are set when Bold or Italic is wanted and the
+  face's own name does not already say so. Variable **TrueType** (`gvar`) is a
+  different mechanism and is not instanced. CFF2 is left whole by the optimizer
+  (not subset) and rejected for authoring new text.
 - Complex-text authoring requires the optional `uharfbuzz`, `python-bidi`, and
   `fonttools` dependencies
   (`pip install aspose-pdf-foss-for-python[text-layout]`) and an embedded

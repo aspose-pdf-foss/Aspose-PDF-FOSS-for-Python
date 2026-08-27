@@ -218,6 +218,14 @@ class ResolvedFace:
     is_cff: bool
     """``True`` when outlines live in a ``CFF `` table rather than ``glyf``."""
 
+    variation: dict[str, float] | None = None
+    """Variable-font axis coordinates to draw at, when the face has axes.
+
+    A modern system font is usually one variable file rather than four static
+    ones, so reaching Bold or Italic means asking for a *coordinate*, not a
+    different file. Honoured for CFF2 outlines.
+    """
+
 
 @dataclass
 class _Source:
@@ -469,7 +477,12 @@ class FontResolver:
         for face in ordered:
             program = self._program(face)
             if program is not None:
-                return ResolvedFace(program, face.best_name, face.is_cff)
+                variation = _variation_for(
+                    program, bold=bold, italic=italic, face=face
+                )
+                return ResolvedFace(
+                    program, face.best_name, face.is_cff, variation
+                )
         return None
 
     def _program(self, face: _Face) -> bytes | None:
@@ -566,6 +579,40 @@ def _extract_collection_face(data: bytes, face_index: int) -> bytes | None:
         body += b"\x00" * padding
         cursor += length + padding
     return bytes(out + body)
+
+
+def _variation_for(
+    program: bytes, *, bold: bool, italic: bool, face: _Face
+) -> dict[str, float] | None:
+    """Axis coordinates that reach the wanted style, or ``None``.
+
+    Only asked of a face that actually carries axes, and only for the part of
+    the style the face does not already supply: a file whose own name says
+    "Bold" is already there, and moving its ``wght`` further would overshoot.
+    """
+    from .cff_outlines import _parse_fvar_axes
+
+    try:
+        axes = {axis["tag"]: axis for axis in _parse_fvar_axes(program)}
+    except Exception:  # noqa: BLE001 - a malformed fvar just means no axes
+        return None
+    if not axes:
+        return None
+    # The label counts alongside the name table: a caller-supplied program is
+    # known by the name the caller gave it, and a stripped subset may carry no
+    # name table at all.
+    text = _normalize(
+        f"{face.subfamily} {face.full} {face.postscript} {face.source.label}"
+    )
+    variation: dict[str, float] = {}
+    if bold and "wght" in axes and not any(word in text for word in _BOLD_WORDS):
+        variation["wght"] = min(700.0, float(axes["wght"]["max"]))
+    if italic and not any(word in text for word in _ITALIC_WORDS):
+        if "ital" in axes:
+            variation["ital"] = float(axes["ital"]["max"])
+        elif "slnt" in axes:
+            variation["slnt"] = float(axes["slnt"]["min"])
+    return variation or None
 
 
 def _style_wanted(

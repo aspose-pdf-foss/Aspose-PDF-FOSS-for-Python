@@ -20,6 +20,8 @@ outline (or an inert source) rather than raising.
 from __future__ import annotations
 
 import struct
+from collections.abc import Mapping
+from typing import Any
 
 from .agl import cff_standard_strings
 from .font_subset_cff import (
@@ -151,6 +153,142 @@ def _decode_reals(operand_bytes: bytes) -> list[float]:
     return vals
 
 
+def _parse_fvar_axes(data: bytes) -> list[dict[str, Any]]:
+    """Axis records from an SFNT's ``fvar`` table, or ``[]``."""
+    table = _sfnt_table(data, b"fvar")
+    if table is None or len(table) < 16:
+        return []
+    try:
+        axes_offset, _, axis_count, axis_size = struct.unpack_from(">HHHH", table, 4)
+    except struct.error:
+        return []
+    axes: list[dict[str, Any]] = []
+    for index in range(axis_count):
+        start = axes_offset + index * axis_size
+        if start + 20 > len(table):
+            break
+        tag = table[start : start + 4].decode("latin-1")
+        minimum, default, maximum = struct.unpack_from(">lll", table, start + 4)
+        axes.append(
+            {
+                "tag": tag,
+                "min": minimum / 65536.0,
+                "default": default / 65536.0,
+                "max": maximum / 65536.0,
+            }
+        )
+    return axes
+
+
+def _sfnt_table(data: bytes, tag: bytes) -> bytes | None:
+    """The named table of an SFNT wrapper, or ``None`` for a bare CFF."""
+    if len(data) < 12 or data[:4] not in (b"OTTO", b"\x00\x01\x00\x00", b"true"):
+        return None
+    try:
+        count = struct.unpack_from(">H", data, 4)[0]
+        for index in range(count):
+            record = 12 + index * 16
+            if data[record : record + 4] != tag:
+                continue
+            offset, length = struct.unpack_from(">II", data, record + 8)
+            if offset + length <= len(data):
+                return data[offset : offset + length]
+    except struct.error:
+        return None
+    return None
+
+
+def _normalize_coordinates(
+    axes: list[dict[str, Any]],
+    variation: Mapping[str, float] | None,
+    raw: bytes,
+) -> tuple[float, ...]:
+    """User axis values -> normalised [-1, 1] coordinates, ``avar`` applied."""
+    if not axes:
+        return ()
+    coords: list[float] = []
+    for axis in axes:
+        value = None if variation is None else variation.get(axis["tag"])
+        if value is None:
+            coords.append(0.0)
+            continue
+        value = max(axis["min"], min(axis["max"], float(value)))
+        default = axis["default"]
+        if value == default:
+            coords.append(0.0)
+        elif value < default:
+            span = default - axis["min"]
+            coords.append((value - default) / span if span else 0.0)
+        else:
+            span = axis["max"] - default
+            coords.append((value - default) / span if span else 0.0)
+    return tuple(_apply_avar(raw, coords))
+
+
+def _apply_avar(raw: bytes, coords: list[float]) -> list[float]:
+    """Apply the ``avar`` segment maps, which reshape an axis's response."""
+    table = _sfnt_table(raw, b"avar")
+    if table is None or len(table) < 8:
+        return coords
+    try:
+        axis_count = struct.unpack_from(">H", table, 6)[0]
+    except struct.error:
+        return coords
+    cursor = 8
+    out = list(coords)
+    for axis in range(min(axis_count, len(out))):
+        try:
+            pair_count = struct.unpack_from(">H", table, cursor)[0]
+        except struct.error:
+            return out
+        cursor += 2
+        pairs: list[tuple[float, float]] = []
+        for _ in range(pair_count):
+            try:
+                from_value, to_value = struct.unpack_from(">hh", table, cursor)
+            except struct.error:
+                return out
+            pairs.append((from_value / 16384.0, to_value / 16384.0))
+            cursor += 4
+        out[axis] = _piecewise(pairs, out[axis])
+    return out
+
+
+def _piecewise(pairs: list[tuple[float, float]], value: float) -> float:
+    if len(pairs) < 2:
+        return value
+    for index in range(1, len(pairs)):
+        left_from, left_to = pairs[index - 1]
+        right_from, right_to = pairs[index]
+        if left_from <= value <= right_from:
+            span = right_from - left_from
+            if span <= 0:
+                return left_to
+            ratio = (value - left_from) / span
+            return left_to + ratio * (right_to - left_to)
+    return value
+
+
+def _region_scalar(
+    region: list[tuple[float, float, float]], coords: tuple[float, ...]
+) -> float:
+    """The region's weight at *coords* (OpenType variation scalar)."""
+    scalar = 1.0
+    for axis, (start, peak, end) in enumerate(region):
+        if peak == 0.0:
+            continue  # this axis does not participate in the region
+        value = coords[axis] if axis < len(coords) else 0.0
+        if value == peak:
+            continue
+        if value <= start or value >= end:
+            return 0.0
+        if value < peak:
+            scalar *= (value - start) / (peak - start) if peak != start else 0.0
+        else:
+            scalar *= (end - value) / (end - peak) if end != peak else 0.0
+    return scalar
+
+
 def _maybe_extract_cff(data: bytes) -> bytes:
     """Return the ``CFF ``/``CFF2`` table when *data* is an SFNT/OpenType wrapper."""
     if len(data) >= 12 and data[:4] in (b"OTTO", b"\x00\x01\x00\x00", b"true"):
@@ -179,7 +317,19 @@ def _maybe_extract_cff(data: bytes) -> bytes:
 class CffOutlines:
     """Decode glyph outlines from a CFF (Type 2 charstring) font program."""
 
-    def __init__(self, font_bytes: bytes):
+    def __init__(
+        self,
+        font_bytes: bytes,
+        *,
+        variation: Mapping[str, float] | None = None,
+    ):
+        """Decode a CFF program, optionally at a variable-font *instance*.
+
+        *variation* names axis coordinates in user units -- ``{"wght": 700}``
+        -- for a CFF2 program that carries an ``fvar`` table. Without it (or
+        for any non-variable font) the default master is drawn, exactly as
+        before.
+        """
         self.units_per_em = 1000
         self.num_glyphs = 0
         self._charstrings: list[bytes] = []
@@ -189,6 +339,13 @@ class CffOutlines:
         self._is_cid = False
         self._is_cff2 = False
         self._region_counts: dict[int, int] = {}
+        # Variation regions from the ItemVariationStore, the region set each
+        # ``vsindex`` selects, and the blend scalars for the chosen instance.
+        self._regions: list[list[tuple[float, float, float]]] = []
+        self._vsindex_regions: dict[int, list[int]] = {}
+        self._scalars: dict[int, list[float]] = {}
+        self.axes: list[dict[str, Any]] = []
+        self.coordinates: tuple[float, ...] = ()
         self._encoding_off: int | None = None
         self._charset_off: int | None = None
         self._strings: list[bytes] = []
@@ -196,8 +353,12 @@ class CffOutlines:
         self._data = b""
         self._cache: dict[int, list[Contour]] = {}
         self._ok = False
+        raw = bytes(font_bytes)
         try:
-            self._parse(_maybe_extract_cff(bytes(font_bytes)))
+            self.axes = _parse_fvar_axes(raw)
+            self._parse(_maybe_extract_cff(raw))
+            if self._ok and self._is_cff2 and self._regions:
+                self._select_instance(raw, variation)
         except (struct.error, IndexError, ValueError):
             self._ok = False
 
@@ -288,23 +449,81 @@ class CffOutlines:
             self._fd_lsubrs = [[]]
         vstore_off = _dict_int(entries, _OP_VSTORE)
         if vstore_off is not None:
-            self._region_counts = self._parse_variation_regions(data, vstore_off)
+            # The CFF2 ``vstore`` offset points at a 2-byte length, *then* the
+            # ItemVariationStore. Reading from the length itself finds no store
+            # at all -- and with no region counts the ``blend`` operator cannot
+            # tell deltas from coordinates, so a variable font drew garbage
+            # rather than its default master.
+            self._region_counts = self._parse_variation_regions(data, vstore_off + 2)
         self._is_cff2 = True
         self._ok = True
 
     def _parse_variation_regions(self, data: bytes, off: int) -> dict[int, int]:
-        """Return ``{vsindex: region count}`` from the ItemVariationStore."""
+        """Read the ItemVariationStore: region counts, axes and per-vsindex sets.
+
+        CFF2 splits variation data in two: the *deltas* travel inside the
+        charstring as ``blend`` operands, and this store says how many there
+        are and what each one means -- one region per delta, each a triple of
+        axis coordinates. Reading only the counts is enough to *skip* the
+        deltas; reading the regions is what lets them be applied.
+        """
         try:
             if struct.unpack_from(">H", data, off)[0] != 1:
                 return {}
+            region_list_off = struct.unpack_from(">I", data, off + 2)[0]
+            self._regions = self._parse_region_list(data, off + region_list_off)
             data_count = struct.unpack_from(">H", data, off + 6)[0]
             counts: dict[int, int] = {}
             for index in range(data_count):
                 ivd_offset = struct.unpack_from(">I", data, off + 8 + 4 * index)[0]
-                counts[index] = struct.unpack_from(">H", data, off + ivd_offset + 4)[0]
+                base = off + ivd_offset
+                region_count = struct.unpack_from(">H", data, base + 4)[0]
+                counts[index] = region_count
+                self._vsindex_regions[index] = [
+                    struct.unpack_from(">H", data, base + 6 + 2 * i)[0]
+                    for i in range(region_count)
+                ]
             return counts
         except struct.error:
             return {}
+
+    @staticmethod
+    def _parse_region_list(data: bytes, off: int) -> list[list[tuple[float, float, float]]]:
+        """``[[(start, peak, end) per axis] per region]`` from a VarRegionList."""
+        try:
+            axis_count, region_count = struct.unpack_from(">HH", data, off)
+        except struct.error:
+            return []
+        regions: list[list[tuple[float, float, float]]] = []
+        cursor = off + 4
+        for _ in range(region_count):
+            axes: list[tuple[float, float, float]] = []
+            for _axis in range(axis_count):
+                try:
+                    start, peak, end = struct.unpack_from(">hhh", data, cursor)
+                except struct.error:
+                    return regions
+                axes.append((start / 16384.0, peak / 16384.0, end / 16384.0))
+                cursor += 6
+            regions.append(axes)
+        return regions
+
+    def _select_instance(
+        self, raw: bytes, variation: Mapping[str, float] | None
+    ) -> None:
+        """Pick a variable-font instance and precompute its blend scalars."""
+        coords = _normalize_coordinates(self.axes, variation, raw)
+        self.coordinates = coords
+        if not coords or not any(coords):
+            return  # the default master: every scalar is 0, nothing to blend.
+        scalars = [_region_scalar(region, coords) for region in self._regions]
+        self._scalars = {
+            vsindex: [
+                scalars[index] if index < len(scalars) else 0.0
+                for index in indices
+            ]
+            for vsindex, indices in self._vsindex_regions.items()
+        }
 
     def _units_per_em(self, entries) -> int:
         raw = _dict_get(entries, _OP_FONTMATRIX)
@@ -381,6 +600,7 @@ class CffOutlines:
                 self._local_subrs(gid),
                 is_cff2=self._is_cff2,
                 region_counts=self._region_counts,
+                scalars=self._scalars,
             )
             contours = interp.run(self._charstrings[gid])
         except (struct.error, IndexError, ValueError):
@@ -523,6 +743,7 @@ class _T2Glyph:
         *,
         is_cff2: bool = False,
         region_counts: dict[int, int] | None = None,
+        scalars: dict[int, list[float]] | None = None,
     ):
         self._gsubrs = gsubrs
         self._lsubrs = lsubrs
@@ -536,6 +757,7 @@ class _T2Glyph:
         self._nstems = 0
         self._is_cff2 = is_cff2
         self._region_counts = region_counts or {}
+        self._scalars = scalars or {}
         self._vsindex = 0
         # CFF2 charstrings carry no leading width, so none is ever consumed.
         self._have_width = is_cff2
@@ -636,19 +858,36 @@ class _T2Glyph:
         self._have_width = True
 
     def _blend(self) -> None:
-        """Collapse a CFF2 ``blend`` to the default instance (drop region deltas).
+        """Resolve a CFF2 ``blend`` for the selected instance.
 
-        Stack layout is ``base(n), deltas(n*k), n``; dropping the top ``n*k``
-        deltas leaves the ``n`` default values for the following operator.
+        Stack layout is ``base(n), deltas(n*k), n``. The deltas are laid out
+        value-major -- all *k* regions for value 0, then for value 1 -- so each
+        default value takes its own slice. With no instance selected the
+        deltas are simply dropped, which leaves the default master; with one,
+        each value gains the region deltas weighted by that region's scalar.
         """
         if not self.stack:
             return
         n = int(self.stack.pop())
-        if n < 0:
+        if n <= 0:
             return
-        drop = n * self._region_counts.get(self._vsindex, 0)
-        if 0 < drop <= len(self.stack):
-            del self.stack[len(self.stack) - drop :]
+        regions = self._region_counts.get(self._vsindex, 0)
+        drop = n * regions
+        if drop <= 0 or drop > len(self.stack) - n:
+            return
+        scalars = self._scalars.get(self._vsindex)
+        base = len(self.stack) - drop
+        if scalars and len(scalars) == regions:
+            values_at = base - n
+            if values_at >= 0:
+                for value in range(n):
+                    delta = 0.0
+                    start = base + value * regions
+                    for index, scalar in enumerate(scalars):
+                        if scalar:
+                            delta += scalar * self.stack[start + index]
+                    self.stack[values_at + value] += delta
+        del self.stack[base:]
 
     def _stems(self) -> None:
         if not self._have_width and len(self.stack) % 2 == 1:
