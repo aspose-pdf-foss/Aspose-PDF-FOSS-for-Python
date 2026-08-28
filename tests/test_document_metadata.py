@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import io
+
 import pytest
 
 from aspose_pdf.document import Document
 from aspose_pdf.exceptions import PdfSecurityException
 from aspose_pdf.outlines import OutlineCollection, OutlineItem
-
 
 # ---------------------------------------------------------------------------
 # Helpers

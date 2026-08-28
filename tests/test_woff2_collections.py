@@ -9,14 +9,14 @@ import pytest
 
 pytest.importorskip("fontTools")
 
-from fontTools.fontBuilder import FontBuilder  # noqa: E402
-from fontTools.pens.ttGlyphPen import TTGlyphPen  # noqa: E402
-from fontTools.ttLib import TTFont  # noqa: E402
-from fontTools.ttLib.ttCollection import TTCollection  # noqa: E402
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.ttLib import TTFont
+from fontTools.ttLib.ttCollection import TTCollection
 
-from aspose_pdf.engine.sfnt import parse_faces  # noqa: E402
-from aspose_pdf.engine.woff import build_ttc  # noqa: E402
-from aspose_pdf.engine.woff2 import decode  # noqa: E402
+from aspose_pdf.engine.sfnt import parse_faces
+from aspose_pdf.engine.woff import build_ttc
+from aspose_pdf.engine.woff2 import decode
 
 _KNOWN_TAGS = (
     "cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ",

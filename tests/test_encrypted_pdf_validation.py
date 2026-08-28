@@ -4,9 +4,10 @@ These tests verify that the :class:`aspose_pdf.engine.simple_pdf.SimplePdf`
 class correctly handles encrypted documents.
 """
 
-import pytest
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import PdfSecurityException

@@ -1,6 +1,7 @@
-from aspose_pdf.engine.filters import StreamDecoder
 import importlib
+
 import aspose_pdf.engine.ccitt
+from aspose_pdf.engine.filters import StreamDecoder
 
 
 def test_ccitt_import():

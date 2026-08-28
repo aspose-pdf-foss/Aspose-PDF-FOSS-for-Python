@@ -13,8 +13,8 @@ from aspose_pdf import (
     ByteArrayDataSource,
     Document,
     OptimizationOptions,
-    Optimizer,
     OptimizeOptions,
+    Optimizer,
 )
 from aspose_pdf.engine.cos import (
     PdfArray,
@@ -167,7 +167,7 @@ def test_page_content_protected_when_reuse_disallowed():
 
 
 def test_page_content_merged_when_reuse_allowed():
-    pdf, cos, c1, c2 = _two_page_content_pdf()
+    pdf, _cos, c1, c2 = _two_page_content_pdf()
     pdf.optimize(
         OptimizationOptions(
             remove_unused_objects=False, allow_reuse_page_content=True

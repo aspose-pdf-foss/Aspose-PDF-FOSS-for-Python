@@ -7,7 +7,7 @@ incomplete chains, expired certificates and self-signed handling.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from aspose_pdf.engine.signing import SigningUtils
 from aspose_pdf.signature import PdfSignature
@@ -64,7 +64,7 @@ def test_missing_intermediate_breaks_chain():
 
 def test_expired_leaf_rejected():
     root, rk = SigningUtils.create_self_signed_ca("Exp Root")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     leaf, lk = SigningUtils.issue_certificate(
         "Exp Leaf",
         root,

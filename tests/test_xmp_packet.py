@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -18,7 +18,6 @@ from aspose_pdf.xmp import (
     parse,
     serialize,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -752,7 +751,7 @@ XMP_NS_T = "http://ns.adobe.com/xap/1.0/"
 
 def test_set_get_date_round_trip():
     packet = XmpPacket()
-    dt = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    dt = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
     packet.set_date("xmp", "CreateDate", dt, uri=XMP_NS_T)
     assert packet.get("xmp", "CreateDate").value == "2024-01-02T03:04:05+00:00"
     assert packet.get_date("xmp", "CreateDate") == dt
@@ -760,7 +759,7 @@ def test_set_get_date_round_trip():
 
 def test_set_date_survives_serialize_round_trip():
     packet = XmpPacket()
-    dt = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    dt = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
     packet.set_date("xmp", "ModifyDate", dt, uri=XMP_NS_T)
     reparsed = parse(serialize(packet))
     assert reparsed.get_date("xmp", "ModifyDate") == dt

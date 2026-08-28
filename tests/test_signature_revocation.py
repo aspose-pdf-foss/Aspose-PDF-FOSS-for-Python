@@ -7,7 +7,7 @@ tests embed a CRL into the CMS; the online test monkeypatches the HTTP helper in
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -44,7 +44,7 @@ def _root_and_leaf(name):
 
 
 def _build_crl(root, rk, revoked_serial=None):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     builder = (
         x509.CertificateRevocationListBuilder()
         .issuer_name(root.subject)
@@ -106,7 +106,7 @@ def test_revocation_unknown_without_info():
 
 def test_online_ocsp_revoked_via_monkeypatch(monkeypatch):
     root, rk, leaf, lk = _root_and_leaf("OCSP")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     response = (
         ocsp.OCSPResponseBuilder()
         .add_response(

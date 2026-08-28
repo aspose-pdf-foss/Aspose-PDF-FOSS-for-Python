@@ -6,9 +6,9 @@ import struct
 
 import pytest
 
-from aspose_pdf.images import ImagePlacement
 from aspose_pdf.engine import dct, jpx
 from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.images import ImagePlacement
 from aspose_pdf.load_limits import PdfLoadLimits
 
 

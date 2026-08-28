@@ -10,16 +10,16 @@ Covers:
 
 from __future__ import annotations
 
+from typing import ClassVar
 
+from aspose_pdf.signature import PdfSignature
 from aspose_pdf.validation import (
-    ValidationMode,
     ValidationMethod,
-    ValidationStatus,
+    ValidationMode,
     ValidationOptions,
     ValidationResult,
+    ValidationStatus,
 )
-from aspose_pdf.signature import PdfSignature
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -362,10 +362,18 @@ class TestGeneratedSecurityReexports:
 
     def test_imports_from_generated(self):
         from aspose_pdf.generated.security import (
-            ValidationOptions as VO,
-            ValidationResult as VR,
-            ValidationMode as VM,
             ValidationMethod as VMeth,
+        )
+        from aspose_pdf.generated.security import (
+            ValidationMode as VM,
+        )
+        from aspose_pdf.generated.security import (
+            ValidationOptions as VO,
+        )
+        from aspose_pdf.generated.security import (
+            ValidationResult as VR,
+        )
+        from aspose_pdf.generated.security import (
             ValidationStatus as VS,
         )
 
@@ -378,6 +386,8 @@ class TestGeneratedSecurityReexports:
     def test_compromise_detector_imports_from_generated(self):
         from aspose_pdf.generated.security import (
             CompromiseCheckResult as GeneratedResult,
+        )
+        from aspose_pdf.generated.security import (
             SignaturesCompromiseDetector as GeneratedDetector,
         )
         from aspose_pdf.security import (
@@ -393,11 +403,11 @@ class TestGeneratedSecurityReexports:
 
         class Signature:
             valid = True
-            byte_range = [0, 2, 4, 2]
+            byte_range: ClassVar[list[int]] = [0, 2, 4, 2]
             reference_data = b"abcdef\nxref\n0 0\n"
 
         class SignedDocument:
-            signatures = [Signature()]
+            signatures: ClassVar[list] = [Signature()]
 
         result = SignaturesCompromiseDetector(SignedDocument()).check()
 

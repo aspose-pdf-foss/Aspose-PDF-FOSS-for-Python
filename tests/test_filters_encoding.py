@@ -8,8 +8,8 @@ import random
 
 import pytest
 
-from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.engine.filters import StreamDecoder, StreamEncoder
+from aspose_pdf.exceptions import PdfValidationException
 
 
 def _roundtrip(data, filters, parms=None):

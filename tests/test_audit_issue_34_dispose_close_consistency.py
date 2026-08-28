@@ -14,7 +14,7 @@ from pathlib import Path
 
 from aspose_pdf.document import Document
 from aspose_pdf.engine.simple_pdf import SimplePdf
-from aspose_pdf.facades import PdfFileEditor, PdfExtractor
+from aspose_pdf.facades import PdfExtractor, PdfFileEditor
 
 
 def _tiny_valid_pdf(path: Path) -> None:

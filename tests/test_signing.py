@@ -1,8 +1,8 @@
-from aspose_pdf.engine.signing import SigningUtils
-
 # cryptography types for precise assertions
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import rsa
+
+from aspose_pdf.engine.signing import SigningUtils
 
 
 def test_create_self_signed_cert_returns_correct_types():

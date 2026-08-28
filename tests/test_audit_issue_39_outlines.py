@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from aspose_pdf.exceptions import PdfParseException
 from aspose_pdf.engine.simple_pdf import OUTLINE_TREE_MAX_DEPTH, SimplePdf
+from aspose_pdf.exceptions import PdfParseException
 
 
 def _assemble_pdf(parts: list[tuple[int, bytes]]) -> bytes:
@@ -63,7 +63,8 @@ def _base_pages_catalog(outline_root_id: int = 5) -> list[tuple[int, bytes]]:
 
 def test_outline_valid_single_item_loads():
     """Well-formed /Outlines with one top-level item loads without error."""
-    parts = _base_pages_catalog(5) + [
+    parts = [
+        *_base_pages_catalog(5),
         (
             5,
             b"<< /Type /Outlines /First 4 0 R /Last 4 0 R /Count 1 >>",
@@ -82,7 +83,8 @@ def test_outline_valid_single_item_loads():
 
 def test_outline_next_cycle_raises():
     """A /Next cycle between siblings must raise (AUDIT #39)."""
-    parts = _base_pages_catalog(5) + [
+    parts = [
+        *_base_pages_catalog(5),
         (
             5,
             b"<< /Type /Outlines /First 4 0 R /Last 6 0 R /Count 2 >>",
@@ -103,7 +105,8 @@ def test_outline_next_cycle_raises():
 
 def test_outline_next_missing_object_raises():
     """/Next to a non-existent object must raise."""
-    parts = _base_pages_catalog(5) + [
+    parts = [
+        *_base_pages_catalog(5),
         (
             5,
             b"<< /Type /Outlines /First 4 0 R /Last 4 0 R /Count 1 >>",
@@ -120,7 +123,8 @@ def test_outline_next_missing_object_raises():
 
 def test_outline_next_non_dictionary_raises():
     """Resolved /Next must be a dictionary."""
-    parts = _base_pages_catalog(5) + [
+    parts = [
+        *_base_pages_catalog(5),
         (
             5,
             b"<< /Type /Outlines /First 4 0 R /Last 4 0 R /Count 1 >>",

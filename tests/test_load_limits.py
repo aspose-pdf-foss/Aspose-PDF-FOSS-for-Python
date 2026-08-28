@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import base64
+import io
 import zlib
 from dataclasses import replace
 from pathlib import Path
@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 from aspose_pdf import Document, PdfLoadLimits, PdfResourceLimitException
-from aspose_pdf.engine.filters import StreamDecoder
 from aspose_pdf.engine.dss import read_dss
+from aspose_pdf.engine.filters import StreamDecoder
 from aspose_pdf.engine.incremental_update import IncrementalUpdate
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
 from aspose_pdf.engine.simple_pdf import SimplePdf
@@ -363,7 +363,7 @@ def test_page_tree_cycle_is_rejected() -> None:
         }
     )
 
-    with pytest.raises(PdfParseException, match="[Cc]ycle"):
+    with pytest.raises(PdfParseException, match=r"[Cc]ycle"):
         SimplePdf.from_bytes(data, limits=_limits(max_nesting_depth=10))
 
 

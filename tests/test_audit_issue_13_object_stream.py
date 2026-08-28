@@ -4,9 +4,9 @@ import zlib
 
 import pytest
 
-from aspose_pdf.exceptions import PdfParseException
 from aspose_pdf.engine.cos import PdfIndirectReference
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
+from aspose_pdf.exceptions import PdfParseException
 
 _W124 = [1, 4, 2]
 _ENTRY_LEN = sum(_W124)

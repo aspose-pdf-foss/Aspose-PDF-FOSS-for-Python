@@ -9,19 +9,19 @@ import pytest
 
 pytest.importorskip("fontTools")
 
-from fontTools.fontBuilder import FontBuilder  # noqa: E402
-from fontTools.pens.t2CharStringPen import T2CharStringPen  # noqa: E402
-from fontTools.pens.ttGlyphPen import TTGlyphPen  # noqa: E402
-from fontTools.ttLib import TTCollection, TTFont  # noqa: E402
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.ttLib import TTCollection, TTFont
 
-from aspose_pdf import Document, FontDescriptor, PdfExtractor  # noqa: E402
-from aspose_pdf.engine.cos import (  # noqa: E402
+from aspose_pdf import Document, FontDescriptor, PdfExtractor
+from aspose_pdf.engine.cos import (
     PdfArray,
     PdfDictionary,
     PdfName,
     PdfStream,
 )
-from aspose_pdf.exceptions import FontEmbeddingException  # noqa: E402
+from aspose_pdf.exceptions import FontEmbeddingException
 
 
 def _save(document: Document) -> bytes:

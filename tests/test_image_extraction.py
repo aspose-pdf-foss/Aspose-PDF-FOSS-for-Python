@@ -1,6 +1,6 @@
 import pytest
 
-from aspose_pdf.images import ImagePlacementAbsorber, ImagePlacement, Rectangle
+from aspose_pdf.images import ImagePlacement, ImagePlacementAbsorber, Rectangle
 
 
 class DummyPage:
@@ -39,7 +39,7 @@ def test_visit_no_images():
 
 def test_image_placement_rect_resolution_rotation_matrix():
     """ImagePlacement exposes rectangle, resolution, rotation, and matrix properties."""
-    from aspose_pdf.images import ImagePlacement, DEFAULT_IMAGE_DPI
+    from aspose_pdf.images import DEFAULT_IMAGE_DPI, ImagePlacement
 
     # Default values when not set
     p = ImagePlacement(name="img1", image_data=b"data")

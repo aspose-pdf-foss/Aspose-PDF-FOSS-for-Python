@@ -3,23 +3,23 @@
 from __future__ import annotations
 
 import io
+
 import pytest
 
 from aspose_pdf.document import Document
+from aspose_pdf.engine.cos import (
+    PdfArray,
+    PdfDictionary,
+    PdfName,
+    PdfStream,
+    PdfString,
+)
 from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
-    _minimal_srgb_icc_profile,
     _make_pdfa_xmp,
-)
-from aspose_pdf.engine.cos import (
-    PdfName,
-    PdfDictionary,
-    PdfArray,
-    PdfString,
-    PdfStream,
+    _minimal_srgb_icc_profile,
 )
 from aspose_pdf.exceptions import AsposePdfException
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -180,13 +180,13 @@ class TestSimplePdfConvertToPdfa:
     def test_raises_on_no_cos_doc(self):
         pdf = SimplePdf()
         pdf.pages = [(0, 0, 612, 792)]
-        with pytest.raises(AsposePdfException, match="from_file|from_bytes"):
+        with pytest.raises(AsposePdfException, match=r"from_file|from_bytes"):
             pdf.convert_to_pdfa("1b")
 
     def test_raises_on_encrypted_document(self):
         pdf = _load_simple_pdf()
         pdf.encrypted = True
-        with pytest.raises(AsposePdfException, match="[Ee]ncrypt"):
+        with pytest.raises(AsposePdfException, match=r"[Ee]ncrypt"):
             pdf.convert_to_pdfa("1b")
 
     def test_raises_on_disposed_document(self):

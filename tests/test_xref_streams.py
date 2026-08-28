@@ -13,14 +13,13 @@ PDF libraries are required.
 
 import zlib
 
-
-from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
 from aspose_pdf.engine.cos import (
-    PdfName,
     PdfDictionary,
-    PdfNumber,
     PdfIndirectReference,
+    PdfName,
+    PdfNumber,
 )
+from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
 
 
 def _build_xref_stream_pdf() -> bytes:
@@ -140,8 +139,8 @@ def test_parse_object_stream():
     assert objstm is not None
 
     # Manually extract object 4 from the object stream
-    from aspose_pdf.engine.filters import StreamDecoder
     from aspose_pdf.engine.cos import PdfStream
+    from aspose_pdf.engine.filters import StreamDecoder
 
     if isinstance(objstm, PdfStream):
         content = StreamDecoder.decode(objstm.content, "FlateDecode", None)

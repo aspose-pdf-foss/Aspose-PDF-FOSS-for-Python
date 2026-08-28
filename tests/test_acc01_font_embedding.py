@@ -1,13 +1,14 @@
 """Tests for issue ACC-01: Automatic font embedding during PDF/A conversion."""
 
 from aspose_pdf.document import Document
-from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.engine.cos import (
-    PdfName,
-    PdfDictionary,
     PdfArray,
+    PdfDictionary,
+    PdfName,
     PdfNumber,
 )
+from aspose_pdf.engine.simple_pdf import SimplePdf
+
 
 def _build_pdf_with_unembedded_font() -> bytes:
     """Build a PDF with a single page and one unembedded TrueType font using SimplePdf."""

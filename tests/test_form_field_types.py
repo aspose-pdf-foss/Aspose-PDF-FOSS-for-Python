@@ -2,15 +2,15 @@
 
 import unittest
 
-from aspose_pdf.engine.simple_pdf import CosExtractor
 from aspose_pdf.engine.cos import (
-    PdfDocument,
-    PdfDictionary,
     PdfArray,
+    PdfDictionary,
+    PdfDocument,
     PdfName,
-    PdfString,
     PdfNumber,
+    PdfString,
 )
+from aspose_pdf.engine.simple_pdf import CosExtractor
 
 
 def _make_cos_doc_with_acroform(fields_spec):

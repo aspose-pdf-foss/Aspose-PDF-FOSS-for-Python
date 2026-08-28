@@ -8,7 +8,6 @@ still returns raw stream bytes after catching decode errors (same contract as JB
 
 import pytest
 
-from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.engine.cos import (
     PdfDictionary,
     PdfDocument,
@@ -19,6 +18,7 @@ from aspose_pdf.engine.cos import (
 from aspose_pdf.engine.filters import StreamDecoder
 from aspose_pdf.engine.jpx import HAS_PILLOW
 from aspose_pdf.engine.simple_pdf import CosExtractor
+from aspose_pdf.exceptions import PdfValidationException
 
 
 def test_ccitt_malformed_group4_raises_on_direct_decode():

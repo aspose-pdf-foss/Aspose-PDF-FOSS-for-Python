@@ -18,7 +18,6 @@ from aspose_pdf.font_repository import (
     SystemFontSource,
 )
 
-
 # ---------------------------------------------------------------------------
 # Minimal SFNT builders (no external font files required).
 # ---------------------------------------------------------------------------

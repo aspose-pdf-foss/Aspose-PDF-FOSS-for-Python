@@ -140,6 +140,6 @@ def test_cmyk_content_inside_a_form_xobject_is_normalized():
     xobjects = engine._resolve(
         engine._cos_page_resources(0).mapping[PdfName("XObject")]
     )
-    content = engine._resolve(list(xobjects.mapping.values())[0]).content
+    content = engine._resolve(next(iter(xobjects.mapping.values()))).content
     assert b" k" not in content
     assert b" rg" in content

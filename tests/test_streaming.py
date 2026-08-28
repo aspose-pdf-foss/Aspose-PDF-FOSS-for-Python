@@ -16,10 +16,9 @@ from pathlib import Path
 import pytest
 
 from aspose_pdf.document import Document
-from aspose_pdf.exceptions import PdfSecurityException
 from aspose_pdf.engine.simple_pdf import SimplePdf
+from aspose_pdf.exceptions import PdfSecurityException
 from aspose_pdf.pages import Page
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -205,7 +205,7 @@ def test_type1_differences_resolve_without_a_table():
 
     # /Differences maps code 0x20 to 'C' directly (a Type 1 glyph name); no base
     # encoding table is needed.
-    pdf, ff_num, (l1, _l2, l3) = _embed_type1(
+    pdf, ff_num, (l1, _l2, _l3) = _embed_type1(
         shown_codes=[0x20], differences=[PdfNumber(0x20), PdfName("C")]
     )
     pdf.optimize(_subset_opts())

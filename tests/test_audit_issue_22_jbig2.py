@@ -10,10 +10,10 @@ import struct
 
 import pytest
 
-from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.engine.cos import PdfDictionary, PdfDocument, PdfName, PdfStream
 from aspose_pdf.engine.filters import StreamDecoder
 from aspose_pdf.engine.simple_pdf import CosExtractor
+from aspose_pdf.exceptions import PdfValidationException
 
 
 def _make_jbig2_stream(seg_type: int, seg_data: bytes, header: bool = True) -> bytes:

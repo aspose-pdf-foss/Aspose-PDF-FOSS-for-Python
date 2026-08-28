@@ -16,14 +16,13 @@ from aspose_pdf.engine.cos import (
     PdfString,
 )
 from aspose_pdf.engine.field_appearance import (
+    _text_width,
+    _wrap_text,
     auto_font_size,
     build_text_appearance,
     parse_default_appearance,
-    _text_width,
-    _wrap_text,
 )
 from aspose_pdf.engine.simple_pdf import SimplePdf
-
 
 # ---------------------------------------------------------------------------
 # parse_default_appearance / build_text_appearance (pure unit tests)

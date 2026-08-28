@@ -7,7 +7,7 @@ All material — certificates, the local TSA, CRLs — is built in memory with
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -50,7 +50,7 @@ def _pdf_sig(blob, sub_filter="ETSI.CAdES.detached", data=DATA) -> PdfSignature:
 
 
 def _good_crl(issuer, issuer_key, revoked_serial=None) -> bytes:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     builder = (
         x509.CertificateRevocationListBuilder()
         .issuer_name(issuer.subject)
@@ -189,7 +189,7 @@ def test_pades_t_with_embedded_timestamp():
 # Writer end-to-end (real signature dictionaries)
 # ---------------------------------------------------------------------------
 def _sign_pades_pdf(*, timestamp=None):
-    root, rk, leaf, lk = _chain()
+    root, _rk, leaf, lk = _chain()
     pdf = SimplePdf()
     pdf.pages = [(0, 0, 200, 200)]
     pdf.page_contents = [b"PAdES content"]

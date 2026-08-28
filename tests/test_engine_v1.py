@@ -1,9 +1,10 @@
-import pytest
 from pathlib import Path
+
+import pytest
 
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import PdfSecurityException
-from aspose_pdf.facades import PdfFileEditor, PdfExtractor
+from aspose_pdf.facades import PdfExtractor, PdfFileEditor
 from tests.helpers_make_pdfs import write_min_pdf
 
 

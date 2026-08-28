@@ -1,5 +1,6 @@
 import pytest
-from aspose_pdf.security import SignaturesCompromiseDetector, CompromiseCheckResult
+
+from aspose_pdf.security import CompromiseCheckResult, SignaturesCompromiseDetector
 
 
 class DummySignature:

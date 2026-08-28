@@ -9,8 +9,10 @@ Tests cover:
 """
 
 import os
+
 import pytest
-from aspose_pdf.engine.encryption import EncryptionUtils, PDF_PADDING
+
+from aspose_pdf.engine.encryption import PDF_PADDING, EncryptionUtils
 
 
 @pytest.fixture(scope="function")
@@ -282,7 +284,7 @@ def test_revision_2_key_derivation(random_file_id):
 def test_revision_3_key_derivation(random_file_id):
     """R3 key derivation (128-bit) works correctly."""
     o_value = EncryptionUtils.compute_owner_key_v4("owner", "user", 16, revision=3)
-    u_value, key = EncryptionUtils.compute_user_key_v4(
+    _u_value, key = EncryptionUtils.compute_user_key_v4(
         "user", o_value, -4, random_file_id, 16, revision=3
     )
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from aspose_pdf.engine.simple_pdf import SimplePdf
 
 

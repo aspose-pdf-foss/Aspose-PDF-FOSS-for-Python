@@ -18,6 +18,7 @@ Covers:
 """
 
 import re
+
 import pytest
 
 from aspose_pdf.text import (
@@ -26,7 +27,6 @@ from aspose_pdf.text import (
     TextFragmentCollection,
     TextSearchOptions,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

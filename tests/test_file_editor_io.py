@@ -1,16 +1,18 @@
 """Tests for :class:`aspose_pdf.facades.PdfFileEditor`."""
 
-import pytest
 from pathlib import Path
+from typing import ClassVar
 
-from aspose_pdf.facades import PdfFileEditor, PdfExtractor
+import pytest
+
+from aspose_pdf.facades import PdfExtractor, PdfFileEditor
 from tests.helpers_make_pdfs import write_min_pdf
 
 
 class DummySimplePdf:
     """Minimal stand-in for SimplePdf in tests."""
 
-    dummy_pages_map = {}
+    dummy_pages_map: ClassVar[dict] = {}
     last_saved_instance = None
     last_saved_path = None
 
@@ -73,7 +75,7 @@ def _patch_simple_pdf_for_delete(monkeypatch, initial_pages):
 class _FakeSimplePdfForInsert:
     """Small stub for insert tests."""
 
-    _registry = {}
+    _registry: ClassVar[dict] = {}
 
     def __init__(self):
         self.pages = []

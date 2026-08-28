@@ -14,14 +14,14 @@ import pytest
 
 pytest.importorskip("fontTools")
 
-from fontTools.cffLib import CFFFontSet  # noqa: E402
-from fontTools.fontBuilder import FontBuilder  # noqa: E402
-from fontTools.pens.recordingPen import RecordingPen  # noqa: E402
-from fontTools.pens.t2CharStringPen import T2CharStringPen  # noqa: E402
-from fontTools.ttLib import TTFont  # noqa: E402
+from fontTools.cffLib import CFFFontSet
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.recordingPen import RecordingPen
+from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.ttLib import TTFont
 
-from aspose_pdf import OptimizationOptions  # noqa: E402
-from aspose_pdf.engine.font_subset_cff import (  # noqa: E402
+from aspose_pdf import OptimizationOptions
+from aspose_pdf.engine.font_subset_cff import (
     _build_index,
     _encode_int,
     _slice_private,

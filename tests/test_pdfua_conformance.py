@@ -14,7 +14,6 @@ import pytest
 
 import aspose_pdf
 from aspose_pdf.document import Document
-from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.engine.cos import (
     PdfArray,
     PdfBoolean,
@@ -24,6 +23,7 @@ from aspose_pdf.engine.cos import (
     PdfStream,
     PdfString,
 )
+from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import AsposePdfException
 from aspose_pdf.pdfua import (
     PdfUaValidateOptions,

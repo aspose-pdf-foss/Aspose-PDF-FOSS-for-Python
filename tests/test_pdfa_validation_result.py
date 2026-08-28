@@ -11,12 +11,12 @@ Covers:
 from __future__ import annotations
 
 import io
+
 import pytest
 
 import aspose_pdf
-from aspose_pdf.pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from aspose_pdf.document import Document
-
+from aspose_pdf.pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 
 # ---------------------------------------------------------------------------
 # Minimal parseable PDF helper (no fonts, no prohibited content)

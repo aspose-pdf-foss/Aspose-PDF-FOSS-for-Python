@@ -36,7 +36,7 @@ def test_parse_propagates_non_xref_exceptions():
     pdf_bytes = _build_minimal_pdf_bytes()
     parser = PdfCosParser(pdf_bytes)
 
-    def _broken_section(offset):  # noqa: ARG001
+    def _broken_section(offset):
         raise RuntimeError("simulated non-xref failure")
 
     parser._parse_xref_section = _broken_section  # type: ignore[method-assign]

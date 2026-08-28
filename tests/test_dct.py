@@ -17,13 +17,12 @@ Image = pytest.importorskip("PIL.Image")
 from aspose_pdf.engine import dct  # noqa: E402
 from aspose_pdf.engine.dct import decode  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
 
-def _smooth_rgb(w: int = 96, h: int = 72) -> "Image.Image":
+def _smooth_rgb(w: int = 96, h: int = 72) -> Image.Image:
     """A smooth, in-range image (so nearest-neighbour chroma upsampling is close)."""
     img = Image.new("RGB", (w, h))
     px = img.load()
@@ -33,7 +32,7 @@ def _smooth_rgb(w: int = 96, h: int = 72) -> "Image.Image":
     return img
 
 
-def _smooth_cmyk(w: int = 64, h: int = 48) -> "Image.Image":
+def _smooth_cmyk(w: int = 64, h: int = 48) -> Image.Image:
     """A smooth CMYK image for the 4-component path."""
     img = Image.new("CMYK", (w, h))
     px = img.load()
@@ -48,7 +47,7 @@ def _smooth_cmyk(w: int = 64, h: int = 48) -> "Image.Image":
     return img
 
 
-def _jpeg(img: "Image.Image", **save_kwargs) -> bytes:
+def _jpeg(img: Image.Image, **save_kwargs) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="JPEG", **save_kwargs)
     return buf.getvalue()

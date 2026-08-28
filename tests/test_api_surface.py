@@ -1,5 +1,5 @@
 from aspose_pdf.document import Document
-from aspose_pdf.facades import PdfFileEditor, PdfExtractor
+from aspose_pdf.facades import PdfExtractor, PdfFileEditor
 
 
 def test_document_has_core_methods():

@@ -1,6 +1,7 @@
 import pytest
-from aspose_pdf.engine.simple_pdf import SimplePdf
+
 from aspose_pdf.engine.cos import PdfName
+from aspose_pdf.engine.simple_pdf import SimplePdf
 
 
 def _build_minimal_pdf_bytes():

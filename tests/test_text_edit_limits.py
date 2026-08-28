@@ -116,7 +116,7 @@ def test_entry_points_accept_shared_load_budget() -> None:
 def test_entry_points_reject_mismatched_limits_and_budget() -> None:
     budget = _LoadBudget(_limits(max_content_tokens=8))
 
-    with pytest.raises(ValueError, match="limits must match budget.limits"):
+    with pytest.raises(ValueError, match=r"limits must match budget\.limits"):
         redact_text_in_content(
             b"BT (x) Tj ET",
             "x",

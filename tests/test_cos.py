@@ -1,16 +1,16 @@
 from aspose_pdf.engine.cos import (
     PdfArray,
+    PdfBoolean,
     PdfDictionary,
+    PdfDocument,
+    PdfIndirectReference,
     PdfName,
+    PdfNull,
     PdfNumber,
     PdfString,
-    PdfNull,
-    PdfBoolean,
-    PdfIndirectReference,
 )
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
 from aspose_pdf.engine.pdf_writer_cos import PdfCosWriter
-from aspose_pdf.engine.cos import PdfDocument
 
 
 def test_pdf_object_nesting():

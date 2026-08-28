@@ -13,7 +13,6 @@ import pytest
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import PdfSecurityException
 
-
 _MARK = b"BT /F1 12 Tf (Audit26Hello) Tj ET"
 
 

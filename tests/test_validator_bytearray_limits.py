@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import io
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
+from typing import ClassVar
 
 import pytest
 
@@ -162,7 +163,7 @@ def test_validator_options_precheck_bytes_and_paths(
 class _RecordingDocument:
     """Record the policy and context-manager lifecycle used by validators."""
 
-    instances: list["_RecordingDocument"] = []
+    instances: ClassVar[list[_RecordingDocument]] = []
 
     def __init__(self, *, limits: PdfLoadLimits) -> None:
         self.constructor_limits = limits
@@ -170,7 +171,7 @@ class _RecordingDocument:
         self.disposed = False
         self.__class__.instances.append(self)
 
-    def __enter__(self) -> "_RecordingDocument":
+    def __enter__(self) -> _RecordingDocument:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
@@ -181,7 +182,7 @@ class _RecordingDocument:
         source: bytes,
         *,
         limits: PdfLoadLimits,
-    ) -> "_RecordingDocument":
+    ) -> _RecordingDocument:
         self.load_limits = limits
         return self
 

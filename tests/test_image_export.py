@@ -165,7 +165,7 @@ class TestReconstruct:
     def test_cmyk_raster_to_rgb_png(self):
         meta = {"width": 1, "height": 1, "bpc": 8, "cs_kind": "cmyk",
                 "filter": "FlateDecode"}
-        out, ext = ie.reconstruct_image_file(meta, bytes([0, 0, 0, 0]), "png")
+        out, _ext = ie.reconstruct_image_file(meta, bytes([0, 0, 0, 0]), "png")
         info = parse_png(out)
         assert info["color_type"] == 2  # RGB
         assert info["raw"][1:4] == bytes([255, 255, 255])
@@ -185,7 +185,7 @@ class TestReconstruct:
     def test_ccitt_1bpp_to_png(self):
         meta = {"width": 8, "height": 1, "bpc": 1, "cs_kind": "gray",
                 "filter": "CCITTFaxDecode"}
-        out, ext = ie.reconstruct_image_file(meta, bytes([0b10101010]), "png")
+        out, _ext = ie.reconstruct_image_file(meta, bytes([0b10101010]), "png")
         info = parse_png(out)
         assert info["bit_depth"] == 1 and info["color_type"] == 0
 
@@ -205,7 +205,7 @@ class TestReconstruct:
         assert info["color_type"] == 0
 
     def test_no_meta_writes_verbatim(self):
-        out, ext = ie.reconstruct_image_file(None, b"raw-bytes", "bin")
+        out, _ext = ie.reconstruct_image_file(None, b"raw-bytes", "bin")
         assert out == b"raw-bytes"
 
 

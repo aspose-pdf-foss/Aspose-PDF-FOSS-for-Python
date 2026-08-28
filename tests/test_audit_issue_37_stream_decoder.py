@@ -8,7 +8,6 @@ still returns raw stream bytes when decode fails (same pattern as AUDIT #22–#2
 
 import pytest
 
-from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.engine.cos import (
     PdfDictionary,
     PdfDocument,
@@ -17,6 +16,7 @@ from aspose_pdf.engine.cos import (
 )
 from aspose_pdf.engine.filters import StreamDecoder
 from aspose_pdf.engine.simple_pdf import CosExtractor
+from aspose_pdf.exceptions import PdfValidationException
 
 
 def test_unknown_filter_direct_decode_raises():

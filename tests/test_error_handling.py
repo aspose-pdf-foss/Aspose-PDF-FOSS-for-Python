@@ -1,6 +1,7 @@
 import pytest
-from aspose_pdf.engine.simple_pdf import SimplePdf
+
 from aspose_pdf.engine.parser_exceptions import PdfParseError
+from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import PdfParseException
 
 

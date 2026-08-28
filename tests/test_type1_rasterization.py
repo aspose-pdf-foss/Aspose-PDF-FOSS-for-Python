@@ -17,7 +17,6 @@ from aspose_pdf.engine.cos import (
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.engine.type1_outlines import Type1Outlines
 
-
 # ---------------------------------------------------------------------------
 # Minimal Type 1 builder
 # ---------------------------------------------------------------------------

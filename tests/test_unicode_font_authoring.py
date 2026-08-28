@@ -12,10 +12,10 @@ import pytest
 
 pytest.importorskip("fontTools")
 
-from fontTools.fontBuilder import FontBuilder  # noqa: E402
-from fontTools.pens.ttGlyphPen import TTGlyphPen  # noqa: E402
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-from aspose_pdf import (  # noqa: E402
+from aspose_pdf import (
     Document,
     FontDescriptor,
     FontEmbeddingException,
@@ -23,17 +23,16 @@ from aspose_pdf import (  # noqa: E402
     OptimizationOptions,
     PdfExtractor,
 )
-from aspose_pdf.engine.content_stream_parser import (  # noqa: E402
+from aspose_pdf.engine.content_stream_parser import (
     parse_to_unicode_cmap,
 )
-from aspose_pdf.engine.cos import (  # noqa: E402
+from aspose_pdf.engine.cos import (
     PdfArray,
     PdfDictionary,
     PdfName,
     PdfStream,
 )
-from aspose_pdf.exceptions import PdfValidationException  # noqa: E402
-
+from aspose_pdf.exceptions import PdfValidationException
 
 _SCRIPT_TEXT = "ASCII Č Привет Ж Ω 中漢字 🙂"
 _RENDER_TEXT = "ČЖΩ中"

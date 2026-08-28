@@ -1,11 +1,11 @@
-import zlib
 import base64
 import binascii
+import zlib
 
 import pytest
 
-from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.engine.filters import StreamDecoder
+from aspose_pdf.exceptions import PdfValidationException
 
 
 def test_flate_decode_simple():

@@ -15,7 +15,6 @@ from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fix 1 – SimplePdf.close() must delegate to dispose()
 # ---------------------------------------------------------------------------
@@ -77,7 +76,7 @@ def test_get_attach_names_no_duplicate_def():
     """get_attach_names must be defined exactly once in SimplePdf."""
     src_file = inspect.getsourcefile(SimplePdf)
     assert src_file is not None
-    with open(src_file, "r", encoding="utf-8") as f:
+    with open(src_file, encoding="utf-8") as f:
         tree = ast.parse(f.read())
     class_node = None
     for node in tree.body:

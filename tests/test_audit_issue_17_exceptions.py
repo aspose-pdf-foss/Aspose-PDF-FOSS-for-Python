@@ -12,16 +12,16 @@ from unittest.mock import patch
 
 import pytest
 
+from aspose_pdf.engine.content_stream_parser import ContentStreamParser
+from aspose_pdf.engine.filters import StreamDecoder
 from aspose_pdf.exceptions import (
-    AsposePdfException,
     CONTENT_PARSER_RECOVERABLE,
     PDF_OPERATION_ERRORS,
     PDF_STREAM_DECODE_ERRORS,
+    AsposePdfException,
     PdfParseException,
 )
 from aspose_pdf.facades import PdfFileEditor
-from aspose_pdf.engine.content_stream_parser import ContentStreamParser
-from aspose_pdf.engine.filters import StreamDecoder
 from aspose_pdf.signature import PdfSignature
 
 

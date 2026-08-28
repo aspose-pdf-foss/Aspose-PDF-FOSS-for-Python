@@ -11,7 +11,6 @@ from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfName, PdfNumber
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import PdfValidationException
 
-
 _TWO_BLOCKS = (
     b"BT /F1 24 Tf 1 0 0 1 72 700 Tm (Heading) Tj ET\n"
     b"BT /F1 12 Tf 1 0 0 1 72 680 Tm (Body text) Tj ET"

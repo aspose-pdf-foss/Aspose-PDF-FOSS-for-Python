@@ -1,5 +1,5 @@
-from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.engine.cos import PdfDocument
+from aspose_pdf.engine.simple_pdf import SimplePdf
 
 
 def test_load_from_bytes_uses_cos_parser(tmp_path):

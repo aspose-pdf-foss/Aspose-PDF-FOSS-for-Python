@@ -2,10 +2,12 @@
 
 import pytest
 
-from aspose_pdf.forms import UnsignedContentAbsorber, UnsignedContent
+from aspose_pdf.forms import UnsignedContent, UnsignedContentAbsorber
+from aspose_pdf.generated.forms import (
+    UnsignedContent as GenUnsignedContent,
+)
 from aspose_pdf.generated.forms import (
     UnsignedContentAbsorber as GenUnsignedContentAbsorber,
-    UnsignedContent as GenUnsignedContent,
 )
 
 

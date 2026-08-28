@@ -1,6 +1,7 @@
 from aspose_pdf.engine.content_stream_parser import ContentStreamParser
 from aspose_pdf.engine.simple_pdf import SimplePdf
 
+
 def test_best_effort_literal_nested_escaped():
     """Test best-effort extraction with nested and escaped parentheses."""
     s = b"(Hello (World\\)!) ) Tj"

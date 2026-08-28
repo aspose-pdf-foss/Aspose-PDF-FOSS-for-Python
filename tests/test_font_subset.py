@@ -225,7 +225,7 @@ def _cmap_format0(glyph_ids: list[int]) -> bytes:
 
 def _cmap_format4(segments: list[tuple[int, int, int]]) -> bytes:
     # Each segment is (startCode, endCode, idDelta); a 0xFFFF terminator is added.
-    segs = list(segments) + [(0xFFFF, 0xFFFF, 1)]
+    segs = [*segments, (0xFFFF, 0xFFFF, 1)]
     end_codes = b"".join(struct.pack(">H", e) for _, e, _ in segs)
     start_codes = b"".join(struct.pack(">H", s) for s, _, _ in segs)
     id_deltas = b"".join(struct.pack(">h", d) for _, _, d in segs)
@@ -275,7 +275,6 @@ def test_read_symbol_code_to_gid_absent_cmap():
 
 def _make_pdf_with_type0_font(font_bytes, shown_cids, *, fontfile_key="FontFile2"):
     """One-page COS PDF embedding *font_bytes* as a Type0/CIDFontType2 font."""
-    from aspose_pdf.engine.simple_pdf import SimplePdf
     from aspose_pdf.engine.cos import (
         PdfArray,
         PdfDictionary,
@@ -283,6 +282,7 @@ def _make_pdf_with_type0_font(font_bytes, shown_cids, *, fontfile_key="FontFile2
         PdfNumber,
         PdfStream,
     )
+    from aspose_pdf.engine.simple_pdf import SimplePdf
 
     hexcodes = "".join(f"{c:04x}" for c in shown_cids)
     content = ("BT /F0 12 Tf <" + hexcodes + "> Tj ET").encode("latin-1")
@@ -423,13 +423,13 @@ def test_optimize_subset_survives_save_roundtrip():
 
 def _make_pdf_with_simple_truetype_font(font_bytes, shown_text):
     """One-page COS PDF embedding *font_bytes* as a simple /TrueType font."""
-    from aspose_pdf.engine.simple_pdf import SimplePdf
     from aspose_pdf.engine.cos import (
         PdfDictionary,
         PdfName,
         PdfNumber,
         PdfStream,
     )
+    from aspose_pdf.engine.simple_pdf import SimplePdf
 
     content = ("BT /F0 12 Tf (" + shown_text + ") Tj ET").encode("latin-1")
     pdf = SimplePdf()
@@ -497,7 +497,7 @@ def test_optimize_subsets_simple_truetype_via_symbol_cmap():
 
 def _cmap_format4_unicode(segments):
     """A (3, 1) Windows-Unicode format-4 cmap subtable."""
-    segs = list(segments) + [(0xFFFF, 0xFFFF, 1)]
+    segs = [*segments, (0xFFFF, 0xFFFF, 1)]
     end_codes = b"".join(struct.pack(">H", e) for _, e, _ in segs)
     start_codes = b"".join(struct.pack(">H", s) for s, _, _ in segs)
     id_deltas = b"".join(struct.pack(">h", d) for _, _, d in segs)

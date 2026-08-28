@@ -12,18 +12,23 @@ pytest.importorskip("fontTools")
 pytest.importorskip("uharfbuzz")
 pytest.importorskip("bidi")
 
-from fontTools.feaLib.builder import addOpenTypeFeaturesFromString  # noqa: E402
-from fontTools.fontBuilder import FontBuilder  # noqa: E402
-from fontTools.pens.ttGlyphPen import TTGlyphPen  # noqa: E402
+from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-from aspose_pdf import Document, TextLayoutOptions  # noqa: E402
-from aspose_pdf.engine.content_stream_parser import (  # noqa: E402
+from aspose_pdf import Document, TextLayoutOptions
+from aspose_pdf.engine.content_stream_parser import (
     parse_to_unicode_cmap,
 )
-from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfName, PdfStream  # noqa: E402
-from aspose_pdf.engine.font_authoring import prepare_authored_font  # noqa: E402
-from aspose_pdf.engine.text_layout import layout_text  # noqa: E402
-from aspose_pdf.exceptions import (  # noqa: E402
+from aspose_pdf.engine.cos import (
+    PdfArray,
+    PdfDictionary,
+    PdfName,
+    PdfStream,
+)
+from aspose_pdf.engine.font_authoring import prepare_authored_font
+from aspose_pdf.engine.text_layout import layout_text
+from aspose_pdf.exceptions import (
     FontEmbeddingException,
     PdfValidationException,
 )

@@ -18,25 +18,25 @@ pytest.importorskip("uharfbuzz")
 pytest.importorskip("bidi")
 pytest.importorskip("fontTools")
 
-from fontTools.feaLib.builder import addOpenTypeFeaturesFromString  # noqa: E402
-from fontTools.fontBuilder import FontBuilder  # noqa: E402
-from fontTools.pens.ttGlyphPen import TTGlyphPen  # noqa: E402
+from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-from aspose_pdf import Document  # noqa: E402
-from aspose_pdf.engine.text_edit import (  # noqa: E402
+from aspose_pdf import Document
+from aspose_pdf.engine.text_edit import (
     Reshaper,
     _shape_replacement_codes,
     replace_text_in_content,
 )
-from aspose_pdf.engine.text_locate import CompositeFontMetric  # noqa: E402
-from aspose_pdf.exceptions import FontEmbeddingException  # noqa: E402
-from aspose_pdf.facades import PdfExtractor  # noqa: E402
-from aspose_pdf.engine.text_layout import (  # noqa: E402
+from aspose_pdf.engine.text_layout import (
     needs_shaping,
     shape_join_preserving,
 )
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget  # noqa: E402
-from aspose_pdf.text_layout import TextLayoutOptions  # noqa: E402
+from aspose_pdf.engine.text_locate import CompositeFontMetric
+from aspose_pdf.exceptions import FontEmbeddingException
+from aspose_pdf.facades import PdfExtractor
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
+from aspose_pdf.text_layout import TextLayoutOptions
 
 # Arabic letters used across the tests (logical order runs right-to-left).
 SEEN, LAM, ALEF, MEEM, AIN = "س", "ل", "ا", "م", "ع"

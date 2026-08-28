@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from aspose_pdf.exceptions import PdfParseException
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
+from aspose_pdf.exceptions import PdfParseException
 
 
 def _pdf_with_stream(*, inner_dict: bytes, payload: bytes) -> bytes:

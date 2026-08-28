@@ -1,6 +1,7 @@
 import pytest
-from aspose_pdf.pages import Page
+
 from aspose_pdf.document import Document
+from aspose_pdf.pages import Page
 
 
 @pytest.fixture

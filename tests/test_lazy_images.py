@@ -1,5 +1,6 @@
 from aspose_pdf.engine.simple_pdf import LazyImageDict
 
+
 def test_lazy_image_dict_loading():
     call_count = 0
     def loader():

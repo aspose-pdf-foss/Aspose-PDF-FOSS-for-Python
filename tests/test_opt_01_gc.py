@@ -1,6 +1,7 @@
 
+from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfIndirectReference, PdfName
 from aspose_pdf.engine.simple_pdf import SimplePdf
-from aspose_pdf.engine.cos import PdfDictionary, PdfName, PdfArray, PdfIndirectReference
+
 
 def test_gc_literal_cycle():
     """Verify that GC handles literal cycles without infinite looping."""

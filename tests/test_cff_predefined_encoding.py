@@ -8,13 +8,13 @@ import pytest
 
 pytest.importorskip("fontTools")
 
-from fontTools.cffLib.CFFToCFF2 import convertCFFToCFF2  # noqa: E402
-from fontTools.fontBuilder import FontBuilder  # noqa: E402
-from fontTools.pens.t2CharStringPen import T2CharStringPen  # noqa: E402
-from fontTools.ttLib import TTFont  # noqa: E402
+from fontTools.cffLib.CFFToCFF2 import convertCFFToCFF2
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.ttLib import TTFont
 
-from aspose_pdf.engine.agl import base_encoding_table  # noqa: E402
-from aspose_pdf.engine.cff_outlines import CffOutlines  # noqa: E402
+from aspose_pdf.engine.agl import base_encoding_table
+from aspose_pdf.engine.cff_outlines import CffOutlines
 
 
 def _charstring() -> object:

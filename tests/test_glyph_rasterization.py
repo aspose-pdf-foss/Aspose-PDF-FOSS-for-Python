@@ -19,7 +19,6 @@ from aspose_pdf.engine.cos import (
 from aspose_pdf.engine.glyph_outlines import TrueTypeOutlines
 from aspose_pdf.engine.simple_pdf import SimplePdf
 
-
 # ---------------------------------------------------------------------------
 # Minimal TrueType builder with real glyph outlines
 # ---------------------------------------------------------------------------

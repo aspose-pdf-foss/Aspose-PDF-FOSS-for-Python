@@ -6,8 +6,7 @@ path and also checks that the decoder gracefully falls back to the original
 data when it encounters malformed input.
 """
 
-from aspose_pdf.engine.ccitt import Decoder
-from aspose_pdf.engine.ccitt import decode_group4
+from aspose_pdf.engine.ccitt import Decoder, decode_group4
 
 
 def test_decode_returns_input_when_k_is_non_negative():
