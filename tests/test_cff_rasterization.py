@@ -92,8 +92,12 @@ def _box_via_subr_charstrings(x0, y0, x1, y1):
     return main, [lsubr]
 
 
-def _make_simple_cff(charstrings, *, encoding=None, lsubrs=None):
-    """Assemble a minimal name-keyed CFF program."""
+def _make_simple_cff(charstrings, *, encoding=None, lsubrs=None, charset=None):
+    """Assemble a minimal name-keyed CFF program.
+
+    *charset* writes a predefined charset offset (1 = Expert, 2 = ExpertSubset);
+    left out, the charset is absent, which means the ISOAdobe identity.
+    """
     header = bytes([1, 0, 4, 1])
     name_index = _cff_index([b"Test"])
     string_index = _cff_index([])
@@ -114,6 +118,8 @@ def _make_simple_cff(charstrings, *, encoding=None, lsubrs=None):
 
     def top_dict(cs_off, enc_off, priv_off):
         out = _enc_off(cs_off) + b"\x11"  # CharStrings
+        if charset is not None:
+            out += _enc_off(charset) + b"\x0f"  # charset (a predefined index)
         if encoding is not None:
             out += _enc_off(enc_off) + b"\x10"  # Encoding
         if lsubrs is not None:
@@ -325,6 +331,62 @@ def test_render_simple_cff_outline_not_box():
 
     assert _count_black(raster, 8, 27, 33, 35) > 30  # bottom bar filled
     assert _count_black(raster, 8, 9, 33, 19) == 0  # upper cell empty (not a box)
+
+
+def test_render_macexpert_encoded_cff_draws_a_real_glyph():
+    """An Expert-encoded CFF resolves to real outlines rather than glyph boxes.
+
+    The two Expert halves have to meet for this to work: MacExpertEncoding maps
+    code 0x21 to "exclamsmall", and the predefined Expert charset -- which the
+    font stores no names for at all -- puts that glyph at id 2.
+    """
+    cff = _make_simple_cff(
+        [b"\x0e", b"\x0e", _box_charstring(0, 0, 1000, 300)], charset=1
+    )
+    pdf = SimplePdf()
+    pdf.pages = [(0, 0, 40, 40)]
+    pdf.page_contents = [b"BT /F1 30 Tf 1 0 0 1 5 5 Tm <21> Tj ET"]
+    pdf._ensure_cos()
+    cos = pdf._cos_doc
+    ff = cos.register_object(
+        PdfStream(
+            cff,
+            {
+                PdfName("Length"): PdfNumber(len(cff)),
+                PdfName("Subtype"): PdfName("Type1C"),
+            },
+        )
+    )
+    descriptor = cos.register_object(
+        PdfDictionary(
+            {
+                PdfName("Type"): PdfName("FontDescriptor"),
+                PdfName("FontName"): PdfName("Test"),
+                PdfName("FontFile3"): ff,
+            }
+        )
+    )
+    font = cos.register_object(
+        PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Font"),
+                PdfName("Subtype"): PdfName("Type1"),
+                PdfName("BaseFont"): PdfName("Test"),
+                PdfName("Encoding"): PdfName("MacExpertEncoding"),
+                PdfName("FirstChar"): PdfNumber(0x21),
+                PdfName("Widths"): PdfArray([PdfNumber(1000)]),
+                PdfName("FontDescriptor"): descriptor,
+            }
+        )
+    )
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {PdfName("Font"): PdfDictionary({PdfName("F1"): font})}
+    )
+
+    raster = _render_first_page(pdf)
+
+    assert _count_black(raster, 8, 27, 33, 35) > 30  # the glyph's bottom bar
+    assert _count_black(raster, 8, 9, 33, 19) == 0  # not a placeholder box
 
 
 def test_render_cid_keyed_cff_glyph():

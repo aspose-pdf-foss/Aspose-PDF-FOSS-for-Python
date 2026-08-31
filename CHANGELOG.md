@@ -9,6 +9,26 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The optimizer subsets the last two font kinds it left whole.** *CFF2*
+  (`/FontFile3` with `/Subtype /OpenType`, PDF 2.0) is now erased glyph by
+  glyph like every other embedded program, as a CIDFontType0 or as a simple
+  font resolved through the sfnt's own `cmap`. CFF2 removed `endchar`, so an
+  erased glyph there is a zero-length charstring, and its advance width — which
+  CFF2 keeps in `hmtx` — is untouched. The `FDArray`/`FDSelect`, each Font
+  DICT's `Private` and the `ItemVariationStore` move with it, so a subset
+  variable font still instantiates; verified against fontTools at four weights.
+  *MacExpertEncoding* is now bundled alongside Standard/WinAnsi/MacRoman, as
+  are the predefined **Expert** and **ExpertSubset** CFF charsets, whose glyph
+  ordering the specification fixes rather than the font storing it. A
+  `/BaseEncoding` outside the four names PDF 32000-1 allows still keeps the
+  font whole — that name is malformed rather than unsupported, and guessing
+  which was meant could erase a used glyph.
+
+- **An Expert-encoded CFF or Type 1 font draws real glyphs instead of boxes.**
+  The same two tables the optimizer needed are what the renderer was missing:
+  a font under `/MacExpertEncoding` now resolves its oldstyle figures and small
+  caps through its charset, and extracts as text through the Adobe Glyph List.
+
 - **A variable CFF2 font can be drawn at a chosen instance.** The
   ItemVariationStore's regions are read, `fvar` supplies the axes (with `avar`
   applied) and each `blend` resolves to `default + Σ scalar x delta`, verified
@@ -18,6 +38,11 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **A corrupt CFF2 INDEX could stall the optimizer.** A CFF2 INDEX counts its
+  items in a uint32 rather than CFF1's uint16, so a malformed font could ask
+  for four billion offsets out of a few bytes and be walked entry by entry. The
+  count is now rejected when it cannot fit in the data that follows it.
 
 - **A variable CFF2 font drew garbage, not its default master.** The CFF DICT
   parser stopped at CFF1's operator range, so the Top DICT's `vstore`

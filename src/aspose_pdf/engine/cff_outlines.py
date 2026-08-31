@@ -5,9 +5,10 @@ The CFF subsetter (:mod:`.font_subset_cff`) erases unused charstrings without
 page renderer can fill real CFF glyph outlines instead of placeholder boxes.
 Both **name-keyed** (``/Type1C``) and **CID-keyed** (``/CIDFontType0C``) CFF
 programs are handled, including global/local subroutines, the flex operators,
-and a font's ``FontMatrix`` (for the em scale).  A full OpenType (``OTTO``)
-wrapper is unwrapped to its ``CFF `` table.  CFF2 (major version 2) is out of
-scope.
+and a font's ``FontMatrix`` (for the em scale).  A full OpenType wrapper is
+unwrapped to its ``CFF `` table, or to ``CFF2`` when that is the only one
+present -- CFF2 is read too, at whichever variable instance the caller asks
+for.
 
 Outlines are returned as flattened, closed contours in font units (y up),
 matching :class:`aspose_pdf.engine.glyph_outlines.TrueTypeOutlines`, so the
@@ -23,7 +24,7 @@ import struct
 from collections.abc import Mapping
 from typing import Any
 
-from .agl import cff_standard_strings
+from .agl import cff_predefined_charset, cff_standard_strings
 from .font_subset_cff import (
     _OP_CHARSTRINGS,
     _OP_ENCODING,
@@ -32,43 +33,19 @@ from .font_subset_cff import (
     _OP_PRIVATE,
     _OP_ROS,
     _OP_SUBRS,
+    _OP_VSTORE,
     _dict_get,
     _dict_int,
     _dict_ints,
     _parse_dict,
     _read_index,
+    _read_index2,
 )
 
 __all__ = ["CffOutlines"]
 
 Point = tuple[float, float]
 Contour = list[Point]
-
-_OP_VSTORE = 24  # CFF2 Top DICT: offset to the ItemVariationStore.
-
-
-def _read_index2(data: bytes, pos: int) -> tuple[list[bytes], int]:
-    """Read a CFF2 INDEX (32-bit count), returning items and the next offset."""
-    count = struct.unpack_from(">I", data, pos)[0]
-    pos += 4
-    if count == 0:
-        return [], pos
-    off_size = data[pos]
-    pos += 1
-    if off_size < 1 or off_size > 4:
-        raise ValueError("bad CFF2 INDEX offSize")
-    offsets = []
-    for _ in range(count + 1):
-        offsets.append(int.from_bytes(data[pos : pos + off_size], "big"))
-        pos += off_size
-    base = pos - 1
-    items = []
-    for i in range(count):
-        start, end = base + offsets[i], base + offsets[i + 1]
-        if not (pos <= start <= end <= len(data)):
-            raise ValueError("bad CFF2 INDEX offsets")
-        items.append(data[start:end])
-    return items, base + offsets[count]
 
 _OP_CHARSET = 15
 _OP_FONTMATRIX = (12, 7)
@@ -409,13 +386,14 @@ class CffOutlines:
         self._ok = True
 
     def _parse_cff2(self, data: bytes) -> None:
-        """Parse a static (default-instance) CFF2 program.
+        """Parse a CFF2 program.
 
         CFF2 replaces the name/Top-DICT/String INDEXes with a fixed-length Top
         DICT, uses 32-bit INDEXes, and is always FD-based (FDArray/FDSelect).
-        Variable-font ``blend``/``vsindex`` operators are honored only for the
-        default instance -- region deltas are dropped -- so a variable CFF2 draws
-        its default master rather than an interpolated instance.
+        The name is historical: with no ``variation`` requested the region
+        deltas a ``blend`` carries are dropped and the default master is drawn,
+        but the ItemVariationStore is parsed either way, because ``blend`` needs
+        its region counts to tell a delta from a coordinate at all.
         """
         if len(data) < 5:
             return
@@ -658,21 +636,35 @@ class CffOutlines:
 
         Resolves the charset (formats 0/1/2, or the ISOAdobe identity charset for
         offset 0) to per-glyph SIDs, then each SID to a name via the predefined
-        CFF strings and the font's own String INDEX. CID-keyed fonts and the
-        Expert/ExpertSubset predefined charsets have no glyph names here and
-        return ``{}``.
+        CFF strings and the font's own String INDEX. The Expert (offset 1) and
+        ExpertSubset (offset 2) predefined charsets carry no data in the font at
+        all, so their fixed glyph orderings come from the bundled tables instead.
+        CID-keyed fonts have no glyph names and return ``{}``.
         """
         if self._name_to_gid is not None:
             return self._name_to_gid
         result: dict[str, int] = {}
-        sids = self._charset_sids()
-        if sids is not None:
-            for gid, sid in enumerate(sids):
-                name = self._sid_name(sid)
-                if name is not None:
-                    result.setdefault(name, gid)
+        names = self._predefined_charset_names()
+        if names is not None:
+            for gid, name in enumerate(names[: self.num_glyphs]):
+                result.setdefault(name, gid)
+        else:
+            sids = self._charset_sids()
+            if sids is not None:
+                for gid, sid in enumerate(sids):
+                    name = self._sid_name(sid)
+                    if name is not None:
+                        result.setdefault(name, gid)
         self._name_to_gid = result
         return result
+
+    def _predefined_charset_names(self) -> tuple[str, ...] | None:
+        """Return the Expert/ExpertSubset glyph ordering when one is in use."""
+        if not self._ok or self._is_cid or self.num_glyphs == 0:
+            return None
+        if self._charset_off not in (1, 2):
+            return None
+        return cff_predefined_charset(self._charset_off)
 
     def _charset_sids(self) -> list[int] | None:
         """Return ``gid -> SID`` for a name-keyed font, or ``None``."""
@@ -686,7 +678,9 @@ class CffOutlines:
                 sids[gid] = gid
             return sids
         if off in (1, 2):
-            return None  # Expert / ExpertSubset predefined charsets unsupported
+            # Expert / ExpertSubset: a fixed glyph ordering, not SIDs stored in
+            # the font -- resolved by name in _predefined_charset_names.
+            return None
         data = self._data
         if off >= len(data):
             return None

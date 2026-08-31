@@ -21,16 +21,26 @@ from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.ttLib import TTFont
 
 from aspose_pdf import OptimizationOptions
+from aspose_pdf.engine.agl import cff_predefined_charset
+from aspose_pdf.engine.cff_outlines import CffOutlines
 from aspose_pdf.engine.font_subset_cff import (
+    _OP_CHARSET,
     _build_index,
     _encode_int,
+    _op_bytes,
+    _parse_dict,
+    _read_index,
     _slice_private,
     cff_charset_cid_to_gid,
     subset_cff,
 )
 
 _ORDER = [".notdef", "A", "B", "C", "D"]
+# Glyph names out of the Expert repertoire, for MacExpertEncoding coverage.
+_EXPERT_ORDER = [".notdef", "zerooldstyle", "oneoldstyle", "twooldstyle", "Asmall"]
 _BOXES = {
+    # .notdef draws too, so that erasing it would be visible -- it never should be.
+    ".notdef": (0, 0, 120, 120),
     "A": (100, 0, 300, 400),
     "B": (50, 50, 350, 300),
     "C": (0, 0, 250, 450),
@@ -38,13 +48,16 @@ _BOXES = {
 }
 
 
-def _build_cff() -> bytes:
+def _build_cff(order: list[str] | None = None) -> bytes:
     """A name-keyed CFF with several many-segment glyphs (so erasure shrinks it)."""
+    order = order or _ORDER
+    boxes = dict(zip(order[1:], list(_BOXES.values())[1:]))
+    boxes[".notdef"] = _BOXES[".notdef"]
     charstrings = {}
-    for name in _ORDER:
+    for name in order:
         pen = T2CharStringPen(600, None)
-        if name in _BOXES:
-            x0, y0, x1, y1 = _BOXES[name]
+        if name in boxes:
+            x0, y0, x1, y1 = boxes[name]
             pen.moveTo((x0, y0))
             for k in range(25):  # lots of segments -> big charstring
                 pen.lineTo((x1 - k, y0 + k))
@@ -52,10 +65,10 @@ def _build_cff() -> bytes:
             pen.closePath()
         charstrings[name] = pen.getCharString()
     fb = FontBuilder(unitsPerEm=1000, isTTF=False)
-    fb.setupGlyphOrder(_ORDER)
-    fb.setupCharacterMap({0x41: "A", 0x42: "B", 0x43: "C", 0x44: "D"})
+    fb.setupGlyphOrder(order)
+    fb.setupCharacterMap({0x41 + i: name for i, name in enumerate(order[1:])})
     fb.setupCFF("SubTest", {}, charstrings, {})
-    fb.setupHorizontalMetrics({g: (600, 0) for g in _ORDER})
+    fb.setupHorizontalMetrics({g: (600, 0) for g in order})
     fb.setupHorizontalHeader(ascent=800, descent=-200)
     fb.setupNameTable({"familyName": "SubTest", "styleName": "Regular"})
     fb.setupOS2()
@@ -92,7 +105,8 @@ def test_subset_keeps_used_and_erases_unused():
     original, got = _charstrings(cff), _charstrings(out)
     # The kept glyph still draws the exact same outline.
     assert _outline(got, "B") == _outline(original, "B")
-    # Every other content glyph is now a bare endchar.
+    # .notdef survives without being asked for; every other glyph is erased.
+    assert _outline(got, ".notdef") == _outline(original, ".notdef")
     for name in ("A", "C", "D"):
         assert got[name].bytecode == b"\x0e"
 
@@ -144,6 +158,73 @@ def test_slice_private_includes_local_subrs():
     assert size == 2
     # The relocated blob carries the Private DICT *and* its local subrs.
     assert blob == private_dict + local_subrs
+
+
+# ---------------------------------------------------------------------------
+# The predefined Expert / ExpertSubset charsets
+# ---------------------------------------------------------------------------
+
+
+def _force_predefined_charset(cff_bytes: bytes, index: int) -> bytes:
+    """Rewrite the Top DICT's charset operand to the predefined *index*.
+
+    fontTools only ever writes a charset stored in the font, so an Expert font
+    has to be made by hand. The operand is rewritten in place at the same byte
+    length, which leaves every other offset in the CFF valid.
+    """
+    header_size = cff_bytes[2]
+    _names, pos = _read_index(cff_bytes, header_size)
+    topdicts, _pos = _read_index(cff_bytes, pos)
+    entries = _parse_dict(topdicts[0])
+    out = bytearray()
+    for key, operand in entries:
+        if key == _OP_CHARSET:
+            assert len(operand) == 1, "expected a one-byte charset offset to swap"
+            out += bytes([index + 139])
+        else:
+            out += operand
+        out += _op_bytes(key)
+    assert len(out) == len(topdicts[0])
+    return cff_bytes.replace(topdicts[0], bytes(out), 1)
+
+
+@pytest.mark.parametrize("index", [1, 2])
+def test_predefined_charset_supplies_the_glyph_names(index):
+    # A charset offset of 1 or 2 stores no names in the font at all: the glyph
+    # ordering is the one the CFF specification fixes.
+    cff = _force_predefined_charset(_build_cff(order=_EXPERT_ORDER), index)
+    names = CffOutlines(cff).name_to_gid()
+    expected = cff_predefined_charset(index)[: len(_EXPERT_ORDER)]
+    assert names == {name: gid for gid, name in enumerate(expected)}
+    # ...which is *not* the font's own glyph order, so this cannot pass by luck.
+    assert set(names) != set(_EXPERT_ORDER)
+
+
+def test_predefined_charset_is_clamped_to_the_font_s_glyph_count():
+    # The Expert charset lists 166 glyphs; this font has five.
+    cff = _force_predefined_charset(_build_cff(order=_EXPERT_ORDER), 1)
+    names = CffOutlines(cff).name_to_gid()
+    assert len(names) == len(_EXPERT_ORDER)
+    assert max(names.values()) == len(_EXPERT_ORDER) - 1
+
+
+def test_optimize_subsets_a_macexpert_font_with_a_predefined_expert_charset():
+    # The two Expert halves together: MacExpertEncoding maps 0x21 to
+    # "exclamsmall", and the predefined Expert charset puts it at glyph 2.
+    cff = _force_predefined_charset(_build_cff(order=_EXPERT_ORDER), 1)
+    assert cff_predefined_charset(1)[2] == "exclamsmall"
+    pdf, ff_num = _embed_simple_type1(cff, [0x21], pdf_encoding="MacExpertEncoding")
+    original = pdf._cos_doc.objects[ff_num].content
+
+    pdf.optimize(_subset_opts(subset_fonts=True))
+
+    subset = pdf._cos_doc.objects[ff_num].content
+    assert len(subset) < len(original)
+    # The font now answers to the Expert names, not the ones it was built with.
+    kept = _charstrings(subset)
+    assert kept["exclamsmall"].bytecode != b"\x0e"
+    for name in ("space", "Hungarumlautsmall", "dollaroldstyle"):
+        assert kept[name].bytecode == b"\x0e"
 
 
 # ---------------------------------------------------------------------------
@@ -579,11 +660,41 @@ def test_simple_cff_standard_encoding_is_subset():
         assert got[name].bytecode == b"\x0e"
 
 
-def test_simple_cff_with_unbundled_base_encoding_is_not_subset():
-    # MacExpertEncoding is not bundled, so there is no code->name table and the
-    # font is kept whole rather than risk erasing a used glyph.
-    cff = _build_cff()
+def test_simple_cff_macexpert_base_encoding_is_subset():
+    # MacExpertEncoding is bundled, so 0x30 resolves to "zerooldstyle" and the
+    # font is subset around it instead of being kept whole.
+    cff = _build_cff(order=_EXPERT_ORDER)
+    pdf, ff_num = _embed_simple_type1(cff, [0x30], pdf_encoding="MacExpertEncoding")
+    original = pdf._cos_doc.objects[ff_num].content
+
+    pdf.optimize(_subset_opts(subset_fonts=True))
+
+    subset = pdf._cos_doc.objects[ff_num].content
+    assert len(subset) < len(original)
+    got = _charstrings(subset)
+    assert got["zerooldstyle"].bytecode != b"\x0e"
+    for name in ("oneoldstyle", "twooldstyle", "Asmall"):
+        assert got[name].bytecode == b"\x0e"
+
+
+def test_simple_cff_macexpert_does_not_read_0x41_as_latin_a():
+    # 0x41 is "A" in Standard/WinAnsi/MacRoman but undefined in MacExpert, where
+    # it falls through to the font's own encoding. Reading the wrong table here
+    # would keep the wrong glyph and erase the used one.
+    cff = _build_cff(order=_EXPERT_ORDER)
     pdf, ff_num = _embed_simple_type1(cff, [0x41], pdf_encoding="MacExpertEncoding")
+    pdf.optimize(_subset_opts(subset_fonts=True))
+    got = _charstrings(pdf._cos_doc.objects[ff_num].content)
+    # The CFF's built-in encoding is Standard, under which 0x41 is "A" -- a name
+    # this font does not define, so nothing can be resolved and it stays whole.
+    assert all(got[name].bytecode != b"\x0e" for name in _EXPERT_ORDER[1:])
+
+
+def test_simple_cff_with_unrecognised_base_encoding_is_not_subset():
+    # PDF 32000-1 Table 114 allows four /BaseEncoding names; anything else is
+    # malformed, and guessing which was meant could erase a used glyph.
+    cff = _build_cff()
+    pdf, ff_num = _embed_simple_type1(cff, [0x41], pdf_encoding="NotAnEncoding")
     original = pdf._cos_doc.objects[ff_num].content
     pdf.optimize(_subset_opts(subset_fonts=True))
     assert pdf._cos_doc.objects[ff_num].content == original

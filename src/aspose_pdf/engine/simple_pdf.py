@@ -8688,9 +8688,10 @@ class SimplePdf:
         Returns ``(base_map, diff_map)``: the predefined base encoding's names
         and the ``/Differences`` overlay. ``base_map`` is empty when the font
         names no base, in which case the caller falls back to the font program's
-        own built-in encoding. Returns ``None`` when a base *is* named but is not
-        one of the bundled tables (Expert/MacExpert), so the caller keeps the
-        font whole rather than guess.
+        own built-in encoding. All four names PDF 32000-1 Table 114 allows are
+        bundled; anything else is a malformed ``/BaseEncoding`` rather than an
+        unsupported one, and returns ``None`` so the caller keeps the font whole
+        rather than guess which table was meant.
         """
         from .agl import base_encoding_table
         from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber
@@ -8730,11 +8731,12 @@ class SimplePdf:
 
         Unused glyphs' charstrings are emptied while every glyph name is kept
         (see :func:`aspose_pdf.engine.font_subset_type1.subset_type1`). The kept
-        glyph names come from the effective simple-font encoding resolved without
-        any external table: the PDF ``/Differences`` (names map straight to Type 1
-        glyph names) over the font's own built-in encoding. A used code that
-        needs a predefined base encoding (a ``/Encoding`` name, or a dict with
-        ``/BaseEncoding``) bails, keeping the font whole.
+        glyph names come from the effective simple-font encoding: the PDF
+        ``/Differences`` over the predefined base encoding over the font's own
+        built-in encoding. Type 1 glyph names *are* the names those tables carry,
+        so no glyph-name-to-Unicode step is involved. A used code that resolves
+        to no name, or to a name the font does not define, bails and keeps the
+        font whole.
         """
         from functools import partial
 
@@ -8800,14 +8802,18 @@ class SimplePdf:
         predefined base encoding, then to a glyph id through the CFF charset;
         failing that, through the CFF's own built-in encoding (code -> gid), and
         finally through StandardEncoding, which is what a CFF with a predefined
-        encoding means. A CID-keyed CFF, a ``/FontFile`` (Type1, not CFF), a base
-        encoding we do not bundle, or any unresolved used code bails, keeping the
-        font whole rather than risk erasing a used glyph.
+        encoding means. A CID-keyed CFF, a ``/FontFile`` (Type1, not CFF), an
+        unrecognised base encoding, or any unresolved used code bails, keeping
+        the font whole rather than risk erasing a used glyph.
+
+        A ``/FontFile3`` may also hold OpenType CFF2 (PDF 2.0). CFF2 has no
+        charset and so no glyph names at all; its codes resolve through the
+        sfnt's own ``cmap``, the same route a simple ``/TrueType`` font takes.
         """
         from .agl import base_encoding_table
         from .cff_outlines import CffOutlines
         from .cos import PdfName
-        from .font_subset_cff import subset_cff
+        from .font_subset_cff import is_cff2, subset_cff, subset_cff2
 
         descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
         located = self._fontfile3(descriptor)
@@ -8820,6 +8826,11 @@ class SimplePdf:
             raise
         except PDF_OPERATION_ERRORS:
             return None
+        if is_cff2(program):
+            keep = self._sfnt_cmap_keep(font, program, codes)
+            if keep is None:
+                return None
+            return ff_stream, keep, program, subset_cff2
         outlines = CffOutlines(program)
         if not outlines.ok or outlines._is_cid:
             return None  # CID-keyed CFF is subset through the Type0 path only.
@@ -8851,7 +8862,7 @@ class SimplePdf:
     def _plan_type0_subset(self, font: Any, codes: set):
         from .cos import PdfArray, PdfDictionary, PdfName
         from .font_subset import subset_truetype
-        from .font_subset_cff import subset_cff
+        from .font_subset_cff import is_cff2, subset_cff, subset_cff2
 
         # Only Identity encodings let us read CIDs straight from the codes.
         encoding = self._get_name(font.mapping.get(PdfName("Encoding")))
@@ -8882,6 +8893,9 @@ class SimplePdf:
             raise
         except PDF_OPERATION_ERRORS:
             return None
+        if cid_subtype == "CIDFontType0" and is_cff2(program):
+            # A PDF 2.0 CIDFontType0 may carry OpenType CFF2 instead of bare CFF.
+            subsetter = subset_cff2
 
         # Resolve CID -> GID. CIDFontType2 uses /CIDToGIDMap. A CIDFontType0 with
         # a CID-keyed CFF (/CIDFontType0C) maps CID -> GID through the CFF charset;
@@ -8908,7 +8922,7 @@ class SimplePdf:
 
     def _plan_simple_truetype_subset(self, font: Any, codes: set):
         from .cos import PdfName
-        from .font_subset import read_symbol_code_to_gid, subset_truetype
+        from .font_subset import subset_truetype
 
         descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
         located = self._fontfile2(descriptor)
@@ -8922,7 +8936,22 @@ class SimplePdf:
         except PDF_OPERATION_ERRORS:
             return None
 
-        # A symbol cmap maps the font's byte codes straight to glyph ids.
+        keep = self._sfnt_cmap_keep(font, program, codes)
+        if keep is None:
+            return None
+        return ff_stream, keep, program, subset_truetype
+
+    def _sfnt_cmap_keep(self, font: Any, program: bytes, codes: set):
+        """Return the keep-GID set resolved through an sfnt's own cmap, or ``None``.
+
+        Shared by the simple ``/TrueType`` plan and a simple font backed by
+        OpenType CFF2: both carry a ``cmap`` and neither has glyph names to go
+        through. A symbol cmap maps the font's byte codes straight to glyph ids;
+        otherwise the PDF ``/Encoding`` gives code -> Unicode and the font's
+        Unicode cmap gives Unicode -> gid.
+        """
+        from .font_subset import read_symbol_code_to_gid
+
         code_to_gid = read_symbol_code_to_gid(program)
         if code_to_gid:
             keep = {0}
@@ -8935,16 +8964,11 @@ class SimplePdf:
                         keep.add(gid)
             if len(keep) <= 1:
                 return None
-            return ff_stream, keep, program, subset_truetype
+            return keep
 
-        # Otherwise resolve the PDF /Encoding (code -> unicode) and the font's
-        # Unicode cmap (unicode -> gid).  To stay safe this bails (keeping the
-        # font whole) the moment any *used* code cannot be resolved, so a used
-        # glyph is never erased.
-        keep = self._simple_truetype_unicode_keep(font, program, codes)
-        if keep is None:
-            return None
-        return ff_stream, keep, program, subset_truetype
+        # To stay safe this bails (keeping the font whole) the moment any *used*
+        # code cannot be resolved, so a used glyph is never erased.
+        return self._simple_truetype_unicode_keep(font, program, codes)
 
     def _simple_truetype_unicode_keep(self, font: Any, program: bytes, codes: set):
         """Return the keep-GID set for a simple TrueType via /Encoding, or None."""

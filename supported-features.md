@@ -162,11 +162,14 @@ Supported (honored options):
   names), which viewers substitute from built-in metrics. Custom embedded fonts
   are left untouched, so rendering is never degraded.
 - `subset_fonts` (default off) — strip unused glyphs from embedded **TrueType**
-  (`/FontFile2`) and **CFF** (`/FontFile3`, both name-keyed and CID-keyed) font
+  (`/FontFile2`), **CFF** (`/FontFile3`, both name-keyed and CID-keyed) and
+  **CFF2** (`/FontFile3` with `/Subtype /OpenType`) font
   programs. Glyph usage is read from page and form-XObject content streams; only
   glyphs actually drawn — plus the components of composite glyphs and `.notdef` —
   are kept. Glyph ids are preserved (glyph erasure: CFF charstrings of unused
-  glyphs become a bare `endchar`), so the font's `cmap`/`charset`/`CIDToGIDMap`/
+  glyphs become a bare `endchar`; CFF2 removed `endchar`, so there the erased
+  charstring is empty and the advance width, which lives in `hmtx`, is
+  untouched), so the font's `cmap`/`charset`/`CIDToGIDMap`/
   `FDSelect` stay valid. Fonts whose code→glyph mapping cannot be resolved
   confidently are left whole.
 - `image_compression_quality` (1–100, default off) — re-encode eligible
@@ -221,29 +224,39 @@ Boundaries:
   `Do`, so an image drawn only inside a form is measured in page space like any
   other; nesting is bounded and a form that draws itself terminates. An image
   that is never placed keeps its resolution, its display size being unknown.
-- Font subsetting (glyph erasure) covers embedded **TrueType** (`/FontFile2`) and
-  **CFF** (`/FontFile3`) programs. Handled: Type0 fonts with Identity encoding
+- Font subsetting (glyph erasure) covers embedded **TrueType** (`/FontFile2`),
+  **CFF** and **CFF2** (`/FontFile3`) programs. Handled: Type0 fonts with Identity
+  encoding
   over a CIDFontType2 (TrueType) or a CIDFontType0 backed by either a name-keyed
   CFF (CIDs are glyph ids per PDF 32000 9.7.4.2) or a **CID-keyed CFF**
   (`/CIDFontType0C` — the `FDArray`/`FDSelect`/charset and each Font DICT's
   `Private` are relocated, and CIDs are mapped to glyph ids through the CFF
   charset). Simple fonts of every embedded flavour resolve their used codes
   through one shared step: `/Differences`, then the predefined base encoding
-  (`Standard`, `WinAnsi`, `MacRoman` — the **bundled Adobe tables**, not the
+  (`Standard`, `WinAnsi`, `MacRoman`, `MacExpert` — the **bundled Adobe tables**,
+  not the
   stdlib codecs, which disagree on real codes such as WinAnsi `0xA0`/`0xAD` and
   MacRoman `0xDB`), then the font program's own built-in encoding. A simple
   `/TrueType` font is subset via its symbol `cmap`, or by mapping that glyph name
   to a scalar through the Adobe Glyph List and looking it up in the font's
   Unicode `cmap`. A simple `/Type1` font backed by a name-keyed CFF
-  (`/FontFile3`) maps the glyph name to a glyph id through the **CFF charset**,
+  (`/FontFile3`) maps the glyph name to a glyph id through the **CFF charset**
+  (including the predefined **Expert** and **ExpertSubset** charsets, whose glyph
+  ordering the CFF specification fixes rather than the font storing it),
   falling back to the CFF's own built-in encoding and then to StandardEncoding —
   which is what a CFF carrying a predefined encoding means. A simple **Type 1**
   font (`/FontFile`, eexec-encrypted) is subset by re-encrypting its Private dict
   with each unused glyph's charstring emptied (``0 0 hsbw endchar``), keeping the
-  glyph names the same resolution produces. **Not** subset (left whole): CFF2,
-  CID-keyed CFF in a simple font, and any font whose used codes need an encoding
-  outside the bundled tables (`MacExpertEncoding` and other unrecognised base
-  names). Resolution falls back to leaving the font whole for any used code it
+  glyph names the same resolution produces. **CFF2** (`/FontFile3` with
+  `/Subtype /OpenType`, PDF 2.0) is subset as either a CIDFontType0 — CFF2 has no
+  charset, so CIDs are glyph ids — or a simple font resolved through the sfnt's
+  own `cmap`; the `FDArray`/`FDSelect`, each Font DICT's `Private` and the
+  `ItemVariationStore` are relocated, and every other sfnt table is copied
+  through, so a subset variable font still instantiates. **Not** subset (left
+  whole): CID-keyed CFF in a simple font, and any font naming a `/BaseEncoding`
+  outside the four PDF 32000-1 Table 114 allows — such a name is malformed
+  rather than unsupported, and guessing which was meant could erase a used
+  glyph. Resolution falls back to leaving the font whole for any used code it
   cannot map exactly, so a used glyph is never erased.
 
 ## Pages
@@ -391,12 +404,15 @@ Boundaries:
   [Fonts](#fonts)) -- which is what lets a non-embedded CJK font draw glyphs
   rather than boxes. The Latin substitutes are Latin-subset Liberation
   faces and the symbolic ones DejaVu subsets, so glyphs outside that coverage
-  (including Symbol's private-use bracket-extender pieces), a simple CFF or
-  Type 1 font under an Expert/MacExpert encoding, and unknown symbolic fonts
+  (including Symbol's private-use bracket-extender pieces, and the oldstyle
+  figures and small caps an Expert-encoded *non-embedded* font would want) and
+  unknown symbolic fonts
   (e.g. non-embedded Wingdings, deliberately boxed rather than mapped to a Latin
   face to avoid drawing the wrong glyphs) are drawn as glyph boxes. Simple CFF
-  and Type 1 fonts under a Standard/WinAnsi/MacRoman predefined encoding (or a
-  `/Differences` map) now resolve real glyphs through the font's charset and the
+  and Type 1 fonts under any of the four PDF predefined encodings —
+  Standard/WinAnsi/MacRoman/**MacExpert** — or a
+  `/Differences` map resolve real glyphs through the font's charset (the
+  predefined **Expert**/**ExpertSubset** charsets included) and the
   Adobe Glyph List rather than falling back to boxes. Latin GSUB
   (ligatures, kerning) through a substitute face is deliberately **not**
   applied: the PDF's own `/Widths` place every glyph, so kerning would move
@@ -760,8 +776,9 @@ Boundaries:
   system font ships as one variable file rather than four static ones, so
   `wght` (and `ital`/`slnt`) are set when Bold or Italic is wanted and the
   face's own name does not already say so. Variable **TrueType** (`gvar`) is a
-  different mechanism and is not instanced. CFF2 is left whole by the optimizer
-  (not subset) and rejected for authoring new text.
+  different mechanism and is not instanced. CFF2 is subset by the optimizer (the
+  ItemVariationStore moves with everything else, so a subset variable font still
+  instantiates) but is rejected for authoring new text.
 - Complex-text authoring requires the optional `uharfbuzz`, `python-bidi`, and
   `fonttools` dependencies
   (`pip install aspose-pdf-foss-for-python[text-layout]`) and an embedded

@@ -14,8 +14,15 @@ Both **name-keyed** and **CID-keyed** CFF (a Top DICT with a ``ROS`` operator --
 ``FDArray`` (an INDEX of Font DICTs, each with its own ``Private`` DICT and local
 subrs), an ``FDSelect`` mapping each glyph to its Font DICT, and a ``charset``
 mapping glyph ids to CIDs; all of these are relocated, and every Font DICT's
-``Private`` offset is patched to its moved position. CFF2 (major version 2) is
-not handled.
+``Private`` offset is patched to its moved position.
+
+**CFF2** (major version 2) is handled by :func:`subset_cff2`, either as a bare
+table or inside the OpenType font that carries it. It is the same erasure with a
+different container: 32-bit INDEXes, a fixed-length Top DICT in place of the
+name/Top-DICT/String INDEXes, no charset or encoding, and an ``ItemVariationStore``
+to relocate. An erased CFF2 glyph is a *zero-length* charstring rather than a
+one-byte ``endchar``, because CFF2 removed ``endchar`` -- a charstring simply
+ends where its INDEX entry does, and its advance width lives in ``hmtx``.
 
 Parsing is deliberately defensive: malformed or unexpected input never raises,
 :func:`subset_cff` simply returns ``None`` so the caller can leave the original
@@ -26,7 +33,7 @@ from __future__ import annotations
 
 import struct
 
-__all__ = ["cff_charset_cid_to_gid", "subset_cff"]
+__all__ = ["cff_charset_cid_to_gid", "is_cff2", "subset_cff", "subset_cff2"]
 
 _ENDCHAR = b"\x0e"  # Type 2 (and Type 1) charstring "endchar" operator.
 
@@ -39,6 +46,7 @@ _OP_SUBRS = 19  # inside a Private DICT, relative to the Private DICT start.
 _OP_ROS = (12, 30)  # marks a CID-keyed font.
 _OP_FDARRAY = (12, 36)  # CID: offset to the Font DICT INDEX.
 _OP_FDSELECT = (12, 37)  # CID: offset to the glyph -> FD map.
+_OP_VSTORE = 24  # CFF2 Top DICT: offset to the ItemVariationStore.
 
 
 def subset_cff(font_bytes: bytes, keep_gids: set[int]) -> bytes | None:
@@ -319,6 +327,254 @@ def _encode_fd_dict(entries):
 
 
 # ---------------------------------------------------------------------------
+# CFF2 subsetting
+# ---------------------------------------------------------------------------
+
+
+def is_cff2(font_bytes: bytes) -> bool:
+    """Whether *font_bytes* is a CFF2 program, bare or inside an sfnt wrapper."""
+    try:
+        tables = _sfnt_tables(font_bytes)
+    except (struct.error, IndexError, ValueError):
+        return False
+    if tables is not None:
+        return "CFF2" in tables
+    return len(font_bytes) >= 5 and font_bytes[0] == 2 and font_bytes[2] >= 5
+
+
+def subset_cff2(font_bytes: bytes, keep_gids: set[int]) -> bytes | None:
+    """Empty every CFF2 charstring outside *keep_gids* (glyph 0 always kept).
+
+    Accepts either a bare ``CFF2`` table or the whole OpenType font carrying one,
+    and returns the same shape it was handed. Glyph numbering is preserved, so
+    ``hmtx``, ``cmap``, ``HVAR`` and the PDF's own CID->GID mapping stay valid and
+    are copied through untouched. Returns ``None`` when the input is not a
+    parseable CFF2, when nothing can be erased, or when the result would not be
+    smaller.
+    """
+    try:
+        return _subset_cff2(font_bytes, keep_gids)
+    except (struct.error, IndexError, ValueError):
+        return None
+
+
+def _subset_cff2(font_bytes: bytes, keep_gids: set[int]) -> bytes | None:
+    tables = _sfnt_tables(font_bytes)
+    if tables is None:
+        return _subset_cff2_table(font_bytes, keep_gids)
+
+    from .font_subset import _build_sfnt
+
+    location = tables.get("CFF2")
+    if location is None:
+        return None
+    off, length = location
+    new_cff2 = _subset_cff2_table(font_bytes[off : off + length], keep_gids)
+    if new_cff2 is None:
+        return None
+    new_tables = {tag: font_bytes[o : o + n] for tag, (o, n) in tables.items()}
+    new_tables["CFF2"] = new_cff2
+    sfnt_version = struct.unpack_from(">I", font_bytes, 0)[0]
+    result = _build_sfnt(sfnt_version, new_tables)
+    if len(result) >= len(font_bytes):
+        return None
+    return result
+
+
+def _sfnt_tables(data: bytes) -> dict[str, tuple[int, int]] | None:
+    """Return ``{tag: (offset, length)}`` when *data* is an sfnt, else ``None``."""
+    if len(data) < 12 or data[:4] not in (b"OTTO", b"\x00\x01\x00\x00", b"true"):
+        return None
+    num_tables = struct.unpack_from(">H", data, 4)[0]
+    tables: dict[str, tuple[int, int]] = {}
+    record = 12
+    for _ in range(num_tables):
+        if record + 16 > len(data):
+            return None
+        tag = data[record : record + 4].decode("latin-1")
+        offset, length = struct.unpack_from(">II", data, record + 8)
+        if offset + length > len(data):
+            return None
+        tables[tag] = (offset, length)
+        record += 16
+    return tables
+
+
+def _subset_cff2_table(data: bytes, keep_gids: set[int]) -> bytes | None:
+    if len(data) < 5 or data[0] != 2:
+        return None
+    hdr_size = data[2]
+    top_dict_length = struct.unpack_from(">H", data, 3)[0]
+    top_end = hdr_size + top_dict_length
+    if hdr_size < 5 or top_end > len(data):
+        return None
+    entries = _parse_dict(data[hdr_size:top_end])
+
+    cs_off = _dict_int(entries, _OP_CHARSTRINGS)
+    fdarray_off = _dict_int(entries, _OP_FDARRAY)
+    if cs_off is None or fdarray_off is None:
+        return None  # FDArray is mandatory in CFF2; without it this is not one.
+    charstrings, _end = _read_index2(data, cs_off)
+    num_glyphs = len(charstrings)
+    if num_glyphs == 0:
+        return None
+
+    keep = {g for g in keep_gids if 0 <= g < num_glyphs}
+    keep.add(0)  # .notdef must survive.
+    new_charstrings = []
+    changed = False
+    for gid, charstring in enumerate(charstrings):
+        if gid in keep:
+            new_charstrings.append(charstring)
+        else:
+            # CFF2 has no ``endchar``: a charstring ends where its INDEX entry
+            # does, so the empty glyph is the empty string.
+            if charstring:
+                changed = True
+            new_charstrings.append(b"")
+    if not changed:
+        return None
+    new_cs_index = _build_index2(new_charstrings)
+
+    # The Global Subr INDEX sits immediately after the Top DICT and is not
+    # referenced by any offset, so it moves with the header and is copied whole.
+    _gsubrs, gsubr_end = _read_index2(data, top_end)
+    gsubr_blob = data[top_end:gsubr_end]
+
+    fdselect_off = _dict_int(entries, _OP_FDSELECT)
+    fdselect_blob = (
+        _slice_fdselect(data, fdselect_off, num_glyphs)
+        if fdselect_off is not None
+        else None
+    )
+    vstore_blob = _slice_vstore(data, entries)
+
+    # Re-encode every Font DICT with a relocatable Private offset, collecting the
+    # Private DICT (+ local subrs) blobs to lay out at the end.
+    fd_items, _fd_end = _read_index2(data, fdarray_off)
+    if not fd_items:
+        return None
+    encoded_fds: list[tuple[bytes, int | None, int | None]] = []
+    private_blobs: list[bytes] = []
+    for fd_bytes in fd_items:
+        fd_entries = _parse_dict(fd_bytes)
+        priv = _dict_ints(fd_entries, _OP_PRIVATE)
+        if priv and len(priv) == 2:
+            blob = _slice_private2(data, fd_entries)
+            if blob is None:
+                return None
+            new_fd, rel = _encode_fd_dict(fd_entries)
+            encoded_fds.append((new_fd, rel, len(private_blobs)))
+            private_blobs.append(blob)
+        else:
+            encoded_fds.append((fd_bytes, None, None))
+    new_fdarray = bytearray(_build_index2([fd[0] for fd in encoded_fds]))
+    fdarray_header_len = len(new_fdarray) - sum(len(fd[0]) for fd in encoded_fds)
+
+    top_dict, patches = _encode_cff2_top_dict(
+        entries, fdselect=fdselect_blob is not None, vstore=vstore_blob is not None
+    )
+    header = bytes([2, data[1], 5]) + struct.pack(">H", len(top_dict))
+
+    # Lay everything out and learn each relocated block's absolute offset.
+    offset = len(header) + len(top_dict) + len(gsubr_blob)
+    new_offsets = {"charstrings": offset}
+    offset += len(new_cs_index)
+    if fdselect_blob is not None:
+        new_offsets["fdselect"] = offset
+        offset += len(fdselect_blob)
+    new_offsets["fdarray"] = offset
+    offset += len(new_fdarray)
+    private_offsets = []
+    for blob in private_blobs:
+        private_offsets.append(offset)
+        offset += len(blob)
+    if vstore_blob is not None:
+        new_offsets["vstore"] = offset
+        offset += len(vstore_blob)
+
+    top_dict = bytearray(top_dict)
+    for name, rel in patches.items():
+        struct.pack_into(">I", top_dict, rel, new_offsets[name])
+    cursor = fdarray_header_len
+    for new_fd, rel, blob_idx in encoded_fds:
+        if rel is not None:
+            struct.pack_into(">I", new_fdarray, cursor + rel, private_offsets[blob_idx])
+        cursor += len(new_fd)
+
+    out = bytearray(header)
+    out += top_dict
+    out += gsubr_blob
+    out += new_cs_index
+    if fdselect_blob is not None:
+        out += fdselect_blob
+    out += new_fdarray
+    for blob in private_blobs:
+        out += blob
+    if vstore_blob is not None:
+        out += vstore_blob
+
+    if len(out) >= len(data):
+        return None
+    return bytes(out)
+
+
+def _slice_vstore(data: bytes, entries) -> bytes | None:
+    """Slice the ItemVariationStore: a uint16 length, then that many bytes."""
+    off = _dict_int(entries, _OP_VSTORE)
+    if off is None or off + 2 > len(data):
+        return None
+    length = struct.unpack_from(">H", data, off)[0]
+    end = off + 2 + length
+    if end > len(data):
+        raise ValueError("bad vstore length")
+    return data[off:end]
+
+
+def _slice_private2(data: bytes, entries) -> bytes | None:
+    """CFF2 counterpart of :func:`_slice_private` (32-bit local subr INDEX)."""
+    operands = _dict_ints(entries, _OP_PRIVATE)
+    if not operands or len(operands) != 2:
+        return None
+    size, off = operands
+    end = off + size
+    rel = _dict_int(_parse_dict(data[off : off + size]), _OP_SUBRS)
+    if rel is not None:
+        _subrs, subrs_end = _read_index2(data, off + rel)
+        end = max(end, subrs_end)
+    if end > len(data):
+        raise ValueError("bad CFF2 Private DICT extent")
+    return data[off:end]
+
+
+def _encode_cff2_top_dict(entries, *, fdselect: bool, vstore: bool):
+    """Re-encode a CFF2 Top DICT with fixed-width relocatable offsets.
+
+    Returns ``(bytes, patches)`` where *patches* maps a block name to the
+    absolute position of its 4-byte value inside the returned bytes -- the Top
+    DICT is not wrapped in an INDEX here, so the positions need no adjusting.
+    """
+    reloc_name = {
+        _OP_CHARSTRINGS: "charstrings",
+        _OP_FDARRAY: "fdarray",
+        _OP_FDSELECT: "fdselect",
+        _OP_VSTORE: "vstore",
+    }
+    present = {"charstrings": True, "fdarray": True, "fdselect": fdselect, "vstore": vstore}
+    out = bytearray()
+    patches: dict[str, int] = {}
+    for key, operand_bytes in entries:
+        name = reloc_name.get(key)
+        if name is not None and present.get(name):
+            patches[name] = len(out) + 1
+            out += _placeholder_offset()
+            out += _op_bytes(key)
+        else:
+            out += operand_bytes + _op_bytes(key)
+    return bytes(out), patches
+
+
+# ---------------------------------------------------------------------------
 # CID charset -> CID->GID map (for the caller's used-CID resolution)
 # ---------------------------------------------------------------------------
 
@@ -542,6 +798,35 @@ def _read_index(data: bytes, pos: int) -> tuple[list[bytes], int]:
     return items, base + offsets[count]
 
 
+def _read_index2(data: bytes, pos: int) -> tuple[list[bytes], int]:
+    """Read a CFF2 INDEX (32-bit count), returning items and the next offset."""
+    count = struct.unpack_from(">I", data, pos)[0]
+    pos += 4
+    if count == 0:
+        return [], pos
+    off_size = data[pos]
+    pos += 1
+    if off_size < 1 or off_size > 4:
+        raise ValueError("bad CFF2 INDEX offSize")
+    # Unlike CFF1's uint16, a CFF2 count is a uint32: garbage here would ask for
+    # billions of offsets. Each one occupies off_size bytes, so anything that
+    # cannot fit in what is left of the data is garbage.
+    if (count + 1) * off_size > len(data) - pos:
+        raise ValueError("CFF2 INDEX count exceeds the data")
+    offsets = []
+    for _ in range(count + 1):
+        offsets.append(int.from_bytes(data[pos : pos + off_size], "big"))
+        pos += off_size
+    base = pos - 1
+    items = []
+    for i in range(count):
+        start, end = base + offsets[i], base + offsets[i + 1]
+        if not (pos <= start <= end <= len(data)):
+            raise ValueError("bad CFF2 INDEX offsets")
+        items.append(data[start:end])
+    return items, base + offsets[count]
+
+
 def _build_index(items: list[bytes]) -> bytes:
     if not items:
         return b"\x00\x00"
@@ -552,6 +837,24 @@ def _build_index(items: list[bytes]) -> bytes:
     last = offsets[-1]
     off_size = 1 if last < 0x100 else 2 if last < 0x10000 else 3 if last < 0x1000000 else 4
     out = bytearray(struct.pack(">H", len(items)))
+    out.append(off_size)
+    for off in offsets:
+        out += off.to_bytes(off_size, "big")
+    out += data
+    return bytes(out)
+
+
+def _build_index2(items: list[bytes]) -> bytes:
+    """Build a CFF2 INDEX (32-bit count); an empty one is the count alone."""
+    if not items:
+        return b"\x00\x00\x00\x00"
+    data = b"".join(items)
+    offsets = [1]
+    for item in items:
+        offsets.append(offsets[-1] + len(item))
+    last = offsets[-1]
+    off_size = 1 if last < 0x100 else 2 if last < 0x10000 else 3 if last < 0x1000000 else 4
+    out = bytearray(struct.pack(">I", len(items)))
     out.append(off_size)
     for off in offsets:
         out += off.to_bytes(off_size, "big")
