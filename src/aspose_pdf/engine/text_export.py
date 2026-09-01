@@ -67,6 +67,8 @@ class Block:
     """List item texts."""
 
     rows: list[list[str]] = field(default_factory=list)
+    #: Per-cell column span, parallel to :attr:`rows`; 1 unless cells merge.
+    spans: list[list[int]] = field(default_factory=list)
     """Table cells, row-major."""
 
     ordered: bool = False
@@ -264,12 +266,29 @@ def _has_content(block: Block) -> bool:
 
 
 def _table_block(rows: list[list[LayoutElement]], texts: dict[int, str]) -> Block:
-    """A detected grid becomes a table, one cell per element in reading order."""
+    """A detected grid becomes a table, laid out on its columns.
+
+    Every row is padded to the table's full width: a column a row leaves blank
+    becomes an empty string rather than being closed up, which would shift the
+    cells after it into the wrong columns. A cell that merges several columns
+    takes the first and leaves the rest empty, and carries its span so HTML can
+    say ``colspan``.
+    """
+    width = max(
+        (cell.column + cell.span for row in rows for cell in row), default=0
+    )
     cells: list[list[str]] = []
+    spans: list[list[int]] = []
     for row in rows:
-        ordered = sorted(row, key=lambda e: e.x)
-        cells.append([texts.get(e.start, "")[:_MAX_CELL_CHARS] for e in ordered])
-    return Block(kind="table", rows=cells)
+        line = [""] * width
+        row_spans = [1] * width
+        for element in sorted(row, key=lambda e: e.x):
+            if 0 <= element.column < width:
+                line[element.column] = texts.get(element.start, "")[:_MAX_CELL_CHARS]
+                row_spans[element.column] = element.span
+        cells.append(line)
+        spans.append(row_spans)
+    return Block(kind="table", rows=cells, spans=spans)
 
 
 def _flow_blocks(
@@ -413,9 +432,19 @@ def _html_block(block: Block, embed_images: bool) -> str:
     if block.kind == "table":
         rows = []
         for index, row in enumerate(block.rows):
-            cell = "th" if index == 0 else "td"
-            cells = "".join(f"<{cell}>{escape(value)}</{cell}>" for value in row)
-            rows.append(f"<tr>{cells}</tr>")
+            name = "th" if index == 0 else "td"
+            spans = block.spans[index] if index < len(block.spans) else [1] * len(row)
+            cells = []
+            column = 0
+            while column < len(row):
+                span = spans[column] if column < len(spans) else 1
+                attribute = f' colspan="{span}"' if span > 1 else ""
+                cells.append(
+                    f"<{name}{attribute}>{escape(row[column])}</{name}>"
+                )
+                # The columns a merged cell covers are already spoken for.
+                column += max(span, 1)
+            rows.append(f"<tr>{''.join(cells)}</tr>")
         body = "\n".join(rows)
         return f"<table>\n{body}\n</table>"
     if block.kind == "figure":

@@ -4534,7 +4534,10 @@ class SimplePdf:
         """Build a nested ``/L`` → ``/LI`` → ``/LBody`` structure for *items*.
 
         Each item (a list of line elements) becomes an ``/LI`` whose ``/LBody``
-        owns the item's line MCIDs. Returns the marks
+        owns the item's line MCIDs. An item indented past the one before it
+        starts a sub-list *inside* that item's ``/LBody``, which is where
+        ISO 32000-1 puts a nested list -- flattening it would tell a reader the
+        sub-items are siblings of the item they belong to. Returns the marks
         ``(start, end, "LBody", mcid)`` for every line, or ``None`` if empty.
         """
         struct_root, struct_ref = self._ensure_struct_tree_root()
@@ -4554,16 +4557,58 @@ class SimplePdf:
         )
         l_ref = self._cos_doc.register_object(l_elem)
 
-        li_refs: list[Any] = []
         marks: list[tuple[int, int, str, int]] = []
+        # One frame per open list level: the /L element, its /LI children so
+        # far, and the /LBody a deeper level would nest inside.
+        stack: list[dict[str, Any]] = [
+            {"elem": l_elem, "ref": l_ref, "kids": [], "last_body": None}
+        ]
+
+        def open_list(parent_body_ref: Any) -> None:
+            nested = PdfDictionary(
+                {
+                    PdfName("Type"): PdfName("StructElem"),
+                    PdfName("S"): PdfName("L"),
+                    PdfName("P"): parent_body_ref,
+                    PdfName("Pg"): page_ref,
+                }
+            )
+            nested_ref = self._cos_doc.register_object(nested)
+            stack.append(
+                {"elem": nested, "ref": nested_ref, "kids": [], "last_body": None}
+            )
+
+        def close_list() -> None:
+            frame = stack.pop()
+            if not frame["kids"]:
+                return
+            frame["elem"].mapping[PdfName("K")] = PdfArray(frame["kids"])
+            parent_body = stack[-1]["last_body"]
+            if parent_body is not None:
+                existing = parent_body.mapping.get(PdfName("K"))
+                kids = (
+                    list(existing.items)
+                    if isinstance(existing, PdfArray)
+                    else ([existing] if existing is not None else [])
+                )
+                kids.append(frame["ref"])
+                parent_body.mapping[PdfName("K")] = PdfArray(kids)
+
         for item in items:
             if not item:
                 continue
+            depth = min(getattr(item[0], "depth", 0), len(stack) - 1 + 1)
+            bullet = getattr(item[0], "bullet", None)
+            while len(stack) - 1 > depth:
+                close_list()
+            if depth == len(stack) and stack[-1]["last_body"] is not None:
+                open_list(stack[-1]["last_body_ref"])
+            frame = stack[-1]
             li_elem = PdfDictionary(
                 {
                     PdfName("Type"): PdfName("StructElem"),
                     PdfName("S"): PdfName("LI"),
-                    PdfName("P"): l_ref,
+                    PdfName("P"): frame["ref"],
                     PdfName("Pg"): page_ref,
                 }
             )
@@ -4588,12 +4633,33 @@ class SimplePdf:
                 if len(mcids) == 1
                 else PdfArray([PdfNumber(m) for m in mcids])
             )
-            li_elem.mapping[PdfName("K")] = lbody_ref
-            li_refs.append(li_ref)
+            if bullet is not None:
+                lbl_elem = PdfDictionary(
+                    {
+                        PdfName("Type"): PdfName("StructElem"),
+                        PdfName("S"): PdfName("Lbl"),
+                        PdfName("P"): li_ref,
+                        PdfName("Pg"): page_ref,
+                    }
+                )
+                lbl_ref = self._cos_doc.register_object(lbl_elem)
+                lbl_mcid = len(parent_array.items)
+                parent_array.items.append(lbl_ref)
+                lbl_elem.mapping[PdfName("K")] = PdfNumber(lbl_mcid)
+                marks.append((bullet.start, bullet.end, "Lbl", lbl_mcid))
+                li_elem.mapping[PdfName("K")] = PdfArray([lbl_ref, lbody_ref])
+            else:
+                li_elem.mapping[PdfName("K")] = lbody_ref
+            frame["kids"].append(li_ref)
+            frame["last_body"] = lbody_elem
+            frame["last_body_ref"] = lbody_ref
 
-        if not li_refs:
+        while len(stack) > 1:
+            close_list()
+        root_frame = stack[0]
+        if not root_frame["kids"]:
             return None
-        l_elem.mapping[PdfName("K")] = PdfArray(li_refs)
+        l_elem.mapping[PdfName("K")] = PdfArray(root_frame["kids"])
         self._append_struct_root_kid(struct_root, l_ref)
         return marks
 
@@ -4602,9 +4668,12 @@ class SimplePdf:
     ) -> list[tuple[int, int, str, int]] | None:
         """Build a nested ``/Table`` → ``/TR`` → ``/TD`` structure for *rows*.
 
-        Each row is a ``/TR`` and each cell (one text element) a ``/TD`` owning
-        that cell's MCID. Returns the marks ``(start, end, "TD", mcid)`` for
-        every cell, or ``None`` if empty.
+        Each row is a ``/TR`` and each cell a ``/TD`` owning that cell's MCID.
+        A cell that covers several columns gets a ``/ColSpan``, and a column a
+        row leaves blank gets a ``/TD`` with no content -- a table read by a
+        screen reader has to have a cell in every column, or the columns after
+        the gap shift left and the row means something else. Returns the marks
+        ``(start, end, "TD", mcid)`` for every cell, or ``None`` if empty.
         """
         struct_root, struct_ref = self._ensure_struct_tree_root()
         page = self._get_page_dict(page_index)
@@ -4627,18 +4696,33 @@ class SimplePdf:
         table_elem, table_ref = struct_elem("Table", struct_ref)
         tr_refs: list[Any] = []
         marks: list[tuple[int, int, str, int]] = []
+        columns = max(
+            (cell.column + cell.span for row in rows for cell in row), default=0
+        )
         for row in rows:
             if not row:
                 continue
             tr_elem, tr_ref = struct_elem("TR", table_ref)
             td_refs: list[Any] = []
+            next_column = 0
             for cell in row:
+                for _ in range(next_column, cell.column):
+                    blank_elem, blank_ref = struct_elem("TD", tr_ref)
+                    del blank_elem  # an empty cell holds no marked content
+                    td_refs.append(blank_ref)
                 td_elem, td_ref = struct_elem("TD", tr_ref)
+                if cell.span > 1:
+                    td_elem.mapping[PdfName("ColSpan")] = PdfNumber(cell.span)
                 mcid = len(parent_array.items)
                 parent_array.items.append(td_ref)
                 td_elem.mapping[PdfName("K")] = PdfNumber(mcid)
                 marks.append((cell.start, cell.end, "TD", mcid))
                 td_refs.append(td_ref)
+                next_column = cell.column + cell.span
+            for _ in range(next_column, columns):
+                blank_elem, blank_ref = struct_elem("TD", tr_ref)
+                del blank_elem
+                td_refs.append(blank_ref)
             tr_elem.mapping[PdfName("K")] = PdfArray(td_refs)
             tr_refs.append(tr_ref)
 
@@ -4777,9 +4861,20 @@ class SimplePdf:
         into one nested ``/L``; every other paragraph/heading/figure is a single
         flat structure element.
         """
-        from .auto_tag import group_into_paragraphs, is_list_item
+        from .auto_tag import (
+            assign_list_depths,
+            attach_image_bullets,
+            group_into_paragraphs,
+            is_list_item,
+        )
 
-        groups = group_into_paragraphs(flow)
+        # A drawn marker has to be paired with its line before grouping, or the
+        # image becomes a standalone /Figure between loose paragraphs.
+        attach_image_bullets(flow)
+        bullets = {id(e.bullet) for e in flow if e.bullet is not None}
+        groups = group_into_paragraphs(
+            [e for e in flow if id(e) not in bullets]
+        )
         marks: list[tuple[int, int, str, int]] = []
         created = 0
         i, total = 0, len(groups)
@@ -4791,6 +4886,7 @@ class SimplePdf:
                     run.append(groups[j])
                     j += 1
                 if len(run) >= 2:
+                    assign_list_depths(run)
                     item_marks = self._register_list_marked_content(page_index, run)
                     if item_marks:
                         marks.extend(item_marks)

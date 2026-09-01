@@ -27,6 +27,7 @@ preserved exactly.
 from __future__ import annotations
 
 import itertools
+import math
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -36,7 +37,9 @@ from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 __all__ = [
     "LayoutElement",
     "TextObject",
+    "assign_list_depths",
     "assign_reading_order",
+    "attach_image_bullets",
     "build_tagged_content",
     "choose_tags",
     "detect_columns",
@@ -76,6 +79,15 @@ _COL_GUTTER_MIN = 18.0    # ... and at least this many user units
 _COL_OVERLAP_RATIO = 0.5  # column bands must share this fraction of their y-span
 _COL_MIN_SPAN_EM = 0.5    # each band must span more than a single line vertically
 _MAX_COL_DEPTH = 3        # recursion cap for nested vertical cuts
+# When this fraction of lines has content on both sides of a candidate gutter,
+# and the lines fill less than _COL_MIN_FILL of the band leading up to it, the
+# gap is between a table's columns rather than between the page's.
+_COL_PAIRED_ROW_RATIO = 0.8
+# Deliberately low: a candidate gutter is already at least 3 em wide, and this
+# asks whether the text before it is narrower than a third of the band. Prose
+# fills more than that even with a ragged edge, so the benefit of the doubt
+# goes to the column reading -- the one that was there before.
+_COL_MIN_FILL = 0.3
 # A line's width is estimated from the bytes it shows; 0.5 em per byte is the
 # usual rough average for Latin text. It is only ever used to ask whether a
 # line *crosses* a candidate gutter, so being approximate is fine -- the answer
@@ -87,6 +99,7 @@ _TABLE_MIN_ROWS = 2       # a table needs at least this many aligned rows
 _TABLE_MIN_COLS = 2       # ... each with at least this many cells
 _TABLE_COL_TOL_EM = 0.6   # cell x-alignment tolerance as a fraction of font size
 _TABLE_COL_TOL_MIN = 4.0  # ... with this floor in user units
+_TABLE_ANCHOR_ROWS = 3    # rows sampled to find the grid's full column set
 
 # List-detection heuristics (see :func:`list_marker`).
 _HEAD_CAP = 32            # bytes of leading shown text kept for marker sniffing
@@ -95,6 +108,14 @@ _BULLET_CHARS = set("•·◦‣▪●■\u2043-\u2013—*\x95")
 # An ordered marker: an optional "(", then digits / a letter / a small roman
 # numeral, then "." or ")" -- e.g. "1.", "(a)", "iv)".
 _ORDERED_RE = re.compile(r"^\(?(?:[0-9]{1,3}|[ivxlcdmIVXLCDM]{1,5}|[A-Za-z])[.)]$")
+# Two list markers within this much of each other sit at the same indent stop.
+_LIST_INDENT_EM = 0.9
+_LIST_INDENT_MIN = 6.0
+_LIST_MAX_DEPTH = 4  # deeper nesting is flattened rather than tracked
+# An image bullet is glyph-sized and sits just left of the line it marks.
+_BULLET_MAX_EM = 1.5
+_BULLET_GAP_EM = 2.5
+_BULLET_BASELINE_EM = 0.4  # how far below the image the baseline may sit
 
 Matrix = tuple[float, float, float, float, float, float]
 _IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
@@ -130,6 +151,12 @@ class LayoutElement:
     tag: str | None = None
     alt: str | None = None
     text_head: str = ""  # leading shown text of the object, for list sniffing
+    width: float = 0.0  # placed width of an image, in page units
+    height: float = 0.0  # ... and its height
+    column: int = 0  # table cell: index of the column anchor it sits on
+    span: int = 1  # table cell: how many columns it covers
+    depth: int = 0  # list item: nesting level, from its indentation
+    bullet: LayoutElement | None = None  # the image standing in for a marker
 
 
 def _mul(m: Matrix, n: Matrix) -> Matrix:
@@ -415,11 +442,92 @@ def list_marker(head: str) -> str | None:
 
 
 def is_list_item(group: list[LayoutElement]) -> bool:
-    """Whether a paragraph *group* is a list item (a ``/P`` line with a marker)."""
+    """Whether a paragraph *group* is a list item.
+
+    Either a ``/P`` line whose text begins with a marker, or one an image
+    bullet was attached to by :func:`attach_image_bullets`.
+    """
     if not group:
         return False
     head = group[0]
-    return head.kind == "text" and head.tag == "P" and list_marker(head.text_head) is not None
+    if head.kind != "text" or head.tag != "P":
+        return False
+    return head.bullet is not None or list_marker(head.text_head) is not None
+
+
+def attach_image_bullets(flow: list[LayoutElement]) -> None:
+    """Pair a small image with the text line it bullets, in place.
+
+    A list whose markers are drawn rather than typed carries no marker *text*,
+    so the leading-character test never fires and the items read as loose
+    paragraphs with a picture between them. What identifies the image is its
+    company: a glyph-sized figure immediately to the left of a line, on that
+    line's own baseline. The line then knows its own marker, which becomes the
+    item's ``/Lbl``.
+    """
+    figures = [e for e in flow if e.kind == "xobject" and e.tag == "Figure"]
+    if not figures:
+        return
+    taken: set[int] = set()
+    for text in flow:
+        if text.kind != "text" or text.tag != "P" or text.bullet is not None:
+            continue
+        size = text.font_size or 10.0
+        for bullet in figures:
+            if id(bullet) in taken:
+                continue
+            if (
+                bullet.width <= 0
+                or bullet.width > _BULLET_MAX_EM * size
+                or bullet.height > _BULLET_MAX_EM * size
+            ):
+                continue
+            # A drawn bullet sits on the line's baseline, so the baseline falls
+            # inside the image's vertical span (a descender's worth below it at
+            # the most). Row grouping is no help here: the anchor recorded for
+            # an image is its centre, half a bullet above where the text sits.
+            bottom = bullet.y - bullet.height / 2.0
+            top = bullet.y + bullet.height / 2.0
+            if not bottom - _BULLET_BASELINE_EM * size <= text.y <= top:
+                continue
+            right_edge = bullet.x + bullet.width / 2.0
+            if not right_edge <= text.x <= right_edge + _BULLET_GAP_EM * size:
+                continue
+            text.bullet = bullet
+            taken.add(id(bullet))
+            break
+
+
+def assign_list_depths(items: list[list[LayoutElement]]) -> None:
+    """Set each item's ``depth`` from how far its marker is indented.
+
+    A nested list is not marked in the content stream -- it is drawn as items
+    that start further right. Indents are clustered rather than measured
+    against a fixed step, because the step varies by document and a sub-item's
+    own continuation lines sit at yet another x.
+    """
+    stops: list[float] = []
+    for item in items:
+        if not item:
+            continue
+        head = item[0]
+        tol = max(_LIST_INDENT_MIN, _LIST_INDENT_EM * (head.font_size or 10.0))
+        for depth, stop in enumerate(stops):
+            if abs(head.x - stop) <= tol:
+                # Returning to a stop closes every level opened after it.
+                del stops[depth + 1 :]
+                break
+        else:
+            if stops and head.x < stops[-1]:
+                # Further left than any known stop and not near one: treat it
+                # as the outermost level rather than inventing a new one.
+                depth = 0
+                stops[:] = [head.x]
+            else:
+                stops.append(head.x)
+                depth = len(stops) - 1
+        for line in item:
+            line.depth = min(depth, _LIST_MAX_DEPTH)
 
 
 def has_marked_content(
@@ -567,6 +675,13 @@ def find_layout_elements(
         elif op == "Do":
             if last_name is not None:
                 cx, cy = _apply(ctm, 0.5, 0.5)  # centre of the placed unit square
+                # The CTM maps the unit square onto the page, so its
+                # transformed edges are the placed image's size.
+                x0, y0 = _apply(ctm, 0.0, 0.0)
+                x1, _ = _apply(ctm, 1.0, 0.0)
+                _, y1 = _apply(ctm, 0.0, 1.0)
+                placed_w = math.hypot(x1 - x0, _apply(ctm, 1.0, 0.0)[1] - y0)
+                placed_h = math.hypot(_apply(ctm, 0.0, 1.0)[0] - x0, y1 - y0)
                 active_budget.check(
                     len(elements) + 1,
                     "max_container_items",
@@ -580,6 +695,8 @@ def find_layout_elements(
                         cx,
                         cy,
                         name=last_name[0],
+                        width=placed_w,
+                        height=placed_h,
                     )
                 )
 
@@ -866,10 +983,52 @@ def _split_columns(
     right = [e for e in elements if e.x >= best_at]
     if len(left) < 2 or len(right) < 2 or not _side_by_side(left, right, med_fs):
         return [elements]
+    if _is_table_gap(left, right, best_at):
+        return [elements]
     return (
         _split_columns(left, med_fs, depth + 1)
         + _split_columns(right, med_fs, depth + 1)
     )
+
+
+def _is_table_gap(
+    left: list[LayoutElement], right: list[LayoutElement], at: float
+) -> bool:
+    """Whether a gap separates a *table's* columns rather than the page's.
+
+    Both look the same from the anchors alone, and reading a table as columns
+    turns its rows inside out -- the whole first column, then the whole second.
+    Two things tell them apart:
+
+    *How much of the band the text fills.* A column of prose runs to the gutter,
+    ragged edge and all; a table cell is a word or a number with the rest of the
+    column empty behind it.
+
+    *Whether the rows pair up.* Two columns are independent -- a line on the
+    left has no counterpart beside it except by coincidence -- while a table's
+    rows reach across every gap between its columns.
+
+    Both are required, and a page whose elements carry no width to measure is
+    left as columns: no evidence is a reason to keep the previous reading, not
+    to overturn it.
+    """
+    widths = [
+        _estimated_right_edge(e) - e.x
+        for e in left
+        if e.kind == "text" and e.text_length > 0
+    ]
+    if not widths:
+        return False
+    available = at - _median([e.x for e in left])
+    if available <= 0 or _median(widths) / available > _COL_MIN_FILL:
+        return False
+
+    lines = group_rows(left + right)
+    if len(lines) < _TABLE_MIN_ROWS:
+        return False
+    lefts = {id(e) for e in left}
+    paired = sum(1 for line in lines if len({id(e) in lefts for e in line}) == 2)
+    return paired >= _COL_PAIRED_ROW_RATIO * len(lines)
 
 
 def detect_columns(elements: list[LayoutElement]) -> list[list[LayoutElement]]:
@@ -933,37 +1092,105 @@ def _row_tol(row: list[LayoutElement]) -> float:
     return max(_TABLE_COL_TOL_MIN, _TABLE_COL_TOL_EM * fs)
 
 
-def _xs_aligned(xs: list[float], anchors: list[float], tol: float) -> bool:
-    """Whether cell x-positions *xs* line up with column *anchors* within *tol*."""
-    if len(xs) != len(anchors):
-        return False
-    return all(abs(x - a) <= tol for x, a in zip(xs, anchors))
+def _assign_columns(
+    row: list[LayoutElement], anchors: list[float], tol: float
+) -> list[int] | None:
+    """Map each cell in *row* to a column anchor, or ``None`` if it does not fit.
+
+    A row need not fill every column: a table with a blank cell simply has no
+    element on that anchor. What it may not do is put two cells on one anchor,
+    or a cell on none -- either means the row is not part of this grid.
+    """
+    used: set[int] = set()
+    columns: list[int] = []
+    for element in row:
+        best, best_delta = None, tol
+        for index, anchor in enumerate(anchors):
+            delta = abs(element.x - anchor)
+            if delta <= best_delta:
+                best, best_delta = index, delta
+        if best is None or best in used:
+            return None
+        used.add(best)
+        columns.append(best)
+    return columns
+
+
+def _column_span(
+    element: LayoutElement, column: int, anchors: list[float], tol: float
+) -> int:
+    """How many columns a cell covers, from where its text reaches.
+
+    A merged cell starts on one anchor and runs past the next; an ordinary cell
+    stops short of it. The estimate is the same rough one the gutter check
+    uses, so the threshold is the alignment tolerance rather than an exact edge.
+    """
+    right = _estimated_right_edge(element)
+    span = 1
+    for index in range(column + 1, len(anchors)):
+        if right > anchors[index] + tol:
+            span += 1
+        else:
+            break
+    return span
+
+
+def _table_anchors(rows: list[list[LayoutElement]], start: int) -> list[float] | None:
+    """Column anchors for a grid beginning at *start*, or ``None``.
+
+    The widest of the first few rows defines the columns: a header row that
+    merges two cells, or a first row with a blank, would otherwise fix the grid
+    at too few columns and push every fuller row out of it.
+    """
+    window = rows[start : start + _TABLE_ANCHOR_ROWS]
+    widest = max(window, key=len)
+    if len(widest) < _TABLE_MIN_COLS:
+        return None
+    return [e.x for e in widest]
 
 
 def _table_run(rows: list[list[LayoutElement]], start: int) -> list[list[LayoutElement]] | None:
     """Maximal grid of aligned rows starting at *start*, or ``None``.
 
-    A grid is two or more consecutive rows that each hold the same number of
-    cells (at least two) whose x-positions line up column-for-column. This is
-    deliberately strict — it recognises a regular table and leaves ragged text,
-    single-column paragraphs and merged/empty cells to the flow path.
+    A grid is two or more consecutive rows whose cells all land on a shared set
+    of column anchors. Rows may leave columns empty and may merge across them:
+    each kept cell records the column it sits on and how many it covers, so the
+    caller can emit the blanks and the spans it cannot see from the row alone.
     """
-    first = rows[start]
-    k = len(first)
-    if k < _TABLE_MIN_COLS:
+    # A table has to *begin* on a row that shows the grid. A single-cell row
+    # before one is far more often the sentence introducing the table, and no
+    # geometry distinguishes it from a merged title row.
+    if len(rows[start]) < _TABLE_MIN_COLS:
         return None
-    anchors = [e.x for e in first]
-    tol = _row_tol(first)
-    run = [first]
-    j = start + 1
-    while (
-        j < len(rows)
-        and len(rows[j]) == k
-        and _xs_aligned([e.x for e in rows[j]], anchors, tol)
-    ):
+    anchors = _table_anchors(rows, start)
+    if anchors is None:
+        return None
+    tol = _row_tol(max(rows[start : start + _TABLE_ANCHOR_ROWS], key=len))
+    run: list[list[LayoutElement]] = []
+    j = start
+    while j < len(rows):
+        columns = _assign_columns(rows[j], anchors, tol)
+        if columns is None:
+            break
+        for element, column in zip(rows[j], columns):
+            element.column = column
+            element.span = _column_span(element, column, anchors, tol)
         run.append(rows[j])
         j += 1
-    return run if len(run) >= _TABLE_MIN_ROWS else None
+    # Trailing rows that show only one cell are far more often the prose under
+    # a table than its last row, so they are handed back to the flow.
+    while run and len(run[-1]) < _TABLE_MIN_COLS:
+        run.pop()
+    if len(run) < _TABLE_MIN_ROWS:
+        return None
+    # Allowing empty cells means a run of ordinary lines all starting at the
+    # left margin would otherwise read as a one-column table with blanks. A
+    # table has to *show* its grid: most of its rows, and at least two, span
+    # more than one column.
+    full = sum(1 for row in run if len(row) >= _TABLE_MIN_COLS)
+    if full < _TABLE_MIN_ROWS or full * 2 < len(run):
+        return None
+    return run
 
 
 def detect_tables(
@@ -1003,8 +1230,8 @@ def _same_paragraph(prev: LayoutElement, cur: LayoutElement) -> bool:
         return False
     if prev.tag != "P" or cur.tag != "P":
         return False
-    if list_marker(cur.text_head) is not None:
-        return False  # a new list marker begins a new item (its own group)
+    if list_marker(cur.text_head) is not None or cur.bullet is not None:
+        return False  # a new marker begins a new item (its own group)
     fp, fc = prev.font_size, cur.font_size
     if fp > 0 and fc > 0:
         ratio = fc / fp

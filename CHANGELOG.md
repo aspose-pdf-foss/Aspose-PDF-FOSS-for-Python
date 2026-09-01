@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`auto_tag` sees four shapes it used to miss.** A table row may now leave a
+  column **blank** (it gets an empty `/TD`, so the cells after it stay in their
+  own columns instead of shifting left) and a cell reaching past the next
+  column is a **merge** carrying `/ColSpan`, which the HTML export writes as
+  `colspan`. A **wide-gutter table** is no longer cut into page columns first:
+  a clear gap whose text fills less than a third of the band, with content on
+  both sides of every line, is a table's column gap, and splitting it read the
+  rows inside out. A list item indented past the one before it opens a
+  **sub-list** inside that item's `/LBody` rather than continuing flat. And a
+  list whose markers are **drawn rather than typed** — a glyph-sized image
+  beside each line — becomes an `/L` whose items carry the image as their
+  `/Lbl`, instead of loose paragraphs with pictures between them.
+
 - **PDF/A-4 and PDF/UA-2 — the PDF 2.0 conformance parts — are validated and
   produced.** Both are defined *on* PDF 2.0 rather than capped by it, so the
   header is required to be exactly 2.0 and conversion raises an older one.

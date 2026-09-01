@@ -695,9 +695,12 @@ def test_auto_tag_builds_table_structure():
     assert content.count(b"BDC") == 6
 
 
-def test_wide_gutter_grid_reads_as_columns_not_table():
-    # A wide inter-column gap is split into columns first, so the aligned grid is
-    # not recognised as a table (documented boundary).
+def test_a_wide_gutter_grid_is_a_table_not_two_columns():
+    """Cells far narrower than the gap between them are a table's columns.
+
+    The column splitter used to cut here first, and reading a table column-major
+    turns its rows inside out -- the whole first column, then the whole second.
+    """
     doc, pdf = _list_doc(
         b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (a) Tj ET\n"
         b"BT /F1 12 Tf 1 0 0 1 400 700 Tm (b) Tj ET\n"
@@ -709,4 +712,21 @@ def test_wide_gutter_grid_reads_as_columns_not_table():
         pdf._resolve(k).mapping.get(PdfName("S")).name.lstrip("/")
         for k in pdf._resolve(_struct_root(pdf).mapping.get(PdfName("K"))).items
     }
-    assert "Table" not in tags
+    assert "Table" in tags
+
+
+def test_a_wide_gutter_with_prose_beside_it_is_still_two_columns():
+    """Lines that run up to the gap are columns, however wide the gap is."""
+    from aspose_pdf.engine.auto_tag import detect_columns
+
+    # 24 bytes at 10pt is about 120 units: it fills most of the 134-unit band
+    # up to the gutter without crossing it.
+    left = [
+        LayoutElement("text", 0, 0, x=72, y=y, font_size=10, text_length=24, tag="P")
+        for y in (700, 686, 672)
+    ]
+    right = [
+        LayoutElement("text", 0, 0, x=340, y=y, font_size=10, text_length=24, tag="P")
+        for y in (700, 686, 672)
+    ]
+    assert len(detect_columns(left + right)) == 2

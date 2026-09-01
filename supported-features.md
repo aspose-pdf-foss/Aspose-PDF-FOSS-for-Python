@@ -1447,9 +1447,20 @@ Supported:
   begins with a list marker (a bullet/dash, or a numbered/lettered/roman
   `1.`/`(a)`/`iv)` prefix) are wrapped into a nested `/L` → `/LI` → `/LBody`
   list (two or more items required; a continuation line without a marker folds
-  into its item). Consecutive rows forming a regular aligned grid (two or more
-  rows, each with the same number of column-aligned cells) become a nested
-  `/Table` → `/TR` → `/TD`. Elements are wrapped in `BDC`/`EMC` by a
+  into its item). An item indented past the one before it opens a **sub-list**
+  inside that item's `/LBody`, which is where ISO 32000-1 puts a nested list;
+  indents are clustered rather than measured against a fixed step, and
+  returning to an outer indent closes the levels opened after it. A list whose
+  markers are **drawn rather than typed** is recognised too: a glyph-sized
+  image immediately left of a line, on that line's own baseline, becomes the
+  item's `/Lbl` instead of a standalone `/Figure`. Consecutive rows forming an
+  aligned grid become a nested
+  `/Table` → `/TR` → `/TD`. A row may leave a column **blank** (it gets an
+  empty `/TD`, so the cells after it stay in their own columns) and a cell that
+  reaches past the next anchor is a **merge**, carrying `/ColSpan` — the HTML
+  export writes `colspan` for it. The grid must still show itself: a table
+  starts on a row that spans more than one column, most of its rows do too, and
+  trailing single-cell rows go back to the flow. Elements are wrapped in `BDC`/`EMC` by a
   byte-level splice (originals preserved, inline images skipped) and linked by
   MCID through `/StructParents` and the `/ParentTree`. Pages already carrying
   marked content are left untouched.
@@ -1539,13 +1550,20 @@ Boundaries:
   markers, and regular aligned grids are tagged as tables. Image `/Figure`
   alternate text is a caller-supplied placeholder (alt text cannot be inferred),
   column detection is a whitespace heuristic that requires the gutter to be
-  genuinely clear -- no line's estimated extent may cross it, which is what
-  keeps a widely-spaced table from being read column-major -- but a full-width
-  banner over the columns may still be mis-assigned, list detection is marker-text based (an unmarked
-  or image-bulleted list is not recognised, and nesting is flat), and table
-  detection needs a regular grid whose columns are closer than the
-  column-split gutter (a wide-gutter table reads as columns, and merged/empty
-  cells break the grid). It is a starting point a human refines through
+  genuinely clear -- no line's estimated extent may cross it -- but a full-width
+  banner over the columns may still be mis-assigned. A gap that *is* clear is
+  still not a column boundary when the text before it fills less than a third
+  of the band and every line has content on both sides: that is a table's
+  column gap, and splitting it would read the rows inside out. The benefit of
+  the doubt goes to the column reading, so a wide-gutter table whose cells are
+  as wide as prose is still split, and a page whose elements carry no width to
+  measure keeps the column reading unchanged.
+  List detection is still marker-based: an unmarked list is not recognised, a
+  drawn marker has to be glyph-sized and beside its line, and nesting is
+  inferred from indentation alone, so a sub-list aligned with its parent reads
+  as flat. A table's first row must span more than one column, so a merged
+  title row above a grid is read as the paragraph it is indistinguishable from.
+  It is a starting point a human refines through
   `Document.tagged_content`, not certified accessibility.
   Content authored through the page APIs carries caller-supplied semantic tags
   and alt text.
