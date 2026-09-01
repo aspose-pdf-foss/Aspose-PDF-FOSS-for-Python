@@ -21,6 +21,7 @@ from aspose_pdf.exceptions import UnsupportedFeatureException
 __all__ = [
     "describe",
     "reject_load_options",
+    "reject_operation",
     "require_pdf_save_format",
 ]
 
@@ -34,6 +35,7 @@ _UNSUPPORTED_TYPES: dict[str, str] = {
     "CgmLoadOptions": "CGM import",
     "HtmlLoadOptions": "HTML import",
     "LatexFragment": "LaTeX authoring",
+    "IPath": "the presentation drawing model",
     "OfdLoadOptions": "OFD import",
     "PrinterSettings": "printing",
     "SvgLoadOptions": "SVG import",
@@ -88,6 +90,18 @@ def _fail(feature: str, subject: str) -> NoReturn:
         f"{feature} is not implemented; {subject} is an API-compatibility "
         f"placeholder. {_DOC_POINTER}"
     )
+
+
+def reject_operation(value: Any, subject: str) -> NoReturn:
+    """Reject an operation on a placeholder object.
+
+    A placeholder may be *constructed* -- that is what keeps ported code
+    importing and running as far as the first real use. Asking one to do work
+    is the real use, and doing nothing quietly would leave the caller to find
+    out from a blank page.
+    """
+    feature = describe(value) or "this surface"
+    _fail(feature, subject)
 
 
 def reject_load_options(value: Any) -> NoReturn:

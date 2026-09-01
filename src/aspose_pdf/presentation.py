@@ -1,6 +1,17 @@
-"""Presentation primitives for Aspose.PDF Python SDK."""
+"""Presentation drawing primitives kept for API compatibility.
+
+``FillMode`` and ``IMatrix`` are genuine value objects: the two fill rules PDF
+defines, and an affine matrix that really multiplies. ``IPath`` is not -- there
+is no path-drawing operation in this package for it to feed, so its path
+building raises :class:`~aspose_pdf.exceptions.UnsupportedFeatureException`
+rather than accepting segments nobody will ever draw. Use
+:meth:`aspose_pdf.pages.Page.draw_rectangle` and
+:meth:`~aspose_pdf.pages.Page.draw_line` to put geometry on a page.
+"""
 
 from __future__ import annotations
+
+from aspose_pdf import _compat_surface
 
 
 class FillMode:
@@ -52,7 +63,11 @@ class IMatrix:
 
 
 class IPath:
-    """Interface for path operations."""
+    """Path placeholder: constructible, but it cannot collect a path.
+
+    It used to accept segments and silently drop them, so a caller building a
+    path found out only from a page that stayed blank.
+    """
     
     def __init__(self):
         """Initialize a path."""
@@ -93,7 +108,8 @@ class IPath:
             raise ValueError("Invalid fill mode")
         self._fill_mode = mode
     
-    def append_cubic_bezier_curve(self, x1: float, y1: float, x2: float, y2: float, x: float, y: float) -> None:
-        """Append a cubic Bezier curve to the path."""
-        self._current_x = x
-        self._current_y = y
+    def append_cubic_bezier_curve(
+        self, x1: float, y1: float, x2: float, y2: float, x: float, y: float
+    ) -> None:
+        """Raise: there is nothing this path could be drawn with."""
+        _compat_surface.reject_operation(self, "`IPath.append_cubic_bezier_curve`")

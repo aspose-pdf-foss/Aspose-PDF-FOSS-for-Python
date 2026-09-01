@@ -9,6 +9,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A render can say where it spent its time.** Pass a `PerformanceLogger`
+  (`aspose_pdf.visualization`) to `Page.render()` and it records seconds per
+  phase into a dictionary you own — nothing is timed without one, so a plain
+  render pays nothing, and two renders in different threads keep their own
+  numbers. This is what that class was for: it was a working stopwatch that
+  nothing in the package ever fed. `VirtualizationPerformance`, the
+  process-global one beside it, stays a caller-only stopwatch — a library that
+  timed itself into module-level state would interleave two documents rendered
+  at once.
+
 - **CI cross-validates the library's output against an independent
   implementation.** Every other test asks whether the library agrees with
   itself; a new `cross-validate` job asks whether qpdf agrees — it parses and
@@ -110,6 +120,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **`IPath` accepted path segments and dropped them.** The compatibility
+  surfaces are meant to be constructible but to raise when used, so a caller
+  finds out at the call rather than from a blank page;
+  `IPath.append_cubic_bezier_curve` silently did nothing instead. It now raises
+  `UnsupportedFeatureException` like every other placeholder. `FillMode` and
+  `IMatrix` beside it are genuine value objects and are unchanged.
 
 - **Pages were written without a resource dictionary.** `/Resources` is
   required and inheritable (ISO 32000-1 table 30), and qpdf reported every

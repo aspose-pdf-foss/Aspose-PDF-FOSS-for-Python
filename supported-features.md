@@ -296,6 +296,16 @@ Supported:
   bounds curves exactly rather than by their control points.
 - Iterate pages with `Document.iter_pages()`.
 - Iterate decoded page content streams with `Document.iter_page_content_streams()`.
+- **Measure where a render spent its time** by passing a
+  `PerformanceLogger` (`aspose_pdf.visualization`) to `Page.render()`: it
+  records seconds per phase (`content`, `interpret`, `annotations`,
+  `downsample`) into a dictionary the caller owns, with `summarise()` for a
+  slowest-first report. Nothing is timed unless a logger is passed, so a plain
+  render pays nothing for the option, and two renders in different threads keep
+  their own numbers. Measured on a text-and-vector page at 150 dpi with 3x
+  supersampling, box-downsampling costs about as much as interpreting the
+  page — it is close to the floor for pure Python, since every one of the
+  `target_pixels x ss x ss x 3` source bytes has to be added.
 - Render a page to a dependency-free RGB raster with `Page.render()` or
   `Document.render_page()`, then save it as PNG, TIFF or JPEG through
   `RasterizedPage.save()` / `Page.save_as_image()` /
@@ -1640,8 +1650,8 @@ with Document("input.pdf") as document:
 | Non-PDF export | `SaveFormat.PPTX` | Rejected by `Document.save(destination, save_format)` before anything is written to the path or stream. (`DocFormat.SVG`/`HTML`/`MARKDOWN`, `HtmlSaveOptions` and `MarkdownSaveOptions` are implemented — see [Pages](#pages).) |
 | Printing | `Duplex`, `PrintRange`, `PrinterSettings` | No print operation exists; `PrinterSettings` is rejected by `Document.save`. |
 | LaTeX | `LatexFragment` | Rejected as a load source; no LaTeX authoring or import path exists. |
-| Presentation drawing model | `FillMode`, `IMatrix`, `IPath` in `aspose_pdf.presentation` | Inert value objects. They accumulate path data that nothing consumes and are not connected to page authoring or rendering. |
-| Instrumentation | `PerformanceLogger`, `VirtualizationPerformance` in `aspose_pdf.visualization` | Working stopwatch helpers, but nothing in the package feeds them and they do not virtualise or accelerate rendering. (`RasterizedPage`, re-exported from the same module, is the real render result.) |
+| Presentation drawing model | `IPath` in `aspose_pdf.presentation` | Constructible, but `append_cubic_bezier_curve` raises: there is no path-drawing operation for it to feed, and it used to accept segments and drop them. `FillMode` and `IMatrix` from the same module are *not* placeholders — the two PDF fill rules, and an affine matrix that really multiplies. Draw with `Page.draw_rectangle` / `Page.draw_line`. |
+| Instrumentation | `VirtualizationPerformance` in `aspose_pdf.visualization` | A process-global stopwatch, kept for ported code. It works and callers may use it, but the package never writes to it: timing a library into module-level state would interleave two documents rendered at once. It does not virtualise or accelerate anything. (`PerformanceLogger` from the same module is *not* a placeholder — see [Rendering](#rendering); `RasterizedPage` is the real render result.) |
 
 `Document.save` accepts `None` (the default), `SaveFormat.PDF`,
 `DocFormat.PDF`, `DocFormat.SVG`, `DocFormat.HTML`, `DocFormat.MARKDOWN`, and

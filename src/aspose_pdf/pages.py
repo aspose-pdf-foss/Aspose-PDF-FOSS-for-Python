@@ -321,6 +321,7 @@ class Page:
         shape_substitute_text: bool = True,
         draw_annotations: bool = True,
         font_substitution: Any = None,
+        performance: Any = None,
     ) -> RasterizedPage:
         """Render this page to an RGB raster image.
 
@@ -338,6 +339,9 @@ class Page:
         ``font_substitution`` overrides the document's
         :attr:`~aspose_pdf.Document.font_substitution` for this call, naming
         the font sources non-embedded fonts may be drawn with.
+        ``performance`` is an optional
+        :class:`~aspose_pdf.visualization.PerformanceLogger` the render records
+        its per-phase timings into; without one nothing is measured.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -355,6 +359,7 @@ class Page:
             shape_substitute_text=shape_substitute_text,
             draw_annotations=draw_annotations,
             font_substitution=font_substitution,
+            performance=performance,
         )
 
     def to_svg(

@@ -9,10 +9,12 @@ semantics remain outside this renderer.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import itertools
 import math
 import struct
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -611,6 +613,7 @@ def render_page(
     shape_substitute_text: bool = True,
     draw_annotations: bool = True,
     font_substitution: Any = None,
+    performance: Any = None,
 ) -> RasterizedPage:
     """Render ``page_index`` from a ``SimplePdf`` into an RGB raster.
 
@@ -631,6 +634,11 @@ def render_page(
     directories, font programs or the platform fonts to draw non-embedded
     fonts with; it defaults to the document's own setting. Without one only the
     bundled substitute faces are used, exactly as before.
+
+    ``performance`` is an optional
+    :class:`~aspose_pdf.visualization.PerformanceLogger`; when one is given the
+    render records how long each phase took into it. Without one nothing is
+    timed, so a plain render pays nothing for the option.
     """
     if pdf is None:
         raise AsposePdfException("No document loaded")
@@ -646,6 +654,7 @@ def render_page(
         shape_substitute_text=shape_substitute_text,
         draw_annotations=draw_annotations,
         font_substitution=font_substitution,
+        performance=performance,
     )
     return renderer.render()
 
@@ -663,9 +672,11 @@ class _PageRasterizer:
         shape_substitute_text: bool = True,
         draw_annotations: bool = True,
         font_substitution: Any = None,
+        performance: Any = None,
     ):
         self.shape_substitute_text = bool(shape_substitute_text)
         self.draw_annotations = bool(draw_annotations)
+        self.performance = performance
         if font_substitution is None:
             font_substitution = getattr(pdf, "_font_substitution", None)
         self._font_resolver = resolver_for(font_substitution)
@@ -754,20 +765,40 @@ class _PageRasterizer:
         self._offscreen_work_bytes = 0
 
     def render(self) -> RasterizedPage:
-        content = self._page_content()
+        with self._phase("content"):
+            content = self._page_content()
         if content:
-            self._interpret(content, self.resources_cos, self.resources_plain, depth=0)
+            with self._phase("interpret"):
+                self._interpret(
+                    content, self.resources_cos, self.resources_plain, depth=0
+                )
         if self.draw_annotations:
-            self._paint_annotations()
-        pixels = (
-            self._downsample() if self._ss > 1 else bytes(self.canvas.pixels)
-        )
+            with self._phase("annotations"):
+                self._paint_annotations()
+        with self._phase("downsample"):
+            pixels = self._downsample() if self._ss > 1 else bytes(self.canvas.pixels)
         return RasterizedPage(
             width=self.target_width,
             height=self.target_height,
             pixels=pixels,
             dpi=self.dpi,
         )
+
+    @contextlib.contextmanager
+    def _phase(self, name: str):
+        """Time a render phase into the caller's logger, if there is one.
+
+        Without a logger this is a plain pass-through: a render nobody asked to
+        measure does no timing work at all.
+        """
+        if self.performance is None:
+            yield
+            return
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.performance.record(name, time.perf_counter() - started)
 
     # Annotation flags (ISO 32000-1 table 165), 1-based bit positions.
     _ANNOT_HIDDEN = 1 << 1
@@ -883,7 +914,17 @@ class _PageRasterizer:
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
     def _downsample(self) -> bytes:
-        """Box-average each ``ss x ss`` block of the supersampled canvas."""
+        """Box-average each ``ss x ss`` block of the supersampled canvas.
+
+        Measured as the most expensive phase of a render -- more than
+        interpreting the page -- but it is close to the floor for pure Python:
+        every one of the ``target_pixels * ss * ss * 3`` source bytes has to be
+        added, and rewriting the loop as sequence operations (slicing the block
+        rows, summing them elementwise, reducing each channel in groups) was
+        1.4x faster at ``ss=3`` and *slower* at ``ss=2``. Going further means
+        handing the work to a native array library, which this renderer
+        deliberately does not require.
+        """
         ss = self._ss
         src = self.canvas.pixels
         src_stride = self.width * 3
