@@ -993,6 +993,10 @@ PDF2_STRUCTURE_NS = "http://iso.org/pdf2/ssn"
 #: The revision year each PDF/UA part identifies itself with in XMP.
 _PDFUA_REVISIONS = {1: None, 2: "2024"}
 
+#: Ceiling on a structure-tree walk, so a malformed tree cannot turn validation
+#: into an unbounded traversal.
+_MAX_STRUCT_ELEMENTS = 100_000
+
 
 def pdfua_extended(pdf: Any, part: int = 1) -> tuple[list[str], list[str]]:
     """Return ``(errors, warnings)`` for the extended PDF/UA catalog checks.
@@ -1124,6 +1128,45 @@ def _check_structure_namespace(
             "PDF/UA-2 requires the StructTreeRoot to declare the PDF 2.0 "
             f"standard structure namespace ({PDF2_STRUCTURE_NS}) in "
             "/Namespaces."
+        )
+        return  # nothing to belong to yet; the elements are a later problem
+    _check_elements_are_namespaced(pdf, struct_root, errors)
+
+
+def _check_elements_are_namespaced(
+    pdf: Any, struct_root: PdfDictionary, errors: list[str]
+) -> None:
+    """Every structure element must say which namespace its type comes from.
+
+    Declaring the namespace on the root says it exists; an element's ``/NS`` is
+    what says its type is drawn from it. A tree carried over from part 1 has
+    the declaration and none of the elements, and its types are still the
+    unqualified names ISO 14289-2 replaced.
+    """
+    plain: list[str] = []
+    seen: set[int] = set()
+    stack = [struct_root.get(PdfName("K"))]
+    while stack and len(seen) <= _MAX_STRUCT_ELEMENTS:
+        node = pdf._resolve(stack.pop())
+        if isinstance(node, PdfArray):
+            stack.extend(node.items)
+            continue
+        if not isinstance(node, PdfDictionary) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        kind = pdf._get_name(node.get(PdfName("S")))
+        if kind is None:
+            continue
+        if node.get(PdfName("NS")) is None:
+            plain.append(kind)
+        kids = node.get(PdfName("K"))
+        if kids is not None:
+            stack.append(kids)
+    if plain:
+        shown = ", ".join(sorted(set(plain))[:5])
+        errors.append(
+            f"PDF/UA-2 requires every structure element to name its namespace "
+            f"(/NS); {len(plain)} do not (e.g. {shown})."
         )
 
 

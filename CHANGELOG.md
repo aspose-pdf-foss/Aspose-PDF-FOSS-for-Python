@@ -9,6 +9,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`convert_to_pdfua(part=2)` moves the tag tree into the standard structure
+  namespace.** It declared the namespace on the structure root and stopped
+  there, so a tree carried over from part 1 kept the unqualified types
+  ISO 14289-2 replaced: the declaration says the namespace exists, an element's
+  `/NS` says its type comes from it. Every element now names it, an element
+  that already names a different namespace keeps it, and `validate_pdfua(2)`
+  reports the ones that do not — after the root declaration, so the thing to
+  fix first is not buried.
+
 - **A render can say where it spent its time.** Pass a `PerformanceLogger`
   (`aspose_pdf.visualization`) to `Page.render()` and it records seconds per
   phase into a dictionary you own — nothing is timed without one, so a plain
@@ -120,6 +129,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **`MacRomanEncoding` was the Mac OS Roman character set, not the table PDF
+  defines.** All 256 codes carried a name, where Annex D.2 defines 208 and
+  leaves the rest to the font's own encoding — and once a name resolves,
+  nothing looks at the font again. A font whose encoding put something else at
+  `0xB0` had the glyph named `infinity` kept and the glyph it actually shows
+  erased. The base table is now PDF's (with `space`, not `nbspace`, at `0xCA`),
+  and the 36 extra Mac OS Roman names that are real glyphs are kept as a
+  supplement consulted *after* the font — where they still resolve the codes a
+  Mac-produced font leaves to convention.
 
 - **`IPath` accepted path segments and dropped them.** The compatibility
   surfaces are meant to be constructible but to raise when used, so a caller

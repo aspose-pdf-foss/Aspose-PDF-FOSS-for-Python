@@ -54,8 +54,18 @@ def _as_pdfa(level: str, mutate=None) -> Document:
     return _reloaded(document)
 
 
+def _nested_document() -> Document:
+    """A page whose tag tree has depth: a list nests /LI and /LBody under /L."""
+    document = Document()
+    page = document.pages.add()
+    page.add_text("Heading", 60, 730, font_size=20)
+    page.add_text("- first item", 60, 700, font_size=11)
+    page.add_text("- second item", 60, 686, font_size=11)
+    return document
+
+
 def _as_pdfua(part: int, mutate=None) -> Document:
-    document = _reloaded(_document())
+    document = _reloaded(_nested_document())
     document.convert_to_pdfua(part=part, title="Doc", auto_tag=True)
     if mutate is not None:
         mutate(document._engine_pdf)
@@ -326,6 +336,117 @@ def test_part_two_declares_the_standard_structure_namespace():
     data = _bytes(_as_pdfua(2))
     assert PDF2_STRUCTURE_NS.encode() in data
     assert b"/Namespaces" in data
+
+
+def test_every_element_names_the_namespace_it_draws_its_type_from():
+    """Declaring the namespace is not the same as being in it.
+
+    A tree carried over from part 1 has the root declaration and elements whose
+    types are still the unqualified names ISO 14289-2 replaced.
+    """
+    document = _as_pdfua(2)
+    engine = document._engine_pdf
+    root = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+    struct_root = engine._resolve(root.mapping[PdfName("StructTreeRoot")])
+
+    kinds = []
+    stack = [struct_root.mapping.get(PdfName("K"))]
+    while stack:
+        node = engine._resolve(stack.pop())
+        if isinstance(node, PdfArray):
+            stack.extend(node.items)
+            continue
+        if not isinstance(node, PdfDictionary) or PdfName("S") not in node.mapping:
+            continue
+        kinds.append(
+            (node.mapping[PdfName("S")].name.lstrip("/"), PdfName("NS") in node.mapping)
+        )
+        kids = node.mapping.get(PdfName("K"))
+        if kids is not None:
+            stack.append(kids)
+
+    # The tree really does nest, so this covers children and not just roots.
+    assert {"L", "LI", "LBody"} <= {kind for kind, _ in kinds}, kinds
+    assert all(namespaced for _kind, namespaced in kinds), kinds
+
+
+def test_an_element_left_out_of_the_namespace_is_an_error():
+    def strip_one(engine):
+        root = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+        struct_root = engine._resolve(root.mapping[PdfName("StructTreeRoot")])
+        first = engine._resolve(
+            engine._resolve(struct_root.mapping[PdfName("K")]).items[0]
+        )
+        del first.mapping[PdfName("NS")]
+
+    errors = _as_pdfua(2, strip_one).validate_pdfua(2).errors
+    assert any("name its namespace" in error for error in errors)
+
+
+def test_an_element_already_in_another_namespace_keeps_it():
+    # Relabelling a type from another vocabulary would not make it standard.
+    from aspose_pdf.engine.cos import PdfString
+
+    document = _reloaded(_nested_document())
+    document.convert_to_pdfua(part=1, title="Doc", auto_tag=True)
+    engine = document._engine_pdf
+    root = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+    struct_root = engine._resolve(root.mapping[PdfName("StructTreeRoot")])
+    foreign = engine._cos_doc.register_object(
+        PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Namespace"),
+                PdfName("NS"): PdfString(b"http://example.invalid/ns"),
+            }
+        )
+    )
+    first = engine._resolve(engine._resolve(struct_root.mapping[PdfName("K")]).items[0])
+    first.mapping[PdfName("NS")] = foreign
+
+    document.convert_to_pdfua(part=2, title="Doc")
+
+    assert first.mapping[PdfName("NS")] is foreign
+
+
+def test_a_tree_under_an_already_declared_namespace_is_still_moved_into_it():
+    """The declaration can pre-date the elements — a part-1 tree, hand-edited.
+
+    Conversion has to namespace the elements even when it has no namespace of
+    its own to add.
+    """
+    document = _reloaded(_nested_document())
+    document.convert_to_pdfua(part=2, title="Doc", auto_tag=True)
+    engine = document._engine_pdf
+    root = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+    struct_root = engine._resolve(root.mapping[PdfName("StructTreeRoot")])
+    for reference in engine._resolve(struct_root.mapping[PdfName("K")]).items:
+        engine._resolve(reference).mapping.pop(PdfName("NS"), None)
+
+    # The /Namespaces declaration is already there; only the elements are not.
+    document.convert_to_pdfua(part=2, title="Doc")
+
+    assert not any(
+        "name its namespace" in error for error in document.validate_pdfua(2).errors
+    )
+
+
+def test_the_root_declaration_is_reported_before_the_elements():
+    # Listing every element as un-namespaced when the namespace does not exist
+    # yet buries the one thing the author has to fix.
+    errors = _as_pdfua(1).validate_pdfua(2).errors
+    assert any("standard structure namespace" in error for error in errors)
+    assert not any("name its namespace" in error for error in errors)
+
+
+def test_re_running_the_conversion_does_not_change_the_namespacing():
+    document = _reloaded(_nested_document())
+    document.convert_to_pdfua(part=2, title="Doc", auto_tag=True)
+    engine = document._engine_pdf
+    root = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+    moved_again = engine._retag_into_namespace(
+        root, engine._declare_structure_namespace(root)
+    )
+    assert moved_again == 0
 
 
 def test_a_part_one_document_does_not_validate_as_part_two():

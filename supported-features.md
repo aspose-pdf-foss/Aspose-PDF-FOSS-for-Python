@@ -236,7 +236,13 @@ Boundaries:
   (`Standard`, `WinAnsi`, `MacRoman`, `MacExpert` — the **bundled Adobe tables**,
   not the
   stdlib codecs, which disagree on real codes such as WinAnsi `0xA0`/`0xAD` and
-  MacRoman `0xDB`), then the font program's own built-in encoding. A simple
+  MacRoman `0xDB`), then the font program's own built-in encoding, and last the
+  Mac OS Roman names for the 48 codes `MacRomanEncoding` leaves undefined
+  (`infinity` at `0xB0`, `apple` at `0xF0` …). That order matters: PDF's
+  MacRomanEncoding is a *subset* of the Mac OS Roman character set, and naming
+  those codes before consulting the font would resolve one to a glyph the font
+  happens to carry under that name while its own encoding puts something else
+  there — keeping the wrong glyph and erasing the used one. A simple
   `/TrueType` font is subset via its symbol `cmap`, or by mapping that glyph name
   to a scalar through the Adobe Glyph List and looking it up in the font's
   Unicode `cmap`. A simple `/Type1` font backed by a name-keyed CFF
@@ -1382,7 +1388,12 @@ Supported:
   `validate_pdfua(part=2)` and `convert_to_pdfua(part=2)`: PDF 2.0 header, an
   XMP `pdfuaid:rev` of `2024` alongside `pdfuaid:part`, and the PDF 2.0
   standard structure namespace (`http://iso.org/pdf2/ssn`) declared in the
-  struct root's `/Namespaces`. Every part-1 catalog requirement still applies.
+  struct root's `/Namespaces` **and named by every structure element's `/NS`**
+  — the declaration says the namespace exists, the element's `/NS` says its
+  type is drawn from it, and a tree carried over from part 1 has the first and
+  not the second. Conversion moves an existing tree into the namespace and
+  leaves alone any element that already names a different one. Every part-1
+  catalog requirement still applies.
 - Check **device colour against the output intent** (ISO 19005-1 6.2.3.3): a
   device space is permitted only when an OutputIntent's `DestOutputProfile` is
   a profile of that same space, read from the ICC header, so DeviceCMYK content
@@ -1551,8 +1562,9 @@ Boundaries:
   whole of PDF 2.0. In particular PDF/A-4 requires an embedded PDF to itself be
   PDF/A (outside `4f`), which is not verified — only that every file
   specification declares its `/AFRelationship`. `convert_to_pdfua(part=2)`
-  declares the standard structure namespace but does not re-tag existing
-  elements into it: a tag tree built for part 1 keeps its unqualified types.
+  moves elements into the standard structure namespace but does not *translate*
+  types between vocabularies: the tags this library writes exist in both
+  namespaces, and a foreign type keeps whatever namespace it already names.
 - The PDF/UA structure-tree checks validate a tag tree that already exists.
   Marked-content (MCID) coverage is cross-checked against the `/ParentTree`
   (advisory warnings), including named property lists that resolve to an MCID

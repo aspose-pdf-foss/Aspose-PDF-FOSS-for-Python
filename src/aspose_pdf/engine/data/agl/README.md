@@ -8,6 +8,11 @@
 - the four PDF predefined base encodings **StandardEncoding**,
   **WinAnsiEncoding**, **MacRomanEncoding**, and **MacExpertEncoding** as
   code -> glyph name;
+- the **Mac OS Roman supplement**: the 36 codes MacRomanEncoding leaves
+  undefined that the wider Mac OS Roman set gives a real glyph name (the twelve
+  ASCII control mnemonics it also names are dropped — a name the Adobe Glyph
+  List does not know cannot be a glyph). Consulted only *after* a font's own
+  built-in encoding;
 - the 391 predefined **CFF standard strings** (SID -> name) used to resolve a
   CFF charset;
 - the two predefined **CFF charsets** (Expert, ExpertSubset) as glyph id -> name,
@@ -16,9 +21,9 @@
 The bundle is generated from fontTools (`agl.LEGACY_AGL2UV`,
 `encodings.StandardEncoding`, `encodings.MacRoman`, `cffLib.cffStandardStrings`,
 `cffLib.cffIExpertStrings`, `cffLib.cffExpertSubsetStrings`; WinAnsi is derived
-from CP1252 and the AGL) and from ReportLab
-(`pdfbase._fontdata_enc_macexpert.MacExpertEncoding`, which fontTools does not
-carry). Both are build-time dependencies only; the runtime library reads this
+from CP1252 and the AGL) and from ReportLab (`pdfbase._fontdata_enc_macroman`
+and `_fontdata_enc_macexpert` — the tables PDF defines; fontTools' MacRoman is
+the wider Mac OS *character set*, which is where the supplement comes from). Both are build-time dependencies only; the runtime library reads this
 blob and never imports either or accesses the network.
 
 Regenerate the file with:
@@ -29,7 +34,7 @@ python scripts/build_agl_data.py --check   # verify it is current
 ```
 
 The generated file's SHA-256 digest is
-`f7a0eb4e232f60ad2f56931e679c92b382ee1087e2693af9d0c4522125b8993c`, which the
+`e0512727c35de809b8b2df71813d4e69ce318aabf4998b0b23049b1193f12a22`, which the
 runtime verifies before decompressing under bounded output limits.
 
 Name resolution follows the Adobe "AGL Specification" algorithm (drop the part

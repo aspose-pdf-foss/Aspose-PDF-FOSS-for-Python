@@ -19,7 +19,7 @@ from functools import lru_cache
 from importlib import resources
 
 _BUNDLE_NAME = "agl/glyphlist.json.zlib"
-_BUNDLE_SHA256 = "f7a0eb4e232f60ad2f56931e679c92b382ee1087e2693af9d0c4522125b8993c"
+_BUNDLE_SHA256 = "e0512727c35de809b8b2df71813d4e69ce318aabf4998b0b23049b1193f12a22"
 _MAX_BUNDLE_BYTES = 1 << 20  # compressed guard (~27 KiB actual)
 _MAX_BUNDLE_OUTPUT = 4 << 20  # decompressed guard (~110 KiB actual)
 _MAX_NAME_LENGTH = 63  # bound the per-name algorithm work
@@ -68,9 +68,30 @@ def base_encoding_table(name: str) -> tuple[str, ...] | None:
     ``WinAnsiEncoding``, ``MacRomanEncoding`` and ``MacExpertEncoding`` (undefined
     codes are the empty string). Any other name is malformed rather than merely
     unsupported, and yields ``None`` so callers fall back rather than guess.
+
+    ``MacRomanEncoding`` is the table PDF defines, which is a *subset* of the
+    Mac OS Roman character set: 48 codes it leaves undefined belong to the
+    font's own built-in encoding, not to this table. See
+    :func:`mac_os_roman_supplement` for what a Mac-produced font is likely to
+    put there when its built-in encoding says nothing either.
     """
     table = _bundle()["encodings"].get(name)
     return tuple(table) if table is not None else None
+
+
+@lru_cache(maxsize=1)
+def mac_os_roman_supplement() -> dict[int, str]:
+    """Mac OS Roman names for codes PDF's MacRomanEncoding leaves undefined.
+
+    A *last* resort, after ``/Differences``, the base encoding and the font's
+    own built-in encoding. Imposing these names earlier would override the
+    encoding the font actually carries -- which, in the subsetter, can keep the
+    wrong glyph and erase the used one.
+    """
+    return {
+        int(code): name
+        for code, name in _bundle()["mac_os_roman_supplement"].items()
+    }
 
 
 @lru_cache(maxsize=2)

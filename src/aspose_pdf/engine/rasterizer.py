@@ -2840,8 +2840,16 @@ class _PageRasterizer:
         custom = outlines.encoding_code_to_gid()
         if not name_to_gid and not custom:
             return None
+        # The CFF's own encoding is a code -> gid map; hand it over as names so
+        # it takes the same place in the precedence as a Type 1 font's does --
+        # ahead of the Mac OS Roman supplement, which must not override the
+        # encoding the font itself carries.
+        gid_to_name = {gid: name for name, gid in name_to_gid.items()}
+        builtin_names = {
+            code: gid_to_name[gid] for code, gid in custom.items() if gid in gid_to_name
+        }
         code_to_name = self._simple_code_to_name(
-            font_dict, {}, has_custom_gid=bool(custom)
+            font_dict, builtin_names, has_custom_gid=bool(custom)
         )
 
         def code_to_gid(code, _c2n=code_to_name, _n2g=name_to_gid, _cm=custom):
@@ -2944,8 +2952,12 @@ class _PageRasterizer:
         ``/BaseEncoding``); failing that, the font's own built-in encoding, then
         StandardEncoding -- unless the font already supplies a custom code -> gid
         map, in which case no name base is imposed. ``/Differences`` overlay last.
+
+        MacRomanEncoding leaves 48 codes undefined that the wider Mac OS Roman
+        set names; those fall to the font's own built-in encoding first, and to
+        the Mac OS Roman name only if the font says nothing about them.
         """
-        from .agl import base_encoding_table
+        from .agl import base_encoding_table, mac_os_roman_supplement
 
         enc_ref = font_dict.mapping.get(PdfName("Encoding"))
         base_name = self._cos_name(enc_ref)
@@ -2968,6 +2980,12 @@ class _PageRasterizer:
             else:
                 standard = base_encoding_table("StandardEncoding") or ()
                 base = {code: name for code, name in enumerate(standard) if name}
+        elif base_name == "MacRomanEncoding":
+            # Everything PDF's table does not cover, in precedence order.
+            for code, name in builtin_code_to_name.items():
+                base.setdefault(code, name)
+            for code, name in mac_os_roman_supplement().items():
+                base.setdefault(code, name)
 
         code_to_name = dict(base)
         if isinstance(differences, PdfArray):

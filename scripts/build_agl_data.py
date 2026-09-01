@@ -2,8 +2,11 @@
 """Build the bundled Adobe Glyph List (glyph name -> Unicode) table.
 
 The source is the Adobe Glyph List (``glyphlist.txt``), as vendored by fontTools
-in ``fontTools.agl.LEGACY_AGL2UV`` (4281 names), plus ReportLab's transcription
-of MacExpertEncoding (PDF 32000-1 Annex D.4), which fontTools does not carry.
+in ``fontTools.agl.LEGACY_AGL2UV`` (4281 names), plus ReportLab's transcriptions
+of MacRomanEncoding and MacExpertEncoding (PDF 32000-1 Annex D.2 and D.4).
+fontTools carries a MacRoman table too, but it is the *Mac OS* Roman character
+set rather than the subset PDF defines -- it fills the codes PDF leaves
+undefined, which is useful as a fallback and wrong as the base encoding.
 Both are build-time dependencies only: the runtime library never imports them
 and loads only the generated blob below. The output is deterministic and no
 network is used.
@@ -74,6 +77,7 @@ def build_bundle() -> bytes:
     from fontTools.encodings.MacRoman import MacRoman
     from fontTools.encodings.StandardEncoding import StandardEncoding
     from reportlab.pdfbase._fontdata_enc_macexpert import MacExpertEncoding
+    from reportlab.pdfbase._fontdata_enc_macroman import MacRomanEncoding
 
     def codepoints(value: object) -> list[int]:
         # A few AGL names map to a sequence of scalars, not a single one.
@@ -88,8 +92,18 @@ def build_bundle() -> bytes:
         "encodings": {
             "StandardEncoding": _clean(list(StandardEncoding)),
             "WinAnsiEncoding": _clean(_win_ansi_names()),
-            "MacRomanEncoding": _clean(list(MacRoman)),
+            "MacRomanEncoding": _clean(list(MacRomanEncoding)),
             "MacExpertEncoding": _clean(list(MacExpertEncoding)),
+        },
+        # Mac OS Roman names the 48 codes PDF's MacRomanEncoding leaves
+        # undefined. Twelve of them are ASCII control mnemonics ("CR", "DEL")
+        # that no font has a glyph for; the rest are real glyphs a Mac-produced
+        # font is likely to carry there, and are kept as a *fallback* consulted
+        # after the font's own built-in encoding -- never as the base.
+        "mac_os_roman_supplement": {
+            str(code): name
+            for code, name in enumerate(_clean(list(MacRoman)))
+            if name and not _clean(list(MacRomanEncoding))[code] and name in glyphs
         },
         # The 391 predefined CFF strings (SID -> name) for charset resolution.
         "cff_standard_strings": list(cffStandardStrings),

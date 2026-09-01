@@ -686,6 +686,10 @@ PDFUA_REVISIONS: dict[int, str | None] = {1: None, 2: "2024"}
 #: element types from it rather than from the unqualified names part 1 used.
 PDF2_STRUCTURE_NS = "http://iso.org/pdf2/ssn"
 
+#: Ceiling on a structure-tree walk, so a malformed or hostile tree cannot
+#: turn a conversion into an unbounded traversal.
+_MAX_STRUCT_ELEMENTS = 100_000
+
 
 def _pdfa_level_parts(level: str) -> tuple[str, str | None]:
     """Resolve a level string to ``(part, conformance)``, or raise.
@@ -8997,13 +9001,21 @@ class SimplePdf:
     def _simple_encoding_names(self, font: Any):
         """Resolve a simple font's ``/Encoding`` to code -> glyph name tables.
 
-        Returns ``(base_map, diff_map)``: the predefined base encoding's names
-        and the ``/Differences`` overlay. ``base_map`` is empty when the font
-        names no base, in which case the caller falls back to the font program's
-        own built-in encoding. All four names PDF 32000-1 Table 114 allows are
-        bundled; anything else is a malformed ``/BaseEncoding`` rather than an
-        unsupported one, and returns ``None`` so the caller keeps the font whole
-        rather than guess which table was meant.
+        Returns ``(base_map, diff_map, late_map)``: the predefined base
+        encoding's names, the ``/Differences`` overlay, and names to try only
+        *after* the font program's own encoding. ``base_map`` is empty when the
+        font names no base, in which case the caller falls back to the font
+        program's own built-in encoding. All four names PDF 32000-1 Table 114
+        allows are bundled; anything else is a malformed ``/BaseEncoding``
+        rather than an unsupported one, and returns ``None`` so the caller keeps
+        the font whole rather than guess which table was meant.
+
+        ``late_map`` exists for MacRomanEncoding, whose PDF table is a subset of
+        the Mac OS Roman character set. The 48 codes it leaves undefined belong
+        to the font's own encoding; naming them from Mac OS Roman *first* would
+        resolve a code to a glyph the font happens to have under that name while
+        its own encoding put something else there -- keeping the wrong glyph and
+        erasing the used one.
         """
         from .agl import base_encoding_table
         from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber
@@ -9036,7 +9048,12 @@ class SimplePdf:
                 elif isinstance(item, PdfName):
                     diff_map[current] = item.name.lstrip("/")
                     current += 1
-        return base_map, diff_map
+        late_map: dict[int, str] = {}
+        if base_name == "MacRomanEncoding":
+            from .agl import mac_os_roman_supplement
+
+            late_map = dict(mac_os_roman_supplement())
+        return base_map, diff_map, late_map
 
     def _plan_type1_subset(self, font: Any, codes: set):
         """Plan a subset for a simple Type 1 (``/FontFile``) font.
@@ -9085,17 +9102,23 @@ class SimplePdf:
         """Resolve the used glyph names of a simple Type 1 font, or ``None``.
 
         Names come from ``/Differences``, then the predefined base encoding, then
-        the font's own built-in encoding.
+        the font's own built-in encoding, and last the Mac OS Roman names for
+        the codes PDF's MacRomanEncoding leaves to the font.
         """
         resolved = self._simple_encoding_names(font)
         if resolved is None:
             return None  # base encoding we do not bundle -> bail.
-        base_map, diff_map = resolved
+        base_map, diff_map, late_map = resolved
         builtin = outlines.builtin_encoding
         keep = {".notdef"}
         for code_bytes in codes:
             for b in code_bytes:
-                name = diff_map.get(b) or base_map.get(b) or builtin.get(b)
+                name = (
+                    diff_map.get(b)
+                    or base_map.get(b)
+                    or builtin.get(b)
+                    or late_map.get(b)
+                )
                 if name is None or name not in outlines.name_to_gid:
                     return None  # unresolved/absent used glyph -> bail (no erase).
                 keep.add(name)
@@ -9149,7 +9172,7 @@ class SimplePdf:
         resolved = self._simple_encoding_names(font)
         if resolved is None:
             return None  # base encoding we do not bundle -> bail.
-        base_map, diff_map = resolved
+        base_map, diff_map, late_map = resolved
         code_to_gid = outlines.encoding_code_to_gid()
         name_to_gid = outlines.name_to_gid()
         # A CFF with a predefined encoding exposes no custom code -> gid table;
@@ -9164,6 +9187,9 @@ class SimplePdf:
                 gid = name_to_gid.get(name) if name else None
                 if gid is None:
                     gid = code_to_gid.get(b)
+                if gid is None and b in late_map:
+                    # Only now: the font's own encoding had nothing to say.
+                    gid = name_to_gid.get(late_map[b])
                 if gid is None:
                     return None  # unresolved used code -> bail (never erase it).
                 keep.add(gid)
@@ -9321,8 +9347,13 @@ class SimplePdf:
         resolved = self._simple_encoding_names(font)
         if resolved is None:
             return {}
-        base_map, diff_map = resolved
+        base_map, diff_map, late_map = resolved
         mapping: dict[int, int] = {}
+        # The late names go in first so the base and /Differences overwrite them.
+        for code, glyph in late_map.items():
+            uni = _glyph_name_to_unicode(glyph)
+            if uni is not None:
+                mapping[code] = uni
         for code, glyph in base_map.items():
             uni = _glyph_name_to_unicode(glyph)
             if uni is not None:
@@ -11735,16 +11766,18 @@ class SimplePdf:
             # from the PDF 2.0 standard structure namespace rather than the
             # unqualified names part 1 used.
             self.pdf_version = "2.0"
-            self._declare_structure_namespace(root)
+            namespace_ref = self._declare_structure_namespace(root)
+            if namespace_ref is not None:
+                self._retag_into_namespace(root, namespace_ref)
 
         logger.info("PDF/UA structure added; checking remaining issues.")
         return self.check_pdfua_compliance(part)[0]
 
-    def _declare_structure_namespace(self, root: PdfDictionary) -> None:
-        """Declare the PDF 2.0 standard structure namespace on the struct root."""
+    def _declare_structure_namespace(self, root: PdfDictionary) -> Any:
+        """Declare the PDF 2.0 standard structure namespace; return its reference."""
         struct_root = self._resolve(root.mapping.get(PdfName("StructTreeRoot")))
         if not isinstance(struct_root, PdfDictionary):
-            return
+            return None
         namespaces = self._resolve(struct_root.mapping.get(PdfName("Namespaces")))
         if not isinstance(namespaces, PdfArray):
             namespaces = PdfArray([])
@@ -11757,14 +11790,56 @@ class SimplePdf:
             if isinstance(uri, PdfString) and (
                 decode_pdf_text_string(uri) == PDF2_STRUCTURE_NS
             ):
-                return
+                return item
         namespace = PdfDictionary(
             {
                 PdfName("Type"): PdfName("Namespace"),
                 PdfName("NS"): _pdf_text_string(PDF2_STRUCTURE_NS),
             }
         )
-        namespaces.items.append(self._cos_doc.register_object(namespace))
+        reference = self._cos_doc.register_object(namespace)
+        namespaces.items.append(reference)
+        return reference
+
+    def _retag_into_namespace(self, root: PdfDictionary, namespace_ref: Any) -> int:
+        """Point every structure element at the PDF 2.0 standard namespace.
+
+        Declaring the namespace on the structure root says it exists; it is
+        each element's ``/NS`` that says the element's type is *drawn from* it.
+        Without this a tree built for part 1 keeps unqualified names, which is
+        what ISO 14289-2 replaced.
+
+        An element that already names a namespace keeps it: that is somebody's
+        deliberate choice, and a type from another vocabulary does not become a
+        standard one by being relabelled. Returns how many elements were moved.
+        """
+        struct_root = self._resolve(root.mapping.get(PdfName("StructTreeRoot")))
+        if not isinstance(struct_root, PdfDictionary):
+            return 0
+        moved = 0
+        seen: set[int] = set()
+        stack = [struct_root.mapping.get(PdfName("K"))]
+        while stack:
+            if len(seen) > _MAX_STRUCT_ELEMENTS:
+                break
+            node = self._resolve(stack.pop())
+            if isinstance(node, PdfArray):
+                stack.extend(node.items)
+                continue
+            if not isinstance(node, PdfDictionary):
+                continue
+            key = id(node)
+            if key in seen:
+                continue
+            seen.add(key)
+            if PdfName("S") in node.mapping:
+                if PdfName("NS") not in node.mapping:
+                    node.mapping[PdfName("NS")] = namespace_ref
+                    moved += 1
+                kids = node.mapping.get(PdfName("K"))
+                if kids is not None:
+                    stack.append(kids)
+        return moved
 
     def _inject_pdfua_xmp(
         self, root: PdfDictionary, title: str, part: int = 1
