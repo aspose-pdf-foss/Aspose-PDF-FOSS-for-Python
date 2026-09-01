@@ -981,9 +981,12 @@ Supported:
   renders as an empty box, and the field carries no value until signed. It
   round-trips and reports as a `signature` field and can be removed like any
   other. A **seed value** (`seed_value=` → `/SV`) constrains how the field may
-  be signed (`filter`, `sub_filter`, `digest_method`, `reasons`, plus
+  be signed (`filter`, `sub_filter`, `digest_method`, `reasons`, `v`,
+  `legal_attestation`, `add_rev_info`, `lock_document`, `appearance_filter`,
+  `mdp` and `timestamp`, plus
   `required` naming the entries whose `/Ff` bit makes them binding rather than
-  advisory), and a **field lock** (`lock=` → `/Lock`) names the fields the
+  advisory — `mdp` binds either way, having no bit), and a **field lock**
+  (`lock=` → `/Lock`) names the fields the
   signature freezes (`action` of `All`/`Include`/`Exclude`, with `fields` for
   the latter two).
 - Regenerate field appearance streams from their values via
@@ -1239,10 +1242,28 @@ Supported:
   fields in one document can be signed in turn, each revision leaving the
   earlier signatures valid. Supports `adbe.pkcs7.detached` and PAdES
   (`pades=True`), an embedded chain, a local or network timestamp, and DocMDP
-  certification. The field's `/SV` seed value is **enforced** where its `/Ff`
-  marks an entry binding (`/SubFilter`, `/Reasons`), and a `/Lock` is carried
+  certification. A `/Lock` on the field is carried
   into the signature as a **FieldMDP** transform. A field that already carries
   a `/V` is rejected rather than overwritten.
+- **Whole-document signing goes through the same path**: `SimplePdf.signing_creds`
+  authors (or reuses) a signature field, saves the document normally, and then
+  fills that field with `sign_field` — so a signed save preserves the COS
+  structure like any other save, and everything below applies to it too.
+- **The field's `/SV` seed value is enforced.** An entry is advisory until its
+  bit in `/Ff` is set; then a signer that cannot honour it refuses rather than
+  signs around it. Checked: `/Filter` (the handler must be `Adobe.PPKLite`),
+  `/SubFilter`, `/V` (the seed value version), `/Reasons`,
+  `/LegalAttestation` and `/AppearanceFilter` (neither of which this signer can
+  produce, so a required one is a refusal), and `/AddRevInfo` (revocation
+  material inside the signature — build a `/DSS` with `enable_ltv` instead).
+  Some entries are *followed* rather than merely checked: `/DigestMethod`
+  selects the digest to sign with (SHA-256/384/512; SHA-1 and RIPEMD160 are
+  refused rather than silently substituted), `/TimeStamp /URL` names the
+  authority to call when the caller supplied none and its `/Ff` bit 1 makes a
+  timestamp mandatory, and `/LockDocument /true` turns the signature into a
+  certifying one at "no changes permitted". `/MDP` has no `/Ff` bit of its own
+  and therefore always binds: it fixes whether the signature certifies and at
+  which level.
 - Create and validate DocMDP certification (certifying) signatures, including
   reporting the certification level and flagging changes that violate a
   "no changes permitted" certification.
@@ -1301,13 +1322,17 @@ Boundaries:
   validators (e.g. veraPDF, eIDAS validation services). Online harvesting of
   fresh revocation material into the `/DSS` at build time is opt-in by supplying
   it to `enable_ltv`; the builder itself stays offline.
-- Signing an authored field goes through `sign_field` on the *saved bytes*,
-  which is what a byte-range signature covers. The whole-document signing path
-  (`SimplePdf.signing_creds`) is unchanged: it rebuilds the file and synthesises
-  its own single field, so it neither fills an authored field nor preserves the
-  COS structure. Of the `/SV` seed value, `/SubFilter` and `/Reasons` are
-  enforced when required; `/Filter`, `/DigestMethod`, `/V`, `/LegalAttestation`
-  and `/AddRevInfo` are written but not enforced at signing time.
+- Signing goes through `sign_field` on the *saved bytes*, which is what a
+  byte-range signature covers. A document that is **encrypted as well as
+  signed** is the one exception and stays on the encrypting writer: an appended
+  revision would have to encrypt the strings it writes while leaving the
+  signature's `/Contents` in the clear. It produces the same signature layout,
+  but rebuilds the file rather than preserving its COS structure.
+- The `/SV` entries a signer cannot satisfy — `/LegalAttestation`,
+  `/AppearanceFilter`, and `/AddRevInfo true` — are refused when required
+  rather than approximated. `/SV /Cert` (constraining *which certificate* may
+  sign) is not evaluated: the caller supplies the credentials directly, so a
+  mismatch is theirs to notice.
 
 ## PDF/A And PDF/UA
 

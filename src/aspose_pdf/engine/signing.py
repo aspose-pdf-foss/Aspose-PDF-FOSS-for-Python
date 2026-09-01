@@ -22,6 +22,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import pkcs7
 from cryptography.x509.oid import NameOID
 
+from aspose_pdf.engine.cms import hash_from_name
+
 logger = logging.getLogger("aspose_pdf.signing")
 
 
@@ -170,6 +172,7 @@ class SigningUtils:
         key: rsa.RSAPrivateKey,
         *,
         extra_certs: Sequence[x509.Certificate] | None = None,
+        hash_algo: str = "sha256",
         tsa: tuple | None = None,
         timestamp_url: str | None = None,
         timestamp_timeout: float = 10.0,
@@ -187,6 +190,9 @@ class SigningUtils:
         extra_certs:
             Additional certificates (e.g. intermediate CAs) to embed so a
             verifier can build the trust chain.
+        hash_algo:
+            Digest to sign with (``sha256`` by default); a signature field's
+            ``/SV /DigestMethod`` seed value can ask for a stronger one.
         tsa:
             Optional ``(tsa_cert, tsa_key)`` tuple for embedding a timestamp
             from a *local* TSA (offline).
@@ -201,7 +207,7 @@ class SigningUtils:
         builder = (
             pkcs7.PKCS7SignatureBuilder()
             .set_data(data)
-            .add_signer(cert, key, hashes.SHA256())
+            .add_signer(cert, key, hash_from_name(hash_algo))
         )
         for extra in extra_certs or []:
             builder = builder.add_certificate(extra)

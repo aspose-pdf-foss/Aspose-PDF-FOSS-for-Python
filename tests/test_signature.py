@@ -9,8 +9,11 @@ def test_add_signature_metadata():
         reason="Test reason", contact="test@example.com", location="Test location"
     )
     pdf_bytes = pdf.to_bytes()
-    assert b"/Sig" in pdf_bytes
-    assert b"/Signature" in pdf_bytes
+    # ISO 32000-1 table 252: a signature dictionary's /Type is /Sig, not
+    # /Signature -- which is what this used to write.
+    assert b"/Type /Sig " in pdf_bytes
+    assert b"/Type /Signature" not in pdf_bytes
+    assert b"/Reason (Test reason)" in pdf_bytes
 
 
 def test_signature_object_presence():

@@ -9,6 +9,25 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A signature field's `/SV` seed value is honoured, not just read.** It is
+  the field author's instruction to whoever signs, and only `/SubFilter` and
+  `/Reasons` were checked — a field demanding SHA-512, a particular handler, a
+  timestamp or a certifying signature got one that quietly ignored the demand.
+  Every entry now either binds or is refused, and several are *followed*:
+  `/DigestMethod` picks the digest (SHA-1 and RIPEMD160 are refused rather than
+  silently downgraded to), `/TimeStamp /URL` supplies the authority when the
+  caller named none, and `/LockDocument /true` makes the signature certify.
+  `/MDP` binds regardless of `/Ff`, being the one entry with no flag.
+  `Form.add_signature_field(seed_value=…)` can author all of them.
+
+- **Whole-document signing and field signing are one path.**
+  `SimplePdf.signing_creds` used to synthesise its own field and patch its own
+  byte range inside the legacy writer, which meant a signed save rebuilt the
+  file from the in-memory model — silently dropping form fields and anything
+  else only the COS writer preserves. It now authors a field (or reuses one the
+  caller already authored, seed value and all), saves normally, and fills it
+  with `sign_field`.
+
 - **Layers resolve for printing and exporting, not only for the screen.** A
   group's `/Usage` dictionary says what it should do for an event and the
   configuration's `/AS` usage application dictionaries are what apply it —
@@ -56,6 +75,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **A signature's `/ByteRange` left the `/Contents` delimiters inside the signed
+  ranges.** Excluding only the hex digits still yields a verifiable signature,
+  but a validator matches the gap against the `/Contents` string to prove the
+  signature covers the document — and could not, reporting the coverage as
+  indeterminate instead of "entire file" (confirmed with pyHanko before and
+  after). The gap now runs from the `<` through the `>`.
+
+- **A signature dictionary was written as `/Type /Signature`**, which is not a
+  PDF object type; ISO 32000-1 table 252 says `/Sig`. `/ContactInfo` was
+  written but never read back, so it was always `None` on a loaded signature.
 
 - **A corrupt CFF2 INDEX could stall the optimizer.** A CFF2 INDEX counts its
   items in a uint32 rather than CFF1's uint16, so a malformed font could ask

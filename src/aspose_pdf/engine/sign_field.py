@@ -135,36 +135,126 @@ def _find_field(
     raise PdfValidationException(f"Signature field '{name}' not found")
 
 
+#: ``/Ff`` bit for each ``/SV`` entry (ISO 32000-1 table 234, bit *positions*).
+_SEED_FLAGS = {
+    "Filter": 1 << 0,
+    "SubFilter": 1 << 1,
+    "V": 1 << 2,
+    "Reasons": 1 << 3,
+    "LegalAttestation": 1 << 4,
+    "AddRevInfo": 1 << 5,
+    "DigestMethod": 1 << 6,
+    "LockDocument": 1 << 7,
+    "AppearanceFilter": 1 << 8,
+}
+
+#: ``/SV /DigestMethod`` names this signer can actually produce. SHA-1 and
+#: RIPEMD160 are in the specification's list and are deliberately absent: a
+#: field demanding one of them gets a refusal, not a weak signature.
+_DIGEST_BY_NAME = {
+    "SHA256": "sha256",
+    "SHA384": "sha384",
+    "SHA512": "sha512",
+}
+
+#: The highest ``/SV /V`` this signer understands. Version 1 is the PDF 1.5 set
+#: of seed value entries, 2 adds the PDF 1.7 ones; every entry of both is
+#: either honoured or refused below.
+_SEED_VERSION = 2
+
+
+class _SeedValue:
+    """What a field's ``/SV`` dictionary decided for this signature."""
+
+    __slots__ = ("digest_algorithm", "lock_document", "timestamp_url")
+
+    def __init__(
+        self,
+        digest_algorithm: str | None = None,
+        timestamp_url: str | None = None,
+        lock_document: bool = False,
+    ) -> None:
+        self.digest_algorithm = digest_algorithm
+        self.timestamp_url = timestamp_url
+        self.lock_document = lock_document
+
+
+def _sv_names(doc: Any, value: Any) -> list[str]:
+    array = _resolve(doc, value)
+    if not isinstance(array, PdfArray):
+        return []
+    return [
+        item.name.lstrip("/")
+        for item in (_resolve(doc, i) for i in array.items)
+        if isinstance(item, PdfName)
+    ]
+
+
 def _check_seed_value(
-    doc: Any, field: PdfDictionary, *, sub_filter: str, reason: str | None
-) -> None:
-    """Enforce the required constraints of the field's ``/SV`` dictionary.
+    doc: Any,
+    field: PdfDictionary,
+    *,
+    sub_filter: str,
+    reason: str | None,
+    certify_permissions: int | None,
+    has_timestamp: bool,
+) -> _SeedValue:
+    """Enforce the field's ``/SV`` dictionary and report what it chose.
 
     A seed value entry is advisory unless its bit in ``/Ff`` is set, in which
-    case a signer that cannot honour it must not sign (ISO 32000-1 §12.7.4.5,
-    table 234). Enforced here: ``/SubFilter`` (bit position 2) and ``/Reasons``
-    (bit position 4).
+    case a signer that cannot honour it **must not sign** (ISO 32000-1
+    §12.7.4.5, table 234). Some entries can be honoured -- a digest to use, a
+    timestamp authority to call -- and those are returned rather than merely
+    checked; the rest either match or raise.
+
+    ``/MDP`` carries no ``/Ff`` bit at all, so it is always binding.
     """
+    decision = _SeedValue()
     sv = _resolve(doc, field.mapping.get(PdfName("SV")))
     if not isinstance(sv, PdfDictionary):
-        return
+        return decision
     flags_obj = _resolve(doc, sv.mapping.get(PdfName("Ff")))
     flags = int(flags_obj.value) if isinstance(flags_obj, PdfNumber) else 0
 
-    allowed = _resolve(doc, sv.mapping.get(PdfName("SubFilter")))
-    if flags & (1 << 1) and isinstance(allowed, PdfArray):
-        names = [
-            item.name
-            for item in (_resolve(doc, i) for i in allowed.items)
-            if isinstance(item, PdfName)
-        ]
-        if PdfName(sub_filter).name not in names:
+    def required(entry: str) -> bool:
+        return bool(flags & _SEED_FLAGS[entry])
+
+    version = _resolve(doc, sv.mapping.get(PdfName("V")))
+    if required("V") and isinstance(version, PdfNumber):
+        if float(version.value) > _SEED_VERSION:
             raise PdfSecurityException(
-                f"Seed value requires /SubFilter in {names}; got /{sub_filter}"
+                f"Seed value requires signature handler version {version.value}; "
+                f"this signer implements {_SEED_VERSION}"
+            )
+
+    handler = _resolve(doc, sv.mapping.get(PdfName("Filter")))
+    if required("Filter") and isinstance(handler, PdfName):
+        wanted = handler.name.lstrip("/")
+        if wanted != "Adobe.PPKLite":
+            raise PdfSecurityException(
+                f"Seed value requires the /{wanted} signature handler; "
+                "this signer is /Adobe.PPKLite"
+            )
+
+    names = _sv_names(doc, sv.mapping.get(PdfName("SubFilter")))
+    if required("SubFilter") and names and sub_filter not in names:
+        raise PdfSecurityException(
+            f"Seed value requires /SubFilter in {names}; got /{sub_filter}"
+        )
+
+    digests = _sv_names(doc, sv.mapping.get(PdfName("DigestMethod")))
+    if digests:
+        usable = [_DIGEST_BY_NAME[name] for name in digests if name in _DIGEST_BY_NAME]
+        if usable:
+            decision.digest_algorithm = usable[0]
+        elif required("DigestMethod"):
+            raise PdfSecurityException(
+                f"Seed value requires /DigestMethod in {digests}; this signer "
+                f"produces {sorted(_DIGEST_BY_NAME)}"
             )
 
     reasons = _resolve(doc, sv.mapping.get(PdfName("Reasons")))
-    if flags & (1 << 3) and isinstance(reasons, PdfArray):
+    if required("Reasons") and isinstance(reasons, PdfArray):
         allowed_reasons = [
             text
             for text in (_text(_resolve(doc, i)) for i in reasons.items)
@@ -174,6 +264,93 @@ def _check_seed_value(
             raise PdfSecurityException(
                 f"Seed value requires /Reason in {allowed_reasons}; got {reason!r}"
             )
+
+    if required("LegalAttestation"):
+        raise PdfSecurityException(
+            "Seed value requires a legal attestation, which this signer cannot "
+            "produce; sign the field with a tool that can, or clear the "
+            "requirement from /SV"
+        )
+
+    add_rev_info = _resolve(doc, sv.mapping.get(PdfName("AddRevInfo")))
+    if required("AddRevInfo") and getattr(add_rev_info, "value", False) is True:
+        raise PdfSecurityException(
+            "Seed value requires revocation information inside the signature, "
+            "which this signer does not embed; build a /DSS with enable_ltv "
+            "after signing, or clear the requirement from /SV"
+        )
+
+    if required("AppearanceFilter"):
+        raise PdfSecurityException(
+            "Seed value requires a named appearance, which this signer does not "
+            "build; author the field's appearance first, or clear the "
+            "requirement from /SV"
+        )
+
+    _check_seed_mdp(doc, sv, certify_permissions)
+    decision.lock_document = _check_seed_lock(doc, sv, required("LockDocument"))
+    decision.timestamp_url = _check_seed_timestamp(doc, sv, has_timestamp)
+    return decision
+
+
+def _check_seed_mdp(doc: Any, sv: PdfDictionary, certify_permissions: int | None) -> None:
+    """``/SV /MDP /P`` fixes whether this signature certifies, and at what level.
+
+    There is no ``/Ff`` bit for ``/MDP``, so unlike its neighbours it is not
+    "advisory unless flagged" -- it always binds.
+    """
+    mdp = _resolve(doc, sv.mapping.get(PdfName("MDP")))
+    if not isinstance(mdp, PdfDictionary):
+        return
+    p = _resolve(doc, mdp.mapping.get(PdfName("P")))
+    if not isinstance(p, PdfNumber):
+        return
+    wanted = int(p.value)
+    if wanted == 0:
+        if certify_permissions is not None:
+            raise PdfSecurityException(
+                "Seed value /MDP /P 0 forbids a certifying signature"
+            )
+        return
+    if certify_permissions != wanted:
+        raise PdfSecurityException(
+            f"Seed value /MDP requires a certifying signature with /P {wanted}; "
+            f"got {certify_permissions!r}"
+        )
+
+
+def _check_seed_lock(doc: Any, sv: PdfDictionary, required: bool) -> bool:
+    """``/SV /LockDocument``: ``/true``, ``/false`` or ``/auto`` (PDF 2.0)."""
+    value = _resolve(doc, sv.mapping.get(PdfName("LockDocument")))
+    if not isinstance(value, PdfName):
+        return False
+    setting = value.name.lstrip("/")
+    if setting == "true":
+        return True
+    if setting in ("false", "auto"):
+        return False
+    if required:
+        raise PdfSecurityException(
+            f"Seed value /LockDocument is /{setting}, which is not one of "
+            "/true, /false or /auto"
+        )
+    return False
+
+
+def _check_seed_timestamp(doc: Any, sv: PdfDictionary, has_timestamp: bool) -> str | None:
+    """``/SV /TimeStamp``: a ``/URL`` to use, and a ``/Ff`` of 1 making it binding."""
+    entry = _resolve(doc, sv.mapping.get(PdfName("TimeStamp")))
+    if not isinstance(entry, PdfDictionary):
+        return None
+    flags = _resolve(doc, entry.mapping.get(PdfName("Ff")))
+    binding = isinstance(flags, PdfNumber) and int(flags.value) & 1
+    url = _text(_resolve(doc, entry.mapping.get(PdfName("URL"))))
+    if binding and not has_timestamp and not url:
+        raise PdfSecurityException(
+            "Seed value requires a timestamp but names no /URL, and none was "
+            "supplied to the signer"
+        )
+    return url
 
 
 def _signature_references(
@@ -292,9 +469,17 @@ def sign_field(
 
     Set *pades* for a CAdES-BES signature (``ETSI.CAdES.detached``, PAdES-B),
     which a *tsa* or *timestamp_url* upgrades to PAdES-T. *certify_permissions*
-    (1/2/3) makes this a DocMDP certifying signature. The field's ``/SV`` seed
-    value is enforced where its ``/Ff`` marks an entry required, and a ``/Lock``
-    is carried into the signature as a FieldMDP transform.
+    (1/2/3) makes this a DocMDP certifying signature.
+
+    The field's ``/SV`` seed value is enforced where its ``/Ff`` marks an entry
+    required: an entry this signer cannot honour makes it refuse rather than
+    sign around the constraint. Some entries are *followed* rather than merely
+    checked -- ``/DigestMethod`` chooses the digest, ``/TimeStamp /URL`` names
+    the authority to call when the caller supplied none, and ``/LockDocument``
+    turns the signature into a certifying one. ``/MDP`` binds regardless of
+    ``/Ff``, which is the one entry with no flag of its own. A ``/Lock`` on the
+    field (as opposed to ``/SV``) is carried into the signature as a FieldMDP
+    transform.
     """
     if certify_permissions is not None and certify_permissions not in (1, 2, 3):
         raise PdfValidationException(
@@ -315,7 +500,22 @@ def sign_field(
         raise PdfSecurityException(f"Field '{field_name}' is already signed")
 
     sub_filter = "ETSI.CAdES.detached" if pades else "adbe.pkcs7.detached"
-    _check_seed_value(doc, field, sub_filter=sub_filter, reason=reason)
+    seed = _check_seed_value(
+        doc,
+        field,
+        sub_filter=sub_filter,
+        reason=reason,
+        certify_permissions=certify_permissions,
+        has_timestamp=bool(tsa or timestamp_url),
+    )
+    # A seed value may supply what the caller did not: the authority to stamp
+    # with, the digest to use, and -- for /LockDocument -- a certification the
+    # caller never asked for.
+    if timestamp_url is None and tsa is None and seed.timestamp_url:
+        timestamp_url = seed.timestamp_url
+    if seed.lock_document and certify_permissions is None:
+        certify_permissions = 1  # no changes permitted
+    digest_algorithm = seed.digest_algorithm or "sha256"
 
     inc = IncrementalUpdate(pdf_bytes, budget=budget)
     sig_num = inc.get_next_object_number()
@@ -380,18 +580,26 @@ def sign_field(
     contents_end = combined.index(b">", contents_start)
 
     total = len(combined)
-    byte_range = (0, contents_start, contents_end, total - contents_end)
+    # The excluded gap runs from the ``<`` through the ``>`` inclusive, not
+    # just the hex digits between them. Leaving the delimiters inside the
+    # signed ranges still yields a verifiable signature, but a validator cannot
+    # then match the gap to the /Contents string, and reports the coverage as
+    # indeterminate rather than "the whole file".
+    gap_start = contents_start - 1  # the '<'
+    gap_end = contents_end + 1  # one past the '>'
+    byte_range = (0, gap_start, gap_end, total - gap_end)
     combined[arr_start : arr_start + _BYTE_RANGE_WIDTH] = (
         "{:010d} {:010d} {:010d} {:010d}".format(*byte_range).encode("latin-1")
     )
 
-    signed_data = bytes(combined[0:contents_start] + combined[contents_end:])
+    signed_data = bytes(combined[0:gap_start] + combined[gap_end:])
     signer = SigningUtils.sign_data_cades if pades else SigningUtils.sign_data_pkcs7
     blob = signer(
         signed_data,
         cert,
         key,
         extra_certs=extra_certs,
+        hash_algo=digest_algorithm,
         tsa=tsa,
         timestamp_url=timestamp_url,
         timestamp_timeout=timestamp_timeout,

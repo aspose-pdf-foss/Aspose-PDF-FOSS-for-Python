@@ -2480,10 +2480,18 @@ class SimplePdf:
         """Serialize PDF to bytes, preserving structure when possible."""
         self._ensure_not_disposed()
 
+        # Signing goes through the one signing implementation: the document is
+        # serialized unsigned around an authored field, then that field is
+        # filled by ``sign_field`` on the saved bytes -- which is what a
+        # byte-range signature actually covers. Routing it through PdfWriterV0
+        # instead used to force a structure-losing rewrite of any document that
+        # had a COS graph, discarding its annotations, outlines and form fields.
+        if self.signing_creds and not self.encrypted:
+            return self._to_bytes_signed()
         # Encrypted documents must use PdfWriterV0 (it applies encryption to
-        # streams); signing is likewise only implemented in PdfWriterV0, so a
-        # request to sign must route there even when a COS document exists
-        # (otherwise the signature would be silently dropped).
+        # streams), and an encrypted document that is also signed stays with it:
+        # an appended revision would have to encrypt the strings it writes while
+        # leaving the signature's /Contents in the clear.
         if self.encrypted or self.signing_creds:
             writer = PdfWriterV0(self)
             return writer.write()
@@ -2619,6 +2627,103 @@ class SimplePdf:
         # Build incremental update
         data = self.to_bytes_incremental()
         Path(path).write_bytes(data)
+
+    def _to_bytes_signed(self) -> bytes:
+        """Serialize the document and sign it through :func:`sign_field`.
+
+        Whole-document signing and field signing used to be two
+        implementations: this one synthesised its own field and patched its own
+        byte range inside the legacy writer, which meant a signed save rebuilt
+        the file from the in-memory model and threw away whatever the COS
+        writer would have preserved. There is one path now -- author the field,
+        save normally, then fill it as an incremental revision.
+        """
+        from .sign_field import sign_field
+
+        cert, key = self.signing_creds
+        details = self.signature or {}
+        field_name = self._ensure_signature_field(
+            details.get("Name") or "Signature1"
+        )
+        creds, self.signing_creds = self.signing_creds, None
+        try:
+            unsigned = self.to_bytes()
+        finally:
+            self.signing_creds = creds
+        return sign_field(
+            unsigned,
+            field_name,
+            cert,
+            key,
+            pades=self.pades,
+            reason=details.get("Reason") or None,
+            location=details.get("Location") or None,
+            contact=details.get("ContactInfo") or None,
+            signer_name=details.get("Name") or None,
+            extra_certs=self.extra_certs,
+            tsa=self.timestamp_tsa,
+            timestamp_url=self.timestamp_url,
+            timestamp_timeout=self.timestamp_timeout,
+            certify_permissions=self.certify_permissions,
+            limits=getattr(self, "load_limits", None),
+        )
+
+    def _ensure_signature_field(self, name: str) -> str:
+        """Return the name of a signature field to fill, authoring one if needed.
+
+        A caller who already authored a field with this name -- with its own
+        seed value, lock dictionary and visible widget -- gets that field
+        filled rather than a second one appended beside it. Whether the field
+        is one that *may* be filled (a ``/FT /Sig`` that is not already signed)
+        is not decided here: ``sign_field`` rules on that for every signer, and
+        duplicating the rule would only let the two drift apart.
+        """
+        self._ensure_cos()
+        for existing, _field in self._iter_form_fields():
+            if existing == name:
+                return name
+        if not self.pages:
+            raise PdfValidationException("A document with no pages cannot be signed")
+        self.create_form_field(
+            name,
+            "signature",
+            # An invisible signature: a zero-size widget, which is what a
+            # whole-document signature has always been here.
+            [{"page_index": 0, "rect": (0.0, 0.0, 0.0, 0.0)}],
+        )
+        return name
+
+    def _iter_form_fields(self):
+        """Yield ``(fully qualified name, field dictionary)`` for every AcroForm field."""
+        root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(root, PdfDictionary):
+            return
+        acroform = self._resolve(root.mapping.get(PdfName("AcroForm")))
+        if not isinstance(acroform, PdfDictionary):
+            return
+        fields = self._resolve(acroform.mapping.get(PdfName("Fields")))
+        if not isinstance(fields, PdfArray):
+            return
+        stack = [(item, "") for item in reversed(fields.items)]
+        seen = 0
+        while stack:
+            ref, prefix = stack.pop()
+            seen += 1
+            if seen > 4096:  # a malformed field tree must not spin here
+                return
+            entry = self._resolve(ref)
+            if not isinstance(entry, PdfDictionary):
+                continue
+            title = self._resolve(entry.mapping.get(PdfName("T")))
+            partial = (
+                decode_pdf_text_string(title) if isinstance(title, PdfString) else ""
+            )
+            name = f"{prefix}.{partial}" if prefix and partial else (prefix or partial)
+            kids = self._resolve(entry.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray) and kids.items:
+                for kid in reversed(kids.items):
+                    stack.append((kid, name))
+            yield name, entry
 
     def to_bytes_incremental(self) -> bytes:
         """Serialize the document as a byte-preserving incremental update.
@@ -9672,7 +9777,7 @@ class SimplePdf:
         return parent_ref, siblings
 
     def _form_widget_page(
-        self, page_index: Any, rect: Any
+        self, page_index: Any, rect: Any, *, allow_empty: bool = False
     ) -> tuple[PdfDictionary, PdfIndirectReference, tuple[float, float, float, float]]:
         if isinstance(page_index, bool) or not isinstance(page_index, int):
             raise TypeError("Page index must be an integer")
@@ -9691,7 +9796,9 @@ class SimplePdf:
             ) from exc
         if not all(math.isfinite(value) for value in coords):
             raise PdfValidationException("Field rectangle values must be finite")
-        if coords[2] <= coords[0] or coords[3] <= coords[1]:
+        if coords[2] < coords[0] or coords[3] < coords[1]:
+            raise PdfValidationException("Field rectangle must not be inverted")
+        if not allow_empty and (coords[2] == coords[0] or coords[3] == coords[1]):
             raise PdfValidationException("Field rectangle must have positive dimensions")
 
         page = self._get_page_dict(page_index)
@@ -9718,25 +9825,42 @@ class SimplePdf:
     # ISO 32000-1 table 234 (/SV /Ff): 1-based bit positions Filter=1,
     # SubFilter=2, V=3, Reasons=4, LegalAttestation=5, AddRevInfo=6,
     # DigestMethod=7. A set bit makes that entry a requirement, not a hint.
+    # ISO 32000-1 table 234: the /Ff bit that makes each /SV entry binding.
+    # /MDP has no bit of its own -- it always binds.
     _SEED_REQUIRED_BITS: ClassVar[dict[str, int]] = {
         "filter": 1 << 0,
         "sub_filter": 1 << 1,
+        "v": 1 << 2,
         "reasons": 1 << 3,
+        "legal_attestation": 1 << 4,
+        "add_rev_info": 1 << 5,
         "digest_method": 1 << 6,
+        "lock_document": 1 << 7,
+        "appearance_filter": 1 << 8,
     }
+    _SEED_LOCK_DOCUMENT: ClassVar[frozenset[str]] = frozenset(
+        {"true", "false", "auto"}
+    )
 
     def _signature_seed_value_cos(self, spec: Mapping[str, Any]) -> PdfDictionary:
         """Build a signature field's ``/SV`` seed value dictionary.
 
         Recognised keys: ``filter``, ``sub_filter`` (a sequence of names),
         ``digest_method`` (a sequence of names), ``reasons`` (a sequence of
-        text strings) and ``required`` (a subset of those key names whose
-        constraints a signer must honour rather than merely prefer).
+        text strings), ``v`` (the handler version a signer must implement),
+        ``legal_attestation`` (a sequence of text strings), ``add_rev_info``,
+        ``lock_document`` (``true``/``false``/``auto``), ``appearance_filter``,
+        ``mdp`` (``{"p": 0-3}``, which binds whether or not it is listed as
+        required), ``timestamp`` (``{"url": ..., "required": bool}``) and
+        ``required`` (a subset of the above whose constraints a signer must
+        honour rather than merely prefer).
         """
         if not isinstance(spec, Mapping):
             raise TypeError("seed_value must be a mapping")
         unknown = set(spec) - {
             "filter", "sub_filter", "digest_method", "reasons", "required",
+            "v", "legal_attestation", "add_rev_info", "lock_document",
+            "appearance_filter", "mdp", "timestamp",
         }
         if unknown:
             raise PdfValidationException(
@@ -9765,6 +9889,63 @@ class SimplePdf:
             sv[PdfName("Reasons")] = PdfArray(
                 [_pdf_text_string(str(item)) for item in reasons]
             )
+
+        version = spec.get("v")
+        if version is not None:
+            if isinstance(version, bool) or not isinstance(version, int):
+                raise PdfValidationException("seed value 'v' must be an integer")
+            sv[PdfName("V")] = PdfNumber(version)
+        attestation = spec.get("legal_attestation")
+        if attestation is not None:
+            if isinstance(attestation, str) or not isinstance(attestation, Sequence):
+                raise PdfValidationException(
+                    "seed value 'legal_attestation' must be a sequence"
+                )
+            sv[PdfName("LegalAttestation")] = PdfArray(
+                [_pdf_text_string(str(item)) for item in attestation]
+            )
+        add_rev_info = spec.get("add_rev_info")
+        if add_rev_info is not None:
+            sv[PdfName("AddRevInfo")] = PdfBoolean(bool(add_rev_info))
+        lock_document = spec.get("lock_document")
+        if lock_document is not None:
+            setting = str(lock_document)
+            if setting not in self._SEED_LOCK_DOCUMENT:
+                raise PdfValidationException(
+                    "seed value 'lock_document' must be true, false or auto"
+                )
+            sv[PdfName("LockDocument")] = PdfName(setting)
+        appearance = spec.get("appearance_filter")
+        if appearance is not None:
+            sv[PdfName("AppearanceFilter")] = _pdf_text_string(str(appearance))
+        mdp = spec.get("mdp")
+        if mdp is not None:
+            if not isinstance(mdp, Mapping):
+                raise TypeError("seed value 'mdp' must be a mapping")
+            p = mdp.get("p")
+            if isinstance(p, bool) or not isinstance(p, int) or not 0 <= p <= 3:
+                raise PdfValidationException("seed value 'mdp' needs 'p' in 0..3")
+            sv[PdfName("MDP")] = PdfDictionary({PdfName("P"): PdfNumber(p)})
+        timestamp = spec.get("timestamp")
+        if timestamp is not None:
+            if not isinstance(timestamp, Mapping):
+                raise TypeError("seed value 'timestamp' must be a mapping")
+            unknown_ts = set(timestamp) - {"url", "required"}
+            if unknown_ts:
+                raise PdfValidationException(
+                    f"Unknown seed value timestamp entries: {sorted(unknown_ts)}"
+                )
+            entry: dict[PdfName, Any] = {}
+            url = timestamp.get("url")
+            if url is not None:
+                entry[PdfName("URL")] = _pdf_text_string(str(url))
+            if timestamp.get("required"):
+                entry[PdfName("Ff")] = PdfNumber(1)
+            if not entry:
+                raise PdfValidationException(
+                    "seed value 'timestamp' needs a 'url' or 'required'"
+                )
+            sv[PdfName("TimeStamp")] = PdfDictionary(entry)
 
         required = spec.get("required") or ()
         if isinstance(required, str) or not isinstance(required, Sequence):
@@ -9866,7 +10047,11 @@ class SimplePdf:
             if not isinstance(spec, dict):
                 raise TypeError("Widget specifications must be dictionaries")
             page, page_ref, rect = self._form_widget_page(
-                spec.get("page_index"), spec.get("rect")
+                spec.get("page_index"),
+                spec.get("rect"),
+                # A zero-size widget is how a signature says "invisible"
+                # (ISO 32000-1 12.7.4.5); for every other field it is a mistake.
+                allow_empty=field_type == "signature",
             )
             prepared_widgets.append((spec, page, page_ref, rect))
 
@@ -13821,6 +14006,7 @@ class CosExtractor:
                         for key, attr in [
                             ("Reason", "reason"),
                             ("Location", "location"),
+                            ("ContactInfo", "contact_info"),
                             ("M", "date"),
                         ]:
                             val = v_obj.mapping.get(PdfName(key))
@@ -14710,7 +14896,7 @@ class PdfWriterV0:
                 "ETSI.CAdES.detached" if self.pdf.pades else "adbe.pkcs7.detached"
             )
             self.out.extend(
-                f"<< /Type /Signature /Filter /Adobe.PPKLite "
+                f"<< /Type /Sig /Filter /Adobe.PPKLite "
                 f"/SubFilter /{sub_filter} "
                 f"/Reason {self._string_literal(reason)} "
                 f"/Location {self._string_literal(location)}".encode()
@@ -14742,11 +14928,18 @@ class PdfWriterV0:
                 or self.pdf.timestamp_url
             ):
                 sig_max_len = 65536
-            self.out.extend(b" /Contents <")
+            self.out.extend(b" /Contents ")
+            # The /ByteRange gap runs from the ``<`` through the ``>``
+            # inclusive; leaving the delimiters signed makes a validator unable
+            # to match the gap to the /Contents string and report full coverage.
+            gap_start_offset = len(self.out)
+            self.out.extend(b"<")
             contents_start_offset = len(self.out)
             self.out.extend(b"0" * sig_max_len)
             contents_end_offset = len(self.out)
-            self.out.extend(b"> >>\n")
+            self.out.extend(b">")
+            gap_end_offset = len(self.out)
+            self.out.extend(b" >>\n")
 
             self._end_obj()
 
@@ -14767,7 +14960,7 @@ class PdfWriterV0:
             contact = self.pdf.signature.get("ContactInfo", "")
             location = self.pdf.signature.get("Location", "")
             self._write_line(
-                f"<< /Type /Signature /Filter /Adobe.PPKLite "
+                f"<< /Type /Sig /Filter /Adobe.PPKLite "
                 f"/SubFilter /adbe.pkcs7.detached "
                 f"/Reason {self._string_literal(reason)} "
                 f"/ContactInfo {self._string_literal(contact)} "
@@ -14824,10 +15017,9 @@ class PdfWriterV0:
             cert, key = self.pdf.signing_creds
             file_len = len(self.out)
 
-            # Range 1: 0 to contents_start_offset
-            # Range 2: contents_end_offset to file_len
-            range1 = [0, contents_start_offset]
-            range2 = [contents_end_offset, file_len - contents_end_offset]
+            # Range 1: 0 up to the '<'; range 2: from just past the '>'.
+            range1 = [0, gap_start_offset]
+            range2 = [gap_end_offset, file_len - gap_end_offset]
 
             # Patch ByteRange (43 bytes: 10 + 1 + 10 + 1 + 10 + 1 + 10)
             br_patched = (
