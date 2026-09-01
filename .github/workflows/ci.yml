@@ -74,3 +74,53 @@ jobs:
 
       - name: Check distribution metadata
         run: python -m twine check dist/*
+
+  cross-validate:
+    # Every other job asks whether the library agrees with itself. This one asks
+    # whether independent implementations agree with it: qpdf (through pikepdf)
+    # parses and rewrites what we write, and veraPDF -- the reference PDF/A
+    # validator this project's own documentation points users at -- reaches a
+    # verdict on our PDF/A output.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install package, dev dependencies and pikepdf
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev] pikepdf
+
+      - name: Cross-validate against qpdf
+        run: pytest -q tests/test_cross_validation.py
+
+      # veraPDF is the reference PDF/A validator, and the one this project's
+      # documentation tells users to run. It is deliberately non-blocking:
+      # this library's PDF/A support is heuristic by design, so the useful
+      # output is *which* rules a sample fails, published as an artifact for a
+      # human to read, rather than a pass/fail gate it was never built to meet.
+      - name: Write conformance samples
+        run: python scripts/write_conformance_samples.py conformance-samples
+
+      - name: Validate the samples with veraPDF
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD/conformance-samples:/data" \
+            verapdf/cli:latest --format mrr --recurse /data \
+            > verapdf-report.xml
+
+      - name: Publish the veraPDF report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verapdf-report
+          path: |
+            verapdf-report.xml
+            conformance-samples/
+          if-no-files-found: warn

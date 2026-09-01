@@ -1186,6 +1186,12 @@ class SimplePdf:
                 PdfName("Type"): PdfName("Pages"),
                 PdfName("Count"): PdfNumber(0),
                 PdfName("Kids"): PdfArray([]),
+                # /Resources is required and *inheritable* (ISO 32000-1 table
+                # 30). It goes on the tree root rather than on each page so a
+                # page that has none still inherits one -- putting an empty
+                # dictionary on the page itself would instead shadow whatever a
+                # caller hung on an ancestor.
+                PdfName("Resources"): PdfDictionary({}),
             }
         )
         pages_ref = self._cos_doc.register_object(pages)

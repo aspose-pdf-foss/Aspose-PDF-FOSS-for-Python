@@ -9,6 +9,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **CI cross-validates the library's output against an independent
+  implementation.** Every other test asks whether the library agrees with
+  itself; a new `cross-validate` job asks whether qpdf agrees — it parses and
+  rewrites documents covering layers, tagging, PDF/A-4, PDF/UA-2, optimization
+  and signing, and reads their structure back out (including that a signature's
+  byte range really covers the whole file). `tests/test_cross_validation.py`
+  skips when pikepdf is absent, so a plain checkout stays green. The same job
+  writes one conformance sample per level with
+  `scripts/write_conformance_samples.py` and runs veraPDF over them, publishing
+  its report as an artifact — advisory rather than gating, because the useful
+  output is which rules a sample fails.
+
 - **`auto_tag` sees four shapes it used to miss.** A table row may now leave a
   column **blank** (it gets an empty `/TD`, so the cells after it stay in their
   own columns instead of shifting left) and a cell reaching past the next
@@ -98,6 +110,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **Pages were written without a resource dictionary.** `/Resources` is
+  required and inheritable (ISO 32000-1 table 30), and qpdf reported every
+  document this library produced as needing repair. It now goes on the page
+  tree root, where a page that has none inherits it — putting an empty one on
+  each page instead would shadow whatever a caller hung on an ancestor.
 
 - **PDF/A-3 rejected the embedded files it exists to carry.** The check
   compared the requested level against the literal `"3"`, which no real level

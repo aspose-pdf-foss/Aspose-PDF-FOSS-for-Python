@@ -1531,7 +1531,11 @@ Boundaries:
 - PDF/A and PDF/UA checks are heuristic signals, not certification-grade
   validation. They inspect document structure, not rendered output, glyph
   coverage, colour fidelity, or the semantic correctness of a tag tree. Use a
-  dedicated validator such as veraPDF for formal compliance.
+  dedicated validator such as veraPDF for formal compliance —
+  `scripts/write_conformance_samples.py` writes one sample per level to point
+  it at, and CI runs veraPDF over them and publishes its report. That step is
+  deliberately advisory: the useful output is *which* rules a sample fails, not
+  a pass/fail gate this library was never built to meet.
 - The PDF 2.0 parts are checked at the same depth as the earlier ones, which
   means their *identification* and the structural rules that differ, not the
   whole of PDF 2.0. In particular PDF/A-4 requires an embedded PDF to itself be
