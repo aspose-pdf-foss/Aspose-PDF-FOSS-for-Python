@@ -9,6 +9,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **PDF/A-4 and PDF/UA-2 — the PDF 2.0 conformance parts — are validated and
+  produced.** Both are defined *on* PDF 2.0 rather than capped by it, so the
+  header is required to be exactly 2.0 and conversion raises an older one.
+  ISO 19005-4 dropped the accessible/basic/unicode split: the levels are `"4"`
+  (no conformance letter at all), `"4e"` (engineering — the level that exists
+  to permit 3D and rich media) and `"4f"` (embedded files of any type), plus a
+  required `pdfaid:rev` of 2020. ISO 14289-2 adds a `pdfuaid:rev` of 2024 and
+  the PDF 2.0 standard structure namespace in the struct root's `/Namespaces`;
+  reach it with `validate_pdfua(part=2)` and `convert_to_pdfua(part=2)`.
+
 - **A signature field's `/SV` seed value is honoured, not just read.** It is
   the field author's instruction to whoever signs, and only `/SubFilter` and
   `/Reasons` were checked — a field demanding SHA-512, a particular handler, a
@@ -75,6 +85,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **PDF/A-3 rejected the embedded files it exists to carry.** The check
+  compared the requested level against the literal `"3"`, which no real level
+  string ever equals, so `"3b"` fell on the prohibited side along with
+  PDF/A-1 and -2. Asking for a PDF/A level that does not exist (`"4a"`, a typo)
+  no longer falls back to PDF/A-1b either, which used to write metadata
+  claiming a level nobody asked for.
 
 - **A signature's `/ByteRange` left the `/Contents` delimiters inside the signed
   ranges.** Excluding only the hex digits still yields a verifiable signature,

@@ -652,6 +652,57 @@ def _minimal_srgb_icc_profile() -> bytes:
     return header + tag_table + tag_data
 
 
+#: The PDF/A conformance levels this library knows, as
+#: ``normalised level -> (part, conformance letter or None)``. PDF/A-4 has no
+#: "a" level -- ISO 19005-4 dropped the accessible/basic/unicode distinction --
+#: and its base level carries no conformance letter at all; ``e`` (engineering)
+#: and ``f`` (embedded files) are its two variants.
+PDFA_LEVELS: dict[str, tuple[str, str | None]] = {
+    "1a": ("1", "A"),
+    "1b": ("1", "B"),
+    "2a": ("2", "A"),
+    "2b": ("2", "B"),
+    "2u": ("2", "U"),
+    "3a": ("3", "A"),
+    "3b": ("3", "B"),
+    "3u": ("3", "U"),
+    "4": ("4", None),
+    "4e": ("4", "E"),
+    "4f": ("4", "F"),
+}
+
+#: Parts that identify themselves with an ``xmp`` revision year as well as a
+#: part number. Only PDF/A-4 does (ISO 19005-4:2020).
+PDFA_REVISIONS: dict[str, str] = {"4": "2020"}
+
+#: The PDF header version each PDF/A part is written against.
+PDFA_HEADER_VERSION: dict[str, str] = {"1": "1.4", "2": "1.7", "3": "1.7", "4": "2.0"}
+
+#: PDF/UA parts, and the revision year each identifies itself with. ISO 14289-1
+#: predates the ``rev`` property, so only part 2 carries one.
+PDFUA_REVISIONS: dict[int, str | None] = {1: None, 2: "2024"}
+
+#: The PDF 2.0 standard structure namespace. PDF/UA-2 draws its structure
+#: element types from it rather than from the unqualified names part 1 used.
+PDF2_STRUCTURE_NS = "http://iso.org/pdf2/ssn"
+
+
+def _pdfa_level_parts(level: str) -> tuple[str, str | None]:
+    """Resolve a level string to ``(part, conformance)``, or raise.
+
+    An unrecognised level used to fall back to PDF/A-1b, so asking for a level
+    that does not exist quietly produced a document claiming a different one.
+    """
+    normalised = _normalize_pdfa_level_short(level)
+    try:
+        return PDFA_LEVELS[normalised]
+    except KeyError:
+        raise PdfValidationException(
+            f"Unknown PDF/A level {level!r}; expected one of "
+            f"{', '.join(sorted(PDFA_LEVELS))}"
+        ) from None
+
+
 def _make_pdfa_xmp(level: str, title: str) -> bytes:
     """Return a minimal UTF-8 XMP metadata packet declaring PDF/A conformance.
 
@@ -659,29 +710,27 @@ def _make_pdfa_xmp(level: str, title: str) -> bytes:
     :func:`aspose_pdf.engine.data.xmp.serialize_xmp` so the PDF/A packet shares
     the package's single XMP serializer.
     """
-    level_map = {
-        "1a": ("1", "A"),
-        "1b": ("1", "B"),
-        "2a": ("2", "A"),
-        "2b": ("2", "B"),
-        "2u": ("2", "U"),
-        "3a": ("3", "A"),
-        "3b": ("3", "B"),
-        "3u": ("3", "U"),
-    }
-    part, conformance = level_map.get(level.lower(), ("1", "B"))
+    part, conformance = _pdfa_level_parts(level)
     pdfaid = STANDARD_XMP_NAMESPACES["pdfaid"]
     dc = STANDARD_XMP_NAMESPACES["dc"]
     packet = XmpPacket()
     packet.add(XmpField(prefix="pdfaid", name="part", namespace_uri=pdfaid, value=part))
-    packet.add(
-        XmpField(
-            prefix="pdfaid",
-            name="conformance",
-            namespace_uri=pdfaid,
-            value=conformance,
+    revision = PDFA_REVISIONS.get(part)
+    if revision is not None:
+        packet.add(
+            XmpField(
+                prefix="pdfaid", name="rev", namespace_uri=pdfaid, value=revision
+            )
         )
-    )
+    if conformance is not None:
+        packet.add(
+            XmpField(
+                prefix="pdfaid",
+                name="conformance",
+                namespace_uri=pdfaid,
+                value=conformance,
+            )
+        )
     packet.add(
         XmpField(
             prefix="dc",
@@ -696,18 +745,29 @@ def _make_pdfa_xmp(level: str, title: str) -> bytes:
     return serialize_xmp(packet)
 
 
-def _make_pdfua_xmp(title: str) -> bytes:
-    """Return a minimal UTF-8 XMP packet declaring PDF/UA-1 conformance.
+def _make_pdfua_xmp(title: str, part: int = 1) -> bytes:
+    """Return a minimal UTF-8 XMP packet declaring PDF/UA conformance.
 
-    Emits ``pdfuaid:part = 1`` plus a ``dc:title``, rendered through the
-    package's shared XMP serializer.
+    Emits ``pdfuaid:part`` plus a ``dc:title``, rendered through the package's
+    shared XMP serializer. Part 2 (ISO 14289-2) also carries ``pdfuaid:rev``.
     """
+    if part not in PDFUA_REVISIONS:
+        raise PdfValidationException(
+            f"Unknown PDF/UA part {part!r}; expected 1 or 2"
+        )
     pdfuaid = STANDARD_XMP_NAMESPACES["pdfuaid"]
     dc = STANDARD_XMP_NAMESPACES["dc"]
     packet = XmpPacket()
     packet.add(
-        XmpField(prefix="pdfuaid", name="part", namespace_uri=pdfuaid, value="1")
+        XmpField(prefix="pdfuaid", name="part", namespace_uri=pdfuaid, value=str(part))
     )
+    revision = PDFUA_REVISIONS[part]
+    if revision is not None:
+        packet.add(
+            XmpField(
+                prefix="pdfuaid", name="rev", namespace_uri=pdfuaid, value=revision
+            )
+        )
     packet.add(
         XmpField(
             prefix="dc",
@@ -732,12 +792,25 @@ def _normalize_pdfa_level_short(level: str) -> str:
     return v
 
 
-def _parse_expected_pdfaid(level_short: str) -> tuple[str, str] | None:
-    """Return ``(part, conformance_letter_upper)`` e.g. ``('1', 'B')``, or *None*."""
-    m = re.match(r"^(\d+)([a-z])$", level_short.strip().lower())
-    if not m:
-        return None
-    return m.group(1), m.group(2).upper()
+def _parse_expected_pdfaid(level_short: str) -> tuple[str, str | None] | None:
+    """Return ``(part, conformance letter or None)``, or *None* for a bad level.
+
+    PDF/A-4's base level has no conformance letter at all, so ``None`` in the
+    second position means "the packet must not declare one" -- not "anything
+    goes".
+    """
+    return PDFA_LEVELS.get(_normalize_pdfa_level_short(level_short))
+
+
+def _extract_xmp_pdfaid_revision(xmp_bytes: bytes) -> str | None:
+    """Extract ``pdfaid:rev`` from an XMP packet, or ``None``."""
+    text = xmp_bytes.decode("utf-8", errors="replace")
+    match = re.search(r"pdfaid:rev\s*>([^<]+)</", text, re.IGNORECASE)
+    if match is None:
+        match = re.search(
+            r"pdfaid:rev\s*=\s*[\"\']([^\"\']+)[\"\']", text, re.IGNORECASE
+        )
+    return match.group(1).strip() if match else None
 
 
 def _extract_xmp_pdfaid_fields(xmp_bytes: bytes) -> tuple[str | None, str | None]:
@@ -3171,12 +3244,17 @@ class SimplePdf:
             except PDF_OPERATION_ERRORS:
                 pass
 
-        # 4. Prohibited: Audio/Video/Executable attachments
-        if self.attachments and level != "3":
-            problems.append("PDF/A prohibits embedded files (unless PDF/A-3).")
+        # 4. Embedded files, permitted only from PDF/A-3 on. The comparison
+        # here used to be against the literal "3", which no real level string
+        # ever equals -- so PDF/A-3, the part that exists to carry
+        # attachments, rejected them too.
+        level_norm = _normalize_pdfa_level_short(level)
+        if self.attachments and level_norm[:1] not in ("3", "4"):
+            problems.append(
+                "PDF/A-1 and PDF/A-2 prohibit embedded files."
+            )
 
         # 5. Required: Font embedding, ToUnicode (level A), symbolic-font mapping
-        level_norm = _normalize_pdfa_level_short(level)
         if self._cos_doc:
             for i in range(len(self.pages)):
                 page_dict = self._get_page_dict(i)
@@ -3340,23 +3418,44 @@ class SimplePdf:
                             )
                         else:
                             exp_part, exp_conf = expected
-                            if xm_part is None or xm_conf is None:
+                            if xm_part is None:
                                 problems.append(
-                                    "XMP metadata must declare pdfaid:part "
-                                    "and pdfaid:conformance."
+                                    "XMP metadata must declare pdfaid:part."
                                 )
-                            else:
-                                if xm_part != exp_part:
+                            elif xm_part != exp_part:
+                                problems.append(
+                                    f"XMP pdfaid:part is {xm_part!r} "
+                                    "but validation level "
+                                    f"requires part {exp_part!r}."
+                                )
+                            if exp_conf is None:
+                                # PDF/A-4 base: declaring a conformance letter
+                                # would claim one of the variants instead.
+                                if xm_conf is not None:
                                     problems.append(
-                                        f"XMP pdfaid:part is {xm_part!r} "
-                                        "but validation level "
-                                        f"requires part {exp_part!r}."
+                                        f"PDF/A-{exp_part} declares no "
+                                        "conformance level, but the XMP "
+                                        f"metadata says {xm_conf!r}."
                                     )
-                                if xm_conf != exp_conf:
+                            elif xm_conf is None:
+                                problems.append(
+                                    "XMP metadata must declare "
+                                    "pdfaid:conformance."
+                                )
+                            elif xm_conf != exp_conf:
+                                problems.append(
+                                    f"XMP pdfaid:conformance is {xm_conf!r} "
+                                    "but validation level "
+                                    f"requires {exp_conf!r}."
+                                )
+                            wanted_rev = PDFA_REVISIONS.get(exp_part)
+                            if wanted_rev is not None:
+                                got_rev = _extract_xmp_pdfaid_revision(xmp_bytes)
+                                if got_rev != wanted_rev:
                                     problems.append(
-                                        f"XMP pdfaid:conformance is {xm_conf!r} "
-                                        "but validation level "
-                                        f"requires {exp_conf!r}."
+                                        f"PDF/A-{exp_part} requires XMP "
+                                        f"pdfaid:rev = {wanted_rev}; got "
+                                        f"{got_rev!r}."
                                     )
 
         # 8. Prohibited stream filters: LZWDecode (PDF/A-1) and Crypt (all parts).
@@ -3407,16 +3506,22 @@ class SimplePdf:
 
         return problems, warnings
 
-    def check_pdfua_compliance(self) -> tuple[list[str], list[str]]:
+    def check_pdfua_compliance(self, part: int = 1) -> tuple[list[str], list[str]]:
         """Inspect catalog-level PDF/UA prerequisites (heuristic only).
 
         Verifies a *tagged-PDF shell*: ``/StructTreeRoot``, ``/MarkInfo`` with
         ``/Marked true``, a document title shown via ViewerPreferences
         ``/DisplayDocTitle true``, and an XMP ``pdfuaid:part`` declaration;
-        recommends ``/Lang``.  This is not PDF/UA-1 certification — see
-        :class:`~aspose_pdf.pdfua.PdfUaValidationResult`.
+        recommends ``/Lang``. *part* selects ISO 14289-1 (the default) or
+        ISO 14289-2, which is defined on PDF 2.0 and identifies itself with a
+        revision year and namespaced structure types. This is not PDF/UA
+        certification — see :class:`~aspose_pdf.pdfua.PdfUaValidationResult`.
         """
         self._ensure_not_disposed()
+        if part not in PDFUA_REVISIONS:
+            raise PdfValidationException(
+                f"Unknown PDF/UA part {part!r}; expected 1 or 2"
+            )
         errors: list[str] = []
         warnings: list[str] = []
         if self._cos_doc is None:
@@ -3464,7 +3569,7 @@ class SimplePdf:
                 "of the document."
             )
 
-        ext_errors, ext_warnings = conformance.pdfua_extended(self)
+        ext_errors, ext_warnings = conformance.pdfua_extended(self, part)
         errors.extend(ext_errors)
         warnings.extend(ext_warnings)
 
@@ -11196,6 +11301,7 @@ class SimplePdf:
             )
 
         level_norm = _normalize_pdfa_level_short(level)
+        _pdfa_level_parts(level_norm)  # reject a level that does not exist
 
         # 1. Remove prohibited content from the catalog
         for key in (PdfName("OpenAction"), PdfName("AA")):
@@ -11214,13 +11320,14 @@ class SimplePdf:
         if isinstance(names_obj, PdfDictionary):
             if PdfName("JavaScript") in names_obj.mapping:
                 del names_obj.mapping[PdfName("JavaScript")]
-            if level.lower() not in ("3a", "3b", "3u"):
+            if level_norm[:1] not in ("3", "4"):
                 if PdfName("EmbeddedFiles") in names_obj.mapping:
                     del names_obj.mapping[PdfName("EmbeddedFiles")]
                 self.attachments.clear()
             else:
-                # PDF/A-3 permits embedded files, but every Filespec must declare
-                # an /AFRelationship. Stamp a default on any that lack one.
+                # PDF/A-3 and PDF/A-4 permit embedded files, but every Filespec
+                # must declare an /AFRelationship saying what it is for. Stamp a
+                # default on any that lack one.
                 ef_tree = self._resolve(
                     names_obj.mapping.get(PdfName("EmbeddedFiles"))
                 )
@@ -11315,11 +11422,15 @@ class SimplePdf:
                 [PdfString(id1), PdfString(id2)]
             )
 
-        # 6. Cap the PDF header version (PDF/A-1 -> 1.4, PDF/A-2/3 -> 1.7).
-        max_version = 1.4 if level_norm.startswith("1") else 1.7
+        # 6. Set the PDF header version the part is defined against
+        # (PDF/A-1 -> 1.4, PDF/A-2/3 -> 1.7, PDF/A-4 -> 2.0). Parts 1-3 cap it;
+        # part 4 *is* PDF 2.0, so an older header is wrong rather than merely
+        # conservative and is raised to it.
+        target = PDFA_HEADER_VERSION[level_norm[:1]]
+        limit = float(target)
         current = conformance._parse_pdf_version(self.pdf_version or "")
-        if current is None or current > max_version:
-            self.pdf_version = "1.4" if max_version == 1.4 else "1.7"
+        if current is None or current > limit or (limit >= 2.0 and current < limit):
+            self.pdf_version = target
 
         # 7. Automatic font embedding
         if font_lookup_directory:
@@ -11384,6 +11495,7 @@ class SimplePdf:
         language: str = "en",
         title: str | None = None,
         auto_tag: bool = False,
+        part: int = 1,
     ) -> list[str]:
         """Add the catalog-level PDF/UA prerequisites to this document in place.
 
@@ -11515,12 +11627,46 @@ class SimplePdf:
                 page.mapping[PdfName("Tabs")] = PdfName("S")
 
         # XMP metadata declaring pdfuaid:part (merged into any existing packet).
-        self._inject_pdfua_xmp(root, title)
+        self._inject_pdfua_xmp(root, title, part)
+        if part >= 2:
+            # ISO 14289-2 is defined on PDF 2.0, and its structure types come
+            # from the PDF 2.0 standard structure namespace rather than the
+            # unqualified names part 1 used.
+            self.pdf_version = "2.0"
+            self._declare_structure_namespace(root)
 
         logger.info("PDF/UA structure added; checking remaining issues.")
-        return self.check_pdfua_compliance()[0]
+        return self.check_pdfua_compliance(part)[0]
 
-    def _inject_pdfua_xmp(self, root: PdfDictionary, title: str) -> None:
+    def _declare_structure_namespace(self, root: PdfDictionary) -> None:
+        """Declare the PDF 2.0 standard structure namespace on the struct root."""
+        struct_root = self._resolve(root.mapping.get(PdfName("StructTreeRoot")))
+        if not isinstance(struct_root, PdfDictionary):
+            return
+        namespaces = self._resolve(struct_root.mapping.get(PdfName("Namespaces")))
+        if not isinstance(namespaces, PdfArray):
+            namespaces = PdfArray([])
+            struct_root.mapping[PdfName("Namespaces")] = namespaces
+        for item in namespaces.items:
+            entry = self._resolve(item)
+            if not isinstance(entry, PdfDictionary):
+                continue
+            uri = self._resolve(entry.mapping.get(PdfName("NS")))
+            if isinstance(uri, PdfString) and (
+                decode_pdf_text_string(uri) == PDF2_STRUCTURE_NS
+            ):
+                return
+        namespace = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Namespace"),
+                PdfName("NS"): _pdf_text_string(PDF2_STRUCTURE_NS),
+            }
+        )
+        namespaces.items.append(self._cos_doc.register_object(namespace))
+
+    def _inject_pdfua_xmp(
+        self, root: PdfDictionary, title: str, part: int = 1
+    ) -> None:
         """Ensure the catalog ``/Metadata`` XMP declares ``pdfuaid:part = 1``.
 
         Merges into an existing XMP packet when one is present so a document
@@ -11534,9 +11680,17 @@ class SimplePdf:
                 packet.set_value(
                     "pdfuaid",
                     "part",
-                    "1",
+                    str(part),
                     uri=STANDARD_XMP_NAMESPACES["pdfuaid"],
                 )
+                revision = PDFUA_REVISIONS[part]
+                if revision is not None:
+                    packet.set_value(
+                        "pdfuaid",
+                        "rev",
+                        revision,
+                        uri=STANDARD_XMP_NAMESPACES["pdfuaid"],
+                    )
                 if packet.get("dc", "title") is None:
                     packet.add(
                         XmpField(
@@ -11555,7 +11709,7 @@ class SimplePdf:
             except PDF_OPERATION_ERRORS:
                 xmp_bytes = None
         if xmp_bytes is None:
-            xmp_bytes = _make_pdfua_xmp(title)
+            xmp_bytes = _make_pdfua_xmp(title, part)
 
         xmp_stream = PdfStream(
             content=xmp_bytes,

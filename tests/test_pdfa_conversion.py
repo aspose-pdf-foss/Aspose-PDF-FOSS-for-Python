@@ -19,7 +19,7 @@ from aspose_pdf.engine.simple_pdf import (
     _make_pdfa_xmp,
     _minimal_srgb_icc_profile,
 )
-from aspose_pdf.exceptions import AsposePdfException
+from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -164,9 +164,13 @@ class TestMakePdfaXmp:
         xmp = _make_pdfa_xmp("1b", "T").decode("utf-8")
         assert xmp.endswith('<?xpacket end="w"?>')
 
-    def test_unknown_level_defaults_to_1b(self):
-        xmp = _make_pdfa_xmp("99z", "Doc").decode("utf-8")
-        assert "<pdfaid:part>1</pdfaid:part>" in xmp
+    def test_unknown_level_is_rejected(self):
+        # It used to fall back to PDF/A-1b, so a document asking for a level
+        # that does not exist got metadata claiming a different one.
+        with pytest.raises(PdfValidationException, match="Unknown PDF/A level"):
+            _make_pdfa_xmp("99z", "Doc")
+        with pytest.raises(PdfValidationException, match="Unknown PDF/A level"):
+            _make_pdfa_xmp("4a", "Doc")  # there is no accessible level in part 4
 
 
 # ---------------------------------------------------------------------------

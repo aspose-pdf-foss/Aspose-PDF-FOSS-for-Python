@@ -1341,11 +1341,13 @@ Supported:
 - Run heuristic PDF/A validation and get structured errors/warnings. Beyond
   encryption, metadata/XMP, fonts and output intents, the checker inspects
   many structural ISO 19005 rules observable from the object graph: a trailer
-  `/ID`, the header version per part (1.4 for PDF/A-1, 1.7 for PDF/A-2/3),
+  `/ID`, the header version per part (1.4 for PDF/A-1, 1.7 for PDF/A-2/3,
+  exactly 2.0 for PDF/A-4),
   document/page additional actions (`/AA`), optional content (`/OCProperties`,
   PDF/A-1), AcroForm `/NeedAppearances` and dynamic XFA, prohibited
-  annotations (Sound/Movie/Screen/3D/RichMedia; FileAttachment outside
-  PDF/A-3), annotation flags (Print required; Hidden/NoView/Invisible
+  annotations (Sound/Movie/Screen/3D/RichMedia — 3D and RichMedia are
+  permitted in PDF/A-4e, the engineering level that exists for them;
+  FileAttachment outside PDF/A-3 and -4), annotation flags (Print required; Hidden/NoView/Invisible
   forbidden) and appearances, prohibited actions
   (Launch/JavaScript/Sound/Movie/ResetForm/ImportData/SetOCGState/Rendition),
   PostScript XObjects, image `/Interpolate`, and PDF/A-1 transparency
@@ -1353,10 +1355,24 @@ Supported:
   `/Group /S /Transparency`). It also flags annotation constant opacity
   (`/CA` < 1, PDF/A-1), the `/Crypt` stream filter, the catalog `/Requirements`
   entry, `CIDFontType2` fonts missing `/CIDToGIDMap`, a filtered XMP `/Metadata`
-  stream (which must be plaintext), and PDF/A-3 embedded files lacking
-  `/AFRelationship`. PDF/A level A additionally requires a tagged
+  stream (which must be plaintext), and embedded files lacking
+  `/AFRelationship` in the parts that permit them (PDF/A-3 and -4). PDF/A
+  level A additionally requires a tagged
   structure tree, which is walked to verify standard structure types (or
   `/RoleMap` mappings), Figure/Formula alternate text, and `/Note` identifiers.
+- **PDF/A-4** (ISO 19005-4) is validated and produced. It is defined *on*
+  PDF 2.0 rather than capped by it, so the header is required to be exactly
+  2.0 and `convert_to_pdfa("4")` raises an older one rather than leaving it.
+  Part 4 dropped the accessible/basic/unicode split: there is no PDF/A-4a, the
+  base level `"4"` carries no `pdfaid:conformance` at all, and the variants are
+  `"4e"` (engineering — 3D and rich media) and `"4f"` (embedded files of any
+  type). A `pdfaid:rev` of `2020` is required and written, and a level that
+  does not exist is rejected instead of quietly producing PDF/A-1b metadata.
+- **PDF/UA-2** (ISO 14289-2) is validated and produced via
+  `validate_pdfua(part=2)` and `convert_to_pdfua(part=2)`: PDF 2.0 header, an
+  XMP `pdfuaid:rev` of `2024` alongside `pdfuaid:part`, and the PDF 2.0
+  standard structure namespace (`http://iso.org/pdf2/ssn`) declared in the
+  struct root's `/Namespaces`. Every part-1 catalog requirement still applies.
 - Check **device colour against the output intent** (ISO 19005-1 6.2.3.3): a
   device space is permitted only when an OutputIntent's `DestOutputProfile` is
   a profile of that same space, read from the ICC header, so DeviceCMYK content
@@ -1505,6 +1521,13 @@ Boundaries:
   validation. They inspect document structure, not rendered output, glyph
   coverage, colour fidelity, or the semantic correctness of a tag tree. Use a
   dedicated validator such as veraPDF for formal compliance.
+- The PDF 2.0 parts are checked at the same depth as the earlier ones, which
+  means their *identification* and the structural rules that differ, not the
+  whole of PDF 2.0. In particular PDF/A-4 requires an embedded PDF to itself be
+  PDF/A (outside `4f`), which is not verified — only that every file
+  specification declares its `/AFRelationship`. `convert_to_pdfua(part=2)`
+  declares the standard structure namespace but does not re-tag existing
+  elements into it: a tag tree built for part 1 keeps its unqualified types.
 - The PDF/UA structure-tree checks validate a tag tree that already exists.
   Marked-content (MCID) coverage is cross-checked against the `/ParentTree`
   (advisory warnings), including named property lists that resolve to an MCID

@@ -37,10 +37,13 @@ from .cos import (
     PdfString,
 )
 
-# Annotation subtypes that are never permitted in PDF/A (multimedia / 3D).
+# Annotation subtypes not permitted in PDF/A (multimedia / 3D).
 _PROHIBITED_ANNOT_SUBTYPES = frozenset(
     {"Sound", "Movie", "Screen", "RichMedia", "3D"}
 )
+
+# ...of which PDF/A-4e, the engineering level, exists precisely to allow.
+_ENGINEERING_ANNOT_SUBTYPES = frozenset({"RichMedia", "3D"})
 
 # Action ``/S`` types prohibited by PDF/A.
 _PROHIBITED_ACTION_TYPES = frozenset(
@@ -147,7 +150,15 @@ def pdfa_extended(pdf: Any, level_short: str) -> tuple[list[str], list[str]]:
         return errors, warnings
 
     part1 = _is_part1(level_short)
-    is_a3 = level_short[:1] == "3"
+    part = level_short[:1]
+    # Every part from 3 on permits embedded files, so every one of them needs
+    # the /AFRelationship that says what the attachment is *for*.
+    allows_embedded = part in ("3", "4")
+    # PDF/A-4e is the engineering level: 3D and rich media are the reason it
+    # exists, so the annotation types every other part forbids are allowed.
+    engineering = level_short == "4e"
+    # There is no PDF/A-4a: ISO 19005-4 dropped the accessible/basic/unicode
+    # split, so tagging is not a conformance level there.
     level_a = level_short.endswith("a")
 
     try:
@@ -156,9 +167,9 @@ def pdfa_extended(pdf: Any, level_short: str) -> tuple[list[str], list[str]]:
         _check_catalog_rules(pdf, part1, errors)
         _check_acroform(pdf, errors)
         _check_metadata_unfiltered(pdf, errors)
-        _check_pages(pdf, part1, is_a3, errors, warnings)
-        if is_a3:
-            _check_embedded_files(pdf, errors)
+        _check_pages(pdf, part1, allows_embedded, errors, warnings, engineering)
+        if allows_embedded:
+            _check_embedded_files(pdf, errors, part)
         if level_a:
             _check_tagging_for_level_a(pdf, errors, warnings)
     except PdfResourceLimitException:
@@ -180,6 +191,15 @@ def _check_trailer_id(pdf: Any, errors: list[str]) -> None:
 def _check_pdf_version(pdf: Any, level_short: str, errors: list[str]) -> None:
     version = _parse_pdf_version(getattr(pdf, "pdf_version", "") or "")
     if version is None:
+        return
+    if level_short[:1] == "4":
+        # PDF/A-4 is defined on PDF 2.0, not merely capped by it: an older
+        # header would put the file under a specification it does not follow.
+        if abs(version - 2.0) > 1e-9:
+            errors.append(
+                "PDF/A-4 requires PDF version 2.0; the header declares "
+                f"{pdf.pdf_version}."
+            )
         return
     if _is_part1(level_short):
         if version > 1.4 + 1e-9:
@@ -241,9 +261,10 @@ def _check_metadata_unfiltered(pdf: Any, errors: list[str]) -> None:
 def _check_pages(
     pdf: Any,
     part1: bool,
-    is_a3: bool,
+    allows_embedded: bool,
     errors: list[str],
     warnings: list[str],
+    engineering: bool = False,
 ) -> None:
     for i in range(len(pdf.pages)):
         page = pdf._get_page_dict(i)
@@ -260,7 +281,9 @@ def _check_pages(
                     "PDF/A-1 prohibits transparency groups "
                     f"(page {i + 1} /Group /S /Transparency)."
                 )
-        _check_annotations(pdf, page, i, part1, is_a3, errors, warnings)
+        _check_annotations(
+            pdf, page, i, part1, allows_embedded, errors, warnings, engineering
+        )
         resources = _get_dict(pdf, page.get(PdfName("Resources")))
         if resources is not None:
             _check_resources(pdf, resources, i, part1, errors, set(), 0)
@@ -275,9 +298,10 @@ def _check_annotations(
     page: PdfDictionary,
     i: int,
     part1: bool,
-    is_a3: bool,
+    allows_embedded: bool,
     errors: list[str],
     warnings: list[str],
+    engineering: bool = False,
 ) -> None:
     annots = pdf._resolve(page.get(PdfName("Annots")))
     if not isinstance(annots, PdfArray):
@@ -288,11 +312,14 @@ def _check_annotations(
             continue
         subtype = _name(pdf, annot, "Subtype")
         label = subtype or "annotation"
-        if subtype in _PROHIBITED_ANNOT_SUBTYPES:
+        prohibited = _PROHIBITED_ANNOT_SUBTYPES - (
+            _ENGINEERING_ANNOT_SUBTYPES if engineering else frozenset()
+        )
+        if subtype in prohibited:
             errors.append(f"PDF/A prohibits /{subtype} annotations (page {i + 1}).")
-        elif subtype == "FileAttachment" and not is_a3:
+        elif subtype == "FileAttachment" and not allows_embedded:
             errors.append(
-                "PDF/A (except PDF/A-3) prohibits /FileAttachment annotations "
+                "PDF/A-1 and PDF/A-2 prohibit /FileAttachment annotations "
                 f"(page {i + 1})."
             )
 
@@ -477,8 +504,11 @@ def _check_tagging_for_level_a(
     warnings.extend(s_warn)
 
 
-def _check_embedded_files(pdf: Any, errors: list[str]) -> None:
-    """Flag PDF/A-3 embedded file specifications lacking ``/AFRelationship``."""
+def _check_embedded_files(pdf: Any, errors: list[str], part: str = "3") -> None:
+    """Flag embedded file specifications lacking ``/AFRelationship``.
+
+    Applies to the parts that permit attachments at all -- PDF/A-3 and PDF/A-4.
+    """
     root = catalog(pdf)
     if root is None:
         return
@@ -501,8 +531,8 @@ def _check_embedded_files(pdf: Any, errors: list[str]) -> None:
         else:
             label = "embedded file"
         errors.append(
-            "PDF/A-3 requires /AFRelationship on embedded file specifications "
-            f"({label})."
+            f"PDF/A-{part} requires /AFRelationship on embedded file "
+            f"specifications ({label})."
         )
 
 
@@ -956,8 +986,22 @@ def pdfua_mcid_coverage(pdf: Any) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 # PDF/UA — catalog
 # ---------------------------------------------------------------------------
-def pdfua_extended(pdf: Any) -> tuple[list[str], list[str]]:
-    """Return ``(errors, warnings)`` for the extended PDF/UA catalog checks."""
+#: The PDF 2.0 standard structure namespace PDF/UA-2 draws its element types
+#: from (ISO 32000-2 14.7.4; ISO 14289-2 8.2).
+PDF2_STRUCTURE_NS = "http://iso.org/pdf2/ssn"
+
+#: The revision year each PDF/UA part identifies itself with in XMP.
+_PDFUA_REVISIONS = {1: None, 2: "2024"}
+
+
+def pdfua_extended(pdf: Any, part: int = 1) -> tuple[list[str], list[str]]:
+    """Return ``(errors, warnings)`` for the extended PDF/UA catalog checks.
+
+    *part* selects ISO 14289-1 or -2. Part 2 is defined on PDF 2.0 and adds two
+    identification requirements of its own: a ``pdfuaid:rev`` year, and
+    structure element types drawn from the PDF 2.0 standard structure namespace
+    rather than the unqualified names part 1 used.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     root = catalog(pdf)
@@ -965,6 +1009,9 @@ def pdfua_extended(pdf: Any) -> tuple[list[str], list[str]]:
         return errors, warnings
 
     try:
+        _check_pdfua_version(pdf, part, errors)
+        if part >= 2:
+            _check_structure_namespace(pdf, root, errors)
         viewer = _get_dict(pdf, root.get(PdfName("ViewerPreferences")))
         display = pdf._resolve(viewer.get(PdfName("DisplayDocTitle"))) if viewer else None
         if not (isinstance(display, PdfBoolean) and display.value):
@@ -982,8 +1029,8 @@ def pdfua_extended(pdf: Any) -> tuple[list[str], list[str]]:
             errors.append(
                 "PDF/UA requires an XMP metadata stream declaring pdfuaid:part."
             )
-        elif "pdfuaid:part" not in metadata.content.decode("utf-8", errors="replace"):
-            errors.append("PDF/UA XMP metadata must declare pdfuaid:part (= 1).")
+        else:
+            _check_pdfua_identifier(metadata.content, part, errors)
     except PdfResourceLimitException:
         raise
     except PDF_OPERATION_ERRORS:
@@ -1001,6 +1048,83 @@ def pdfua_extended(pdf: Any) -> tuple[list[str], list[str]]:
     warnings.extend(mcid_warnings)
 
     return errors, warnings
+
+
+def _check_pdfua_version(pdf: Any, part: int, errors: list[str]) -> None:
+    """PDF/UA-2 is defined on PDF 2.0; part 1 puts no ceiling on the version."""
+    if part < 2:
+        return
+    version = _parse_pdf_version(getattr(pdf, "pdf_version", "") or "")
+    if version is not None and abs(version - 2.0) > 1e-9:
+        errors.append(
+            "PDF/UA-2 requires PDF version 2.0; the header declares "
+            f"{pdf.pdf_version}."
+        )
+
+
+def _check_pdfua_identifier(xmp: bytes, part: int, errors: list[str]) -> None:
+    """Check the ``pdfuaid`` part (and, from part 2, revision) in an XMP packet."""
+    text = xmp.decode("utf-8", errors="replace")
+    declared = _xmp_value(text, "pdfuaid:part")
+    if declared is None:
+        errors.append(
+            f"PDF/UA XMP metadata must declare pdfuaid:part (= {part})."
+        )
+    elif declared != str(part):
+        errors.append(
+            f"XMP pdfuaid:part is {declared!r} but validation requires "
+            f"part {part}."
+        )
+    revision = _PDFUA_REVISIONS.get(part)
+    if revision is None:
+        return
+    declared_rev = _xmp_value(text, "pdfuaid:rev")
+    if declared_rev != revision:
+        errors.append(
+            f"PDF/UA-{part} requires XMP pdfuaid:rev = {revision}; got "
+            f"{declared_rev!r}."
+        )
+
+
+def _xmp_value(text: str, qualified_name: str) -> str | None:
+    """Read an XMP property written either as an element or as an attribute."""
+    pattern = re.escape(qualified_name)
+    match = re.search(rf"{pattern}\s*>([^<]+)</", text, re.IGNORECASE)
+    if match is None:
+        match = re.search(
+            rf"{pattern}\s*=\s*[\"\']([^\"\']+)[\"\']", text, re.IGNORECASE
+        )
+    return match.group(1).strip() if match else None
+
+
+def _check_structure_namespace(
+    pdf: Any, root: PdfDictionary, errors: list[str]
+) -> None:
+    """PDF/UA-2 structure types come from the PDF 2.0 standard namespace."""
+    struct_root = _get_dict(pdf, root.get(PdfName("StructTreeRoot")))
+    if struct_root is None:
+        return  # the missing /StructTreeRoot is already reported on its own
+    namespaces = pdf._resolve(struct_root.get(PdfName("Namespaces")))
+    declared = []
+    if isinstance(namespaces, PdfArray):
+        for item in namespaces.items:
+            entry = _get_dict(pdf, item)
+            if entry is None:
+                continue
+            uri = pdf._resolve(entry.get(PdfName("NS")))
+            if isinstance(uri, PdfString):
+                raw = uri.value
+                declared.append(
+                    raw.decode("utf-8", "replace")
+                    if isinstance(raw, bytes)
+                    else str(raw)
+                )
+    if PDF2_STRUCTURE_NS not in declared:
+        errors.append(
+            "PDF/UA-2 requires the StructTreeRoot to declare the PDF 2.0 "
+            f"standard structure namespace ({PDF2_STRUCTURE_NS}) in "
+            "/Namespaces."
+        )
 
 
 def _has_document_title(pdf: Any, root: PdfDictionary) -> bool:

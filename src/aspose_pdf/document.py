@@ -1251,7 +1251,8 @@ class Document:
         Parameters
         ----------
         level : str
-            PDF/A level ('1b', '2b', '3b', etc.)
+            PDF/A level: ``'1a'``/``'1b'``, ``'2a'``/``'2b'``/``'2u'``,
+            ``'3a'``/``'3b'``/``'3u'``, or ``'4'``/``'4e'``/``'4f'``.
 
         Returns
         -------
@@ -1271,7 +1272,10 @@ class Document:
         Parameters
         ----------
         level : str
-            PDF/A conformance level to check (e.g. ``"1b"``, ``"2b"``).
+            PDF/A conformance level to check (e.g. ``"1b"``, ``"2b"``,
+            ``"4"``). ISO 19005-4 has no accessible/basic/unicode split: its
+            levels are ``"4"``, ``"4e"`` (engineering, which permits 3D and
+            rich media) and ``"4f"`` (embedded files of any type).
 
         Returns
         -------
@@ -1289,24 +1293,33 @@ class Document:
 
     @property
     def is_pdfua_compliant(self) -> bool:
-        """Heuristic PDF/UA catalog structure check (tagged PDF shell).
+        """Heuristic PDF/UA-1 catalog structure check (tagged PDF shell).
 
         Uses the same rules as :meth:`validate_pdfua`.  A ``True`` value does
         **not** mean the document is accessible or PDF/UA certified — only
         that required catalog entries for tagging passed this library's
-        lightweight inspection.
+        lightweight inspection. For ISO 14289-2 call
+        ``validate_pdfua(part=2)``.
         """
         self._ensure_not_disposed()
         return self.validate_pdfua().is_valid
 
-    def validate_pdfua(self) -> PdfUaValidationResult:
+    def validate_pdfua(self, part: int = 1) -> PdfUaValidationResult:
         """Validate catalog-level PDF/UA prerequisites (heuristic).
 
         Checks for ``/StructTreeRoot``, ``/MarkInfo`` with ``/Marked true``,
         and emits a warning when ``/Lang`` is missing.  This is **not** a full
-        PDF/UA-1 validator: use :attr:`PdfUaValidationResult.is_heuristic` and
+        PDF/UA validator: use :attr:`PdfUaValidationResult.is_heuristic` and
         :attr:`PdfUaValidationResult.HEURISTIC_VALIDATION_NOTICE` when
         building compliance or accessibility automation.
+
+        Parameters
+        ----------
+        part : int
+            ``1`` for ISO 14289-1 (the default) or ``2`` for ISO 14289-2, which
+            is defined on PDF 2.0 and additionally requires an XMP
+            ``pdfuaid:rev`` and structure types drawn from the PDF 2.0 standard
+            structure namespace.
 
         Returns
         -------
@@ -1316,7 +1329,7 @@ class Document:
         """
         self._ensure_not_disposed()
         if self._engine_pdf:
-            errs, warns = self._engine_pdf.check_pdfua_compliance()
+            errs, warns = self._engine_pdf.check_pdfua_compliance(part)
         else:
             errs, warns = (["No document loaded"], [])
         return PdfUaValidationResult(errors=errs, warnings=warns)
@@ -1340,8 +1353,9 @@ class Document:
         Parameters
         ----------
         level : str
-            Target PDF/A conformance level (e.g. ``'1b'``, ``'2b'``,
-            ``'3b'``).  Case-insensitive.
+            Target PDF/A conformance level (e.g. ``'1b'``, ``'2b'``, ``'3b'``,
+            ``'4'``).  Case-insensitive. PDF/A-4 is written against PDF 2.0, so
+            the header version is raised to match.
 
         Returns
         -------
@@ -1369,6 +1383,7 @@ class Document:
         language: str = "en",
         title: str | None = None,
         auto_tag: bool = False,
+        part: int = 1,
     ) -> list[str]:
         """Add the catalog-level PDF/UA prerequisites to the document in place.
 
@@ -1393,6 +1408,10 @@ class Document:
         auto_tag : bool
             When ``True``, heuristically tag existing page text into the
             structure tree before building the shell (default ``False``).
+        part : int
+            ``1`` for ISO 14289-1 (the default) or ``2`` for ISO 14289-2, which
+            also raises the header to PDF 2.0, adds an XMP ``pdfuaid:rev`` and
+            declares the PDF 2.0 standard structure namespace.
 
         Returns
         -------
@@ -1410,7 +1429,7 @@ class Document:
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
         return self._engine_pdf.convert_to_pdfua(
-            language=language, title=title, auto_tag=auto_tag
+            language=language, title=title, auto_tag=auto_tag, part=part
         )
 
     def auto_tag(
