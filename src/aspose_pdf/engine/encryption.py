@@ -862,3 +862,78 @@ class EncryptionUtils:
     def generate_file_id() -> bytes:
         """Generate a random 16-byte file ID for new documents."""
         return os.urandom(16)
+
+
+def decrypt_object_in_place(
+    obj: object,
+    obj_num: int,
+    gen_num: int,
+    key: bytes,
+    algorithm: str,
+    *,
+    encrypt_metadata: bool = True,
+    max_depth: int = 100,
+) -> None:
+    """Decrypt one indirect object -- its strings and stream payload -- in place.
+
+    Everything an object holds is enciphered under a key derived from that
+    object's own number and generation (ISO 32000-1 7.6.2), so decryption
+    belongs to the object as a whole rather than to any one value inside it.
+    Three things are skipped, each for its own reason: a cross-reference stream
+    is what a reader parses to *find* the ``/Encrypt`` dictionary, so it is
+    never encrypted; a ``/Metadata`` stream is plain whenever the handler says
+    ``/EncryptMetadata false``; and a signature's ``/Contents`` is written over
+    the file afterwards, outside the encryption entirely.
+
+    A value that will not decrypt is left exactly as it was stored rather than
+    failing the whole document: one damaged object should surface when it is
+    used, not make everything around it unreadable.
+    """
+    from .cos import PdfArray, PdfDictionary, PdfName, PdfStream, PdfString
+
+    def _type_name(mapping: dict) -> str | None:
+        value = mapping.get(PdfName("Type"))
+        return value.name.lstrip("/") if isinstance(value, PdfName) else None
+
+    def _walk(node: object, depth: int, in_signature: bool) -> None:
+        if depth > max_depth:
+            return
+        if isinstance(node, PdfString):
+            try:
+                node.value = EncryptionUtils.decrypt_object_data(
+                    key, algorithm, obj_num, node.value, gen_num
+                )
+            except PdfSecurityException:
+                pass
+            return
+        if isinstance(node, PdfArray):
+            for item in node.items:
+                _walk(item, depth + 1, in_signature)
+            return
+        if not isinstance(node, PdfDictionary):
+            return
+        signature = (
+            _type_name(node.mapping) == "Sig" or PdfName("ByteRange") in node.mapping
+        )
+        for name, value in node.mapping.items():
+            if signature and name.name.lstrip("/") == "Contents":
+                continue
+            _walk(value, depth + 1, signature)
+
+    if isinstance(obj, PdfStream) and not obj.content_decrypted:
+        # Marked whether or not a cipher runs: the flag records that the
+        # security handler has had its say about these bytes.
+        obj.content_decrypted = True
+        stream_type = _type_name(obj.mapping)
+        exempt = stream_type == "XRef" or (
+            stream_type == "Metadata" and not encrypt_metadata
+        )
+        if obj.content and not exempt:
+            try:
+                obj.content = EncryptionUtils.decrypt_object_data(
+                    key, algorithm, obj_num, obj.content, gen_num
+                )
+            except PdfSecurityException:
+                pass
+
+    _walk(obj, 0, False)

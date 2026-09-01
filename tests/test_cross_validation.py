@@ -53,16 +53,24 @@ def _page_of_everything() -> Document:
     return _reloaded(document)
 
 
-def _qpdf_problems(data: bytes) -> list[str]:
+def _page_content(page) -> bytes:
+    """The page's content bytes, whether ``/Contents`` is one stream or many."""
+    contents = page.Contents
+    if isinstance(contents, pikepdf.Array):
+        return b"\n".join(bytes(part.read_bytes()) for part in contents)
+    return bytes(contents.read_bytes())
+
+
+def _qpdf_problems(data: bytes, password: str = "") -> list[str]:
     """qpdf's own complaints about *data*, if any."""
-    with pikepdf.open(io.BytesIO(data)) as pdf:
+    with pikepdf.open(io.BytesIO(data), password=password) as pdf:
         return list(pdf.check_pdf_syntax())
 
 
-def _qpdf_rewrite(data: bytes) -> bytes:
+def _qpdf_rewrite(data: bytes, password: str = "") -> bytes:
     """Re-save through qpdf, which has to re-read every object to do it."""
     out = io.BytesIO()
-    with pikepdf.open(io.BytesIO(data)) as pdf:
+    with pikepdf.open(io.BytesIO(data), password=password) as pdf:
         pdf.save(out)
     return out.getvalue()
 
@@ -103,6 +111,21 @@ def _documents() -> dict[str, bytes]:
     optimized = _page_of_everything()
     optimized.optimize(OptimizationOptions(subset_fonts=True, compress_fonts=True))
     made["optimized"] = _saved(optimized)
+
+    # A title makes the string half of the encryption visible: strings and
+    # streams are enciphered separately, and only one of them shows up in the
+    # page content.
+    for algorithm in ("RC4", "AES-128", "AES-256"):
+        sealed = _page_of_everything()
+        sealed.info["Title"] = "Encrypted and structured"
+        sealed.encrypt("u", "owner", algorithm=algorithm)
+        made[f"encrypted-{algorithm}"] = _saved(sealed)
+
+    packed = _page_of_everything()
+    packed.info["Title"] = "Encrypted and structured"
+    packed.optimize(OptimizationOptions(use_object_streams=True))
+    packed.encrypt("u", "owner", algorithm="AES-128")
+    made["encrypted-objstm"] = _saved(packed)
 
     signed = _page_of_everything()
     from aspose_pdf.engine.signing import SigningUtils
@@ -168,8 +191,10 @@ def test_every_page_reaches_a_resource_dictionary(documents):
     # /Resources is required and inheritable; qpdf repairs a page that has
     # neither its own nor an inherited one, and says so.
     for name, data in documents.items():
+        password = "u" if name.startswith("encrypted") else ""
         assert not any(
-            "Resources is missing" in problem for problem in _qpdf_problems(data)
+            "Resources is missing" in problem
+            for problem in _qpdf_problems(data, password)
         ), name
 
 
@@ -222,6 +247,41 @@ def test_a_tagged_document_presents_a_structure_tree(documents):
     with pikepdf.open(io.BytesIO(documents["tagged"])) as pdf:
         assert bool(pdf.Root.MarkInfo.Marked) is True
         assert len(pdf.Root.StructTreeRoot.K) > 0
+
+
+# ---------------------------------------------------------------------------
+# Encryption: the writer enciphers, and qpdf has to be able to undo it
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["encrypted-RC4", "encrypted-AES-128", "encrypted-AES-256", "encrypted-objstm"],
+)
+def test_qpdf_opens_what_the_writer_enciphered(documents, name):
+    """Every string and stream has to come back, from another implementation.
+
+    Encryption is per object and per value; an entry left in the clear, or
+    enciphered twice, is invisible in our own round trip -- we would make the
+    same mistake reading it back -- and obvious here.
+    """
+    data = documents[name]
+    assert _qpdf_problems(data, "u") == []
+    with pikepdf.open(io.BytesIO(data), password="u") as pdf:
+        assert str(pdf.docinfo["/Title"]) == "Encrypted and structured"
+        assert [str(f.T) for f in pdf.Root.AcroForm.Fields] == ["nickname"]
+        assert str(pdf.Root.Names.EmbeddedFiles.Names[0]) == "notes.txt"
+        assert "/Outlines" in pdf.Root
+        assert b"Body text" in _page_content(pdf.pages[0])
+
+
+def test_a_qpdf_decrypted_rewrite_still_reads_back_here(documents):
+    """The other direction: qpdf strips the encryption, we read the result."""
+    rewritten = _qpdf_rewrite(documents["encrypted-AES-256"], "u")
+    document = Document(io.BytesIO(rewritten))
+
+    assert document.page_count == 1
+    assert [field.name for field in document.form] == ["nickname"]
 
 
 # ---------------------------------------------------------------------------

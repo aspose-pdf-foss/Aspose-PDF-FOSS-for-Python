@@ -111,11 +111,24 @@ class PdfDictionary(PdfObject):
 
 
 class PdfStream(PdfDictionary):
+    """A stream object: a dictionary plus a byte payload.
+
+    ``content_decrypted`` says whether :attr:`content` has been through the
+    document's security handler. A stream built in code holds plaintext by
+    construction, so it starts ``True``; one parsed out of a file holds the
+    bytes exactly as stored, so the parser sets it ``False`` until the handler
+    runs. Without the distinction a reader cannot tell an encrypted payload
+    from a plain one sitting in the same graph -- which is how a stream
+    authored after load ends up "decrypted" into noise, and how an encrypted
+    payload ends up written out as if it were plain.
+    """
+
     def __init__(
         self, content: bytes = b"", mapping: dict[PdfName, PdfObject] | None = None
     ) -> None:
         super().__init__(mapping)
         self.content: bytes = content
+        self.content_decrypted: bool = True
 
     def __repr__(self) -> str:
         return f"PdfStream(content={self.content!r}, dict={self.mapping})"
@@ -203,3 +216,32 @@ def annotation_value_to_cos(value: Any) -> PdfObject:
     raise TypeError(
         f"Unsupported annotation property value of type {type(value).__name__!r}"
     )
+
+
+def cos_dict_to_plain(obj: Any, resolve: Any = None) -> dict | None:
+    """Flatten a :class:`PdfDictionary` into plain Python keys and values.
+
+    ``StreamDecoder`` takes ``/DecodeParms`` as an ordinary mapping with string
+    keys, because it knows nothing about the COS model. Handing it a
+    :class:`PdfDictionary` instead is silent rather than loud -- ``get("Predictor")``
+    simply misses, and the filter runs as if no predictor were declared -- so
+    every caller has to convert, and they all convert the same way.
+
+    *resolve* dereferences an indirect value; without it, values are taken as
+    they are.
+    """
+    if not isinstance(obj, PdfDictionary):
+        return None
+    deref = resolve if callable(resolve) else (lambda value: value)
+    result: dict[str, Any] = {}
+    for key, value in obj.mapping.items():
+        resolved = deref(value)
+        if isinstance(resolved, PdfNumber):
+            result[key.name.lstrip("/")] = resolved.value
+        elif isinstance(resolved, PdfName):
+            result[key.name.lstrip("/")] = resolved.name.lstrip("/")
+        elif isinstance(resolved, PdfBoolean):
+            result[key.name.lstrip("/")] = resolved.value
+        else:
+            result[key.name.lstrip("/")] = resolved
+    return result

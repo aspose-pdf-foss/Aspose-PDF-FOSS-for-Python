@@ -118,11 +118,13 @@ flowchart TD
   page content.
 - `Annotation` and `AnnotationCollection` read, add, and auto-generate `/AP /N` appearance
   streams for the standard shape and text-markup annotation subtypes.
-- `Document.encrypt(..., algorithm=...)` and `Document.decrypt()` apply standard-handler password
-  protection — AES-256 (`/V 5 /R 6`) by default, AES-128 or 128-bit RC4 on request — and every
-  standard-handler flavour, including 40-bit RC4 and owner-password-only documents, can be opened;
-  `PdfSignature.validate()` cryptographically verifies a signer's identity, trust chain, revocation
-  status, and PAdES conformance level.
+- `Document.encrypt(..., algorithm=...)` and `Document.decrypt()` apply and remove standard-handler
+  password protection — AES-256 (`/V 5 /R 6`) by default, AES-128 or 128-bit RC4 on request — and
+  every standard-handler flavour, including 40-bit RC4 and owner-password-only documents, can be
+  opened. Encryption is applied as the document is serialised, per object, so an encrypted save
+  keeps the form fields, attachments, layers and tags of the document it was given, signatures
+  included; `PdfSignature.validate()` cryptographically verifies a signer's identity, trust chain,
+  revocation status, and PAdES conformance level.
 - `Document.validate_pdfa()`, `Document.convert_to_pdfa()`, `Document.validate_pdfua()`, and
   `Document.auto_tag()` run heuristic PDF/A and PDF/UA compliance checks and generate a structure
   tree for existing content.

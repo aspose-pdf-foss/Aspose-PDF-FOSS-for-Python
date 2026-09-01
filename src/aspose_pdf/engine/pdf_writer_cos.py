@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import zlib
+from dataclasses import dataclass, field
 
 from .cos import (
     PdfArray,
@@ -18,6 +19,46 @@ from .cos import (
     PdfStream,
     PdfString,
 )
+from .encryption import EncryptionUtils
+
+
+def _is_signature(d: PdfDictionary) -> bool:
+    """Whether *d* is a signature value dictionary (ISO 32000-1 12.8.1)."""
+    type_name = d.mapping.get(PdfName("Type"))
+    return (
+        isinstance(type_name, PdfName) and type_name.name == "/Sig"
+    ) or PdfName("ByteRange") in d.mapping
+
+
+@dataclass(frozen=True)
+class WriterEncryption:
+    """The security handler, applied as :class:`PdfCosWriter` serialises.
+
+    Encryption in PDF is per *object*: every string and every stream payload is
+    enciphered with a key derived from the file key and the object's own number
+    and generation (ISO 32000-1 7.6.2). That makes serialisation the only place
+    it can happen, because that is where an object's number is known.
+
+    Four things stay in the clear, and each for its own reason. The
+    ``/Encrypt`` dictionary holds the values a reader needs *before* it has a
+    key, so it is named in *exempt*. A cross-reference stream is how a reader
+    finds that dictionary, so ISO 32000-1 7.5.8.2 leaves it plain. A
+    signature's ``/Contents`` is written over the file after encryption, so
+    enciphering it would destroy the signature. And the ``/Metadata`` stream is
+    plain whenever the handler advertises ``/EncryptMetadata false``, which is
+    the entire point of that entry.
+    """
+
+    key: bytes
+    algorithm: str
+    exempt: frozenset[int] = field(default_factory=frozenset)
+    encrypt_metadata: bool = True
+
+    def apply(self, obj_num: int, gen_num: int, data: bytes) -> bytes:
+        """Return *data* enciphered with the key for this object."""
+        return EncryptionUtils.encrypt_object_data(
+            self.key, self.algorithm, obj_num, data, gen_num
+        )
 
 
 class PdfCosWriter:
@@ -37,10 +78,22 @@ class PdfCosWriter:
         pdf_version: str = "1.7",
         *,
         use_object_streams: bool = False,
+        encryption: WriterEncryption | None = None,
     ) -> None:
         self.doc = doc
         self.pdf_version = pdf_version
         self.use_object_streams = use_object_streams
+        self.encryption = encryption
+        # (number, generation) of the object being serialised, or None where
+        # nothing is encrypted -- the trailer, an unencrypted document, an
+        # exempt object, or a caller using this writer as a plain serialiser.
+        self._crypt_obj: tuple[int, int] | None = None
+
+    def _crypt_for(self, obj_number: int, gen_number: int = 0):
+        """The object identity to encrypt with, or ``None`` to write in clear."""
+        if self.encryption is None or obj_number in self.encryption.exempt:
+            return None
+        return (obj_number, gen_number)
 
     # ---------------------------------------------------------------------
     # Public API
@@ -77,13 +130,17 @@ class PdfCosWriter:
             obj = self.doc.objects[obj_number]
             offsets[obj_number] = len(buffer)
             buffer.extend(f"{obj_number} 0 obj\n".encode())
-            if isinstance(obj, PdfStream):
-                # Stream content is binary: emit the raw bytes verbatim so the
-                # written length matches /Length. (Decoding to latin1 and then
-                # re-encoding as UTF-8 would expand any byte >= 0x80.)
-                self._extend_stream_bytes(buffer, obj)
-            else:
-                buffer.extend(self.serialize_object(obj).encode("utf-8"))
+            self._crypt_obj = self._crypt_for(obj_number)
+            try:
+                if isinstance(obj, PdfStream):
+                    # Stream content is binary: emit the raw bytes verbatim so
+                    # the written length matches /Length. (Decoding to latin1
+                    # and re-encoding as UTF-8 would expand any byte >= 0x80.)
+                    self._extend_stream_bytes(buffer, obj)
+                else:
+                    buffer.extend(self.serialize_object(obj).encode("utf-8"))
+            finally:
+                self._crypt_obj = None
             # Ensure a newline before endobj
             if not buffer.endswith(b"\n"):
                 buffer.extend(b"\n")
@@ -133,11 +190,19 @@ class PdfCosWriter:
             if isinstance(root_ref, PdfIndirectReference)
             else None
         )
+        # The /Encrypt dictionary joins it: a reader has to read that before it
+        # has a key, so it can be neither encrypted nor buried in an object
+        # stream that is (ISO 32000-1 7.5.7). Whatever is kept out of the
+        # object stream still has to be written -- ``unpacked_nums`` below
+        # reads this same set.
+        standalone = {catalog_num}
+        if self.encryption is not None:
+            standalone.update(self.encryption.exempt)
 
         packable = [
             (num, objects[num])
             for num in sorted(objects.keys())
-            if not isinstance(objects[num], PdfStream) and num != catalog_num
+            if not isinstance(objects[num], PdfStream) and num not in standalone
         ]
         if not packable:
             return None
@@ -147,6 +212,10 @@ class PdfCosWriter:
         xref_num = max_existing + 2
 
         # --- Build the object stream -------------------------------------
+        # Strings inside an object stream are not enciphered individually: the
+        # stream is encrypted as a whole, under its own object number
+        # (ISO 32000-1 7.5.7). So the bodies are serialised in the clear here
+        # and the packed result is encrypted once, below.
         bodies = [
             (num, self.serialize_object(obj).encode("latin-1"))
             for num, obj in packable
@@ -188,23 +257,31 @@ class PdfCosWriter:
         unpacked_nums = [
             num
             for num in sorted(objects.keys())
-            if isinstance(objects[num], PdfStream) or num == catalog_num
+            if isinstance(objects[num], PdfStream) or num in standalone
         ]
         for num in unpacked_nums:
             offsets[num] = len(buffer)
             buffer.extend(f"{num} 0 obj\n".encode())
             obj = objects[num]
-            if isinstance(obj, PdfStream):
-                self._extend_stream_bytes(buffer, obj)
-            else:
-                buffer.extend(self.serialize_object(obj).encode("utf-8"))
+            self._crypt_obj = self._crypt_for(num)
+            try:
+                if isinstance(obj, PdfStream):
+                    self._extend_stream_bytes(buffer, obj)
+                else:
+                    buffer.extend(self.serialize_object(obj).encode("utf-8"))
+            finally:
+                self._crypt_obj = None
             if not buffer.endswith(b"\n"):
                 buffer.extend(b"\n")
             buffer.extend(b"endobj\n")
 
         offsets[objstm_num] = len(buffer)
         buffer.extend(f"{objstm_num} 0 obj\n".encode())
-        self._extend_stream_bytes(buffer, objstm)
+        self._crypt_obj = self._crypt_for(objstm_num)
+        try:
+            self._extend_stream_bytes(buffer, objstm)
+        finally:
+            self._crypt_obj = None
         buffer.extend(b"\nendobj\n")
 
         # --- Build the cross-reference stream ----------------------------
@@ -246,13 +323,16 @@ class PdfCosWriter:
             PdfName("Length"): PdfNumber(len(xref_content)),
         }
         # Carry the document references the trailer needs into the XRef dict.
-        for key_name in ("Root", "Info", "ID"):
+        for key_name in ("Root", "Info", "ID", "Encrypt"):
             val = self.doc.trailer.mapping.get(PdfName(key_name))
             if val is not None:
                 xref_map[PdfName(key_name)] = val
         xref_stream = PdfStream(content=xref_content, mapping=xref_map)
 
         buffer.extend(f"{xref_num} 0 obj\n".encode())
+        # ``_crypt_obj`` stays None here: the cross-reference stream is what a
+        # reader parses to find /Encrypt, so neither it nor the /ID beside it
+        # can be enciphered (ISO 32000-1 7.5.8.2).
         self._extend_stream_bytes(buffer, xref_stream)
         buffer.extend(b"\nendobj\n")
         buffer.extend(f"startxref\n{xref_offset}\n%%EOF".encode())
@@ -275,6 +355,22 @@ class PdfCosWriter:
         # added after load (e.g. a newly written /Metadata stream).
         trailer.mapping[PdfName("Size")] = PdfNumber(size)
         return trailer
+
+    def serialize_indirect(
+        self, obj_number: int, obj: PdfObject, gen_number: int = 0
+    ) -> str:
+        """Serialise *obj* as the body of indirect object *obj_number*.
+
+        The plain :meth:`serialize_object` has no object identity to work with,
+        so it cannot encrypt; anything an encrypted document emits outside
+        :meth:`write` -- an incremental revision, say -- has to come through
+        here instead.
+        """
+        self._crypt_obj = self._crypt_for(obj_number, gen_number)
+        try:
+            return self.serialize_object(obj)
+        finally:
+            self._crypt_obj = None
 
     def serialize_object(self, obj: PdfObject) -> str:
         """Dispatch serialisation based on object type."""
@@ -303,6 +399,8 @@ class PdfCosWriter:
 
     def _serialize_string(self, s: PdfString) -> str:
         raw = s.value
+        if self._crypt_obj is not None and self.encryption is not None:
+            raw = self.encryption.apply(*self._crypt_obj, raw)
         # Use hex string notation for any value that contains bytes outside
         # the printable ASCII range — this covers binary data such as file IDs.
         if any(b < 0x20 or b > 0x7E for b in raw):
@@ -318,10 +416,23 @@ class PdfCosWriter:
 
     def _serialize_dictionary(self, d: PdfDictionary) -> str:
         parts: list[str] = []
+        clear_contents = self._crypt_obj is not None and _is_signature(d)
         # Sort keys for deterministic output
         for key in sorted(d.mapping.keys(), key=lambda k: k.name):
             value = d.mapping[key]
-            parts.append(f"{key.name} {self.serialize_object(value)}")
+            if clear_contents and key.name == "/Contents":
+                # The CMS blob is patched into the file *after* it is written,
+                # over the whole byte range the signature covers. Enciphering
+                # the placeholder would leave the signer writing plaintext into
+                # a slot every reader decrypts.
+                saved, self._crypt_obj = self._crypt_obj, None
+                try:
+                    text = self.serialize_object(value)
+                finally:
+                    self._crypt_obj = saved
+            else:
+                text = self.serialize_object(value)
+            parts.append(f"{key.name} {text}")
         inner = " ".join(parts)
         return f"<< {inner} >>"
 
@@ -335,17 +446,45 @@ class PdfCosWriter:
         # We need to handle binary content correctly.
         return f"{dict_repr}\nstream\n{stream.content.decode('latin1')}\nendstream"
 
+    def _stream_payload(self, stream: PdfStream) -> bytes:
+        """The bytes to write for *stream*, enciphered where the handler says.
+
+        A cross-reference stream is never encrypted -- it is what a reader
+        parses to find the ``/Encrypt`` dictionary -- and neither is
+        ``/Metadata`` under ``/EncryptMetadata false``.
+        """
+        content = stream.content
+        if self._crypt_obj is None or self.encryption is None or not content:
+            return content
+        stream_type = stream.mapping.get(PdfName("Type"))
+        if isinstance(stream_type, PdfName):
+            if stream_type.name == "/XRef":
+                return content
+            if (
+                stream_type.name == "/Metadata"
+                and not self.encryption.encrypt_metadata
+            ):
+                return content
+        return self.encryption.apply(*self._crypt_obj, content)
+
     def _extend_stream_bytes(self, buffer: bytearray, stream: PdfStream) -> None:
         """Append a stream object to *buffer* with its content as raw bytes.
 
-        ``/Length`` is set to the exact byte length of the content so it always
-        aligns with the ``endstream`` keyword, regardless of the bytes written.
+        ``/Length`` is the length of what is actually written, which for an
+        encrypted document is the ciphertext -- AES pads and prefixes an IV, so
+        it is longer than the payload in the graph. The entry is emitted from a
+        copy of the dictionary rather than written back into it: the object in
+        memory still holds plaintext, and a ``/Length`` describing the
+        ciphertext would be a lie to everything that reads the graph after the
+        save.
         """
-        stream.mapping[PdfName("Length")] = PdfNumber(len(stream.content))
-        dict_repr = self._serialize_dictionary(stream)
+        payload = self._stream_payload(stream)
+        mapping = dict(stream.mapping)
+        mapping[PdfName("Length")] = PdfNumber(len(payload))
+        dict_repr = self._serialize_dictionary(PdfDictionary(mapping))
         buffer.extend(dict_repr.encode("latin-1"))
         buffer.extend(b"\nstream\n")
-        buffer.extend(stream.content)
+        buffer.extend(payload)
         buffer.extend(b"\nendstream")
 
     # The writer does not maintain any mutable state beyond the document reference.

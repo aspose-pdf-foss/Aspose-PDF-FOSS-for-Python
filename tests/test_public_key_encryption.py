@@ -224,7 +224,10 @@ def test_the_dictionary_names_the_handler_and_carries_recipients(alice):
 
     assert b"/Filter /Adobe.PubSec" in data
     assert b"/SubFilter /adbe.pkcs7.s5" in data
-    assert b"/V 5 /R 6" in data
+    # The two are asserted apart because the writer sorts dictionary keys for
+    # deterministic output, so /R precedes /V and they are not adjacent.
+    assert b"/V 5" in data
+    assert b"/R 6" in data
     # /V 4 and 5 keep /Recipients inside the crypt filter, not at the top.
     assert b"/CF << /DefaultCryptFilter" in data
     assert b"/Recipients [" in data

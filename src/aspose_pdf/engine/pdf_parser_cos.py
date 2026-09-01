@@ -44,6 +44,7 @@ from .cos import (
     PdfNumber,
     PdfStream,
     PdfString,
+    cos_dict_to_plain,
 )
 
 logger = logging.getLogger("aspose_pdf")
@@ -563,6 +564,12 @@ class PdfCosParser:
         """Retrieve a parsed object by its indirect reference."""
         return self._objects.get(ref.object_number)
 
+    def _resolve(self, obj: Any) -> Any:
+        """Dereference an indirect reference, returning the object itself."""
+        if isinstance(obj, PdfIndirectReference) and self._objects is not None:
+            return self._objects.get(obj.object_number)
+        return obj
+
     # ---------------------------------------------------------------------
     # XRef Section Parsing
     # ---------------------------------------------------------------------
@@ -786,7 +793,19 @@ class PdfCosParser:
         filter_name = None
         if isinstance(filter_obj, PdfName):
             filter_name = filter_obj.name.lstrip("/")
-        decode_parms = stream_obj.mapping.get(PdfName("DecodeParms"))
+        # No resolver: the cross-reference stream is parsed before any object
+        # can be looked up, so its own /DecodeParms has to be a direct object.
+        decode_parms = cos_dict_to_plain(stream_obj.mapping.get(PdfName("DecodeParms")))
+
+        # The limit applies to what inflate produces, which a PNG predictor has
+        # not been undone on yet: it prefixes every row with a filter-type byte
+        # (ISO 32000-1 7.4.4.4), so that intermediate is one byte per entry
+        # longer than the entries are. Sizing the limit to the entries alone
+        # rejects the predictor'd cross-reference streams that most producers
+        # write -- which is to say, most PDFs.
+        inflated_bytes = expected_content_bytes
+        if _png_predictor(decode_parms):
+            inflated_bytes += requested_entries
 
         content = stream_obj.content
         if filter_name:
@@ -795,7 +814,7 @@ class PdfCosParser:
                 filter_name,
                 decode_parms,
                 limits=self._limits,
-                max_output_bytes=expected_content_bytes,
+                max_output_bytes=inflated_bytes,
             )
         self._budget.reserve_decoded(len(content), "xref stream")
         if len(content) < expected_content_bytes:
@@ -876,7 +895,9 @@ class PdfCosParser:
         filter_name = None
         if isinstance(filter_obj, PdfName):
             filter_name = filter_obj.name.lstrip("/")
-        decode_parms = objstm.mapping.get(PdfName("DecodeParms"))
+        decode_parms = cos_dict_to_plain(
+            self._resolve(objstm.mapping.get(PdfName("DecodeParms"))), self._resolve
+        )
 
         content = objstm.content
         if filter_name:
@@ -1122,14 +1143,25 @@ class PdfCosParser:
             stream_bytes = _extract_stream_bytes(
                 self._data, stream_start, content_end, length
             )
-            # Construct PdfStream object
+            # Construct PdfStream object. The bytes are as they sit in the
+            # file, so they are still ciphertext when the document is
+            # encrypted; the object decryptor marks them once it has run.
             stream_obj = PdfStream(content=bytes(stream_bytes), mapping=obj.mapping)
+            stream_obj.content_decrypted = False
             return stream_obj
         return obj
 
     # ---------------------------------------------------------------------
     # End of class
     # ---------------------------------------------------------------------
+
+
+def _png_predictor(decode_parms: Any) -> bool:
+    """Whether *decode_parms* selects a PNG predictor (``/Predictor`` >= 10)."""
+    if not isinstance(decode_parms, dict):
+        return False
+    predictor = decode_parms.get("Predictor", 1)
+    return isinstance(predictor, (int, float)) and int(predictor) >= 10
 
 
 class LazyPdfObjectStore(MutableMapping[int, Any]):
@@ -1145,14 +1177,15 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
         self._xref_offsets = dict(xref_offsets)
         self._compressed = dict(compressed)
         self._cache: dict[int, Any] = {}
-        # Decrypts the strings of a freshly materialized object, installed once
-        # the document password has been verified. Objects that come out of an
-        # object stream are skipped: the stream they lived in was decrypted as
-        # a whole, so their strings are already plain (ISO 32000-1 7.5.7).
-        self._string_decryptor: Callable[[int, int, Any], None] | None = None
+        # Decrypts a freshly materialized object -- its strings and, for a
+        # stream, its content bytes -- installed once the document password has
+        # been verified. Objects that come out of an object stream are skipped:
+        # the stream they lived in was decrypted as a whole, so what they hold
+        # is already plain (ISO 32000-1 7.5.7).
+        self._object_decryptor: Callable[[int, int, Any], None] | None = None
         self._decrypted: set[int] = set()
 
-    def attach_string_decryptor(
+    def attach_object_decryptor(
         self,
         decryptor: Callable[[int, int, Any], None],
         *,
@@ -1161,11 +1194,15 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
         """Install *decryptor* and apply it to already-materialized objects.
 
         *decryptor* receives ``(object_number, generation, object)`` and
-        decrypts that object's strings in place. Objects in *skip* -- the
-        ``/Encrypt`` dictionary, whose strings are never encrypted -- are left
-        alone.
+        decrypts that object in place. Objects in *skip* -- the ``/Encrypt``
+        dictionary, which is never encrypted -- are left alone.
+
+        Running here rather than at first *use* is what makes an object stream
+        readable: its bytes have to be plain before they can be inflated and
+        split into the objects inside, and that happens the moment the stream
+        object itself is materialized.
         """
-        self._string_decryptor = decryptor
+        self._object_decryptor = decryptor
         self._decrypted.update(int(n) for n in skip)
         for obj_num in list(self._cache):
             if obj_num in self._compressed:
@@ -1173,8 +1210,8 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
             self._decrypt_object(int(obj_num), self._cache[obj_num])
 
     def _decrypt_object(self, obj_num: int, obj: Any) -> None:
-        """Run the installed string decryptor over *obj* exactly once."""
-        if self._string_decryptor is None or obj_num in self._decrypted:
+        """Run the installed decryptor over *obj* exactly once."""
+        if self._object_decryptor is None or obj_num in self._decrypted:
             return
         self._decrypted.add(obj_num)
         gen = 0
@@ -1183,7 +1220,7 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
             header = _OBJECT_HEADER_RE.match(self._parser._data, offset)
             if header is not None:
                 gen = int(header.group(2))
-        self._string_decryptor(obj_num, gen, obj)
+        self._object_decryptor(obj_num, gen, obj)
 
     @property
     def materialized_count(self) -> int:

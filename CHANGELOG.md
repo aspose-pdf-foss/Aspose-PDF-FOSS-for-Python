@@ -9,6 +9,29 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **An encrypted save keeps the document it was given.** Encryption lived only
+  in the legacy writer, which rebuilds a file from an in-memory model, so
+  encrypting a loaded document silently discarded its form fields, attachments,
+  optional content and marked content — everything the model does not carry.
+  The COS writer applies the security handler itself now, enciphering each
+  object's strings and stream payload as it serialises them, so encryption is a
+  property of the bytes rather than a different way of writing the file. The
+  entries that have to stay readable stay readable: the `/Encrypt` dictionary
+  (a reader needs it *before* it has a key), the cross-reference stream, a
+  signature's `/Contents`, and `/Metadata` under `/EncryptMetadata false`.
+  Object streams work under encryption too — the `/ObjStm` is enciphered whole,
+  under its own object number, with the strings inside it left alone.
+  `optimize()` no longer switches off font subsetting, image recompression and
+  content de-duplication on an encrypted document; those were disabled because
+  the graph used to hold ciphertext, which it no longer does.
+
+- **A signed document can be encrypted.** Signing an encrypted document used to
+  fall back to the rebuilding writer, losing the same structure. It now takes
+  the same path as any other signature — an appended revision over the saved
+  bytes — enciphered with the file's own key, with `/Contents` written over it
+  in the clear as ISO 32000-1 7.6.2 requires. pyHanko validates the result as
+  covering the entire file, with the document's form fields still present.
+
 - **`convert_to_pdfua(part=2)` moves the tag tree into the standard structure
   namespace.** It declared the namespace on the structure root and stopped
   there, so a tree carried over from part 1 kept the unqualified types
@@ -129,6 +152,30 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **Re-saving a document opened with a password destroyed every string in it.**
+  Strings are decrypted at load; without the writer putting the cipher back
+  they were emitted in the clear under a trailer that still declared
+  `/Encrypt`, so every reader dutifully "decrypted" them into noise — a title,
+  a field name, a bookmark, an attachment name. qpdf read the title of such a
+  file as an empty string. The writer now re-enciphers what it emits, and
+  `tests/test_cross_validation.py` checks the result against qpdf.
+
+- **A cross-reference stream with a PNG predictor could not be read at all.**
+  `/Predictor 12` is what qpdf, Ghostscript and Acrobat write, so this is the
+  shape most real cross-reference streams have. Two things stopped it: the
+  decode limit was sized to the entries rather than to the predictor'd rows
+  inflate actually produces, so the stream was rejected as oversized, and
+  `/DecodeParms` reached the filter layer as a COS dictionary, whose
+  `get("Predictor")` misses — the predictor was skipped in silence and the
+  entries read one byte out of step. Object streams were unreachable in such a
+  file as a result.
+
+- **`Document.decrypt(password)` did not remove the protection.** It unlocked
+  the document for reading and left `/Encrypt` in place, so the next save wrote
+  an encrypted file — and, before the fix above, a corrupt one. It is the
+  counterpart of `encrypt` again: the dictionary goes, `/O` and `/U` with it,
+  and the next save is a plain file.
 
 - **`MacRomanEncoding` was the Mac OS Roman character set, not the table PDF
   defines.** All 256 codes carried a name, where Annex D.2 defines 208 and

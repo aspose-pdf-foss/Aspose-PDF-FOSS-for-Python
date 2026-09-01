@@ -149,8 +149,8 @@ Supported (honored options):
 - `remove_duplicate_images` (default on) — collapse images with identical
   decoded pixels across the COS object graph. Copies that differ only in
   compression or filters (e.g. one stored raw, one Flate) are merged, not just
-  byte-identical streams. Opaque codecs (DCT/JPX/CCITT/JBIG2) and encrypted
-  streams fall back to byte-identical matching.
+  byte-identical streams. Opaque codecs (DCT/JPX/CCITT/JBIG2) fall back to
+  byte-identical matching.
 - `link_duplicate_streams` (default on) — share a single copy of byte-identical
   content streams; `allow_reuse_page_content` (default on) controls whether page
   `/Contents` streams participate.
@@ -196,8 +196,10 @@ Supported (honored options):
 - `use_object_streams` (default on) — after optimizing, a full save packs
   eligible objects into an object stream (`ObjStm`) located by a cross-reference
   stream (`XRef`), the single biggest file-size lever. Produces PDF 1.5+ output
-  and is automatically skipped for encrypted/signed saves and when stream
-  compression is disabled.
+  and is automatically skipped when stream compression is disabled. An
+  encrypted save packs objects the same way: the object stream is enciphered as
+  a whole under its own object number, and the `/Encrypt` dictionary and the
+  cross-reference stream stay outside it, in the clear.
 
 Boundaries:
 
@@ -1181,6 +1183,13 @@ Boundaries:
 Supported:
 
 - Encrypt and decrypt documents with user and owner passwords.
+- **An encrypted save keeps the document it was given.** Encryption is applied
+  by the COS writer as it serialises, per object, so a loaded document that is
+  encrypted (or re-saved having been opened with a password) keeps its form
+  fields, attachments, optional content, marked content and annotations rather
+  than being rebuilt from an in-memory model. `Document.decrypt(password)` is
+  the counterpart of `encrypt`: it takes the protection off, `/O` and `/U`
+  included, so the next save writes a plain file.
 - **Open every standard security handler flavour**, whichever tool wrote it:
   40-bit RC4 (`/V 1 /R 2`), 128-bit RC4 (`/V 2 /R 3`, and `/V 4` with a `/V2`
   crypt filter), AES-128 (`/V 4 /R 4`, `AESV2`) and AES-256 (`/V 5`, both the
@@ -1339,11 +1348,9 @@ Boundaries:
   fresh revocation material into the `/DSS` at build time is opt-in by supplying
   it to `enable_ltv`; the builder itself stays offline.
 - Signing goes through `sign_field` on the *saved bytes*, which is what a
-  byte-range signature covers. A document that is **encrypted as well as
-  signed** is the one exception and stays on the encrypting writer: an appended
-  revision would have to encrypt the strings it writes while leaving the
-  signature's `/Contents` in the clear. It produces the same signature layout,
-  but rebuilds the file rather than preserving its COS structure.
+  byte-range signature covers, and an **encrypted document is signed the same
+  way**: the appended revision is enciphered with the file's own key, while the
+  signature's `/Contents` is written over it in the clear (ISO 32000-1 7.6.2).
 - The `/SV` entries a signer cannot satisfy — `/LegalAttestation`,
   `/AppearanceFilter`, and `/AddRevInfo true` — are refused when required
   rather than approximated. `/SV /Cert` (constraining *which certificate* may

@@ -74,7 +74,12 @@ from .data.xmp import (
     parse_xmp,
     serialize_xmp,
 )
-from .encryption import EncryptionUtils, normalize_encryption_algorithm
+from .encryption import (
+    IDENTITY_ALGORITHM,
+    EncryptionUtils,
+    decrypt_object_in_place,
+    normalize_encryption_algorithm,
+)
 from .filters import StreamDecoder
 from .incremental_update import IncrementalUpdate
 from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
@@ -158,6 +163,35 @@ def _outline_link_absent(link: Any) -> bool:
     from .cos import PdfNull
 
     return isinstance(link, PdfNull)
+
+
+def encrypt_metadata_flag(enc: Any, resolve: Any) -> bool:
+    """Whether the security handler *enc* encrypts the ``/Metadata`` stream.
+
+    ``/EncryptMetadata false`` leaves the XMP packet readable to a tool that
+    has no password, which is the entire point of the entry. Both the
+    ``/Encrypt`` dictionary and the crypt filter it selects may carry the flag;
+    the filter wins. *resolve* dereferences an indirect value, so the same
+    reading serves a reader (which has an extractor) and a writer (which has
+    the document).
+    """
+    from .cos import PdfBoolean, PdfDictionary, PdfName
+
+    if not isinstance(enc, PdfDictionary):
+        return True
+    crypt_filter = None
+    stmf = resolve(enc.mapping.get(PdfName("StmF")))
+    if isinstance(stmf, PdfName) and stmf.name != "/Identity":
+        cf = resolve(enc.mapping.get(PdfName("CF")))
+        if isinstance(cf, PdfDictionary):
+            crypt_filter = resolve(cf.mapping.get(PdfName(stmf.name)))
+    for source in (crypt_filter, enc):
+        if not isinstance(source, PdfDictionary):
+            continue
+        flag = resolve(source.mapping.get(PdfName("EncryptMetadata")))
+        if isinstance(flag, PdfBoolean):
+            return bool(flag.value)
+    return True
 
 
 def _effective_encryption_password(password: str | None) -> str | None:
@@ -2569,15 +2603,8 @@ class SimplePdf:
         # byte-range signature actually covers. Routing it through PdfWriterV0
         # instead used to force a structure-losing rewrite of any document that
         # had a COS graph, discarding its annotations, outlines and form fields.
-        if self.signing_creds and not self.encrypted:
+        if self.signing_creds:
             return self._to_bytes_signed()
-        # Encrypted documents must use PdfWriterV0 (it applies encryption to
-        # streams), and an encrypted document that is also signed stays with it:
-        # an appended revision would have to encrypt the strings it writes while
-        # leaving the signature's /Contents in the clear.
-        if self.encrypted or self.signing_creds:
-            writer = PdfWriterV0(self)
-            return writer.write()
 
         # Prefer COS writer when we have a COS document - it preserves annotations,
         # outlines, and full structure. Use legacy writer only when _cos_doc is absent
@@ -2593,26 +2620,17 @@ class SimplePdf:
             # Cache is used during write in some cases, ensure it's valid
             self._ensure_page_cache()
 
-            # Ensure /ID is present in the trailer
-            id_key = PdfName("ID")
-            if id_key not in self._cos_doc.trailer.mapping:
-                id1 = EncryptionUtils.generate_file_id()
-                id2 = EncryptionUtils.generate_file_id()
-                self.file_id = [id1, id2]
-                self._cos_doc.trailer.mapping[id_key] = PdfArray(
-                    [
-                        PdfString(id1),
-                        PdfString(id2),
-                    ]
-                )
             self._sync_pages_to_cos()
             self._sync_metadata_to_cos()
             self._sync_xmp_to_cos()
             self._sync_attachments_to_cos()
+            encryption = self._writer_encryption()
+            self._sync_file_id_to_cos(replace=encryption is not None)
             writer = PdfCosWriter(
                 self._cos_doc,
                 pdf_version=self.pdf_version,
                 use_object_streams=self._use_object_streams,
+                encryption=encryption,
             )
             return writer.write()
 
@@ -2733,6 +2751,8 @@ class SimplePdf:
             unsigned = self.to_bytes()
         finally:
             self.signing_creds = creds
+        # The bytes just written may be encrypted; the appended revision has to
+        # be encrypted the same way, with the same key and the same exemptions.
         return sign_field(
             unsigned,
             field_name,
@@ -2749,6 +2769,7 @@ class SimplePdf:
             timestamp_timeout=self.timestamp_timeout,
             certify_permissions=self.certify_permissions,
             limits=getattr(self, "load_limits", None),
+            encryption=self._writer_encryption(),
         )
 
     def _ensure_signature_field(self, name: str) -> str:
@@ -3117,6 +3138,198 @@ class SimplePdf:
         # Store revision for reference during writing
         self._encryption_revision = revision
         self._encryption_key_length = key_length
+
+    def _sync_file_id_to_cos(self, *, replace: bool) -> None:
+        """Ensure the trailer carries a ``/ID``, generating one if it has none.
+
+        With *replace* the document's own ``file_id`` overwrites whatever is
+        there. That is what an encrypted save needs: every revision below 5
+        derives the file key from ``/ID[0]`` (ISO 32000-1 Algorithm 2, step
+        (f)), so the bytes ``encrypt()`` derived from and the bytes the trailer
+        carries must be the same. When they are not, every conforming reader
+        computes a different key and rejects the correct password -- this
+        library included, on the very next load.
+        """
+        id_key = PdfName("ID")
+        present = id_key in self._cos_doc.trailer.mapping
+        if present and not (replace and self.file_id):
+            return
+        if not self.file_id:
+            self.file_id = [
+                EncryptionUtils.generate_file_id(),
+                EncryptionUtils.generate_file_id(),
+            ]
+        first = self.file_id[0]
+        second = self.file_id[1] if len(self.file_id) > 1 else first
+        self._cos_doc.trailer.mapping[id_key] = PdfArray(
+            [PdfString(first), PdfString(second)]
+        )
+
+    def _writer_encryption(self) -> Any:
+        """The handler the COS writer applies, or ``None`` to write in clear.
+
+        Two different situations arrive here. A caller who has just invoked
+        ``encrypt()`` wants a *new* ``/Encrypt`` dictionary, written from the
+        values that call computed. A document that was merely *opened* with a
+        password wants the dictionary it already carries: its ``/O`` and ``/U``
+        bind the file key, so rewriting them would silently change the
+        password. The second case is the common one -- opening a document
+        unlocks its graph, and saving has to put the lock back.
+        """
+        if self._cos_doc is None:
+            return None
+        from .pdf_writer_cos import WriterEncryption
+
+        trailer = self._cos_doc.trailer.mapping
+        enc_key = PdfName("Encrypt")
+
+        if self.encrypted and self.encryption_key:
+            dictionary = self._encryption_dictionary()
+            existing = trailer.get(enc_key)
+            if (
+                isinstance(existing, PdfIndirectReference)
+                and existing.object_number in self._cos_doc.objects
+            ):
+                # Reuse the slot so nothing that points at it goes stale.
+                self._cos_doc.objects[existing.object_number] = dictionary
+                reference = existing
+            else:
+                reference = self._cos_doc.register_object(dictionary)
+            trailer[enc_key] = reference
+            key = self.encryption_key
+            algorithm = self.encryption_algorithm
+            exempt = {reference.object_number}
+            metadata = True
+        else:
+            reference = trailer.get(enc_key)
+            if reference is None or not self._cos_decrypt_key:
+                return None
+            key = self._cos_decrypt_key
+            algorithm = self._cos_decrypt_algorithm
+            exempt = (
+                {reference.object_number}
+                if isinstance(reference, PdfIndirectReference)
+                else set()
+            )
+            metadata = encrypt_metadata_flag(self._resolve(reference), self._resolve)
+
+        if normalize_encryption_algorithm(algorithm) == IDENTITY_ALGORITHM:
+            # /StmF and /StrF both name Identity: the document is "encrypted"
+            # only in that it carries permissions.
+            return None
+        return WriterEncryption(
+            key, algorithm, frozenset(exempt), encrypt_metadata=metadata
+        )
+
+    def _encryption_dictionary(self) -> PdfDictionary:
+        """Build the ``/Encrypt`` dictionary for the values just computed.
+
+        The declared revision has to match the derivation actually used:
+        RC4 with a 128-bit key is ``/V 2 /R 3``, AES-128 is ``/V 4 /R 4`` with
+        an ``AESV2`` crypt filter, and AES-256 is ``/V 5 /R 6`` with ``AESV3``,
+        ``/UE``, ``/OE`` and the encrypted ``/Perms`` that revision 6 readers
+        validate. Writing a revision whose key derivation differs from the one
+        used here would leave the file readable only by this library.
+
+        Both writers serialise this one dictionary. Keeping a second, textual
+        copy for the legacy writer is how the two drift apart, and a drifted
+        ``/Encrypt`` is a file nobody can open.
+        """
+        if self._recipient_envelopes:
+            return self._public_key_encryption_dictionary()
+        algorithm = normalize_encryption_algorithm(self.encryption_algorithm)
+        entries: dict[PdfName, Any] = {
+            PdfName("Filter"): PdfName("Standard"),
+            PdfName("O"): PdfString(self.O or b""),
+            PdfName("U"): PdfString(self.U or b""),
+            PdfName("P"): PdfNumber(self.P),
+        }
+        if algorithm == "RC4":
+            key_bits = 8 * len(self.encryption_key or b"\x00" * 16)
+            entries[PdfName("V")] = PdfNumber(2)
+            entries[PdfName("R")] = PdfNumber(3)
+            entries[PdfName("Length")] = PdfNumber(key_bits)
+            return PdfDictionary(entries)
+
+        if algorithm == "AES-128":
+            version, revision, bits, cfm, cf_length = 4, 4, 128, "AESV2", 16
+        else:  # AES-256
+            version, revision, bits, cfm, cf_length = 5, 6, 256, "AESV3", 32
+            ue_val = getattr(self, "UE", None)
+            oe_val = getattr(self, "OE", None)
+            perms = getattr(self, "Perms", None)
+            if ue_val and oe_val:
+                entries[PdfName("UE")] = PdfString(ue_val)
+                entries[PdfName("OE")] = PdfString(oe_val)
+            if perms:
+                entries[PdfName("Perms")] = PdfString(perms)
+        entries[PdfName("V")] = PdfNumber(version)
+        entries[PdfName("R")] = PdfNumber(revision)
+        entries[PdfName("Length")] = PdfNumber(bits)
+        entries[PdfName("CF")] = PdfDictionary(
+            {
+                PdfName("StdCF"): PdfDictionary(
+                    {
+                        PdfName("Type"): PdfName("CryptFilter"),
+                        PdfName("CFM"): PdfName(cfm),
+                        PdfName("AuthEvent"): PdfName("DocOpen"),
+                        PdfName("Length"): PdfNumber(cf_length),
+                    }
+                )
+            }
+        )
+        entries[PdfName("StmF")] = PdfName("StdCF")
+        entries[PdfName("StrF")] = PdfName("StdCF")
+        entries[PdfName("EncryptMetadata")] = PdfBoolean(True)
+        return PdfDictionary(entries)
+
+    def _public_key_encryption_dictionary(self) -> PdfDictionary:
+        """Build the public-key (``/Adobe.PubSec``) security dictionary.
+
+        There is no ``/O``, ``/U`` or ``/P`` here: the seed and each
+        recipient's permissions live inside the CMS envelopes, and the file key
+        is a hash over the seed and every envelope. The envelope bytes must
+        therefore survive exactly -- a single re-encoded byte changes the hash
+        and locks every reader out, this library included.
+
+        ``/V 4`` and ``/V 5`` carry ``/Recipients`` inside the crypt filter
+        rather than at the dictionary level (ISO 32000-2, 7.6.5.2), which is
+        why the entry sits under ``/CF``.
+        """
+        algorithm = normalize_encryption_algorithm(self.encryption_algorithm)
+        envelopes = self._recipient_envelopes or []
+        if algorithm == "AES-256":
+            version, revision, bits, cfm, cf_length = 5, 6, 256, "AESV3", 32
+        elif algorithm == "AES-128":
+            version, revision, bits, cfm, cf_length = 4, 4, 128, "AESV2", 16
+        else:  # RC4-128 through a crypt filter
+            version, revision, bits, cfm, cf_length = 4, 4, 128, "V2", 16
+        crypt_filter = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("CryptFilter"),
+                PdfName("CFM"): PdfName(cfm),
+                PdfName("AuthEvent"): PdfName("DocOpen"),
+                PdfName("Length"): PdfNumber(cf_length),
+                PdfName("Recipients"): PdfArray(
+                    [PdfString(blob) for blob in envelopes]
+                ),
+                PdfName("EncryptMetadata"): PdfBoolean(True),
+            }
+        )
+        return PdfDictionary(
+            {
+                PdfName("Filter"): PdfName(PUBSEC_FILTER),
+                PdfName("SubFilter"): PdfName(subfilter_for(algorithm)),
+                PdfName("V"): PdfNumber(version),
+                PdfName("R"): PdfNumber(revision),
+                PdfName("Length"): PdfNumber(bits),
+                PdfName("CF"): PdfDictionary(
+                    {PdfName("DefaultCryptFilter"): crypt_filter}
+                ),
+                PdfName("StmF"): PdfName("DefaultCryptFilter"),
+                PdfName("StrF"): PdfName("DefaultCryptFilter"),
+            }
+        )
 
     def encrypt_for_recipients(
         self,
@@ -3636,11 +3849,29 @@ class SimplePdf:
         self.encrypt(password)
 
     def remove_password(self) -> None:
-        """Remove password protection."""
+        """Remove password protection, so the next save writes a plain file."""
         self._ensure_not_disposed()
         self.password = None
         self.encrypted = False
         self.encryption_key = None
+        self._drop_encryption_from_cos()
+
+    def _drop_encryption_from_cos(self) -> None:
+        """Take the ``/Encrypt`` dictionary out of the graph, object and all.
+
+        Clearing the flags alone is not enough: the writer decides from the
+        graph, so a trailer that still names an ``/Encrypt`` would put the lock
+        straight back on. The dictionary object goes too rather than being left
+        unreferenced -- it carries the ``/O`` and ``/U`` password hashes, which
+        have no business surviving into a file whose protection was just
+        removed.
+        """
+        if self._cos_doc is None:
+            return
+        reference = self._cos_doc.trailer.mapping.pop(PdfName("Encrypt"), None)
+        if isinstance(reference, PdfIndirectReference):
+            self._cos_doc.objects.pop(reference.object_number, None)
+        self._cos_decrypt_key = None
 
     def change_passwords(
         self,
@@ -8238,9 +8469,9 @@ class SimplePdf:
             names = [self._get_name(f) or "" for f in filt.items]
         terminal = names[-1] if names else None
 
-        # Encrypted streams are stored ciphertext; comparing the stored bytes is
-        # the only safe option without per-object decryption here.
-        if getattr(self, "encryption_key", None) or terminal in opaque:
+        # An opaque codec is compared as stored: decoding a JPEG to compare
+        # pixels would call two visually identical images the same stream.
+        if terminal in opaque:
             return ("enc", terminal, hashlib.md5(stream.content).digest())
         try:
             raw = self._decode_cos_stream(stream)
@@ -8382,7 +8613,7 @@ class SimplePdf:
         result is smaller and its colour model is reproduced exactly, so masks,
         odd colour spaces and images carrying a ``/Decode`` array are untouched.
         """
-        if self._cos_doc is None or getattr(self, "encryption_key", None):
+        if self._cos_doc is None:
             return
         if quality is None and max_dim is None and target_dpi is None:
             return
@@ -8925,11 +9156,6 @@ class SimplePdf:
         mapping cannot be resolved confidently are left untouched.
         """
         if self._cos_doc is None:
-            return
-        # Subsetting rewrites a font program to plaintext; on an encrypted
-        # document that would desynchronise it from the ciphertext streams the
-        # writer re-encrypts, so leave embedded fonts whole there.
-        if getattr(self, "encryption_key", None):
             return
         from .cos import PdfName, PdfNumber
 
@@ -12768,20 +12994,26 @@ class CosExtractor:
             self._stream_decrypt_algorithm = (
                 self.encryption_algorithm_name()
             )
-            self._attach_string_decryption()
+            self._attach_object_decryption()
 
-    def _attach_string_decryption(self) -> None:
-        """Decrypt string values as their objects are materialized.
+    def _attach_object_decryption(self) -> None:
+        """Decrypt objects as they are materialized, once each.
 
-        Strings in an encrypted document are encrypted with the same per-object
-        key as that object's streams (ISO 32000-1 7.6.2). The ``/Encrypt``
+        Strings and stream bytes in an encrypted document share one per-object
+        key (ISO 32000-1 7.6.2), so both are handled here. The ``/Encrypt``
         dictionary is exempt, and so is a signature's ``/Contents``, which is
-        written over the encrypted bytes rather than inside them.
+        written *over* the encrypted bytes rather than inside them.
+
+        Decrypting a stream's payload at materialization rather than at first
+        decode is what makes an encrypted PDF that uses object streams
+        readable at all: the ``/ObjStm`` has to be plain before it can be
+        inflated and split into the objects it carries, which happens inside
+        the object store, well before any caller asks to decode a stream.
         """
         from .cos import PdfName
 
         store = getattr(self._doc, "objects", None)
-        attach = getattr(store, "attach_string_decryptor", None)
+        attach = getattr(store, "attach_object_decryptor", None)
         if not callable(attach):
             return
         key = self._stream_decrypt_key
@@ -12796,53 +13028,29 @@ class CosExtractor:
 
         max_depth = self._limits.max_nesting_depth or 100
 
+        encrypt_metadata = self._encrypt_metadata_enabled()
+
         def decrypt(obj_num: int, gen: int, obj: Any) -> None:
-            self._decrypt_strings_in(obj, obj_num, gen, key, algorithm, 0, max_depth)
+            decrypt_object_in_place(
+                obj,
+                obj_num,
+                gen,
+                key,
+                algorithm,
+                encrypt_metadata=encrypt_metadata,
+                max_depth=max_depth,
+            )
 
         attach(decrypt, skip=skip)
 
-    def _decrypt_strings_in(
-        self,
-        obj: Any,
-        obj_num: int,
-        gen: int,
-        key: bytes,
-        algorithm: str,
-        depth: int,
-        max_depth: int,
-    ) -> None:
-        """Decrypt every :class:`PdfString` reachable inside *obj*, in place."""
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfStream, PdfString
+    def _encrypt_metadata_enabled(self) -> bool:
+        """Whether this document's handler encrypts the ``/Metadata`` stream."""
+        from .cos import PdfName
 
-        if depth > max_depth:
-            return
-        if isinstance(obj, PdfString):
-            try:
-                obj.value = EncryptionUtils.decrypt_object_data(
-                    key, algorithm, obj_num, obj.value, gen
-                )
-            except PdfSecurityException:
-                # A string that will not decrypt is left as stored rather than
-                # failing the whole document load.
-                pass
-            return
-        if isinstance(obj, PdfArray):
-            for item in obj.items:
-                self._decrypt_strings_in(
-                    item, obj_num, gen, key, algorithm, depth + 1, max_depth
-                )
-            return
-        if isinstance(obj, (PdfDictionary, PdfStream)):
-            is_signature = (
-                self._get_name(obj.mapping.get(PdfName("Type"))) == "Sig"
-                or PdfName("ByteRange") in obj.mapping
-            )
-            for name, value in obj.mapping.items():
-                if is_signature and name.name.lstrip("/") == "Contents":
-                    continue
-                self._decrypt_strings_in(
-                    value, obj_num, gen, key, algorithm, depth + 1, max_depth
-                )
+        return encrypt_metadata_flag(
+            self._resolve(self._doc.trailer.mapping.get(PdfName("Encrypt"))),
+            self._resolve,
+        )
 
     # ----- helpers ----------------------------------------------------------
     def _resolve(self, obj: Any) -> Any:
@@ -13158,7 +13366,11 @@ class CosExtractor:
             image_dimensions = self._image_dimensions(
                 stream, f"object {obj_id}" if obj_id else "stream"
             )
-        if self._stream_decrypt_key and data:
+        # ``content_decrypted`` is the whole story: the object store already
+        # ran the security handler over anything it materialized, and a stream
+        # authored after load was never encrypted to begin with. Deciding from
+        # the key alone would decrypt one of those a second time.
+        if self._stream_decrypt_key and data and not stream.content_decrypted:
             data = EncryptionUtils.decrypt_object_data(
                 self._stream_decrypt_key,
                 self._stream_decrypt_algorithm,
@@ -13239,23 +13451,9 @@ class CosExtractor:
 
     def _cos_dict_to_plain(self, obj: Any) -> dict | None:
         """Convert PdfDictionary to plain dict with string keys for StreamDecoder."""
-        from .cos import PdfBoolean, PdfDictionary, PdfName, PdfNumber
+        from .cos import cos_dict_to_plain
 
-        if not isinstance(obj, PdfDictionary):
-            return None
-        result = {}
-        for k, v in obj.mapping.items():
-            key = k.name.lstrip("/")
-            v_resolved = self._resolve(v)
-            if isinstance(v_resolved, PdfNumber):
-                result[key] = v_resolved.value
-            elif isinstance(v_resolved, PdfName):
-                result[key] = v_resolved.name.lstrip("/")
-            elif isinstance(v_resolved, PdfBoolean):
-                result[key] = v_resolved.value
-            else:
-                result[key] = v_resolved
-        return result
+        return cos_dict_to_plain(obj, self._resolve)
 
     # ----- public API -------------------------------------------------------
     def extract_pages(self) -> list[tuple[float, float, float, float]]:
@@ -14830,88 +15028,15 @@ class PdfWriterV0:
         )
 
     def _encrypt_dictionary(self) -> bytes:
-        """Serialize the standard security handler dictionary.
+        """Serialize the ``/Encrypt`` dictionary the document computed.
 
-        The declared revision has to match the values actually computed:
-        RC4 with a 128-bit key is ``/V 2 /R 3``, AES-128 is ``/V 4 /R 4`` with
-        an ``AESV2`` crypt filter, and AES-256 is ``/V 5 /R 6`` with ``AESV3``,
-        ``/UE``, ``/OE`` and the encrypted ``/Perms`` that revision 6 readers
-        validate. Writing a revision whose key derivation differs from the one
-        used here would leave the file readable only by this library.
+        The structure itself is built once, by ``SimplePdf``, so this writer
+        and the COS writer cannot disagree about what a given algorithm
+        declares.
         """
-        if self.pdf._recipient_envelopes:
-            return self._public_key_encrypt_dictionary()
-        algorithm = normalize_encryption_algorithm(self.pdf.encryption_algorithm)
-        o_val = (self.pdf.O or b"").hex()
-        u_val = (self.pdf.U or b"").hex()
-        parts = ["<< /Filter /Standard"]
-        if algorithm == "RC4":
-            key_bits = 8 * len(self.pdf.encryption_key or b"\x00" * 16)
-            parts.append(f"/V 2 /R 3 /Length {key_bits}")
-            parts.append(f"/O <{o_val}> /U <{u_val}> /P {self.pdf.P}")
-        elif algorithm == "AES-128":
-            parts.append("/V 4 /R 4 /Length 128")
-            parts.append(f"/O <{o_val}> /U <{u_val}> /P {self.pdf.P}")
-            parts.append(
-                "/CF << /StdCF << /Type /CryptFilter /CFM /AESV2 "
-                "/AuthEvent /DocOpen /Length 16 >> >>"
-            )
-            parts.append("/StmF /StdCF /StrF /StdCF /EncryptMetadata true")
-        else:  # AES-256
-            ue_val = (getattr(self.pdf, "UE", None) or b"").hex()
-            oe_val = (getattr(self.pdf, "OE", None) or b"").hex()
-            perms = getattr(self.pdf, "Perms", None) or b""
-            parts.append("/V 5 /R 6 /Length 256")
-            parts.append(f"/O <{o_val}> /U <{u_val}> /P {self.pdf.P}")
-            if ue_val and oe_val:
-                parts.append(f"/UE <{ue_val}> /OE <{oe_val}>")
-            if perms:
-                parts.append(f"/Perms <{perms.hex()}>")
-            parts.append(
-                "/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 "
-                "/AuthEvent /DocOpen /Length 32 >> >>"
-            )
-            parts.append("/StmF /StdCF /StrF /StdCF /EncryptMetadata true")
-        parts.append(">>")
-        return " ".join(parts).encode()
-
-    def _public_key_encrypt_dictionary(self) -> bytes:
-        """Serialize the public-key (``/Adobe.PubSec``) security dictionary.
-
-        There is no ``/O``, ``/U`` or ``/P`` here: the seed and each
-        recipient's permissions live inside the CMS envelopes, and the file key
-        is a hash over the seed and every envelope. The envelopes are written
-        as hexadecimal strings so their bytes survive exactly -- a re-encoded
-        byte would change the hash and lock every reader out, this library
-        included.
-
-        ``/V 4`` and ``/V 5`` carry ``/Recipients`` inside the crypt filter
-        rather than at the dictionary level (ISO 32000-2, 7.6.5.2), which is
-        why the entry sits under ``/CF``.
-        """
-        algorithm = normalize_encryption_algorithm(self.pdf.encryption_algorithm)
-        envelopes = self.pdf._recipient_envelopes or []
-        recipients = " ".join(f"<{blob.hex()}>" for blob in envelopes)
-        if algorithm == "AES-256":
-            version, revision, bits, cfm, cf_length = 5, 6, 256, "AESV3", 32
-        elif algorithm == "AES-128":
-            version, revision, bits, cfm, cf_length = 4, 4, 128, "AESV2", 16
-        else:  # RC4-128 through a crypt filter
-            version, revision, bits, cfm, cf_length = 4, 4, 128, "V2", 16
-        sub_filter = subfilter_for(algorithm)
-        parts = [
-            "<< /Filter /Adobe.PubSec",
-            f"/SubFilter /{sub_filter}",
-            f"/V {version} /R {revision} /Length {bits}",
-            (
-                "/CF << /DefaultCryptFilter << /Type /CryptFilter "
-                f"/CFM /{cfm} /AuthEvent /DocOpen /Length {cf_length} "
-                f"/Recipients [ {recipients} ] /EncryptMetadata true >> >>"
-            ),
-            "/StmF /DefaultCryptFilter /StrF /DefaultCryptFilter",
-            ">>",
-        ]
-        return " ".join(parts).encode()
+        return PdfCosWriter(self.pdf._cos_doc or PdfDocument()).serialize_object(
+            self.pdf._encryption_dictionary()
+        ).encode("latin-1")
 
     def _string_literal(self, value: Any) -> str:
         """Return *value* as a PDF string, encrypted when the document is.

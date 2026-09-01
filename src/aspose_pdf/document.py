@@ -1702,11 +1702,18 @@ class Document:
         return self
 
     def decrypt(self, password: str) -> Document:
-        """Decrypt the PDF document."""
+        """Remove the document's password protection.
+
+        This is the counterpart of :meth:`encrypt`: the next save writes a
+        plain file. Opening an encrypted document already unlocks it for
+        reading, and a re-save keeps the protection it came with -- taking the
+        lock off is this explicit call.
+        """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
         self._engine_pdf.decrypt(password)
+        self._engine_pdf.remove_password()
         self._encrypted = False
         return self
 

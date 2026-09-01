@@ -105,6 +105,149 @@ def _build_object_stream_pdf() -> bytes:
     return header + obj1 + obj2 + objst + xref + trailer + startxref
 
 
+def _build_predicted_xref_stream_pdf() -> bytes:
+    """An XRef stream filtered through the PNG Up predictor, as producers write.
+
+    ``/Predictor 12`` is what qpdf, Ghostscript and Acrobat all emit, so this
+    is the shape most real cross-reference streams have. Every row carries a
+    leading filter-type byte, which makes the inflated data one byte per entry
+    longer than the entries themselves and has to be undone before the entries
+    can be read.
+    """
+    header = b"%PDF-1.7\n"
+    obj1 = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    obj2 = b"2 0 obj\n<< /Type /Pages /Count 0 >>\nendobj\n"
+
+    offset1 = len(header)
+    offset2 = offset1 + len(obj1)
+    xref_offset = offset2 + len(obj2)
+
+    rows = [
+        b"\x00" + (0).to_bytes(4, "big"),
+        b"\x01" + offset1.to_bytes(4, "big"),
+        b"\x01" + offset2.to_bytes(4, "big"),
+        b"\x01" + xref_offset.to_bytes(4, "big"),
+    ]
+    # PNG Up: each row is stored as its difference from the row above, behind a
+    # filter-type byte of 2.
+    previous = b"\x00" * 5
+    predicted = bytearray()
+    for row in rows:
+        predicted.append(2)
+        predicted.extend(
+            bytes((row[i] - previous[i]) & 0xFF for i in range(len(row)))
+        )
+        previous = row
+    compressed = zlib.compress(bytes(predicted))
+
+    xref_dict = (
+        b"<< /Type /XRef /Filter /FlateDecode"
+        b" /DecodeParms << /Predictor 12 /Columns 5 >>"
+        b" /W [1 4 0] /Size 4 /Root 1 0 R /Length "
+        + str(len(compressed)).encode()
+        + b" >>\n"
+    )
+    xref_obj = (
+        b"3 0 obj\n" + xref_dict + b"stream\n" + compressed + b"\nendstream\n"
+        b"endobj\n"
+    )
+    startxref = b"startxref\n" + str(xref_offset).encode() + b"\n%%EOF\n"
+    return header + obj1 + obj2 + xref_obj + startxref
+
+
+def test_parse_xref_stream_with_a_png_predictor():
+    """A predictor'd cross-reference stream has to parse like any other.
+
+    Two things used to stop it. The decode limit was sized to the entries
+    rather than to the predictor'd rows inflate actually produces, so the
+    stream was rejected as oversized; and ``/DecodeParms`` reached the filter
+    layer as a COS dictionary, whose ``get("Predictor")`` misses, so the
+    predictor was silently skipped and the entries read one byte out of step.
+    """
+    doc = PdfCosParser(_build_predicted_xref_stream_pdf()).parse()
+
+    root = doc.trailer.mapping.get(PdfName("Root"))
+    assert isinstance(root, PdfIndirectReference)
+    catalog = doc.objects[root.object_number]
+    assert isinstance(catalog, PdfDictionary)
+    assert catalog.mapping.get(PdfName("Type")).name == "/Catalog"
+    pages = doc.objects[2]
+    assert pages.mapping.get(PdfName("Type")).name == "/Pages"
+
+
+def _build_predicted_object_stream_pdf() -> bytes:
+    """An object stream whose ``/DecodeParms`` declares a PNG predictor.
+
+    Rare but legal, and the only way to tell whether the parser reads
+    ``/DecodeParms`` on an object stream at all: a COS dictionary handed to the
+    filter layer looks exactly like no parameters, so the predictor would be
+    skipped and the objects parsed out of predictor rows.
+    """
+    header = b"%PDF-1.7\n"
+    obj4 = b"<< /Type /Example /Value 42 >>"
+    pair = b"4 0 "
+    body = pair + obj4
+
+    columns = 8
+    rows = [body[i : i + columns] for i in range(0, len(body), columns)]
+    rows[-1] = rows[-1].ljust(columns, b" ")
+    previous = b"\x00" * columns
+    predicted = bytearray()
+    for row in rows:
+        predicted.append(2)  # PNG Up
+        predicted.extend(bytes((row[i] - previous[i]) & 0xFF for i in range(columns)))
+        previous = row
+    compressed = zlib.compress(bytes(predicted))
+
+    obj1 = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    obj2 = b"2 0 obj\n<< /Type /Pages /Count 0 >>\nendobj\n"
+    offset1 = len(header)
+    offset2 = offset1 + len(obj1)
+    objstm_offset = offset2 + len(obj2)
+
+    objstm = (
+        b"3 0 obj\n"
+        b"<< /Type /ObjStm /Filter /FlateDecode"
+        b" /DecodeParms << /Predictor 12 /Columns " + str(columns).encode() + b" >>"
+        b" /N 1 /First " + str(len(pair)).encode() +
+        b" /Length " + str(len(compressed)).encode() + b" >>\n"
+        b"stream\n" + compressed + b"\nendstream\nendobj\n"
+    )
+
+    xref_offset = objstm_offset + len(objstm)
+    xref = (
+        b"xref\n0 4\n0000000000 65535 f \n"
+        b"%010d 00000 n \n%010d 00000 n \n%010d 00000 n \n"
+        % (offset1, offset2, objstm_offset)
+    )
+    trailer = b"trailer\n<< /Size 5 /Root 1 0 R >>\n"
+    startxref = b"startxref\n" + str(xref_offset).encode() + b"\n%%EOF\n"
+    return header + obj1 + obj2 + objstm + xref + trailer + startxref
+
+
+def test_parse_object_stream_with_a_png_predictor():
+    """``/DecodeParms`` has to reach the filter layer as a plain mapping."""
+    from aspose_pdf.engine.cos import PdfStream
+    from aspose_pdf.engine.filters import StreamDecoder
+
+    parser = PdfCosParser(_build_predicted_object_stream_pdf())
+    parser.parse()
+    objstm = parser.get_object(PdfIndirectReference(3, 0))
+    assert isinstance(objstm, PdfStream)
+
+    extracted = parser._parse_object_stream(objstm)
+    assert set(extracted) == {4}
+    assert extracted[4].mapping[PdfName("Value")].value == 42
+
+    # Without the predictor undone, the row bytes would still be in the way.
+    plain = StreamDecoder.decode(
+        objstm.content,
+        "FlateDecode",
+        {"Predictor": 12, "Columns": 8},
+    )
+    assert plain.startswith(b"4 0 << /Type /Example")
+
+
 def test_parse_xref_stream_minimal():
     """Test parsing a PDF with XRef Stream."""
     data = _build_xref_stream_pdf()

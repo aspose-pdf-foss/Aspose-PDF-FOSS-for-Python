@@ -27,9 +27,10 @@ from aspose_pdf.engine.cos import (
     PdfNumber,
     PdfString,
 )
+from aspose_pdf.engine.encryption import decrypt_object_in_place
 from aspose_pdf.engine.incremental_update import IncrementalUpdate
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
-from aspose_pdf.engine.pdf_writer_cos import PdfCosWriter
+from aspose_pdf.engine.pdf_writer_cos import PdfCosWriter, WriterEncryption
 from aspose_pdf.engine.signing import SigningUtils
 from aspose_pdf.exceptions import PdfSecurityException, PdfValidationException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
@@ -43,6 +44,33 @@ _CONTENTS_HEX_LARGE = 65536
 
 # /ByteRange holds four 10-digit numbers separated by single spaces.
 _BYTE_RANGE_WIDTH = 43
+
+
+def _unlock(doc: Any, encryption: WriterEncryption) -> None:
+    """Decrypt the parsed graph so its fields can be read and re-emitted.
+
+    Signing an encrypted document is signing an *encrypted* document: the
+    strings this module reads (a field's ``/T``, its seed value) arrive as
+    ciphertext, and the objects it re-emits have to go back out the same way.
+    Decrypting the graph once, through the same object store hook the loader
+    uses, means everything between those two points works on plain values --
+    and the writer, given the same handler, re-encrypts what it emits.
+    """
+    attach = getattr(getattr(doc, "objects", None), "attach_object_decryptor", None)
+    if not callable(attach):
+        return
+
+    def decrypt(obj_num: int, gen: int, obj: Any) -> None:
+        decrypt_object_in_place(
+            obj,
+            obj_num,
+            gen,
+            encryption.key,
+            encryption.algorithm,
+            encrypt_metadata=encryption.encrypt_metadata,
+        )
+
+    attach(decrypt, skip=encryption.exempt)
 
 
 def _resolve(doc: Any, obj: Any) -> Any:
@@ -433,11 +461,11 @@ def _acroform_objects(
 
     if isinstance(acro_value, PdfIndirectReference):
         num = acro_value.object_number
-        body = writer.serialize_object(acro)
+        body = writer.serialize_indirect(num, acro)
         updates.append((num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1")))
     if catalog_dirty:
         num = root_ref.object_number
-        body = writer.serialize_object(catalog)
+        body = writer.serialize_indirect(num, catalog)
         updates.append((num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1")))
     return updates
 
@@ -459,6 +487,7 @@ def sign_field(
     timestamp_timeout: float = 10.0,
     certify_permissions: int | None = None,
     limits: PdfLoadLimits | None = None,
+    encryption: WriterEncryption | None = None,
 ) -> bytes:
     """Sign the existing signature field *field_name* and return the new bytes.
 
@@ -480,6 +509,13 @@ def sign_field(
     ``/Ff``, which is the one entry with no flag of its own. A ``/Lock`` on the
     field (as opposed to ``/SV``) is carried into the signature as a FieldMDP
     transform.
+
+    *encryption* is the handler *pdf_bytes* was written with, and is required
+    when it was written with one: the strings read here are ciphertext until it
+    is applied, and the ones written back have to be enciphered again. The
+    signature's ``/Contents`` stays in the clear regardless -- it is patched
+    over the file after the fact, outside the encryption entirely
+    (ISO 32000-1 7.6.2).
     """
     if certify_permissions is not None and certify_permissions not in (1, 2, 3):
         raise PdfValidationException(
@@ -489,6 +525,8 @@ def sign_field(
     budget = _LoadBudget(_coerce_limits(limits))
     budget.check_input(len(pdf_bytes))
     doc = PdfCosParser(pdf_bytes, budget=budget).parse()
+    if encryption is not None:
+        _unlock(doc, encryption)
 
     field_ref, field = _find_field(doc, budget, field_name)
     ft = _resolve(doc, field.mapping.get(PdfName("FT")))
@@ -543,10 +581,10 @@ def sign_field(
     if references is not None:
         sig_map[PdfName("Reference")] = references
 
-    writer = PdfCosWriter(doc)
+    writer = PdfCosWriter(doc, encryption=encryption)
     # /ByteRange and /Contents are appended as literal text so their byte
     # offsets survive serialization unchanged and can be patched in place.
-    head = writer.serialize_object(PdfDictionary(sig_map))
+    head = writer.serialize_indirect(sig_num, PdfDictionary(sig_map))
     if not head.endswith(">>"):
         raise PdfValidationException("Unexpected signature dictionary encoding")
     sig_body = (
@@ -560,7 +598,7 @@ def sign_field(
 
     field.mapping[PdfName("V")] = sig_ref
     field_num = field_ref.object_number
-    field_body = writer.serialize_object(field)
+    field_body = writer.serialize_indirect(field_num, field)
     inc.add_object(
         field_num,
         f"{field_num} 0 obj\n{field_body}\nendobj\n".encode("latin-1"),

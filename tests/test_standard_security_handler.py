@@ -137,7 +137,7 @@ def _encrypt_dict(data: bytes) -> dict[str, bytes]:
         if match:
             fields[key] = bytes.fromhex(match.group(1).decode())
     fields["ID"] = bytes.fromhex(
-        re.search(rb"/ID \[<([0-9a-fA-F]*)>", data).group(1).decode()
+        re.search(rb"/ID \[\s*<([0-9a-fA-F]*)>", data).group(1).decode()
     )
     fields["P"] = int(re.search(rb"/P (-?\d+)", data).group(1))
     return fields
@@ -145,7 +145,9 @@ def _encrypt_dict(data: bytes) -> dict[str, bytes]:
 
 def _first_content_stream(data: bytes) -> tuple[int, bytes]:
     """Return (object number, raw stream bytes) of the first content stream."""
-    for match in re.finditer(rb"(\d+) 0 obj\s*<< /Length (\d+) >>\s*stream\r?\n", data):
+    for match in re.finditer(
+        rb"(\d+) 0 obj\s*<<\s*/Length (\d+)\s*>>\s*stream\r?\n", data
+    ):
         obj_num = int(match.group(1))
         length = int(match.group(2))
         start = match.end()
@@ -234,7 +236,7 @@ def test_written_document_binds_the_key_to_the_trailer_id(
     derivation_id = document._engine_pdf._file_id
     document.dispose()
     trailer_id = bytes.fromhex(
-        re.search(rb"/ID \[<([0-9a-fA-F]*)>", out.read_bytes()).group(1).decode()
+        re.search(rb"/ID \[\s*<([0-9a-fA-F]*)>", out.read_bytes()).group(1).decode()
     )
     assert trailer_id == derivation_id
 
