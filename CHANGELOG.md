@@ -9,6 +9,24 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Layers resolve for printing and exporting, not only for the screen.** A
+  group's `/Usage` dictionary says what it should do for an event and the
+  configuration's `/AS` usage application dictionaries are what apply it —
+  neither was read, so a watermark marked "do not print" printed anyway.
+  `Document.layers.resolve("Print")` now reports the states an event calls for
+  and `apply_usage("Print")` adopts them, which makes flattening a print copy
+  actually drop the watermark. `Layer.set_usage(printing=False)` writes both
+  halves, because a `/Usage` entry no `/AS` entry mentions changes nothing.
+  Zoom ranges and BCP 47 language tags are evaluated when a magnification or
+  locale is supplied, and left alone when one is not.
+
+- **Alternate optional content configurations are listed and can be applied.**
+  `Document.layers.configurations` reports `/D` and every `/Configs` entry with
+  the layers it shows and locks, `apply_configuration(name)` adopts a preset as
+  the document's state, and `save_configuration(name)` snapshots the current
+  states as a new one. Removing a layer now also purges it from the alternates
+  and from the usage applications, instead of only from `/D`.
+
 - **The optimizer subsets the last two font kinds it left whole.** *CFF2*
   (`/FontFile3` with `/Subtype /OpenType`, PDF 2.0) is now erased glyph by
   glyph like every other embedded program, as a CIDFontType0 or as a simple

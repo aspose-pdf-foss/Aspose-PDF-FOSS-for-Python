@@ -6,10 +6,16 @@ configuration in ``/OCProperties /D`` says which groups start visible; content
 belongs to a group through an ``/OC`` entry naming either an OCG or an OCMD,
 and an OCMD combines several groups under a policy.
 
+A configuration is not only ``/D``: ``/OCProperties /Configs`` holds named
+alternates a viewer offers as presets. And a state is not only what the
+configuration writes down -- a group may carry a ``/Usage`` dictionary saying
+what it should do when *viewed*, *printed* or *exported*, which the
+configuration's ``/AS`` usage application dictionaries switch on for a given
+event. ``/Usage`` on its own is inert; ``/AS`` is what applies it.
+
 Nothing here paints or parses content streams: it answers one question --
-"is this ``/OC`` object visible in the default configuration?" -- for the
-renderer, the text extractor and the graphics absorber, and it backs the
-public layer API.
+"is this ``/OC`` object visible?" -- for the renderer, the text extractor and
+the graphics absorber, and it backs the public layer API.
 """
 
 from __future__ import annotations
@@ -29,12 +35,70 @@ from .cos import (
 )
 
 __all__ = [
+    "USAGE_EVENTS",
     "OptionalContent",
+    "OptionalContentConfiguration",
     "OptionalContentGroup",
+    "apply_configuration",
     "create_group",
     "flatten",
     "remove_group",
+    "save_configuration",
+    "set_usage",
 ]
+
+#: The events a ``/AS`` usage application dictionary can name (Table 103).
+USAGE_EVENTS = ("View", "Print", "Export")
+
+#: ``/Usage`` sub-dictionary -> the key holding its ON/OFF state.
+_STATE_KEYS = {
+    "View": "ViewState",
+    "Print": "PrintState",
+    "Export": "ExportState",
+}
+
+#: Configuration entries that describe *state*, and so travel with a
+#: configuration when it is applied. ``/Name`` and ``/Creator`` identify the
+#: configuration itself and stay behind.
+_CONFIG_STATE_KEYS = (
+    "BaseState",
+    "ON",
+    "OFF",
+    "Order",
+    "Locked",
+    "AS",
+    "RBGroups",
+    "ListMode",
+    "Intent",
+)
+
+
+class OptionalContentConfiguration:
+    """One optional content configuration: ``/D``, or an entry of ``/Configs``."""
+
+    __slots__ = ("creator", "index", "is_default", "locked", "name", "states")
+
+    def __init__(
+        self,
+        index: int,
+        name: str,
+        creator: str,
+        states: dict[int, bool],
+        locked: frozenset[int],
+        *,
+        is_default: bool,
+    ) -> None:
+        #: Position in ``/Configs``; ``-1`` for the default configuration.
+        self.index = index
+        self.name = name
+        self.creator = creator
+        self.states = states
+        self.locked = locked
+        self.is_default = is_default
+
+    def __repr__(self) -> str:
+        which = "default" if self.is_default else f"index {self.index}"
+        return f"OptionalContentConfiguration({self.name!r}, {which})"
 
 
 class OptionalContentGroup:
@@ -65,11 +129,30 @@ class OptionalContent:
     ``visible_by_number`` maps an OCG's object number to whether the default
     configuration shows it; :meth:`is_visible` answers the same question for a
     resolved ``/OC`` value, following an OCMD's ``/P`` policy.
+
+    *event* selects which of the configuration's ``/AS`` usage application
+    dictionaries apply -- ``View`` (the default, what a viewer shows on
+    screen), ``Print`` or ``Export``. *zoom* is the magnification a ``/Zoom``
+    usage is judged against and *language* the BCP 47 tag a ``/Language`` usage
+    is matched to; leaving either ``None`` leaves that category unevaluated,
+    because guessing a viewer's zoom or locale would decide visibility on
+    invented grounds.
     """
 
-    def __init__(self, pdf: Any) -> None:
+    def __init__(
+        self,
+        pdf: Any,
+        *,
+        event: str = "View",
+        zoom: float | None = None,
+        language: str | None = None,
+    ) -> None:
         self.groups: list[OptionalContentGroup] = []
         self.visible_by_number: dict[int, bool] = {}
+        self.configurations: list[OptionalContentConfiguration] = []
+        self.event = event
+        self.zoom = zoom
+        self.language = language
         self._pdf = pdf
         self._load()
 
@@ -100,6 +183,26 @@ class OptionalContent:
 
         all_groups = self._reference_numbers(properties.mapping.get(PdfName("OCGs")))
         config = self._resolve(properties.mapping.get(PdfName("D")))
+        self.visible_by_number = self._configured_states(config, all_groups)
+        if isinstance(config, PdfDictionary):
+            self._apply_usage(config, self.visible_by_number)
+
+        for number in all_groups:
+            group = self._resolve(self._object(number))
+            name = ""
+            intent: tuple[str, ...] = ()
+            if isinstance(group, PdfDictionary):
+                name = self._text(group.mapping.get(PdfName("Name")))
+                intent = self._intent(group.mapping.get(PdfName("Intent")))
+            self.groups.append(
+                OptionalContentGroup(
+                    number, name, self.visible_by_number[number], intent
+                )
+            )
+        self._load_configurations(properties, config, all_groups)
+
+    def _configured_states(self, config: Any, all_groups: list[int]) -> dict[int, bool]:
+        """Resolve ``/BaseState`` plus the ``/ON`` and ``/OFF`` overrides."""
         base_state = "ON"
         on_numbers: set[int] = set()
         off_numbers: set[int] = set()
@@ -113,23 +216,171 @@ class OptionalContent:
             off_numbers = set(
                 self._reference_numbers(config.mapping.get(PdfName("OFF")))
             )
-
+        states: dict[int, bool] = {}
         for number in all_groups:
             visible = base_state == "ON"
             if number in on_numbers:
                 visible = True
             if number in off_numbers:
                 visible = False
-            self.visible_by_number[number] = visible
-            group = self._resolve(self._object(number))
-            name = ""
-            intent: tuple[str, ...] = ()
-            if isinstance(group, PdfDictionary):
-                name = self._text(group.mapping.get(PdfName("Name")))
-                intent = self._intent(group.mapping.get(PdfName("Intent")))
-            self.groups.append(
-                OptionalContentGroup(number, name, visible, intent)
+            states[number] = visible
+        return states
+
+    def _load_configurations(
+        self, properties: PdfDictionary, default: Any, all_groups: list[int]
+    ) -> None:
+        """Read ``/D`` and every entry of ``/Configs`` as a named configuration."""
+        candidates: list[tuple[int, Any]] = [(-1, default)]
+        configs = self._resolve(properties.mapping.get(PdfName("Configs")))
+        if isinstance(configs, PdfArray):
+            candidates += list(enumerate(configs.items))
+        for index, item in candidates:
+            config = self._resolve(item)
+            if not isinstance(config, PdfDictionary):
+                continue
+            self.configurations.append(
+                OptionalContentConfiguration(
+                    index,
+                    self._text(config.mapping.get(PdfName("Name"))),
+                    self._text(config.mapping.get(PdfName("Creator"))),
+                    self._configured_states(config, all_groups),
+                    frozenset(
+                        self._reference_numbers(config.mapping.get(PdfName("Locked")))
+                    ),
+                    is_default=index < 0,
+                )
             )
+
+    # -- usage application (/AS) ------------------------------------------
+    def _apply_usage(self, config: PdfDictionary, states: dict[int, bool]) -> None:
+        """Overlay the ``/AS`` entries matching ``self.event`` onto *states*.
+
+        Each entry names an event, the groups it governs and the ``/Usage``
+        categories to consult. A group is left alone when no listed category
+        expresses a state -- that is the difference between "this usage says
+        nothing about printing" and "this usage says do not print".
+        """
+        entries = self._resolve(config.mapping.get(PdfName("AS")))
+        if not isinstance(entries, PdfArray):
+            return
+        for item in entries.items:
+            entry = self._resolve(item)
+            if not isinstance(entry, PdfDictionary):
+                continue
+            if self._name(entry.mapping.get(PdfName("Event"))) != self.event:
+                continue
+            categories = self._category_names(entry.mapping.get(PdfName("Category")))
+            numbers = self._reference_numbers(entry.mapping.get(PdfName("OCGs")))
+            exact_language = any(
+                self._language_match(number) is True for number in numbers
+            )
+            for number in numbers:
+                if number not in states:
+                    continue
+                state = self._usage_state(number, categories, exact_language)
+                if state is not None:
+                    states[number] = state
+
+    def _category_names(self, obj: Any) -> tuple[str, ...]:
+        obj = self._resolve(obj)
+        if isinstance(obj, PdfName):
+            name = self._name(obj)
+            return (name,) if name else ()
+        if isinstance(obj, PdfArray):
+            names = [self._name(item) for item in obj.items]
+            return tuple(name for name in names if name)
+        return ()
+
+    def _usage_dictionary(self, number: int) -> PdfDictionary | None:
+        group = self._resolve(self._object(number))
+        if not isinstance(group, PdfDictionary):
+            return None
+        usage = self._resolve(group.mapping.get(PdfName("Usage")))
+        return usage if isinstance(usage, PdfDictionary) else None
+
+    def _usage_state(
+        self, number: int, categories: Sequence[str], exact_language: bool
+    ) -> bool | None:
+        """Combine the listed categories' states, or ``None`` if none speaks.
+
+        The categories are combined with AND: a group is shown only where every
+        category that has an opinion says so, which is what "any category that
+        is OFF turns the group OFF" amounts to.
+        """
+        usage = self._usage_dictionary(number)
+        if usage is None:
+            return None
+        result: bool | None = None
+        for category in categories:
+            value = self._category_state(usage, category, number, exact_language)
+            if value is None:
+                continue
+            result = value if result is None else (result and value)
+        return result
+
+    def _category_state(
+        self, usage: PdfDictionary, category: str, number: int, exact_language: bool
+    ) -> bool | None:
+        entry = self._resolve(usage.mapping.get(PdfName(category)))
+        if not isinstance(entry, PdfDictionary):
+            return None
+        state_key = _STATE_KEYS.get(category)
+        if state_key is not None:
+            state = self._name(entry.mapping.get(PdfName(state_key)))
+            if state == "ON":
+                return True
+            if state == "OFF":
+                return False
+            return None
+        if category == "Zoom":
+            return self._zoom_state(entry)
+        if category == "Language":
+            match = self._language_match(number)
+            if match is None:
+                return None
+            if match:
+                return True
+            # No match: a preferred alternative still shows when nothing else
+            # in this usage application matched exactly.
+            preferred = self._name(entry.mapping.get(PdfName("Preferred"))) == "ON"
+            return preferred and not exact_language
+        return None  # /User needs an identity we do not have; /CreatorInfo has no state.
+
+    def _zoom_state(self, entry: PdfDictionary) -> bool | None:
+        """``/min`` (inclusive) and ``/max`` (exclusive) around ``self.zoom``."""
+        if self.zoom is None:
+            return None
+        low = self._number(entry.mapping.get(PdfName("min")))
+        high = self._number(entry.mapping.get(PdfName("max")))
+        if low is None and high is None:
+            return None
+        if low is not None and self.zoom < low:
+            return False
+        if high is not None and self.zoom >= high:
+            return False
+        return True
+
+    def _language_match(self, number: int) -> bool | None:
+        """Whether a group's ``/Usage /Language`` matches ``self.language``."""
+        if self.language is None:
+            return None
+        usage = self._usage_dictionary(number)
+        if usage is None:
+            return None
+        entry = self._resolve(usage.mapping.get(PdfName("Language")))
+        if not isinstance(entry, PdfDictionary):
+            return None
+        tag = self._text(entry.mapping.get(PdfName("Lang")))
+        if not tag:
+            return None
+        wanted = self.language.lower().replace("_", "-")
+        tag = tag.lower().replace("_", "-")
+        # BCP 47 prefix matching: "en" covers "en-GB", but "en-GB" is not "en-US".
+        return wanted == tag or wanted.startswith(tag + "-")
+
+    def _number(self, obj: Any) -> float | None:
+        obj = self._resolve(obj)
+        return float(obj.value) if isinstance(obj, PdfNumber) else None
 
     def _object(self, number: int) -> Any:
         cos_doc = getattr(self._pdf, "_cos_doc", None)
@@ -408,17 +659,256 @@ def remove_group(pdf: Any, object_number: int) -> bool:
             ]
             removed = removed or len(kept) != len(array.items)
             array.items[:] = kept
-    config = pdf._resolve(properties.mapping.get(PdfName("D")))
-    if isinstance(config, PdfDictionary):
-        for key in ("ON", "OFF", "Order", "Locked", "AS"):
-            array = pdf._resolve(config.mapping.get(PdfName(key)))
-            if isinstance(array, PdfArray):
-                array.items[:] = [
-                    item
-                    for item in array.items
-                    if not _is_reference_to(item, object_number)
-                ]
+    for config in _all_configurations(pdf, properties):
+        _purge_group(pdf, config, object_number)
     return removed
+
+
+def _all_configurations(pdf: Any, properties: PdfDictionary) -> list[PdfDictionary]:
+    """``/D`` and every ``/Configs`` entry, as dictionaries."""
+    found = []
+    default = pdf._resolve(properties.mapping.get(PdfName("D")))
+    if isinstance(default, PdfDictionary):
+        found.append(default)
+    configs = pdf._resolve(properties.mapping.get(PdfName("Configs")))
+    if isinstance(configs, PdfArray):
+        for item in configs.items:
+            config = pdf._resolve(item)
+            if isinstance(config, PdfDictionary):
+                found.append(config)
+    return found
+
+
+def _purge_group(pdf: Any, config: PdfDictionary, object_number: int) -> None:
+    """Drop every reference to a group from one configuration.
+
+    ``/AS`` needs its own pass: its entries are dictionaries, not references,
+    so the group hides one level down in each entry's ``/OCGs``, and an entry
+    left governing nothing is dropped rather than kept as an empty rule.
+    """
+    for key in ("ON", "OFF", "Order", "Locked", "RBGroups"):
+        array = pdf._resolve(config.mapping.get(PdfName(key)))
+        if isinstance(array, PdfArray):
+            array.items[:] = [
+                item
+                for item in array.items
+                if not _is_reference_to(item, object_number)
+            ]
+    entries = pdf._resolve(config.mapping.get(PdfName("AS")))
+    if not isinstance(entries, PdfArray):
+        return
+    kept = []
+    for item in entries.items:
+        entry = pdf._resolve(item)
+        if not isinstance(entry, PdfDictionary):
+            kept.append(item)
+            continue
+        groups = pdf._resolve(entry.mapping.get(PdfName("OCGs")))
+        if isinstance(groups, PdfArray):
+            groups.items[:] = [
+                reference
+                for reference in groups.items
+                if not _is_reference_to(reference, object_number)
+            ]
+            if not groups.items:
+                continue
+        kept.append(item)
+    entries.items[:] = kept
+    if not entries.items:
+        config.mapping.pop(PdfName("AS"), None)
+
+
+def apply_configuration(pdf: Any, index: int) -> bool:
+    """Make the ``/Configs`` entry at *index* the document's default state.
+
+    A viewer offers alternate configurations as presets and switches between
+    them without changing the file. This library resolves visibility from
+    ``/D`` everywhere -- rendering, extraction, absorption, flattening -- so
+    applying one means copying its state into ``/D``: ``/BaseState``, the
+    ``/ON`` and ``/OFF`` overrides, ``/Order``, ``/Locked``, ``/AS`` and the
+    rest. What identifies the alternate (its ``/Name`` and ``/Creator``) stays
+    behind, and the alternate itself is left in ``/Configs`` so the choice can
+    be made again.
+    """
+    properties = _properties_of(pdf, create=False)
+    if properties is None:
+        return False
+    configs = pdf._resolve(properties.mapping.get(PdfName("Configs")))
+    if not isinstance(configs, PdfArray) or not 0 <= index < len(configs.items):
+        return False
+    source = pdf._resolve(configs.items[index])
+    if not isinstance(source, PdfDictionary):
+        return False
+    config = _config_of(pdf, properties)
+    for key in _CONFIG_STATE_KEYS:
+        value = source.mapping.get(PdfName(key))
+        if value is None:
+            config.mapping.pop(PdfName(key), None)
+        else:
+            config.mapping[PdfName(key)] = _copy_value(value)
+    return True
+
+
+def save_configuration(
+    pdf: Any, name: str, *, creator: str | None = None
+) -> int:
+    """Snapshot the current default state as a named ``/Configs`` entry.
+
+    Returns the new entry's index. The snapshot copies the state ``/D`` holds
+    right now, so switching layers and saving is how a preset gets built.
+    """
+    from .simple_pdf import _pdf_text_string
+
+    if not isinstance(name, str) or not name:
+        raise PdfValidationException("A configuration needs a non-empty name")
+    properties = _properties_of(pdf, create=True)
+    assert properties is not None
+    default = _config_of(pdf, properties)
+    entry = PdfDictionary({PdfName("Name"): _pdf_text_string(name)})
+    if creator:
+        entry.mapping[PdfName("Creator")] = _pdf_text_string(creator)
+    for key in _CONFIG_STATE_KEYS:
+        value = default.mapping.get(PdfName(key))
+        if value is not None:
+            entry.mapping[PdfName(key)] = _copy_value(value)
+    configs = pdf._resolve(properties.mapping.get(PdfName("Configs")))
+    if not isinstance(configs, PdfArray):
+        configs = PdfArray([])
+        properties.mapping[PdfName("Configs")] = configs
+    configs.items.append(entry)
+    return len(configs.items) - 1
+
+
+def _copy_value(value: Any) -> Any:
+    """Shallow-copy an array so two configurations never share one list.
+
+    Without this a preset and the default configuration end up holding the
+    same ``/Order`` or ``/OFF`` object, and the next layer added to the
+    document silently rewrites the preset as well.
+    """
+    if isinstance(value, PdfArray):
+        return PdfArray(list(value.items))
+    return value
+
+
+def set_usage(
+    pdf: Any,
+    object_number: int,
+    *,
+    view: bool | None = None,
+    printing: bool | None = None,
+    export: bool | None = None,
+    zoom: tuple[float | None, float | None] | None = None,
+    language: str | None = None,
+    preferred: bool = False,
+) -> None:
+    """Write a group's ``/Usage`` and register it for the matching events.
+
+    ``/Usage`` on its own changes nothing: it is a *statement* about the group,
+    and only a configuration's ``/AS`` entry turns that statement into a state
+    for a given event. So both are written here -- saying a layer must not
+    print puts ``/Print /PrintState /OFF`` on the group *and* lists the group
+    under an ``/AS`` entry for the ``Print`` event.
+
+    ``zoom`` is a ``(min, max)`` pair of magnifications (either may be
+    ``None``); ``language`` is a BCP 47 tag, with *preferred* marking it the
+    fallback when nothing matches exactly. Both are consulted for the ``View``
+    event.
+    """
+    from .simple_pdf import _pdf_text_string
+
+    group = pdf._resolve(PdfIndirectReference(object_number, 0))
+    if not isinstance(group, PdfDictionary):
+        raise PdfValidationException(
+            f"No optional content group with object {object_number}"
+        )
+    usage = pdf._resolve(group.mapping.get(PdfName("Usage")))
+    if not isinstance(usage, PdfDictionary):
+        usage = PdfDictionary()
+        group.mapping[PdfName("Usage")] = usage
+
+    events: dict[str, list[str]] = {}
+    for category, value in (("View", view), ("Print", printing), ("Export", export)):
+        if value is None:
+            continue
+        usage.mapping[PdfName(category)] = PdfDictionary(
+            {PdfName(_STATE_KEYS[category]): PdfName("ON" if value else "OFF")}
+        )
+        events.setdefault(category, []).append(category)
+    if zoom is not None:
+        low, high = zoom
+        entry = PdfDictionary()
+        if low is not None:
+            entry.mapping[PdfName("min")] = PdfNumber(float(low))
+        if high is not None:
+            entry.mapping[PdfName("max")] = PdfNumber(float(high))
+        usage.mapping[PdfName("Zoom")] = entry
+        events.setdefault("View", []).append("Zoom")
+    if language is not None:
+        usage.mapping[PdfName("Language")] = PdfDictionary(
+            {
+                PdfName("Lang"): _pdf_text_string(language),
+                PdfName("Preferred"): PdfName("ON" if preferred else "OFF"),
+            }
+        )
+        events.setdefault("View", []).append("Language")
+
+    properties = _properties_of(pdf, create=True)
+    assert properties is not None
+    config = _config_of(pdf, properties)
+    for event, categories in events.items():
+        _register_usage(pdf, config, event, categories, object_number)
+
+
+def _register_usage(
+    pdf: Any,
+    config: PdfDictionary,
+    event: str,
+    categories: Sequence[str],
+    object_number: int,
+) -> None:
+    """Add the group to the ``/AS`` entry for *event*, creating it if needed."""
+    entries = pdf._resolve(config.mapping.get(PdfName("AS")))
+    if not isinstance(entries, PdfArray):
+        entries = PdfArray([])
+        config.mapping[PdfName("AS")] = entries
+    target = None
+    for item in entries.items:
+        candidate = pdf._resolve(item)
+        if not isinstance(candidate, PdfDictionary):
+            continue
+        name = candidate.mapping.get(PdfName("Event"))
+        if isinstance(name, PdfName) and name.name.lstrip("/") == event:
+            target = candidate
+            break
+    if target is None:
+        target = PdfDictionary(
+            {
+                PdfName("Event"): PdfName(event),
+                PdfName("Category"): PdfArray([]),
+                PdfName("OCGs"): PdfArray([]),
+            }
+        )
+        entries.items.append(target)
+
+    listed = pdf._resolve(target.mapping.get(PdfName("Category")))
+    if not isinstance(listed, PdfArray):
+        listed = PdfArray([])
+        target.mapping[PdfName("Category")] = listed
+    have = {
+        item.name.lstrip("/") for item in listed.items if isinstance(item, PdfName)
+    }
+    for category in categories:
+        if category not in have:
+            listed.items.append(PdfName(category))
+            have.add(category)
+
+    groups = pdf._resolve(target.mapping.get(PdfName("OCGs")))
+    if not isinstance(groups, PdfArray):
+        groups = PdfArray([])
+        target.mapping[PdfName("OCGs")] = groups
+    if not any(_is_reference_to(item, object_number) for item in groups.items):
+        groups.items.append(PdfIndirectReference(object_number, 0))
 
 
 def _is_reference_to(item: Any, object_number: int) -> bool:

@@ -506,6 +506,33 @@ Supported:
   built from `/Not`, `/And` and `/Or` over group references.
 - Honour `/BaseState` in the default configuration, with `/ON` and `/OFF`
   overriding it per group.
+- **List and apply alternate configurations.** `Document.layers.configurations`
+  reports `/OCProperties /D` and every `/Configs` entry — name, creator, which
+  layers each shows and which it locks;
+  `Document.layers.apply_configuration(name)` adopts one. Everything here
+  resolves visibility from the default configuration, so applying a preset
+  copies its state into `/D` (base state, the per-layer overrides, `/Order`,
+  `/Locked`, `/AS`) while leaving the preset in place to be chosen again — and
+  rendering, extraction, absorption and flattening follow it from then on.
+  `Document.layers.save_configuration(name)` snapshots the current states as a
+  new preset.
+- **Resolve for an event, not just for the screen.** A group's `/Usage`
+  dictionary says what it should do when viewed, printed or exported, and the
+  configuration's `/AS` usage application dictionaries are what turn that into
+  a state — `/Usage` alone is inert. `Document.layers.resolve("Print")` reports
+  the states without changing anything and `apply_usage("Print")` makes them
+  the document's own, so flattening a print copy really drops a "do not print"
+  watermark. `View` (with its `/Zoom` and `/Language` categories), `Print` and
+  `Export` are evaluated; several categories on one group combine so that any
+  category saying OFF wins. A `/Zoom` or `/Language` group is left at its
+  configured state unless a magnification or BCP 47 tag is supplied, rather
+  than being decided on an invented viewer. Language tags match whole subtags
+  (`de` covers `de-AT`, not `den`), and a `/Preferred` group stands in when
+  nothing matched exactly. The `View` event is the default everywhere, so a
+  group a `/AS` entry hides on screen is hidden in rendering and extraction too.
+- **Say what a layer should do** with `Layer.set_usage(printing=False)` (also
+  `view`, `export`, `zoom=(min, max)`, `language=`, `preferred=`), which writes
+  both the group's `/Usage` and the configuration's `/AS` entry that applies it.
 
 - **Create a layer** with `Document.layers.add(name, visible=…)`. The group is
   registered in `/OCProperties /OCGs` and in the default configuration's
@@ -529,11 +556,16 @@ Supported:
 
 Boundaries:
 
-- Only the **default** configuration (`/D`) is applied. Alternate
-  configurations in `/Configs` are neither applied nor exposed.
-- Usage application dictionaries (`/AS`) are not evaluated, so a group whose
-  state a viewer would derive from zoom level, print or export usage keeps the
-  configured state. Everything is resolved for the on-screen (`View`) case.
+- Applying an alternate configuration **writes** it into `/D` rather than
+  keeping a separate in-memory selection: this library has one notion of "the
+  current state", and that is the one every other feature reads. The preset
+  survives in `/Configs`, but `/D`'s previous state is overwritten — snapshot
+  it with `save_configuration` first if it mattered.
+- The `/User` usage category is not evaluated: it names a person, a position or
+  an organisation to match against whoever is viewing, and this library has no
+  viewer identity to match. `/CreatorInfo` carries no state by definition.
+  Radio-button groups (`/RBGroups`) travel with a configuration but are not
+  enforced when layers are switched individually.
 - A layer marks content, and only content a page's *own* stream shows: an
   ``/OC`` on a form XObject's contents is honoured, but there is no API to tag
   an existing image or annotation with a layer after the fact -- author it
