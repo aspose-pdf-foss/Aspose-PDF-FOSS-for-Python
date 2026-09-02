@@ -283,6 +283,146 @@ def test_an_embedded_file_without_a_relationship_is_flagged_for_part_four():
     assert any("PDF/A-4 requires /AFRelationship" in e for e in _errors(document, "4"))
 
 
+# ---------------------------------------------------------------------------
+# An attached PDF has to be PDF/A itself (ISO 19005-4 6.9)
+# ---------------------------------------------------------------------------
+
+
+def _plain_pdf() -> bytes:
+    """A perfectly ordinary PDF, conforming to nothing in particular."""
+    return _bytes(_reloaded(_document()))
+
+
+def _pdfa_pdf(level: str) -> bytes:
+    document = _reloaded(_document())
+    document.convert_to_pdfa(level)
+    return _bytes(document)
+
+
+def _carrying(payload: bytes, level: str, name: str = "inner.pdf") -> Document:
+    document = _reloaded(_document())
+    document.add_attachment(name, payload, mime="application/pdf")
+    document.convert_to_pdfa(level)
+    return _reloaded(document)
+
+
+def _embedded_errors(document: Document, level: str) -> list[str]:
+    return [e for e in _errors(document, level) if "mbedded PDF" in e]
+
+
+@pytest.mark.parametrize("level", ["4", "4e"])
+def test_an_attached_pdf_that_is_not_pdfa_breaks_part_four(level):
+    """4e adds 3D and rich media; it does not relax what may be attached."""
+    document = _carrying(_plain_pdf(), level)
+
+    (problem,) = _embedded_errors(document, level)
+    assert "inner.pdf" in problem
+    assert "pdfaid:part" in problem
+
+
+def test_the_files_level_is_the_one_that_lifts_the_rule():
+    """``f`` exists precisely so arbitrary files may be carried."""
+    assert _embedded_errors(_carrying(_plain_pdf(), "4f"), "4f") == []
+
+
+@pytest.mark.parametrize("attached", ["1b", "2b", "4"])
+def test_an_attached_pdfa_of_an_accepted_part_is_fine(attached):
+    document = _carrying(_pdfa_pdf(attached), "4")
+
+    assert _embedded_errors(document, "4") == []
+
+
+def test_an_attached_pdfa_three_is_refused_by_name():
+    """Part 3 is absent from the list, and for a reason.
+
+    PDF/A-3 exists to carry arbitrary attachments, so knowing a file is
+    PDF/A-3 says nothing about what travels inside it.
+    """
+    document = _carrying(_pdfa_pdf("3b"), "4")
+
+    (problem,) = _embedded_errors(document, "4")
+    assert "part '3'" in problem
+
+
+def test_part_three_may_carry_a_pdf_that_is_not_pdfa():
+    """The rule belongs to part 4. Part 3 has the opposite purpose.
+
+    PDF/A-3 was created so that a conforming file could carry the arbitrary
+    source material a document was made from -- a spreadsheet, an invoice in
+    XML, or another PDF that conforms to nothing.
+    """
+    document = _reloaded(_document())
+    document.add_attachment("inner.pdf", _plain_pdf(), mime="application/pdf")
+    document.convert_to_pdfa("3b")
+
+    assert _embedded_errors(_reloaded(document), "3b") == []
+
+
+def test_an_attachment_that_is_not_a_pdf_is_not_subject_to_the_rule():
+    """The rule is about attached PDFs, not about attachments."""
+    document = _reloaded(_document())
+    document.add_attachment("notes.txt", b"just text", mime="text/plain")
+    document.convert_to_pdfa("4")
+
+    assert _embedded_errors(_reloaded(document), "4") == []
+
+
+def test_the_payload_decides_not_the_declared_type():
+    """A producer's MIME label is not evidence about the bytes.
+
+    Both directions matter: a PDF labelled as something else is still a PDF,
+    and something else labelled as a PDF is still not one.
+    """
+    mislabelled = _reloaded(_document())
+    mislabelled.add_attachment("inner.bin", _plain_pdf(), mime="application/octet-stream")
+    mislabelled.convert_to_pdfa("4")
+    assert len(_embedded_errors(_reloaded(mislabelled), "4")) == 1
+
+    pretending = _reloaded(_document())
+    pretending.add_attachment("notes.pdf", b"not a PDF at all", mime="application/pdf")
+    pretending.convert_to_pdfa("4")
+    assert _embedded_errors(_reloaded(pretending), "4") == []
+
+
+def test_an_attachment_that_merely_claims_pdfa_does_not_pass():
+    """The declaration opens the check; it does not answer it."""
+    from aspose_pdf.engine.simple_pdf import STANDARD_XMP_NAMESPACES
+    from aspose_pdf.xmp import XmpField
+
+    liar = _reloaded(_document())
+    packet = liar.xmp_metadata
+    namespace = STANDARD_XMP_NAMESPACES["pdfaid"]
+    packet.add(XmpField("pdfaid", "part", namespace, "2"))
+    packet.add(XmpField("pdfaid", "conformance", namespace, "B"))
+    liar.xmp_metadata = packet
+
+    document = _carrying(_bytes(liar), "4", name="claims.pdf")
+    problems = _embedded_errors(document, "4")
+
+    assert problems, "an attachment claiming PDF/A-2b was taken at its word"
+    assert all(p.startswith("Embedded PDF 'claims.pdf': ") for p in problems)
+    assert any("OutputIntents" in p for p in problems)
+
+
+def test_the_descent_stops_and_says_that_it_did():
+    """Each level costs a parse, so the structural half is bounded.
+
+    Identification keeps being checked all the way down -- that is what the
+    rule turns on -- but past the bound a declaration is taken at its word,
+    and a warning says so rather than leaving the gap silent.
+    """
+    from aspose_pdf.engine.conformance import _MAX_EMBEDDED_PDF_DEPTH
+
+    payload = _plain_pdf()
+    for _ in range(_MAX_EMBEDDED_PDF_DEPTH + 1):
+        payload = _bytes(_carrying(payload, "4"))
+    document = _carrying(payload, "4")
+
+    result = document.validate_pdfa("4")
+    assert _embedded_errors(document, "4") == []
+    assert any("was not checked further" in w for w in result.warnings)
+
+
 def test_part_three_may_carry_attachments_too():
     """The part that exists to carry attachments used to reject them.
 

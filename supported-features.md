@@ -1407,6 +1407,13 @@ Supported:
   `"4e"` (engineering — 3D and rich media) and `"4f"` (embedded files of any
   type). A `pdfaid:rev` of `2020` is required and written, and a level that
   does not exist is rejected instead of quietly producing PDF/A-1b metadata.
+  An **attached PDF must be PDF/A itself** (ISO 19005-4 6.9): the payload has
+  to declare `pdfaid:part` 1, 2 or 4 — part 3 is not on the list, since its
+  purpose is to carry arbitrary files — and is then checked against the same
+  rules as any other document, so an attachment that merely *claims* PDF/A
+  does not pass. `"4f"` is the level that lifts the rule; `"4e"` does not, as
+  it adds 3D and rich media and nothing else. Whether an attachment is a PDF is
+  decided by its bytes, not by the `/Subtype` MIME its producer declared.
 - **PDF/UA-2** (ISO 14289-2) is validated and produced via
   `validate_pdfua(part=2)` and `convert_to_pdfua(part=2)`: PDF 2.0 header, an
   XMP `pdfuaid:rev` of `2024` alongside `pdfuaid:part`, and the PDF 2.0
@@ -1582,9 +1589,9 @@ Boundaries:
   a pass/fail gate this library was never built to meet.
 - The PDF 2.0 parts are checked at the same depth as the earlier ones, which
   means their *identification* and the structural rules that differ, not the
-  whole of PDF 2.0. In particular PDF/A-4 requires an embedded PDF to itself be
-  PDF/A (outside `4f`), which is not verified — only that every file
-  specification declares its `/AFRelationship`. `convert_to_pdfua(part=2)`
+  whole of PDF 2.0. An attached PDF is validated two levels deep; below that
+  its `pdfaid:part` is still read but its contents are taken at their word, and
+  a warning says so. `convert_to_pdfua(part=2)`
   moves elements into the standard structure namespace but does not *translate*
   types between vocabularies: the tags this library writes exist in both
   namespaces, and a foreign type keeps whatever namespace it already names.

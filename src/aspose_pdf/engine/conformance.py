@@ -45,6 +45,19 @@ _PROHIBITED_ANNOT_SUBTYPES = frozenset(
 # ...of which PDF/A-4e, the engineering level, exists precisely to allow.
 _ENGINEERING_ANNOT_SUBTYPES = frozenset({"RichMedia", "3D"})
 
+# ISO 19005-4 6.9: an embedded file that is itself a PDF shall conform to
+# PDF/A-1, PDF/A-2 or PDF/A-4. Part 3 is deliberately absent -- its whole
+# purpose is to carry arbitrary attachments, so a PDF/A-3 file is no guarantee
+# about what it contains -- and PDF/A-4f is the level that lifts the rule
+# entirely. PDF/A-4e does not: it adds 3D and rich media, nothing else.
+_EMBEDDED_PDFA_PARTS = frozenset({"1", "2", "4"})
+
+# How far down a chain of attached PDFs the *structural* checks are run. Each
+# level costs a full parse and validation of the payload, so the descent stops
+# while identification -- which is what the rule turns on -- keeps being
+# checked all the way down.
+_MAX_EMBEDDED_PDF_DEPTH = 2
+
 # Action ``/S`` types prohibited by PDF/A.
 _PROHIBITED_ACTION_TYPES = frozenset(
     {
@@ -139,10 +152,14 @@ def _parse_pdf_version(value: str) -> float | None:
 # ---------------------------------------------------------------------------
 # PDF/A
 # ---------------------------------------------------------------------------
-def pdfa_extended(pdf: Any, level_short: str) -> tuple[list[str], list[str]]:
+def pdfa_extended(
+    pdf: Any, level_short: str, *, _depth: int = 0
+) -> tuple[list[str], list[str]]:
     """Return ``(errors, warnings)`` for the extended PDF/A structural checks.
 
     ``level_short`` is the normalised level (e.g. ``"1b"``, ``"2a"``).
+    ``_depth`` counts how many attached PDFs deep this validation already is;
+    it bounds the descent and is not part of the caller-facing surface.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -170,6 +187,10 @@ def pdfa_extended(pdf: Any, level_short: str) -> tuple[list[str], list[str]]:
         _check_pages(pdf, part1, allows_embedded, errors, warnings, engineering)
         if allows_embedded:
             _check_embedded_files(pdf, errors, part)
+        # PDF/A-4f is the level that exists to carry arbitrary attachments;
+        # every other part-4 level requires an attached PDF to be PDF/A itself.
+        if part == "4" and level_short != "4f":
+            _check_embedded_pdfs(pdf, errors, warnings, _depth)
         if level_a:
             _check_tagging_for_level_a(pdf, errors, warnings)
     except PdfResourceLimitException:
@@ -534,6 +555,141 @@ def _check_embedded_files(pdf: Any, errors: list[str], part: str = "3") -> None:
             f"PDF/A-{part} requires /AFRelationship on embedded file "
             f"specifications ({label})."
         )
+
+
+def _embedded_payload(pdf: Any, filespec: PdfDictionary) -> bytes | None:
+    """The decoded bytes of an embedded file, or ``None`` if unreadable."""
+    ef = _get_dict(pdf, filespec.get(PdfName("EF")))
+    if ef is None:
+        return None
+    for key in ("F", "UF"):
+        ref = ef.get(PdfName(key))
+        stream = pdf._resolve(ref)
+        if not isinstance(stream, PdfStream):
+            continue
+        try:
+            return pdf._decode_cos_stream(stream, ref)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return None
+    return None
+
+
+def _filespec_label(pdf: Any, filespec: PdfDictionary) -> str:
+    """The name to blame in a message about this embedded file."""
+    for key in ("UF", "F"):
+        value = pdf._resolve(filespec.get(PdfName(key)))
+        if isinstance(value, PdfString):
+            raw = value.value
+            return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+    return "embedded file"
+
+
+def _check_embedded_pdfs(
+    pdf: Any, errors: list[str], warnings: list[str], depth: int
+) -> None:
+    """An attached PDF has to be PDF/A itself (ISO 19005-4 6.9).
+
+    Only PDF/A-4f lifts this, and only PDF *payloads* are subject to it -- a
+    spreadsheet or an image attached to a PDF/A-4 file is a separate question,
+    answered by whether the level permits attachments at all.
+
+    Conformance is established the way the rule states it: the payload has to
+    declare ``pdfaid:part`` 1, 2 or 4. What it declares is then checked against
+    the same rules as any other document, so a file that merely *claims* PDF/A
+    does not pass -- until the descent bound stops that second half, past which
+    the declaration alone is checked.
+    """
+    from .simple_pdf import SimplePdf, _extract_xmp_pdfaid_fields
+
+    root = catalog(pdf)
+    if root is None:
+        return
+    names = _get_dict(pdf, root.get(PdfName("Names")))
+    if names is None:
+        return
+    ef_tree = _get_dict(pdf, names.get(PdfName("EmbeddedFiles")))
+    if ef_tree is None:
+        return
+
+    for value in _iter_name_tree_values(pdf, ef_tree, set(), 0):
+        filespec = _get_dict(pdf, value)
+        if filespec is None:
+            continue
+        payload = _embedded_payload(pdf, filespec)
+        # The bytes decide, not the declared MIME type or the file extension:
+        # both are producer-supplied labels, and the rule is about what the
+        # attachment *is*.
+        if payload is None or not payload.startswith(b"%PDF-"):
+            continue
+
+        label = _filespec_label(pdf, filespec)
+        try:
+            inner = SimplePdf.from_bytes(
+                payload, limits=getattr(pdf, "_load_limits", None)
+            )
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS as exc:
+            errors.append(
+                f"PDF/A-4 requires the embedded PDF {label!r} to conform to "
+                f"PDF/A, but it could not be read ({exc})."
+            )
+            continue
+
+        metadata = _embedded_xmp(inner)
+        part, conformance = (
+            _extract_xmp_pdfaid_fields(metadata) if metadata else (None, None)
+        )
+        if part is None:
+            errors.append(
+                f"PDF/A-4 requires the embedded PDF {label!r} to conform to "
+                "PDF/A; it declares no pdfaid:part."
+            )
+            continue
+        if part not in _EMBEDDED_PDFA_PARTS:
+            errors.append(
+                f"PDF/A-4 accepts an embedded PDF conforming to PDF/A-1, -2 "
+                f"or -4; {label!r} declares part {part!r}."
+            )
+            continue
+        if depth >= _MAX_EMBEDDED_PDF_DEPTH:
+            # Say so rather than passing it in silence: the declaration is all
+            # that was checked this far down, and a file can declare PDF/A
+            # without being it.
+            warnings.append(
+                f"Embedded PDF {label!r} declares PDF/A-{part} but was not "
+                "checked further: attachments nested more than "
+                f"{_MAX_EMBEDDED_PDF_DEPTH} deep are taken at their word."
+            )
+            continue
+
+        inner_level = f"{part}{(conformance or '').lower()}"
+        try:
+            inner_errors, inner_warnings = inner.check_pdfa_compliance_detailed(
+                inner_level, _depth=depth + 1
+            )
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            continue
+        # Both lists carry across, named for the file they came from. An
+        # advisory raised about an attachment is still advisory, and dropping
+        # them would hide the one that says how deep the descent went.
+        for problem in inner_errors:
+            errors.append(f"Embedded PDF {label!r}: {problem}")
+        for advisory in inner_warnings:
+            warnings.append(f"Embedded PDF {label!r}: {advisory}")
+
+
+def _embedded_xmp(pdf: Any) -> bytes | None:
+    """The catalog ``/Metadata`` packet of *pdf*, or ``None``."""
+    root = catalog(pdf)
+    if root is None:
+        return None
+    stream = pdf._resolve(root.get(PdfName("Metadata")))
+    return stream.content if isinstance(stream, PdfStream) else None
 
 
 def _iter_name_tree_values(pdf: Any, node: PdfDictionary, visited: set[int], depth: int):

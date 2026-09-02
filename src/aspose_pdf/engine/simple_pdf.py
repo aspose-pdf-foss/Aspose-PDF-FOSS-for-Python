@@ -3608,7 +3608,7 @@ class SimplePdf:
         return self.check_pdfa_compliance_detailed(level)[0]
 
     def check_pdfa_compliance_detailed(
-        self, level: str = "1b"
+        self, level: str = "1b", *, _depth: int = 0
     ) -> tuple[list[str], list[str]]:
         """Check the document against PDF/A standards (heuristic).
 
@@ -3624,6 +3624,10 @@ class SimplePdf:
         Returns:
             Tuple of ``(errors, warnings)``. Errors break conformance;
             warnings are advisory (e.g. missing annotation appearances).
+
+        ``_depth`` is internal: PDF/A-4 requires an attached PDF to conform to
+        PDF/A itself, so a validation can descend into one, and the counter is
+        what stops it descending for ever.
         """
         self._ensure_not_disposed()
         logger.info("Beginning PDF/A compliance check.")
@@ -3920,7 +3924,9 @@ class SimplePdf:
 
         # 9. Extended structural rules (catalog actions, AcroForm, annotations,
         #    actions, transparency, optional content, version, file id, ...).
-        ext_errors, warnings = conformance.pdfa_extended(self, level_norm)
+        ext_errors, warnings = conformance.pdfa_extended(
+            self, level_norm, _depth=_depth
+        )
         problems.extend(ext_errors)
 
         if problems:

@@ -25,6 +25,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content de-duplication on an encrypted document; those were disabled because
   the graph used to hold ciphertext, which it no longer does.
 
+- **PDF/A-4 now checks that an attached PDF is PDF/A itself.** ISO 19005-4 6.9
+  requires it — an attachment has to declare `pdfaid:part` 1, 2 or 4, with part
+  3 deliberately absent because carrying arbitrary files is what PDF/A-3 is
+  *for* — and only the `"4f"` level lifts the rule; `"4e"` adds 3D and rich
+  media and nothing else. Validation reads the attachment's declaration and
+  then checks it against the same rules as any other document, so one that
+  merely claims PDF/A does not pass, with each problem named for the file it
+  came from. Whether an attachment is a PDF is decided by its bytes rather than
+  by the MIME type its producer declared. The structural half descends two
+  levels; below that the declaration is taken at its word and a warning says
+  so.
+
 - **An encrypted document can be saved incrementally.** `save(incremental=True)`
   refused any encrypted document; it now appends a revision enciphered with the
   file's own key, keeping `/Encrypt` in the new trailer, so the original bytes
