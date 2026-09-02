@@ -286,7 +286,13 @@ Supported:
 - Get page count with `len(document.pages)` or `document.page_count`.
 - Iterate, index, slice, and use negative indexing for pages.
 - Add a blank page.
-- Insert a blank page or existing page object.
+- Insert a blank page, or a **copy of an existing page** of the same document:
+  the copy keeps its resources, rotation and boxes, gets its own content stream
+  so the two can be edited apart, and gets fresh copies of the page's
+  annotations. **Widget** annotations are left out — one is a form field's
+  presence on a page, and duplicating it would put a single field in two places
+  where typing in either changes both. A page from a *different* document is
+  refused; `Document.merge` brings pages across.
 - Delete pages by index and clear all pages.
 - Check whether a page belongs to a collection and get its index.
 - Read page media box/rectangle through `Page.rect` and `Page.media_box`.

@@ -655,7 +655,14 @@ class PageCollection:
         return Page(self._document, idx)
 
     def insert(self, index: int, page: Page | Any | None = None) -> Page:
-        """Insert a page at *index*."""
+        """Insert a page at *index*, blank or a copy of an existing one.
+
+        A :class:`Page` of *this* document is copied whole -- its resources,
+        rotation and boxes, and its annotations as fresh objects. Copying a page
+        out of a *different* document is refused rather than half-done: the
+        objects its content names live in that document's graph, and bringing
+        them across is what :meth:`aspose_pdf.Document.merge` is for.
+        """
         self._ensure_not_disposed()
         count = len(self)
         if index < 0:
@@ -666,6 +673,13 @@ class PageCollection:
         if page is None:
             # Insert a blank page
             self._document._engine_pdf.insert(index, ((0, 0, 612, 792), b""))
+        elif isinstance(page, Page):
+            if page._document is not self._document:
+                raise PdfValidationException(
+                    "insert() copies a page within one document; use "
+                    "Document.merge to bring pages in from another"
+                )
+            self._document._engine_pdf.copy_page(page.index, index)
         else:
             self._document._engine_pdf.insert(index, page)
 

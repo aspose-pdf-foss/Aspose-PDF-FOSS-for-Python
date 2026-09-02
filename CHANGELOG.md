@@ -215,6 +215,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Inserting an existing page produced a blank one.** `pages.insert(index,
+  page)` is documented as taking an existing page, but carried over only the
+  media box and the content bytes: the new page named fonts and images that
+  were not in *its* resources, so every reference dangled, nothing was drawn,
+  and no structural error showed for it — annotations were dropped too. A copy
+  now keeps the page's resources, rotation and boxes, takes its own content
+  stream so the two can be edited apart, and gets fresh copies of the
+  annotations (widgets excepted: one is a form field's presence on a page, and
+  duplicating it would put a single field in two places). A page from another
+  document is refused rather than half-copied — `Document.merge` is what brings
+  pages across.
+
 - **A rich-text field whose widget was a separate object never showed its
   markup.** `/RV` is a field-level entry, like `/V`, so a field with its widget
   under `/Kids` — which is what this library's own `Form.add_text_field`

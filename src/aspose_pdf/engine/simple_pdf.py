@@ -1290,8 +1290,19 @@ class SimplePdf:
         for i, (rect, content) in enumerate(zip(self.pages, self.page_contents)):
             self._create_cos_page(i, rect, content)
 
+    #: Page-level keys a copied page must not inherit verbatim. ``/Parent``
+    #: names the tree node the *source* hangs from, and ``/Annots`` is rebuilt
+    #: so the two pages do not share annotation objects. ``/Contents`` is not
+    #: listed because the copy is always given a stream of its own below --
+    #: excluding it here as well would say the same thing twice.
+    _PAGE_COPY_SKIP = ("Parent", "Annots")
+
     def _create_cos_page(
-        self, index: int, rect: tuple[float, float, float, float], content: bytes
+        self,
+        index: int,
+        rect: tuple[float, float, float, float],
+        content: bytes,
+        source: PdfDictionary | None = None,
     ) -> None:
         if self._cos_doc is None:
             return
@@ -1311,8 +1322,22 @@ class SimplePdf:
                 PdfName("MediaBox"): PdfArray([PdfNumber(v) for v in rect]),
             }
         )
+        if source is not None:
+            # A copy keeps everything the page declared -- /Resources above all,
+            # without which its content stream references nothing and the page
+            # draws blank -- plus /Rotate, /CropBox and the rest. Resource
+            # objects are shared by reference, which is what a PDF does anyway;
+            # the content stream is not, so editing one page leaves the other
+            # alone.
+            for key, value in source.mapping.items():
+                if key.name.lstrip("/") not in self._PAGE_COPY_SKIP:
+                    page.mapping[key] = value
 
-        if content:
+        # A copy always gets its own stream, empty or not: sharing the source's
+        # would let an edit to either page show on both, and an inherited
+        # /Contents is exactly what would be left behind for a page whose
+        # content is empty.
+        if content or source is not None:
             content_stream = PdfStream(mapping={}, content=content)
             content_ref = self._cos_doc.register_object(content_stream)
             page.mapping[PdfName("Contents")] = content_ref
@@ -7278,7 +7303,53 @@ class SimplePdf:
         """Add a page to the end with COS synchronization."""
         self.insert(len(self.pages), page)
 
-    def insert(self, index: int, page: Any) -> None:
+    def copy_page(self, source_index: int, at_index: int) -> None:
+        """Insert a copy of this document's page *source_index* at *at_index*.
+
+        The copy keeps what the page declares -- resources, rotation, boxes --
+        because a page without its ``/Resources`` draws nothing: every font and
+        image its content names resolves to no object. Annotations are copied
+        as new objects so the two pages do not share them, except **widget**
+        annotations, which are a form field's presence on a page: duplicating
+        one would put a single field in two places, where typing in either
+        changes both.
+        """
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        if source_index < 0 or source_index >= len(self.pages):
+            raise PdfValidationException("Source page index out of range")
+        source = self._get_page_dict(source_index)
+        if not isinstance(source, PdfDictionary):
+            raise PdfValidationException("Source page is not a page dictionary")
+        self.insert(
+            at_index,
+            (self.pages[source_index], self.get_page_content(source_index)),
+            _source=source,
+        )
+        target = at_index if at_index <= len(self.pages) - 1 else len(self.pages) - 1
+        self._copy_page_annotations(source, target)
+
+    def _copy_page_annotations(self, source: PdfDictionary, target_index: int) -> None:
+        """Give the page at *target_index* its own copies of *source*'s annots."""
+        annots = self._resolve(source.mapping.get(PdfName("Annots")))
+        if not isinstance(annots, PdfArray) or not annots.items:
+            return
+        page_ref = PdfIndirectReference(self._page_obj_ids[target_index], 0)
+        page = self._resolve(page_ref)
+        copied: list[Any] = []
+        for item in annots.items:
+            annot = self._resolve(item)
+            if not isinstance(annot, PdfDictionary):
+                continue
+            if self._get_name(annot.mapping.get(PdfName("Subtype"))) == "Widget":
+                continue
+            clone = PdfDictionary(dict(annot.mapping))
+            clone.mapping[PdfName("P")] = page_ref
+            copied.append(self._cos_doc.register_object(clone))
+        if copied:
+            page.mapping[PdfName("Annots")] = PdfArray(copied)
+
+    def insert(self, index: int, page: Any, *, _source: Any = None) -> None:
         """Insert a page at index with COS synchronization."""
         self._ensure_not_disposed()
         self._ensure_cos()  # Ensure COS doc exists for new PDFs
@@ -7311,7 +7382,7 @@ class SimplePdf:
         self._page_cache_valid = False
         self._authored_font_cache.clear()
         if self._cos_doc:
-            self._create_cos_page(index, media_box, content)
+            self._create_cos_page(index, media_box, content, _source)
 
     def add_page_break(self) -> None:
         """Add a blank page."""
