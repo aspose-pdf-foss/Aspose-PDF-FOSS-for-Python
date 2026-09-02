@@ -10931,6 +10931,7 @@ class SimplePdf:
             "ft": None,
             "ff": 0,
             "v": None,
+            "rv": None,
             "opt": None,
         }
         self._gen_field_appearance_rec(field_ref, inherited, acro)
@@ -11242,10 +11243,17 @@ class SimplePdf:
         ff = int(ff_obj.value) if isinstance(ff_obj, PdfNumber) else inherited["ff"]
         v_raw = field.mapping.get(PdfName("V"))
         v = v_raw if v_raw is not None else inherited["v"]
+        # /RV is a field-level entry like /V, so a field with a separate widget
+        # keeps it on the field. Reading it off the widget alone means a rich
+        # text field renders its plain /V and the markup is never seen.
+        rv_raw = field.mapping.get(PdfName("RV"))
+        rv = rv_raw if rv_raw is not None else inherited.get("rv")
         opt_raw = field.mapping.get(PdfName("Opt"))
         opt = opt_raw if opt_raw is not None else inherited.get("opt")
 
-        child = {"da": da, "q": q, "ft": ft, "ff": ff, "v": v, "opt": opt}
+        child = {
+            "da": da, "q": q, "ft": ft, "ff": ff, "v": v, "rv": rv, "opt": opt
+        }
 
         count = 0
         kids = self._resolve(field.mapping.get(PdfName("Kids")))
@@ -11256,7 +11264,7 @@ class SimplePdf:
             # Terminal (merged field + widget) annotation.
             try:
                 if self._set_widget_appearance(
-                    field, ft, ff or 0, q or 0, v, da, acro, opt
+                    field, ft, ff or 0, q or 0, v, da, acro, opt, rv
                 ):
                     count += 1
             except PdfResourceLimitException:
@@ -11275,6 +11283,7 @@ class SimplePdf:
         da: str | None,
         acro: PdfDictionary,
         opt: Any = None,
+        rv: Any = None,
     ) -> bool:
         rect = self._get_cos_rect(widget.mapping.get(PdfName("Rect")))
         llx, urx = min(rect[0], rect[2]), max(rect[0], rect[2])
@@ -11294,7 +11303,7 @@ class SimplePdf:
             return self._set_button_widget_state(widget, v, is_radio)
         if ft in ("Tx", "Ch"):
             return self._set_text_widget_appearance(
-                widget, ft, ff, q, v, da, acro, rect_n, w, h, opt
+                widget, ft, ff, q, v, da, acro, rect_n, w, h, opt, rv
             )
         if ft == "Sig":
             # An unsigned signature field shows an empty box: draw only the /MK
@@ -11319,6 +11328,7 @@ class SimplePdf:
         w: float,
         h: float,
         opt: Any = None,
+        rv: Any = None,
     ) -> bool:
         from .field_appearance import (
             build_list_box_appearance,
@@ -11334,7 +11344,7 @@ class SimplePdf:
         # Rich-text fields (Ff bit 26) render their /RV styled markup.
         if ft == "Tx" and (ff & (1 << 25)):
             rich = self._rich_text_widget_appearance(
-                widget, size, color, q, w, h, font_name, acro
+                widget, size, color, q, w, h, font_name, acro, rv
             )
             if rich is not None:
                 content, resources = rich
@@ -11406,24 +11416,38 @@ class SimplePdf:
         h: float,
         font_name: str = "Helv",
         acro: PdfDictionary | None = None,
+        rv: Any = None,
     ) -> tuple[bytes, PdfDictionary | None] | None:
-        """Build a rich-text field appearance from ``/RV``, or ``None``."""
-        rv = self._resolve(widget.mapping.get(PdfName("RV")))
-        rc = decode_pdf_text_string(rv) if isinstance(rv, PdfString) else None
+        """Build a rich-text field appearance from ``/RV``, or ``None``.
+
+        *rv* comes down the field tree, which is also where a merged
+        field/widget's own value comes from: the recursion reads ``/RV`` off
+        every node it visits, and a merged widget is the node.
+        """
+        value = self._resolve(rv)
+        rc = decode_pdf_text_string(value) if isinstance(value, PdfString) else None
         if not rc or not rc.strip():
             return None
         from .rich_text import RichStyle, build_rich_text_content
 
+        # The field's /DA names the font its text is meant to be in: it seeds
+        # the family markup without a font-family inherits, and -- when the
+        # form actually carries that font -- supplies the face itself.
+        document_font, font_ref = self._rich_text_document_font(font_name, acro)
         default = RichStyle(
             size=size if size > 0 else 12.0,
             color=color or "0 g",
-            # The field's /DA names the font its text is meant to be in, so it
-            # seeds the family that markup without a font-family inherits.
-            family=self._field_font_family(font_name, acro) or "sans",
+            family=document_font.family if document_font else "sans",
         )
         align = quadding if quadding in (0, 1, 2) else 0
         built = build_rich_text_content(
-            rc, w, h, default_style=default, padding=2.0, default_align=align
+            rc,
+            w,
+            h,
+            default_style=default,
+            padding=2.0,
+            default_align=align,
+            document_font=document_font,
         )
         if built is None:
             return None
@@ -11431,7 +11455,75 @@ class SimplePdf:
         content = ("/Tx BMC\nq\n" + "\n".join(body) + "\nQ\nEMC\n").encode(
             "latin-1", "replace"
         )
-        return content, self._build_appearance_resources({}, fonts)
+        synthesised = {name: spec for name, spec in fonts.items() if spec}
+        resources = self._build_appearance_resources({}, synthesised)
+        if font_ref is not None and font_name in fonts:
+            resources = self._with_font_reference(resources, font_name, font_ref)
+        return content, resources
+
+    def _with_font_reference(
+        self, resources: PdfDictionary | None, name: str, ref: Any
+    ) -> PdfDictionary:
+        """Add an existing font resource to a generated ``/Resources``.
+
+        The synthesised Standard-14 faces are built from specs; the document's
+        own font is not built at all -- it already exists, and the appearance
+        has to point at that object rather than a copy, or a viewer resolves a
+        different font from the one the field declares.
+        """
+        if resources is None:
+            resources = PdfDictionary({})
+        fonts = self._resolve(resources.mapping.get(PdfName("Font")))
+        if not isinstance(fonts, PdfDictionary):
+            fonts = PdfDictionary({})
+            resources.mapping[PdfName("Font")] = fonts
+        fonts.mapping[PdfName(name)] = ref
+        return resources
+
+    def _rich_text_document_font(
+        self, font_name: str, acro: PdfDictionary | None
+    ) -> tuple[Any, Any]:
+        """``(DocumentFont, font reference)`` for the field's own font.
+
+        Both are ``None`` when the form does not carry the resource, or when it
+        carries a composite font: a Type0's appearance is written in CID codes,
+        and this layout writes the same PDFDocEncoded literals the plain field
+        path does, so drawing rich text with it would mis-encode every word.
+        """
+        from .rich_text import DocumentFont
+        from .std_font_data import family_from_name
+
+        if not isinstance(acro, PdfDictionary):
+            return None, None
+        dr = self._resolve(acro.mapping.get(PdfName("DR")))
+        if not isinstance(dr, PdfDictionary):
+            return None, None
+        fonts = self._resolve(dr.mapping.get(PdfName("Font")))
+        if not isinstance(fonts, PdfDictionary):
+            return None, None
+        ref = fonts.mapping.get(PdfName(font_name))
+        font = self._resolve(ref)
+        if not isinstance(font, PdfDictionary):
+            return None, None
+        if not isinstance(ref, PdfIndirectReference):
+            # A /DR font kept as a direct dictionary cannot be referenced from
+            # an appearance's resources; give it an object number, as the plain
+            # field path does, so both point at the same font.
+            ref = self._cos_doc.register_object(font)
+            fonts.mapping[PdfName(font_name)] = ref
+        if self._get_name(font.mapping.get(PdfName("Subtype"))) == "Type0":
+            return None, None
+        base = self._get_name(font.mapping.get(PdfName("BaseFont")))
+        family = family_from_name(base) if base else None
+        metric = self._simple_font_metric(font)
+        return (
+            DocumentFont(
+                resource=font_name,
+                family=family or "sans",
+                width_of=getattr(metric, "width_of", None),
+            ),
+            ref,
+        )
 
     def _field_value_to_text(self, v: Any) -> str:
         """Render a form-field ``/V`` value as display text."""

@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
+from typing import Any
 
 from .field_appearance import _fmt, _pdf_literal
 
@@ -63,6 +64,10 @@ _NAMED_COLORS = {
 _LINE_LEADING = 1.16   # baseline-to-baseline as a multiple of the line font size
 _CHAR_WIDTH_EM = 0.6   # flat fallback advance when metrics are unavailable
 
+# "no width function was supplied", which is different from "there is none":
+# a document font may legitimately have no /Widths to measure with.
+_UNSET = object()
+
 
 @dataclass(frozen=True)
 class RichStyle:
@@ -80,6 +85,26 @@ class RichStyle:
 class RichRun:
     text: str
     style: RichStyle
+
+
+@dataclass(frozen=True)
+class DocumentFont:
+    """The document's own font for a rich-text block, when there is one.
+
+    A form field names its font in ``/DA``, and that font may be embedded --
+    a brand face nothing in the Standard 14 resembles. Runs asking for no other
+    face are drawn with it, by *reference*: the resource already exists in the
+    form's ``/DR``, so nothing has to be synthesised and nothing is re-encoded.
+
+    A run that asks for bold, italic, or a different family cannot be: an
+    arbitrary embedded face has no bold sibling to reach for. Those fall back
+    to the Standard 14, which is why *family* is recorded -- the fallback
+    should be the family the document font belongs to, not a default.
+    """
+
+    resource: str                      # the /DR key, used verbatim in Tf
+    family: str = "sans"               # what the Standard 14 falls back to
+    width_of: Any = None               # code -> advance in 1/1000 em, or None
 
 
 def _font_spec(base: str) -> dict[str, str]:
@@ -239,8 +264,30 @@ def _style_width_fn(style: RichStyle):
     )
 
 
-def _measure(text: str, style: RichStyle) -> float:
-    fn = _style_width_fn(style)
+def _face_for(
+    style: RichStyle, default: RichStyle, document_font: DocumentFont | None
+) -> tuple[str, dict[str, str] | None, Any]:
+    """``(resource name, font spec to synthesise or None, width function)``.
+
+    The document's own font is used only for a run that asks for exactly the
+    face the field declares -- no bold, no italic, and the same family. Anything
+    else needs a face that font cannot provide, so it falls back to the
+    Standard 14.
+    """
+    if (
+        document_font is not None
+        and not style.bold
+        and not style.italic
+        and style.family == default.family
+    ):
+        return document_font.resource, None, document_font.width_of
+    name, base = _FONT_TABLE[(style.family, style.bold, style.italic)]
+    return name, _font_spec(base), _style_width_fn(style)
+
+
+def _measure(text: str, style: RichStyle, fn: Any = _UNSET) -> float:
+    if fn is _UNSET:
+        fn = _style_width_fn(style)
     if fn is None:
         return len(text) * _CHAR_WIDTH_EM * style.size
     total = 0.0
@@ -257,8 +304,18 @@ class _Line:
     size: float  # dominant (max) font size on the line
 
 
-def _wrap_paragraph(runs: list[RichRun], max_width: float) -> list[_Line]:
-    """Greedy word-wrap a paragraph's runs into lines of ``(word, style)``."""
+def _wrap_paragraph(
+    runs: list[RichRun], max_width: float, widths: Any = None
+) -> list[_Line]:
+    """Greedy word-wrap a paragraph's runs into lines of ``(word, style)``.
+
+    *widths* maps a style to the advance function that style is drawn with, so
+    a run using the document's own font is wrapped on *its* metrics rather than
+    on a substitute's.
+    """
+    def width_fn(style: RichStyle) -> Any:
+        return widths(style) if widths is not None else _UNSET
+
     align = runs[0].style.align if runs else 0
     tokens: list[tuple[str, RichStyle]] = []
     for run in runs:
@@ -271,8 +328,9 @@ def _wrap_paragraph(runs: list[RichRun], max_width: float) -> list[_Line]:
     cur: list[tuple[str, RichStyle]] = []
     cur_w = 0.0
     for word, style in tokens:
-        word_w = _measure(word, style)
-        space_w = _measure(" ", style) if cur else 0.0
+        fn = width_fn(style)
+        word_w = _measure(word, style, fn)
+        space_w = _measure(" ", style, fn) if cur else 0.0
         if cur and cur_w + space_w + word_w > max_width:
             lines.append(_Line(cur, align, max(s.size for _t, s in cur)))
             cur, cur_w = [(word, style)], word_w
@@ -283,12 +341,13 @@ def _wrap_paragraph(runs: list[RichRun], max_width: float) -> list[_Line]:
     return lines
 
 
-def _line_width(line: _Line) -> float:
+def _line_width(line: _Line, widths: Any = None) -> float:
     total = 0.0
     for i, (word, style) in enumerate(line.words):
+        fn = widths(style) if widths is not None else _UNSET
         if i:
-            total += _measure(" ", style)
-        total += _measure(word, style)
+            total += _measure(" ", style, fn)
+        total += _measure(word, style, fn)
     return total
 
 
@@ -300,35 +359,44 @@ def build_rich_text_content(
     default_style: RichStyle,
     padding: float = 2.0,
     default_align: int = 0,
-) -> tuple[list[str], dict[str, dict[str, str]]] | None:
+    document_font: DocumentFont | None = None,
+) -> tuple[list[str], dict[str, dict[str, str] | None]] | None:
     """Lay out rich text into ``(BT…ET body lines, fonts)``, or ``None`` if empty.
 
     *default_style* seeds size/colour/alignment for text outside any styled span
-    (from the ``/DA`` or ``/DS`` default). Returns the content operators for the
-    text block (the caller wraps them in ``q``/``Q`` and any background/border)
-    plus the font resources the block references.
+    (from the ``/DA`` or ``/DS`` default). *document_font*, when given, is the
+    field's own font: runs asking for exactly the face it declares are drawn
+    with it by reference. Returns the content operators for the text block (the
+    caller wraps them in ``q``/``Q`` and any background/border) plus the font
+    resources the block references. A resource whose spec is ``None`` is the
+    document font: it is in the mapping because the layout used it, and the
+    value is empty because the caller -- not this function -- holds the object
+    to point at.
     """
     seed = replace(default_style, align=default_align)
     paragraphs = parse_rich_text(rc, seed)
     if not paragraphs:
         return None
 
+    def widths(style: RichStyle) -> Any:
+        return _face_for(style, seed, document_font)[2]
+
     max_width = max(1.0, width - 2.0 * padding)
     lines: list[_Line] = []
     for para in paragraphs:
-        lines.extend(_wrap_paragraph(para, max_width))
+        lines.extend(_wrap_paragraph(para, max_width, widths))
     if not any(line.words for line in lines):
         return None
 
     body: list[str] = ["BT"]
-    fonts: dict[str, dict[str, str]] = {}
+    fonts: dict[str, dict[str, str] | None] = {}
     cur_font: tuple[str, float] | None = None
     cur_color: str | None = None
     y = height - padding
     for line in lines:
         y -= line.size
         if line.words:
-            total = _line_width(line)
+            total = _line_width(line, widths)
             if line.align == 1:
                 x = max(padding, (width - total) / 2.0)
             elif line.align == 2:
@@ -336,10 +404,10 @@ def build_rich_text_content(
             else:
                 x = padding
             for i, (word, style) in enumerate(line.words):
+                fname, spec, fn = _face_for(style, seed, document_font)
                 if i:
-                    x += _measure(" ", style)
-                fname, base = _FONT_TABLE[(style.family, style.bold, style.italic)]
-                fonts[fname] = _font_spec(base)
+                    x += _measure(" ", style, fn)
+                fonts[fname] = spec
                 if (fname, style.size) != cur_font:
                     body.append(f"/{fname} {_fmt(style.size)} Tf")
                     cur_font = (fname, style.size)
@@ -348,7 +416,7 @@ def build_rich_text_content(
                     cur_color = style.color
                 body.append(f"1 0 0 1 {_fmt(x)} {_fmt(y)} Tm")
                 body.append(f"{_pdf_literal(word)} Tj")
-                x += _measure(word, style)
+                x += _measure(word, style, fn)
         y -= line.size * (_LINE_LEADING - 1.0)
     body.append("ET")
     return body, fonts

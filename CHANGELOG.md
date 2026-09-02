@@ -25,6 +25,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content de-duplication on an encrypted document; those were disabled because
   the graph used to hold ciphertext, which it no longer does.
 
+- **A form field's rich text is drawn in the font the field declares.** The
+  markup was laid out in a Standard-14 face whatever the `/DA` named, so a form
+  using an embedded brand font rendered visibly wrong type. Runs asking for
+  exactly that face now use it by reference to the form's own `/DR` resource,
+  measured with its `/Widths`, so wrapping follows the real advances too; a run
+  wanting bold, italic or another family still falls back to the Standard 14 of
+  the matching family, since an arbitrary embedded face has no bold sibling. A
+  Type0/CID field font is deliberately left out: its appearance is written in
+  CID codes, and drawing PDFDocEncoded literals with it would mis-encode every
+  word.
+
 - **Existing content can be put on a layer.** A layer could be created and
   content authored onto it inside a `Page.layer` block, but a watermark, a
   stamp or a reviewer's comments already in the document had no way onto one at
@@ -195,6 +206,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **A rich-text field whose widget was a separate object never showed its
+  markup.** `/RV` is a field-level entry, like `/V`, so a field with its widget
+  under `/Kids` — which is what this library's own `Form.add_text_field`
+  produces — keeps it on the field. It was read off the widget alone, so every
+  such field rendered its plain `/V` and the markup was never seen. It is now
+  inherited down the field tree beside `/V`.
 
 - **Opening a document and saving it made the file bigger, every time.**
   Outlines and attachments live in the model, not the COS graph, and are

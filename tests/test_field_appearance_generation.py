@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 import pytest
 
@@ -686,16 +687,185 @@ def _appearance_fonts(engine, field) -> set[str]:
     return {key.name.lstrip("/") for key in fonts.mapping}
 
 
-@pytest.mark.parametrize(
-    ("base_font", "resource"),
-    [("Times-Roman", "TiRo"), ("Courier", "Cour"), ("Helvetica", "Helv")],
-)
-def test_rich_text_inherits_the_family_the_field_default_names(base_font, resource):
-    """Markup that names no family should follow the field, not a default.
+def _dr_with(base_font: str, extra: dict | None = None) -> PdfDictionary:
+    font = PdfDictionary(
+        {
+            PdfName("Type"): PdfName("Font"),
+            PdfName("Subtype"): PdfName("Type1"),
+            PdfName("BaseFont"): PdfName(base_font),
+            PdfName("Encoding"): PdfName("WinAnsiEncoding"),
+            **(extra or {}),
+        }
+    )
+    return PdfDictionary(
+        {PdfName("Font"): PdfDictionary({PdfName("Cust"): font})}
+    )
 
-    A form whose ``/DA`` says Times means its text to be Times; rendering the
-    styled spans in Helvetica because the markup was silent contradicts the
-    field's own declaration.
+
+@pytest.mark.parametrize("base_font", ["Times-Roman", "Courier", "BrandSans"])
+def test_rich_text_is_drawn_with_the_font_the_field_declares(base_font):
+    """The field's own font, not a lookalike -- including one nothing resembles.
+
+    A form's ``/DA`` names the font its text is meant to be in, and that font
+    may be embedded. Substituting a Standard-14 face for it renders the field
+    in visibly the wrong type.
+    """
+    widget = _rich_text_widget("<body><p>styled</p></body>", da="/Cust 12 Tf 0 g")
+    engine, field, _acro = _engine_with_acroform(widget, dr=_dr_with(base_font))
+
+    assert engine.generate_field_appearances() == 1
+    assert _appearance_fonts(engine, field) == {"Cust"}
+
+
+def test_the_appearance_points_at_the_form_s_own_font_object():
+    """A copy would let the two drift; a viewer must resolve the same font."""
+    dr = _dr_with("BrandSans")
+    widget = _rich_text_widget("<body><p>styled</p></body>", da="/Cust 12 Tf 0 g")
+    engine, field, _acro = _engine_with_acroform(widget, dr=dr)
+    engine.generate_field_appearances()
+
+    ap = engine._resolve(field.mapping[PdfName("AP")])
+    n = engine._resolve(ap.mapping[PdfName("N")])
+    resources = engine._resolve(n.mapping[PdfName("Resources")])
+    used = engine._resolve(resources.mapping[PdfName("Font")]).mapping[PdfName("Cust")]
+    declared = engine._resolve(
+        engine._resolve(dr.mapping[PdfName("Font")]).mapping[PdfName("Cust")]
+    )
+
+    assert engine._resolve(used) is declared
+
+
+@pytest.mark.parametrize(
+    ("markup", "base_font", "fallback"),
+    [
+        ("<b>styled</b>", "Times-Roman", "TiBo"),
+        ("<b>styled</b>", "Courier", "CoBo"),
+        ("<b>styled</b>", "Helvetica", "HeBo"),
+        ("<i>styled</i>", "Times-Roman", "TiIt"),
+        ("<i>styled</i>", "Courier", "CoOb"),
+    ],
+)
+def test_a_styled_run_falls_back_to_that_font_s_family(markup, base_font, fallback):
+    """An arbitrary embedded face has no bold or italic sibling to reach for.
+
+    The fallback still has to be the *right* family: a Times field asking for
+    bold should get Times-Bold, not Helvetica-Bold.
+    """
+    widget = _rich_text_widget(
+        f"<body><p>plain {markup}</p></body>", da="/Cust 12 Tf 0 g"
+    )
+    engine, field, _acro = _engine_with_acroform(widget, dr=_dr_with(base_font))
+
+    assert engine.generate_field_appearances() == 1
+    assert _appearance_fonts(engine, field) == {"Cust", fallback}
+
+
+def test_centring_measures_the_line_on_the_field_font_too():
+    """Alignment needs the line's real width, not a substitute's guess.
+
+    Centred text is placed from the width of the whole line, so measuring it
+    with the wrong advances puts every centred line in the wrong place -- a
+    separate calculation from the one wrapping uses, and separately wrong.
+    """
+
+    def first_x(width: int) -> float:
+        dr = _dr_with(
+            "BrandSans",
+            {
+                PdfName("FirstChar"): PdfNumber(32),
+                PdfName("Widths"): PdfArray([PdfNumber(width)] * 96),
+            },
+        )
+        widget = _rich_text_widget(
+            '<body><p style="text-align:center">centred</p></body>',
+            da="/Cust 12 Tf 0 g",
+        )
+        engine, field, _acro = _engine_with_acroform(widget, dr=dr)
+        engine.generate_field_appearances()
+        content = _ap_content(engine, field).decode("latin-1")
+        return float(re.search(r"1 0 0 1 ([\d.-]+) [\d.-]+ Tm", content).group(1))
+
+    # Wider characters make a wider line, which starts further left.
+    assert first_x(1000) < first_x(250)
+
+
+def test_rich_text_reaches_a_widget_that_is_a_separate_object():
+    """``/RV`` is a field-level entry, like ``/V``.
+
+    A field with its own widget under ``/Kids`` keeps ``/RV`` on the field;
+    reading it off the widget alone left every such field rendering its plain
+    ``/V`` with the markup never seen at all.
+    """
+    widget = PdfDictionary(
+        {
+            PdfName("Type"): PdfName("Annot"),
+            PdfName("Subtype"): PdfName("Widget"),
+            PdfName("Rect"): PdfArray(
+                [PdfNumber(100), PdfNumber(680), PdfNumber(300), PdfNumber(740)]
+            ),
+        }
+    )
+    doc = PdfDocument()
+    widget_ref = doc.register_object(widget)
+    field = PdfDictionary(
+        {
+            PdfName("FT"): PdfName("Tx"),
+            PdfName("T"): PdfString(b"rich1"),
+            PdfName("Ff"): PdfNumber(1 << 25),
+            PdfName("DA"): PdfString(b"/Helv 12 Tf 0 g"),
+            PdfName("V"): PdfString(b"plainval"),
+            PdfName("RV"): PdfString(b"<body><p>markup</p></body>"),
+            PdfName("Kids"): PdfArray([widget_ref]),
+        }
+    )
+    field_ref = doc.register_object(field)
+    acro = PdfDictionary({PdfName("Fields"): PdfArray([field_ref])})
+    root = PdfDictionary(
+        {
+            PdfName("Type"): PdfName("Catalog"),
+            PdfName("AcroForm"): doc.register_object(acro),
+        }
+    )
+    doc.trailer = PdfDictionary({PdfName("Root"): doc.register_object(root)})
+    engine = SimplePdf()
+    engine._cos_doc = doc
+
+    assert engine.generate_field_appearances() == 1
+    content = _ap_content(engine, widget)
+    assert b"(markup) Tj" in content
+    assert b"plainval" not in content
+
+
+def test_rich_text_wraps_on_the_field_font_s_own_widths():
+    """Measuring an embedded face with a substitute's advances misplaces it.
+
+    The same markup in the same box has to wrap differently when the font says
+    its characters are four times as wide.
+    """
+
+    def lines(width: int) -> int:
+        widths = PdfArray([PdfNumber(width)] * 96)
+        dr = _dr_with(
+            "BrandSans",
+            {PdfName("FirstChar"): PdfNumber(32), PdfName("Widths"): widths},
+        )
+        widget = _rich_text_widget(
+            "<body><p>the quick brown fox jumps over the lazy dog</p></body>",
+            da="/Cust 12 Tf 0 g",
+        )
+        engine, field, _acro = _engine_with_acroform(widget, dr=dr)
+        engine.generate_field_appearances()
+        content = _ap_content(engine, field).decode("latin-1")
+        return len({m.group(1) for m in re.finditer(r"1 0 0 1 [\d.-]+ ([\d.-]+) Tm", content)})
+
+    assert lines(1000) > lines(250)
+
+
+def test_a_composite_field_font_is_not_used_for_rich_text():
+    """A Type0's appearance is written in CID codes, which this layout is not.
+
+    Drawing PDFDocEncoded literals with it would mis-encode every word, so the
+    Standard 14 is the honest fallback.
     """
     dr = PdfDictionary(
         {
@@ -704,9 +874,8 @@ def test_rich_text_inherits_the_family_the_field_default_names(base_font, resour
                     PdfName("Cust"): PdfDictionary(
                         {
                             PdfName("Type"): PdfName("Font"),
-                            PdfName("Subtype"): PdfName("Type1"),
-                            PdfName("BaseFont"): PdfName(base_font),
-                            PdfName("Encoding"): PdfName("WinAnsiEncoding"),
+                            PdfName("Subtype"): PdfName("Type0"),
+                            PdfName("BaseFont"): PdfName("BrandSans"),
                         }
                     )
                 }
@@ -717,7 +886,7 @@ def test_rich_text_inherits_the_family_the_field_default_names(base_font, resour
     engine, field, _acro = _engine_with_acroform(widget, dr=dr)
 
     assert engine.generate_field_appearances() == 1
-    assert _appearance_fonts(engine, field) == {resource}
+    assert _appearance_fonts(engine, field) == {"Helv"}
 
 
 def test_rich_text_markup_overrides_the_field_default_family():

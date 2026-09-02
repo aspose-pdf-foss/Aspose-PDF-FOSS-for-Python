@@ -1130,11 +1130,15 @@ Boundaries:
   `text-align`. Fonts are the **Standard 14 text faces** — Helvetica, Times and
   Courier, each in four styles — picked by `font-family` (a stack takes the
   first name it recognises; an unrecognised one keeps what the run inherited)
-  and measured with that family's own advances. A field's `/DA` font seeds the
-  family for markup that names none. Embedded and other document fonts are
-  **not** used, so a Type0/CID field font still falls back to the plain `/DA`
-  appearance rather than styled spans; backgrounds and nested block layout are
-  not rendered either, and `Stamp` is
+  and measured with that family's own advances. In a **form field**, the font
+  the `/DA` names is used directly — embedded faces included, by reference to
+  the form's own `/DR` resource and measured with its `/Widths` — for runs
+  asking for exactly that face; a run wanting bold, italic or another family
+  falls back to the Standard 14 of the same family, because an arbitrary
+  embedded face has no bold sibling to reach for. A **Type0/CID** field font is
+  not used: its appearance is written in CID codes and this layout writes
+  PDFDocEncoded literals, so the Standard 14 stands in. Backgrounds and nested
+  block layout are not rendered, and `Stamp` is
   a captioned box rather than the standard rubber-stamp artwork. Dash patterns, `/LE` line endings and `/BE` cloud borders
   are drawn (see above); the cloud is a uniform scallop approximation and line
   endings are sized heuristically from the border width. Check-box/radio *widget*
