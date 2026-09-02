@@ -937,3 +937,37 @@ def decrypt_object_in_place(
                 pass
 
     _walk(obj, 0, False)
+
+
+def attach_document_decryption(
+    doc: object,
+    key: bytes,
+    algorithm: str,
+    *,
+    skip: object = (),
+    encrypt_metadata: bool = True,
+) -> None:
+    """Decrypt every object of a freshly parsed *doc* as it is materialized.
+
+    A parser hands back the graph exactly as the file stores it. Anything that
+    then wants to *read* that graph -- to find a field, to compare an object
+    against the one in memory -- needs it in the clear, and anything that writes
+    part of it back has to encipher again. Both happen through the object
+    store's own once-per-object hook, so a document is decrypted lazily and
+    never twice.
+
+    Objects named in *skip* are left alone; that is the ``/Encrypt`` dictionary,
+    whose values are stored unencrypted because a reader needs them before it
+    has a key. Silently does nothing for a store with no hook, which is the
+    case for a graph built in code rather than parsed.
+    """
+    attach = getattr(getattr(doc, "objects", None), "attach_object_decryptor", None)
+    if not callable(attach):
+        return
+
+    def decrypt(obj_num: int, gen: int, obj: object) -> None:
+        decrypt_object_in_place(
+            obj, obj_num, gen, key, algorithm, encrypt_metadata=encrypt_metadata
+        )
+
+    attach(decrypt, skip=skip)

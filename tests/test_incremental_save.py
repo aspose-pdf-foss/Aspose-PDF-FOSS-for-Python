@@ -113,14 +113,131 @@ def test_incremental_save_to_path(tmp_path):
     assert len(written) > len(base)
 
 
-def test_incremental_save_rejects_encrypted_document():
+# ---------------------------------------------------------------------------
+# Encrypted documents
+# ---------------------------------------------------------------------------
+
+ALGORITHMS = ["RC4", "AES-128", "AES-256"]
+
+
+def _sealed_pdf(algorithm: str) -> bytes:
+    doc = Document(io.BytesIO(_base_pdf()))
+    doc.info["Title"] = "Sealed base"
+    doc.encrypt("u", "owner", algorithm=algorithm)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("algorithm", ALGORITHMS)
+def test_incremental_save_keeps_an_encrypted_document_encrypted(algorithm):
+    """The appended revision is enciphered with the file's own key.
+
+    RC4 is in the list deliberately: a block cipher handed something that was
+    never enciphered usually fails its padding check, and a value that will not
+    decrypt is left as stored -- so an object wrongly appended in the clear can
+    survive an AES round trip untouched. A stream cipher turns it to noise.
+    """
+    base = _sealed_pdf(algorithm)
+    doc = Document(io.BytesIO(base), password="u")
+    doc.pages[0].add_text("Appended after signing off", 60, 640, font_size=11)
+    out = io.BytesIO()
+    doc.save(out, incremental=True)
+    whole = out.getvalue()
+
+    assert whole[: len(base)] == base
+    assert len(whole) > len(base)
+    assert whole.count(b"%%EOF") == base.count(b"%%EOF") + 1
+
+    reopened = Document(io.BytesIO(whole), password="u")
+    assert reopened.info["Title"] == "Sealed base"
+    assert b"Appended after signing off" in reopened.pages[0].content
+    # And the appended bytes really are enciphered.
+    assert b"Appended after signing off" not in whole
+
+
+@pytest.mark.parametrize("algorithm", ALGORITHMS)
+def test_the_appended_trailer_still_names_the_encryption_dictionary(algorithm):
+    """Dropping ``/Encrypt`` would tell a reader the new objects are plain."""
+    base = _sealed_pdf(algorithm)
+    doc = Document(io.BytesIO(base), password="u")
+    doc.pages[0].add_text("More", 60, 620, font_size=11)
+    out = io.BytesIO()
+    doc.save(out, incremental=True)
+
+    appended = out.getvalue()[len(base) :]
+    assert re.search(rb"trailer\b.*?/Encrypt \d+ 0 R", appended, re.S)
+
+
+def test_incremental_save_rejects_adding_encryption():
+    """The preserved prefix stays plain, so the file cannot become encrypted."""
     base = _base_pdf()
-    doc = Document()
-    doc.load_from(base)
-    doc._engine_pdf.encrypted = True
+    doc = Document(io.BytesIO(base))
+    doc.encrypt("u", "owner")
+
+    with pytest.raises(PdfSecurityException, match="change a document's encryption"):
+        doc.save(io.BytesIO(), incremental=True)
+
+
+def test_incremental_save_rejects_removing_encryption():
+    """And it cannot become plain: the prefix stays enciphered."""
+    doc = Document(io.BytesIO(_sealed_pdf("AES-128")), password="u")
+    doc.decrypt("u")
+
+    with pytest.raises(PdfSecurityException, match="add or remove encryption"):
+        doc.save(io.BytesIO(), incremental=True)
+
+
+def test_incremental_save_rejects_changing_the_password():
+    """A new password re-keys every object, including the untouchable ones."""
+    doc = Document(io.BytesIO(_sealed_pdf("AES-128")), password="u")
+    doc.change_passwords("u", "second")
+
+    with pytest.raises(PdfSecurityException, match="change a document's encryption"):
+        doc.save(io.BytesIO(), incremental=True)
+
+
+@pytest.mark.parametrize("algorithm", ALGORITHMS)
+def test_an_unchanged_encrypted_document_appends_nothing(algorithm):
+    """Change detection has to compare plaintext, not ciphertext.
+
+    Both sides hold the same objects, but one has been decrypted and the other
+    has not -- and enciphering to compare would never match anyway, since AES
+    picks a fresh initialisation vector every time.
+    """
+    base = _sealed_pdf(algorithm)
+    doc = Document(io.BytesIO(base), password="u")
+    out = io.BytesIO()
+    doc.save(out, incremental=True)
+
+    assert out.getvalue() == base
+
+
+def test_incremental_save_rejects_a_document_waiting_to_be_signed():
+    """Signing writes its own revision; appending one first would strand it."""
+    from aspose_pdf.engine.signing import SigningUtils
+
+    doc = Document(io.BytesIO(_base_pdf()))
+    doc._engine_pdf.signing_creds = SigningUtils.create_self_signed_cert()
+
+    with pytest.raises(PdfSecurityException, match="to-be-signed"):
+        doc.save(io.BytesIO(), incremental=True)
+
+
+def test_a_refused_incremental_save_leaves_the_document_alone():
+    """A call that raises must not have rewritten ``/Encrypt`` on the way."""
+    from aspose_pdf.engine.cos import PdfName
+
+    doc = Document(io.BytesIO(_base_pdf()))
+    before = dict(doc._engine_pdf._cos_doc.trailer.mapping)
+    doc.encrypt("u", "owner")
 
     with pytest.raises(PdfSecurityException):
         doc.save(io.BytesIO(), incremental=True)
+
+    trailer = doc._engine_pdf._cos_doc.trailer.mapping
+    assert PdfName("Encrypt") not in trailer
+    assert set(trailer) == set(before)
 
 
 def test_incremental_save_scratch_document_falls_back_to_full_save():

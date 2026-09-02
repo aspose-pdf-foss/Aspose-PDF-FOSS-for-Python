@@ -8,6 +8,8 @@ convenience ``append_incremental_update`` function.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from aspose_pdf.engine.incremental_update import (
@@ -81,23 +83,33 @@ def test_add_new_object_and_next_number():
 
 
 def test_build_incremental_xref_format():
+    """Entries are read by *offset*, so each must be exactly twenty bytes.
+
+    ISO 32000-1 7.5.4 fixes the width: ten offset digits, a space, five
+    generation digits, a space, the type letter, and a two-byte end of line. A
+    reader multiplies to reach the n-th entry rather than scanning for
+    newlines, so the section has to be measured the same way here -- splitting
+    on newlines first hides an extra byte, and only the *second* entry of a
+    subsection lands in the wrong place, which is why one object appended alone
+    still reads.
+    """
     pdf = _minimal_pdf()
     iu = IncrementalUpdate(pdf)
-    # Add two objects to trigger xref generation.
+    # Two consecutive numbers, so they share one subsection.
     iu.add_object(2, b"2 0 obj\n<<>>\nendobj\n")
     iu.add_object(3, b"3 0 obj\n<<>>\nendobj\n")
     xref = iu.build_incremental_xref(iu.original_eof_offset)
-    # The xref section must start with the keyword and contain one header line.
+
     assert xref.startswith(b"xref\n"), "xref does not start with 'xref' keyword"
-    lines = xref.split(b"\n")
-    # Header line format: "first_obj count"
-    header = lines[1]
+    header, entries = xref[len(b"xref\n") :].split(b"\n", 1)
     first_obj, count = map(int, header.split())
     assert first_obj == 2
     assert count == 2
-    # Each entry line must be exactly 20 bytes (including the trailing space).
-    for entry in lines[2:4]:
-        assert len(entry) == 20, f"xref entry length {len(entry)} != 20"
+
+    assert len(entries) == 20 * count
+    for index in range(count):
+        entry = entries[index * 20 : (index + 1) * 20]
+        assert re.fullmatch(rb"\d{10} \d{5} [nf](?: \r| \n|\r\n)", entry), entry
 
 
 def test_build_incremental_trailer_values():

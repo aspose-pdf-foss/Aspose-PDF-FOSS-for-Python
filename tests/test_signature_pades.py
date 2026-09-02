@@ -7,8 +7,10 @@ All material — certificates, the local TSA, CRLs — is built in memory with
 
 from __future__ import annotations
 
+import io
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 
@@ -338,3 +340,28 @@ def test_detector_flags_unsigned_payload_after_archive_timestamp():
     result = SignaturesCompromiseDetector(pdf).check()
     assert result.has_compromised_signatures is True
     assert "annotations/widgets (layering risk)" in " ".join(result.reasons)
+
+
+def test_building_a_dss_into_an_encrypted_document_is_refused():
+    """The validation material would go in as plaintext streams.
+
+    This builder writes its stream objects by hand rather than through the
+    encrypting writer, so it has no key to encipher them with. A ``/DSS`` full
+    of certificates that every reader decrypts into noise looks present and is
+    unusable, which is worse than not being there -- so it refuses instead.
+    """
+    from aspose_pdf import Document
+    from aspose_pdf.exceptions import PdfSecurityException
+
+    document = Document()
+    document.pages.add()
+    buffer = io.BytesIO()
+    document.save(buffer)
+
+    sealed = Document(io.BytesIO(buffer.getvalue()))
+    sealed.encrypt("u", "owner")
+    out = io.BytesIO()
+    sealed.save(out)
+
+    with pytest.raises(PdfSecurityException, match="encrypted document"):
+        dss.build_dss(out.getvalue(), dss.DssMaterial(certs=[b"\x30\x03\x02\x01\x00"]))

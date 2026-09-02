@@ -275,6 +275,54 @@ def test_qpdf_opens_what_the_writer_enciphered(documents, name):
         assert b"Body text" in _page_content(pdf.pages[0])
 
 
+def test_qpdf_reads_an_appended_revision_without_repairing_it():
+    """An appended cross-reference section is read by offset, not by line.
+
+    Entries are a fixed twenty bytes, so one byte too many puts every entry
+    after the first in a subsection out of step. Our own parser scans rather
+    than multiplies and never noticed; qpdf reports the file as damaged and
+    reconstructs the table.
+    """
+    document = _page_of_everything()
+    document.pages[0].add_text("Appended later", 60, 660, font_size=11)
+    out = io.BytesIO()
+    document.save(out, incremental=True)
+    whole = out.getvalue()
+
+    assert whole.count(b"%%EOF") >= 2
+    assert _qpdf_problems(whole) == []
+    with pikepdf.open(io.BytesIO(whole)) as pdf:
+        assert b"Appended later" in _page_content(pdf.pages[0])
+
+
+@pytest.mark.parametrize("algorithm", ["RC4", "AES-128", "AES-256"])
+def test_qpdf_reads_an_encrypted_incremental_revision(algorithm):
+    """An appended revision has to be enciphered like the rest of the file.
+
+    The original bytes stay verbatim, so qpdf is reading two revisions written
+    at different times under one key -- exactly the case where an object
+    appended in the clear, or under the wrong object number, shows up.
+    """
+    base = _page_of_everything()
+    base.info["Title"] = "Encrypted and structured"
+    base.encrypt("u", "owner", algorithm=algorithm)
+    sealed = _saved(base)
+
+    document = Document(io.BytesIO(sealed), password="u")
+    document.pages[0].add_text("Appended later", 60, 660, font_size=11)
+    out = io.BytesIO()
+    document.save(out, incremental=True)
+    whole = out.getvalue()
+
+    assert whole[: len(sealed)] == sealed
+    assert _qpdf_problems(whole, "u") == []
+    with pikepdf.open(io.BytesIO(whole), password="u") as pdf:
+        assert str(pdf.docinfo["/Title"]) == "Encrypted and structured"
+        content = _page_content(pdf.pages[0])
+        assert b"Appended later" in content
+        assert b"Body text" in content
+
+
 def test_a_qpdf_decrypted_rewrite_still_reads_back_here(documents):
     """The other direction: qpdf strips the encryption, we read the result."""
     rewritten = _qpdf_rewrite(documents["encrypted-AES-256"], "u")

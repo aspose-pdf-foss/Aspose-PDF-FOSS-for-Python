@@ -77,6 +77,7 @@ from .data.xmp import (
 from .encryption import (
     IDENTITY_ALGORITHM,
     EncryptionUtils,
+    attach_document_decryption,
     decrypt_object_in_place,
     normalize_encryption_algorithm,
 )
@@ -2844,11 +2845,16 @@ class SimplePdf:
         emitted in sorted order, so the comparison is insensitive to key order
         and unchanged objects are never re-emitted.
 
+        An encrypted document keeps its protection: the appended objects are
+        enciphered with the file's own key, and ``/Encrypt`` is carried into the
+        new trailer. What cannot be done incrementally is *changing* the
+        protection -- adding it, removing it, or changing the password re-keys
+        every object, and the objects in the preserved prefix cannot follow. Nor
+        can a document waiting to be signed take this path: signing produces its
+        own revision.
+
         Falls back to a full :meth:`to_bytes` when there is no base revision to
-        append to (a document built from scratch). Encrypted or to-be-signed
-        documents are rejected, because a correct incremental revision for them
-        must be produced through the encrypting/signing writer rather than this
-        plaintext appender.
+        append to (a document built from scratch).
         """
         self._ensure_not_disposed()
         raw = self._raw_bytes
@@ -2856,14 +2862,32 @@ class SimplePdf:
             # No base revision exists; a full serialization is the only
             # meaningful result.
             return self.to_bytes()
-        if self.encrypted or self._original_encrypted or self.signing_creds:
+        if self.signing_creds:
             raise PdfSecurityException(
-                "Incremental save is not supported for encrypted or to-be-signed "
-                "documents; use save() for a full rewrite or sign() for signing."
+                "Incremental save is not supported for to-be-signed documents; "
+                "use sign() for signing."
             )
         if self._cos_doc is None:
             # Minimal/parse-only document with no object graph to diff against.
             return bytes(raw)
+
+        if self.encrypted:
+            # encrypt() or change_passwords() derives a fresh file key, so every
+            # object in the prefix is enciphered under a key the new /Encrypt no
+            # longer describes. Checked before the handler is built, because
+            # building one writes a new /Encrypt into the graph -- a call that
+            # is about to fail should not leave that behind.
+            raise PdfSecurityException(
+                "Incremental save cannot change a document's encryption; use "
+                "save() for a full rewrite."
+            )
+        encryption = self._writer_encryption()
+        if bool(self._original_encrypted) != (encryption is not None):
+            raise PdfSecurityException(
+                "Incremental save cannot add or remove encryption: the "
+                "preserved prefix stays as it was written; use save() for a "
+                "full rewrite."
+            )
 
         raw = bytes(raw)
 
@@ -2886,8 +2910,23 @@ class SimplePdf:
         pristine = PdfCosParser(
             raw, limits=self._load_limits, budget=self._load_budget
         ).parse()
+        if encryption is not None:
+            # The graph in memory was decrypted at load; the fresh parse has
+            # not been, so the two are only comparable once both hold plain
+            # values. Comparing ciphertext would also never match: AES picks a
+            # new IV every time it enciphers.
+            attach_document_decryption(
+                pristine,
+                encryption.key,
+                encryption.algorithm,
+                skip=encryption.exempt,
+                encrypt_metadata=encryption.encrypt_metadata,
+            )
         pristine_writer = PdfCosWriter(pristine)
+        # One writer compares (plain, so unchanged objects match), one emits
+        # (enciphered, so what is appended matches the rest of the file).
         writer = PdfCosWriter(self._cos_doc)
+        emitter = PdfCosWriter(self._cos_doc, encryption=encryption)
 
         incr = IncrementalUpdate(
             raw, limits=self._load_limits, budget=self._load_budget
@@ -2903,7 +2942,12 @@ class SimplePdf:
                 and pristine_writer.serialize_object(pristine_obj) == current
             ):
                 continue  # unchanged; leave it in the preserved prefix
-            body = f"{obj_num} 0 obj\n{current}\nendobj\n".encode("latin-1")
+            emitted = (
+                current
+                if encryption is None
+                else emitter.serialize_indirect(obj_num, obj)
+            )
+            body = f"{obj_num} 0 obj\n{emitted}\nendobj\n".encode("latin-1")
             incr.add_object(obj_num, body)
 
         if not incr.modified_objects:
@@ -2926,11 +2970,15 @@ class SimplePdf:
         # /Root, /Info, or /AcroForm survive, but drop cross-reference-stream and
         # stale chaining keys that must not appear in a classic trailer.
         trailer = PdfDictionary(dict(self._cos_doc.trailer.mapping))
+        # /Encrypt stays: the appended objects are enciphered, and a trailer
+        # that omitted it would tell the reader they are not.
         for drop in (
             "Type", "Index", "W", "Length", "Filter", "DecodeParms",
-            "XRefStm", "Prev", "Size", "Encrypt",
+            "XRefStm", "Prev", "Size",
         ):
             trailer.mapping.pop(PdfName(drop), None)
+        if encryption is None:
+            trailer.mapping.pop(PdfName("Encrypt"), None)
         trailer.mapping[PdfName("Size")] = PdfNumber(highest + 1)
         trailer.mapping[PdfName("Prev")] = PdfNumber(prev_startxref)
         trailer_bytes = (

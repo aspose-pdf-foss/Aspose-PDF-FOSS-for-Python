@@ -27,7 +27,7 @@ from aspose_pdf.engine.cos import (
     PdfNumber,
     PdfString,
 )
-from aspose_pdf.engine.encryption import decrypt_object_in_place
+from aspose_pdf.engine.encryption import attach_document_decryption
 from aspose_pdf.engine.incremental_update import IncrementalUpdate
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
 from aspose_pdf.engine.pdf_writer_cos import PdfCosWriter, WriterEncryption
@@ -56,21 +56,13 @@ def _unlock(doc: Any, encryption: WriterEncryption) -> None:
     uses, means everything between those two points works on plain values --
     and the writer, given the same handler, re-encrypts what it emits.
     """
-    attach = getattr(getattr(doc, "objects", None), "attach_object_decryptor", None)
-    if not callable(attach):
-        return
-
-    def decrypt(obj_num: int, gen: int, obj: Any) -> None:
-        decrypt_object_in_place(
-            obj,
-            obj_num,
-            gen,
-            encryption.key,
-            encryption.algorithm,
-            encrypt_metadata=encryption.encrypt_metadata,
-        )
-
-    attach(decrypt, skip=encryption.exempt)
+    attach_document_decryption(
+        doc,
+        encryption.key,
+        encryption.algorithm,
+        skip=encryption.exempt,
+        encrypt_metadata=encryption.encrypt_metadata,
+    )
 
 
 def _resolve(doc: Any, obj: Any) -> Any:

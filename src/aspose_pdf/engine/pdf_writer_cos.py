@@ -437,14 +437,16 @@ class PdfCosWriter:
         return f"<< {inner} >>"
 
     def _serialize_stream(self, stream: PdfStream) -> str:
-        # Ensure Length entry is present - required for PDF readers.
-        length_key = PdfName("Length")
-        if length_key not in stream.mapping:
-            stream.mapping[length_key] = PdfNumber(len(stream.content))
-        dict_repr = self._serialize_dictionary(stream)
-        # Content can be binary, but serialize_object returns str.
-        # We need to handle binary content correctly.
-        return f"{dict_repr}\nstream\n{stream.content.decode('latin1')}\nendstream"
+        """Serialise a stream object as text, latin-1 standing in for bytes.
+
+        This is the path an *appended revision* takes -- an incremental update
+        emits object bodies one at a time rather than through :meth:`write` --
+        so it has to encipher the payload and declare its length exactly as the
+        full write does. Emitting the plaintext here instead would leave a
+        stream every reader decrypts into noise.
+        """
+        payload, dict_repr = self._stream_parts(stream)
+        return f"{dict_repr}\nstream\n{payload.decode('latin1')}\nendstream"
 
     def _stream_payload(self, stream: PdfStream) -> bytes:
         """The bytes to write for *stream*, enciphered where the handler says.
@@ -467,8 +469,8 @@ class PdfCosWriter:
                 return content
         return self.encryption.apply(*self._crypt_obj, content)
 
-    def _extend_stream_bytes(self, buffer: bytearray, stream: PdfStream) -> None:
-        """Append a stream object to *buffer* with its content as raw bytes.
+    def _stream_parts(self, stream: PdfStream) -> tuple[bytes, str]:
+        """The bytes to write for *stream* and the dictionary that describes them.
 
         ``/Length`` is the length of what is actually written, which for an
         encrypted document is the ciphertext -- AES pads and prefixes an IV, so
@@ -481,7 +483,11 @@ class PdfCosWriter:
         payload = self._stream_payload(stream)
         mapping = dict(stream.mapping)
         mapping[PdfName("Length")] = PdfNumber(len(payload))
-        dict_repr = self._serialize_dictionary(PdfDictionary(mapping))
+        return payload, self._serialize_dictionary(PdfDictionary(mapping))
+
+    def _extend_stream_bytes(self, buffer: bytearray, stream: PdfStream) -> None:
+        """Append a stream object to *buffer* with its content as raw bytes."""
+        payload, dict_repr = self._stream_parts(stream)
         buffer.extend(dict_repr.encode("latin-1"))
         buffer.extend(b"\nstream\n")
         buffer.extend(payload)

@@ -25,6 +25,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content de-duplication on an encrypted document; those were disabled because
   the graph used to hold ciphertext, which it no longer does.
 
+- **An encrypted document can be saved incrementally.** `save(incremental=True)`
+  refused any encrypted document; it now appends a revision enciphered with the
+  file's own key, keeping `/Encrypt` in the new trailer, so the original bytes
+  — and any signature over them — stay untouched. Changing the protection is
+  still refused, and now says why: adding it, removing it or changing the
+  password re-keys every object, and the ones in the preserved prefix cannot
+  follow. Building a `/DSS` into an encrypted document is refused for the same
+  kind of reason, rather than writing validation material nobody can read.
+
 - **A signed document can be encrypted.** Signing an encrypted document used to
   fall back to the rebuilding writer, losing the same structure. It now takes
   the same path as any other signature — an appended revision over the saved
@@ -152,6 +161,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the default master.
 
 ### Fixed
+
+- **Every appended revision this library wrote had a malformed cross-reference
+  section.** Entries are read by offset — a fixed twenty bytes each — and one
+  byte too many put every entry after the first in a subsection out of step.
+  Only the first still read, which is why a signature (whose appended objects
+  are rarely consecutive) looked fine while an incremental save of two
+  neighbouring objects did not: qpdf reported the file as damaged and rebuilt
+  the table. The unit test measured each line after splitting on newlines, so
+  it saw twenty bytes where the file had twenty-one; it now measures the
+  section the way a reader indexes into it.
 
 - **Re-saving a document opened with a password destroyed every string in it.**
   Strings are decrypted at load; without the writer putting the cipher back

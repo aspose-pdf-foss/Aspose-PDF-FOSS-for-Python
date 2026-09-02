@@ -32,7 +32,7 @@ from aspose_pdf.engine.cos import (
 from aspose_pdf.engine.incremental_update import IncrementalUpdate
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
 from aspose_pdf.engine.pdf_writer_cos import PdfCosWriter
-from aspose_pdf.exceptions import PdfResourceLimitException
+from aspose_pdf.exceptions import PdfResourceLimitException, PdfSecurityException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 # Failures while reading a third-party DSS must degrade to "no material",
@@ -129,6 +129,18 @@ def build_dss(
     material = material.deduped()
     if material.is_empty():
         return original_pdf
+
+    # The validation material goes in as *streams*, and this builder emits them
+    # by hand rather than through the encrypting writer, so it has no key to
+    # encipher them with. Writing plaintext into an encrypted file would put
+    # certificates there that every reader decrypts into noise -- material that
+    # looks present and is unusable is worse than material that is absent.
+    if PdfName("Encrypt") in PdfCosParser(original_pdf).parse().trailer.mapping:
+        raise PdfSecurityException(
+            "Building a /DSS into an encrypted document is not supported: the "
+            "appended validation material would have to be enciphered with the "
+            "document's own key."
+        )
 
     inc = IncrementalUpdate(original_pdf)
 

@@ -224,23 +224,24 @@ class IncrementalUpdate:
             offsets[obj_num] = current
             current += len(obj_data)
 
-        lines = [b"xref"]
+        # Entries are *exactly* twenty bytes each -- ten offset digits, a space,
+        # five generation digits, a space, the type letter, then a two-byte end
+        # of line (ISO 32000-1 7.5.4). A reader indexes into the section by
+        # multiplying, so one byte too many puts every following entry in a
+        # subsection out of step; the first still reads, which is why this only
+        # shows up when two consecutive object numbers are appended together.
+        out = bytearray(b"xref\n")
         i = 0
         while i < len(sorted_nums):
             run_start_idx = i
             while i + 1 < len(sorted_nums) and sorted_nums[i + 1] == sorted_nums[i] + 1:
                 i += 1
             run = sorted_nums[run_start_idx : i + 1]
-            first = run[0]
-            count = len(run)
-            lines.append(f"{first} {count}".encode("ascii"))
+            out += f"{run[0]} {len(run)}\n".encode("ascii")
             for obj_num in run:
-                off = offsets[obj_num]
-                # 20-byte xref lines (PDF 1.7); match PdfCosWriter / common viewers.
-                lines.append(f"{off:010d} 00000 n \r".encode("latin-1"))
+                out += f"{offsets[obj_num]:010d} 00000 n \n".encode("latin-1")
             i += 1
-        lines.append(b"")
-        return b"\n".join(lines)
+        return bytes(out)
 
     def build_incremental_trailer(
         self, prev_xref: int, new_size: int, xref_offset: int

@@ -38,8 +38,12 @@ Supported:
   modified since load are appended as a new revision chained through `/Prev`, so
   an existing signature stays valid. Change detection compares each object's
   canonical serialization against a re-parse of the original. Documents built
-  from scratch fall back to a full write; encrypted or to-be-signed documents
-  are rejected (their revisions must go through the encrypting/signing writer).
+  from scratch fall back to a full write. An **encrypted** document keeps its
+  protection: the appended objects are enciphered with the file's own key and
+  the new trailer still names `/Encrypt`. *Changing* the protection is refused
+  — adding it, removing it or changing the password re-keys every object, and
+  the ones in the preserved prefix cannot follow — as is a document waiting to
+  be signed, which produces its own revision.
 - Use `Document` as a context manager and release resources with `dispose()` or
   `close()`.
 - Read and write document info metadata.
@@ -1341,6 +1345,11 @@ Boundaries:
   own filter -- is not decrypted. `/StmF /Identity` (streams left in the clear)
   is honoured as written, and a document that leaves streams in the clear while
   encrypting only its strings through `/StrF` keeps those strings as stored.
+- Building a `/DSS` into an **encrypted** document is refused. The validation
+  material goes in as streams that `engine.dss` writes by hand rather than
+  through the encrypting writer, so it has no key to encipher them with, and a
+  `/DSS` full of certificates every reader turns to noise is worse than one
+  that is absent.
 - PAdES baseline levels (B/T/LT/LTA) are produced and validated against trust
   anchors, but this is not a formally certified eIDAS-grade implementation:
   conformance to ETSI EN 319 142 / final certification is deferred to external
