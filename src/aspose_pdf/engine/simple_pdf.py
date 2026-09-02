@@ -166,6 +166,50 @@ def _outline_link_absent(link: Any) -> bool:
     return isinstance(link, PdfNull)
 
 
+def collect_name_tree_entries(root: Any, resolve: Any, budget: Any) -> list:
+    """Return a name tree's leaves as a flat ``[key, value, ...]`` list.
+
+    A name-tree node holds its entries either directly in ``/Names`` or splits
+    them across ``/Kids`` sub-nodes (ISO 32000-1 7.9.6). Producers balance large
+    trees into the nested form, so reading ``/Names`` alone silently misses
+    every entry such a document carries. Kids are visited in order, preserving
+    the tree's sort order; depth, cumulative entry count, and revisited nodes
+    are bounded like any other document graph.
+    """
+    from .cos import PdfArray, PdfDictionary, PdfName
+
+    entries: list = []
+    seen: set[int] = set()
+    stack: list[tuple[Any, int]] = [(root, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if not isinstance(node, PdfDictionary):
+            continue
+        node_id = id(node)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        budget.check(depth, "max_nesting_depth", "embedded-file name tree depth")
+        names_arr = resolve(node.mapping.get(PdfName("Names")))
+        if isinstance(names_arr, PdfArray):
+            entries.extend(names_arr.items)
+            budget.check(
+                len(entries),
+                "max_container_items",
+                "embedded-file name tree entries",
+            )
+        kids = resolve(node.mapping.get(PdfName("Kids")))
+        if isinstance(kids, PdfArray):
+            budget.check(
+                len(kids.items),
+                "max_container_items",
+                "embedded-file name tree kids",
+            )
+            for kid in reversed(kids.items):
+                stack.append((resolve(kid), depth + 1))
+    return entries
+
+
 def encrypt_metadata_flag(enc: Any, resolve: Any) -> bool:
     """Whether the security handler *enc* encrypts the ``/Metadata`` stream.
 
@@ -2246,6 +2290,62 @@ class SimplePdf:
         data = writer.write()
         Path(path).write_bytes(data)
 
+    def _register_at(self, obj: Any, number: int | None) -> PdfIndirectReference:
+        """Register *obj*, taking over object *number* when one was offered.
+
+        The syncs below rebuild whole sub-trees from the in-memory model on
+        every save. Letting each rebuild claim fresh object numbers means a
+        document that merely opened and saved unchanged comes back larger every
+        time, trailing the previous copy behind as garbage -- and an
+        incremental save appends the lot, because a rebuilt object under a new
+        number can never compare equal to the one it replaces. Writing the
+        rebuild back into the slots it already occupies keeps a save that
+        changed nothing byte-for-byte identical.
+        """
+        if number is not None:
+            obj._obj_number = number
+        return self._cos_doc.register_object(obj)
+
+    def _outline_slots(self, root: PdfDictionary) -> list[int]:
+        """Object numbers the catalog's outline tree occupies, in build order.
+
+        Document order -- the root, then each item before its children --
+        matches the order :meth:`_inject_outlines_to_cos` allocates in, so an
+        unchanged tree lands back exactly where it was.
+        """
+        outlines_ref = root.mapping.get(PdfName("Outlines"))
+        if not isinstance(outlines_ref, PdfIndirectReference):
+            return []
+        outlines = self._resolve(outlines_ref)
+        if not isinstance(outlines, PdfDictionary):
+            return []
+
+        slots = [outlines_ref.object_number]
+        seen = {outlines_ref.object_number}
+        limit = self._load_limits.max_objects or 250000
+
+        # An explicit stack rather than recursion: nesting depth here is
+        # whatever the document says, and a deep chain of /First links would
+        # otherwise be bounded by Python's own recursion limit. A sibling is
+        # pushed before the children so the children come off first, which is
+        # the order the rebuild allocates in.
+        stack: list[Any] = [outlines.mapping.get(PdfName("First"))]
+        while stack and len(slots) < limit:
+            ref = stack.pop()
+            if not isinstance(ref, PdfIndirectReference):
+                continue
+            number = ref.object_number
+            if number in seen:
+                continue  # a malformed tree that loops back on itself
+            item = self._resolve(ref)
+            if not isinstance(item, PdfDictionary):
+                continue
+            seen.add(number)
+            slots.append(number)
+            stack.append(item.mapping.get(PdfName("Next")))
+            stack.append(item.mapping.get(PdfName("First")))
+        return slots
+
     def _inject_outlines_to_cos(self, outline_items: list[dict]) -> None:
         """Build outline tree from _outlines_data and add /Outlines to the Catalog."""
         if not outline_items or self._cos_doc is None:
@@ -2264,6 +2364,13 @@ class SimplePdf:
             idx = max(0, min(page_index, len(page_obj_ids) - 1))
             return PdfIndirectReference(page_obj_ids[idx], 0)
 
+        # The tree already in the catalog is a list of slots to write into,
+        # handed out in the same order the rebuild allocates.
+        slots = iter(self._outline_slots(root))
+
+        def next_slot() -> int | None:
+            return next(slots, None)
+
         def build_outline_item(
             item: dict, parent_ref: PdfIndirectReference
         ) -> PdfIndirectReference | None:
@@ -2277,6 +2384,10 @@ class SimplePdf:
                     PdfName("Parent"): parent_ref,
                 }
             )
+            # Registered before its children so numbers are handed out in
+            # document order; the dictionary is filled in below, and the graph
+            # holds this same object.
+            item_ref = self._register_at(outline_dict, next_slot())
             target = item.get("target")
             if target is not None:
                 cos_target, key = self._interactive_target_cos(target)
@@ -2292,7 +2403,7 @@ class SimplePdf:
             children = item.get("children", [])
             child_refs: list[PdfIndirectReference] = []
             for child in children:
-                child_ref = build_outline_item(child, PdfIndirectReference(0, 0))
+                child_ref = build_outline_item(child, item_ref)
                 if child_ref is not None:
                     child_refs.append(child_ref)
 
@@ -2300,8 +2411,6 @@ class SimplePdf:
                 outline_dict.mapping[PdfName("First")] = child_refs[0]
                 outline_dict.mapping[PdfName("Last")] = child_refs[-1]
                 outline_dict.mapping[PdfName("Count")] = PdfNumber(-len(child_refs))
-
-            item_ref = self._cos_doc.register_object(outline_dict)
 
             if child_refs:
                 for i, ref in enumerate(child_refs):
@@ -2321,7 +2430,7 @@ class SimplePdf:
                 PdfName("Count"): PdfNumber(len(outline_items)),
             }
         )
-        outline_root_ref = self._cos_doc.register_object(outline_root)
+        outline_root_ref = self._register_at(outline_root, next_slot())
 
         item_refs: list[PdfIndirectReference] = []
         for item in outline_items:
@@ -2378,6 +2487,42 @@ class SimplePdf:
         for k, v in self.metadata.items():
             info_dict.mapping[PdfName(k)] = PdfString(v.encode("utf-8"))
 
+    def _attachment_slots(self, catalog: PdfDictionary) -> dict[str, tuple]:
+        """Object numbers each embedded file already occupies, keyed by name.
+
+        Keyed by name rather than by position so adding one attachment does not
+        renumber the rest -- an incremental save would then append every one of
+        them.
+        """
+        names_dict = self._resolve(catalog.mapping.get(PdfName("Names")))
+        if not isinstance(names_dict, PdfDictionary):
+            return {}
+        embedded = self._resolve(names_dict.mapping.get(PdfName("EmbeddedFiles")))
+        if not isinstance(embedded, PdfDictionary):
+            return {}
+
+        slots: dict[str, tuple] = {}
+        items = collect_name_tree_entries(embedded, self._resolve, self._load_budget)
+        for index in range(0, len(items) - 1, 2):
+            key, value = self._resolve(items[index]), items[index + 1]
+            if not isinstance(key, PdfString) or not isinstance(
+                value, PdfIndirectReference
+            ):
+                continue
+            filespec = self._resolve(value)
+            if not isinstance(filespec, PdfDictionary):
+                continue
+            ef = self._resolve(filespec.mapping.get(PdfName("EF")))
+            stream_number = None
+            if isinstance(ef, PdfDictionary):
+                for ef_key in (PdfName("F"), PdfName("UF")):
+                    candidate = ef.mapping.get(ef_key)
+                    if isinstance(candidate, PdfIndirectReference):
+                        stream_number = candidate.object_number
+                        break
+            slots[decode_pdf_text_string(key)] = (value.object_number, stream_number)
+        return slots
+
     def _sync_attachments_to_cos(self) -> None:
         """Write ``self.attachments`` into the catalog name tree before save.
 
@@ -2403,10 +2548,19 @@ class SimplePdf:
             return
 
         # Name trees must be ordered by key, so emit names sorted.
+        slots = self._attachment_slots(catalog)
         array_items: list[Any] = []
         for name in sorted(self.attachments):
+            filespec_slot, stream_slot = slots.get(name, (None, None))
             data = bytes(self.attachments[name])
-            meta = self.attachment_meta.get(name) or {}
+            # What the file carried, under whatever the caller has since set:
+            # reading the MIME type, description and dates and then writing
+            # them back out is the difference between a round trip and quiet
+            # data loss.
+            meta = {
+                **(self.attachment_read_meta.get(name) or {}),
+                **(self.attachment_meta.get(name) or {}),
+            }
 
             params = PdfDictionary({PdfName("Size"): PdfNumber(len(data))})
             for date_key, meta_key in (("CreationDate", "creation_date"),
@@ -2431,7 +2585,7 @@ class SimplePdf:
                     ef_mapping[PdfName("Filter")] = PdfName("FlateDecode")
 
             ef_stream = PdfStream(mapping=ef_mapping, content=content)
-            ef_ref = self._cos_doc.register_object(ef_stream)
+            ef_ref = self._register_at(ef_stream, stream_slot)
             filespec_mapping = {
                 PdfName("Type"): PdfName("Filespec"),
                 PdfName("F"): PdfString(name),
@@ -2448,7 +2602,9 @@ class SimplePdf:
             description = meta.get("description")
             if description:
                 filespec_mapping[PdfName("Desc")] = PdfString(description)
-            fs_ref = self._cos_doc.register_object(PdfDictionary(filespec_mapping))
+            fs_ref = self._register_at(
+                PdfDictionary(filespec_mapping), filespec_slot
+            )
             array_items.append(PdfString(name))
             array_items.append(fs_ref)
 
@@ -14938,51 +15094,8 @@ class CosExtractor:
         return entries
 
     def _collect_name_tree_entries(self, root: Any) -> list:
-        """Return a name tree's leaves as a flat ``[key, value, ...]`` list.
-
-        A name-tree node holds its entries either directly in ``/Names`` or
-        splits them across ``/Kids`` sub-nodes (ISO 32000-1 7.9.6). Producers
-        balance large trees into the nested form, so reading ``/Names`` alone
-        silently misses every entry such a document carries. Kids are visited
-        in order, preserving the tree's sort order; depth, cumulative entry
-        count, and revisited nodes are bounded like any other document graph.
-        """
-        from .cos import PdfArray, PdfDictionary, PdfName
-
-        entries: list = []
-        seen: set[int] = set()
-        stack: list[tuple[Any, int]] = [(root, 1)]
-        while stack:
-            node, depth = stack.pop()
-            if not isinstance(node, PdfDictionary):
-                continue
-            node_id = id(node)
-            if node_id in seen:
-                continue
-            seen.add(node_id)
-            self._budget.check(
-                depth,
-                "max_nesting_depth",
-                "embedded-file name tree depth",
-            )
-            names_arr = self._resolve(node.mapping.get(PdfName("Names")))
-            if isinstance(names_arr, PdfArray):
-                entries.extend(names_arr.items)
-                self._budget.check(
-                    len(entries),
-                    "max_container_items",
-                    "embedded-file name tree entries",
-                )
-            kids = self._resolve(node.mapping.get(PdfName("Kids")))
-            if isinstance(kids, PdfArray):
-                self._budget.check(
-                    len(kids.items),
-                    "max_container_items",
-                    "embedded-file name tree kids",
-                )
-                for kid in reversed(kids.items):
-                    stack.append((self._resolve(kid), depth + 1))
-        return entries
+        """Return a name tree's leaves as a flat ``[key, value, ...]`` list."""
+        return collect_name_tree_entries(root, self._resolve, self._budget)
 
     def _read_filespec_meta(self, filespec: Any, ef_stream: Any) -> dict:
         """Read typed metadata from a ``/Filespec`` and its ``/EmbeddedFile`` stream.

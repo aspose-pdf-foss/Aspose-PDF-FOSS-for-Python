@@ -162,6 +162,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Opening a document and saving it made the file bigger, every time.**
+  Outlines and attachments live in the model, not the COS graph, and are
+  rebuilt on each save — claiming fresh object numbers as they went, so four
+  objects and several hundred bytes of superseded copies accumulated per round
+  trip. An incremental save was worse: an object rebuilt under a new number can
+  never compare equal to the one it replaces, so the whole tree was appended
+  every time. Each rebuild now takes over the numbers its previous copy
+  occupied, which makes an unchanged save byte-for-byte identical and an
+  unchanged incremental save append nothing whatsoever.
+
+- **Saving a loaded document dropped every attachment's MIME type, description
+  and dates.** They were read into the model at load and then ignored by the
+  writer, so a round trip silently discarded them — and, incidentally, kept an
+  otherwise untouched document from reproducing itself. What the file carried
+  is now written back out, with anything the caller set taking precedence.
+
 - **Every appended revision this library wrote had a malformed cross-reference
   section.** Entries are read by offset — a fixed twenty bytes each — and one
   byte too many put every entry after the first in a subsection out of step.

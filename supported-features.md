@@ -44,6 +44,13 @@ Supported:
   — adding it, removing it or changing the password re-keys every object, and
   the ones in the preserved prefix cannot follow — as is a document waiting to
   be signed, which produces its own revision.
+- **A save reproduces what it was given.** Outlines and attachments are held in
+  the model rather than the COS graph and are rebuilt on every save; the
+  rebuild takes over the object numbers the previous copy occupied, so opening
+  a document and saving it unchanged returns the same bytes instead of a file
+  that grows on every round trip, and an unchanged incremental save appends
+  nothing at all. An attachment's MIME type, description and dates are carried
+  from the loaded document into the save.
 - Use `Document` as a context manager and release resources with `dispose()` or
   `close()`.
 - Read and write document info metadata.

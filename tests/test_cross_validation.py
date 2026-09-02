@@ -275,6 +275,27 @@ def test_qpdf_opens_what_the_writer_enciphered(documents, name):
         assert b"Body text" in _page_content(pdf.pages[0])
 
 
+def test_a_qpdf_rewrite_settles_after_one_save_here():
+    """A foreign numbering must stop moving once we have written it once.
+
+    Outlines and attachments are rebuilt from the model on every save, so a
+    document arriving with someone else's object numbers -- and possibly a
+    nested name tree -- has to be renumbered once and then left alone. Growing
+    on every round trip is what this checks against.
+    """
+    document = _page_of_everything()
+    rewritten = _qpdf_rewrite(_saved(document))
+
+    first = _saved(Document(io.BytesIO(rewritten)))
+    second = _saved(Document(io.BytesIO(first)))
+
+    assert second == first
+    with pikepdf.open(io.BytesIO(second)) as pdf:
+        assert "/Outlines" in pdf.Root
+        assert str(pdf.Root.Names.EmbeddedFiles.Names[0]) == "notes.txt"
+        assert _qpdf_problems(second) == []
+
+
 def test_qpdf_reads_an_appended_revision_without_repairing_it():
     """An appended cross-reference section is read by offset, not by line.
 
