@@ -294,6 +294,11 @@ Supported:
   where typing in either changes both. A page from a *different* document is
   refused; `Document.merge` brings pages across.
 - Delete pages by index and clear all pages.
+- A **link or bookmark points at the page named**, whatever has happened to the
+  page order since it was loaded. A destination's page is resolved by walking
+  the page tree at the moment it is written, so one authored between an insert
+  and the next save lands where the caller asked rather than one page short of
+  it.
 - Check whether a page belongs to a collection and get its index.
 - Read page media box/rectangle through `Page.rect` and `Page.media_box`.
 - Read and set page rotation through `Page.rotation` (0/90/180/270, clockwise;
@@ -422,6 +427,13 @@ Supported:
 
 Boundaries:
 
+- **Deleting a page does not rewrite what pointed at it.** A link or bookmark
+  whose destination was that page keeps naming the page object, which stays in
+  the file; the destination simply resolves to nothing. Reading such an
+  annotation reports no destination rather than a broken one (see
+  [Annotations](#annotations)), but the entry is left in the file as it was --
+  repointing or removing another object's reference is a decision about the
+  caller's document, not a consequence of deleting a page.
 - Page rendering is a best-effort rasterizer, not a certification-grade visual
   engine. Its overprint support is a composite RGB preview, not a plate-accurate
   separation or process/spot ink model, and complete PDF 2.0 imaging semantics
@@ -1099,6 +1111,12 @@ Supported:
 - Read and set type-specific annotation properties through
   `Annotation.properties`, `Annotation.get_property`, and
   `Annotation.set_property`; mark PDF name values with `annotations.Name`.
+- Read a **destination** back as the typed object it was written from: a
+  `/Dest`, or the `/D` of a `/GoTo` action, whose page belongs to this document
+  becomes the matching `aspose_pdf.interactive` destination carrying the page
+  *index*, and writing it back through the same property reproduces the page
+  reference. A page index is what the plain property channel cannot otherwise
+  carry, since the page is named by object reference.
 - Read and write annotation contents, rectangle, title/author, and normal
   appearance stream.
 - Auto-generate normal appearance streams (`/AP /N`) from geometry and colours
@@ -1156,6 +1174,14 @@ Boundaries:
   unknown name falling back to the subtype's default as a viewer does. Other
   subtypes (`Sound`, `3D`, …) still need an appearance supplied via
   `appearance_normal`.
+- A destination is typed only when its page is one **this** document has. A
+  remote destination (`GoToR`) names a page in another file by *number*, which
+  the plain channel already carries and writes back unchanged; typing it would
+  turn it into a reference into this document. A destination whose page has
+  since been deleted, or whose view is not one of the eight ISO 32000-1 defines,
+  is not surfaced at all rather than half-converted into something that would
+  write back malformed. A page dictionary is never a property value anywhere
+  else either, so a reference to one is dropped rather than inlined.
 - The page rasterizer **composites annotation appearances** over the page
   content, the way a viewer shows them: each annotation's `/AP` `/N` is placed
   by fitting its `/Matrix`-transformed `/BBox` to `/Rect` (ISO 32000-1 12.5.5),

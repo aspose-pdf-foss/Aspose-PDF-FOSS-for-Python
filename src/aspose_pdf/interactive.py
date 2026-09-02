@@ -256,6 +256,44 @@ class ResetFormAction(Action):
         return spec
 
 
+# ISO 32000-1 table 151. The parameter counts are the inverse of each class's
+# ``_spec``: a reader is entitled to fewer than the maximum (a trailing null is
+# often simply omitted, and each optional parameter already defaults to the
+# ``None`` that means "keep the current value") but never more, and ``FitR``'s
+# rectangle is all four numbers or nothing.
+_DESTINATION_KINDS: dict[str, tuple[type[Destination], int, int]] = {
+    "Fit": (FitDestination, 0, 0),
+    "FitB": (FitBDestination, 0, 0),
+    "XYZ": (XYZDestination, 0, 3),
+    "FitH": (FitHDestination, 0, 1),
+    "FitBH": (FitBHDestination, 0, 1),
+    "FitV": (FitVDestination, 0, 1),
+    "FitBV": (FitBVDestination, 0, 1),
+    "FitR": (FitRDestination, 4, 4),
+}
+
+
+def destination_from_spec(
+    kind: str, page: int, params: Sequence[float | None]
+) -> Destination | None:
+    """Rebuild the destination a ``/Dest`` array describes.
+
+    The inverse of :meth:`Destination._spec`. *kind* is the destination name
+    without its slash, *page* the zero-based index the array's page reference
+    resolves to, and *params* the numbers after it (``None`` for a null).
+    Returns ``None`` when *kind* is not one of the eight defined names or the
+    parameters do not fit it -- an array that is no destination this API can
+    express, which is the caller's to interpret.
+    """
+    entry = _DESTINATION_KINDS.get(kind)
+    if entry is None:
+        return None
+    cls, minimum, maximum = entry
+    if not minimum <= len(params) <= maximum:
+        return None
+    return cls(page, *params)
+
+
 __all__ = [
     "Action",
     "Destination",
@@ -275,4 +313,5 @@ __all__ = [
     "SubmitFormAction",
     "URIAction",
     "XYZDestination",
+    "destination_from_spec",
 ]

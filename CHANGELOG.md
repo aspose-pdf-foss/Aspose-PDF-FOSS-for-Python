@@ -7,6 +7,30 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **An internal link can be read back.** `Page.annotations` raised
+  `Annotation property graph contains a cycle` for any link pointing at a page
+  of the same document — the commonest annotation there is — and because the
+  failure happened while building the collection, no annotation on that page
+  could be read at all. The property channel turns an annotation entry into
+  plain Python and resolves indirect references as it goes, so a `/Dest` pulled
+  in a copy of the page it named; that page lists the annotation holding the
+  destination, and the walk came back to where it started. A `/Dest`, or the
+  `/D` of a `/GoTo` action, now reads back as the `aspose_pdf.interactive`
+  destination it was written from, carrying the page index, and writing that
+  property back reproduces the page reference. A remote (`GoToR`) destination
+  keeps naming its page by number, since it belongs to another file.
+
+- **A link or bookmark written after inserting a page pointed at the wrong
+  one.** Both places that turn a page index into a page reference read
+  `_page_obj_ids`, a list kept by hand alongside the edits, which carries a `0`
+  placeholder for an inserted page until the next save: every page after the
+  insert was off by one, and a destination naming the inserted page itself was
+  written as `0 0 R` — the head of the free list (ISO 32000-1 7.5.4), never a
+  real object, so the link led nowhere. Both now resolve the page by walking
+  the page tree, which is right at every moment, and share one helper.
+
 ### Added
 
 - **An encrypted save keeps the document it was given.** Encryption lived only

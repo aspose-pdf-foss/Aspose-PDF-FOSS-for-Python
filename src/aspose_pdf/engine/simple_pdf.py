@@ -1115,6 +1115,13 @@ def _resource_signature(
     return (type(obj).__name__, repr(obj))
 
 
+#: Returned for an annotation entry shaped like a destination whose page is not
+#: one this document has. Distinct from ``None``, which means "not a
+#: destination", because the two lead to opposite handling: one is surfaced as
+#: the plain array it is, the other is not surfaced at all.
+_UNRESOLVED_DESTINATION = object()
+
+
 # ---------------------------------------------------------------------------
 # SimplePdf - main document class
 # ---------------------------------------------------------------------------
@@ -2381,13 +2388,8 @@ class SimplePdf:
         if not isinstance(root, PdfDictionary):
             return
 
-        page_obj_ids = getattr(self, "_page_obj_ids", [])
-        if not page_obj_ids or len(self.pages) == 0:
+        if not self._page_reference_numbers():
             return
-
-        def make_page_ref(page_index: int) -> PdfIndirectReference:
-            idx = max(0, min(page_index, len(page_obj_ids) - 1))
-            return PdfIndirectReference(page_obj_ids[idx], 0)
 
         # The tree already in the catalog is a list of slots to write into,
         # handed out in the same order the rebuild allocates.
@@ -2418,7 +2420,7 @@ class SimplePdf:
                 cos_target, key = self._interactive_target_cos(target)
                 outline_dict.mapping[PdfName(key)] = cos_target
             else:
-                page_ref = make_page_ref(item.get("page_index", 0))
+                page_ref = self._make_page_ref(item.get("page_index", 0))
                 outline_dict.mapping[PdfName("Dest")] = PdfArray(
                     [page_ref, PdfName("Fit")]
                 )
@@ -7687,6 +7689,17 @@ class SimplePdf:
         obj = self._resolve(obj)
         active = _active if _active is not None else set()
         item_count = _item_count if _item_count is not None else [0]
+        if (
+            isinstance(obj, PdfDictionary)
+            and self._get_name(obj.mapping.get(PdfName("Type"))) == "Page"
+        ):
+            # A page is never a property *value*. Inlining one copied the
+            # page into the property, and since a page lists the annotations
+            # on it, the walk came back to the annotation it started from --
+            # which is where the "cycle" came from. A page named where a
+            # destination belongs is handled as an array below; this is every
+            # other place a reference to one turns up.
+            return None
         if isinstance(obj, PdfBoolean):
             return obj.value
         if isinstance(obj, PdfNumber):
@@ -7702,6 +7715,11 @@ class SimplePdf:
             except (UnicodeDecodeError, AttributeError):
                 return bytes(obj.value)
         if isinstance(obj, PdfArray):
+            destination = self._destination_from_cos(obj)
+            if destination is _UNRESOLVED_DESTINATION:
+                return None
+            if destination is not None:
+                return destination
             depth = _depth + 1
             self._load_budget.check(
                 depth,
@@ -7811,7 +7829,30 @@ class SimplePdf:
             if value is None:
                 annot.mapping.pop(pdf_key, None)
             else:
-                annot.mapping[pdf_key] = annotation_value_to_cos(value)
+                annot.mapping[pdf_key] = self._annotation_property_to_cos(value)
+
+    def _annotation_property_to_cos(self, value: Any) -> Any:
+        """Like :func:`annotation_value_to_cos`, but resolving destinations.
+
+        ``cos.py`` knows nothing of pages, so it cannot turn a
+        :class:`~aspose_pdf.interactive.Destination` back into the page
+        reference it came from. The recursion is here because a destination
+        also appears nested, as the ``/D`` of a ``/GoTo`` action.
+        """
+        from ..interactive import Destination
+
+        if isinstance(value, Destination):
+            return self._destination_cos(value, self._make_page_ref)
+        if isinstance(value, dict):
+            return PdfDictionary(
+                {
+                    PdfName(str(key)): self._annotation_property_to_cos(item)
+                    for key, item in value.items()
+                }
+            )
+        if isinstance(value, (list, tuple)):
+            return PdfArray([self._annotation_property_to_cos(item) for item in value])
+        return annotation_value_to_cos(value)
 
     def _get_cos_name(self, val: Any) -> str:
         if isinstance(val, PdfName):
@@ -7895,13 +7936,93 @@ class SimplePdf:
     # -- typed interactive targets (actions / destinations) ---------------
 
     def _make_page_ref(self, index: int) -> Any:
-        from .cos import PdfIndirectReference
+        """Reference the page at *index* as the page tree currently lists it.
 
-        ids = getattr(self, "_page_obj_ids", [])
-        if not ids:
-            return PdfIndirectReference(0, 0)
-        idx = max(0, min(int(index), len(ids) - 1))
-        return PdfIndirectReference(ids[idx], 0)
+        ``_page_obj_ids`` is a shadow list maintained by hand across edits and
+        it is wrong between an edit and the next save: an inserted page leaves
+        a ``0`` placeholder behind, which both shifts every page after it and
+        serialises as ``0 0 R`` -- object 0 is the head of the free list
+        (ISO 32000-1 7.5.4) and is never a real object, so a viewer following
+        the destination arrives nowhere. The tree walk is the account that is
+        right at every moment.
+        """
+        refs = self._page_reference_numbers()
+        if not refs:
+            raise PdfValidationException("the document has no page to point at")
+        idx = max(0, min(int(index), len(refs) - 1))
+        return PdfIndirectReference(refs[idx], 0)
+
+    def _page_reference_numbers(self) -> list[int]:
+        """Object numbers of the pages, in the order the page tree lists them.
+
+        The cache itself, for reading: a destination is resolved once per
+        annotation entry and copying the list each time would cost more than
+        the lookup.
+        """
+        self._ensure_page_cache()
+        return self._page_refs
+
+    def _page_index_of(self, ref: Any) -> int | None:
+        """Zero-based index of the page *ref* names, or ``None`` for no page.
+
+        *ref* is an indirect reference; its caller has already established
+        that, because a destination that names its page any other way is not
+        one this document can resolve.
+        """
+        refs = self._page_reference_numbers()
+        try:
+            return refs.index(ref.object_number)
+        except ValueError:
+            return None
+
+    def _destination_from_cos(self, obj: Any) -> Any:
+        """Rebuild the :class:`Destination` *obj* describes, or ``None``.
+
+        An array that starts with a reference to a *page* is a destination.
+        Only such a destination is typed: the page is an object reference, and
+        a list of plain numbers and names -- all the property channel can
+        otherwise carry -- cannot express one, so the reader used to inline the
+        page instead, which is what made an ordinary internal link unreadable.
+        A remote destination (``GoToR``) names its page by *number*, which the
+        plain channel already carries and writes back unchanged, so it is
+        deliberately left alone: typing it would make it write back as a
+        reference into *this* document.
+
+        Returns ``None`` when *obj* is not a destination, and
+        :data:`_UNRESOLVED_DESTINATION` when it is one this document cannot
+        represent -- the page has since been deleted, or the entry names a
+        view ISO 32000-1 does not define. Surfacing those as a half-converted
+        array would only offer the caller something to write back malformed.
+        """
+        from ..interactive import destination_from_spec
+
+        if not isinstance(obj, PdfArray) or len(obj.items) < 2:
+            return None
+        if not isinstance(obj.items[0], PdfIndirectReference):
+            return None
+        target = self._resolve(obj.items[0])
+        if not isinstance(target, PdfDictionary):
+            return None
+        if self._get_name(target.mapping.get(PdfName("Type"))) != "Page":
+            return None
+
+        page = self._page_index_of(obj.items[0])
+        if page is None:
+            return _UNRESOLVED_DESTINATION
+        kind = self._resolve(obj.items[1])
+        if not isinstance(kind, PdfName):
+            return _UNRESOLVED_DESTINATION
+        params: list[float | None] = []
+        for item in obj.items[2:]:
+            value = self._resolve(item)
+            if isinstance(value, PdfNumber):
+                params.append(float(value.value))
+            elif isinstance(value, PdfNull) or value is None:
+                params.append(None)
+            else:
+                return _UNRESOLVED_DESTINATION
+        built = destination_from_spec(kind.name.lstrip("/"), page, params)
+        return _UNRESOLVED_DESTINATION if built is None else built
 
     def _destination_cos(self, dest: Any, make_ref: Any) -> PdfArray:
         from .cos import PdfNull
