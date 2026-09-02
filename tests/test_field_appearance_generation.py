@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 
+import pytest
+
 from aspose_pdf import Document
 from aspose_pdf.engine.cos import (
     PdfArray,
@@ -674,6 +676,75 @@ def test_rich_text_field_renders_rv():
     res = engine._resolve(n.mapping[PdfName("Resources")])
     fonts = engine._resolve(res.mapping[PdfName("Font")])
     assert PdfName("HeBo") in fonts.mapping
+
+
+def _appearance_fonts(engine, field) -> set[str]:
+    ap = engine._resolve(field.mapping[PdfName("AP")])
+    n = engine._resolve(ap.mapping[PdfName("N")])
+    res = engine._resolve(n.mapping[PdfName("Resources")])
+    fonts = engine._resolve(res.mapping[PdfName("Font")])
+    return {key.name.lstrip("/") for key in fonts.mapping}
+
+
+@pytest.mark.parametrize(
+    ("base_font", "resource"),
+    [("Times-Roman", "TiRo"), ("Courier", "Cour"), ("Helvetica", "Helv")],
+)
+def test_rich_text_inherits_the_family_the_field_default_names(base_font, resource):
+    """Markup that names no family should follow the field, not a default.
+
+    A form whose ``/DA`` says Times means its text to be Times; rendering the
+    styled spans in Helvetica because the markup was silent contradicts the
+    field's own declaration.
+    """
+    dr = PdfDictionary(
+        {
+            PdfName("Font"): PdfDictionary(
+                {
+                    PdfName("Cust"): PdfDictionary(
+                        {
+                            PdfName("Type"): PdfName("Font"),
+                            PdfName("Subtype"): PdfName("Type1"),
+                            PdfName("BaseFont"): PdfName(base_font),
+                            PdfName("Encoding"): PdfName("WinAnsiEncoding"),
+                        }
+                    )
+                }
+            )
+        }
+    )
+    widget = _rich_text_widget("<body><p>styled</p></body>", da="/Cust 12 Tf 0 g")
+    engine, field, _acro = _engine_with_acroform(widget, dr=dr)
+
+    assert engine.generate_field_appearances() == 1
+    assert _appearance_fonts(engine, field) == {resource}
+
+
+def test_rich_text_markup_overrides_the_field_default_family():
+    """The field seeds; it does not overrule what the markup asks for."""
+    dr = PdfDictionary(
+        {
+            PdfName("Font"): PdfDictionary(
+                {
+                    PdfName("Cust"): PdfDictionary(
+                        {
+                            PdfName("Type"): PdfName("Font"),
+                            PdfName("Subtype"): PdfName("Type1"),
+                            PdfName("BaseFont"): PdfName("Times-Roman"),
+                        }
+                    )
+                }
+            )
+        }
+    )
+    widget = _rich_text_widget(
+        '<body><p style="font-family:monospace">styled</p></body>',
+        da="/Cust 12 Tf 0 g",
+    )
+    engine, field, _acro = _engine_with_acroform(widget, dr=dr)
+
+    assert engine.generate_field_appearances() == 1
+    assert _appearance_fonts(engine, field) == {"Cour"}
 
 
 def test_rich_text_flag_off_uses_plain_value():

@@ -1121,11 +1121,16 @@ Boundaries:
   `Caret`, `Text` and `FileAttachment` subtypes above; text uses the
   synthesised Helvetica family measured
   with the bundled substitute's real glyph metrics. Rich text (`/RC`, `/RV`)
-  renders a subset — `<p>`/`<span>`/`<b>`/`<i>` with `font-size`, `color`,
-  `font-weight`, `font-style` and `text-align` — in the Helvetica family only
-  (no embedded/other fonts — a Type0/CID field font therefore falls back to the
-  plain `/DA` appearance rather than styled spans — backgrounds, or nested block
-  layout), and `Stamp` is
+  renders a subset — `<p>`/`<span>`/`<b>`/`<i>`/`<tt>`/`<code>` with
+  `font-size`, `color`, `font-family`, `font-weight`, `font-style` and
+  `text-align`. Fonts are the **Standard 14 text faces** — Helvetica, Times and
+  Courier, each in four styles — picked by `font-family` (a stack takes the
+  first name it recognises; an unrecognised one keeps what the run inherited)
+  and measured with that family's own advances. A field's `/DA` font seeds the
+  family for markup that names none. Embedded and other document fonts are
+  **not** used, so a Type0/CID field font still falls back to the plain `/DA`
+  appearance rather than styled spans; backgrounds and nested block layout are
+  not rendered either, and `Stamp` is
   a captioned box rather than the standard rubber-stamp artwork. Dash patterns, `/LE` line endings and `/BE` cloud borders
   are drawn (see above); the cloud is a uniform scallop approximation and line
   endings are sized heuristically from the border width. Check-box/radio *widget*

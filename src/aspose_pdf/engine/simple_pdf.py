@@ -11333,7 +11333,9 @@ class SimplePdf:
         box_content = self._field_widget_box_content(widget, w, h)
         # Rich-text fields (Ff bit 26) render their /RV styled markup.
         if ft == "Tx" and (ff & (1 << 25)):
-            rich = self._rich_text_widget_appearance(widget, size, color, q, w, h)
+            rich = self._rich_text_widget_appearance(
+                widget, size, color, q, w, h, font_name, acro
+            )
             if rich is not None:
                 content, resources = rich
                 widget.mapping[PdfName("AP")] = self._register_annotation_appearance(
@@ -11402,6 +11404,8 @@ class SimplePdf:
         quadding: Any,
         w: float,
         h: float,
+        font_name: str = "Helv",
+        acro: PdfDictionary | None = None,
     ) -> tuple[bytes, PdfDictionary | None] | None:
         """Build a rich-text field appearance from ``/RV``, or ``None``."""
         rv = self._resolve(widget.mapping.get(PdfName("RV")))
@@ -11410,7 +11414,13 @@ class SimplePdf:
             return None
         from .rich_text import RichStyle, build_rich_text_content
 
-        default = RichStyle(size=size if size > 0 else 12.0, color=color or "0 g")
+        default = RichStyle(
+            size=size if size > 0 else 12.0,
+            color=color or "0 g",
+            # The field's /DA names the font its text is meant to be in, so it
+            # seeds the family that markup without a font-family inherits.
+            family=self._field_font_family(font_name, acro) or "sans",
+        )
         align = quadding if quadding in (0, 1, 2) else 0
         built = build_rich_text_content(
             rc, w, h, default_style=default, padding=2.0, default_align=align
@@ -11537,6 +11547,31 @@ class SimplePdf:
                 ]
         lines.append("Q")
         return ("\n".join(lines) + "\n").encode("ascii")
+
+    def _field_font_family(
+        self, font_name: str, acro: PdfDictionary | None
+    ) -> str | None:
+        """The Standard-14 family of a ``/DR`` font, from its ``/BaseFont``.
+
+        The resource name itself says nothing -- ``TiRo`` is a key, not a font
+        -- so the resolved dictionary is what answers. ``None`` when the form
+        carries no such resource or its name gives no family signal.
+        """
+        from .std_font_data import family_from_name
+
+        if not isinstance(acro, PdfDictionary):
+            return None
+        dr = self._resolve(acro.mapping.get(PdfName("DR")))
+        if not isinstance(dr, PdfDictionary):
+            return None
+        fonts = self._resolve(dr.mapping.get(PdfName("Font")))
+        if not isinstance(fonts, PdfDictionary):
+            return None
+        font = self._resolve(fonts.mapping.get(PdfName(font_name)))
+        if not isinstance(font, PdfDictionary):
+            return None
+        base = self._get_name(font.mapping.get(PdfName("BaseFont")))
+        return family_from_name(base) if base else None
 
     def _resolve_field_font(
         self, font_name: str, acro: PdfDictionary

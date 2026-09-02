@@ -25,6 +25,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content de-duplication on an encrypted document; those were disabled because
   the graph used to hold ciphertext, which it no longer does.
 
+- **Rich text is no longer stuck in Helvetica.** `/RC` and `/RV` markup now
+  honours `font-family`, choosing among the Standard 14 text faces — Helvetica,
+  Times and Courier, each in regular, bold, italic and bold-italic — and the
+  HTML monospace tags (`<tt>`, `<code>`, `<kbd>`, `<samp>`) select Courier. A
+  font stack takes the first name it recognises, and a name that signals no
+  family leaves the run with the one it inherited rather than resetting it to
+  the default. Each family is measured with its own advances, so wrapping and
+  alignment are right for Times and for fixed-pitch Courier instead of using
+  Helvetica's widths for all three. A form field's `/DA` font seeds the family
+  that markup naming none inherits, so a field declared in Times renders its
+  styled spans in Times.
+
 - **PDF/A-4 now checks that an attached PDF is PDF/A itself.** ISO 19005-4 6.9
   requires it — an attachment has to declare `pdfaid:part` 1, 2 or 4, with part
   3 deliberately absent because carrying arbitrary files is what PDF/A-3 is

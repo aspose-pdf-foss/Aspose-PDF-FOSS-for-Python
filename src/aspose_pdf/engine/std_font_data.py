@@ -63,14 +63,20 @@ def _symbolic_standard_key(name: str) -> str | None:
     return None
 
 
-def _family(name: str, flags: int) -> str | None:
-    """Pick ``sans`` / ``serif`` / ``mono`` from the name, then the flags.
+def family_from_name(name: str) -> str | None:
+    """Pick ``sans`` / ``serif`` / ``mono`` from a font name, or ``None``.
 
-    Returns ``None`` when neither the name nor the flags give a confident family
-    *and* the font is symbolic -- substituting a Latin face for an unrecognised
-    symbol font (e.g. a non-embedded Wingdings) would draw the wrong glyphs, so
-    the caller keeps its box fallback instead.
+    Names arrive from two vocabularies that overlap almost completely: a PDF
+    ``/BaseFont`` (``Times-BoldItalic``, ``CourierNewPSMT``) and a CSS
+    ``font-family`` (``serif``, ``"Courier New", monospace``). Both are matched
+    the same way, on keywords rather than an exact table, after separators are
+    dropped so ``Times New Roman,Bold`` and ``TimesNewRomanPS-BoldMT`` align.
+
+    ``None`` means the name carries no family signal at all -- which is a
+    different answer from "sans", and lets a caller fall back to whatever it
+    inherited rather than to a default.
     """
+    name = re.sub(r"[\s,_+-]", "", name or "").lower()
     if any(k in name for k in _MONO_KEYS):
         return "mono"
     if "sans" in name:  # e.g. "sans-serif", "ptsans" -- sans wins over serif
@@ -79,6 +85,20 @@ def _family(name: str, flags: int) -> str | None:
         return "serif"
     if any(k in name for k in _SANS_KEYS):
         return "sans"
+    return None
+
+
+def _family(name: str, flags: int) -> str | None:
+    """Pick ``sans`` / ``serif`` / ``mono`` from the name, then the flags.
+
+    Returns ``None`` when neither the name nor the flags give a confident family
+    *and* the font is symbolic -- substituting a Latin face for an unrecognised
+    symbol font (e.g. a non-embedded Wingdings) would draw the wrong glyphs, so
+    the caller keeps its box fallback instead.
+    """
+    named = family_from_name(name)
+    if named is not None:
+        return named
     # No family signal in the name: trust the descriptor flags.
     if flags & _FLAG_FIXED_PITCH:
         return "mono"

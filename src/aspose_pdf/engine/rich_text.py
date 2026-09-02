@@ -1,11 +1,13 @@
 """Parse and render the XHTML rich text of ``/RC`` (annotations) and ``/RV``.
 
 Rich text is a small XHTML fragment (``<body>`` with ``<p>``/``<span>``/
-``<b>``/``<i>`` and ``style`` attributes). We parse it into styled runs and lay
+``<b>``/``<i>``/``<tt>`` and ``style`` attributes). We parse it into runs and lay
 them out into an appearance content stream, honouring per-run font size, colour,
-bold/italic and paragraph text alignment. Fonts are the Standard-14 Helvetica
-family (regular/bold/oblique/bold-oblique), measured with the bundled
-metric-compatible substitute so wrapping and alignment use real advances.
+font family, bold/italic and paragraph text alignment. Fonts are the Standard-14
+text faces -- Helvetica, Times and Courier, each in four styles -- chosen by
+``font-family`` and measured with the bundled metric-compatible substitute for
+*that* family, so wrapping and alignment use real advances rather than one
+family's advances for all three.
 
 Parsing uses :mod:`html.parser` (no DTD/entity expansion, so no XXE risk) and is
 forgiving of the not-quite-XML markup writers emit. Unsupported tags degrade to
@@ -20,13 +22,32 @@ from html.parser import HTMLParser
 
 from .field_appearance import _fmt, _pdf_literal
 
-# (bold, italic) -> (resource name, Standard-14 BaseFont).
+# (family, bold, italic) -> (resource name, Standard-14 BaseFont). The short
+# resource names are the ones Acrobat uses for these faces in an AcroForm /DR,
+# so a viewer that already carries them recognises what it is being handed.
 _FONT_TABLE = {
-    (False, False): ("Helv", "Helvetica"),
-    (True, False): ("HeBo", "Helvetica-Bold"),
-    (False, True): ("HeOb", "Helvetica-Oblique"),
-    (True, True): ("HeBO", "Helvetica-BoldOblique"),
+    ("sans", False, False): ("Helv", "Helvetica"),
+    ("sans", True, False): ("HeBo", "Helvetica-Bold"),
+    ("sans", False, True): ("HeOb", "Helvetica-Oblique"),
+    ("sans", True, True): ("HeBO", "Helvetica-BoldOblique"),
+    ("serif", False, False): ("TiRo", "Times-Roman"),
+    ("serif", True, False): ("TiBo", "Times-Bold"),
+    ("serif", False, True): ("TiIt", "Times-Italic"),
+    ("serif", True, True): ("TiBI", "Times-BoldItalic"),
+    ("mono", False, False): ("Cour", "Courier"),
+    ("mono", True, False): ("CoBo", "Courier-Bold"),
+    ("mono", False, True): ("CoOb", "Courier-Oblique"),
+    ("mono", True, True): ("CoBO", "Courier-BoldOblique"),
 }
+
+# The face each family is measured against. Times and Courier are metrically
+# very different from Helvetica -- Courier is fixed-pitch -- so wrapping and
+# alignment need the family's own advances, not one family's for all three.
+_FAMILY_BASE = {"sans": "Helvetica", "serif": "Times-Roman", "mono": "Courier"}
+
+# HTML gives these tags a monospace default; a rich-text writer that emits them
+# means it, and there is a Standard-14 face to honour it with.
+_MONOSPACE_TAGS = frozenset({"tt", "code", "kbd", "samp"})
 
 _NAMED_COLORS = {
     "black": "0 g",
@@ -52,6 +73,7 @@ class RichStyle:
     bold: bool = False
     italic: bool = False
     align: int = 0        # 0 left, 1 centre, 2 right
+    family: str = "sans"  # "sans", "serif" or "mono" -- a _FONT_TABLE key
 
 
 @dataclass
@@ -108,7 +130,32 @@ def _apply_css(style: RichStyle, css: str) -> RichStyle:
             changes["italic"] = value.lower() in ("italic", "oblique")
         elif prop == "text-align":
             changes["align"] = {"center": 1, "right": 2, "left": 0}.get(value.lower(), style.align)
+        elif prop == "font-family":
+            family = _css_family(value)
+            if family is not None:
+                changes["family"] = family
     return replace(style, **changes) if changes else style
+
+
+def _css_family(value: str) -> str | None:
+    """Resolve a CSS ``font-family`` list to a Standard-14 family, or ``None``.
+
+    A font stack is a list of preferences ending in a generic name, so the
+    first entry that names something recognisable wins and the rest are the
+    fallbacks it was written to avoid. When nothing in the list is recognised
+    the answer is ``None`` -- the run keeps the family it inherited, which is a
+    better guess than the default.
+    """
+    from .std_font_data import family_from_name
+
+    for candidate in value.split(","):
+        name = candidate.strip().strip("'\"")
+        if not name:
+            continue
+        family = family_from_name(name)
+        if family is not None:
+            return family
+    return None
 
 
 def _apply_tag(style: RichStyle, tag: str, attrs: list[tuple[str, str | None]]) -> RichStyle:
@@ -117,6 +164,8 @@ def _apply_tag(style: RichStyle, tag: str, attrs: list[tuple[str, str | None]]) 
         new = replace(new, bold=True)
     elif tag in ("i", "em"):
         new = replace(new, italic=True)
+    elif tag in _MONOSPACE_TAGS:
+        new = replace(new, family="mono")
     css = dict(attrs).get("style")
     if css:
         new = _apply_css(new, css)
@@ -184,7 +233,7 @@ def _style_width_fn(style: RichStyle):
     from .text_metrics import substitute_width_fn
 
     return substitute_width_fn(
-        "Helvetica",
+        _FAMILY_BASE.get(style.family, "Helvetica"),
         font_weight=700.0 if style.bold else None,
         italic_angle=-12.0 if style.italic else 0.0,
     )
@@ -289,7 +338,7 @@ def build_rich_text_content(
             for i, (word, style) in enumerate(line.words):
                 if i:
                     x += _measure(" ", style)
-                fname, base = _FONT_TABLE[(style.bold, style.italic)]
+                fname, base = _FONT_TABLE[(style.family, style.bold, style.italic)]
                 fonts[fname] = _font_spec(base)
                 if (fname, style.size) != cur_font:
                     body.append(f"/{fname} {_fmt(style.size)} Tf")
