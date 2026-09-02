@@ -313,6 +313,81 @@ class Document:
         self._engine_pdf.attachment_read_meta.pop(name, None)
         return self
 
+    def update_attachment(
+        self,
+        name: str,
+        *,
+        new_name: str | None = None,
+        content: bytes | None = None,
+        mime: str | None = None,
+        description: str | None = None,
+        creation_date=None,
+        mod_date=None,
+        relationship: str | None = None,
+        compress: bool | None = None,
+    ) -> FileSpecification:
+        """Change one embedded file, keeping everything not named here.
+
+        :meth:`add_attachment` *replaces* an attachment: re-adding a name to
+        change its description drops the MIME type, the dates and the
+        relationship it already had, because a fresh add supersedes whatever
+        was read from the file. That leaves no way to edit one field, which is
+        what this is for -- an argument left out is left alone::
+
+            document.update_attachment("notes.txt", description="Reviewed")
+
+        *new_name* renames the attachment; it must not collide with another,
+        since a rename that quietly replaced a different file would be worse
+        than an error. Returns the resulting :class:`FileSpecification`, and
+        raises :class:`KeyError` when the document has no such attachment --
+        a name that does not match is a typo, not a no-op.
+        """
+        self._ensure_not_disposed()
+        eng = self._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        if name not in eng.attachments:
+            raise KeyError(f"No attachment named {name!r}")
+        if relationship is not None and relationship not in AF_RELATIONSHIPS:
+            raise ValueError(
+                f"relationship must be one of {sorted(AF_RELATIONSHIPS)}, "
+                f"got {relationship!r}"
+            )
+        target = name if new_name is None else new_name
+        if target != name and target in eng.attachments:
+            raise ValueError(
+                f"cannot rename {name!r} to {target!r}: the document already "
+                "has an attachment with that name"
+            )
+
+        # What the file carried, under what a caller has already set, under
+        # what this call changes -- the same order everything else reads them.
+        meta = {
+            **(eng.attachment_read_meta.get(name) or {}),
+            **(eng.attachment_meta.get(name) or {}),
+        }
+        for key, value in (
+            ("mime", mime),
+            ("description", description),
+            ("creation_date", creation_date),
+            ("mod_date", mod_date),
+            ("relationship", relationship),
+            ("compress", compress),
+        ):
+            if value is not None:
+                meta[key] = value
+
+        payload = eng.attachments[name] if content is None else bytes(content)
+        eng.attachments.pop(name, None)
+        eng.attachment_meta.pop(name, None)
+        eng.attachment_read_meta.pop(name, None)
+        eng.attachments[target] = bytes(payload)
+        # Merged in full, so the read-back copy is not consulted again: it is
+        # keyed by the old name and would be wrong after a rename.
+        eng.attachment_meta[target] = meta
+        eng.attachment_read_meta.pop(target, None)
+        return self.get_embedded_file(target)
+
     @property
     def embedded_files(self) -> list[FileSpecification]:
         """The document's embedded files as typed :class:`FileSpecification`.

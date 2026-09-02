@@ -25,6 +25,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content de-duplication on an encrypted document; those were disabled because
   the graph used to hold ciphertext, which it no longer does.
 
+- **`Document.update_attachment` changes one embedded file without replacing
+  it.** `add_attachment` supersedes an entry outright, so re-adding a name to
+  change its description silently dropped the MIME type, dates and
+  relationship the file already carried — and there was no other way to edit a
+  single field. An argument left out is now left alone, `new_name=` renames
+  (carrying the metadata across, and refusing to replace a different
+  attachment), and the resulting `FileSpecification` comes back.
+
 - **A form field's rich text is drawn in the font the field declares.** The
   markup was laid out in a Standard-14 face whatever the `/DA` named, so a form
   using an embedded brand font rendered visibly wrong type. Runs asking for

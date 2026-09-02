@@ -1163,6 +1163,12 @@ Boundaries:
 
 Supported:
 
+- **Change one attachment without re-supplying the rest** with
+  `Document.update_attachment(name, ...)`: an argument left out is left alone,
+  so editing a description keeps the MIME type, dates and relationship the file
+  already carried, and `new_name=` renames without losing them. A rename onto
+  an existing attachment is refused rather than replacing it.
+
 - Extract embedded files from the PDF name tree.
 - Decode attachment filenames from regular PDF strings and UTF-16BE strings.
 - Extract embedded streams under `/EF /F` and `/EF /UF`.
@@ -1193,9 +1199,12 @@ Supported:
 
 Boundaries:
 
-- The typed `FileSpecification` view is read-only; mutate attachments through
-  `Document.add_attachment` / `Document.remove_attachment` (or the `attachments`
-  mapping) and re-read `embedded_files`.
+- The typed `FileSpecification` is a snapshot, not a live handle: it is read
+  back from the document and changing one does not change the file. Attachments
+  are mutated through `Document.add_attachment` (which *replaces* an entry),
+  `Document.update_attachment` (which changes only what it is given, renaming
+  included) and `Document.remove_attachment`, then re-read from
+  `embedded_files`.
 - Embedded-file name trees are **read** through their full `/Kids` structure —
   a tree another tool balanced into intermediate nodes yields the same
   attachments as a flat one, in the tree's own order, with depth, cumulative

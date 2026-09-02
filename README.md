@@ -729,7 +729,9 @@ and delete workflows. 235 public types are organized by module below.
     `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
-    `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
+    `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document` /
+    `update_attachment(name, new_name, content, mime, ...) -> FileSpecification` — changes only what
+    it is given, so editing one field keeps the rest
   - properties: `pages`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
     `is_pdfua_compliant`, `font_substitution`

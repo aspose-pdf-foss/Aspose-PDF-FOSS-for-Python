@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 import io
 
+import pytest
+
 from aspose_pdf import Document, FileSpecification
 from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
@@ -342,3 +344,139 @@ def test_remove_last_attachment_clears_embedded_files_tree():
     final_bytes = _save(reopened)
     assert b"/EmbeddedFiles" not in final_bytes
     assert Document().load_from(final_bytes).embedded_files == []
+
+
+# ---------------------------------------------------------------------------
+# Editing one field of an existing attachment
+# ---------------------------------------------------------------------------
+
+
+def _with_full_metadata() -> Document:
+    doc = Document()
+    doc.pages.add()
+    doc.add_attachment(
+        "notes.txt",
+        b"hello",
+        mime="text/plain",
+        description="Original",
+        relationship="Source",
+        creation_date=datetime.datetime(2020, 1, 2, 3, 4, 5, tzinfo=datetime.UTC),
+    )
+    return _reload(doc)
+
+
+def test_updating_one_field_keeps_the_rest():
+    """``add_attachment`` replaces; this is how a single field is changed.
+
+    Re-adding a name to change its description dropped the MIME type, the
+    dates and the relationship the file already carried, because a fresh add
+    supersedes what was read back — leaving no way to edit one field.
+    """
+    doc = _with_full_metadata()
+
+    spec = doc.update_attachment("notes.txt", description="Reviewed")
+
+    assert spec.description == "Reviewed"
+    assert spec.mime_type == "text/plain"
+    assert spec.relationship == "Source"
+    assert spec.creation_date == datetime.datetime(
+        2020, 1, 2, 3, 4, 5, tzinfo=datetime.UTC
+    )
+    assert spec.contents == b"hello"
+
+
+def test_an_update_survives_a_save():
+    doc = _with_full_metadata()
+    doc.update_attachment("notes.txt", description="Reviewed", mime="text/markdown")
+
+    spec = _reload(doc).get_embedded_file("notes.txt")
+
+    assert (spec.description, spec.mime_type) == ("Reviewed", "text/markdown")
+    assert spec.relationship == "Source"
+
+
+def test_renaming_carries_the_metadata_across():
+    doc = _with_full_metadata()
+
+    spec = doc.update_attachment("notes.txt", new_name="notes-v2.txt")
+
+    assert spec.name == "notes-v2.txt"
+    assert spec.mime_type == "text/plain"
+    assert spec.description == "Original"
+    assert sorted(doc.attachments) == ["notes-v2.txt"]
+    assert _reload(doc).get_embedded_file("notes.txt") is None
+
+
+def test_the_payload_can_be_replaced_on_its_own():
+    doc = _with_full_metadata()
+
+    spec = doc.update_attachment("notes.txt", content=b"goodbye")
+
+    assert spec.contents == b"goodbye"
+    assert spec.mime_type == "text/plain"
+
+
+def test_renaming_onto_another_attachment_is_refused():
+    """Quietly replacing a different file is worse than an error."""
+    doc = _with_full_metadata()
+    doc.add_attachment("other.txt", b"x")
+
+    with pytest.raises(ValueError, match="already"):
+        doc.update_attachment("other.txt", new_name="notes.txt")
+
+    assert sorted(doc.attachments) == ["notes.txt", "other.txt"]
+
+
+def test_updating_an_attachment_that_is_not_there_raises():
+    """A name that does not match is a typo, not a no-op."""
+    doc = _with_full_metadata()
+
+    with pytest.raises(KeyError, match="No attachment named"):
+        doc.update_attachment("nope", description="x")
+
+    # ...and it says so before touching anything.
+    assert sorted(doc.attachments) == ["notes.txt"]
+
+
+def test_updating_before_the_first_save_keeps_what_was_just_added():
+    """Metadata a caller set is carried forward too, not only what was read.
+
+    Before a save there is nothing to read back: the attachment's MIME type and
+    dates exist only as what ``add_attachment`` was given, and an update has to
+    preserve those the same way.
+    """
+    doc = Document()
+    doc.pages.add()
+    doc.add_attachment(
+        "notes.txt", b"hello", mime="text/plain", relationship="Source"
+    )
+
+    spec = doc.update_attachment("notes.txt", description="Reviewed")
+
+    assert spec.mime_type == "text/plain"
+    assert spec.relationship == "Source"
+    assert spec.description == "Reviewed"
+
+
+def test_a_renamed_attachment_leaves_no_metadata_behind_for_its_old_name():
+    """``attachments`` is a writable mapping, so the old name can come back.
+
+    A stale read-back entry would then attach the previous file's MIME type and
+    description to whatever bytes were just put under that name.
+    """
+    doc = _with_full_metadata()
+    doc.update_attachment("notes.txt", new_name="notes-v2.txt")
+
+    doc.attachments["notes.txt"] = b"a different file"
+    spec = _reload(doc).get_embedded_file("notes.txt")
+
+    assert spec.contents == b"a different file"
+    assert spec.mime_type is None
+    assert spec.description is None
+
+
+def test_an_unknown_relationship_is_refused():
+    doc = _with_full_metadata()
+
+    with pytest.raises(ValueError, match="relationship"):
+        doc.update_attachment("notes.txt", relationship="Nonesuch")
