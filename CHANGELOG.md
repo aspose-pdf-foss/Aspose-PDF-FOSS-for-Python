@@ -25,6 +25,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content de-duplication on an encrypted document; those were disabled because
   the graph used to hold ciphertext, which it no longer does.
 
+- **Existing content can be put on a layer.** A layer could be created and
+  content authored onto it inside a `Page.layer` block, but a watermark, a
+  stamp or a reviewer's comments already in the document had no way onto one at
+  all. `Layer.add(content)` tags an `Annotation` or an `ImagePlacement`,
+  `Layer.remove` takes the tag off — only its own, so removing one layer never
+  reveals content belonging to another — and `Layer.contains` reports
+  membership, counting content that reaches the group through an `/OCMD`. The
+  renderer already honoured `/OC` on annotations and XObjects, so switching the
+  layer off stops drawing them immediately.
+
 - **Rich text is no longer stuck in Helvetica.** `/RC` and `/RV` markup now
   honours `font-family`, choosing among the Standard 14 text faces — Helvetica,
   Times and Courier, each in regular, bold, italic and bold-italic — and the

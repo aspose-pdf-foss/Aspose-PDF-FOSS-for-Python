@@ -24,6 +24,8 @@ import pytest
 from aspose_pdf import Document
 from aspose_pdf.engine.cos import (
     PdfArray,
+    PdfDictionary,
+    PdfIndirectReference,
     PdfName,
     PdfNumber,
     PdfStream,
@@ -377,3 +379,168 @@ def test_a_loaded_document_flattens_too(tmp_path: Path):
     data = target.read_bytes()
     assert b"CONFIDENTIAL" not in data
     assert b"Reviewer note" in data
+
+
+# ---------------------------------------------------------------------------
+# Putting existing content on a layer
+# ---------------------------------------------------------------------------
+
+# A 1x1 opaque PNG: the smallest thing that becomes an image XObject.
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108020000009077"
+    "3d780000000c4944415408d763f8cfc000000301010018dd8db0"
+    "0000000049454e44ae426082"
+)
+
+
+def _document_with_existing_content() -> Document:
+    """A page carrying an annotation and an image, neither on any layer."""
+    document = Document()
+    page = document.pages.add()
+    page.add_text("Body text", 60, 700, font_size=12)
+    page.annotations.add("Square", (60, 400, 200, 500), "a note")
+    page.add_image(_PNG, 250, 400, width=100, height=100)
+    return document
+
+
+def _placement(document: Document):
+    from aspose_pdf.images import ImagePlacementAbsorber
+
+    absorber = ImagePlacementAbsorber()
+    absorber.visit(document.pages[0])
+    return absorber.image_placements[0]
+
+
+def _oc_of(document: Document, target: PdfDictionary) -> int | None:
+    value = target.mapping.get(PdfName("OC"))
+    return value.object_number if isinstance(value, PdfIndirectReference) else None
+
+
+def _annotation_dict(document: Document) -> PdfDictionary:
+    engine = document._engine_pdf
+    page = engine._cos_doc.objects[engine._page_obj_ids[0]]
+    annots = engine._resolve(page.mapping[PdfName("Annots")])
+    return engine._resolve(annots.items[0])
+
+
+def _xobject_dict(document: Document, name: str) -> PdfDictionary:
+    engine = document._engine_pdf
+    page = engine._cos_doc.objects[engine._page_obj_ids[0]]
+    resources = engine._resolve_resources_cos(page)
+    xobjects = engine._resolve(resources.mapping[PdfName("XObject")])
+    return engine._resolve(xobjects.mapping[PdfName(name)])
+
+
+def test_an_existing_annotation_can_be_put_on_a_layer():
+    """``page.layer`` marks content as it is authored; this is the other case.
+
+    A watermark, a stamp or a reviewer's comments already in the document had
+    no way onto a layer at all.
+    """
+    document = _document_with_existing_content()
+    watermark = document.layers.add("Watermark")
+    annotation = document.pages[0].annotations[0]
+
+    assert watermark.contains(annotation) is False
+    assert watermark.add(annotation) is True
+    assert watermark.contains(annotation) is True
+    assert _oc_of(document, _annotation_dict(document)) == watermark.object_number
+
+
+def test_an_existing_image_can_be_put_on_a_layer():
+    document = _document_with_existing_content()
+    watermark = document.layers.add("Watermark")
+    placement = _placement(document)
+
+    assert watermark.add(placement) is True
+    assert watermark.contains(placement) is True
+    assert _oc_of(document, _xobject_dict(document, placement.name)) == (
+        watermark.object_number
+    )
+
+
+def test_tagging_content_that_already_carries_the_layer_changes_nothing():
+    document = _document_with_existing_content()
+    watermark = document.layers.add("Watermark")
+    annotation = document.pages[0].annotations[0]
+
+    assert watermark.add(annotation) is True
+    assert watermark.add(annotation) is False
+
+
+def test_a_tag_can_be_taken_off_again():
+    document = _document_with_existing_content()
+    watermark = document.layers.add("Watermark")
+    annotation = document.pages[0].annotations[0]
+    watermark.add(annotation)
+
+    assert watermark.remove(annotation) is True
+    assert watermark.contains(annotation) is False
+    assert PdfName("OC") not in _annotation_dict(document).mapping
+    assert watermark.remove(annotation) is False
+
+
+def test_a_layer_only_removes_its_own_tag():
+    """Otherwise taking one layer off reveals content that belongs to another."""
+    document = _document_with_existing_content()
+    watermark = document.layers.add("Watermark")
+    notes = document.layers.add("Notes")
+    annotation = document.pages[0].annotations[0]
+    watermark.add(annotation)
+
+    assert notes.remove(annotation) is False
+    assert watermark.contains(annotation) is True
+
+
+def test_membership_through_an_ocmd_counts():
+    """Content may name a membership dictionary rather than a group directly."""
+    document = _document_with_existing_content()
+    watermark = document.layers.add("Watermark")
+    engine = document._engine_pdf
+    ocmd = PdfDictionary(
+        {
+            PdfName("Type"): PdfName("OCMD"),
+            PdfName("OCGs"): PdfArray(
+                [PdfIndirectReference(watermark.object_number, 0)]
+            ),
+        }
+    )
+    annotation_dict = _annotation_dict(document)
+    annotation_dict.mapping[PdfName("OC")] = engine._cos_doc.register_object(ocmd)
+
+    assert watermark.contains(document.pages[0].annotations[0]) is True
+
+
+def _marks_in_the_image_box(document: Document) -> int:
+    """Sample inside the image's rectangle, which is where the change shows.
+
+    A whole-page ink count is the wrong instrument here: the image is one
+    small rectangle, and counting everything drowns it in the body text.
+    """
+    raster = document.pages[0].render(antialias=False)
+    height = 792  # the default page height, in points and (at 72 dpi) pixels
+    return sum(
+        1
+        for x in range(255, 345, 5)
+        for y in range(405, 495, 5)
+        if raster.get_pixel(x, height - y) != (255, 255, 255)
+    )
+
+
+def test_tagged_content_disappears_when_the_layer_is_switched_off():
+    """The point of the tag: a viewer and the renderer both stop drawing it."""
+    document = _document_with_existing_content()
+    watermark = document.layers.add("Watermark")
+    watermark.add(_placement(document))
+
+    assert _marks_in_the_image_box(document) > 0
+    watermark.visible = False
+    assert _marks_in_the_image_box(document) == 0
+
+
+def test_tagging_something_the_page_does_not_carry_is_refused():
+    document = _document_with_existing_content()
+    watermark = document.layers.add("Watermark")
+
+    with pytest.raises(PdfValidationException, match="annotation or an image"):
+        watermark.add(object())

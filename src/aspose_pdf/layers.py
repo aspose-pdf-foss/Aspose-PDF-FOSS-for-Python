@@ -20,7 +20,8 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from aspose_pdf.exceptions import AsposePdfException
+from aspose_pdf.engine.optional_content import content_groups, tag_content
+from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 
 __all__ = ["Layer", "LayerCollection", "LayerConfiguration"]
 
@@ -57,6 +58,77 @@ class Layer:
     @visible.setter
     def visible(self, value: bool) -> None:
         self._state.set_visible(self._group.object_number, bool(value))
+
+    def _target(self, content: Any):
+        """The COS dictionary *content* is tagged on, or raise.
+
+        Two kinds of content can carry a layer after the fact, and each says
+        where it lives in its own terms: an annotation by its index on a page,
+        an image or form XObject by the name its page's resources give it.
+        """
+        from aspose_pdf.engine.optional_content import content_target
+
+        page_index = getattr(content, "page_index", None)
+        if page_index is None:
+            page = getattr(content, "_page", None)
+            page_index = getattr(page, "index", None)
+        index = getattr(content, "_index", None)
+        name = getattr(content, "name", None)
+
+        target = None
+        if isinstance(page_index, int) and isinstance(index, int):
+            target = content_target(
+                self._state._pdf, page_index, annotation_index=index
+            )
+        elif isinstance(page_index, int) and isinstance(name, str):
+            target = content_target(
+                self._state._pdf, page_index, resource_name=name
+            )
+        if target is None:
+            raise PdfValidationException(
+                "content must be an annotation or an image placement from a "
+                "loaded page; nothing on that page matches it"
+            )
+        return target
+
+    def add(self, content: Any) -> bool:
+        """Tag existing *content* with this layer; ``True`` when it changed.
+
+        *content* is an :class:`~aspose_pdf.annotations.Annotation` or an
+        :class:`~aspose_pdf.images.ImagePlacement`. Content authored inside a
+        ``Page.layer`` block is marked in the content stream; this is the way
+        to put a layer on something that is already in the document::
+
+            watermark = document.layers.add("Watermark")
+            watermark.add(document.pages[0].annotations[0])
+
+        Any tag already there is replaced, a membership dictionary included --
+        asking for membership of one group is asking to trade that logic away.
+        """
+        return tag_content(
+            self._state._pdf, self._target(content), self._group.object_number
+        )
+
+    def remove(self, content: Any) -> bool:
+        """Untag *content*, which then shows unconditionally; ``True`` if it did.
+
+        Only a tag naming *this* layer is removed: taking one layer's tag off
+        content that carries another's would silently reveal it.
+        """
+        target = self._target(content)
+        if self._group.object_number not in content_groups(self._state._pdf, target):
+            return False
+        return tag_content(self._state._pdf, target, None)
+
+    def contains(self, content: Any) -> bool:
+        """Whether *content* is tagged with this layer.
+
+        A membership dictionary counts: content that names an ``/OCMD`` listing
+        this group belongs to it, whatever else the dictionary combines it with.
+        """
+        return self._group.object_number in content_groups(
+            self._state._pdf, self._target(content)
+        )
 
     def set_usage(
         self,

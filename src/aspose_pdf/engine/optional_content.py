@@ -637,6 +637,82 @@ def create_group(
     return reference.object_number
 
 
+def content_target(
+    pdf: Any,
+    page_index: int,
+    *,
+    annotation_index: int | None = None,
+    resource_name: str | None = None,
+) -> PdfDictionary | None:
+    """The dictionary a layer tag goes on, or ``None`` if there is no such thing.
+
+    An annotation carries its ``/OC`` on the annotation dictionary itself
+    (ISO 32000-1 12.5.2); an image or form XObject carries it on the XObject's
+    own stream dictionary (8.10.1). Both are reached from the page -- by index
+    into ``/Annots``, or by the name the page's ``/Resources /XObject`` gives
+    the object -- which is also how a caller identifies them.
+    """
+    page_ids = getattr(pdf, "_page_obj_ids", [])
+    if page_index < 0 or page_index >= len(page_ids):
+        return None
+    page = pdf._cos_doc.objects.get(page_ids[page_index]) if pdf._cos_doc else None
+    if not isinstance(page, PdfDictionary):
+        return None
+
+    if annotation_index is not None:
+        annots = pdf._resolve(page.mapping.get(PdfName("Annots")))
+        if not isinstance(annots, PdfArray):
+            return None
+        if annotation_index < 0 or annotation_index >= len(annots.items):
+            return None
+        target = pdf._resolve(annots.items[annotation_index])
+        return target if isinstance(target, PdfDictionary) else None
+
+    if resource_name is not None:
+        resources = pdf._resolve_resources_cos(page)
+        if not isinstance(resources, PdfDictionary):
+            return None
+        xobjects = pdf._resolve(resources.mapping.get(PdfName("XObject")))
+        if not isinstance(xobjects, PdfDictionary):
+            return None
+        target = pdf._resolve(xobjects.mapping.get(PdfName(resource_name)))
+        return target if isinstance(target, PdfDictionary) else None
+
+    return None
+
+
+def tag_content(pdf: Any, target: PdfDictionary, object_number: int | None) -> bool:
+    """Point *target*'s ``/OC`` at a group, or clear it; True when it changed.
+
+    The reference has to be indirect: ``/OC`` names an object the catalog's
+    ``/OCProperties /OCGs`` also names, and a viewer matches them by identity.
+    An existing tag is replaced outright -- including a membership dictionary,
+    whose logic the caller is asking to trade for plain membership of one group.
+    """
+    key = PdfName("OC")
+    if object_number is None:
+        return target.mapping.pop(key, None) is not None
+    existing = target.mapping.get(key)
+    if _is_reference_to(existing, object_number):
+        return False
+    target.mapping[key] = PdfIndirectReference(object_number, 0)
+    return True
+
+
+def content_groups(pdf: Any, target: PdfDictionary) -> list[int]:
+    """The groups *target*'s ``/OC`` names, directly or through an ``/OCMD``."""
+    oc = target.mapping.get(PdfName("OC"))
+    if oc is None:
+        return []
+    state = OptionalContent(pdf)
+    resolved = pdf._resolve(oc)
+    if isinstance(resolved, PdfDictionary) and state._name(
+        resolved.mapping.get(PdfName("Type"))
+    ) == "OCMD":
+        return state._reference_numbers(resolved.mapping.get(PdfName("OCGs")))
+    return state._reference_numbers(oc)
+
+
 def remove_group(pdf: Any, object_number: int) -> bool:
     """Drop a group from the document; its content becomes unconditional.
 

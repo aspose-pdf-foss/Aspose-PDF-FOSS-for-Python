@@ -111,7 +111,8 @@ flowchart TD
 - `Document.layers` lists, creates, switches and removes optional content groups; rendering, text
   extraction, and graphics absorption all skip a hidden layer, the way a viewer does.
   `Page.layer(layer)` is a context manager that puts everything authored inside it on that layer,
-  and `Document.flatten_layers()` resolves the layers for good — deleting what is hidden from the
+  `Layer.add(content)` puts an annotation or image that is *already* in the document on one, and
+  `Document.flatten_layers()` resolves the layers for good — deleting what is hidden from the
   file rather than leaving it there for the next reader to switch back on.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
@@ -442,7 +443,7 @@ and delete workflows. 235 public types are organized by module below.
 | `InvalidFormTypeOperationException` | Exception thrown when an invalid form type operation is attempted. |
 | `InvalidOperationException` | Raised when a graphics element is attached to the wrong parent. |
 | `InvalidPasswordException` | Raised when an incorrect password is provided for an encrypted document. |
-| `Layer` | One optional content group: its name, intent, and whether it is shown. |
+| `Layer` | One optional content group: its name, intent, whether it is shown, and `add`/`remove`/`contains` for tagging existing content with it. |
 | `LayerCollection` | The document's layers: indexable by position or by name, with `add(name, visible)` and `remove(layer)`. |
 | `InvalidPdfFileFormatException` | Raised when the PDF file format is invalid or corrupted. |
 | `InvalidValueFormatException` | Raised when an invalid value is encountered during parsing or conversion. |

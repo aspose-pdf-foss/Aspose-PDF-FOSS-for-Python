@@ -595,10 +595,14 @@ Boundaries:
   viewer identity to match. `/CreatorInfo` carries no state by definition.
   Radio-button groups (`/RBGroups`) travel with a configuration but are not
   enforced when layers are switched individually.
-- A layer marks content, and only content a page's *own* stream shows: an
-  ``/OC`` on a form XObject's contents is honoured, but there is no API to tag
-  an existing image or annotation with a layer after the fact -- author it
-  inside a `Page.layer` block instead.
+- A layer marks content a page's *own* stream shows; an ``/OC`` on a form
+  XObject's contents is honoured too. Content already in the document goes onto
+  a layer through `Layer.add(content)` — an `Annotation` or an `ImagePlacement`
+  — with `Layer.remove` and `Layer.contains` beside it. That writes the `/OC`
+  on the annotation or XObject dictionary, so a viewer and the renderer both
+  stop drawing it when the layer is off. Membership through an `/OCMD` counts
+  as membership; setting a tag replaces whatever was there, that dictionary's
+  logic included.
 - Flattening resolves the *default* configuration as it currently stands; a
   reader cannot get the hidden content back, which is the point, so save a copy
   first if the layers still matter. A `/OC` whose properties operand is an
