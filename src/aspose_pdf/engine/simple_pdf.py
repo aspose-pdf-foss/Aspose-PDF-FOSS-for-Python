@@ -1115,6 +1115,106 @@ def _resource_signature(
     return (type(obj).__name__, repr(obj))
 
 
+def destination_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
+    """Rebuild the :class:`Destination` *obj* describes, or ``None``.
+
+    An array that starts with a reference to a *page* is a destination. Only
+    such a destination is typed: the page is an object reference, and a list of
+    plain numbers and names -- all a plain-value channel can otherwise carry --
+    cannot express one. A remote destination (``GoToR``) names its page by
+    *number* in another file, so it is deliberately left alone; typing it would
+    make it write back as a reference into *this* document.
+
+    Returns ``None`` when *obj* is not a destination, and
+    :data:`_UNRESOLVED_DESTINATION` when it is one this document cannot
+    represent -- the page has since been deleted, or the entry names a view
+    ISO 32000-1 does not define. Half-converting those would only offer the
+    caller something to write back malformed.
+    """
+    from ..interactive import destination_from_spec
+
+    if not isinstance(obj, PdfArray) or len(obj.items) < 2:
+        return None
+    if not isinstance(obj.items[0], PdfIndirectReference):
+        return None
+    target = resolve(obj.items[0])
+    if not isinstance(target, PdfDictionary):
+        return None
+    type_name = target.mapping.get(PdfName("Type"))
+    if not isinstance(type_name, PdfName) or type_name.name.lstrip("/") != "Page":
+        return None
+
+    page = page_index_of(obj.items[0])
+    if page is None:
+        return _UNRESOLVED_DESTINATION
+    kind = resolve(obj.items[1])
+    if not isinstance(kind, PdfName):
+        return _UNRESOLVED_DESTINATION
+    params: list[float | None] = []
+    for item in obj.items[2:]:
+        value = resolve(item)
+        if isinstance(value, PdfNumber):
+            params.append(float(value.value))
+        elif isinstance(value, PdfNull) or value is None:
+            params.append(None)
+        else:
+            return _UNRESOLVED_DESTINATION
+    built = destination_from_spec(kind.name.lstrip("/"), page, params)
+    return _UNRESOLVED_DESTINATION if built is None else built
+
+
+#: The ``/A`` entries any action this API models is built from; nothing else is
+#: read, which keeps the conversion flat and bounded whatever the file holds.
+_ACTION_SPEC_KEYS = ("S", "D", "F", "URI", "N", "JS", "Flags", "Fields")
+
+
+def action_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
+    """Rebuild the :class:`Action` the ``/A`` dictionary *obj* describes."""
+    from ..interactive import action_from_spec
+
+    if not isinstance(obj, PdfDictionary):
+        return None
+
+    def plain(value: Any) -> Any:
+        value = resolve(value)
+        if isinstance(value, PdfName):
+            return value.name.lstrip("/")
+        if isinstance(value, PdfString):
+            raw = value.value
+            return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+        if isinstance(value, PdfNumber):
+            return value.value
+        return None
+
+    spec: dict[str, Any] = {}
+    for key in _ACTION_SPEC_KEYS:
+        raw = obj.mapping.get(PdfName(key))
+        if raw is None:
+            continue
+        if key == "D":
+            destination = destination_from_cos(raw, resolve, page_index_of)
+            if destination is _UNRESOLVED_DESTINATION:
+                return None
+            if destination is None:
+                # A remote destination, whose page is a number rather than a
+                # reference, or a named one -- both plain values.
+                resolved = resolve(raw)
+                destination = (
+                    [plain(entry) for entry in resolved.items]
+                    if isinstance(resolved, PdfArray)
+                    else plain(raw)
+                )
+            spec[key] = destination
+        elif key == "Fields":
+            resolved = resolve(raw)
+            if not isinstance(resolved, PdfArray):
+                return None
+            spec[key] = [plain(entry) for entry in resolved.items]
+        else:
+            spec[key] = plain(raw)
+    return action_from_spec(spec)
+
+
 #: Returned for an annotation entry shaped like a destination whose page is not
 #: one this document has. Distinct from ``None``, which means "not a
 #: destination", because the two lead to opposite handling: one is surfaced as
@@ -2338,6 +2438,58 @@ class SimplePdf:
             obj._obj_number = number
         return self._cos_doc.register_object(obj)
 
+    def _loaded_target_page(self, loaded: Any) -> Any:
+        """The page reference an outline item's loaded target names, or ``None``.
+
+        ``None`` covers everything that does not name a page of this document:
+        no target at all, an action that goes somewhere else, a named
+        destination, and a remote destination -- whose page is a *number* in
+        another file.
+        """
+        if loaded is None:
+            return None
+        obj = self._resolve(loaded[1])
+        if isinstance(obj, PdfDictionary):
+            obj = self._resolve(obj.mapping.get(PdfName("D")))
+        if not isinstance(obj, PdfArray) or not obj.items:
+            return None
+        page = obj.items[0]
+        return page if isinstance(page, PdfIndirectReference) else None
+
+    def _loaded_target_still_lands(self, loaded: Any) -> bool:
+        """True unless the target names a page this document no longer has.
+
+        Deleting a page leaves the page object in the file, so a destination
+        naming it still *parses*; it simply goes nowhere. Writing that back
+        would preserve a bookmark by making it dead, so the item falls back to
+        its page index instead.
+        """
+        page = self._loaded_target_page(loaded)
+        return page is None or self._page_index_of(page) is not None
+
+    def outline_items(self) -> list[dict]:
+        """The outline model with every page index resolved as it stands now.
+
+        An item loaded from a file keeps the target the file held, page
+        reference and all, so the bookmark follows its page through inserts and
+        deletes. The index beside it is a *view* of that reference, and would
+        otherwise still be the one the page had when the document was opened.
+        """
+
+        def refreshed(items: list[dict]) -> list[dict]:
+            out = []
+            for item in items:
+                entry = dict(item)
+                page = self._loaded_target_page(item.get("loaded_target"))
+                index = self._page_index_of(page) if page is not None else None
+                if index is not None:
+                    entry["page_index"] = index
+                entry["children"] = refreshed(item.get("children", []))
+                out.append(entry)
+            return out
+
+        return refreshed(self._outlines_data)
+
     def _outline_slots(self, root: PdfDictionary) -> list[int]:
         """Object numbers the catalog's outline tree occupies, in build order.
 
@@ -2415,8 +2567,14 @@ class SimplePdf:
             # document order; the dictionary is filled in below, and the graph
             # holds this same object.
             item_ref = self._register_at(outline_dict, next_slot())
+            loaded = item.get("loaded_target")
             target = item.get("target")
-            if target is not None:
+            if loaded is not None and self._loaded_target_still_lands(loaded):
+                # What the file held, unchanged -- including the page it names
+                # by reference, so the bookmark follows its page rather than an
+                # index that another edit has since moved out from under it.
+                outline_dict.mapping[PdfName(loaded[0])] = loaded[1]
+            elif target is not None:
                 cos_target, key = self._interactive_target_cos(target)
                 outline_dict.mapping[PdfName(key)] = cos_target
             else:
@@ -7976,53 +8134,8 @@ class SimplePdf:
             return None
 
     def _destination_from_cos(self, obj: Any) -> Any:
-        """Rebuild the :class:`Destination` *obj* describes, or ``None``.
-
-        An array that starts with a reference to a *page* is a destination.
-        Only such a destination is typed: the page is an object reference, and
-        a list of plain numbers and names -- all the property channel can
-        otherwise carry -- cannot express one, so the reader used to inline the
-        page instead, which is what made an ordinary internal link unreadable.
-        A remote destination (``GoToR``) names its page by *number*, which the
-        plain channel already carries and writes back unchanged, so it is
-        deliberately left alone: typing it would make it write back as a
-        reference into *this* document.
-
-        Returns ``None`` when *obj* is not a destination, and
-        :data:`_UNRESOLVED_DESTINATION` when it is one this document cannot
-        represent -- the page has since been deleted, or the entry names a
-        view ISO 32000-1 does not define. Surfacing those as a half-converted
-        array would only offer the caller something to write back malformed.
-        """
-        from ..interactive import destination_from_spec
-
-        if not isinstance(obj, PdfArray) or len(obj.items) < 2:
-            return None
-        if not isinstance(obj.items[0], PdfIndirectReference):
-            return None
-        target = self._resolve(obj.items[0])
-        if not isinstance(target, PdfDictionary):
-            return None
-        if self._get_name(target.mapping.get(PdfName("Type"))) != "Page":
-            return None
-
-        page = self._page_index_of(obj.items[0])
-        if page is None:
-            return _UNRESOLVED_DESTINATION
-        kind = self._resolve(obj.items[1])
-        if not isinstance(kind, PdfName):
-            return _UNRESOLVED_DESTINATION
-        params: list[float | None] = []
-        for item in obj.items[2:]:
-            value = self._resolve(item)
-            if isinstance(value, PdfNumber):
-                params.append(float(value.value))
-            elif isinstance(value, PdfNull) or value is None:
-                params.append(None)
-            else:
-                return _UNRESOLVED_DESTINATION
-        built = destination_from_spec(kind.name.lstrip("/"), page, params)
-        return _UNRESOLVED_DESTINATION if built is None else built
+        """This document's view of :func:`destination_from_cos`."""
+        return destination_from_cos(obj, self._resolve, self._page_index_of)
 
     def _destination_cos(self, dest: Any, make_ref: Any) -> PdfArray:
         from .cos import PdfNull
@@ -14880,8 +14993,19 @@ class CosExtractor:
                     else str(raw)
                 )
 
-            # Destination → page index
+            # The target, kept exactly as the file holds it so that saving
+            # writes back what was read, plus a typed view of it where this
+            # API has a class for it and the page index it lands on.
+            loaded_target = None
+            target = None
             page_index = 0
+            for key in ("Dest", "A"):
+                raw = item.mapping.get(PdfName(key))
+                if raw is None:
+                    continue
+                loaded_target = (key, raw)
+                target = self._outline_target(key, self._resolve(raw))
+                break
             dest = self._resolve(item.mapping.get(PdfName("Dest")))
             if isinstance(dest, PdfArray) and len(dest.items) > 0:
                 page_ref = dest.items[0]
@@ -14910,12 +15034,36 @@ class CosExtractor:
                     "page_index": page_index,
                     "is_bold": bool(flags & 2),
                     "is_italic": bool(flags & 1),
+                    "target": target,
+                    "loaded_target": loaded_target,
                     "children": children,
                 }
             )
 
             item_ref = item.mapping.get(PdfName("Next"))
         return items
+
+    def _outline_target(self, key: str, obj: Any) -> Any:
+        """The typed view of an outline item's ``/Dest`` or ``/A``, if any.
+
+        ``None`` for a target this API has no class for -- a named destination,
+        an action type it does not model. The item keeps the target the file
+        holds either way; this only decides whether it can also be read.
+        """
+        if key == "A":
+            return action_from_cos(obj, self._resolve, self._outline_page_index)
+        destination = destination_from_cos(
+            obj, self._resolve, self._outline_page_index
+        )
+        return None if destination is _UNRESOLVED_DESTINATION else destination
+
+    def _outline_page_index(self, ref: Any) -> int | None:
+        """Zero-based index of the page *ref* names, or ``None`` for no page."""
+        ids = getattr(self, "_page_obj_ids", [])
+        try:
+            return ids.index(ref.object_number)
+        except ValueError:
+            return None
 
     def _page_ref_to_index(self, page_ref: Any) -> int:
         """Map a page object reference to a zero-based page index."""

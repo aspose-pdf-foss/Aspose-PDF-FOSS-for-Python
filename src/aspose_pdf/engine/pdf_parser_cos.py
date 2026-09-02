@@ -203,6 +203,18 @@ def _extract_stream_bytes(
     return bytes(data[stream_start:end_at])
 
 
+_STRING_ESCAPES = {
+    "n": 0x0A,
+    "r": 0x0D,
+    "t": 0x09,
+    "b": 0x08,
+    "f": 0x0C,
+    "(": 0x28,
+    ")": 0x29,
+    "\\": 0x5C,
+}
+
+
 class _Tokenizer:
     """A tiny recursive-descent tokenizer for PDF syntax.
 
@@ -345,14 +357,47 @@ class _Tokenizer:
         return self._read_number()
 
     def _read_literal_string(self) -> PdfString:
+        """Read ``( ... )`` into the bytes it stands for.
+
+        ISO 32000-1 7.3.4.2. The escapes are the point: a backslash used to
+        swallow the character after it, so every ``\\(``, ``\\)`` and ``\\\\``
+        vanished from the value -- silently deleting those characters from any
+        title, bookmark, annotation or field text that contained them. Bytes
+        rather than text, because ``\\ddd`` names a byte and a literal string
+        may hold any encoding.
+        """
         self._consume()  # '(' opening
-        result = []
+        result = bytearray()
         depth = 1
         while self.pos < self.len and depth > 0:
             ch = self._peek()
+            self._consume()
             if ch == "\\":
-                # escaped character - keep the next char literally
-                self._consume(2)
+                if self.pos >= self.len:
+                    break
+                escaped = self._peek()
+                self._consume()
+                if escaped in _STRING_ESCAPES:
+                    result.append(_STRING_ESCAPES[escaped])
+                elif escaped in "01234567":
+                    digits = escaped
+                    while (
+                        len(digits) < 3
+                        and self.pos < self.len
+                        and self._peek() in "01234567"
+                    ):
+                        digits += self._peek()
+                        self._consume()
+                    # High-order overflow is ignored rather than an error.
+                    result.append(int(digits, 8) & 0xFF)
+                elif escaped in "\r\n":
+                    # A backslash before an end-of-line continues the line and
+                    # contributes nothing at all.
+                    if escaped == "\r" and self._peek() == "\n":
+                        self._consume()
+                else:
+                    # Any other character stands for itself, backslash dropped.
+                    result.append(ord(escaped) & 0xFF)
                 continue
             if ch == "(":
                 depth += 1
@@ -360,13 +405,18 @@ class _Tokenizer:
             elif ch == ")":
                 depth -= 1
                 if depth == 0:
-                    self._consume()  # consume final ')'
                     break
-            result.append(ch)
-            self._consume()
+            elif ch in "\r\n":
+                # However an end-of-line is written inside the string, its
+                # value is one line feed.
+                if ch == "\r" and self._peek() == "\n":
+                    self._consume()
+                result.append(0x0A)
+                continue
+            result.append(ord(ch) & 0xFF)
         if depth != 0:
             raise PdfParseException("Unterminated PDF literal string")
-        return PdfString("".join(result))
+        return PdfString(bytes(result))
 
     def _read_hex_string(self) -> PdfString:
         self._consume()  # '<' opening

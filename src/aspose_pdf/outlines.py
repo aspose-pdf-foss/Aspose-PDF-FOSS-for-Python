@@ -32,13 +32,44 @@ class OutlineItem:
         destination: object | None = None,
     ) -> None:
         self.title: str = title
-        self.page_index: int = page_index
         self.is_bold: bool = is_bold
         self.is_italic: bool = is_italic
-        # Optional typed target: an aspose_pdf.interactive Destination or Action.
-        # When set it overrides ``page_index`` (which is the fit-to-page default).
-        self.destination: object | None = destination
+        # What the item was loaded with, exactly as the file holds it, so a
+        # document that is merely opened and saved keeps its bookmarks. The
+        # two public ways of naming a target drop it, because the caller has
+        # then said where the bookmark goes.
+        self._loaded_target: tuple[str, object] | None = None
+        self._page_index = int(page_index)
+        self._destination = destination
         self.children: list[OutlineItem] = []
+
+    @property
+    def page_index(self) -> int:
+        """Zero-based index of the destination page."""
+        return self._page_index
+
+    @page_index.setter
+    def page_index(self, value: int) -> None:
+        self._page_index = int(value)
+        self._destination = None
+        self._loaded_target = None
+
+    @property
+    def destination(self) -> object | None:
+        """Typed target: an ``aspose_pdf.interactive`` Destination or Action.
+
+        When set it overrides :attr:`page_index`, which is the fit-to-page
+        default. Reading it gives back the target of a bookmark loaded from a
+        file, or ``None`` when that target is one this API does not model -- a
+        named destination, or an action type it has no class for. Such a target
+        is still written back unchanged; it is only unavailable to read.
+        """
+        return self._destination
+
+    @destination.setter
+    def destination(self, value: object | None) -> None:
+        self._destination = value
+        self._loaded_target = None
 
     def add(self, item: OutlineItem) -> OutlineItem:
         """Append *item* as a child of this outline entry and return it."""
@@ -56,10 +87,11 @@ class OutlineItem:
     def _to_dict(self) -> dict:
         return {
             "title": self.title,
-            "page_index": self.page_index,
+            "page_index": self._page_index,
             "is_bold": self.is_bold,
             "is_italic": self.is_italic,
-            "target": self.destination,
+            "target": self._destination,
+            "loaded_target": self._loaded_target,
             "children": [c._to_dict() for c in self.children],
         }
 
@@ -70,7 +102,11 @@ class OutlineItem:
             page_index=d.get("page_index", 0),
             is_bold=d.get("is_bold", False),
             is_italic=d.get("is_italic", False),
+            destination=d.get("target"),
         )
+        # Straight onto the attribute: assigning either public one would mean
+        # the caller had chosen a target, and would throw this away.
+        item._loaded_target = d.get("loaded_target")
         for child_dict in d.get("children", []):
             item.children.append(cls._from_dict(child_dict))
         return item

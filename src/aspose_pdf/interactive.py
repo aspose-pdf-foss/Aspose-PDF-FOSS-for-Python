@@ -294,6 +294,83 @@ def destination_from_spec(
     return cls(page, *params)
 
 
+def action_from_spec(spec: dict) -> Action | None:
+    """Rebuild the action an ``/A`` dictionary describes.
+
+    The inverse of :meth:`Action._spec`. *spec* is that dictionary as plain
+    Python -- keys without their slash, strings decoded, and a ``D`` entry
+    already turned into a :class:`Destination` (or left as the ``[page number,
+    name, ...]`` list a remote destination uses). Returns ``None`` for an action
+    type this API does not model, which is the caller's cue to keep what the
+    file holds rather than write something else in its place.
+    """
+    kind = spec.get("S")
+    if kind == "GoTo":
+        destination = spec.get("D")
+        # A named destination is a string looked up in the document's /Dests;
+        # `GoToAction` has nowhere to put one.
+        return GoToAction(destination) if isinstance(destination, Destination) else None
+    if kind == "URI":
+        uri = spec.get("URI")
+        return URIAction(uri) if isinstance(uri, str) else None
+    if kind == "GoToR":
+        target = spec.get("F")
+        if not isinstance(target, str):
+            return None
+        destination = spec.get("D")
+        if isinstance(destination, (list, tuple)) and len(destination) >= 2:
+            # A remote destination names its page by number, so it arrives as a
+            # plain list; the number is the page and the rest is the view.
+            page, name, *params = destination
+            if not isinstance(page, (int, float)) or not isinstance(name, str):
+                return None
+            destination = destination_from_spec(name, int(page), params)
+            if destination is None:
+                return None
+        elif destination is not None and not isinstance(destination, Destination):
+            return None
+        return GoToRAction(target, destination)
+    if kind == "Named":
+        name = spec.get("N")
+        return NamedAction(name) if isinstance(name, str) else None
+    if kind == "JavaScript":
+        script = spec.get("JS")
+        return JavaScriptAction(script) if isinstance(script, str) else None
+    if kind == "Launch":
+        target = spec.get("F")
+        return LaunchAction(target) if isinstance(target, str) else None
+    if kind in ("SubmitForm", "ResetForm"):
+        fields = spec.get("Fields")
+        if fields is not None:
+            if not isinstance(fields, (list, tuple)) or not all(
+                isinstance(name, str) for name in fields
+            ):
+                return None
+            fields = list(fields)
+        flags = spec.get("Flags")
+        flags = int(flags) if isinstance(flags, (int, float)) else 0
+        # ISO 32000-1 tables 237 and 239: bit 1 flips /Fields from the fields to
+        # act on to the fields to leave alone, and needs a list to invert.
+        exclude = bool(flags & 1)
+        if exclude and fields is None:
+            return None
+        if kind == "ResetForm":
+            return ResetFormAction(fields, exclude)
+        url = spec.get("F")
+        if not isinstance(url, str):
+            return None
+        formats = {
+            bit: name for name, bit in SubmitFormAction._FORMAT_FLAGS.items() if bit
+        }
+        submit_format = "fdf"
+        for bit, name in formats.items():
+            if flags & bit:
+                submit_format = name
+                break
+        return SubmitFormAction(url, fields, exclude, submit_format)
+    return None
+
+
 __all__ = [
     "Action",
     "Destination",
@@ -313,5 +390,6 @@ __all__ = [
     "SubmitFormAction",
     "URIAction",
     "XYZDestination",
+    "action_from_spec",
     "destination_from_spec",
 ]

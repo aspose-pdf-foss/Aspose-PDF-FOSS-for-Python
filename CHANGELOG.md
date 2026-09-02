@@ -9,6 +9,33 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Opening a document and saving it rewrote every bookmark.** The outline model
+  read a bookmark back as one number — the index of the page its `/Dest` named —
+  and wrote it out again as "fit that page". A `/XYZ` view lost its position and
+  zoom; a bookmark carrying an *action* lost the action altogether and became a
+  jump to page 1. Nothing warned, and no structure check could notice, because
+  "fit page 1" is a perfectly well-formed destination. An index is also not an
+  identity: deleting or inserting a single page silently repointed every
+  bookmark past it, while link annotations — which keep the page *reference* —
+  were never affected. A bookmark loaded from a file now carries the target the
+  file held, verbatim, and that is what gets written back; naming a target
+  through `page_index` or `destination` replaces it. `OutlineItem.destination`
+  also reads the target back typed, so a bookmark's action or view can be
+  inspected and not only written.
+
+- **A literal string lost its parentheses and backslashes.** Inside `( ... )` a
+  backslash introduces an escape (ISO 32000-1 7.3.4.2); the reader consumed the
+  backslash *and* the character after it and kept neither. Since `\(`, `\)` and
+  `\\` are exactly what the writer escapes, any title, bookmark label,
+  annotation, field value or script containing a parenthesis or a backslash came
+  back short of them — a document could be opened and saved with its own text
+  quietly edited. The other escape forms had never been read at all: `\ddd` is
+  an octal byte, a backslash before an end-of-line joins the lines, and an
+  end-of-line without one is a single line feed however the file writes it. The
+  value is now assembled as bytes, so a high byte is the file's byte rather than
+  the UTF-8 of the character it resembles in Latin-1. Checked against pikepdf
+  over every escape form.
+
 - **An internal link can be read back.** `Page.annotations` raised
   `Annotation property graph contains a cycle` for any link pointing at a page
   of the same document — the commonest annotation there is — and because the

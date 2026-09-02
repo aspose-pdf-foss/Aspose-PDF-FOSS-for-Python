@@ -60,7 +60,21 @@ Supported:
 - Open documents in streaming/lazy mode and decode page content on demand.
 - Merge `Document` instances.
 - Run resource optimization and stream compression helpers.
-- Preserve and edit outlines/bookmarks.
+- Preserve and edit outlines/bookmarks. **A bookmark loaded from a file keeps
+  the target the file held, exactly** -- its view (`/XYZ` position and zoom,
+  `/FitR` rectangle), its action if it has one instead of a destination, a named
+  destination, even an action type this API does not model -- so opening a
+  document and saving it leaves its bookmarks alone. Because the target keeps
+  naming its page by *reference*, a bookmark follows that page through inserts
+  and deletes rather than through an index another edit has moved.
+  `OutlineItem.destination` reads the target back typed
+  (`aspose_pdf.interactive`) where there is a class for it, and `page_index`
+  reads the page's current position. Setting either replaces the target, since
+  the caller has then said where the bookmark goes.
+- **A literal string keeps its parentheses and backslashes.** Escapes inside
+  `( ... )` are decoded per ISO 32000-1 7.3.4.2 -- `\n \r \t \b \f \( \) \\`,
+  octal `\ddd`, and a backslash before an end-of-line as a line continuation --
+  and an end-of-line written any way inside the string reads as one line feed.
 
 ## Resource Limits For Untrusted PDFs
 
@@ -427,13 +441,16 @@ Supported:
 
 Boundaries:
 
-- **Deleting a page does not rewrite what pointed at it.** A link or bookmark
-  whose destination was that page keeps naming the page object, which stays in
-  the file; the destination simply resolves to nothing. Reading such an
-  annotation reports no destination rather than a broken one (see
+- **Deleting a page does not rewrite what pointed at it.** A *link* whose
+  destination was that page keeps naming the page object, which stays in the
+  file; the destination simply resolves to nothing. Reading such an annotation
+  reports no destination rather than a broken one (see
   [Annotations](#annotations)), but the entry is left in the file as it was --
   repointing or removing another object's reference is a decision about the
-  caller's document, not a consequence of deleting a page.
+  caller's document, not a consequence of deleting a page. A *bookmark* is the
+  exception, because its target is rebuilt on every save and cannot simply be
+  left: one whose page is gone gives up the reference and falls back to the
+  index it last had, clamped to the document, keeping its view or action.
 - Page rendering is a best-effort rasterizer, not a certification-grade visual
   engine. Its overprint support is a composite RGB preview, not a plate-accurate
   separation or process/spot ink model, and complete PDF 2.0 imaging semantics

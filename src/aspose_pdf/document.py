@@ -629,11 +629,7 @@ class Document:
         """
         self._ensure_not_disposed()
         if self._outlines is None:
-            data = (
-                getattr(self._engine_pdf, "_outlines_data", [])
-                if self._engine_pdf
-                else []
-            )
+            data = self._engine_pdf.outline_items() if self._engine_pdf else []
             self._outlines = OutlineCollection._from_list(data)
         return self._outlines
 
