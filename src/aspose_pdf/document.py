@@ -1612,9 +1612,7 @@ class Document:
             return self
         _require_pdf_save_format(save_format)
 
-        # Sync the in-memory outline collection back to the engine before writing
-        if self._outlines is not None and self._engine_pdf is not None:
-            self._engine_pdf._outlines_data = self._outlines._to_list()
+        self._flush_outlines()
 
         if incremental:
             data = self._engine_pdf.to_bytes_incremental()
@@ -1659,6 +1657,16 @@ class Document:
         """Alias of :meth:`dispose` (matches .NET ``Close``)."""
         self.dispose()
 
+    def _flush_outlines(self) -> None:
+        """Put the live outline collection back where the engine reads it.
+
+        The collection is a copy taken on first access, so anything the engine
+        does with bookmarks -- writing them, or handing them to a merge --
+        must see the caller's edits first.
+        """
+        if self._outlines is not None and self._engine_pdf is not None:
+            self._engine_pdf._outlines_data = self._outlines._to_list()
+
     def merge(self, *documents: Document) -> Document:
         """Merge the supplied documents into this one."""
         self._ensure_not_disposed()
@@ -1669,7 +1677,12 @@ class Document:
             if not isinstance(doc, Document):
                 raise TypeError("All items to merge must be Document instances")
             if doc._engine_pdf is not None:
+                doc._flush_outlines()
+                self._flush_outlines()
                 self._engine_pdf.append(doc._engine_pdf)
+                # The bookmarks the merge appended are the engine's now; a
+                # collection taken before it would still be the old tree.
+                self._outlines = None
         return self
 
     def encrypt(

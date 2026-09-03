@@ -9,6 +9,25 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Merging a document brought across a tracing of its pages, not the pages.**
+  `Document.merge` copied each page's rectangle and its content bytes and
+  nothing else. A page without its `/Resources` names fonts and images that
+  resolve to no object, so it drew blank — or, worse, drew with whatever the
+  *target* had registered under the same name, which for two documents built by
+  this library is always `/F1`: merged text rendered in the wrong typeface with
+  nothing to show that anything was wrong. Everything else was dropped in
+  silence — annotations, form fields, bookmarks, attachments, layers. A page is
+  now imported: its dictionary is copied into the target's graph with every
+  object it reaches, once each, references remapped, and attributes inherited
+  from an ancestor of the source's page tree resolved onto it. The structures
+  those pages belong to come with them, since a widget whose field is not in
+  `/AcroForm /Fields` is a control the form does not know about, and an
+  optional content group missing from `/OCProperties` is not a layer any viewer
+  offers to switch. A field or attachment name used by both documents is given
+  to the newcomer under a numbered variant rather than replacing what is there.
+  The source document is untouched and shares no object with the result, and
+  merging no longer takes the other document's title.
+
 - **Opening a document and saving it rewrote every bookmark.** The outline model
   read a bookmark back as one number — the index of the page its `/Dest` named —
   and wrote it out again as "fit that page". A `/XYZ` view lost its position and

@@ -58,7 +58,20 @@ Supported:
 - Read file identifiers and permission flags.
 - Validate, check, and repair basic PDF structure.
 - Open documents in streaming/lazy mode and decode page content on demand.
-- Merge `Document` instances.
+- **Merge `Document` instances.** A merged page is *imported*: its dictionary
+  is copied into this document's object graph along with everything it reaches
+  -- resources above all, without which its content names fonts and images that
+  resolve to nothing -- each object copied once, references remapped, and
+  attributes it inherited from an ancestor of its own page tree resolved onto
+  it. Its annotations come with it, a link among them still pointing at the
+  page it pointed at. The structures those pages belong to come too: form
+  fields (a widget whose field is not in `/AcroForm /Fields` is a control the
+  form does not know about), optional content groups (one missing from
+  `/OCProperties` is not a layer a viewer offers to switch), bookmarks
+  (retargeted at the merged pages), and embedded files. Where both documents
+  used one name -- a field, an attachment -- the newcomer is renamed rather
+  than replacing what is there or silently becoming the same object. The source
+  document is left exactly as it was, and shares no object with the result.
 - Run resource optimization and stream compression helpers.
 - Preserve and edit outlines/bookmarks. **A bookmark loaded from a file keeps
   the target the file held, exactly** -- its view (`/XYZ` position and zoom,
@@ -441,6 +454,13 @@ Supported:
 
 Boundaries:
 
+- **Merging does not carry across what belongs to the whole document rather
+  than to its pages.** The document information dictionary, XMP, the page
+  labels, the viewer preferences and the structure tree stay this document's;
+  a merge appends pages, and taking the other document's title or its tagging
+  would be a different operation. Named destinations (`/Dests`) are not merged
+  either, so a bookmark or link of the source that goes by name rather than by
+  page reference is preserved as it stands and resolves to nothing here.
 - **Deleting a page does not rewrite what pointed at it.** A *link* whose
   destination was that page keeps naming the page object, which stays in the
   file; the destination simply resolves to nothing. Reading such an annotation

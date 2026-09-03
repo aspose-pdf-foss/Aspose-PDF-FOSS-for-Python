@@ -14,7 +14,7 @@ import struct
 import zlib
 from collections import namedtuple
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -8453,16 +8453,292 @@ class SimplePdf:
 
         del annots_array.items[annot_index]
 
-    def append(self, other: SimplePdf) -> None:
-        """Append another PDF's pages (with COS synchronization)."""
-        self._ensure_not_disposed()
-        for rect, content in zip(other.pages, other.page_contents):
-            self.add((rect, content))
+    #: Page entries the import supplies itself: ``/Parent`` names a node in the
+    #: *other* document's tree, and ``/Contents`` is rebuilt from the bytes.
+    _PAGE_IMPORT_SKIP = ("Parent", "Contents")
 
-        # Merge images and other metadata
+    #: Inheritable page attributes (ISO 32000-1 table 30). They may sit on an
+    #: ancestor of the page, which the import deliberately does not follow, so
+    #: they are resolved and written onto the copy.
+    _INHERITABLE_PAGE_KEYS = ("Resources", "MediaBox", "CropBox", "Rotate")
+
+    def append(self, other: SimplePdf) -> None:
+        """Append another document's pages, as the pages they are.
+
+        Appending used to carry across a page's rectangle and its content
+        bytes and nothing else -- no ``/Resources``, so every font and image the
+        content named resolved to no object; the page drew blank, or worse,
+        drew with whatever the *target* happened to have registered under the
+        same name. Annotations, form fields, bookmarks and attachments were
+        dropped outright.
+        """
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        other._ensure_cos()
+        other._ensure_page_cache()
+
+        # Every source page is created first, so that a reference to any of
+        # them -- an annotation's /P, a bookmark's destination, a widget shared
+        # by a field on another page -- resolves to the copy instead of
+        # importing the page again and dragging the whole source tree behind it.
+        imported: dict[int, Any] = {}
+        pages: list[tuple[Any, Any]] = []
+        appended_at = len(self.pages)
+        for index in range(len(other.pages)):
+            self.insert(
+                len(self.pages), (other.pages[index], other.get_page_content(index))
+            )
+            self._ensure_page_cache()
+            new_ref = PdfIndirectReference(self._page_refs[len(self.pages) - 1], 0)
+            imported[other._page_refs[index]] = new_ref
+            pages.append((other._get_page_dict(index), new_ref))
+
+        for source, new_ref in pages:
+            self._import_page_entries(other, source, new_ref, imported)
+
+        self._merge_acroform(other, imported)
+        self._merge_optional_content(other, imported)
+        self._merge_outlines(other, imported, appended_at)
+        self._merge_attachments(other)
+
         self.images.update(other.images)
-        self.metadata.update(other.metadata)
         self._page_cache_valid = False
+
+    def _import_page_entries(
+        self, other: SimplePdf, source: Any, new_ref: Any, imported: dict[int, Any]
+    ) -> None:
+        """Copy *source*'s entries onto the page *new_ref* names."""
+        if not isinstance(source, PdfDictionary):
+            return
+        page = self._resolve(new_ref)
+        for key, value in source.mapping.items():
+            if key.name.lstrip("/") in self._PAGE_IMPORT_SKIP:
+                continue
+            page.mapping[key] = self._import_object(other, value, imported)
+        for name in self._INHERITABLE_PAGE_KEYS:
+            if PdfName(name) in page.mapping:
+                continue
+            value = other._get_inherited_attr(source, name)
+            if value is not None:
+                page.mapping[PdfName(name)] = self._import_object(
+                    other, value, imported
+                )
+
+    def _import_object(
+        self,
+        other: SimplePdf,
+        obj: Any,
+        imported: dict[int, Any],
+        _depth: int = 0,
+    ) -> Any:
+        """Copy *obj* out of *other*'s object graph into this one.
+
+        An indirect reference is registered before its target is copied, so a
+        graph that points back at itself -- which any page with annotations
+        does -- is copied once rather than followed forever.
+        """
+        self._load_budget.check(_depth, "max_nesting_depth", "imported object depth")
+        if isinstance(obj, PdfIndirectReference):
+            existing = imported.get(obj.object_number)
+            if existing is not None:
+                return existing
+            placeholder = self._cos_doc.register_object(PdfNull())
+            imported[obj.object_number] = placeholder
+            self._cos_doc.objects[placeholder.object_number] = self._import_object(
+                other, other._resolve(obj), imported, _depth
+            )
+            return placeholder
+        if isinstance(obj, PdfStream):
+            # Plaintext by construction, which is the default: the stream was
+            # reached through the other document's object store, so its handler
+            # has already run, and the copy is not enciphered under any key of
+            # ours. Carrying the source's flag would offer this document's key
+            # a payload that was never encrypted with it.
+            return PdfStream(
+                content=obj.content,
+                mapping={
+                    key: self._import_object(other, value, imported, _depth + 1)
+                    for key, value in obj.mapping.items()
+                },
+            )
+        if isinstance(obj, PdfDictionary):
+            self._load_budget.check(
+                len(obj.mapping), "max_container_items", "imported dictionary entries"
+            )
+            return PdfDictionary(
+                {
+                    key: self._import_object(other, value, imported, _depth + 1)
+                    for key, value in obj.mapping.items()
+                }
+            )
+        if isinstance(obj, PdfArray):
+            self._load_budget.check(
+                len(obj.items), "max_container_items", "imported array items"
+            )
+            return PdfArray(
+                [
+                    self._import_object(other, item, imported, _depth + 1)
+                    for item in obj.items
+                ]
+            )
+        return obj
+
+    def _merge_acroform(self, other: SimplePdf, imported: dict[int, Any]) -> None:
+        """Adopt the fields the appended pages' widgets belong to.
+
+        The widgets arrive with their pages, and a widget without its field in
+        ``/AcroForm /Fields`` is a control the form does not know about: it
+        draws, and nothing reads or fills it. A field whose fully qualified name
+        is already taken is renamed rather than dropped or merged -- two fields
+        of the same name are *one* field in PDF, so keeping the name would make
+        filling either change both.
+        """
+        source_root = other._resolve(other._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(source_root, PdfDictionary):
+            return
+        source_acro = other._resolve(source_root.mapping.get(PdfName("AcroForm")))
+        if not isinstance(source_acro, PdfDictionary):
+            return
+        source_fields = other._resolve(source_acro.mapping.get(PdfName("Fields")))
+        if not isinstance(source_fields, PdfArray) or not source_fields.items:
+            return
+
+        acro, fields = self._ensure_acroform_for_authoring()
+        taken = {name for name, _ in self._iter_form_fields()}
+        for item in source_fields.items:
+            copied = self._import_object(other, item, imported)
+            field = self._resolve(copied)
+            if not isinstance(field, PdfDictionary):
+                continue
+            title = self._resolve(field.mapping.get(PdfName("T")))
+            name = decode_pdf_text_string(title) if isinstance(title, PdfString) else ""
+            if name in taken:
+                unique = name
+                suffix = 2
+                while unique in taken:
+                    unique = f"{name}_{suffix}"
+                    suffix += 1
+                field.mapping[PdfName("T")] = _pdf_text_string(unique)
+                name = unique
+            taken.add(name)
+            fields.items.append(copied)
+
+        for key in ("DR", "DA", "Q"):
+            source_value = source_acro.mapping.get(PdfName(key))
+            if source_value is None or PdfName(key) in acro.mapping:
+                continue
+            acro.mapping[PdfName(key)] = self._import_object(
+                other, source_value, imported
+            )
+
+    def _merge_optional_content(
+        self, other: SimplePdf, imported: dict[int, Any]
+    ) -> None:
+        """List the appended document's layers among ours.
+
+        An optional content group reached only through a page's ``/OC`` is not
+        a layer any viewer offers to switch: membership of ``/OCProperties
+        /OCGs`` is what makes it one.
+        """
+        from .optional_content import _config_of, _properties_of
+
+        source_catalog = other._resolve(
+            other._cos_doc.trailer.mapping.get(PdfName("Root"))
+        )
+        if not isinstance(source_catalog, PdfDictionary):
+            return
+        source_properties = other._resolve(
+            source_catalog.mapping.get(PdfName("OCProperties"))
+        )
+        if not isinstance(source_properties, PdfDictionary):
+            return
+        source_groups = other._resolve(source_properties.mapping.get(PdfName("OCGs")))
+        if not isinstance(source_groups, PdfArray) or not source_groups.items:
+            return
+
+        properties = _properties_of(self, create=True)
+        groups = self._resolve(properties.mapping.get(PdfName("OCGs")))
+        config = _config_of(self, properties)
+        source_config = other._resolve(source_properties.mapping.get(PdfName("D")))
+        off = (
+            other._resolve(source_config.mapping.get(PdfName("OFF")))
+            if isinstance(source_config, PdfDictionary)
+            else None
+        )
+        hidden = {
+            item.object_number
+            for item in (off.items if isinstance(off, PdfArray) else [])
+            if isinstance(item, PdfIndirectReference)
+        }
+
+        for item in source_groups.items:
+            copied = self._import_object(other, item, imported)
+            groups.items.append(copied)
+            order = self._resolve(config.mapping.get(PdfName("Order")))
+            if isinstance(order, PdfArray):
+                order.items.append(copied)
+            # A group starts visible unless the source said otherwise, and its
+            # state has to be restated here: the configuration it came from is
+            # not the one this document reads.
+            if isinstance(item, PdfIndirectReference) and item.object_number in hidden:
+                config_off = self._resolve(config.mapping.get(PdfName("OFF")))
+                if not isinstance(config_off, PdfArray):
+                    config_off = PdfArray([])
+                    config.mapping[PdfName("OFF")] = config_off
+                config_off.items.append(copied)
+
+    def _merge_outlines(
+        self, other: SimplePdf, imported: dict[int, Any], appended_at: int
+    ) -> None:
+        """Append the other document's bookmarks, retargeted at the copies."""
+        source_items = other.outline_items()
+        if not source_items:
+            return
+
+        def retargeted(items: list[dict]) -> list[dict]:
+            out = []
+            for item in items:
+                entry = dict(item)
+                loaded = item.get("loaded_target")
+                if loaded is not None:
+                    entry["loaded_target"] = (
+                        loaded[0],
+                        self._import_object(other, loaded[1], imported),
+                    )
+                target = item.get("target")
+                if target is not None and hasattr(target, "page"):
+                    entry["target"] = replace(
+                        target, page=item.get("page_index", 0) + appended_at
+                    )
+                entry["page_index"] = item.get("page_index", 0) + appended_at
+                entry["children"] = retargeted(item.get("children", []))
+                out.append(entry)
+            return out
+
+        self._outlines_data = list(self._outlines_data) + retargeted(source_items)
+
+    def _merge_attachments(self, other: SimplePdf) -> None:
+        """Take the other document's embedded files, keeping ours on a clash.
+
+        A name is the key of the document's embedded-file name tree, so two
+        files cannot share one; the newcomer is given a numbered name rather
+        than replacing a file that is already there.
+        """
+        for name, payload in other.attachments.items():
+            unique = name
+            suffix = 2
+            while unique in self.attachments:
+                stem, dot, extension = name.rpartition(".")
+                unique = (
+                    f"{stem}_{suffix}{dot}{extension}"
+                    if dot
+                    else f"{name}_{suffix}"
+                )
+                suffix += 1
+            self.attachments[unique] = payload
+            meta = other.attachment_read_meta.get(name)
+            if meta:
+                self.attachment_read_meta[unique] = dict(meta)
 
     # ---------------------------------------------------------------------------
     # Attachments
