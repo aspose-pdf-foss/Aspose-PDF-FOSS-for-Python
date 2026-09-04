@@ -7,6 +7,7 @@ import zlib
 from dataclasses import dataclass, field
 
 from .cos import (
+    PDF_BINARY_COMMENT,
     PdfArray,
     PdfBoolean,
     PdfDictionary,
@@ -125,6 +126,7 @@ class PdfCosWriter:
         buffer = bytearray()
         # Header
         buffer.extend(f"%PDF-{self.pdf_version}\n".encode("ascii"))
+        buffer.extend(PDF_BINARY_COMMENT)
 
         # Serialize objects and record byte offsets
         offsets: dict[int, int] = {}
@@ -254,6 +256,7 @@ class PdfCosWriter:
             version = "1.5"
         buffer = bytearray()
         buffer.extend(f"%PDF-{version}\n".encode("ascii"))
+        buffer.extend(PDF_BINARY_COMMENT)
 
         offsets: dict[int, int] = {}
         unpacked_nums = [

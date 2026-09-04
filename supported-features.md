@@ -54,6 +54,12 @@ Supported:
 - Use `Document` as a context manager and release resources with `dispose()` or
   `close()`.
 - Read and write document info metadata.
+- **A saved file says on its second line that it is binary.** The header is
+  followed by a comment holding four bytes above 127 (ISO 32000-1 7.5.2), which
+  is what tells a transfer in text mode or an editor weighing line-ending
+  translation to copy the bytes as they stand. ISO 19005-1 6.1.2 requires it,
+  so its absence used to fail every file this library wrote against PDF/A-1 --
+  on the second line, before anything else was read.
 - **A number is written in the only notation PDF has.** A real is decimal
   digits with a period and no exponent (ISO 32000-1 7.3.3), to six decimal
   places with trailing zeros dropped -- the rule content streams already
@@ -1499,7 +1505,13 @@ Supported:
   encryption, metadata/XMP, fonts and output intents, the checker inspects
   many structural ISO 19005 rules observable from the object graph: a trailer
   `/ID`, the header version per part (1.4 for PDF/A-1, 1.7 for PDF/A-2/3,
-  exactly 2.0 for PDF/A-4),
+  exactly 2.0 for PDF/A-4), the **implementation limits** annex C.1 sets and
+  19005-1 6.1.13 adopts (a name over 127 bytes, a string over 65535, an integer
+  past +/-2,147,483,647 — a conforming reader need not handle any of them), the
+  **binary comment** after the header as a *warning* rather than an error,
+  because it is the one requirement here that is not a property of the object
+  graph: the check reads the bytes the document was loaded from, and whether
+  their absence survives depends on how it is saved next,
   document/page additional actions (`/AA`), optional content (`/OCProperties`,
   PDF/A-1), AcroForm `/NeedAppearances` and dynamic XFA, prohibited
   annotations (Sound/Movie/Screen/3D/RichMedia — 3D and RichMedia are

@@ -53,6 +53,7 @@ from .content_stream_parser import (
     parse_image_placements_from_content,
 )
 from .cos import (
+    PDF_BINARY_COMMENT,
     AnnotationName,
     PdfArray,
     PdfBoolean,
@@ -15999,6 +16000,7 @@ class PdfWriterV0:
         self.out = bytearray()
         self.xref = []
         self._write_line(f"%PDF-{self.pdf.pdf_version}".encode())
+        self._write_line(PDF_BINARY_COMMENT.rstrip(b"\n"))
 
         count = self.pdf.page_count
         if count == 0:

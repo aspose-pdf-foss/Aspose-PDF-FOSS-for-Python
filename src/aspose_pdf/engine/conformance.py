@@ -28,6 +28,7 @@ from typing import Any
 
 from ..exceptions import PDF_OPERATION_ERRORS, PdfResourceLimitException
 from .cos import (
+    _MAX_PDF_INTEGER,
     PdfArray,
     PdfBoolean,
     PdfDictionary,
@@ -182,6 +183,8 @@ def pdfa_extended(
     try:
         _check_trailer_id(pdf, errors)
         _check_pdf_version(pdf, level_short, errors)
+        _check_binary_comment(pdf, warnings)
+        _check_implementation_limits(pdf, errors)
         _check_catalog_rules(pdf, part1, errors)
         _check_acroform(pdf, errors)
         _check_metadata_unfiltered(pdf, errors)
@@ -208,6 +211,108 @@ def _check_trailer_id(pdf: Any, errors: list[str]) -> None:
     id_obj = pdf._resolve(pdf._cos_doc.trailer.get(PdfName("ID")))
     if not isinstance(id_obj, PdfArray) or len(id_obj.items) < 1:
         errors.append("PDF/A requires a file identifier (/ID) in the trailer.")
+
+
+BINARY_COMMENT_MISSING = (
+    "PDF/A requires the header to be followed by a comment holding at least "
+    "four bytes above 127, marking the file as binary; the file this document "
+    "was loaded from has none. A full save writes one."
+)
+
+
+def _check_binary_comment(pdf: Any, warnings: list[str]) -> None:
+    """The header must be followed by a comment of four bytes above 127.
+
+    ISO 19005-1 6.1.2, and a convention of ISO 32000-1 7.5.2 for every file
+    that holds binary data: it tells anything inspecting the first two lines --
+    a file transfer in text mode, an editor deciding whether to translate line
+    endings -- to copy the bytes as they stand.
+
+    A *warning*, because it is the one requirement here that is not a property
+    of the object graph. The check can only read the bytes the document was
+    loaded from, and whether their absence survives depends on how the document
+    is saved next: a full save writes a header with the comment, while an
+    incremental save keeps the original bytes as its prefix and does not.
+    """
+    raw = getattr(pdf, "_raw_bytes", None)
+    head = bytes(raw[:1024]) if raw is not None else b""
+    end_of_header = head.find(b"\n")
+    if end_of_header < 0:
+        # No loaded bytes to read a header out of -- a document built in
+        # memory, or one whose first line never ended. Either way the next full
+        # save writes the header, so there is nothing here to have got wrong.
+        return
+    comment = head[end_of_header + 1 :].split(b"\n", 1)[0]
+    if comment.startswith(b"%") and sum(1 for byte in comment if byte > 127) >= 4:
+        return
+    warnings.append(BINARY_COMMENT_MISSING)
+
+
+#: ISO 32000-1 annex C.1, which ISO 19005-1 6.1.13 adopts. A conforming reader
+#: is not obliged to handle anything past these, so a file that needs it to is
+#: not archivable.
+_MAX_NAME_BYTES = 127
+_MAX_STRING_BYTES = 65535
+
+
+def _check_implementation_limits(pdf: Any, errors: list[str]) -> None:
+    """Report values past the limits a conforming reader must accept."""
+    seen: set[int] = set()
+    over_long_name: str | None = None
+    over_long_string = False
+    over_range_integer: int | None = None
+
+    for number, obj in list(pdf._cos_doc.objects.items()):
+        if number in seen:
+            continue
+        seen.add(number)
+        for value in _walk_values(pdf, obj, 0):
+            if isinstance(value, PdfName):
+                text = value.name.lstrip("/")
+                if len(text.encode("utf-8")) > _MAX_NAME_BYTES:
+                    over_long_name = over_long_name or text[:32]
+            elif isinstance(value, PdfString):
+                if len(value.value) > _MAX_STRING_BYTES:
+                    over_long_string = True
+            elif isinstance(value, PdfNumber) and isinstance(value.value, int):
+                if abs(value.value) > _MAX_PDF_INTEGER:
+                    over_range_integer = over_range_integer or value.value
+
+    if over_long_name is not None:
+        errors.append(
+            f"PDF/A limits a name to {_MAX_NAME_BYTES} bytes; "
+            f"'{over_long_name}...' is longer."
+        )
+    if over_long_string:
+        errors.append(
+            f"PDF/A limits a string to {_MAX_STRING_BYTES} bytes; "
+            "the document holds a longer one."
+        )
+    if over_range_integer is not None:
+        errors.append(
+            "PDF/A limits an integer to +/-2,147,483,647; the document holds "
+            f"{over_range_integer}."
+        )
+
+
+def _walk_values(pdf: Any, obj: Any, depth: int):
+    """Yield every direct value inside *obj*, references not followed.
+
+    Each object is visited on its own, so following a reference would only
+    visit it twice; the depth bound is for a container nested inside itself,
+    which a hand-built graph can be.
+    """
+    if depth > 32:
+        return
+    if isinstance(obj, PdfDictionary):
+        for key, value in obj.mapping.items():
+            yield key
+            yield from _walk_values(pdf, value, depth + 1)
+    elif isinstance(obj, PdfArray):
+        for item in obj.items:
+            yield from _walk_values(pdf, item, depth + 1)
+    else:
+        yield obj
 
 
 def _check_pdf_version(pdf: Any, level_short: str, errors: list[str]) -> None:

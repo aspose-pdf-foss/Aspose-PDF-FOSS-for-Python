@@ -44,6 +44,14 @@ class PdfNumber(PdfObject):
         return f"PdfNumber({self.value})"
 
 
+#: The comment that follows the header, four bytes above 127 behind a ``%``
+#: (ISO 32000-1 7.5.2). It tells anything that inspects the first two lines --
+#: a file transfer in text mode, an editor deciding whether to translate line
+#: endings -- that the file is binary and must be copied as it stands. PDF/A-1
+#: 6.1.2 makes it a requirement rather than a convention.
+PDF_BINARY_COMMENT = b"%\xe2\xe3\xcf\xd3\n"
+
+
 #: ISO 32000-1 annex C.1: the largest integer a conforming reader must accept.
 _MAX_PDF_INTEGER = 2147483647
 

@@ -9,6 +9,26 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Every saved file was missing the comment that marks it binary.** A PDF that
+  holds binary data puts a comment of at least four bytes above 127 immediately
+  after `%PDF-x.y` (ISO 32000-1 7.5.2), so that a transfer in text mode or an
+  editor weighing line-ending translation copies the bytes as they stand.
+  ISO 19005-1 6.1.2 requires it, and this library wrote none — so every file it
+  produced failed PDF/A-1 on its second line, and its own conformance check
+  never looked, reporting a freshly converted PDF/A-1b document as having no
+  issues at all. All three writers emit it now, and the checker reports its
+  absence as a warning: it is the one requirement here that is not a property of
+  the object graph, since a full save supplies one and an incremental save,
+  which keeps the original bytes as its prefix, does not.
+
+### Added
+
+- **The PDF/A checker enforces the implementation limits.** ISO 32000-1 annex
+  C.1, which ISO 19005-1 6.1.13 adopts: a name of more than 127 bytes, a string
+  of more than 65535, an integer past ±2,147,483,647. A conforming reader is not
+  obliged to handle any of them, so a file that needs it to is not archivable —
+  and all three passed the checker in silence.
+
 - **A number too small or too large was written in a notation PDF does not
   have.** A real is decimal digits with a period, and exponential notation is
   not permitted (ISO 32000-1 7.3.3); Python writes small and large floats as
