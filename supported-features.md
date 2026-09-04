@@ -54,6 +54,15 @@ Supported:
 - Use `Document` as a context manager and release resources with `dispose()` or
   `close()`.
 - Read and write document info metadata.
+- **A number is written in the only notation PDF has.** A real is decimal
+  digits with a period and no exponent (ISO 32000-1 7.3.3), to six decimal
+  places with trailing zeros dropped -- the rule content streams already
+  followed, now shared, so a coordinate is spelled the same way in a content
+  stream and in a `/Rect`. A whole number beyond +/-2,147,483,647 keeps a
+  fraction so it stays a *real*: past that an integer token is out of the range
+  annex C.1 guarantees, and a reader holding integers in a fixed-width type
+  resolves the object containing it to null. An infinity or a NaN has no
+  decimal form and is refused rather than written as a word.
 - **A name escapes what it holds.** A PDF *name* is a sequence of bytes, and
   any byte that is not a regular character is written `#` followed by two hex
   digits (ISO 32000-1 7.3.5) -- a space or a bracket does not merely

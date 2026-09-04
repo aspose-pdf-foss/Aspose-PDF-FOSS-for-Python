@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A number too small or too large was written in a notation PDF does not
+  have.** A real is decimal digits with a period, and exponential notation is
+  not permitted (ISO 32000-1 7.3.3); Python writes small and large floats as
+  `1e-05` and `1.5e+20`, and the COS writer handed those straight to the file,
+  where `e` starts a keyword rather than continuing a number. Setting a crop box
+  a little too small was enough to produce a document this library could not
+  reload. Two neighbouring faults went with it: an infinity or a NaN was written
+  as the word Python names it by, and a whole number past +/-2,147,483,647 was
+  written without a period — an integer token outside the range annex C.1
+  guarantees, which qpdf resolves to null, silently deleting the annotation that
+  held it. Content streams had the rule right in their own function all along;
+  both paths share it now.
+
 - **A name containing a space or a delimiter produced a file nothing could
   read.** A PDF name escapes any byte that is not a regular character as `#`
   followed by two hex digits (ISO 32000-1 7.3.5); this library wrote the bytes

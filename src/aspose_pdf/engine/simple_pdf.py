@@ -66,6 +66,7 @@ from .cos import (
     PdfString,
     annotation_value_to_cos,
     decode_pdf_text_string,
+    format_pdf_number,
 )
 from .data.xmp import (
     STANDARD_XMP_NAMESPACES,
@@ -16058,7 +16059,7 @@ class PdfWriterV0:
             self._start_obj(f_p_id + i)
             self._write_line(
                 f"<< /Type /Page /Parent 2 0 R /MediaBox "
-                f"[{mbox[0]} {mbox[1]} {mbox[2]} {mbox[3]}]".encode()
+                f"[{' '.join(format_pdf_number(v) for v in mbox[:4])}]".encode()
             )
             self._write_line(f"/Contents {f_c_id + i} 0 R".encode())
             self._write_line(

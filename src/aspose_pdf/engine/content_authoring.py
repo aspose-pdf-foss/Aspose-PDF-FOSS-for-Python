@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 import struct
 import zlib
@@ -12,6 +11,7 @@ from dataclasses import dataclass
 from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
+from .cos import format_pdf_number
 from .filters import StreamDecoder
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -51,22 +51,10 @@ class AuthoredImage:
         return meta
 
 
-def format_number(value: float) -> str:
-    """Format a numeric operand for compact, deterministic PDF content."""
-
-    if isinstance(value, bool):
-        raise PdfValidationException("PDF numeric operands must be numbers.")
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        raise PdfValidationException("PDF numeric operands must be numbers.")
-    if not math.isfinite(number):
-        raise PdfValidationException("PDF numeric operands must be finite.")
-    if abs(number) < 0.0000005:
-        number = 0.0
-    if number.is_integer():
-        return str(int(number))
-    return f"{number:.6f}".rstrip("0").rstrip(".")
+#: A content operand and a COS number follow the same rule, so they are the
+#: same function; the name is kept because that is what this module's callers
+#: read it as.
+format_number = format_pdf_number
 
 
 def safe_resource_name(name: str | None, prefix: str) -> str | None:

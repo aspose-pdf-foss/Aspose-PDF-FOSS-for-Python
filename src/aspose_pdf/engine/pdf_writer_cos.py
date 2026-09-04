@@ -19,6 +19,7 @@ from .cos import (
     PdfStream,
     PdfString,
     encode_pdf_name,
+    format_pdf_number,
 )
 from .encryption import EncryptionUtils
 
@@ -380,7 +381,7 @@ class PdfCosWriter:
         if isinstance(obj, PdfBoolean):
             return "true" if obj.value else "false"
         if isinstance(obj, PdfNumber):
-            return str(obj.value)
+            return format_pdf_number(obj.value)
         if isinstance(obj, PdfString):
             return self._serialize_string(obj)
         if isinstance(obj, PdfName):

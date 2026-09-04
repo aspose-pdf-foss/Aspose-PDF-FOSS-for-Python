@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import abc
+import math
 from typing import Any
+
+from aspose_pdf.exceptions import PdfValidationException
 
 
 class PdfObject(abc.ABC):
@@ -39,6 +42,55 @@ class PdfNumber(PdfObject):
 
     def __repr__(self) -> str:
         return f"PdfNumber({self.value})"
+
+
+#: ISO 32000-1 annex C.1: the largest integer a conforming reader must accept.
+_MAX_PDF_INTEGER = 2147483647
+
+
+def format_pdf_number(value: Any) -> str:
+    """Write *value* as the number token a file holds.
+
+    ISO 32000-1 7.3.3: a real is decimal digits with an optional sign and a
+    period, and **exponential notation is not permitted**. Python writes small
+    and large floats as ``1e-05`` and ``1.5e+20``, which is not a number in a
+    PDF at all -- the ``e`` starts a keyword, and the file stops parsing there.
+    Infinities and NaN have no decimal form and are refused rather than written
+    as the words Python names them by.
+
+    Six decimal places, trailing zeros dropped, and a value that is a whole
+    number written without a fraction: the same rule content streams have
+    always used, so a coordinate is spelled the same way wherever it lands.
+    """
+    if isinstance(value, bool):
+        raise PdfValidationException("PDF numbers must be numbers, not booleans.")
+    if isinstance(value, int):
+        return _format_pdf_integer(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise PdfValidationException("PDF numbers must be numbers.") from None
+    if not math.isfinite(number):
+        raise PdfValidationException(
+            "PDF has no way to write an infinity or a NaN as a number."
+        )
+    if abs(number) < 0.0000005:
+        number = 0.0
+    if number.is_integer():
+        return _format_pdf_integer(int(number))
+    return f"{number:.6f}".rstrip("0").rstrip(".")
+
+
+def _format_pdf_integer(whole: int) -> str:
+    """A whole number, kept a *real* when it is too large to be an integer.
+
+    A token with no period is an integer, and an integer is guaranteed only to
+    +/-2,147,483,647 (ISO 32000-1 annex C.1). Past that, a reader holding
+    integers in a fixed-width type reads the token as nothing at all -- qpdf
+    resolves such an object to null -- so the value keeps a fraction and stays
+    a real, which is held as a double.
+    """
+    return str(whole) if abs(whole) <= _MAX_PDF_INTEGER else f"{whole}.0"
 
 
 #: The characters a name may hold as themselves (ISO 32000-1 7.3.5): the
