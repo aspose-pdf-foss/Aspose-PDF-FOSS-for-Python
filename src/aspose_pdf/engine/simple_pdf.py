@@ -250,51 +250,25 @@ def _effective_encryption_password(password: str | None) -> str | None:
 
 # Regular PDF name characters (ISO 32000 7.3.5): printable ASCII minus
 # whitespace and the delimiter set; everything else is written as ``#XX``.
-_NAME_DELIMITERS = set(b"()<>[]{}/%#")
-
-
 def _encode_mime_name(mime: str) -> PdfName:
-    """Encode a MIME media type as a PDF name (``text/plain`` -> ``/text#2Fplain``)."""
+    """A MIME media type as a PDF name (``text/plain`` -> ``/text#2Fplain``).
+
+    The escaping is the writer's, not this function's: a name escapes whatever
+    it holds. The type is stripped and forced to ASCII first, because a media
+    type is a token from a registry, not free text.
+    """
     from .cos import PdfName
 
-    out = []
-    for byte in str(mime).strip().encode("ascii", "replace"):
-        if 0x21 <= byte <= 0x7E and byte not in _NAME_DELIMITERS:
-            out.append(chr(byte))
-        else:
-            out.append(f"#{byte:02X}")
-    return PdfName("".join(out))
+    return PdfName(str(mime).strip().encode("ascii", "replace").decode("ascii"))
 
 
 def _decode_mime_name(name: Any) -> str | None:
-    """Decode a MIME media type from a PDF name (``/text#2Fplain`` -> ``text/plain``).
-
-    The inverse of :func:`_encode_mime_name`: the leading ``/`` is dropped and
-    ``#XX`` hex escapes are resolved. Returns ``None`` for a missing/empty name.
-    """
+    """The media type a ``/Subtype`` name holds, or ``None`` if it holds none."""
     from .cos import PdfName
 
     if not isinstance(name, PdfName):
         return None
-    raw = name.name
-    if raw.startswith("/"):
-        raw = raw[1:]
-    if not raw:
-        return None
-    out = bytearray()
-    i, n = 0, len(raw)
-    while i < n:
-        ch = raw[i]
-        if ch == "#" and i + 3 <= n:
-            try:
-                out.append(int(raw[i + 1 : i + 3], 16))
-                i += 3
-                continue
-            except ValueError:
-                pass
-        out.append(ord(ch) & 0xFF)
-        i += 1
-    return out.decode("ascii", "replace") or None
+    return name.name.lstrip("/") or None
 
 
 def _format_pdf_date(value: Any) -> str | None:

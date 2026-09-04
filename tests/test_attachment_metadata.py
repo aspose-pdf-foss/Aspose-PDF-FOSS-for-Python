@@ -34,11 +34,16 @@ def _save(doc: Document) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def test_encode_mime_name_escapes_slash():
-    assert _encode_mime_name("text/plain").name == "/text#2Fplain"
-    assert _encode_mime_name("application/pdf").name == "/application#2Fpdf"
-    # '+' and '.' are regular name chars and stay literal.
-    assert _encode_mime_name("image/svg+xml").name == "/image#2Fsvg+xml"
+def test_encode_mime_name_keeps_the_media_type_it_was_given():
+    """The escaping is the writer's -- a name escapes whatever it holds -- so
+    what this has to get right is the type, not its spelling in the file.
+    ``test_mime_subtype_written_and_content_roundtrips`` checks the bytes."""
+    assert _encode_mime_name("text/plain").name == "/text/plain"
+    assert _encode_mime_name("application/pdf").name == "/application/pdf"
+    assert _encode_mime_name("image/svg+xml").name == "/image/svg+xml"
+    # A media type is a registry token, so anything outside ASCII is refused
+    # rather than carried.
+    assert _encode_mime_name("  text/plain  ").name == "/text/plain"
 
 
 def test_format_pdf_date_variants():

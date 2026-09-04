@@ -41,6 +41,58 @@ class PdfNumber(PdfObject):
         return f"PdfNumber({self.value})"
 
 
+#: The characters a name may hold as themselves (ISO 32000-1 7.3.5): the
+#: printable ASCII range less ``#``, which introduces an escape, and the eight
+#: delimiters, which would end the name.
+_NAME_REGULAR = frozenset(
+    chr(code) for code in range(0x21, 0x7F) if chr(code) not in "#()<>[]{}/%"
+)
+
+
+def encode_pdf_name(name: str) -> str:
+    """Write *name* -- without its slash -- as the token a file holds.
+
+    ISO 32000-1 7.3.5. A name is a sequence of bytes, and any byte that is not
+    a regular character is written ``#`` followed by two hex digits. Emitting
+    them raw does not merely misrepresent the name: a space, a bracket or a
+    parenthesis *ends* it, so the file that comes out cannot be parsed at all.
+    Bytes above ASCII are UTF-8, which is what PDF 2.0 asks for and what
+    readers assume of a PDF 1.x name that has them.
+    """
+    out = []
+    for byte in name.encode("utf-8"):
+        character = chr(byte)
+        out.append(character if character in _NAME_REGULAR else f"#{byte:02X}")
+    return "".join(out)
+
+
+def decode_pdf_name(token: str) -> str:
+    """Read a name token back, resolving its ``#`` escapes.
+
+    A ``#`` that is not followed by two hex digits is malformed; it is taken
+    for itself rather than refusing the file, and is written back escaped.
+    """
+    if "#" not in token:
+        return token
+    out = bytearray()
+    index = 0
+    while index < len(token):
+        character = token[index]
+        digits = token[index + 1 : index + 3] if character == "#" else ""
+        if len(digits) == 2 and all(
+            digit in "0123456789abcdefABCDEF" for digit in digits
+        ):
+            out.append(int(digits, 16))
+            index += 3
+            continue
+        out.append(ord(character) & 0xFF)
+        index += 1
+    try:
+        return out.decode("utf-8")
+    except UnicodeDecodeError:
+        return out.decode("latin-1")
+
+
 def encode_pdf_text_string(text: str) -> bytes:
     """Encode *text* as the octets of a PDF ``text string``.
 

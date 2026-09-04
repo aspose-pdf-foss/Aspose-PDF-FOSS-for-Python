@@ -54,6 +54,15 @@ Supported:
 - Use `Document` as a context manager and release resources with `dispose()` or
   `close()`.
 - Read and write document info metadata.
+- **A name escapes what it holds.** A PDF *name* is a sequence of bytes, and
+  any byte that is not a regular character is written `#` followed by two hex
+  digits (ISO 32000-1 7.3.5) -- a space or a bracket does not merely
+  misrepresent a name, it *ends* it. Callers do not escape: an annotation
+  property's key, a value marked with `annotations.Name`, and an attachment's
+  media type are all written as given and read back as given, whatever they
+  hold. Bytes above ASCII go out as UTF-8. On the way in, `#XX` is resolved,
+  and a `#` that is not followed by two hex digits is taken for itself rather
+  than refusing the file.
 - **Text is written in an encoding other readers understand.** A PDF *text
   string* -- a title, a bookmark label, an annotation's contents, a field name
   or value, an attachment name, a signature reason -- has two encodings

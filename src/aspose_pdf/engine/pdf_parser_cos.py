@@ -45,6 +45,7 @@ from .cos import (
     PdfStream,
     PdfString,
     cos_dict_to_plain,
+    decode_pdf_name,
 )
 
 logger = logging.getLogger("aspose_pdf")
@@ -321,8 +322,7 @@ class _Tokenizer:
         start = self.pos
         while self.pos < self.len and self.s[self.pos] not in " \t\r\n<>[]()/":
             self.pos += 1
-        name = self.s[start : self.pos]
-        return PdfName(name)
+        return PdfName(decode_pdf_name(self.s[start : self.pos]))
 
     def _read_number(self) -> PdfNumber:
         start = self.pos

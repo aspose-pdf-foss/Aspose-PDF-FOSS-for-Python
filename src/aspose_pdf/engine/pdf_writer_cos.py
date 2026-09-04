@@ -18,6 +18,7 @@ from .cos import (
     PdfObject,
     PdfStream,
     PdfString,
+    encode_pdf_name,
 )
 from .encryption import EncryptionUtils
 
@@ -383,7 +384,7 @@ class PdfCosWriter:
         if isinstance(obj, PdfString):
             return self._serialize_string(obj)
         if isinstance(obj, PdfName):
-            return obj.name
+            return "/" + encode_pdf_name(obj.name.lstrip("/"))
         if isinstance(obj, PdfArray):
             return self._serialize_array(obj)
         if isinstance(
@@ -432,7 +433,7 @@ class PdfCosWriter:
                     self._crypt_obj = saved
             else:
                 text = self.serialize_object(value)
-            parts.append(f"{key.name} {text}")
+            parts.append(f"{self.serialize_object(key)} {text}")
         inner = " ".join(parts)
         return f"<< {inner} >>"
 

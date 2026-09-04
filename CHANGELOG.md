@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A name containing a space or a delimiter produced a file nothing could
+  read.** A PDF name escapes any byte that is not a regular character as `#`
+  followed by two hex digits (ISO 32000-1 7.3.5); this library wrote the bytes
+  as they were. A space, a bracket or a parenthesis *ends* a name, so a document
+  with one anywhere came out unparseable — by other tools and by this library
+  itself, which raised `Unexpected token` on reloading what it had just written.
+  Reading was the mirror: `#20` was taken for three characters, so a name
+  another producer escaped came back wrong. Both are reachable from the public
+  surface wherever a caller names something — an annotation property's key, or
+  a value marked with `annotations.Name`. One place had noticed and fixed it for
+  itself, with a private pair of functions that escaped an attachment's media
+  type; those are gone, because a name now escapes whatever it holds.
+
 - **Non-Latin text was written in an encoding no other reader could decode.** A
   PDF text string is PDFDocEncoded or UTF-16BE behind a `FEFF` byte order mark
   (ISO 32000-1 7.9.2.2). This library wrote raw UTF-8, which is neither, so a
