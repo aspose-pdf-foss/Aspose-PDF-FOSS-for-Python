@@ -89,7 +89,18 @@ Supported:
   (ISO 32000-2) or bare, and PDFDocEncoding's upper half.
 - Read and set the PDF header version used on save.
 - Read file identifiers and permission flags.
-- Validate, check, and repair basic PDF structure.
+- **Validate, check, and repair basic PDF structure.** `validate()` (and its
+  alias `check()`) answers whether the document is one the format describes:
+  the catalog resolves, the page tree is reached once per node, `/Count` agrees
+  with the pages there are, every node's `/Parent` is the node that lists it,
+  and every page has a `/MediaBox` on itself or above it. The walk of the object
+  graph only has to terminate -- there is deliberately no cycle *test*, because
+  a PDF object graph is not a tree and the back-references it is built from
+  (`/Parent`, an annotation's `/P`, an outline's `/Prev`) are required by the
+  format. A reference to an object the file does not have is *legal* (7.3.10
+  makes it null) and does not fail validation. `repair()` reconciles the page
+  tree with the model, so a document salvaged from a truncated file writes the
+  pages it claims to have.
 - Open documents in streaming/lazy mode and decode page content on demand.
 - **Merge `Document` instances.** A merged page is *imported*: its dictionary
   is copied into this document's object graph along with everything it reaches

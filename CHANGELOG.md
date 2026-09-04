@@ -9,6 +9,28 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`validate()` called every conforming document invalid, and broken ones
+  valid.** The structural check walked the object graph and rejected it if any
+  node was reachable from itself. A PDF object graph is not a tree: a page's
+  `/Parent`, an annotation's `/P`, an outline's `/Prev` all point back, and
+  `/Parent` is *required* on every page (ISO 32000-1 7.7.3.2) — so `validate()`
+  and `check()` returned `False` for every document this library wrote, and
+  deleting the required entry made them return `True`. They returned `True` for
+  genuinely broken files too, because what is actually wrong there is still a
+  perfectly traversable graph: a page missing from its parent's `/Kids` is never
+  reached, and a catalog whose `/Pages` names nothing simply ends the walk. The
+  walk now only has to terminate, and what makes a page tree a page tree is
+  checked directly — `/Count`, `/Parent` membership, no node reached twice, a
+  `/MediaBox` on every page.
+
+- **`repair()` left a salvaged document claiming a page it did not write.** The
+  page sync refused to add anything when the object graph had no pages yet, on
+  the grounds that there might be no page tree to add to. A document repaired
+  from a truncated file has one — an empty one — and pages in the model that
+  belong in it, so it saved with `/Count 0` while reporting one page. What
+  decides is now whether there is a tree, and `repair()` runs the sync after
+  making sure there is. Found by the fixed `validate()` on its first outing.
+
 - **The file-based editor workflows went through a second merge that lost the
   same things `Document.merge` used to.** `PdfFileEditor.concatenate` and
   `.extract`, and the low-code merger and splitter behind them, called a

@@ -2499,19 +2499,23 @@ class SimplePdf:
     def _sync_pages_to_cos(self) -> None:
         """Append any Python-level pages that are not yet in the COS document.
 
-        Only runs when the COS document already has a known-good page structure
-        (i.e. _page_obj_ids is non-empty, meaning at least one page was successfully
-        parsed).  For broken/minimal PDFs with no real page tree the COS root may
-        be absent and _create_cos_page would crash; in those cases the COS is
-        written as-is, which is the pre-existing behavior.
+        The condition used to be that the COS document already had pages, on
+        the grounds that a document with no page tree would crash the page
+        builder. But a *salvaged* document has a page tree -- an empty one --
+        and pages in the model that belong in it, and the guard refused those
+        too: the file came out with ``/Count 0`` while the model claimed a
+        page, so a document repaired from a truncated file saved with nothing
+        in it. What decides is whether there is a tree to add to.
         """
         if not self._cos_doc:
             return
-        cos_page_count = len(getattr(self, "_page_obj_ids", []))
-        if cos_page_count == 0:
-            # COS has no known pages — page tree may be absent; do not
-            # attempt to inject.
+        root = self._resolve(self._cos_doc.trailer.get(PdfName("Root")))
+        if not isinstance(root, PdfDictionary):
             return
+        tree = self._resolve(root.mapping.get(PdfName("Pages")))
+        if not isinstance(tree, PdfDictionary):
+            return
+        cos_page_count = len(getattr(self, "_page_obj_ids", []))
         for i in range(cos_page_count, len(self.pages)):
             rect = self.pages[i]
             content = self.page_contents[i] if i < len(self.page_contents) else b""
@@ -8672,6 +8676,60 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     # Validation/Repair/Optimization
     # ---------------------------------------------------------------------------
+    def _page_tree_is_consistent(self, root: PdfDictionary) -> bool:
+        """True when the catalog's page tree is one the format describes.
+
+        What a walk of the object graph cannot tell on its own, because every
+        shape below is a graph that traverses perfectly well:
+
+        * ``/Pages`` resolves to a node -- the catalog's one required child.
+        * Every node is reached once, so no page is listed twice.
+        * ``/Count`` agrees with the pages there are; a reader that trusts it
+          and a reader that walks would otherwise disagree.
+        * A node's ``/Parent`` is the node that lists it. Everything a page
+          inherits -- resources, boxes, rotation -- is resolved up that chain,
+          so a parent that does not list the page hands it another page's.
+        * Every page has a ``/MediaBox``, on itself or above it. It is the one
+          entry a page cannot do without: without it there is no page to draw
+          on, and a reader can only guess a size.
+        """
+        pages_ref = root.mapping.get(PdfName("Pages"))
+        found = 0
+        seen: set[int] = set()
+        stack: list[tuple[Any, Any, bool]] = [(pages_ref, None, False)]
+        while stack:
+            ref, parent_ref, boxed = stack.pop()
+            node = self._resolve(ref)
+            if not isinstance(node, PdfDictionary):
+                return False
+            if isinstance(ref, PdfIndirectReference):
+                if ref.object_number in seen:
+                    return False
+                seen.add(ref.object_number)
+            if parent_ref is not None:
+                own_parent = node.mapping.get(PdfName("Parent"))
+                if (
+                    not isinstance(own_parent, PdfIndirectReference)
+                    or not isinstance(parent_ref, PdfIndirectReference)
+                    or own_parent.object_number != parent_ref.object_number
+                ):
+                    return False
+            boxed = boxed or PdfName("MediaBox") in node.mapping
+            kids = self._resolve(node.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray):
+                for kid in kids.items:
+                    stack.append((kid, ref, boxed))
+            elif not boxed:
+                return False
+            else:
+                found += 1
+
+        tree = self._resolve(pages_ref)
+        declared = self._get_number(self._resolve(tree.mapping.get(PdfName("Count"))))
+        if declared is not None and int(declared) != found:
+            return False
+        return found == len(self.pages)
+
     def validate(self, max_depth: int = 100) -> bool:
         """Validate PDF structure and integrity.
 
@@ -8710,20 +8768,25 @@ class SimplePdf:
                 if not hasattr(self._cos_doc, "objects") or not self._cos_doc.objects:
                     return False
 
-                # 5. Deep structural validation with an explicit stack so a
-                # hostile graph cannot exhaust Python's recursion limit.
-                active: set[tuple[str, int]] = set()
-                complete: set[tuple[str, int]] = set()
+                # 5. Walk the graph with an explicit stack so a hostile
+                #    document cannot exhaust Python's recursion limit, and a
+                #    visited set so it terminates. There is deliberately no
+                #    cycle *test*: a PDF object graph is not a tree, and the
+                #    back-references it is built from -- a page's /Parent, an
+                #    annotation's /P, an outline's /Prev -- are required by the
+                #    format. Calling those corruption failed every conforming
+                #    document, which is what this used to do.
+                seen: set[tuple[str, int]] = set()
                 checked_nodes = 0
-                stack: list[tuple[Any, int, bool]] = [
-                    (self._cos_doc.trailer, 0, False)
-                ]
-                graph_invalid = False
+                stack: list[tuple[Any, int]] = [(self._cos_doc.trailer, 0)]
                 while stack:
-                    obj, depth, exiting = stack.pop()
+                    obj, depth = stack.pop()
                     if isinstance(obj, PdfIndirectReference):
                         key = ("ref", obj.object_number)
                         resolved = self._cos_doc.objects.get(obj.object_number)
+                        # A reference to an object the file does not have is
+                        # *legal* -- ISO 32000-1 7.3.10 makes it null -- so it
+                        # ends the walk rather than failing it.
                         children = [resolved] if resolved is not None else []
                     elif isinstance(obj, PdfDictionary):
                         key = ("direct", id(obj))
@@ -8744,18 +8807,10 @@ class SimplePdf:
                     else:
                         continue
 
-                    if exiting:
-                        active.remove(key)
-                        complete.add(key)
-                        continue
-                    if key in active:
-                        graph_invalid = True
-                        break
-                    if key in complete:
+                    if key in seen:
                         continue
                     if depth > max_depth:
-                        graph_invalid = True
-                        break
+                        return False
                     self._load_budget.check(
                         depth + 1,
                         "max_nesting_depth",
@@ -8767,12 +8822,11 @@ class SimplePdf:
                         "max_container_items",
                         "COS validation graph nodes",
                     )
-                    active.add(key)
-                    stack.append((obj, depth, True))
-                    for child in reversed(children):
-                        stack.append((child, depth + 1, False))
+                    seen.add(key)
+                    for child in children:
+                        stack.append((child, depth + 1))
 
-                if graph_invalid:
+                if not self._page_tree_is_consistent(root):
                     return False
 
             except PdfResourceLimitException:
@@ -8880,7 +8934,14 @@ class SimplePdf:
                     pages_ref = self._cos_doc.register_object(pages_dict)
                     root[PdfName("Pages")] = pages_ref
 
-        # 7. Remove invalid image references
+        # 7. Put the model's pages into the page tree, which the step above
+        #    has just made sure exists. A salvaged document has its pages in
+        #    the model and not in the tree, and a repair that leaves the two
+        #    disagreeing has not repaired the thing that was wrong: the file
+        #    came out with /Count 0 while the model claimed a page.
+        self._sync_pages_to_cos()
+
+        # 8. Remove invalid image references
         valid_images = {}
         for name, data in self.images.items():
             if isinstance(name, str) and isinstance(data, (bytes, bytearray)):
