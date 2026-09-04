@@ -54,6 +54,15 @@ Supported:
 - Use `Document` as a context manager and release resources with `dispose()` or
   `close()`.
 - Read and write document info metadata.
+- **Text is written in an encoding other readers understand.** A PDF *text
+  string* -- a title, a bookmark label, an annotation's contents, a field name
+  or value, an attachment name, a signature reason -- has two encodings
+  (ISO 32000-1 7.9.2.2): PDFDocEncoding, or UTF-16BE behind a `FEFF` byte order
+  mark. ASCII is written as it stands and anything else as UTF-16BE, so a
+  Cyrillic title or a Japanese bookmark reads correctly in other tools rather
+  than as mojibake. On the way in, all four things files actually hold are
+  read: UTF-16BE and UTF-16LE behind their marks, UTF-8 behind `EFBBBF`
+  (ISO 32000-2) or bare, and PDFDocEncoding's upper half.
 - Read and set the PDF header version used on save.
 - Read file identifiers and permission flags.
 - Validate, check, and repair basic PDF structure.

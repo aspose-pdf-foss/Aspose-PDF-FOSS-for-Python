@@ -35,6 +35,7 @@ from .cos import (
     PdfNumber,
     PdfStream,
     PdfString,
+    decode_pdf_text_string,
 )
 
 # Annotation subtypes not permitted in PDF/A (multimedia / 3D).
@@ -545,10 +546,7 @@ def _check_embedded_files(pdf: Any, errors: list[str], part: str = "3") -> None:
             continue
         fname = pdf._resolve(filespec.get(PdfName("F")))
         if isinstance(fname, PdfString):
-            raw = fname.value
-            label = (
-                raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
-            )
+            label = decode_pdf_text_string(fname)
         else:
             label = "embedded file"
         errors.append(
@@ -581,8 +579,7 @@ def _filespec_label(pdf: Any, filespec: PdfDictionary) -> str:
     for key in ("UF", "F"):
         value = pdf._resolve(filespec.get(PdfName(key)))
         if isinstance(value, PdfString):
-            raw = value.value
-            return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+            return decode_pdf_text_string(value)
     return "embedded file"
 
 
@@ -1273,12 +1270,7 @@ def _check_structure_namespace(
                 continue
             uri = pdf._resolve(entry.get(PdfName("NS")))
             if isinstance(uri, PdfString):
-                raw = uri.value
-                declared.append(
-                    raw.decode("utf-8", "replace")
-                    if isinstance(raw, bytes)
-                    else str(raw)
-                )
+                declared.append(decode_pdf_text_string(uri))
     if PDF2_STRUCTURE_NS not in declared:
         errors.append(
             "PDF/UA-2 requires the StructTreeRoot to declare the PDF 2.0 "

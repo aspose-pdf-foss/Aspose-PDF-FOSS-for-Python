@@ -65,6 +65,7 @@ from .cos import (
     PdfStream,
     PdfString,
     annotation_value_to_cos,
+    decode_pdf_text_string,
 )
 from .data.xmp import (
     STANDARD_XMP_NAMESPACES,
@@ -370,45 +371,6 @@ def _parse_pdf_date(value: Any) -> datetime.datetime | None:
     return result
 
 
-def _pdf_string_octets(s: PdfString) -> bytes:
-    """Recover PDF string octets from :class:`PdfString`.
-
-    Literal strings are tokenized into Unicode code points U+0000-U+00FF per
-    input byte, then stored in :attr:`PdfString.value` as UTF-8. Hex strings
-    store raw octets directly in :attr:`PdfString.value`. Unicode ``PdfString``
-    values (constructor from ``str``) keep UTF-8 that may contain code points
-    above U+00FF, in which case we treat ``value`` as the final octet sequence.
-    """
-    raw = s.value
-    if not raw:
-        return b""
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return bytes(raw)
-    if all(ord(ch) < 256 for ch in text):
-        return bytes(ord(ch) for ch in text)
-    return bytes(raw)
-
-
-def decode_pdf_text_string(s: PdfString) -> str:
-    """Decode a PDF ``text string`` (literal or hex) to a Unicode filename or path.
-
-    Supports UTF-16BE / UTF-16LE with BOM (PDF 1.7), UTF-8, and Latin-1 fallback.
-    """
-    octets = _pdf_string_octets(s)
-    if not octets:
-        return ""
-    if len(octets) >= 2 and octets[0:2] == b"\xfe\xff":
-        return octets[2:].decode("utf-16-be", errors="replace")
-    if len(octets) >= 2 and octets[0:2] == b"\xff\xfe":
-        return octets[2:].decode("utf-16-le", errors="replace")
-    try:
-        return octets.decode("utf-8")
-    except UnicodeDecodeError:
-        return octets.decode("latin-1", errors="replace")
-
-
 def _pack_bilevel(samples: bytes, width: int, height: int) -> bytes:
     """Pack 8-bit coverage back into one bit per sample, MSB first, row-padded."""
     row_bytes = (width + 7) // 8
@@ -424,11 +386,7 @@ def _pack_bilevel(samples: bytes, width: int, height: int) -> bytes:
 
 def _pdf_text_string(value: Any) -> PdfString:
     """Encode a Python value as a PDF text string."""
-    text = str(value)
-    try:
-        return PdfString(text.encode("ascii"))
-    except UnicodeEncodeError:
-        return PdfString(b"\xfe\xff" + text.encode("utf-16-be"))
+    return PdfString(str(value))
 
 
 # RC4 implementation replaced by cryptography library
@@ -1180,8 +1138,7 @@ def action_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
         if isinstance(value, PdfName):
             return value.name.lstrip("/")
         if isinstance(value, PdfString):
-            raw = value.value
-            return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+            return decode_pdf_text_string(value)
         if isinstance(value, PdfNumber):
             return value.value
         return None
@@ -2670,7 +2627,7 @@ class SimplePdf:
             new_ref = self._cos_doc.register_object(info_dict)
             self._cos_doc.trailer.mapping[PdfName("Info")] = new_ref
         for k, v in self.metadata.items():
-            info_dict.mapping[PdfName(k)] = PdfString(v.encode("utf-8"))
+            info_dict.mapping[PdfName(k)] = PdfString(v)
 
     def _attachment_slots(self, catalog: PdfDictionary) -> dict[str, tuple]:
         """Object numbers each embedded file already occupies, keyed by name.
@@ -7868,10 +7825,7 @@ class SimplePdf:
             # Stream-valued entries (rare for annotations) are not surfaced here.
             return None
         if isinstance(obj, PdfString):
-            try:
-                return obj.value.decode("utf-8")
-            except (UnicodeDecodeError, AttributeError):
-                return bytes(obj.value)
+            return decode_pdf_text_string(obj)
         if isinstance(obj, PdfArray):
             destination = self._destination_from_cos(obj)
             if destination is _UNRESOLVED_DESTINATION:
@@ -8027,10 +7981,7 @@ class SimplePdf:
 
     def _get_cos_string(self, val: Any) -> str:
         if isinstance(val, PdfString):
-            try:
-                return val.value.decode("utf-8")
-            except (UnicodeDecodeError, AttributeError):
-                return str(val.value)
+            return decode_pdf_text_string(val)
         return ""
 
     def add_annotation(self, page_index: int, data: dict[str, Any]) -> None:
@@ -11666,11 +11617,7 @@ class SimplePdf:
             if not isinstance(t, PdfString):
                 continue
 
-            local_name = (
-                t.value.decode("utf-8", errors="ignore")
-                if isinstance(t.value, bytes)
-                else str(t.value)
-            )
+            local_name = decode_pdf_text_string(t)
             full_name = f"{prefix}.{local_name}" if prefix else local_name
 
             if full_name == target_name:
@@ -12631,11 +12578,7 @@ class SimplePdf:
             if isinstance(info_dict_check, PdfDictionary):
                 t = self._resolve(info_dict_check.mapping.get(PdfName("Title")))
                 if isinstance(t, PdfString) and t.value:
-                    title = (
-                        t.value.decode("utf-8", errors="replace")
-                        if isinstance(t.value, bytes)
-                        else str(t.value)
-                    )
+                    title = decode_pdf_text_string(t)
             if not title:
                 title = "Untitled"
 
@@ -12836,11 +12779,7 @@ class SimplePdf:
         if not title and isinstance(info_dict, PdfDictionary):
             existing = self._resolve(info_dict.mapping.get(PdfName("Title")))
             if isinstance(existing, PdfString) and existing.value:
-                title = (
-                    existing.value.decode("utf-8", errors="replace")
-                    if isinstance(existing.value, bytes)
-                    else str(existing.value)
-                )
+                title = decode_pdf_text_string(existing)
         if not title:
             title = "Untitled"
 
@@ -14796,11 +14735,7 @@ class CosExtractor:
             key = k.name.lstrip("/")
             v_resolved = self._resolve(v)
             if isinstance(v_resolved, PdfString):
-                raw = v_resolved.value
-                if isinstance(raw, bytes):
-                    metadata[key] = raw.decode("utf-8", errors="ignore")
-                else:
-                    metadata[key] = str(raw)
+                metadata[key] = decode_pdf_text_string(v_resolved)
             elif isinstance(v_resolved, PdfNumber):
                 metadata[key] = str(v_resolved.value)
             else:
@@ -15262,12 +15197,7 @@ class CosExtractor:
             title = ""
             title_obj = self._resolve(item.mapping.get(PdfName("Title")))
             if isinstance(title_obj, PdfString):
-                raw = title_obj.value
-                title = (
-                    raw.decode("utf-8", errors="ignore")
-                    if isinstance(raw, bytes)
-                    else str(raw)
-                )
+                title = decode_pdf_text_string(title_obj)
 
             # The target, kept exactly as the file holds it so that saving
             # writes back what was read, plus a typed view of it where this
@@ -15368,12 +15298,7 @@ class CosExtractor:
             val = sig_obj.mapping.get(PdfName(field_name))
             val = self._resolve(val)
             if isinstance(val, PdfString):
-                raw = val.value
-                res[field_name] = (
-                    raw.decode("utf-8", errors="ignore")
-                    if isinstance(raw, bytes)
-                    else str(raw)
-                )
+                res[field_name] = decode_pdf_text_string(val)
         return res if res else None
 
     def extract_signatures(self, data: bytes) -> list[PdfSignature]:
@@ -15470,11 +15395,7 @@ class CosExtractor:
                         t = self._resolve(t)
                         name = ""
                         if isinstance(t, PdfString):
-                            name = (
-                                t.value.decode("utf-8", errors="ignore")
-                                if isinstance(t.value, bytes)
-                                else str(t.value)
-                            )
+                            name = decode_pdf_text_string(t)
 
                         sig = PdfSignature(
                             name=name,
@@ -15494,12 +15415,7 @@ class CosExtractor:
                             val = v_obj.mapping.get(PdfName(key))
                             val = self._resolve(val)
                             if isinstance(val, PdfString):
-                                s_val = (
-                                    val.value.decode("utf-8", errors="ignore")
-                                    if isinstance(val.value, bytes)
-                                    else str(val.value)
-                                )
-                                setattr(sig, attr, s_val)
+                                setattr(sig, attr, decode_pdf_text_string(val))
 
                         sub = self._resolve(v_obj.mapping.get(PdfName("SubFilter")))
                         if isinstance(sub, PdfName):

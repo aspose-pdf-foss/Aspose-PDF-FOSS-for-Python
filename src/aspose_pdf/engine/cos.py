@@ -41,10 +41,49 @@ class PdfNumber(PdfObject):
         return f"PdfNumber({self.value})"
 
 
+def encode_pdf_text_string(text: str) -> bytes:
+    """Encode *text* as the octets of a PDF ``text string``.
+
+    ISO 32000-1 7.9.2.2 gives a text string two encodings: PDFDocEncoding, or
+    UTF-16BE behind a ``FEFF`` byte order mark. Raw UTF-8 is neither -- a
+    conforming reader takes those bytes for PDFDocEncoding and shows mojibake,
+    which is what every non-Latin title, bookmark and annotation this library
+    wrote used to look like outside it. ASCII is PDFDocEncoding's own first
+    128 characters and stays as it is; anything else goes to UTF-16BE, which
+    covers every string PDFDocEncoding could and every string it could not.
+    """
+    try:
+        return text.encode("ascii")
+    except UnicodeEncodeError:
+        return b"\xfe\xff" + text.encode("utf-16-be")
+
+
+def decode_pdf_text_string(s: PdfString) -> str:
+    """Read a PDF ``text string`` back, in whichever encoding it arrived in.
+
+    The inverse of :func:`encode_pdf_text_string`, plus the two things files in
+    the wild also hold: UTF-16LE behind its own mark, and UTF-8 (which
+    ISO 32000-2 admits behind ``EFBBBF``, and which producers write bare).
+    PDFDocEncoding's upper half is approximated by Latin-1, which it agrees
+    with except for a handful of typographic characters.
+    """
+    octets = s.value
+    if octets[:2] == b"\xfe\xff":
+        return octets[2:].decode("utf-16-be", errors="replace")
+    if octets[:2] == b"\xff\xfe":
+        return octets[2:].decode("utf-16-le", errors="replace")
+    if octets[:3] == b"\xef\xbb\xbf":
+        return octets[3:].decode("utf-8", errors="replace")
+    try:
+        return octets.decode("utf-8")
+    except UnicodeDecodeError:
+        return octets.decode("latin-1", errors="replace")
+
+
 class PdfString(PdfObject):
     def __init__(self, value: bytes | str) -> None:
         if isinstance(value, str):
-            self.value = value.encode("utf-8")
+            self.value = encode_pdf_text_string(value)
         elif isinstance(value, (bytes, bytearray)):
             self.value = bytes(value)
         else:

@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Non-Latin text was written in an encoding no other reader could decode.** A
+  PDF text string is PDFDocEncoded or UTF-16BE behind a `FEFF` byte order mark
+  (ISO 32000-1 7.9.2.2). This library wrote raw UTF-8, which is neither, so a
+  conforming reader took those bytes for PDFDocEncoding: every non-Latin title,
+  bookmark, annotation, field value and attachment name it produced showed as
+  mojibake in Acrobat and in every other tool. Reading its own files back hid it
+  completely, because the reader made the same assumption. Field names were the
+  exception — they went through the one encoder that was right — and that
+  mismatch is what made it visible from inside: the field-value setter matched
+  names with a hand-rolled UTF-8 decode, so `form["Ф"].value = "V"` found no
+  field, wrote nothing, reported success, and the value was gone after a save.
+  There is now one encoder and one decoder, used everywhere a text string is
+  written or read; the decoder also accepts UTF-16LE and marked UTF-8, which
+  other producers write. Checked against pikepdf in both directions.
+
 - **Merging a document brought across a tracing of its pages, not the pages.**
   `Document.merge` copied each page's rectangle and its content bytes and
   nothing else. A page without its `/Resources` names fonts and images that
