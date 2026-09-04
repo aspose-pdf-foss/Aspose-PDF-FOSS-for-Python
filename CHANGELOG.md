@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The file-based editor workflows went through a second merge that lost the
+  same things `Document.merge` used to.** `PdfFileEditor.concatenate` and
+  `.extract`, and the low-code merger and splitter behind them, called a
+  different implementation: it built a fresh model from page rectangles and
+  content bytes, pooled the sources' images into one renamed namespace, and
+  rewrote the content streams to match. A concatenated page had no `/Resources`
+  of its own, every page in the result carried every image in it, and
+  annotations were dropped. Both are the same operation as appending a
+  document's pages, and are now the same code. Extraction adds one rule to it: a
+  subset of pages is a different document, so what belongs to the pages comes
+  and the document's embedded files do not, and a bookmark comes only if the page
+  it points at did — remapped to where that page landed, which also makes
+  extracting pages in a new order work. The content-stream renaming module the
+  old merge needed is deleted; nothing renames anything now.
+
 - **Every saved file was missing the comment that marks it binary.** A PDF that
   holds binary data puts a comment of at least four bytes above 127 immediately
   after `%PDF-x.y` (ISO 32000-1 7.5.2), so that a transfer in text mode or an

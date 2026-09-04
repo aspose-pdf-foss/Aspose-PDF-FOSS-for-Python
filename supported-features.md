@@ -483,7 +483,13 @@ Supported:
   (`PaintType 1`) and uncoloured (`PaintType 2`, taking the colour from `scn`)
   patterns are supported.
 - Use `PdfFileEditor` to concatenate, extract, insert, delete, append, and add a
-  blank page through file-based workflows.
+  blank page through file-based workflows. These go through the same page import
+  as `Document.merge`: a page arrives with its own resources and annotations,
+  and nothing is renamed or rewritten. **Extracting** a subset takes what belongs
+  to those pages -- annotations, the fields their widgets belong to, the optional
+  content groups their content names -- and a bookmark only when the page it
+  points at came too, remapped to where that page landed. The document's embedded
+  files are not part of a page subset.
 
 Boundaries:
 

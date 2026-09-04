@@ -90,7 +90,6 @@ from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
 from .pdf_parser_cos import PdfCosParser
 from .pdf_writer_cos import PdfCosWriter
 from .pubsec import PUBSEC_FILTER, subfilter_for
-from .rename_resources import safe_rename_names
 from .signing import SigningUtils
 from .text_edit import redact_text_in_content, replace_text_in_content
 
@@ -2239,95 +2238,22 @@ class SimplePdf:
 
     @classmethod
     def merge(cls, *pdfs: SimplePdf) -> SimplePdf:
-        """Merge multiple PDFs into one, resolving resource name collisions
-        and deduplicating."""
+        """Return a new document holding every page of *pdfs*, in order.
+
+        This used to be a second, older merge: it copied page rectangles and
+        content bytes into a fresh model and pooled the sources' images under
+        renamed keys, so a merged page had no ``/Resources`` of its own and every
+        page in the result carried every image in it. It is the same operation
+        :meth:`append` performs, and now the same code -- which is what
+        ``PdfFileEditor.concatenate`` and the low-code merger reach through.
+        """
         merged = cls()
-        passwords = set()
-
-        # Track used resource names and hashes for deduplication
-        all_res_names = set()
-        res_data_to_name = {}  # hash -> name
-        font_signature_to_name = {}
-
-        for pdf_idx, pdf in enumerate(pdfs):
+        for pdf in pdfs:
             if not isinstance(pdf, SimplePdf):
                 raise TypeError("All items to merge must be SimplePdf instances")
-
-            # 1. Base copy
-            _ = len(merged.pages)  # page_offset
-            merged.pages.extend(pdf.pages)
-
-            # 2. Handle Resource Collisions (Images, Fonts, etc.)
-            name_map = {}
-
-            # Collect all resources from this PDF
-            # SimplePdf currently only exposes 'images' and 'attachments'
-            # Fonts are hidden in _cos_doc usually.
-            # For a truly robust merge, we'd need to parse resources from each page.
-            # Here we implement a renaming strategy for all dictionary-based
-            # resources we know.
-
-            # Helper for renaming
-            def get_safe_name(old_name, data_hash=None):
-                if data_hash and data_hash in res_data_to_name:
-                    return res_data_to_name[data_hash]
-
-                new_name = old_name
-                counter = 1
-                while new_name in all_res_names:
-                    new_name = f"{old_name}_{pdf_idx}_{counter}"
-                    counter += 1
-
-                if data_hash:
-                    res_data_to_name[data_hash] = new_name
-                all_res_names.add(new_name)
-                return new_name
-
-            # Process Images
-            for old_name, img_data in pdf.images.items():
-                img_hash = hashlib.sha256(img_data).hexdigest()
-                new_name = get_safe_name(old_name, img_hash)
-                name_map[old_name] = new_name
-                merged.images[new_name] = img_data
-
-                if old_name in pdf._image_sizes:
-                    merged._image_sizes[new_name] = pdf._image_sizes[old_name]
-                if old_name in pdf._image_meta:
-                    merged._image_meta[new_name] = pdf._image_meta[old_name]
-
-            # Process Fonts
-            for old_name, font_obj in pdf.fonts.items():
-                signature = _resource_signature(pdf, font_obj)
-                new_name = font_signature_to_name.get(signature)
-                if new_name is None:
-                    new_name = get_safe_name(old_name)
-                    font_signature_to_name[signature] = new_name
-                    merged.fonts[new_name] = font_obj
-                name_map[old_name] = new_name
-
-            # Process ExtGStates
-            for old_name, gs_obj in pdf.extgstates.items():
-                new_name = get_safe_name(old_name)
-                name_map[old_name] = new_name
-                merged.extgstates[new_name] = gs_obj
-
-            # 3. Update Content Streams with renamed resources
-            for content in pdf.page_contents:
-                updated_content = safe_rename_names(content, name_map)
-                merged.page_contents.append(updated_content)
-
-            merged.metadata.update(pdf.metadata)
-            if pdf.encrypted:
-                passwords.add(pdf.password)
-
-        if passwords:
-            merged.encrypt(next(iter(passwords)))
-
+            merged.append(pdf)
         return merged
 
-    # ---------------------------------------------------------------------------
-    # Signing
-    # ---------------------------------------------------------------------------
     def sign(self, signature: PdfSignature, output_path: str) -> None:
         """Sign the PDF document."""
         self._ensure_not_disposed()
@@ -7284,17 +7210,9 @@ class SimplePdf:
         new_pdf = SimplePdf()
         new_pdf._load_limits = self._load_limits
         new_pdf._load_budget = self._load_budget
-        new_pdf.pages = [self.pages[i] for i in indices]
-        new_pdf.page_contents = [self.page_contents[i] for i in indices]
-        new_pdf.images = dict(self.images)
+        new_pdf.append(self, indices)
         new_pdf.metadata = dict(self.metadata)
         new_pdf.watermark_text = self.watermark_text
-        new_pdf.encrypted = self.encrypted
-        new_pdf.password = self.password
-        new_pdf.O = self.O
-        new_pdf.U = self.U
-        new_pdf.P = self.P
-        new_pdf.encryption_key = self.encryption_key
         return new_pdf
 
     def delete_pages(self, start_index: int, count: int) -> None:
@@ -8389,7 +8307,7 @@ class SimplePdf:
     #: they are resolved and written onto the copy.
     _INHERITABLE_PAGE_KEYS = ("Resources", "MediaBox", "CropBox", "Rotate")
 
-    def append(self, other: SimplePdf) -> None:
+    def append(self, other: SimplePdf, pages: Sequence[int] | None = None) -> None:
         """Append another document's pages, as the pages they are.
 
         Appending used to carry across a page's rectangle and its content
@@ -8398,38 +8316,86 @@ class SimplePdf:
         drew with whatever the *target* happened to have registered under the
         same name. Annotations, form fields, bookmarks and attachments were
         dropped outright.
+
+        *pages* names a subset in the order to take it, for extracting part of
+        a document. What belongs to the pages still comes -- their annotations,
+        the fields their widgets belong to, the optional content groups their
+        content names -- while the document's embedded files do not: a subset
+        of pages is a different document, and its attachments were not part of
+        what was asked for. A bookmark comes only if the page it points at did.
         """
         self._ensure_not_disposed()
         self._ensure_cos()
         other._ensure_cos()
         other._ensure_page_cache()
 
+        whole = pages is None
+        selection = range(len(other.pages)) if whole else list(pages)
+
         # Every source page is created first, so that a reference to any of
         # them -- an annotation's /P, a bookmark's destination, a widget shared
         # by a field on another page -- resolves to the copy instead of
         # importing the page again and dragging the whole source tree behind it.
         imported: dict[int, Any] = {}
-        pages: list[tuple[Any, Any]] = []
-        appended_at = len(self.pages)
-        for index in range(len(other.pages)):
+        positions: dict[int, int] = {}
+        copied: list[tuple[Any, Any]] = []
+        for index in selection:
             self.insert(
                 len(self.pages), (other.pages[index], other.get_page_content(index))
             )
             self._ensure_page_cache()
             new_ref = PdfIndirectReference(self._page_refs[len(self.pages) - 1], 0)
             imported[other._page_refs[index]] = new_ref
-            pages.append((other._get_page_dict(index), new_ref))
+            positions[index] = len(self.pages) - 1
+            copied.append((other._get_page_dict(index), new_ref))
 
-        for source, new_ref in pages:
+        for source, new_ref in copied:
             self._import_page_entries(other, source, new_ref, imported)
 
         self._merge_acroform(other, imported)
         self._merge_optional_content(other, imported)
-        self._merge_outlines(other, imported, appended_at)
-        self._merge_attachments(other)
-
-        self.images.update(other.images)
+        self._merge_outlines(other, imported, positions)
+        self._merge_image_views(other, positions)
+        if whole:
+            self._merge_attachments(other)
         self._page_cache_valid = False
+
+    def _merge_image_views(self, other: SimplePdf, positions: dict[int, int]) -> None:
+        """Carry the by-name views of the images the appended pages carry.
+
+        The images themselves travel in the object graph, each page keeping its
+        own resource names. These are the flat, document-wide views the public
+        image API reads -- keyed by a name that has to be unique across the
+        merged document, where the sources' names are not. Identical bytes keep
+        one entry, so merging a document with itself does not double its
+        images.
+        """
+        renamed: dict[str, str] = {}
+        for name, data in other.images.items():
+            key = name
+            suffix = 2
+            while key in self.images and self.images[key] != data:
+                key = f"{name}_{suffix}"
+                suffix += 1
+            self.images[key] = data
+            renamed[name] = key
+
+        for source_index, target_index in positions.items():
+            names = other._page_image_map.get(source_index)
+            if names:
+                self._page_image_map[target_index] = [
+                    renamed.get(name, name) for name in names
+                ]
+
+        for view in (
+            "_image_sizes",
+            "_image_meta",
+            "_image_matrix_map",
+            "_image_rect_map",
+        ):
+            mine = getattr(self, view)
+            for name, value in getattr(other, view).items():
+                mine.setdefault(renamed.get(name, name), value)
 
     def _import_page_entries(
         self, other: SimplePdf, source: Any, new_ref: Any, imported: dict[int, Any]
@@ -8615,9 +8581,17 @@ class SimplePdf:
                 config_off.items.append(copied)
 
     def _merge_outlines(
-        self, other: SimplePdf, imported: dict[int, Any], appended_at: int
+        self, other: SimplePdf, imported: dict[int, Any], positions: dict[int, int]
     ) -> None:
-        """Append the other document's bookmarks, retargeted at the copies."""
+        """Append the other document's bookmarks, retargeted at the copies.
+
+        *positions* maps a source page index to where that page landed here. A
+        bookmark whose page is not in it did not come across -- only part of the
+        document was taken -- and neither does the bookmark: pointing it at
+        whatever now sits at its old index would send the reader somewhere the
+        original never named. Its children go with it, since a bookmark tree
+        cannot skip a level.
+        """
         source_items = other.outline_items()
         if not source_items:
             return
@@ -8625,6 +8599,9 @@ class SimplePdf:
         def retargeted(items: list[dict]) -> list[dict]:
             out = []
             for item in items:
+                index = positions.get(item.get("page_index", 0))
+                if index is None:
+                    continue
                 entry = dict(item)
                 loaded = item.get("loaded_target")
                 if loaded is not None:
@@ -8634,10 +8611,8 @@ class SimplePdf:
                     )
                 target = item.get("target")
                 if target is not None and hasattr(target, "page"):
-                    entry["target"] = replace(
-                        target, page=item.get("page_index", 0) + appended_at
-                    )
-                entry["page_index"] = item.get("page_index", 0) + appended_at
+                    entry["target"] = replace(target, page=index)
+                entry["page_index"] = index
                 entry["children"] = retargeted(item.get("children", []))
                 out.append(entry)
             return out
