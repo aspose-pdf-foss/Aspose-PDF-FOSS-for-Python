@@ -705,7 +705,11 @@ class ContentStreamParser:
             "T*": 0,
             "Tj": 1,
             "TJ": 1,
-            "'": 3,
+            # ISO 32000-1 table 109: `string '` takes one operand, where
+            # `aw ac string "` takes three. Asking for three left the
+            # operator short and it was skipped, so every `'` in a file
+            # dropped the line of text it drew.
+            "'": 1,
             '"': 3,
             "Tc": 1,
             "Tw": 1,
@@ -771,6 +775,7 @@ class ContentStreamParser:
         """Extract and return the textual content of the stream."""
         self._buffer = []
         self._in_text = False
+        self._last_shown_y: float | None = None
         self._marked_actual_text = []
         self._gs_stack = [{"nonstroking_cs": None, "stroking_cs": None}]
         stack: list[Any] = []
@@ -957,6 +962,46 @@ class ContentStreamParser:
     # ---------------------------------------------------------------------
     # Internal helpers
     # ---------------------------------------------------------------------
+    def _separate_from_previous_show(self) -> None:
+        """Put a line break or a space before text, or nothing at all.
+
+        Decided where the text is shown rather than where the position moved,
+        because a move only matters once something is drawn after it -- and the
+        answer depends on the baseline it was drawn at, which is what tells a
+        new line from a shift along the current one.
+        """
+        if self._last_shown_y is None:
+            pass
+        elif abs(self._text_y - self._last_shown_y) > 1e-6:
+            self._buffer.append("\n")
+        elif self._pending_move:
+            self._buffer.append(" ")
+        self._pending_move = False
+        self._last_shown_y = self._text_y
+
+    def _move_text_position(self, op: str, ops: list[Any]) -> bool:
+        """Apply a text-positioning operator; True if it began a new line.
+
+        Only the vertical translation is tracked, which is what decides the
+        question: ``Td`` moves relative to the start of the current line, ``TD``
+        does that and sets the leading, ``T*`` steps down by the leading, and
+        ``Tm`` replaces the matrix outright. A rotated ``Tm`` makes the
+        translation an approximation of the baseline; a line break is still the
+        right reading of it changing.
+        """
+        previous = self._text_y
+        if op == "Tm":
+            self._text_y = float(ops[5]) if len(ops) >= 6 and isinstance(
+                ops[5], (int, float)
+            ) else previous
+        elif op == "T*":
+            self._text_y = previous - self._leading
+        elif len(ops) >= 2 and isinstance(ops[1], (int, float)):
+            if op == "TD":
+                self._leading = -float(ops[1])
+            self._text_y = previous + float(ops[1])
+        return abs(self._text_y - previous) > 1e-6
+
     def _handle_operator(self, op: str, ops: list[Any]) -> None:
         if op == "BT":
             self._reset_text_state()
@@ -970,7 +1015,12 @@ class ContentStreamParser:
         if not self._in_text:
             return
 
-        if op in {"Tc", "Tw", "Tz", "TL", "Tr", "Ts", "d0", "d1"}:
+        if op == "TL":
+            if ops and isinstance(ops[0], (int, float)):
+                self._leading = float(ops[0])
+            return
+
+        if op in {"Tc", "Tw", "Tz", "Tr", "Ts", "d0", "d1"}:
             return
 
         if op == "Tf":
@@ -988,8 +1038,8 @@ class ContentStreamParser:
             return
 
         if op in {"Td", "TD", "Tm", "T*"}:
-            if not self._text_suppressed():
-                self._buffer.append(" ")
+            self._move_text_position(op, ops)
+            self._pending_move = True
             return
 
         if op == "Tj":
@@ -999,6 +1049,7 @@ class ContentStreamParser:
             raw = ops[0]
             self._note_glyph_widths_from_bytes(raw)
             if not self._text_suppressed():
+                self._separate_from_previous_show()
                 self._buffer.append(self._decode_bytes(raw))
             return
 
@@ -1014,6 +1065,7 @@ class ContentStreamParser:
                 if isinstance(element, bytes):
                     self._note_glyph_widths_from_bytes(element)
                     if not self._text_suppressed():
+                        self._separate_from_previous_show()
                         self._buffer.append(self._decode_bytes(element))
                 elif isinstance(element, (int, float)):
                     # TJ numbers: thousandths of a text space unit; large negative
@@ -1028,25 +1080,25 @@ class ContentStreamParser:
                             self._buffer.append(" ")
             return
 
-        if op == "'":
-            if not self._text_suppressed():
-                self._buffer.append("\n")
-            if len(ops) >= 1 and not self._text_suppressed():
-                self._buffer.append(
-                    self._decode_bytes(ops[-1])
-                )  # Last operand is string
-            return
-
-        if op == '"':
-            if not self._text_suppressed():
-                self._buffer.append("\n")
-            if len(ops) >= 1 and not self._text_suppressed():
-                self._buffer.append(
-                    self._decode_bytes(ops[-1])
-                )  # Last operand is string
+        if op in {"'", '"'}:
+            # Both step down one line and then show: the quote operators are
+            # T* with a string, and the double-quote form sets the spacing too.
+            self._move_text_position("T*", [])
+            self._pending_move = True
+            if ops and not self._text_suppressed():
+                self._separate_from_previous_show()
+                self._buffer.append(self._decode_bytes(ops[-1]))
             return
 
     def _reset_text_state(self) -> None:
+        # BT starts the text matrix at the identity. Where text was last *shown*
+        # is not reset with it: a page built one text object per line has a BT
+        # between every pair of them, and the question a separator answers is
+        # whether this text is on the same line as the text before it -- not
+        # whether it is in the same text object.
+        self._text_y = 0.0
+        self._leading = 0.0
+        self._pending_move = False
         self._current_font = None
         self._font_encoding_map = None
         self._to_unicode_map = None

@@ -7092,58 +7092,56 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     # Text extraction
     # ---------------------------------------------------------------------------
-    def extract_text(self) -> str:
-        """Extract plain text from page contents."""
-        if self._extracted_text is not None:
-            return self._extracted_text
-        texts: list[str] = []
-        # Use empty resources when page resources are unavailable.
-        empty_resources = {}
+    def extract_page_text(self, page_index: int) -> str:
+        """The text one page's content streams say, its line breaks kept.
 
-        for i, stream in enumerate(self.page_contents):
+        The single place a page's content is parsed for text: the whole
+        document, the page-at-a-time cursor and the public ``Page`` accessor
+        all come through here, where they each used to repeat the same
+        parse-with-resources dance.
+        """
+        self._ensure_not_disposed()
+        if page_index < 0 or page_index >= len(self.page_contents):
+            return ""
+        stream = self.page_contents[page_index]
+        resources = {}
+        if self._cos_doc:
             try:
-                # Try to get resources from COS doc if available
-                resources = empty_resources
-                if self._cos_doc:
-                    try:
-                        page_res = self._get_page_resources(i)
-                        if page_res:
-                            resources = page_res
-                    except PdfResourceLimitException:
-                        raise
-                    except PDF_OPERATION_ERRORS:
-                        pass
+                resources = self._get_page_resources(page_index) or {}
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                resources = {}
 
-                parser = ContentStreamParser(
-                    stream,
-                    resources,
-                    limits=self._load_limits,
-                    budget=self._load_budget,
-                    hidden_oc_names=self.hidden_oc_property_names(i),
-                )
-                text = parser.extract_text()
-                if not text:
-                    text = parser.best_effort_extract_text()
-                texts.append(text)
+        def parse() -> ContentStreamParser:
+            return ContentStreamParser(
+                stream,
+                resources,
+                limits=self._load_limits,
+                budget=self._load_budget,
+                hidden_oc_names=self.hidden_oc_property_names(page_index),
+            )
+
+        try:
+            text = parse().extract_text()
+            return text if text else parse().best_effort_extract_text()
+        except PdfResourceLimitException:
+            raise
+        except CONTENT_PARSER_RECOVERABLE:
+            try:
+                return parse().best_effort_extract_text()
             except PdfResourceLimitException:
                 raise
             except CONTENT_PARSER_RECOVERABLE:
-                # Fallback to best-effort extraction if full parser fails
-                try:
-                    parser = ContentStreamParser(
-                        stream,
-                        resources,
-                        limits=self._load_limits,
-                        budget=self._load_budget,
-                        hidden_oc_names=self.hidden_oc_property_names(i),
-                    )
-                    texts.append(parser.best_effort_extract_text())
-                except PdfResourceLimitException:
-                    raise
-                except CONTENT_PARSER_RECOVERABLE:
-                    pass
+                return ""
 
-        self._extracted_text = "\n".join(texts)
+    def extract_text(self) -> str:
+        """Extract plain text from page contents, one page per line group."""
+        if self._extracted_text is not None:
+            return self._extracted_text
+        self._extracted_text = "\n".join(
+            self.extract_page_text(index) for index in range(len(self.page_contents))
+        )
         self._page_text_cursor = 0
         return self._extracted_text
 
@@ -7157,53 +7155,8 @@ class SimplePdf:
         self._ensure_not_disposed()
         if self._page_text_cursor >= len(self.page_contents):
             raise StopIteration("No more pages")
-        stream = self.page_contents[self._page_text_cursor]
         self._page_text_cursor += 1
-        try:
-            # Try to get resources (same logic as extract_text)
-            resources = {}
-            if self._cos_doc and self._cos_doc.pages:
-                try:
-                    if (self._page_text_cursor - 1) < len(self._cos_doc.pages):
-                        page_node = self._cos_doc.pages[self._page_text_cursor - 1]
-                        if isinstance(page_node, dict) and "Resources" in page_node:
-                            resources = page_node["Resources"]
-                except PdfResourceLimitException:
-                    raise
-                except PDF_OPERATION_ERRORS:
-                    pass
-
-            parser = ContentStreamParser(
-                stream,
-                resources,
-                limits=self._load_limits,
-                budget=self._load_budget,
-                hidden_oc_names=self.hidden_oc_property_names(
-                    self._page_text_cursor - 1
-                ),
-            )
-            text = parser.extract_text()
-            if not text:
-                text = parser.best_effort_extract_text()
-            return text
-        except PdfResourceLimitException:
-            raise
-        except CONTENT_PARSER_RECOVERABLE:
-            try:
-                parser = ContentStreamParser(
-                    stream,
-                    resources,
-                    limits=self._load_limits,
-                    budget=self._load_budget,
-                    hidden_oc_names=self.hidden_oc_property_names(
-                        self._page_text_cursor - 1
-                    ),
-                )
-                return parser.best_effort_extract_text()
-            except PdfResourceLimitException:
-                raise
-            except CONTENT_PARSER_RECOVERABLE:
-                return ""
+        return self.extract_page_text(self._page_text_cursor - 1)
 
     def has_next_page_text(self) -> bool:
         return self._page_text_cursor < len(self.page_contents)

@@ -9,6 +9,23 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Extracted text had no lines, and the absorbers found no text at all.** The
+  content-stream reader answered every text-positioning operator with a space —
+  `Td`, `TD`, `Tm` and `T*` alike — though those four both start a new line and
+  shift along the one in progress. The line structure was discarded at exactly
+  the point where it was known, so a page of prose came out as one very long
+  line. The separator is now chosen where the text is *shown*, from the baseline
+  it is shown at. Alongside it, `'` (show on the next line) was declared as
+  taking three operands where ISO 32000-1 table 109 gives it one, so the
+  operator was skipped for want of operands and every line it drew was lost.
+
+- **`TextFragmentAbsorber` and `TextAbsorber` collected nothing from a real
+  document.** They look for an `extract_text()` method, and neither `Page` nor
+  `Document` had one — a hundred tests passed on them because every one fed a
+  stub with a `.text` attribute, and not one used a `Document`. Both now have
+  the accessor, sharing the single per-page routine that the whole-document
+  extractor and the page-at-a-time cursor also use instead of each repeating it.
+
 - **`add_text` drew the wrong glyphs for anything but ASCII.** The string in a
   text-showing operator is a sequence of *codes*, and a simple font gives each
   code a glyph through its encoding. `add_text` wrote the text's UTF-8 into one

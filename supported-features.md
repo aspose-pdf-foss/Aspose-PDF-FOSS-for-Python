@@ -752,9 +752,18 @@ Supported:
   map is available.
 - Use glyph-name fallbacks such as `uniXXXX` and `uXXXX`.
 - Use best-effort text extraction fallback for partially broken content streams.
+- **Extract a page's text with the line breaks it was written in.**
+  `Page.extract_text` and `Document.extract_text` return what the page says; the
+  separator between two runs comes from the text-positioning operators
+  (`Td`/`TD`/`Tm`/`T*`, and the leading `TL` feeds them) — a change of baseline
+  is a line, a move along one is a space. How those lines group into paragraphs
+  is a judgement `to_markdown` and `to_html` make and this does not, so a
+  wrapped paragraph is one paragraph there and several lines here.
 - Use `TextFragmentAbsorber` and `TextAbsorber` to collect text fragments, search
   exact phrases, run regex searches, control case sensitivity, and inspect match
-  offsets/page indices.
+  offsets/page indices. A *document* is taken page by page, which is the only
+  way a fragment can say which page it came from; an object whose pages are not
+  themselves extractable answers for its own text as a whole.
 - Replace or redact existing text in simple page content streams with
   `Document.replace_text`, `Document.redact_text`, `Page.replace_text`, and
   `Page.redact_text`. The editor rewrites literal and hexadecimal string

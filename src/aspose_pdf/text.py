@@ -289,7 +289,13 @@ class TextFragmentAbsorber:
         The method supports objects that expose ``extract_text()`` (pages,
         :class:`~aspose_pdf.engine.simple_pdf.SimplePdf`) as well as
         document-like objects with an iterable ``pages`` attribute.
+
+        A document is taken page by page when its pages can be, because that is
+        the only way a fragment can say which page it came from. Asking the
+        document for all its text at once puts every fragment on page 0.
         """
+        if self._visit_pages(page_or_doc):
+            return
         if hasattr(page_or_doc, "extract_text"):
             text = page_or_doc.extract_text()
             if isinstance(text, list):
@@ -297,17 +303,23 @@ class TextFragmentAbsorber:
                     self._process_page_text(str(item), page_idx)
             elif isinstance(text, str):
                 self._process_page_text(text, 0)
-        elif hasattr(page_or_doc, "pages"):
-            pages = page_or_doc.pages
-            try:
-                page_iter = iter(pages)
-            except TypeError:
-                return
-            for page_idx, page in enumerate(page_iter):
-                if hasattr(page, "extract_text"):
-                    raw = page.extract_text()
-                    if isinstance(raw, str):
-                        self._process_page_text(raw, page_idx)
+
+    def _visit_pages(self, page_or_doc: Any) -> bool:
+        """Collect page by page; False when *page_or_doc* has no such pages."""
+        pages = getattr(page_or_doc, "pages", None)
+        if pages is None:
+            return False
+        try:
+            page_list = list(pages)
+        except TypeError:
+            return False
+        if not page_list or not all(hasattr(page, "extract_text") for page in page_list):
+            return False
+        for page_idx, page in enumerate(page_list):
+            raw = page.extract_text()
+            if isinstance(raw, str):
+                self._process_page_text(raw, page_idx)
+        return True
 
     def reset(self) -> None:
         """Clear all collected fragments, regex results and errors."""

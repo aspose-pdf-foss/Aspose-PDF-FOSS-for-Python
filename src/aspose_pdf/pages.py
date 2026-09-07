@@ -136,6 +136,20 @@ class Page:
             return eng.page_contents[self._index]
         return b""
 
+    def extract_text(self) -> str:
+        """The text this page says, with the line breaks it was written in.
+
+        Text-positioning operators are what separate one line from the next, so
+        the result keeps them; how those lines are grouped into paragraphs is a
+        judgement :meth:`to_markdown` and :meth:`to_html` make and this does
+        not.
+        """
+        self._document._ensure_not_disposed()
+        engine = self._document._engine_pdf
+        if engine is None:
+            return ""
+        return engine.extract_page_text(self._index)
+
     def add_text(
         self,
         text: str,

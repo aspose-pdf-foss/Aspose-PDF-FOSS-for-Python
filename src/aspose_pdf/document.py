@@ -1657,6 +1657,16 @@ class Document:
         """Alias of :meth:`dispose` (matches .NET ``Close``)."""
         self.dispose()
 
+    def extract_text(self) -> str:
+        """The text of every page, in order, pages separated by a line break.
+
+        Each page's own line breaks are kept; see :meth:`Page.extract_text`.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            return ""
+        return self._engine_pdf.extract_text()
+
     def _flush_outlines(self) -> None:
         """Put the live outline collection back where the engine reads it.
 
