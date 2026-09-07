@@ -1109,6 +1109,7 @@ class ContentStreamParser:
         self._embedded_encoding_codespaces = ()
         self._opaque_composite = False
         self._widths_by_code = None
+        self._width_fn = None
         self._default_glyph_width = 1000
         self._is_cid_identity = False
         self._last_glyph_width = 500
@@ -1132,6 +1133,7 @@ class ContentStreamParser:
     def _apply_metrics_from_font(self) -> None:
         """Populate width tables from font dict (simple, Type0 / CID)."""
         self._widths_by_code = None
+        self._width_fn = None
         self._default_glyph_width = 1000
         self._is_cid_identity = False
         if not self._current_font:
@@ -1156,11 +1158,22 @@ class ContentStreamParser:
             return
 
         wmap = self._load_simple_widths(self._current_font)
+        base = self._current_font.get("BaseFont")
         if wmap:
+            # The font answered for itself, which is the first word on it.
             self._widths_by_code = wmap
             dw = self._current_font.get("MissingWidth", 1000)
             if isinstance(dw, (int, float)):
                 self._default_glyph_width = int(dw)
+        elif isinstance(base, str):
+            # No /Widths, which is how a Standard 14 font is usually written:
+            # its metrics are the reader's to know. Guessing 1000 for every
+            # glyph made the word-gap threshold about four times too wide, so a
+            # TJ array's ordinary word spacing was read as kerning and the words
+            # ran together.
+            from .text_metrics import substitute_width_fn
+
+            self._width_fn = substitute_width_fn(base.lstrip("/"))
 
     def _note_glyph_widths_from_bytes(self, data: Any) -> None:
         if not isinstance(data, bytes) or not data:
@@ -1224,8 +1237,10 @@ class ContentStreamParser:
             return
         if wtable:
             for b in data:
-                w = wtable.get(b, self._default_glyph_width)
-                self._last_glyph_width = w
+                self._last_glyph_width = wtable.get(b, self._default_glyph_width)
+        elif self._width_fn is not None:
+            for b in data:
+                self._last_glyph_width = int(self._width_fn(b))
         else:
             self._last_glyph_width = self._default_glyph_width
 

@@ -752,6 +752,15 @@ Supported:
   map is available.
 - Use glyph-name fallbacks such as `uniXXXX` and `uXXXX`.
 - Use best-effort text extraction fallback for partially broken content streams.
+- **A word gap in a `TJ` array is measured against the font's real metrics.**
+  The displacements between a `TJ` array's strings are kerning inside a word or
+  the space between words, and which is which depends on how wide the glyphs
+  actually are. A Standard 14 font is normally written without a `/Widths`
+  array -- its metrics are the reader's to know -- and assuming a flat em for
+  every glyph put the threshold about four times too high, running words
+  together. The bundled metric-compatible substitutes answer it now, the same
+  ones the appearance builders measure with. A font that declares `/Widths` is
+  believed first.
 - **Extract a page's text with the line breaks it was written in.**
   `Page.extract_text` and `Document.extract_text` return what the page says; the
   separator between two runs comes from the text-positioning operators

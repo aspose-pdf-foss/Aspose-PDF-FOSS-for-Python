@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Words ran together in text extracted from kerned `TJ` arrays.** The
+  displacements between a `TJ` array's strings are kerning inside a word or the
+  space between words, and telling them apart needs to know how wide the glyphs
+  are. A Standard 14 font is normally written *without* a `/Widths` array, its
+  metrics being the reader's to know, and the extractor then assumed 1000 units
+  for every glyph — about four times a typical lowercase letter — putting the
+  word-gap threshold four times too high. Ordinary word spacing was read as
+  kerning, so `Hello world` came out as `Helloworld`. The bundled
+  metric-compatible substitutes already answer this for the appearance
+  builders, which measure text with them to wrap and centre it; the extractor
+  asks them too now, and matches pdfminer across Helvetica, Times, Courier and
+  their bold and italic cuts.
+
 - **Extracted text had no lines, and the absorbers found no text at all.** The
   content-stream reader answered every text-positioning operator with a space —
   `Td`, `TD`, `Tm` and `T*` alike — though those four both start a new line and
