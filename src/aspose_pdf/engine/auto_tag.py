@@ -214,6 +214,11 @@ def _tokens(
 
     token_count = 0
     container_stack: list[str] = []
+    # Where the last `BI`'s dictionary starts, and a latin-1 view of the stream
+    # to read it through -- decoded only if the page actually has an inline
+    # image, which most do not.
+    inline_dict_at: int | None = None
+    text_view: str | None = None
 
     def count_token() -> None:
         nonlocal token_count
@@ -333,27 +338,30 @@ def _tokens(
         token = content[start:i].decode("latin-1")
         count_token()
         yield (token, start, i)
-        if token == "ID":  # inline image: skip the raw binary up to 'EI'
-            i = _skip_inline_image(content, i, n)
+        if token == "BI":
+            inline_dict_at = i
+        elif token == "ID":  # inline image: the samples that follow are not tokens
+            if text_view is None:
+                text_view = content.decode("latin-1")
+            i = _skip_inline_image(text_view, inline_dict_at, i)
+            inline_dict_at = None
 
 
-def _skip_inline_image(content: bytes, i: int, n: int) -> int:
-    """Return the offset past the ``EI`` that ends an inline image's data.
+def _skip_inline_image(text: str, dict_at: int | None, after_id: int) -> int:
+    """Return the offset past the ``EI`` that ends an inline image's samples.
 
-    The bytes between ``ID`` and ``EI`` are arbitrary image samples and must not
-    be tokenized (they could otherwise masquerade as operators or strings).
+    The bytes between ``ID`` and ``EI`` are the image, not tokens: they can
+    spell any operator and open a string that closes nowhere. Where the image's
+    dictionary settles their length that is the answer, and where it does not
+    the search for a free-standing ``EI`` is all there is -- both live in
+    :mod:`.inline_image`, which is the one place that knows what an inline
+    image is.
     """
-    if i < n and content[i] in _WS:
-        i += 1
-    j = i
-    while j + 1 < n:
-        if content[j] == 0x45 and content[j + 1] == 0x49:  # 'EI'
-            prev_ws = j == 0 or content[j - 1] in _WS
-            after = content[j + 2] if j + 2 < n else 0x20
-            if prev_ws and (j + 2 >= n or after in _ENDERS):
-                return j + 2
-        j += 1
-    return n
+    from .inline_image import inline_image_data_end, inline_image_end
+
+    if dict_at is None:  # a stray ID, with no BI to describe it
+        return inline_image_data_end(text, after_id + 1)
+    return inline_image_end(text, dict_at)
 
 
 def _is_number(token: str) -> bool:

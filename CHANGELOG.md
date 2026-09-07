@@ -9,6 +9,34 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An inline image's samples were read as content-stream tokens.** Between
+  `ID` and `EI` lie the image's bytes, and bytes spell whatever they happen to
+  spell — an operator nobody wrote, a name, an opening `(` that closes nowhere.
+  Lexed as tokens they were noise, and because a literal string runs to its
+  closing paren the noise usually swallowed the rest of the page: text drawn
+  after an inline image went missing from `extract_text()` and from the text
+  absorbers, and its marks went missing from the renderer, the SVG export and
+  the graphics absorber. The rule was implemented in exactly one place — the
+  layout reader behind `to_html()`/`to_markdown()` — and the tokenizer the
+  other four readers share did not know it. Both now go through one module,
+  which also applies the rule ISO 32000-1 8.9.7 gives for finding the end of
+  the data: unfiltered samples occupy exactly
+  `ceil(Width × BitsPerComponent × components / 8) × Height` bytes, so the
+  common case needs no searching for a free-standing `EI` — which samples can
+  imitate, and do. A declared length is still checked against the `EI` that
+  should follow it, and only a filtered image falls back to the search.
+
+### Added
+
+- **Inline images are painted.** `BI … ID … EI` reached the renderer as
+  nothing at all; the abbreviated dictionary is now expanded to the image
+  XObject it is a short spelling of (`/W` → `/Width`, `/Fl` → `/FlateDecode`,
+  `/RGB` → `/DeviceRGB` and the rest of table 93) and painted by the same code
+  as `Do`, including a `/ColorSpace` that names an entry in the page's
+  resources. Verified against pdfium across raw, Flate, ASCIIHex, ASCII85 and
+  RunLength data, 1/4/8 bits per component, grey, RGB, CMYK and Indexed
+  colour.
+
 - **Words ran together in text extracted from kerned `TJ` arrays.** The
   displacements between a `TJ` array's strings are kerning inside a word or the
   space between words, and telling them apart needs to know how wide the glyphs

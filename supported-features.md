@@ -413,7 +413,10 @@ Supported:
   `Document.save_page_as_image()`; the format follows the file suffix
   (`.png`, `.tif`/`.tiff`, `.jpg`/`.jpeg`). The renderer covers common content stream
   operators for graphics state, paths, fills/strokes, clipping, image XObjects,
-  form XObjects, and text. Text shown with an embedded font is filled from its
+  inline `BI`/`ID`/`EI` images, form XObjects, and text. An inline image is
+  painted by the same code as `Do`: its abbreviated dictionary is expanded to
+  the image XObject it stands for, including a `/ColorSpace` that names an
+  entry in the page's resources rather than a device space. Text shown with an embedded font is filled from its
   real glyph outlines for all three program formats -- TrueType `glyf`
   (`/FontFile2`, simple and composite), CFF (`/FontFile3`, name-keyed and
   CID-keyed Type 2 charstrings with subroutines and flex), and Type 1
@@ -521,6 +524,12 @@ Boundaries:
   exception, because its target is rebuilt on every save and cannot simply be
   left: one whose page is gone gives up the reference and falls back to the
   index it last had, clamped to the document, keeping its view or action.
+- **A stencil mask paints black rather than the current fill colour.** An
+  image with `/ImageMask true` is decoded as a 1-bit grey *image*, where ISO
+  32000-1 8.9.6.2 makes it a stencil: sample 0 (after `/Decode`) should paint
+  whatever colour is set, and sample 1 nothing at all. It affects image
+  XObjects and inline images alike, and shows up against pdfium wherever a mask
+  is drawn under a non-black fill.
 - Page rendering is a best-effort rasterizer, not a certification-grade visual
   engine. Its overprint support is a composite RGB preview, not a plate-accurate
   separation or process/spot ink model, and complete PDF 2.0 imaging semantics
@@ -752,6 +761,17 @@ Supported:
   map is available.
 - Use glyph-name fallbacks such as `uniXXXX` and `uXXXX`.
 - Use best-effort text extraction fallback for partially broken content streams.
+- **An inline image's samples are not read as tokens.** The bytes between `ID`
+  and `EI` are the image, and they can spell any operator or open a string that
+  closes nowhere, so a reader that lexes them loses the rest of the page. Where
+  the dictionary settles the length it is used (ISO 32000-1 8.9.7: unfiltered
+  samples occupy `ceil(Width x BitsPerComponent x components / 8) x Height`
+  bytes, rows padded to a byte); a declared length is accepted only when an
+  `EI` really stands at the end of it, and a filtered image falls back to
+  searching for a free-standing `EI`. Every reader -- extraction, layout,
+  rendering, the graphics absorber, glyph-usage scanning -- goes through the
+  one module, which also expands the abbreviated dictionary (table 93) to the
+  image XObject names.
 - **A word gap in a `TJ` array is measured against the font's real metrics.**
   The displacements between a `TJ` array's strings are kerning inside a word or
   the space between words, and which is which depends on how wide the glyphs

@@ -760,6 +760,12 @@ class ContentStreamParser:
             "Do": 1,
             "BX": 0,
             "EX": 0,
+            # An inline image reaches the operator loop as `BI`, the image
+            # itself, then `EI` -- the tokenizer having read its dictionary and
+            # samples as one operand. Declaring the arity keeps the operand
+            # stack from carrying every image on a page to the end of it.
+            "BI": 0,
+            "EI": 1,
             "BMC": 1,
             "BDC": 2,
             "EMC": 0,
@@ -1670,6 +1676,32 @@ class ContentStreamParser:
             token = self._read_number_or_operator()
             self._count_token()
             yield token
+            if token == "BI":
+                yield from self._read_inline_image()
+
+    def _read_inline_image(self) -> Iterator[Any]:
+        """Lex a ``BI`` image as one thing and yield it with its ``EI``.
+
+        The samples between ``ID`` and ``EI`` are not tokens (ISO 32000-1
+        8.9.7): lexed as if they were, a photograph's bytes spell operators
+        nobody wrote and open strings that close nowhere, so everything drawn
+        after the image is lost. They arrive here as a single
+        :class:`~.inline_image.InlineImage` operand instead, which is also all
+        a caller needs to paint it.
+        """
+        from .inline_image import scan_inline_image
+
+        image, self._pos = scan_inline_image(
+            self._text, self._pos, limits=self._limits
+        )
+        if image is None:
+            # A dictionary we could not read. The position is wherever it
+            # stopped parsing, so carry on lexing rather than lose the page.
+            return
+        self._count_token()
+        yield image
+        self._count_token()
+        yield "EI"
 
     def _read_string(self) -> bytes:
         # Assumes at "("

@@ -1191,6 +1191,9 @@ class _PageRasterizer:
         if op == "Do" and operands:
             name = str(operands[-1]).lstrip("/")
             self._paint_xobject(name, resources_cos, resources_plain, depth)
+            return
+        if op == "EI" and operands:
+            self._paint_inline_image(operands[-1], resources_cos)
 
     def _set_color(self, op: str, operands: list[Any]) -> None:
         vals = [_number(v) for v in operands]
@@ -3239,6 +3242,32 @@ class _PageRasterizer:
                         "n_comps": 3,
                     }
             self._paint_image_pixels(meta, images[name], self.state.ctm)
+
+    def _paint_inline_image(
+        self, image: Any, resources_cos: PdfDictionary | None
+    ) -> None:
+        """Paint a ``BI … ID … EI`` image over the unit square, the way ``Do`` does.
+
+        An inline image is an image XObject spelled short (ISO 32000-1 8.9.7),
+        so it is painted by the same code. The tokenizer has already expanded
+        the abbreviations; the one thing it could not do is resolve a
+        ``/ColorSpace`` that names an entry in the page's ``/ColorSpace``
+        resources instead of a device space, which only the page knows.
+        """
+        from .inline_image import COLOURSPACE_ABBREVIATIONS, InlineImage
+
+        if not isinstance(image, InlineImage):
+            return
+        stream = image.to_stream()
+        space = stream.mapping.get(PdfName("ColorSpace"))
+        if isinstance(space, PdfName) and resources_cos is not None:
+            name = space.name.lstrip("/")
+            if name not in COLOURSPACE_ABBREVIATIONS.values():
+                spaces = self._resource_dict(resources_cos, "ColorSpace")
+                named = spaces.mapping.get(PdfName(name)) if spaces else None
+                if named is not None:
+                    stream.mapping[PdfName("ColorSpace")] = self._resolve(named)
+        self._paint_image_stream("", stream, None)
 
     def _paint_image_stream(self, name: str, stream: PdfStream, ref: Any) -> None:
         try:
