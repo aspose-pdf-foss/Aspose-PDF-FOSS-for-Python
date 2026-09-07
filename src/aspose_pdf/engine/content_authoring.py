@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
+from .agl import encode_with_base_encoding, unencodable_characters
 from .cos import format_pdf_number
 from .filters import StreamDecoder
 
@@ -70,10 +71,15 @@ def safe_resource_name(name: str | None, prefix: str) -> str | None:
     return None
 
 
-def pdf_literal(text: str) -> str:
-    """Encode text as a PDF literal string preserving UTF-8 bytes."""
+def pdf_literal(text: str | bytes) -> str:
+    """Wrap already-encoded *text* as a PDF literal string.
 
-    raw = str(text).encode("utf-8")
+    The bytes are the string's own: for a simple font they are codes in its
+    encoding, and for a CID font they are the two-byte codes. Encoding is the
+    caller's decision, because only the caller knows the font.
+    """
+
+    raw = text if isinstance(text, bytes) else str(text).encode("utf-8")
     out = bytearray()
     for b in raw:
         if b == 0x5C:
@@ -132,18 +138,41 @@ def build_text_stream(
     font_resource: str,
     font_size: float,
     color: Sequence[float],
+    encoding: str = "WinAnsiEncoding",
 ) -> bytes:
+    """Draw *text* with a simple font, in that font's own encoding.
+
+    The string in a ``Tj`` is a sequence of *codes*, and a simple font gives
+    each code a glyph through its encoding. Writing the text's UTF-8 into one
+    therefore draws whatever glyphs those bytes name -- two wrong letters for
+    every accented one, and nothing recognisable for a script the encoding does
+    not hold. A character the font cannot show is refused rather than drawn as
+    something else.
+    """
     parts = [
         "q",
         color_operator(color, stroking=False),
         "BT",
         f"/{font_resource} {format_number(font_size)} Tf",
         f"1 0 0 1 {format_number(x)} {format_number(y)} Tm",
-        f"{pdf_literal(text)} Tj",
+        f"{pdf_literal(encode_simple_text(text, encoding))} Tj",
         "ET",
         "Q",
     ]
     return (" ".join(parts) + "\n").encode("latin-1")
+
+
+def encode_simple_text(text: str, encoding: str) -> bytes:
+    """The codes *text* has in *encoding*, or a refusal naming what it lacks."""
+    encoded = encode_with_base_encoding(str(text), encoding)
+    if encoded is not None:
+        return encoded
+    missing = "".join(unencodable_characters(str(text), encoding))
+    raise PdfValidationException(
+        f"{encoding} has no code for {missing!r}. A standard font can only "
+        "draw the characters its encoding names; pass font= to embed a font "
+        "that covers this text."
+    )
 
 
 def build_cid_text_stream(

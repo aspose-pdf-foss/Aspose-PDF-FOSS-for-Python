@@ -63,13 +63,38 @@ class StandardFonts:
             return _DEFAULT_WIDTH
         return widths.get(char_code, _DEFAULT_WIDTH)
 
+    #: The two faces whose glyphs are not letters. Their codes mean whatever
+    #: the font says they mean, which is the definition of a symbolic font.
+    SYMBOLIC = ("Symbol", "ZapfDingbats")
+
+    @classmethod
+    def is_symbolic(cls, font_name):
+        """True for a standard font whose codes are its own to define."""
+        return str(font_name).lstrip("/") in cls.SYMBOLIC
+
     @classmethod
     def get_default_encoding(cls, font_name):
-        """Return the default encoding name for a standard font.
+        """The encoding a standard font's codes are in.
 
         Most standard fonts use *WinAnsiEncoding*; ``Symbol`` and
-        ``ZapfDingbats`` historically use *StandardEncoding*.
+        ``ZapfDingbats`` take *StandardEncoding*'s codes for the ASCII range,
+        which is how their Greek letters and dingbats are reached by typing
+        ``a``. That is what the *bytes* are; what may be **declared** is
+        another question -- see :meth:`declared_encoding`.
         """
-        if font_name in ("Symbol", "ZapfDingbats"):
+        if cls.is_symbolic(font_name):
             return "StandardEncoding"
         return "WinAnsiEncoding"
+
+    @classmethod
+    def declared_encoding(cls, font_name):
+        """The ``/Encoding`` to write, or ``None`` to leave it out.
+
+        A symbolic font is left without one so its **built-in** encoding
+        stands (ISO 32000-1 9.6.6.2). Declaring a base encoding there replaces
+        the font's own: Symbol would take ``a`` for Latin *a*, which it has no
+        glyph for, and the page would draw nothing at all.
+        """
+        return None if cls.is_symbolic(font_name) else cls.get_default_encoding(
+            font_name
+        )

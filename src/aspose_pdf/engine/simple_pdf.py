@@ -139,16 +139,12 @@ def _glyph_name_to_unicode(name: str) -> int | None:
 
     Uses the full AGL algorithm (see :mod:`aspose_pdf.engine.agl`), covering
     named glyphs (``aacute``, ``Euro``, ``afii10017`` …) as well as the
-    algorithmic ``uniXXXX``/``uXXXX`` forms. A name that maps to a multi-scalar
-    sequence returns ``None`` because the caller keys a code -> single-codepoint
-    table.
+    algorithmic ``uniXXXX``/``uXXXX`` forms. The same resolution the *encoder*
+    inverts, so a code read back and a character written out agree.
     """
-    from .agl import glyph_name_to_unicode
+    from .agl import glyph_name_to_scalar
 
-    mapped = glyph_name_to_unicode(name)
-    if mapped is None or len(mapped) != 1:
-        return None
-    return ord(mapped)
+    return glyph_name_to_scalar(name)
 
 
 # Maximum /First nesting depth for outline trees; deeper chains raise.
@@ -6349,6 +6345,8 @@ class SimplePdf:
     def _register_standard_font_resource(
         self, page_index: int, base_font: str = "Helvetica"
     ) -> str:
+        from .std_fonts import StandardFonts
+
         font_name = str(base_font or "Helvetica").lstrip("/")
         fonts = self._ensure_resource_subdict(page_index, "Font")
         for key, value in fonts.mapping.items():
@@ -6373,6 +6371,14 @@ class SimplePdf:
                 PdfName("BaseFont"): PdfName(font_name),
             }
         )
+        # Say which encoding the codes in the content stream are in. Without it
+        # a reader falls back to the font's built-in one -- StandardEncoding for
+        # the text faces, which has no accented letters at all, so every code
+        # above 127 drew something else. A symbolic font is the exception: its
+        # built-in encoding is the point of it.
+        declared = StandardFonts.declared_encoding(font_name)
+        if declared is not None:
+            font_dict.mapping[PdfName("Encoding")] = PdfName(declared)
         fonts.mapping[PdfName(resource_name)] = font_dict
         self.fonts[resource_name] = self._convert_cos_to_dict(font_dict)
         return resource_name
@@ -6698,10 +6704,19 @@ class SimplePdf:
                 layout,
             )
         elif font is None:
-            resource = self._register_standard_font_resource(
-                page_index, font_name or "Helvetica"
+            from .std_fonts import StandardFonts
+
+            base = str(font_name or "Helvetica").lstrip("/")
+            resource = self._register_standard_font_resource(page_index, base)
+            content = build_text_stream(
+                text,
+                x,
+                y,
+                resource,
+                size,
+                color,
+                StandardFonts.get_default_encoding(base),
             )
-            content = build_text_stream(text, x, y, resource, size, color)
         else:
             from .font_authoring import prepare_authored_font
 

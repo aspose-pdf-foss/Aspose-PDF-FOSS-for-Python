@@ -9,6 +9,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`add_text` drew the wrong glyphs for anything but ASCII.** The string in a
+  text-showing operator is a sequence of *codes*, and a simple font gives each
+  code a glyph through its encoding. `add_text` wrote the text's UTF-8 into one
+  and declared no encoding at all, so the font fell back to its built-in
+  StandardEncoding and drew whatever glyphs those bytes named: `café` came out
+  with two wrong letters where the accent was, `100€` with three, Cyrillic as a
+  row of Latin nonsense. Nothing failed and nothing warned, and reading the page
+  back through this library hid it because the extractor made the same
+  assumption — pdfminer and Acrobat did not. The font now declares
+  `WinAnsiEncoding` and the text is encoded into it, by inverting the very table
+  the reader resolves codes through, so what is written and what is read back
+  agree by construction. A character that encoding has no code for is refused,
+  naming it and pointing at `font=`, rather than drawn as a different one.
+  `Symbol` and `ZapfDingbats` keep their built-in encoding, which declaring a
+  base encoding would have replaced.
+
 - **`validate()` called every conforming document invalid, and broken ones
   valid.** The structural check walked the object graph and rejected it if any
   node was reachable from itself. A PDF object graph is not a tree: a page's

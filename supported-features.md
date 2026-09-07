@@ -818,7 +818,18 @@ Supported:
   cmap. Vertical fonts apply CID-specific `/W2` position/displacement metrics
   and `/DW2` defaults. The bar is cosmetic — the text is already removed from
   the content — so a run whose position cannot be tracked is left unmarked.
-- Add positioned text to pages with Standard-14 Type1 font resources.
+- Add positioned text to pages with Standard-14 Type1 font resources. The font
+  declares `WinAnsiEncoding` and the text is written as codes in it, so accented
+  letters, curly quotes, dashes, the euro sign and the rest of Latin-1 come out
+  as themselves in any reader -- the codes in a content stream are the font's,
+  and putting the text's UTF-8 there instead drew the glyphs those bytes name. A
+  character `WinAnsiEncoding` has no code for is **refused**, naming it, rather
+  than drawn as a different one; pass `font=` to embed a font that covers it
+  (see [Fonts](#fonts)). This includes the two that look like they should work:
+  the encoding puts *space* at 0xA0 and *hyphen* at 0xAD, so a non-breaking
+  space and a soft hyphen have no code of their own. `Symbol` and
+  `ZapfDingbats` are left without a declared encoding, because their built-in
+  one is the point of them.
 - Mark newly authored text with a structure tag and optional `/ActualText`.
 
 Boundaries:

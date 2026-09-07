@@ -61,6 +61,82 @@ def cff_standard_strings() -> tuple[str, ...]:
     return tuple(_bundle()["cff_standard_strings"])
 
 
+_ENCODERS: dict[str, dict[int, int]] = {}
+
+
+def _encoder_for(name: str) -> dict[int, int] | None:
+    """``unicode scalar -> byte code`` for a predefined base encoding.
+
+    Built by inverting the same table the reader resolves codes through, so a
+    string this library writes and the same string read back agree by
+    construction rather than by two tables happening to match. The lowest code
+    wins where a scalar has more than one, which keeps the ASCII range as
+    itself.
+    """
+    cached = _ENCODERS.get(name)
+    if cached is not None:
+        return cached
+    table = base_encoding_table(name)
+    if table is None:
+        return None
+    encoder: dict[int, int] = {}
+    for code, glyph in enumerate(table):
+        scalar = glyph_name_to_scalar(glyph) if glyph else None
+        if scalar is not None:
+            encoder.setdefault(scalar, code)
+    _ENCODERS[name] = encoder
+    return encoder
+
+
+def glyph_name_to_scalar(name: str) -> int | None:
+    """Resolve a glyph name to a *single* Unicode codepoint, or ``None``.
+
+    A one-byte code stands for one glyph, and the tables that map codes to
+    glyph names are read and written through this, so a name the AGL expands to
+    a sequence (a ligature, say) has no place in either direction.
+    """
+    mapped = glyph_name_to_unicode(name)
+    if mapped is None or len(mapped) != 1:
+        return None
+    return ord(mapped)
+
+
+def encode_with_base_encoding(text: str, name: str) -> bytes | None:
+    """Encode *text* into a simple font's one-byte codes, or ``None``.
+
+    A string drawn with a simple font is a sequence of *codes in that font's
+    encoding*, not text in some encoding of its own: byte 0xE9 is whatever
+    glyph the font puts at 0xE9. Writing UTF-8 into one draws the glyphs those
+    bytes happen to name -- two wrong letters for every accented one -- so a
+    character the encoding has no code for has to stop the caller rather than
+    be written as something else.
+
+    ``None`` means some character has no code here, and names nothing about
+    which: the caller reports the character itself, which is what the writer of
+    the text needs to know.
+    """
+    encoder = _encoder_for(name)
+    if encoder is None:
+        return None
+    out = bytearray()
+    for character in text:
+        code = encoder.get(ord(character))
+        if code is None:
+            return None
+        out.append(code)
+    return bytes(out)
+
+
+def unencodable_characters(text: str, name: str) -> list[str]:
+    """The characters of *text* that *name* has no code for, in order, once each."""
+    encoder = _encoder_for(name) or {}
+    seen: dict[str, None] = {}
+    for character in text:
+        if ord(character) not in encoder:
+            seen.setdefault(character, None)
+    return list(seen)
+
+
 def base_encoding_table(name: str) -> tuple[str, ...] | None:
     """Return a predefined base encoding as a 256-tuple of code -> glyph name.
 
