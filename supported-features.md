@@ -425,7 +425,11 @@ Supported:
   `BT` initialises the text and text-line matrices and nothing else (9.4.1).
   A **pattern** (8.7.3), tiling or shading, is a colour: it paints a path fill,
   a **stroke** (`SCN`) and the **glyphs** of text alike, and a plain colour or a
-  change of colour space puts it down again. An inline image is
+  change of colour space puts it down again.
+  The page's contents are an **isolated transparency group** (11.4.7): they
+  begin on a transparent backdrop and meet the page's background colour once,
+  at the end, so a blend mode painting over bare page blends against nothing
+  rather than against the paper. An inline image is
   painted by the same code as `Do`: its abbreviated dictionary is expanded to
   the image XObject it stands for, including a `/ColorSpace` that names an
   entry in the page's resources rather than a device space. A **stencil mask**

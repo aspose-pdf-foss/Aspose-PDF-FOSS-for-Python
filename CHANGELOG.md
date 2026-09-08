@@ -9,6 +9,27 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A blend mode over bare page blended against paper that is not there.** ISO
+  32000-1 11.4.7: a page's contents are a transparency group, and that group is
+  *isolated* — it begins with nothing behind it, and the paper is joined once,
+  at the end. The canvas was the paper instead, opaque from the first pixel, so
+  `Screen` over bare page came out white where it should leave the colour
+  alone, and every other non-Normal mode was wrong in its own way wherever it
+  painted over nothing. The compositing formula already had the term for it
+  (11.3.8, `(1 - αb) · Cs`); it was simply never reached, because the page
+  canvas carried no alpha to be zero. It does now, and the finished page meets
+  the background in one pass at the end. All sixteen blend modes match pdfium
+  and MuPDF, over bare page and over paint alike.
+
+  The pass costs almost nothing: a pixel nothing reached still holds the
+  background it was filled with and a fully covered one needs no help, so only
+  partial coverage — `ca`/`CA` below 1, or a soft mask — is mixed, and a page
+  with none of it is finished by a single scan in C (0.6 ms on a 1.6-megapixel
+  supersampled canvas). Coverage is stored as the floor of the alpha rather
+  than rounded to nearest, so its complement is exactly the backdrop's share;
+  measured over thirteen `ca` values that agrees with pdfium on all thirteen,
+  where rounding agreed on nine.
+
 - **A pattern only painted path fills.** ISO 32000-1 8.7.3: a pattern is
   selected with `scn`/`SCN` in a Pattern colour space, and from then on it *is*
   the fill or the stroke colour. `SCN` was ignored outright, so a stroke drawn

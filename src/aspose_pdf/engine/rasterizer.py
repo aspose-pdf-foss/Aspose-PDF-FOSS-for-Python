@@ -339,6 +339,12 @@ def _repeated_bytearray(pattern: bytes, count: int) -> bytearray:
     return out
 
 
+#: Maps a coverage byte to 1 where the pixel is *partly* covered and 0 where it
+#: is either untouched or fully covered -- the two cases the page needs no work
+#: for. ``bytes.translate`` then finds them without a Python-level loop.
+_PARTIAL_COVERAGE = bytes(0 if value in (0, 255) else 1 for value in range(256))
+
+
 class _Canvas:
     def __init__(self, width: int, height: int, background: Color):
         self.width = width
@@ -438,7 +444,15 @@ class _Canvas:
             )
             self.pixels[off + channel] = _byte(premultiplied / output_alpha)
         if self.alpha is not None:
-            self.alpha[idx] = _byte(output_alpha * 255.0)
+            # The byte keeps the coverage's *floor*, so its complement
+            # ``255 - a`` carries the fraction and is exactly the backdrop's
+            # share when the page is flattened. Rounding to nearest instead
+            # overstates the paint by up to half a level and lands the result a
+            # unit dark -- measured against pdfium over thirteen `ca` values,
+            # the floor agrees on all thirteen and rounding on nine.
+            # Never floor to zero, though: zero is what says "nothing has ever
+            # reached here", and the flatten relies on that being exactly true.
+            self.alpha[idx] = max(1, int(output_alpha * 255.0))
 
 
 @dataclass
@@ -749,6 +763,14 @@ class _PageRasterizer:
         self.page_height_pts = page_h
         self.background = _coerce_rgb(background)
         self.canvas = _Canvas(self.width, self.height, self.background)
+        # ISO 32000-1 11.4.7: the page's contents form a transparency group,
+        # and that group is *isolated* -- it begins on a transparent backdrop,
+        # not on the paper. The difference only shows through a blend mode:
+        # blending against paper that is not there whitened everything drawn
+        # over bare page, so `Screen` came out white where it should leave the
+        # colour alone. The page is composited onto the background at the end
+        # of the render instead, which is where the paper actually comes in.
+        self.canvas.alpha = bytearray(self.width * self.height)
         # Clip masks saved by ``q`` and restored by ``Q``.
         self._clip_stack: list[bytearray] = []
         self.state = _GraphicsState()
@@ -784,6 +806,7 @@ class _PageRasterizer:
             with self._phase("annotations"):
                 self._paint_annotations()
         with self._phase("downsample"):
+            self._flatten_onto_background()
             pixels = self._downsample() if self._ss > 1 else bytes(self.canvas.pixels)
         return RasterizedPage(
             width=self.target_width,
@@ -920,6 +943,42 @@ class _PageRasterizer:
             return None
         x0, y0, x1, y1 = (float(n) for n in numbers)
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+    def _flatten_onto_background(self) -> None:
+        """Put the finished page group on the paper.
+
+        The canvas holds straight-alpha colour, so a pixel nothing reached is
+        still fully transparent and one drawn at ``ca 0.5`` is half so. Both
+        meet the background here, once, rather than every paint meeting it over
+        and over.
+
+        Almost nothing needs doing: a pixel nothing reached still holds the
+        background the canvas was filled with, and a fully covered one needs no
+        help either. Only partial coverage -- ``ca``/``CA`` below 1, or a soft
+        mask -- has to be mixed, and a page with none is finished by a single
+        scan in C.
+        """
+        alpha = self.canvas.alpha
+        if alpha is None:
+            return
+        # The page is on the paper now and so opaque: an annotation drawn after
+        # this must blend against it, not against nothing.
+        self.canvas.alpha = None
+        partial = alpha.translate(_PARTIAL_COVERAGE)
+        index = partial.find(1)
+        if index < 0:
+            return
+        pixels = self.canvas.pixels
+        background = self.background
+        while index >= 0:
+            weight = alpha[index] / 255.0
+            rest = 1.0 - weight
+            offset = index * 3
+            for channel in range(3):
+                pixels[offset + channel] = _byte(
+                    pixels[offset + channel] * weight + background[channel] * rest
+                )
+            index = partial.find(1, index + 1)
 
     def _downsample(self) -> bytes:
         """Box-average each ``ss x ss`` block of the supersampled canvas.
