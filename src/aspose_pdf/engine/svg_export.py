@@ -352,13 +352,27 @@ class _SvgWriter(_PageRasterizer):
         matrix: Matrix,
         smask: tuple[int, int, bytes] | None = None,
     ) -> None:
-        from .rasterizer import _decode_image_to_rgb
+        from .rasterizer import _decode_image_to_rgb, _decode_stencil
 
-        image = _decode_image_to_rgb(meta, data, limits=self._load_limits)
-        if image is None:
-            return
-        width, height, pixels = image
-        href = _png_data_uri(width, height, "RGB", pixels)
+        if meta.get("image_mask"):
+            # A stencil is a shape, not a picture: it paints the colour already
+            # set, and shows the page through everywhere else. In SVG that is
+            # the fill colour with an alpha channel.
+            stencil = _decode_stencil(meta, data, limits=self._load_limits)
+            if stencil is None:
+                return
+            width, height, coverage = stencil
+            red, green, blue = self.state.fill_color
+            painted = bytes((red, green, blue, 255))
+            clear = b"\x00\x00\x00\x00"
+            pixels = b"".join(painted if on else clear for on in coverage)
+            href = _png_data_uri(width, height, "RGBA", pixels)
+        else:
+            image = _decode_image_to_rgb(meta, data, limits=self._load_limits)
+            if image is None:
+                return
+            width, height, pixels = image
+            href = _png_data_uri(width, height, "RGB", pixels)
         mask_attribute = ""
         if smask is not None and smask[2]:
             mask_attribute = f' mask="url(#{self._mask_from_smask(smask)})"'

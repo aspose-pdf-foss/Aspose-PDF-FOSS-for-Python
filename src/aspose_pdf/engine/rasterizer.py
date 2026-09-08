@@ -44,11 +44,13 @@ from .font_resolver import ResolvedFace, resolver_for
 from .glyph_outlines import TrueTypeOutlines
 from .image_export import (
     TiffPage,
+    apply_decode,
     cmyk_to_rgb,
     ext_from_magic,
     gray_to_rgb,
     indexed_to_rgb,
     rgb_to_gray,
+    stencil_coverage,
     to_8bpc_bytes,
     write_png,
     write_tiff,
@@ -3635,11 +3637,23 @@ class _PageRasterizer:
         matrix: Matrix,
         smask: tuple[int, int, bytes] | None = None,
     ) -> None:
-        image = _decode_image_to_rgb(meta, data, limits=self._load_limits)
-        if image is None:
-            return
-        width, height, pixels = image
-        color_kind = str(meta.get("cs_kind") or "other")
+        coverage: list[int] | None = None
+        pixels = b""
+        if meta.get("image_mask"):
+            # A stencil paints the colour that is already set, so it carries no
+            # colour of its own and no kind to blend it by: the fill's own kind
+            # is the right one, which is what ``color_kind=None`` asks for.
+            stencil = _decode_stencil(meta, data, limits=self._load_limits)
+            if stencil is None:
+                return
+            width, height, coverage = stencil
+            color_kind: str | None = None
+        else:
+            image = _decode_image_to_rgb(meta, data, limits=self._load_limits)
+            if image is None:
+                return
+            width, height, pixels = image
+            color_kind = str(meta.get("cs_kind") or "other")
         inv = _invert_matrix(matrix)
         if inv is None:
             return
@@ -3668,8 +3682,14 @@ class _PageRasterizer:
                     continue
                 sx = min(width - 1, max(0, int(ix_f * width)))
                 sy = min(height - 1, max(0, int((1.0 - iy_f) * height)))
-                off = (sy * width + sx) * 3
-                color = (pixels[off], pixels[off + 1], pixels[off + 2])
+                off = sy * width + sx
+                if coverage is not None:
+                    if not coverage[off]:
+                        continue  # masked out: the page shows through
+                    color = self.state.fill_color
+                else:
+                    off *= 3
+                    color = (pixels[off], pixels[off + 1], pixels[off + 2])
                 alpha = self.state.fill_alpha
                 if sw:
                     ax = min(sw - 1, max(0, int(ix_f * sw)))
@@ -3694,9 +3714,13 @@ class _PageRasterizer:
         meta["bpc"] = int(bpc or 8)
         image_mask = self._resolve(m.get(PdfName("ImageMask")))
         if isinstance(image_mask, PdfBoolean) and image_mask.value:
+            # A stencil mask is not a picture (ISO 32000-1 8.9.6.2): its
+            # samples choose where the *current colour* is painted, and it has
+            # no colour space of its own to be read in.
             meta["bpc"] = 1
             meta["cs_kind"] = "gray"
             meta["n_comps"] = 1
+            meta["image_mask"] = True
         else:
             kind, comps, palette, base_comps = self._colorspace_meta(
                 self._resolve(m.get(PdfName("ColorSpace")))
@@ -3883,7 +3907,14 @@ def _decode_image_to_rgb(
         decoded = decode_jpeg(data, limits=resolved_limits)
         if decoded is None:
             return None
-        pixels = decoded.samples
+        # /Decode maps the components, so it runs before they become RGB --
+        # which is where an Adobe CMYK JPEG's [1 0 1 0 1 0 1 0] belongs.
+        comps_by_mode = {"L": 1, "CMYK": 4}
+        pixels = apply_decode(
+            decoded.samples,
+            meta.get("decode"),
+            comps_by_mode.get(decoded.mode, 3),
+        )
         if decoded.mode == "L":
             pixels = gray_to_rgb(pixels)
         elif decoded.mode == "CMYK":
@@ -3901,6 +3932,7 @@ def _decode_image_to_rgb(
     bpc = int(meta.get("bpc") or 8)
     kind = meta.get("cs_kind") or "rgb"
     comps = int(meta.get("n_comps") or (1 if kind == "gray" else 3))
+    decode = meta.get("decode")
     if kind == "indexed" and meta.get("palette") is not None:
         rgb = indexed_to_rgb(
             data,
@@ -3909,16 +3941,48 @@ def _decode_image_to_rgb(
             width,
             height,
             int(meta.get("palette_base_comps") or 3),
+            decode=decode,
         )
         return (width, height, rgb)
     if kind == "gray" or comps == 1:
-        gray = to_8bpc_bytes(data, bpc, width, height, 1)
+        gray = apply_decode(to_8bpc_bytes(data, bpc, width, height, 1), decode, 1)
         return (width, height, gray_to_rgb(gray))
     if kind == "cmyk" or comps == 4:
-        cmyk = to_8bpc_bytes(data, bpc, width, height, 4)
+        cmyk = apply_decode(to_8bpc_bytes(data, bpc, width, height, 4), decode, 4)
         return (width, height, cmyk_to_rgb(cmyk))
-    rgb = to_8bpc_bytes(data, bpc, width, height, 3)
+    rgb = apply_decode(to_8bpc_bytes(data, bpc, width, height, 3), decode, 3)
     return (width, height, rgb)
+
+
+def _decode_stencil(
+    meta: dict,
+    data: bytes,
+    *,
+    limits: PdfLoadLimits | None = None,
+) -> tuple[int, int, list[int]] | None:
+    """A stencil mask's per-pixel paint/don't map (ISO 32000-1 8.9.6.2).
+
+    A stencil is not a picture: its one-bit samples say where the colour that
+    is already set gets painted and where the page shows through, so there is
+    nothing here to convert to RGB.
+    """
+    resolved_limits = _coerce_limits(limits)
+    budget = _LoadBudget(resolved_limits)
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    if width <= 0 or height <= 0:
+        return None
+    budget.check_image_pixels(width, height, "rasterized stencil mask")
+    budget.check(
+        width * height,
+        "max_decoded_stream_bytes",
+        "rasterized stencil mask samples",
+    )
+    return (
+        width,
+        height,
+        stencil_coverage(data, width, height, meta.get("decode")),
+    )
 
 
 def _coerce_rgb(value: Sequence[int]) -> Color:

@@ -9,6 +9,27 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A stencil mask painted black instead of the colour that was set.** An image
+  with `/ImageMask true` is not a picture (ISO 32000-1 8.9.6.2): its one-bit
+  samples say where the *current fill colour* goes and where the page shows
+  through. The renderer decoded it as a one-bit grey image, so every stencil
+  came out black on white whatever colour was in force — and a stencil is how
+  scanned text, logos and Type 3 glyph bitmaps are drawn. It now paints the
+  fill colour, carrying that colour's own overprint behaviour with it, and
+  leaves masked-out samples untouched. The SVG export emits the same thing as
+  an RGBA image rather than a grey one.
+
+- **`/Decode` was collected and never read.** The array that says which
+  interval of its colour space a sample spans (8.9.5.2) reached the renderer's
+  image metadata and stopped there, so an inverted image rendered
+  un-inverted — including the `[1 0 1 0 1 0 1 0]` that Adobe CMYK JPEGs carry.
+  The image exporter honoured it for a single grey component and ignored it for
+  RGB, CMYK and Indexed. One implementation now serves the renderer, the SVG
+  export and the exporter: per component, at any bit depth, applied before the
+  colour conversion, and in *index* space for `/Indexed`, whose default range is
+  `[0, 2**bpc - 1]` rather than `[0 1]` because its samples are palette entries.
+  Verified against pdfium.
+
 - **An inline image's samples were read as content-stream tokens.** Between
   `ID` and `EI` lie the image's bytes, and bytes spell whatever they happen to
   spell — an operator nobody wrote, a name, an opening `(` that closes nowhere.

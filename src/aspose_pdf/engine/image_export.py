@@ -407,9 +407,12 @@ def indexed_to_rgb(
     width: int,
     height: int,
     base_comps: int = 3,
+    decode: Any = None,
 ) -> bytes:
     """Expand indexed samples to RGB by looking up the ``/Indexed`` palette."""
-    indices = unpack_samples(data, bpc, width, height, comps=1)
+    indices = decode_indices(
+        unpack_samples(data, bpc, width, height, comps=1), decode, bpc
+    )
     out = bytearray(len(indices) * 3)
     plen = len(palette)
     for j, idx in enumerate(indices):
@@ -505,14 +508,114 @@ def _pillow_transcode(
         ) from exc
 
 
-def _decode_is_inverted(decode: Any, comps: int) -> bool:
-    """True when a 1-component ``/Decode`` array requests inverted samples."""
-    if not isinstance(decode, (list, tuple)) or comps != 1 or len(decode) < 2:
+# ---------------------------------------------------------------------------
+# /Decode -- what a sample value means (ISO 32000-1 8.9.5.2)
+# ---------------------------------------------------------------------------
+#
+# A sample is a number in [0, 2**bpc - 1]; the /Decode array says which
+# interval of the colour space it spans. Component *i* maps
+#
+#     Dmin + x * (Dmax - Dmin) / (2**bpc - 1)
+#
+# with the default being the component's own range -- [0 1] for the device
+# spaces, [0, 2**bpc - 1] for /Indexed (where the samples are *indices*), and
+# [0 1] for a stencil mask (where they choose which samples paint). Applied to
+# samples that are already 8 bits wide, x/255 is the same fraction, so the
+# whole mapping is a 256-entry table per component.
+
+
+def decode_tables(decode: Any, comps: int) -> list[bytes | None] | None:
+    """Per-component 256-entry maps for a ``/Decode`` array, or ``None``.
+
+    ``None`` -- for the array as a whole or for one component -- means the
+    default range, which is the identity and needs no work.
+    """
+    if not isinstance(decode, (list, tuple)) or len(decode) < comps * 2:
+        return None
+    tables: list[bytes | None] = []
+    changed = False
+    for index in range(comps):
+        try:
+            dmin = float(decode[2 * index])
+            dmax = float(decode[2 * index + 1])
+        except (TypeError, ValueError):
+            return None
+        if dmin == 0.0 and dmax == 1.0:
+            tables.append(None)
+            continue
+        changed = True
+        span = dmax - dmin
+        tables.append(
+            bytes(
+                min(255, max(0, round((dmin + (x / 255.0) * span) * 255.0)))
+                for x in range(256)
+            )
+        )
+    return tables if changed else None
+
+
+def apply_decode(samples: bytes, decode: Any, comps: int) -> bytes:
+    """Remap tightly packed 8-bit *samples* through a ``/Decode`` array."""
+    tables = decode_tables(decode, comps)
+    if tables is None:
+        return samples
+    out = bytearray(samples)
+    for index, table in enumerate(tables):
+        if table is not None:
+            out[index::comps] = bytes(out[index::comps]).translate(table)
+    return bytes(out)
+
+
+def decode_indices(indices: list[int], decode: Any, bpc: int) -> list[int]:
+    """Remap ``/Indexed`` samples, whose ``/Decode`` is in *index* space.
+
+    Its default is ``[0, 2**bpc - 1]`` rather than ``[0 1]``, because what a
+    sample selects here is a palette entry and not a colour component.
+    """
+    maxv = (1 << bpc) - 1
+    if not isinstance(decode, (list, tuple)) or len(decode) < 2 or maxv <= 0:
+        return indices
+    try:
+        dmin = float(decode[0])
+        dmax = float(decode[1])
+    except (TypeError, ValueError):
+        return indices
+    if dmin == 0.0 and dmax == float(maxv):
+        return indices
+    span = (dmax - dmin) / maxv
+    return [
+        min(maxv, max(0, round(dmin + value * span))) for value in indices
+    ]
+
+
+def stencil_paints_high_sample(decode: Any) -> bool:
+    """Which 1-bit sample a stencil mask paints (ISO 32000-1 8.9.6.2).
+
+    With the default ``/Decode [0 1]`` it is sample **0** that paints and 1
+    that is masked out; ``[1 0]`` reverses them.
+    """
+    if not isinstance(decode, (list, tuple)) or len(decode) < 2:
         return False
     try:
         return float(decode[0]) > float(decode[1])
     except (TypeError, ValueError):
         return False
+
+
+def stencil_coverage(
+    data: bytes, width: int, height: int, decode: Any
+) -> list[int]:
+    """Per-pixel 1/0 for a stencil mask: does this sample paint?"""
+    paints_high = stencil_paints_high_sample(decode)
+    samples = unpack_samples(data, 1, width, height, 1)
+    if paints_high:
+        return [value & 1 for value in samples]
+    return [1 - (value & 1) for value in samples]
+
+
+def _decode_is_inverted(decode: Any, comps: int) -> bool:
+    """True when a 1-component ``/Decode`` array requests inverted samples."""
+    return comps == 1 and stencil_paints_high_sample(decode)
 
 
 def _build_raster(
@@ -533,26 +636,27 @@ def _build_raster(
             width,
             height,
             int(meta.get("palette_base_comps") or 3),
+            decode=decode,
         )
         return ("RGB", rgb, 8, None)
 
     if cs_kind == "cmyk" or (cs_kind == "unknown" and meta.get("n_comps") == 4):
-        samples = to_8bpc_bytes(decoded, bpc, width, height, 4)
+        samples = apply_decode(to_8bpc_bytes(decoded, bpc, width, height, 4), decode, 4)
         return ("RGB", cmyk_to_rgb(samples), 8, None)
 
     if cs_kind == "rgb" or (cs_kind == "unknown" and meta.get("n_comps") == 3):
-        samples = to_8bpc_bytes(decoded, bpc, width, height, 3)
+        samples = apply_decode(to_8bpc_bytes(decoded, bpc, width, height, 3), decode, 3)
         return ("RGB", samples, 8, None)
 
     # grayscale / image-mask / unknown single component
     if bpc == 1:
+        # One bit stays one bit: a stencil is a shape, and inverting the bits
+        # is the whole of /Decode at this depth.
         data = decoded
         if _decode_is_inverted(decode, 1):
             data = _invert_bytes(data)
         return ("L", data, 1, None)
-    samples = to_8bpc_bytes(decoded, bpc, width, height, 1)
-    if _decode_is_inverted(decode, 1):
-        samples = _invert_bytes(samples)
+    samples = apply_decode(to_8bpc_bytes(decoded, bpc, width, height, 1), decode, 1)
     return ("L", samples, 8, None)
 
 

@@ -416,7 +416,14 @@ Supported:
   inline `BI`/`ID`/`EI` images, form XObjects, and text. An inline image is
   painted by the same code as `Do`: its abbreviated dictionary is expanded to
   the image XObject it stands for, including a `/ColorSpace` that names an
-  entry in the page's resources rather than a device space. Text shown with an embedded font is filled from its
+  entry in the page's resources rather than a device space. A **stencil mask**
+  (`/ImageMask true`) is painted as the shape it is (8.9.6.2): its one-bit
+  samples put the *current fill colour* on the page and leave the rest showing
+  through, carrying that colour's own overprint behaviour with them; `/Decode`
+  chooses which samples paint. **`/Decode` is applied generally** (8.9.5.2) --
+  per component, at any bit depth, before the colour conversion, and in *index*
+  space for `/Indexed` -- by the renderer, the SVG export and the image
+  exporter alike. Text shown with an embedded font is filled from its
   real glyph outlines for all three program formats -- TrueType `glyf`
   (`/FontFile2`, simple and composite), CFF (`/FontFile3`, name-keyed and
   CID-keyed Type 2 charstrings with subroutines and flex), and Type 1
@@ -524,12 +531,6 @@ Boundaries:
   exception, because its target is rebuilt on every save and cannot simply be
   left: one whose page is gone gives up the reference and falls back to the
   index it last had, clamped to the document, keeping its view or action.
-- **A stencil mask paints black rather than the current fill colour.** An
-  image with `/ImageMask true` is decoded as a 1-bit grey *image*, where ISO
-  32000-1 8.9.6.2 makes it a stencil: sample 0 (after `/Decode`) should paint
-  whatever colour is set, and sample 1 nothing at all. It affects image
-  XObjects and inline images alike, and shows up against pdfium wherever a mask
-  is drawn under a non-black fill.
 - Page rendering is a best-effort rasterizer, not a certification-grade visual
   engine. Its overprint support is a composite RGB preview, not a plate-accurate
   separation or process/spot ink model, and complete PDF 2.0 imaging semantics
