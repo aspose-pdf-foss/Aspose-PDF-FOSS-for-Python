@@ -15,7 +15,7 @@ import itertools
 import math
 import struct
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -752,7 +752,7 @@ class _PageRasterizer:
         self.state = _GraphicsState()
         self.state_stack: list[_GraphicsState] = []
         self.path = _Path()
-        self.pending_clip: list[list[Point]] | None = None
+        self.pending_clip: tuple[list[list[Point]], bool] | None = None
         self.resources_cos = self._page_resources_cos()
         self.resources_plain = self._page_resources_plain()
         self._font_cache: dict[str, _GlyphFont | None] = {}
@@ -1168,7 +1168,7 @@ class _PageRasterizer:
             self._paint_path(op, depth)
             return
         if op in ("W", "W*"):
-            self.pending_clip = self.path.clone_subpaths()
+            self.pending_clip = (self.path.clone_subpaths(), op == "W*")
             return
         if op in (
             "BT",
@@ -1554,38 +1554,63 @@ class _PageRasterizer:
     def _paint_path(self, op: str, depth: int = 0) -> None:
         if op in ("s", "b", "b*"):
             self.path.close()
+        # The star in `f*`/`B*`/`b*` is the fill rule, and it belongs to the
+        # whole path: the subpaths are filled together or a hole never opens.
+        even_odd = op in ("f*", "B*", "b*")
         if op in ("f", "F", "f*", "B", "B*", "b", "b*"):
             if self.state.fill_tiling is not None:
-                self._fill_tiling(self.path.subpaths, self.state.fill_tiling, depth)
+                self._fill_tiling(
+                    self.path.subpaths,
+                    self.state.fill_tiling,
+                    depth,
+                    even_odd=even_odd,
+                )
             elif self.state.fill_shading is not None:
                 self._fill_subpaths_shading(
-                    self.path.subpaths, self.state.fill_shading, self.state.fill_alpha
+                    self.path.subpaths,
+                    self.state.fill_shading,
+                    self.state.fill_alpha,
+                    even_odd=even_odd,
                 )
             else:
                 self._fill_subpaths(
-                    self.path.subpaths, self.state.fill_color, self.state.fill_alpha
+                    self.path.subpaths,
+                    self.state.fill_color,
+                    self.state.fill_alpha,
+                    even_odd=even_odd,
                 )
         if op in ("S", "s", "B", "B*", "b", "b*"):
             self._stroke_subpaths(
                 self.path.subpaths, self.state.stroke_color, self.state.stroke_alpha
             )
         if self.pending_clip is not None:
-            self._apply_clip(self.pending_clip)
+            clip_subpaths, clip_even_odd = self.pending_clip
+            self._apply_clip(clip_subpaths, even_odd=clip_even_odd)
             self.pending_clip = None
         self.path.clear()
 
     def _fill_subpaths(
-        self, subpaths: Iterable[list[Point]], color: Color, alpha: float
+        self,
+        subpaths: Iterable[list[Point]],
+        color: Color,
+        alpha: float,
+        *,
+        even_odd: bool = False,
     ) -> None:
-        for subpath in subpaths:
-            polygon = [self._user_to_pixel(x, y) for x, y in subpath]
-            self._fill_polygon_pixels(polygon, color, alpha)
+        contours = [
+            [self._user_to_pixel(x, y) for x, y in subpath]
+            for subpath in subpaths
+            if len(subpath) >= 3
+        ]
+        self._fill_contours(contours, color, alpha, even_odd=even_odd)
 
     def _fill_tiling(
         self,
         subpaths: list[list[Point]],
         fill_tiling: tuple[Any, Matrix, int, Color],
         depth: int,
+        *,
+        even_odd: bool = False,
     ) -> None:
         if self._pattern_depth >= 4 or depth > 6:
             return
@@ -1625,7 +1650,7 @@ class _PageRasterizer:
             res_plain = self.pdf._convert_cos_to_dict(res_cos)
 
         old_clip = bytes(self.canvas.clip)
-        self._apply_clip(subpaths)
+        self._apply_clip(subpaths, even_odd=even_odd)
         # Isolate the pattern cell from the outer fill path / pending clip.
         outer_state = self.state
         outer_path = self.path
@@ -1707,49 +1732,43 @@ class _PageRasterizer:
         subpaths: Iterable[list[Point]],
         fill_shading: tuple[Shading, Matrix],
         alpha: float,
+        *,
+        even_odd: bool = False,
     ) -> None:
         shading, matrix = fill_shading
         to_shading = _invert_matrix(matrix)
         if to_shading is None:
             return
-        for subpath in subpaths:
-            polygon = [self._user_to_pixel(x, y) for x, y in subpath]
-            self._fill_polygon_shading(polygon, shading, to_shading, alpha)
+        contours = [
+            [self._user_to_pixel(x, y) for x, y in subpath]
+            for subpath in subpaths
+            if len(subpath) >= 3
+        ]
+        self._fill_contours_shading(
+            contours, shading, to_shading, alpha, even_odd=even_odd
+        )
 
-    def _fill_polygon_shading(
+    def _fill_contours_shading(
         self,
-        polygon: list[Point],
+        contours: list[list[Point]],
         shading: Shading,
         to_shading: Matrix,
         alpha: float,
+        *,
+        even_odd: bool,
     ) -> None:
-        if len(polygon) < 3:
-            return
-        ys = [p[1] for p in polygon]
-        min_y = max(0, math.floor(min(ys)))
-        max_y = min(self.height - 1, math.ceil(max(ys)))
-        for y in range(min_y, max_y + 1):
-            scan_y = y + 0.5
-            nodes: list[float] = []
-            for p0, p1 in zip(polygon, polygon[1:] + polygon[:1]):
-                x0, y0 = p0
-                x1, y1 = p1
-                if (y0 < scan_y <= y1) or (y1 < scan_y <= y0):
-                    if y1 != y0:
-                        nodes.append(x0 + (scan_y - y0) * (x1 - x0) / (y1 - y0))
-            nodes.sort()
-            for i in range(0, len(nodes) - 1, 2):
-                x_start = max(0, math.floor(nodes[i]))
-                x_end = min(self.width - 1, math.ceil(nodes[i + 1]))
-                self._shade_span(
-                    y,
-                    x_start,
-                    x_end,
-                    shading,
-                    to_shading,
-                    alpha,
-                    use_background=True,
-                )
+        for y, x_from, x_to in _scan_spans(
+            contours, even_odd=even_odd, height=self.height
+        ):
+            self._shade_span(
+                y,
+                max(0, math.floor(x_from)),
+                min(self.width - 1, math.ceil(x_to)),
+                shading,
+                to_shading,
+                alpha,
+                use_background=True,
+            )
 
     def _paint_sh(self, name: str, resources_cos: PdfDictionary | None) -> None:
         """Paint a shading (the ``sh`` operator) over the current clip region."""
@@ -1870,28 +1889,23 @@ class _PageRasterizer:
     def _fill_polygon_pixels(
         self, polygon: list[Point], color: Color, alpha: float
     ) -> None:
-        if len(polygon) < 3:
-            return
-        ys = [p[1] for p in polygon]
-        min_y = max(0, math.floor(min(ys)))
-        max_y = min(self.height - 1, math.ceil(max(ys)))
-        if min_y > max_y:
-            return
-        for y in range(min_y, max_y + 1):
-            scan_y = y + 0.5
-            nodes: list[float] = []
-            for p0, p1 in zip(polygon, polygon[1:] + polygon[:1]):
-                x0, y0 = p0
-                x1, y1 = p1
-                if (y0 < scan_y <= y1) or (y1 < scan_y <= y0):
-                    if y1 != y0:
-                        nodes.append(x0 + (scan_y - y0) * (x1 - x0) / (y1 - y0))
-            nodes.sort()
-            for i in range(0, len(nodes) - 1, 2):
-                x_start = max(0, math.floor(nodes[i]))
-                x_end = min(self.width - 1, math.ceil(nodes[i + 1]))
-                for x in range(x_start, x_end + 1):
-                    self._composite_pixel(x, y, color, alpha)
+        self._fill_contours([polygon], color, alpha, even_odd=False)
+
+    def _fill_contours(
+        self,
+        contours: list[list[Point]],
+        color: Color,
+        alpha: float,
+        *,
+        even_odd: bool,
+    ) -> None:
+        for y, x_from, x_to in _scan_spans(
+            contours, even_odd=even_odd, height=self.height
+        ):
+            x_start = max(0, math.floor(x_from))
+            x_end = min(self.width - 1, math.ceil(x_to))
+            for x in range(x_start, x_end + 1):
+                self._composite_pixel(x, y, color, alpha)
 
     def _stroke_segment_pixels(
         self, p0: Point, p1: Point, radius: float, color: Color, alpha: float
@@ -1921,13 +1935,18 @@ class _PageRasterizer:
                 if (px - cx) * (px - cx) + (py - cy) * (py - cy) <= rr:
                     self._composite_pixel(x, y, color, alpha, stroke=True)
 
-    def _apply_clip(self, subpaths: list[list[Point]]) -> None:
+    def _apply_clip(
+        self, subpaths: list[list[Point]], *, even_odd: bool = False
+    ) -> None:
         if not subpaths:
             return
         next_clip = bytearray(b"\x00" * (self.width * self.height))
-        for subpath in subpaths:
-            polygon = [self._user_to_pixel(x, y) for x, y in subpath]
-            self._rasterize_clip_polygon(polygon, next_clip)
+        contours = [
+            [self._user_to_pixel(x, y) for x, y in subpath]
+            for subpath in subpaths
+            if len(subpath) >= 3
+        ]
+        self._rasterize_clip_contours(contours, next_clip, even_odd=even_odd)
         # A *new* mask, never an in-place edit: the outer graphics states on
         # the stack still hold the previous one and must keep seeing it.
         current = self.canvas.clip
@@ -1935,28 +1954,17 @@ class _PageRasterizer:
             1 if current[i] and val else 0 for i, val in enumerate(next_clip)
         )
 
-    def _rasterize_clip_polygon(self, polygon: list[Point], mask: bytearray) -> None:
-        if len(polygon) < 3:
-            return
-        ys = [p[1] for p in polygon]
-        min_y = max(0, math.floor(min(ys)))
-        max_y = min(self.height - 1, math.ceil(max(ys)))
-        for y in range(min_y, max_y + 1):
-            scan_y = y + 0.5
-            nodes: list[float] = []
-            for p0, p1 in zip(polygon, polygon[1:] + polygon[:1]):
-                x0, y0 = p0
-                x1, y1 = p1
-                if (y0 < scan_y <= y1) or (y1 < scan_y <= y0):
-                    if y1 != y0:
-                        nodes.append(x0 + (scan_y - y0) * (x1 - x0) / (y1 - y0))
-            nodes.sort()
-            for i in range(0, len(nodes) - 1, 2):
-                x_start = max(0, math.floor(nodes[i]))
-                x_end = min(self.width - 1, math.ceil(nodes[i + 1]))
-                row = y * self.width
-                for x in range(x_start, x_end + 1):
-                    mask[row + x] = 1
+    def _rasterize_clip_contours(
+        self, contours: list[list[Point]], mask: bytearray, *, even_odd: bool
+    ) -> None:
+        for y, x_from, x_to in _scan_spans(
+            contours, even_odd=even_odd, height=self.height
+        ):
+            x_start = max(0, math.floor(x_from))
+            x_end = min(self.width - 1, math.ceil(x_to))
+            row = y * self.width
+            for x in range(x_start, x_end + 1):
+                mask[row + x] = 1
 
     def _handle_text(
         self,
@@ -2210,50 +2218,25 @@ class _PageRasterizer:
     def _fill_contours_nonzero(
         self, contours: list[list[Point]], color: Color, alpha: float
     ) -> None:
-        """Scanline-fill multiple contours together using the nonzero rule.
+        """Fill glyph contours together, sampling at the pixel centre.
 
-        Filling each contour independently would paint a glyph's counters (the
-        hole in ``o``/``e``/``a``); the nonzero winding rule across all contours
-        leaves them open, matching TrueType's fill convention.
+        A glyph wants tighter coverage than a page path: its stems are often
+        thinner than a pixel, so the span is taken between pixel *centres* and
+        a sub-pixel one is kept rather than rounded away.
         """
-        ys = [p[1] for contour in contours for p in contour]
-        if not ys:
-            return
-        min_y = max(0, math.floor(min(ys)))
-        max_y = min(self.height - 1, math.ceil(max(ys)))
-        for y in range(min_y, max_y + 1):
-            scan_y = y + 0.5
-            crossings: list[tuple[float, int]] = []
-            for contour in contours:
-                n = len(contour)
-                for i in range(n):
-                    x0, y0 = contour[i]
-                    x1, y1 = contour[(i + 1) % n]
-                    if y0 == y1:
-                        continue
-                    if (y0 <= scan_y < y1) or (y1 <= scan_y < y0):
-                        t = (scan_y - y0) / (y1 - y0)
-                        crossings.append((x0 + t * (x1 - x0), 1 if y1 > y0 else -1))
-            if len(crossings) < 2:
-                continue
-            crossings.sort()
-            winding = 0
-            for i in range(len(crossings) - 1):
-                winding += crossings[i][1]
-                if winding == 0:
+        for y, x_from, x_to in _scan_spans(
+            contours, even_odd=False, height=self.height
+        ):
+            x_start = math.ceil(x_from - 0.5)
+            x_end = math.floor(x_to - 0.5)
+            if x_end < x_start:
+                if x_to <= x_from:
                     continue
-                xa, xb = crossings[i][0], crossings[i + 1][0]
-                x_start = math.ceil(xa - 0.5)
-                x_end = math.floor(xb - 0.5)
-                if x_end < x_start:
-                    # Sub-pixel span: keep one pixel so thin stems do not drop out.
-                    if xb <= xa:
-                        continue
-                    x_start = x_end = math.floor((xa + xb) / 2.0)
-                x_start = max(0, x_start)
-                x_end = min(self.width - 1, x_end)
-                for x in range(x_start, x_end + 1):
-                    self._composite_pixel(x, y, color, alpha)
+                x_start = x_end = math.floor((x_from + x_to) / 2.0)
+            x_start = max(0, x_start)
+            x_end = min(self.width - 1, x_end)
+            for x in range(x_start, x_end + 1):
+                self._composite_pixel(x, y, color, alpha)
 
     def _draw_glyph_box(self, width: float, height: float) -> None:
         text = self.state.text
@@ -4086,6 +4069,53 @@ def _decode_stencil(
         height,
         stencil_coverage(data, width, height, meta.get("decode")),
     )
+
+
+def _scan_spans(
+    contours: list[list[Point]],
+    *,
+    even_odd: bool,
+    height: int,
+) -> Iterator[tuple[int, float, float]]:
+    """Yield ``(y, x_from, x_to)`` for the interior of *contours*, row by row.
+
+    ISO 32000-1 8.5.3.3: which points a path encloses is settled by one of two
+    rules, and the rule belongs to the **path**, not to any one subpath -- so
+    the contours have to be scanned together. The nonzero rule counts a ray's
+    crossings signed by the direction each edge is travelled and keeps what
+    does not cancel; the even-odd rule counts them unsigned and keeps alternate
+    spans. Filling each subpath on its own is neither, and leaves every shape
+    with a hole in it solid.
+    """
+    ys = [point[1] for contour in contours for point in contour]
+    if not ys:
+        return
+    min_y = max(0, math.floor(min(ys)))
+    max_y = min(height - 1, math.ceil(max(ys)))
+    for y in range(min_y, max_y + 1):
+        scan_y = y + 0.5
+        crossings: list[tuple[float, int]] = []
+        for contour in contours:
+            count = len(contour)
+            if count < 3:
+                continue
+            for index in range(count):
+                x0, y0 = contour[index]
+                x1, y1 = contour[(index + 1) % count]
+                if y0 == y1:
+                    continue
+                if (y0 <= scan_y < y1) or (y1 <= scan_y < y0):
+                    t = (scan_y - y0) / (y1 - y0)
+                    crossings.append((x0 + t * (x1 - x0), 1 if y1 > y0 else -1))
+        if len(crossings) < 2:
+            continue
+        crossings.sort()
+        winding = 0
+        for index in range(len(crossings) - 1):
+            winding += crossings[index][1]
+            inside = (index % 2 == 0) if even_odd else (winding != 0)
+            if inside:
+                yield y, crossings[index][0], crossings[index + 1][0]
 
 
 def _coerce_rgb(value: Sequence[int]) -> Color:

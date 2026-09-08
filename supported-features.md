@@ -413,7 +413,10 @@ Supported:
   `Document.save_page_as_image()`; the format follows the file suffix
   (`.png`, `.tif`/`.tiff`, `.jpg`/`.jpeg`). The renderer covers common content stream
   operators for graphics state, paths, fills/strokes, clipping, image XObjects,
-  inline `BI`/`ID`/`EI` images, form XObjects, and text. An inline image is
+  inline `BI`/`ID`/`EI` images, form XObjects, and text. A path's interior is
+  decided by the rule its operator names (8.5.3.3) -- nonzero for `f`/`B`/`W`,
+  even-odd for `f*`/`B*`/`W*` -- across all of its subpaths together, so a
+  shape with a hole has one, and the same two rules apply to a clipping path. An inline image is
   painted by the same code as `Do`: its abbreviated dictionary is expanded to
   the image XObject it stands for, including a `/ColorSpace` that names an
   entry in the page's resources rather than a device space. A **stencil mask**

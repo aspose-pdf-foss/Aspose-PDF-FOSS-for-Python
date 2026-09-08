@@ -112,7 +112,6 @@ class _SvgWriter(_PageRasterizer):
         self._line_join = 0
         self._miter_limit = 10.0
         self._stroke_stack: list[tuple[Any, int, int, float]] = []
-        self._fill_rule = "nonzero"
 
     # -- output ------------------------------------------------------------
 
@@ -262,21 +261,23 @@ class _SvgWriter(_PageRasterizer):
 
     # -- paint sinks -------------------------------------------------------
 
-    def _paint_path(self, op: str, depth: int = 0) -> None:
-        # The fill rule lives in the operator, and the rasterizer drops it
-        # (it fills each subpath on its own). SVG can say it exactly, so it is
-        # captured here for ``_fill_subpaths`` to use.
-        self._fill_rule = "evenodd" if op in ("f*", "B*", "b*") else "nonzero"
-        super()._paint_path(op, depth)
-
-    def _fill_subpaths(self, subpaths: Any, color: Color, alpha: float) -> None:
+    def _fill_subpaths(
+        self,
+        subpaths: Any,
+        color: Color,
+        alpha: float,
+        *,
+        even_odd: bool = False,
+    ) -> None:
         """One ``<path>`` for the whole path, so holes and the rule survive."""
         polygons = [
             [self._user_to_pixel(x, y) for x, y in subpath]
             for subpath in subpaths
             if len(subpath) >= 3
         ]
-        self._emit_fill(polygons, color, alpha, rule=self._fill_rule)
+        self._emit_fill(
+            polygons, color, alpha, rule="evenodd" if even_odd else "nonzero"
+        )
 
     def _fill_polygon_pixels(
         self, polygon: list[Point], color: Color, alpha: float
@@ -323,7 +324,9 @@ class _SvgWriter(_PageRasterizer):
             f"{self._clip_attribute()}/>"
         )
 
-    def _apply_clip(self, subpaths: list[list[Point]]) -> None:
+    def _apply_clip(
+        self, subpaths: list[list[Point]], *, even_odd: bool = False
+    ) -> None:
         """Register the clip as a ``<clipPath>``; no raster mask is needed."""
         polygons = [
             [self._user_to_pixel(x, y) for x, y in subpath]
@@ -337,9 +340,10 @@ class _SvgWriter(_PageRasterizer):
         inherited = (
             f' clip-path="url(#{self._clip_id})"' if self._clip_id else ""
         )
+        rule = ' clip-rule="evenodd"' if even_odd else ""
         self._defs.append(
             f'<clipPath id="{identifier}"{inherited}>'
-            f'<path d="{data}"/></clipPath>'
+            f'<path d="{data}"{rule}/></clipPath>'
         )
         self._clip_id = identifier
 
@@ -442,6 +446,8 @@ class _SvgWriter(_PageRasterizer):
         subpaths: Any,
         fill_shading: tuple[Shading, Matrix],
         alpha: float,
+        *,
+        even_odd: bool = False,
     ) -> None:
         shading, matrix = fill_shading
         polygons = [
@@ -451,11 +457,12 @@ class _SvgWriter(_PageRasterizer):
         ]
         if not polygons:
             return
+        rule = "evenodd" if even_odd else "nonzero"
         paint = self._shading_paint(shading, matrix)
         if paint is not None:
-            self._emit_fill(polygons, (0, 0, 0), alpha, rule="nonzero", paint=paint)
+            self._emit_fill(polygons, (0, 0, 0), alpha, rule=rule, paint=paint)
             return
-        self._emit_sampled_shading(polygons, shading, matrix, alpha)
+        self._emit_sampled_shading(polygons, shading, matrix, alpha, rule=rule)
 
     def _paint_sh(self, name: str, resources_cos: Any) -> None:
         """``sh`` paints the shading over the whole clip region."""
@@ -540,6 +547,8 @@ class _SvgWriter(_PageRasterizer):
         shading: Shading,
         matrix: Matrix,
         alpha: float,
+        *,
+        rule: str = "nonzero",
     ) -> None:
         """Draw a shading SVG has no gradient for by sampling it into an image.
 
@@ -578,9 +587,11 @@ class _SvgWriter(_PageRasterizer):
         href = _png_data_uri(width, height, "RGB", bytes(samples))
         identifier = self._identifier("clip")
         inherited = f' clip-path="url(#{self._clip_id})"' if self._clip_id else ""
+        clip_rule = ' clip-rule="evenodd"' if rule == "evenodd" else ""
         self._defs.append(
             f'<clipPath id="{identifier}"{inherited}>'
-            f'<path d="{self._path_data(polygons, close=True)}"/></clipPath>'
+            f'<path d="{self._path_data(polygons, close=True)}"{clip_rule}'
+            "/></clipPath>"
         )
         opacity = f' opacity="{_fmt(alpha, 3)}"' if alpha < 1.0 else ""
         self._emit(

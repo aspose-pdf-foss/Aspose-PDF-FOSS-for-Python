@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **No filled path ever had a hole in it.** ISO 32000-1 8.5.3.3 settles which
+  points a path encloses by one of two rules, and the operator picks one — `f`
+  against `f*`, `B` against `B*`, `W` against `W*`. The rule belongs to the
+  *path*, not to any one subpath, because that is the point of it: a shape with
+  a hole is two subpaths and whether the hole is open depends on counting the
+  crossings of both. The renderer filled each subpath on its own, which is
+  neither rule, and dropped the star entirely — so a donut, a logo counter, a
+  letter drawn as vectors and a region clipped out with `W*` all came out
+  solid. Glyph outlines had their own correct nonzero filler, which is why type
+  looked right while artwork did not; that filler, the path fill, the clip
+  rasterizer and the shading fill are now one scanline pass that takes the rule
+  as an argument. The SVG export names the rule it uses (`fill-rule`,
+  `clip-rule`) instead of relying on the default. Verified against pdfium, and
+  the SVG against a browser engine.
+
 - **`/Mask` was ignored, so a masked image painted an opaque box.** ISO 32000-1
   8.9.6 gives an image three ways to be transparent and it may use one:
   `/SMask`, which was implemented, and `/Mask` in either of its two forms,
