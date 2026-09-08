@@ -52,6 +52,7 @@ from .image_export import (
     rgb_to_gray,
     stencil_coverage,
     to_8bpc_bytes,
+    unpack_samples,
     write_png,
     write_tiff,
 )
@@ -3288,8 +3289,110 @@ class _PageRasterizer:
                 **fallback_meta,
                 **{k: v for k, v in meta.items() if v is not None},
             }
+        alpha_map = self._image_alpha_map(stream, data, meta)
+        self._paint_image_pixels(meta, data, self.state.ctm, alpha_map)
+
+    def _image_alpha_map(
+        self, stream: PdfStream, data: bytes, meta: dict
+    ) -> tuple[int, int, bytes] | None:
+        """The per-pixel alpha an image asks for, as ``(w, h, alpha-bytes)``.
+
+        ISO 32000-1 8.9.6 gives an image three ways to be transparent, and it
+        may use one: ``/SMask``, a greyscale image stating alpha outright;
+        ``/Mask`` naming a **stencil**, whose set samples are the ones *not* to
+        paint; or ``/Mask`` holding an **array** of raw sample ranges, which is
+        colour-key masking -- a pixel every one of whose components falls in
+        its range is left unpainted. ``/SMask`` wins where a file has both.
+
+        All three end up as the same thing: a map sampled over the image's own
+        unit square, which is why the painter needs to know nothing about which
+        one it came from.
+        """
         smask = self._decode_image_smask(stream)
-        self._paint_image_pixels(meta, data, self.state.ctm, smask)
+        if smask is not None:
+            return smask
+        mask_ref = stream.mapping.get(PdfName("Mask"))
+        mask = self._resolve(mask_ref)
+        if isinstance(mask, PdfStream):
+            return self._decode_stencil_mask(mask, mask_ref)
+        if isinstance(mask, PdfArray):
+            return self._colour_key_alpha(mask, data, meta)
+        return None
+
+    def _decode_stencil_mask(
+        self, mask: PdfStream, ref: Any
+    ) -> tuple[int, int, bytes] | None:
+        """A ``/Mask`` stencil's alpha: opaque where it paints, clear where not.
+
+        The stencil is read exactly as one painted by ``Do`` would be -- the
+        sense of its samples is its own ``/Decode``'s to state -- because it is
+        the same object; only what the marked samples *mean* differs. Here they
+        say where the base image reaches the page.
+        """
+        try:
+            data = (
+                self.pdf._decode_cos_stream(mask, ref)
+                if hasattr(self.pdf, "_decode_cos_stream")
+                else mask.content
+            )
+        except PdfResourceLimitException:
+            raise
+        except Exception:
+            data = mask.content
+        meta = self._image_meta_from_stream(mask)
+        if not meta.get("image_mask"):
+            # Table 89 requires a /Mask stream to declare /ImageMask true.
+            # Without it there is nothing to say the samples are a stencil
+            # rather than a picture, and reading a picture as bits would mask
+            # the base image by its own colours.
+            return None
+        stencil = _decode_stencil(meta, data, limits=self._load_limits)
+        if stencil is None:
+            return None
+        width, height, coverage = stencil
+        return (width, height, bytes(255 if painted else 0 for painted in coverage))
+
+    def _colour_key_alpha(
+        self, mask: PdfArray, data: bytes, meta: dict
+    ) -> tuple[int, int, bytes] | None:
+        """Colour-key masking: the sample ranges that are not painted (8.9.6.4).
+
+        The array holds ``2 x n`` integers in the *raw* sample values -- before
+        ``/Decode``, and in index values for an ``/Indexed`` image -- and a
+        pixel is dropped only when **every** component falls inside its own
+        range.
+        """
+        width = int(meta.get("width") or 0)
+        height = int(meta.get("height") or 0)
+        comps = int(meta.get("n_comps") or 0)
+        bpc = int(meta.get("bpc") or 8)
+        if width <= 0 or height <= 0 or comps <= 0:
+            return None
+        if len(mask.items) < comps * 2:
+            return None
+        filt = str(meta.get("filter") or "").lstrip("/")
+        if filt in ("DCTDecode", "DCT", "JPXDecode"):
+            # The samples are still a codestream here, and the spec advises
+            # against colour-keying a lossily coded image anyway.
+            return None
+        bounds: list[tuple[int, int]] = []
+        for index in range(comps):
+            low = self._cos_number(mask.items[2 * index])
+            high = self._cos_number(mask.items[2 * index + 1])
+            if low is None or high is None:
+                return None
+            bounds.append((int(low), int(high)))
+        self._load_budget.check_image_pixels(width, height, "colour-key mask")
+        samples = unpack_samples(data, bpc, width, height, comps)
+        alpha = bytearray(b"\xff" * (width * height))
+        for pixel in range(min(width * height, len(samples) // comps)):
+            base = pixel * comps
+            if all(
+                low <= samples[base + index] <= high
+                for index, (low, high) in enumerate(bounds)
+            ):
+                alpha[pixel] = 0
+        return (width, height, bytes(alpha))
 
     def _decode_image_smask(
         self, stream: PdfStream
@@ -3635,7 +3738,7 @@ class _PageRasterizer:
         meta: dict,
         data: bytes,
         matrix: Matrix,
-        smask: tuple[int, int, bytes] | None = None,
+        alpha_map: tuple[int, int, bytes] | None = None,
     ) -> None:
         coverage: list[int] | None = None
         pixels = b""
@@ -3659,8 +3762,8 @@ class _PageRasterizer:
             return
         sw = sh = 0
         salpha: bytes = b""
-        if smask is not None:
-            sw, sh, salpha = smask
+        if alpha_map is not None:
+            sw, sh, salpha = alpha_map
         corners = [
             _transform_point(matrix, 0.0, 0.0),
             _transform_point(matrix, 1.0, 0.0),

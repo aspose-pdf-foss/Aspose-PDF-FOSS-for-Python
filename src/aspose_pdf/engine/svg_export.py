@@ -350,7 +350,7 @@ class _SvgWriter(_PageRasterizer):
         meta: dict,
         data: bytes,
         matrix: Matrix,
-        smask: tuple[int, int, bytes] | None = None,
+        alpha_map: tuple[int, int, bytes] | None = None,
     ) -> None:
         from .rasterizer import _decode_image_to_rgb, _decode_stencil
 
@@ -374,8 +374,8 @@ class _SvgWriter(_PageRasterizer):
             width, height, pixels = image
             href = _png_data_uri(width, height, "RGB", pixels)
         mask_attribute = ""
-        if smask is not None and smask[2]:
-            mask_attribute = f' mask="url(#{self._mask_from_smask(smask)})"'
+        if alpha_map is not None and alpha_map[2]:
+            mask_attribute = f' mask="url(#{self._svg_mask(alpha_map)})"'
         transform = self._image_transform(matrix)
         attributes = [
             'preserveAspectRatio="none"',
@@ -422,8 +422,9 @@ class _SvgWriter(_PageRasterizer):
             origin[1],
         )
 
-    def _mask_from_smask(self, smask: tuple[int, int, bytes]) -> str:
-        width, height, alpha = smask
+    def _svg_mask(self, alpha_map: tuple[int, int, bytes]) -> str:
+        """An SVG ``<mask>`` for a per-pixel alpha map, wherever it came from."""
+        width, height, alpha = alpha_map
         href = _png_data_uri(width, height, "L", alpha)
         identifier = self._identifier("mask")
         self._defs.append(

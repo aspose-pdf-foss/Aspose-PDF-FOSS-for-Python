@@ -9,6 +9,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`/Mask` was ignored, so a masked image painted an opaque box.** ISO 32000-1
+  8.9.6 gives an image three ways to be transparent and it may use one:
+  `/SMask`, which was implemented, and `/Mask` in either of its two forms,
+  which was not. `/Mask` may name a **stencil**, whose set samples are the ones
+  *not* to paint — sampled over the image's unit square at whatever resolution
+  it has, with the sense stated by the stencil's own `/Decode` — or hold an
+  **array**, which is colour-key masking: `2 × n` bounds on the *raw* sample
+  values, dropping a pixel only when every one of its components falls inside
+  its own range. Both now produce the same per-pixel alpha map that `/SMask`
+  does, so the renderer and the SVG export needed nothing new to honour them,
+  and `/SMask` wins where a file writes both. A `/Mask` stream that does not
+  declare `/ImageMask true` is left alone, as table 89 requires it. Colour-key
+  masking is not applied to a `DCTDecode` or `JPXDecode` image, whose samples
+  are still a codestream at that point — 8.9.6.4 advises against keying a
+  lossily coded image anyway. Verified against pdfium.
+
 - **A stencil mask painted black instead of the colour that was set.** An image
   with `/ImageMask true` is not a picture (ISO 32000-1 8.9.6.2): its one-bit
   samples say where the *current fill colour* goes and where the page shows

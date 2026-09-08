@@ -420,7 +420,11 @@ Supported:
   (`/ImageMask true`) is painted as the shape it is (8.9.6.2): its one-bit
   samples put the *current fill colour* on the page and leave the rest showing
   through, carrying that colour's own overprint behaviour with them; `/Decode`
-  chooses which samples paint. **`/Decode` is applied generally** (8.9.5.2) --
+  chooses which samples paint. An image's **transparency** is honoured in all
+  three forms 8.9.6 allows: `/SMask`, a `/Mask` naming a stencil whose set
+  samples are the ones not to paint, and a `/Mask` array of raw sample ranges
+  (colour-key masking) that drops a pixel when every component falls in its
+  range. `/SMask` wins where a file writes both. **`/Decode` is applied generally** (8.9.5.2) --
   per component, at any bit depth, before the colour conversion, and in *index*
   space for `/Indexed` -- by the renderer, the SVG export and the image
   exporter alike. Text shown with an embedded font is filled from its
@@ -531,6 +535,13 @@ Boundaries:
   exception, because its target is rebuilt on every save and cannot simply be
   left: one whose page is gone gives up the reference and falls back to the
   index it last had, clamped to the document, keeping its view or action.
+- **Colour-key masking is not applied to a lossily coded image.** A `/Mask`
+  array names *raw* sample values, and a `DCTDecode` or `JPXDecode` image's
+  samples are still a codestream where the mask is resolved; 8.9.6.4 advises
+  against keying one anyway. A `/Mask` stream that does not declare
+  `/ImageMask true` is ignored rather than guessed at -- table 89 requires the
+  entry, and the two readers we compared against guess *opposite* polarities
+  for it.
 - Page rendering is a best-effort rasterizer, not a certification-grade visual
   engine. Its overprint support is a composite RGB preview, not a plate-accurate
   separation or process/spot ink model, and complete PDF 2.0 imaging semantics
