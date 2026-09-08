@@ -291,9 +291,11 @@ class _GraphicsState:
     soft_mask: bytes | None = None
     # When set, paths are filled with a shading pattern: (shading, pattern matrix).
     fill_shading: tuple[Shading, Matrix] | None = None
+    stroke_shading: tuple[Shading, Matrix] | None = None
     # When set, paths are filled with a tiling pattern:
     # (pattern stream, pattern matrix, paint type, uncoloured paint colour).
     fill_tiling: tuple[Any, Matrix, int, Color] | None = None
+    stroke_tiling: tuple[Any, Matrix, int, Color] | None = None
     text: _TextState = field(default_factory=_TextState)
 
 
@@ -1224,6 +1226,8 @@ class _PageRasterizer:
                 "RG": "rgb",
                 "K": "cmyk",
             }[op]
+            self.state.stroke_shading = None
+            self.state.stroke_tiling = None
         else:
             self.state.fill_color = color
             self.state.fill_color_space = {
@@ -1251,12 +1255,18 @@ class _PageRasterizer:
             spaces = self._resource_dict(resources_cos, "ColorSpace")
             if spaces is not None and PdfName(name) in spaces.mapping:
                 color_space = spaces.mapping[PdfName(name)]
+        # 8.6.8: setting the colour space also sets the colour to that space's
+        # initial value, so whatever pattern was the colour is no longer it.
         if op == "CS":
             self.state.stroke_color_space = color_space
             self.state.stroke_color_kind = self._color_space_kind(color_space)
+            self.state.stroke_shading = None
+            self.state.stroke_tiling = None
         else:
             self.state.fill_color_space = color_space
             self.state.fill_color_kind = self._color_space_kind(color_space)
+            self.state.fill_shading = None
+            self.state.fill_tiling = None
 
     def _color_space_kind(self, color_space: Any, *, pattern_base: bool = False) -> str:
         resolved = self._resolve(color_space)
@@ -1328,13 +1338,17 @@ class _PageRasterizer:
         # A trailing name operand selects a pattern: "/P0 scn" (an uncoloured
         # tiling pattern may carry its colour as leading operands).
         if op in ("scn", "SCN") and operands and _number(operands[-1]) is None:
-            if is_fill:
-                color_nums = [
-                    _number(v) for v in operands[:-1] if _number(v) is not None
-                ]
-                self._set_fill_pattern(
-                    str(operands[-1]).lstrip("/"), resources_cos, color_nums
-                )
+            # A pattern is a colour, and `SCN` sets it for stroking exactly as
+            # `scn` does for filling (8.7.3.1).
+            color_nums = [
+                _number(v) for v in operands[:-1] if _number(v) is not None
+            ]
+            self._set_pattern(
+                str(operands[-1]).lstrip("/"),
+                resources_cos,
+                color_nums,
+                is_fill=is_fill,
+            )
             return
         nums = [_number(v) for v in operands if _number(v) is not None]
         if not nums:
@@ -1346,22 +1360,44 @@ class _PageRasterizer:
             self.state.fill_tiling = None
         else:
             self.state.stroke_color = color
+            self.state.stroke_shading = None
+            self.state.stroke_tiling = None
 
-    def _set_fill_pattern(
+    def _set_pattern(
         self,
         name: str,
         resources_cos: PdfDictionary | None,
         color_nums: list[float | None],
+        *,
+        is_fill: bool = True,
     ) -> None:
-        self.state.fill_shading = None
-        self.state.fill_tiling = None
+        def use_colour(colour: Color) -> None:
+            if is_fill:
+                self.state.fill_color = colour
+            else:
+                self.state.stroke_color = colour
+
+        def use_shading(value: tuple[Shading, Matrix]) -> None:
+            if is_fill:
+                self.state.fill_shading = value
+            else:
+                self.state.stroke_shading = value
+
+        def use_tiling(value: tuple[Any, Matrix, int, Color]) -> None:
+            if is_fill:
+                self.state.fill_tiling = value
+            else:
+                self.state.stroke_tiling = value
+
+        use_shading(None)  # type: ignore[arg-type]
+        use_tiling(None)  # type: ignore[arg-type]
         pattern = None
         if resources_cos is not None:
             patterns = self._resource_dict(resources_cos, "Pattern")
             if patterns is not None:
                 pattern = self._resolve(patterns.mapping.get(PdfName(name)))
         if not isinstance(pattern, (PdfDictionary, PdfStream)):
-            self.state.fill_color = (128, 128, 128)  # unknown pattern fallback
+            use_colour((128, 128, 128))  # unknown pattern fallback
             return
         ptype = self._cos_number(pattern.mapping.get(PdfName("PatternType")))
         matrix = (
@@ -1377,29 +1413,37 @@ class _PageRasterizer:
                 device_scale=self._device_scale(matrix),
             )
             if shading is not None:
-                self.state.fill_shading = (shading, matrix)
+                use_shading((shading, matrix))
             else:
-                self.state.fill_color = (128, 128, 128)
+                use_colour((128, 128, 128))
             return
         if ptype is not None and int(ptype) == 1 and isinstance(pattern, PdfStream):
             paint_type = int(
                 self._cos_number(pattern.mapping.get(PdfName("PaintType"))) or 1
             )
-            paint_color = self.state.fill_color
+            paint_color = (
+                self.state.fill_color if is_fill else self.state.stroke_color
+            )
             nums = [n for n in color_nums if n is not None]
             if paint_type == 2 and nums:  # uncoloured pattern carries its colour
                 paint_color = self._convert_current_color(
                     nums,
-                    is_fill=True,
+                    is_fill=is_fill,
                     pattern_base=True,
                 )
-                self.state.fill_color_kind = self._color_space_kind(
-                    self.state.fill_color_space,
+                kind = self._color_space_kind(
+                    self.state.fill_color_space
+                    if is_fill
+                    else self.state.stroke_color_space,
                     pattern_base=True,
                 )
-            self.state.fill_tiling = (pattern, matrix, paint_type, paint_color)
+                if is_fill:
+                    self.state.fill_color_kind = kind
+                else:
+                    self.state.stroke_color_kind = kind
+            use_tiling((pattern, matrix, paint_type, paint_color))
             return
-        self.state.fill_color = (128, 128, 128)
+        use_colour((128, 128, 128))
 
     def _apply_extgstate(
         self,
@@ -1668,6 +1712,8 @@ class _PageRasterizer:
                     )
                     self.state.fill_shading = None
                     self.state.fill_tiling = None
+                    self.state.stroke_shading = None
+                    self.state.stroke_tiling = None
                     if paint_type == 2:
                         self.state.fill_color = paint_color
                         self.state.stroke_color = paint_color
@@ -1880,6 +1926,11 @@ class _PageRasterizer:
     def _stroke_subpaths(
         self, subpaths: Iterable[list[Point]], color: Color, alpha: float
     ) -> None:
+        subpaths = list(subpaths)
+        paint = self.state.stroke_tiling or self.state.stroke_shading
+        if paint is not None:
+            self._stroke_with_pattern(subpaths)
+            return
         px_width = max(1.0, self.state.line_width * self.point_scale)
         radius = max(0.5, px_width / 2.0)
         for subpath in subpaths:
@@ -1888,6 +1939,52 @@ class _PageRasterizer:
             pts = [self._user_to_pixel(x, y) for x, y in subpath]
             for p0, p1 in itertools.pairwise(pts):
                 self._stroke_segment_pixels(p0, p1, radius, color, alpha)
+
+    def _stroke_with_pattern(self, subpaths: list[list[Point]]) -> None:
+        """Stroke with a pattern by painting it through the stroke's coverage.
+
+        Unlike a fill or a glyph, a stroke's region is not a path anyone hands
+        us -- it is whatever the pen covered. Collecting that coverage as a
+        mask, narrowing the clip to it and then running the pattern over the
+        area is what lets the same tiler serve all three.
+        """
+        px_width = max(1.0, self.state.line_width * self.point_scale)
+        radius = max(0.5, px_width / 2.0)
+        mask = bytearray(self.width * self.height)
+        for subpath in subpaths:
+            if len(subpath) < 2:
+                continue
+            pts = [self._user_to_pixel(x, y) for x, y in subpath]
+            for p0, p1 in itertools.pairwise(pts):
+                self._stroke_segment_pixels(p0, p1, radius, (0, 0, 0), 1.0, mask=mask)
+        self._paint_pattern_through_mask(mask)
+
+    def _paint_pattern_through_mask(self, mask: bytearray) -> None:
+        """Paint the stroking pattern wherever *mask* is set."""
+        rows = [i for i, on in enumerate(mask) if on]
+        if not rows:
+            return
+        xs = [i % self.width for i in rows]
+        ys = [i // self.width for i in rows]
+        box = [
+            self._pixel_to_user(min(xs), min(ys)),
+            self._pixel_to_user(max(xs) + 1, min(ys)),
+            self._pixel_to_user(max(xs) + 1, max(ys) + 1),
+            self._pixel_to_user(min(xs), max(ys) + 1),
+        ]
+        saved = self.canvas.clip
+        self.canvas.clip = bytearray(
+            1 if saved[i] and mask[i] else 0 for i in range(len(mask))
+        )
+        try:
+            if self.state.stroke_tiling is not None:
+                self._fill_tiling([box], self.state.stroke_tiling, 0)
+            else:
+                self._fill_subpaths_shading(
+                    [box], self.state.stroke_shading, self.state.stroke_alpha
+                )
+        finally:
+            self.canvas.clip = saved
 
     def _fill_polygon_pixels(
         self, polygon: list[Point], color: Color, alpha: float
@@ -1911,7 +2008,13 @@ class _PageRasterizer:
                 self._composite_pixel(x, y, color, alpha)
 
     def _stroke_segment_pixels(
-        self, p0: Point, p1: Point, radius: float, color: Color, alpha: float
+        self,
+        p0: Point,
+        p1: Point,
+        radius: float,
+        color: Color,
+        alpha: float,
+        mask: bytearray | None = None,
     ) -> None:
         x0, y0 = p0
         x1, y1 = p1
@@ -1936,7 +2039,10 @@ class _PageRasterizer:
                 cx = x0 + t * dx
                 cy = y0 + t * dy
                 if (px - cx) * (px - cx) + (py - cy) * (py - cy) <= rr:
-                    self._composite_pixel(x, y, color, alpha, stroke=True)
+                    if mask is not None:
+                        mask[y * self.width + x] = 1
+                    else:
+                        self._composite_pixel(x, y, color, alpha, stroke=True)
 
     def _apply_clip(
         self, subpaths: list[list[Point]], *, even_odd: bool = False
@@ -2222,6 +2328,7 @@ class _PageRasterizer:
         contours: list[list[Point]],
         units_per_em: int,
         offset: tuple[float, float] = (0.0, 0.0),
+        depth: int = 0,
     ) -> None:
         """Fill a glyph's font-unit contours through the text/CTM transform.
 
@@ -2246,18 +2353,33 @@ class _PageRasterizer:
             _multiply(self.state.ctm, text.text_matrix), glyph_to_text
         )
         pixel_contours: list[list[Point]] = []
+        user_contours: list[list[Point]] = []
         for contour in contours:
             polygon = []
+            user_polygon = []
             for gx, gy in contour:
                 ux, uy = _transform_point(base, gx, gy)
+                user_polygon.append((ux, uy))
                 polygon.append(self._user_to_pixel(ux, uy))
             if len(polygon) >= 3:
                 pixel_contours.append(polygon)
+                user_contours.append(user_polygon)
         if not pixel_contours:
             return
         if self._text_clip is not None:
             self._text_clip.extend(pixel_contours)
-        if text.rendering_mode != 7:
+        if text.rendering_mode == 7:
+            return
+        # A pattern is a colour, so text painted with one is painted with the
+        # pattern -- the glyph outlines are the region, exactly as a path's
+        # subpaths are.
+        if self.state.fill_tiling is not None:
+            self._fill_tiling(user_contours, self.state.fill_tiling, depth)
+        elif self.state.fill_shading is not None:
+            self._fill_subpaths_shading(
+                user_contours, self.state.fill_shading, self.state.fill_alpha
+            )
+        else:
             self._fill_contours_nonzero(
                 pixel_contours, self.state.fill_color, self.state.fill_alpha
             )

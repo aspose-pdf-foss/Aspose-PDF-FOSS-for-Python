@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A pattern only painted path fills.** ISO 32000-1 8.7.3: a pattern is
+  selected with `scn`/`SCN` in a Pattern colour space, and from then on it *is*
+  the fill or the stroke colour. `SCN` was ignored outright, so a stroke drawn
+  with a pattern came out in whatever colour happened to be set — black on a
+  fresh page — and glyphs were filled straight from `fill_color`, so text
+  filled with a pattern (how a gradient headline is drawn) came out solid. Both
+  now paint the pattern, tiling and shading alike: a glyph hands over its
+  outlines the way a path hands over its subpaths, while a stroke — which has
+  no such path, only the area the pen covered — has its coverage collected as a
+  mask and the clip narrowed to it, after which the same tiler runs for all
+  three. Setting a plain colour, or a colour space, puts the pattern down again
+  (8.6.8), on the stroking side as well as the filling one. Verified against
+  pdfium and MuPDF.
+
 - **`BT` cleared the whole text state, which is graphics state.** ISO 32000-1
   9.4.1 gives `BT` two jobs — the text matrix and the text *line* matrix — and
   9.3.1 puts everything else a text object uses in the **graphics** state: the

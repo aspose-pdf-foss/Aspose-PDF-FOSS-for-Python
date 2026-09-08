@@ -57,10 +57,14 @@ def test_set_fill_pattern_marks_tiling_state():
         pdf, 0, dpi=72.0, scale=1.0, background=(255, 255, 255), antialias=1
     )
     patterns = rasterizer._resource_dict(rasterizer.resources_cos, "Pattern")
-    rasterizer._set_fill_pattern("P0", rasterizer.resources_cos, [])
+    rasterizer._set_pattern("P0", rasterizer.resources_cos, [], is_fill=True)
     assert rasterizer.state.fill_tiling is not None
     assert rasterizer.state.fill_shading is None
     assert patterns is not None
+    # A pattern is a colour, so the same setter serves the stroking side.
+    assert rasterizer.state.stroke_tiling is None
+    rasterizer._set_pattern("P0", rasterizer.resources_cos, [], is_fill=False)
+    assert rasterizer.state.stroke_tiling is not None
 
 
 def test_render_colored_tiling_pattern_repeats():

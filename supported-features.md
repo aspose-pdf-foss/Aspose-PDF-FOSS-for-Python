@@ -422,7 +422,10 @@ Supported:
   which takes effect at `ET` and is restored by `Q` like any other clip.
   The **text state** -- font and size, `Tc`, `Tw`, `Tz`, `TL`, `Tr`, `Ts` -- is
   graphics state (9.3.1), so it outlives a text object and follows `q`/`Q`;
-  `BT` initialises the text and text-line matrices and nothing else (9.4.1). An inline image is
+  `BT` initialises the text and text-line matrices and nothing else (9.4.1).
+  A **pattern** (8.7.3), tiling or shading, is a colour: it paints a path fill,
+  a **stroke** (`SCN`) and the **glyphs** of text alike, and a plain colour or a
+  change of colour space puts it down again. An inline image is
   painted by the same code as `Do`: its abbreviated dictionary is expanded to
   the image XObject it stands for, including a `/ColorSpace` that names an
   entry in the page's resources rather than a device space. A **stencil mask**
