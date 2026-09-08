@@ -324,15 +324,11 @@ class _SvgWriter(_PageRasterizer):
             f"{self._clip_attribute()}/>"
         )
 
-    def _apply_clip(
-        self, subpaths: list[list[Point]], *, even_odd: bool = False
+    def _apply_clip_contours(
+        self, contours: list[list[Point]], *, even_odd: bool = False
     ) -> None:
         """Register the clip as a ``<clipPath>``; no raster mask is needed."""
-        polygons = [
-            [self._user_to_pixel(x, y) for x, y in subpath]
-            for subpath in subpaths
-            if len(subpath) >= 3
-        ]
+        polygons = [polygon for polygon in contours if len(polygon) >= 3]
         data = self._path_data(polygons, close=True)
         if not data:
             return

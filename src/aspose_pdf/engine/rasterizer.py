@@ -753,6 +753,9 @@ class _PageRasterizer:
         self.state_stack: list[_GraphicsState] = []
         self.path = _Path()
         self.pending_clip: tuple[list[list[Point]], bool] | None = None
+        # Glyph outlines collected by a text object's clipping modes (9.3.6),
+        # in device space, applied at ET. See ``_handle_text``.
+        self._text_clip: list[list[Point]] | None = None
         self.resources_cos = self._page_resources_cos()
         self.resources_plain = self._page_resources_plain()
         self._font_cache: dict[str, _GlyphFont | None] = {}
@@ -1940,12 +1943,20 @@ class _PageRasterizer:
     ) -> None:
         if not subpaths:
             return
+        self._apply_clip_contours(
+            [
+                [self._user_to_pixel(x, y) for x, y in subpath]
+                for subpath in subpaths
+                if len(subpath) >= 3
+            ],
+            even_odd=even_odd,
+        )
+
+    def _apply_clip_contours(
+        self, contours: list[list[Point]], *, even_odd: bool = False
+    ) -> None:
+        """Intersect the clip with *contours*, which are already in device space."""
         next_clip = bytearray(b"\x00" * (self.width * self.height))
-        contours = [
-            [self._user_to_pixel(x, y) for x, y in subpath]
-            for subpath in subpaths
-            if len(subpath) >= 3
-        ]
         self._rasterize_clip_contours(contours, next_clip, even_odd=even_odd)
         # A *new* mask, never an in-place edit: the outer graphics states on
         # the stack still hold the previous one and must keep seeing it.
@@ -1975,10 +1986,27 @@ class _PageRasterizer:
     ) -> None:
         text = self.state.text
         if op == "BT":
-            self.state.text = _TextState(in_text=True)
+            # ISO 32000-1 9.4.1: BT initialises the text matrix and the text
+            # *line* matrix, and nothing else. The other text parameters --
+            # font and size, Tc, Tw, Tz, TL, Tr, Ts -- are **graphics** state
+            # (9.3.1): they outlive a text object and are saved and restored by
+            # q/Q. Resetting them here dropped a font set in an earlier object,
+            # so its text drew at the 12pt fallback in the wrong face.
+            text.in_text = True
+            text.text_matrix = IDENTITY
+            text.line_matrix = IDENTITY
+            # A text object's clipping modes accumulate glyph outlines that are
+            # applied once, at ET (9.3.6). None means nothing has been
+            # accumulated; an empty list means a glyph was shown in a clipping
+            # mode and contributed no outline, which clips everything away and
+            # is not the same thing.
+            self._text_clip = None
             return
         if op == "ET":
             text.in_text = False
+            if self._text_clip is not None:
+                self._apply_clip_contours(self._text_clip)
+                self._text_clip = None
             return
         if not text.in_text:
             return
@@ -2067,8 +2095,9 @@ class _PageRasterizer:
         resources_plain: dict,
     ) -> None:
         text = self.state.text
-        # Modes 3 (invisible) and 7 (clip only) add nothing to the raster.
-        if text.rendering_mode in (3, 7):
+        # Mode 3 is invisible and mode 7 clips without painting; neither puts
+        # anything on the page, but 7 still has outlines to collect.
+        if text.rendering_mode == 3:
             return
         if not isinstance(raw, (bytes, bytearray)):
             return
@@ -2087,6 +2116,7 @@ class _PageRasterizer:
         for index, (gid, width_1000, applies_word, cid) in enumerate(
             font.iter_glyphs(raw)
         ):
+            self._open_text_clip()
             draw_gid = joined[index] if joined is not None else gid
             if font.vertical:
                 # Vertical writing: displace the glyph by its position vector and
@@ -2154,6 +2184,18 @@ class _PageRasterizer:
             return None
         return [mapping.get(index) for index in range(len(codepoints))]
 
+    def _open_text_clip(self) -> None:
+        """Note that a glyph has been shown in a clipping mode (table 106).
+
+        Modes 4-7 add what they show to the clipping path, and a glyph with no
+        outline of its own -- a space -- adds nothing, which is why the
+        accumulator opens per *glyph* and not per showing operator. A showing
+        operator given an empty string clips nothing at all; one given a space
+        clips everything away, and both are what a reader does.
+        """
+        if self.state.text.rendering_mode >= 4 and self._text_clip is None:
+            self._text_clip = []
+
     def _show_text_boxes(self, raw: bytes) -> None:
         """Fallback for non-TrueType fonts: draw a box per visible glyph."""
         text = self.state.text
@@ -2161,6 +2203,7 @@ class _PageRasterizer:
         for ch in decoded:
             if ch in "\r\n":
                 continue
+            self._open_text_clip()
             glyph_w = text.font_size * 0.6 * text.horizontal_scale
             if ch == " ":
                 advance = glyph_w + text.char_spacing + text.word_spacing
@@ -2210,7 +2253,11 @@ class _PageRasterizer:
                 polygon.append(self._user_to_pixel(ux, uy))
             if len(polygon) >= 3:
                 pixel_contours.append(polygon)
-        if pixel_contours:
+        if not pixel_contours:
+            return
+        if self._text_clip is not None:
+            self._text_clip.extend(pixel_contours)
+        if text.rendering_mode != 7:
             self._fill_contours_nonzero(
                 pixel_contours, self.state.fill_color, self.state.fill_alpha
             )
@@ -2251,9 +2298,14 @@ class _PageRasterizer:
             _transform_point(base, pad, max(pad, height - pad)),
         ]
         polygon = [self._user_to_pixel(x, y) for x, y in corners]
-        self._fill_polygon_pixels(
-            polygon, self.state.fill_color, self.state.fill_alpha
-        )
+        if self._text_clip is not None:
+            # The box stands in for a glyph we could not outline; a clipping
+            # mode has to clip to *something* or the page below vanishes.
+            self._text_clip.append(polygon)
+        if text.rendering_mode != 7:
+            self._fill_polygon_pixels(
+                polygon, self.state.fill_color, self.state.fill_alpha
+            )
 
     # -- embedded TrueType font resolution --------------------------------
 

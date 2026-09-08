@@ -416,7 +416,13 @@ Supported:
   inline `BI`/`ID`/`EI` images, form XObjects, and text. A path's interior is
   decided by the rule its operator names (8.5.3.3) -- nonzero for `f`/`B`/`W`,
   even-odd for `f*`/`B*`/`W*` -- across all of its subpaths together, so a
-  shape with a hole has one, and the same two rules apply to a clipping path. An inline image is
+  shape with a hole has one, and the same two rules apply to a clipping path.
+  All eight **text rendering modes** (table 106) are honoured, including the
+  four that clip: modes 4-7 add the glyphs they show to the clipping path,
+  which takes effect at `ET` and is restored by `Q` like any other clip.
+  The **text state** -- font and size, `Tc`, `Tw`, `Tz`, `TL`, `Tr`, `Ts` -- is
+  graphics state (9.3.1), so it outlives a text object and follows `q`/`Q`;
+  `BT` initialises the text and text-line matrices and nothing else (9.4.1). An inline image is
   painted by the same code as `Do`: its abbreviated dictionary is expanded to
   the image XObject it stands for, including a `/ColorSpace` that names an
   entry in the page's resources rather than a device space. A **stencil mask**

@@ -686,8 +686,14 @@ class ContentStreamParser:
             500  # thousandths of text space unit (em fraction)
         )
         self._widths_by_code: dict[int, int] | None = None
+        self._width_fn: Any = None
         self._default_glyph_width: int = 1000
         self._is_cid_identity: bool = False
+        # Text-object position, and the leading a `T*` moves by. The leading is
+        # graphics state (9.3.1) and survives BT; the position does not.
+        self._text_y: float = 0.0
+        self._leading: float = 0.0
+        self._pending_move: bool = False
         self._gs_stack: list[dict[str, str | None]] = []
 
         self.WHITESPACE = " \t\n\r\x0c"
@@ -1010,7 +1016,7 @@ class ContentStreamParser:
 
     def _handle_operator(self, op: str, ops: list[Any]) -> None:
         if op == "BT":
-            self._reset_text_state()
+            self._begin_text_object()
             self._in_text = True
             return
         if op == "ET":
@@ -1096,29 +1102,24 @@ class ContentStreamParser:
                 self._buffer.append(self._decode_bytes(ops[-1]))
             return
 
-    def _reset_text_state(self) -> None:
-        # BT starts the text matrix at the identity. Where text was last *shown*
-        # is not reset with it: a page built one text object per line has a BT
-        # between every pair of them, and the question a separator answers is
-        # whether this text is on the same line as the text before it -- not
-        # whether it is in the same text object.
+    def _begin_text_object(self) -> None:
+        """``BT``: start the text matrix at the identity, and nothing else.
+
+        ISO 32000-1 9.4.1 gives ``BT`` two jobs -- the text matrix and the text
+        *line* matrix -- and 9.3.1 puts everything else a text object uses in
+        the **graphics** state: the font and its size, ``Tc``, ``Tw``, ``Tz``,
+        ``TL``, ``Tr``, ``Ts``. Those outlive a text object, so a page that
+        selects a font once and then opens a text object per line still has its
+        font in the second one. Clearing them here read that page's text with
+        no font at all, dropping every character its encoding was needed for.
+
+        Where text was last *shown* is not reset either: a page built one text
+        object per line has a ``BT`` between every pair of them, and the
+        question a separator answers is whether this text is on the same line
+        as the text before it -- not whether it is in the same text object.
+        """
         self._text_y = 0.0
-        self._leading = 0.0
         self._pending_move = False
-        self._current_font = None
-        self._font_encoding_map = None
-        self._to_unicode_map = None
-        self._predefined_cmap = None
-        self._predefined_encoding = None
-        self._embedded_encoding_map = None
-        self._embedded_encoding_lengths = ()
-        self._embedded_encoding_codespaces = ()
-        self._opaque_composite = False
-        self._widths_by_code = None
-        self._width_fn = None
-        self._default_glyph_width = 1000
-        self._is_cid_identity = False
-        self._last_glyph_width = 500
 
     def _load_cid_widths(self, w_obj: Any) -> dict[int, int]:
         """Parse a CIDFont /W array into code -> width (thousandths)."""

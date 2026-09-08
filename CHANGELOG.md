@@ -9,6 +9,30 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`BT` cleared the whole text state, which is graphics state.** ISO 32000-1
+  9.4.1 gives `BT` two jobs — the text matrix and the text *line* matrix — and
+  9.3.1 puts everything else a text object uses in the **graphics** state: the
+  font and its size, `Tc`, `Tw`, `Tz`, `TL`, `Tr`, `Ts`. Those outlive a text
+  object and are saved and restored by `q`/`Q`. Both readers reset all of it at
+  `BT`, so a page that selects its font once and then opens a text object per
+  line — which is how a great many generators write one — rendered every line
+  after the first at the 12pt fallback in the wrong face, and its text was
+  *extracted* with no font at all, silently dropping every character the
+  encoding was needed for (`café` came back as `caf`). A `TL` set in an earlier
+  object was lost the same way, so `T*` moved nowhere and ran two lines
+  together.
+
+- **Text rendering modes 4 to 7 did not clip.** Table 106: they add what they
+  show to the clipping path, which is applied once, at `ET`. The renderer
+  stored `Tr` and never looked at it past mode 3, so a text-shaped window — the
+  usual way to put a picture inside letters — clipped nothing and the picture
+  covered the page. Mode 7 now collects outlines without painting, the
+  accumulated glyphs intersect the clip at `ET`, and the result is graphics
+  state like any other clip, so `Q` restores it. A glyph that contributes no
+  outline (a space) still opens the window, and so leaves it empty; a showing
+  operator given an empty string builds no clipping path at all. Verified
+  against both pdfium and MuPDF.
+
 - **No filled path ever had a hole in it.** ISO 32000-1 8.5.3.3 settles which
   points a path encloses by one of two rules, and the operator picks one — `f`
   against `f*`, `B` against `B*`, `W` against `W*`. The rule belongs to the
