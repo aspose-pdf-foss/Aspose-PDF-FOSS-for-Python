@@ -7532,6 +7532,29 @@ class SimplePdf:
         if has_ap and not force:
             return True
 
+        stream = self.build_annotation_appearance(annot)
+        if stream is None:
+            return False
+        rect = self._get_cos_rect(annot.mapping.get(PdfName("Rect")))
+        annot.mapping[PdfName("AP")] = self._register_annotation_appearance(
+            rect,
+            {"N": stream.content},
+            self._resolve(stream.mapping.get(PdfName("Resources"))),
+        )
+        return True
+
+    def build_annotation_appearance(self, annot: PdfDictionary) -> PdfStream | None:
+        """The appearance an annotation describes but does not carry.
+
+        An annotation without an ``/AP`` is not invisible: a reader draws it
+        from the properties it does carry -- a ``Square``'s ``/IC`` and ``/C``,
+        a ``Line``'s ``/L``, a ``Highlight``'s ``/QuadPoints`` (ISO 32000-1
+        12.5.2, and the note in 12.5.5 that a viewer generates what is missing).
+
+        The stream is built and handed back rather than stored, so a renderer
+        can draw an annotation without writing to the document it is drawing.
+        :meth:`generate_appearance` is the same thing kept.
+        """
         from .appearance import build_appearance
 
         subtype = self._get_cos_name(annot.mapping.get(PdfName("Subtype")))
@@ -7544,15 +7567,23 @@ class SimplePdf:
             props.setdefault("Contents", decode_pdf_text_string(contents))
         generated = build_appearance(subtype, rect, props)
         if generated is None:
-            return False
-
+            return None
+        width = float(rect[2]) - float(rect[0])
+        height = float(rect[3]) - float(rect[1])
+        mapping = {
+            PdfName("Type"): PdfName("XObject"),
+            PdfName("Subtype"): PdfName("Form"),
+            PdfName("FormType"): PdfNumber(1),
+            PdfName("BBox"): PdfArray(
+                [PdfNumber(0), PdfNumber(0), PdfNumber(width), PdfNumber(height)]
+            ),
+        }
         resources = self._build_appearance_resources(
             generated.ext_gstates, generated.fonts
         )
-        annot.mapping[PdfName("AP")] = self._register_annotation_appearance(
-            rect, {"N": generated.content}, resources
-        )
-        return True
+        if isinstance(resources, PdfDictionary):
+            mapping[PdfName("Resources")] = resources
+        return PdfStream(content=generated.content, mapping=mapping)
 
     def generate_appearances(
         self, page_index: int | None = None, *, force: bool = False

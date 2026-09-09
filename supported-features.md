@@ -429,7 +429,11 @@ Supported:
   The page's contents are an **isolated transparency group** (11.4.7): they
   begin on a transparent backdrop and meet the page's background colour once,
   at the end, so a blend mode painting over bare page blends against nothing
-  rather than against the paper. An inline image is
+  rather than against the paper.
+  An annotation is drawn from its `/AP` where it has one, and from **its own
+  properties where it does not** (12.5.2) -- the same appearance
+  `generate_appearances()` would store, built and discarded so that rendering
+  never writes to the document. An inline image is
   painted by the same code as `Do`: its abbreviated dictionary is expanded to
   the image XObject it stands for, including a `/ColorSpace` that names an
   entry in the page's resources rather than a device space. A **stencil mask**

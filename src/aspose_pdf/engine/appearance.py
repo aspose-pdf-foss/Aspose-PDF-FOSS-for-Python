@@ -1137,9 +1137,16 @@ def _circle(lines: list[str], cx: float, cy: float, r: float) -> None:
     ]
 
 
+#: A note or attachment icon is drawn at a fixed size whatever ``/Rect`` says
+#: (ISO 32000-1 12.5.6.4, 12.5.6.15: the rectangle is not used to scale it).
+#: Twenty points is what readers settle on, and a bigger ``/Rect`` just leaves
+#: the icon centred in more space.
+_ICON_POINTS = 20.0
+
+
 def _icon_frame(w: float, h: float) -> tuple[float, float, float]:
-    """Return ``(size, x, y)`` for a square icon centred in the annotation box."""
-    size = max(1.0, min(w, h))
+    """Return ``(size, x, y)`` for a standard icon centred in the annotation box."""
+    size = max(1.0, min(w, h, _ICON_POINTS))
     return size, (w - size) / 2.0, (h - size) / 2.0
 
 

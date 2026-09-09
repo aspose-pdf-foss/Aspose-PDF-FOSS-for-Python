@@ -9,6 +9,24 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An annotation with no `/AP` was drawn as nothing.** ISO 32000-1 12.5.2
+  gives an annotation the properties its appearance is made of — a `Square`'s
+  `/IC` and `/C`, a `Line`'s `/L`, a `Highlight`'s `/QuadPoints` — and a reader
+  generates the appearance when the file does not carry one, which plenty of
+  writers do not. The library could already build them (`generate_appearances()`
+  writes them into the document); the *renderer* never asked, so every such
+  annotation was missing from a rendered page and from the SVG export. It asks
+  now, through a new `SimplePdf.build_annotation_appearance`, and throws the
+  stream away rather than editing the document it is drawing. Where pdfium and
+  MuPDF agree on what to draw — `Square`, `Circle`, `Ink`, `FreeText` — so do
+  we now.
+
+- **A note or attachment icon filled its whole rectangle.** 12.5.6.4 and
+  12.5.6.15: a `Text` or `FileAttachment` annotation's icon is a fixed size and
+  the rectangle does not scale it, so a 120-point box got a 120-point sticky
+  note where both readers draw a small one centred in the space. It is drawn at
+  twenty points now, which is where readers settle.
+
 - **A blend mode over bare page blended against paper that is not there.** ISO
   32000-1 11.4.7: a page's contents are a transparency group, and that group is
   *isolated* — it begins with nothing behind it, and the paper is joined once,

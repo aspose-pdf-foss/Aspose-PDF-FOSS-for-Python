@@ -230,13 +230,17 @@ def test_malformed_annotation_does_not_abort_the_page():
     assert _is_red(raster, 30, 20)
 
 
-def test_annotation_without_an_appearance_is_skipped():
+def test_annotation_without_an_appearance_is_drawn_from_what_it_says():
+    # No /AP, and nothing but a rectangle to go on: a reader still draws the
+    # default border, and the middle stays empty because nothing asked for a
+    # fill. See tests/test_generated_appearance_rendering.py.
     document = _document([PdfDictionary({
         PdfName("Subtype"): PdfName("Square"),
         PdfName("Rect"): PdfArray([PdfNumber(v) for v in (10, 160, 50, 200)]),
     })])
     raster = _render(document)
-    assert raster.get_pixel(30, 20) == (255, 255, 255)
+    assert raster.get_pixel(30, 20) == (255, 255, 255)  # hollow
+    assert raster.get_pixel(30, 0) == (0, 0, 0)  # its border
 
 
 def test_rendering_survives_a_save_and_reload():

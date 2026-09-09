@@ -915,7 +915,7 @@ class _PageRasterizer:
         """Return the ``/AP /N`` stream, resolving an appearance-state subdictionary."""
         ap = self._resolve(annot.mapping.get(PdfName("AP")))
         if not isinstance(ap, PdfDictionary):
-            return None
+            return self._generated_appearance(annot)
         normal = self._resolve(ap.mapping.get(PdfName("N")))
         if isinstance(normal, PdfStream):
             return normal
@@ -933,6 +933,26 @@ class _PageRasterizer:
             if isinstance(only, PdfStream):
                 return only
         return None
+
+    def _generated_appearance(self, annot: PdfDictionary) -> Any:
+        """The appearance an annotation describes but does not carry.
+
+        A reader draws a ``Square`` from its ``/IC`` and ``/C``, a ``Line``
+        from its ``/L``, a ``Highlight`` from its ``/QuadPoints``, whether or
+        not anyone has written an ``/AP`` for it. The document can be asked to
+        keep such an appearance (``generate_appearances``); rendering one must
+        not need the document changed first, so the stream is built here and
+        thrown away.
+        """
+        builder = getattr(self.pdf, "build_annotation_appearance", None)
+        if not callable(builder):
+            return None
+        try:
+            return builder(annot)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return None
 
     def _cos_rect(self, value: Any) -> tuple[float, float, float, float] | None:
         array = self._resolve(value)
