@@ -43,7 +43,18 @@ Supported:
   the new trailer still names `/Encrypt`. *Changing* the protection is refused
   — adding it, removing it or changing the password re-keys every object, and
   the ones in the preserved prefix cannot follow — as is a document waiting to
-  be signed, which produces its own revision.
+  be signed, which produces its own revision. The appended revision is indexed
+  the same way the one it chains to is: a classic `xref` table after a table,
+  and a **cross-reference stream** after a stream (7.5.8.4 lets a classic
+  trailer's `/Prev` name only a table), written plain and unencrypted as
+  7.5.8.2 requires.
+- **The newest revision to mention an object owns it.** Reading a chain, a
+  plain entry, an entry naming an object stream and a *freed* entry all claim
+  the object number for their revision, so an object lifted out of an object
+  stream by a later update reads as the newer copy and one deleted by a later
+  update stays deleted. A **full** save carries only the trailer keys that name
+  something in the file it is writing — `/Root`, `/Info`, `/ID`, `/Encrypt` —
+  never a `/Prev` into a revision it does not have.
 - **A save reproduces what it was given.** Outlines and attachments are held in
   the model rather than the COS graph and are rebuilt on every save; the
   rebuild takes over the object numbers the previous copy occupied, so opening

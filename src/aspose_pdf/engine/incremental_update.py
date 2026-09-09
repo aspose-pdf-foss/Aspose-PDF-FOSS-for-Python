@@ -48,6 +48,10 @@ class IncrementalUpdate:
     next_obj_num: int = field(init=False)
     modified_objects: dict[int, bytes] = field(default_factory=dict)
     xref_entries: list[tuple[int, int, int]] = field(default_factory=list)
+    #: Whether the revision being chained to ends in a cross-reference
+    #: *stream* rather than a classic table. An update has to match it --
+    #: see :meth:`build_incremental_xref_stream`.
+    previous_is_stream: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         if self.budget is None:
@@ -101,6 +105,11 @@ class IncrementalUpdate:
         data = self.original_data
         xref_start = startxref
         if xref_start + 4 > len(data) or data[xref_start : xref_start + 4] != b"xref":
+            # A cross-reference *stream* stands here, not a table. Its entries
+            # are compressed inside an object, so the object numbers are read
+            # off the file instead -- and the update will have to be a stream
+            # too (:meth:`build_incremental_xref_stream`).
+            self.previous_is_stream = True
             # Fallback: extract object numbers via a simple regex.
             obj_numbers: set[int] = set()
             for match in re.finditer(rb"(\d+)\s+0\s+obj", data):
@@ -242,6 +251,69 @@ class IncrementalUpdate:
                 out += f"{offsets[obj_num]:010d} 00000 n \n".encode("latin-1")
             i += 1
         return bytes(out)
+
+    def build_incremental_xref_stream(
+        self,
+        offsets: dict[int, int],
+        object_number: int,
+        xref_offset: int,
+        size: int,
+        prev: int,
+        extra: str = "",
+    ) -> bytes:
+        """Serialise a cross-reference **stream** for the appended objects.
+
+        ISO 32000-1 7.5.8.4: a revision chains to the one before it through
+        ``/Prev``, and a classic trailer's ``/Prev`` must name a classic table.
+        Appending a table to a file that ends in a cross-reference stream points
+        the chain at something no reader can read as a table -- the previous
+        revision is lost, and only a reader that gives up and rescans the whole
+        file finds the pages again. So an update matches what it chains to.
+
+        *offsets* maps each appended object number to where its body starts;
+        *object_number* and *xref_offset* are this stream's own number and
+        offset, which it has to list among the rest. *extra* carries the
+        trailer keys that belong in the dictionary (``/Root``, ``/Info``,
+        ``/ID``, ``/Encrypt``) already serialised.
+
+        The stream is written plain and **not** encrypted: 7.5.8.2 exempts it,
+        and a reader has to read it before it knows how to decipher anything.
+        """
+        table = dict(offsets)
+        table[object_number] = xref_offset
+        numbers = sorted(table)
+        # /W [1 4 2]: one type byte (1 == in use), a four-byte offset, a
+        # two-byte generation. Fixed widths keep the writer simple and cover
+        # any file this library can produce.
+        entries = bytearray()
+        index: list[tuple[int, int]] = []
+        i = 0
+        while i < len(numbers):
+            run_start = i
+            while i + 1 < len(numbers) and numbers[i + 1] == numbers[i] + 1:
+                i += 1
+            run = numbers[run_start : i + 1]
+            index.append((run[0], len(run)))
+            for number in run:
+                entries += b"\x01"
+                entries += table[number].to_bytes(4, "big")
+                entries += (0).to_bytes(2, "big")
+            i += 1
+        index_text = " ".join(f"{start} {count}" for start, count in index)
+        header = (
+            f"{object_number} 0 obj\n"
+            f"<< /Type /XRef /Size {size} /W [ 1 4 2 ]"
+            f" /Index [ {index_text} ] /Prev {prev}"
+            f" /Length {len(entries)}{extra} >>\nstream\n"
+        ).encode("latin-1")
+        return (
+            header
+            + bytes(entries)
+            + b"\nendstream\nendobj\n"
+            + b"startxref\n"
+            + str(xref_offset).encode("ascii")
+            + b"\n%%EOF\n"
+        )
 
     def build_incremental_trailer(
         self, prev_xref: int, new_size: int, xref_offset: int

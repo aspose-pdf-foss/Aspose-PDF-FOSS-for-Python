@@ -9,6 +9,28 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An incremental update to a file indexed by a cross-reference stream broke
+  the chain.** The update always appended a *classic* `xref` table, and ISO
+  32000-1 7.5.8.4 lets a classic trailer's `/Prev` name only a classic table —
+  so the chain pointed at something no reader can read as one. Everything
+  before the update was lost, and only a reader that gave up and rescanned the
+  whole file found the pages again. An update now writes the same kind of
+  section it chains to, written plain and unencrypted as 7.5.8.2 requires.
+
+- **An object stream answered for objects it no longer held.** Reading a
+  revision chain, inflating an object stream cached *every* member, including
+  numbers a later revision had re-issued as plain objects, so the stale copy
+  outranked the newer one for the life of the document. The rule — the newest
+  revision to mention an object owns it — was being applied to the plain xref
+  entries and not to these, nor to an object a revision had *freed*.
+
+- **A full save copied `/Prev` out of the source trailer.** A full rewrite has
+  no previous revision, so the offset pointed past the end of the file it was
+  written into, and reading it back fell into a full-file reconstruction scan.
+  Only the keys that name something in the file being written are carried now
+  — `/Root`, `/Info`, `/ID`, `/Encrypt` — which is the list its
+  cross-reference-stream sibling already used four lines away.
+
 - **Setting a form field's value left it drawing the old one.** An appearance
   stream *is* what a reader draws: ISO 32000-1 12.7.3.3 lets it trust the
   stream and never look at `/V` unless the AcroForm sets `/NeedAppearances`,

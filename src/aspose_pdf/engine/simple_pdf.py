@@ -3179,6 +3179,30 @@ class SimplePdf:
             trailer.mapping.pop(PdfName(drop), None)
         if encryption is None:
             trailer.mapping.pop(PdfName("Encrypt"), None)
+        if incr.previous_is_stream:
+            # The revision being chained to ends in a cross-reference stream,
+            # so this one must too: a classic trailer's /Prev may only name a
+            # classic table (7.5.8.4).
+            stream_number = highest + 1
+            offsets: dict[int, int] = {}
+            cursor = append_origin
+            for number in sorted(incr.modified_objects):
+                offsets[number] = cursor
+                cursor += len(incr.modified_objects[number])
+            keys = "".join(
+                f" /{name.name.lstrip('/')} "
+                + writer.serialize_object(value)
+                for name, value in trailer.mapping.items()
+            )
+            return raw + objects_bytes + incr.build_incremental_xref_stream(
+                offsets,
+                stream_number,
+                cursor,
+                stream_number + 1,
+                prev_startxref,
+                extra=keys,
+            )
+
         trailer.mapping[PdfName("Size")] = PdfNumber(highest + 1)
         trailer.mapping[PdfName("Prev")] = PdfNumber(prev_startxref)
         trailer_bytes = (

@@ -542,6 +542,8 @@ class PdfCosParser:
             current_offset = xref_offset
             trailer_dict = None
             seen_xref_offsets: set[int] = set()
+            #: Object numbers a newer section has already answered for.
+            claimed: set[int] = set()
             xref_sections = 0
 
             while current_offset is not None:
@@ -558,11 +560,30 @@ class PdfCosParser:
                 self._budget.check(
                     xref_sections, "max_xref_sections", "xref sections"
                 )
-                xref_table, trailer = self._parse_xref_section(current_offset)
-                # Earlier entries take precedence over later (newer updates first)
+                # Each section is read on its own so the chain can decide what
+                # it is allowed to say. `_parse_xref_section` reports objects
+                # living in object streams by writing into the parser, so the
+                # sink is swapped for the call.
+                outer, self._compressed_objects = self._compressed_objects, {}
+                try:
+                    xref_table, trailer = self._parse_xref_section(current_offset)
+                    section_compressed = self._compressed_objects
+                finally:
+                    self._compressed_objects = outer
+                # The chain is walked newest first, and the newest revision to
+                # mention an object is the one that owns it -- *whichever form
+                # it takes*. An object moved out of an object stream by a later
+                # revision, or freed by one, otherwise kept answering from the
+                # older copy: the merge was keeping newest-wins for plain
+                # entries and letting compressed ones through unconditionally.
                 for obj_num, off in xref_table.items():
-                    if obj_num not in all_xref:
+                    if obj_num not in claimed:
+                        claimed.add(obj_num)
                         all_xref[obj_num] = off
+                for obj_num, location in section_compressed.items():
+                    if obj_num not in claimed:
+                        claimed.add(obj_num)
+                        self._compressed_objects[obj_num] = location
                 self._budget.check_objects(
                     len(all_xref) + len(self._compressed_objects)
                 )
@@ -898,8 +919,10 @@ class PdfCosParser:
                 pos += entry_size
 
                 if field1 == 0:
-                    # Free object
-                    pass
+                    # Freed. Recorded all the same, as offset zero: a revision
+                    # that deletes an object has spoken for it, and without the
+                    # entry an older section would put the object back.
+                    xref_table.setdefault(obj_num, 0)
                 elif field1 == 1:
                     # Uncompressed object: field2 = offset, field3 = gen
                     xref_table[obj_num] = field2
@@ -1319,9 +1342,17 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
             raise KeyError(obj_num)
         extracted = self._parser._parse_object_stream(stm)
         for k, v in extracted.items():
-            self._cache[int(k)] = v
+            number = int(k)
+            # Only the members this stream is still the current home of. An
+            # incremental update may re-issue one as a plain object, or move it
+            # into another stream; the newest revision to mention an object
+            # owns it, and caching the stale copy from in here would outrank
+            # that for the life of the document.
+            if self._compressed.get(number, (None, None))[0] != stm_num:
+                continue
+            self._cache[number] = v
             # Already covered by the object stream's own decryption.
-            self._decrypted.add(int(k))
+            self._decrypted.add(number)
         if obj_num not in self._cache:
             raise KeyError(obj_num)
         return self._cache[obj_num]

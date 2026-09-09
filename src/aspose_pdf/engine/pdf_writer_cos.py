@@ -64,6 +64,11 @@ class WriterEncryption:
         )
 
 
+#: The trailer keys that name something in the file being written. Everything
+#: else in a source trailer describes the revision it came from.
+_TRAILER_CARRY = ("Root", "Info", "ID", "Encrypt")
+
+
 class PdfCosWriter:
     """Serialize a :class:`PdfDocument` to a PDF byte sequence.
 
@@ -328,7 +333,7 @@ class PdfCosWriter:
             PdfName("Length"): PdfNumber(len(xref_content)),
         }
         # Carry the document references the trailer needs into the XRef dict.
-        for key_name in ("Root", "Info", "ID", "Encrypt"):
+        for key_name in _TRAILER_CARRY:
             val = self.doc.trailer.mapping.get(PdfName(key_name))
             if val is not None:
                 xref_map[PdfName(key_name)] = val
@@ -347,13 +352,23 @@ class PdfCosWriter:
     # Internal helpers
     # ---------------------------------------------------------------------
     def _prepare_trailer_dict(self, size: int) -> PdfDictionary:
-        """Return a trailer dictionary ensuring required entries.
+        """Return the trailer for a full rewrite.
 
-        The supplied ``self.doc.trailer`` may already contain entries such as
-        ``/Root``. We add ``/Size`` if missing and return a new dictionary that
-        merges both.
+        Only the keys that name something in *this* file are carried over. The
+        rest of a source trailer describes the revision it came from: ``/Prev``
+        chains to a revision a full rewrite does not have, ``/XRefStm`` points
+        into one, and ``/Type``, ``/W``, ``/Index``, ``/Filter``,
+        ``/DecodeParms`` and ``/Length`` belong to a cross-reference *stream*
+        and mean nothing in a classic trailer. Copying ``/Prev`` was enough on
+        its own to send a reader chasing an offset past the end of the file.
         """
-        trailer = PdfDictionary(dict(self.doc.trailer.mapping))
+        trailer = PdfDictionary(
+            {
+                PdfName(key): value
+                for key in _TRAILER_CARRY
+                if (value := self.doc.trailer.mapping.get(PdfName(key))) is not None
+            }
+        )
         # A full rewrite emits every object sequentially, so the computed size
         # (highest object number + 1) is authoritative. Always set it, otherwise
         # a stale /Size carried over from the source trailer can hide objects
