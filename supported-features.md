@@ -558,6 +558,12 @@ Boundaries:
   would be a different operation. Named destinations (`/Dests`) are not merged
   either, so a bookmark or link of the source that goes by name rather than by
   page reference is preserved as it stands and resolves to nothing here.
+  Because the tree does not come, the **key into it does not either**: an
+  imported page gives up its `/StructParents`, and its annotations their
+  `/StructParent` (14.7.4.4). Those are indices into the *source* document's
+  `/ParentTree`, and keeping one would have the page's marked content answer to
+  whatever this document holds under that number — another page's headings, or
+  a tree that is not there at all.
 - **Deleting a page does not rewrite what pointed at it.** A *link* whose
   destination was that page keeps naming the page object, which stays in the
   file; the destination simply resolves to nothing. Reading such an annotation

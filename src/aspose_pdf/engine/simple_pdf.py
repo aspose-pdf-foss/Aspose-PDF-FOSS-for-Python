@@ -8314,7 +8314,14 @@ class SimplePdf:
 
     #: Page entries the import supplies itself: ``/Parent`` names a node in the
     #: *other* document's tree, and ``/Contents`` is rebuilt from the bytes.
-    _PAGE_IMPORT_SKIP = ("Parent", "Contents")
+    #: Page entries an import must not copy. ``/Parent`` and ``/Contents`` are
+    #: rebuilt for the copy. ``/StructParents`` is a **key into the source
+    #: document's** ``/ParentTree`` (ISO 32000-1 14.7.4.4), and the structure
+    #: tree is not what a merge takes -- see the merge boundaries in
+    #: ``supported-features.md`` -- so carrying the key over pointed the page's
+    #: marked content at whatever this document happens to keep under that
+    #: number: another page's headings, or nothing at all.
+    _PAGE_IMPORT_SKIP = ("Parent", "Contents", "StructParents")
 
     #: Inheritable page attributes (ISO 32000-1 table 30). They may sit on an
     #: ancestor of the page, which the import deliberately does not follow, so
@@ -8442,6 +8449,22 @@ class SimplePdf:
                 page.mapping[PdfName(name)] = self._import_object(
                     other, value, imported
                 )
+        self._drop_imported_structure_keys(page)
+
+    def _drop_imported_structure_keys(self, page: PdfDictionary) -> None:
+        """Remove parent-tree keys the imported page brought with it.
+
+        An annotation indexes the structure tree the same way its page does
+        (14.7.4.4), through ``/StructParent``. Both keys mean "look me up in
+        *my* document's ``/ParentTree``", and that document is not this one.
+        """
+        annots = self._resolve(page.mapping.get(PdfName("Annots")))
+        if not isinstance(annots, PdfArray):
+            return
+        for ref in annots.items:
+            annot = self._resolve(ref)
+            if isinstance(annot, PdfDictionary):
+                annot.mapping.pop(PdfName("StructParent"), None)
 
     def _import_object(
         self,

@@ -9,6 +9,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An imported page kept its index into a structure tree it had left
+  behind.** A page's `/StructParents` and an annotation's `/StructParent` (ISO
+  32000-1 14.7.4.4) are keys into *their own document's* `/ParentTree`.
+  Merging does not carry the structure tree across — that is a reasoned
+  boundary — but the key came anyway. Merged into a tagged document, the
+  imported page arrived holding `/StructParents 0` and so claimed the target's
+  first page's headings as its own content, with two pages answering to one
+  entry; extracted or concatenated into a fresh document, it pointed at a
+  `/StructTreeRoot` that was not there. The page import drops both keys now.
+  Checked by reading the structure tree back with pdfium's own reader.
+
 - **`PdfFileEditor.insert` brought a page's drawing and nothing it drew with.**
   It was the last of the model-only page copies, handing the engine a list of
   page rectangles and a list of content bytes: the inserted page arrived with
