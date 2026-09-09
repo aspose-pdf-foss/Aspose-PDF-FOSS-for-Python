@@ -8385,8 +8385,8 @@ class SimplePdf:
         for source, new_ref in copied:
             self._import_page_entries(other, source, new_ref, imported)
 
-        self._merge_acroform(other, imported)
-        self._merge_optional_content(other, imported)
+        self._merge_acroform(other, imported, whole=whole)
+        self._merge_optional_content(other, imported, whole=whole)
         self._merge_outlines(other, imported, positions)
         self._merge_image_views(other, positions)
         if whole:
@@ -8525,7 +8525,9 @@ class SimplePdf:
             )
         return obj
 
-    def _merge_acroform(self, other: SimplePdf, imported: dict[int, Any]) -> None:
+    def _merge_acroform(
+        self, other: SimplePdf, imported: dict[int, Any], *, whole: bool = True
+    ) -> None:
         """Adopt the fields the appended pages' widgets belong to.
 
         The widgets arrive with their pages, and a widget without its field in
@@ -8534,6 +8536,12 @@ class SimplePdf:
         is already taken is renamed rather than dropped or merged -- two fields
         of the same name are *one* field in PDF, so keeping the name would make
         filling either change both.
+
+        Taking a **subset** of pages leaves the other way round to guard as
+        well: a field none of whose widgets came has nothing to show and
+        nothing to fill here. A whole document brings every page, so it brings
+        every field -- including one whose widgets were never placed, which is
+        the author's to keep.
         """
         source_root = other._resolve(other._cos_doc.trailer.mapping.get(PdfName("Root")))
         if not isinstance(source_root, PdfDictionary):
@@ -8548,6 +8556,8 @@ class SimplePdf:
         acro, fields = self._ensure_acroform_for_authoring()
         taken = {name for name, _ in self._iter_form_fields()}
         for item in source_fields.items:
+            if not whole and not self._field_widget_came(other, item, imported):
+                continue
             copied = self._import_object(other, item, imported)
             field = self._resolve(copied)
             if not isinstance(field, PdfDictionary):
@@ -8573,14 +8583,46 @@ class SimplePdf:
                 other, source_value, imported
             )
 
+    def _field_widget_came(
+        self, other: SimplePdf, field_ref: Any, imported: dict[int, Any], _depth: int = 0
+    ) -> bool:
+        """Whether any of *field_ref*'s widgets is on a page that was imported.
+
+        A widget is a field's presence on a page, so a field none of whose
+        widgets came across has nothing to show and nothing to fill: adopting
+        it puts a control in ``/AcroForm /Fields`` that no page draws. Every
+        page of a whole-document merge comes, so this only ever excludes
+        anything when a *subset* was taken.
+        """
+        self._load_budget.check(_depth, "max_nesting_depth", "form field depth")
+        if isinstance(field_ref, PdfIndirectReference) and (
+            field_ref.object_number in imported
+        ):
+            return True
+        field = other._resolve(field_ref)
+        if not isinstance(field, PdfDictionary):
+            return False
+        kids = other._resolve(field.mapping.get(PdfName("Kids")))
+        if not isinstance(kids, PdfArray):
+            return False
+        return any(
+            self._field_widget_came(other, kid, imported, _depth + 1)
+            for kid in kids.items
+        )
+
     def _merge_optional_content(
-        self, other: SimplePdf, imported: dict[int, Any]
+        self, other: SimplePdf, imported: dict[int, Any], *, whole: bool = True
     ) -> None:
         """List the appended document's layers among ours.
 
         An optional content group reached only through a page's ``/OC`` is not
         a layer any viewer offers to switch: membership of ``/OCProperties
         /OCGs`` is what makes it one.
+
+        Taking a **subset** of pages takes only the layers those pages reach:
+        one nothing in the subset names would sit in the viewer's panel,
+        switchable and governing nothing. A whole document keeps them all, an
+        empty layer being as much the author's as a full one.
         """
         from .optional_content import _config_of, _properties_of
 
@@ -8614,6 +8656,12 @@ class SimplePdf:
         }
 
         for item in source_groups.items:
+            if (
+                not whole
+                and isinstance(item, PdfIndirectReference)
+                and item.object_number not in imported
+            ):
+                continue
             copied = self._import_object(other, item, imported)
             groups.items.append(copied)
             order = self._resolve(config.mapping.get(PdfName("Order")))

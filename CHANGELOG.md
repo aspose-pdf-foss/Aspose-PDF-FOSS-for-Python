@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A subset of pages adopted the whole document's fields and layers.** The
+  rule for taking part of a document is written down — what belongs to the
+  pages comes, the document's own belongings do not — but two things came
+  regardless of whether the pages reached them. Every field of the source
+  `/AcroForm` was adopted, so a page split off on its own carried the *other*
+  pages' fields: controls listed in the form that no page in the document
+  draws, and nothing can fill. Every optional content group was adopted too, so
+  the same split carried layers nothing in it names — entries in a viewer's
+  layers panel that switch nothing on or off. A subset now takes a field only
+  when one of its widgets came, and a layer only when a page reaches it.
+  Whole-document merges are unchanged: every page comes, so everything is
+  reached, and a layer an author left empty or a field whose widgets were never
+  placed is theirs to keep — the same way attachments were already handled.
+
 - **An imported page kept its index into a structure tree it had left
   behind.** A page's `/StructParents` and an annotation's `/StructParent` (ISO
   32000-1 14.7.4.4) are keys into *their own document's* `/ParentTree`.

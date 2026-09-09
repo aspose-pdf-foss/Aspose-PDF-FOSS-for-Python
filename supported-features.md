@@ -542,9 +542,11 @@ Supported:
   blank page through file-based workflows. These go through the same page import
   as `Document.merge`: a page arrives with its own resources and annotations,
   and nothing is renamed or rewritten. **Extracting** a subset takes what belongs
-  to those pages -- annotations, the fields their widgets belong to, the optional
-  content groups their content names -- and a bookmark only when the page it
-  points at came too, remapped to where that page landed. The document's embedded
+  to those pages -- annotations, a field only when one of its widgets came, an
+  optional content group only when a page reaches it -- and a bookmark only when
+  the page it points at came too, remapped to where that page landed. A whole
+  document is the other way round: every page comes, so a layer its author left
+  empty and a field whose widgets were never placed come with it. The document's embedded
   files are not part of a page subset. **Inserting** places the imported pages
   at a position rather than after the last one, which is the same import with a
   different index -- an insert at the end is the document a merge produces.
