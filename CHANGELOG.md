@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Text drawn through a form XObject was not extracted at all.** A form is a
+  piece of content a page draws with `Do` (ISO 32000-1 8.10) — headers,
+  footers, stamps, and anything a layout tool reuses live in one. The renderer
+  walks into a form and so does the graphics absorber, but the text reader
+  consumed the `Do` operand and moved on, so a page whose words were all inside
+  forms extracted as empty. It walks in now, with the form's own `/Resources`
+  governing inside it and the page's standing in where a form declares none (or
+  declares an empty set, which older writers use to mean the same). Nested
+  forms are followed to a bounded depth, so a form that draws itself stops.
+  An **image** XObject is not a content stream and is not read as one, nor are
+  its samples inlined into the page's resources to look for words in them.
+  `extract_text`, `Document.extract_text` and the text absorbers all see a
+  form's text now; pdfminer and MuPDF agree.
+
 - **A subset of pages adopted the whole document's fields and layers.** The
   rule for taking part of a document is written down — what belongs to the
   pages comes, the document's own belongings do not — but two things came

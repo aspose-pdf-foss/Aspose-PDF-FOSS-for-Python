@@ -814,6 +814,11 @@ Supported:
   map is available.
 - Use glyph-name fallbacks such as `uniXXXX` and `uXXXX`.
 - Use best-effort text extraction fallback for partially broken content streams.
+- **A form XObject's text is the page's text.** A form drawn with `Do` (8.10) is
+  walked into, with its own `/Resources` governing inside it and the page's
+  standing in where it declares none or declares an empty set; nested forms are
+  followed to a bounded depth. An image XObject is not a content stream and is
+  not read as one.
 - **An inline image's samples are not read as tokens.** The bytes between `ID`
   and `EI` are the image, and they can spell any operator or open a string that
   closes nowhere, so a reader that lexes them loses the rest of the page. Where
@@ -932,7 +937,11 @@ Boundaries:
   rewritten; the positional joining is a geometric heuristic (baseline and
   gap thresholds in em units) that requires advance widths, so fonts without
   usable metrics keep positioning operators as run boundaries, and phrases
-  split across columns, rise changes, or CTM changes are not matched. Type0
+  split across columns, rise changes, or CTM changes are not matched. It edits
+  a **page's own** content stream: text drawn through a form XObject is read
+  (see text extraction) but not rewritten, because a replacement is spliced at a
+  byte offset into one stream and a form is another. The same holds for the
+  HTML/Markdown exports, whose layout analysis works from those offsets. Type0
   editing covers any font with a `ToUnicode` CMap, embedded CIDFontType2 fonts
   under an Identity encoding reconstructed from the font program, and the exact
   bundled predefined names listed above for CIDFontType0 or CIDFontType2.

@@ -1575,6 +1575,23 @@ class SimplePdf:
 
             curr_ref = node.mapping.get(PdfName("Parent"))
 
+    def _is_form_xobject(self, value: Any) -> bool:
+        """Whether *value* is a form XObject, whose content is text to read.
+
+        A form's content stream is part of the page's text: the renderer walks
+        into one, and so must whatever is reading. An **image** XObject's
+        stream is not, and inlining megabytes of samples into a resource
+        dictionary to look for words in them would be worse than useless.
+        """
+        from .cos import PdfName, PdfStream
+
+        resolved = self._resolve(value)
+        return (
+            isinstance(resolved, PdfStream)
+            and isinstance(resolved.mapping.get(PdfName("Subtype")), PdfName)
+            and resolved.mapping[PdfName("Subtype")].name.lstrip("/") == "Form"
+        )
+
     def _convert_cos_to_dict(
         self,
         obj: Any,
@@ -1672,7 +1689,10 @@ class SimplePdf:
                         _depth=depth,
                         _active=active,
                         _item_count=item_count,
-                        _include_stream_content=key_name in {"Encoding", "ToUnicode"},
+                        _include_stream_content=(
+                            key_name in {"Encoding", "ToUnicode"}
+                            or self._is_form_xobject(value)
+                        ),
                     )
                 return result
             finally:

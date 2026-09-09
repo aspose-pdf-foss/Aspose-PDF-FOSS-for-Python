@@ -35,6 +35,10 @@ from .predefined_cmaps import (
     supported_cmap_names,
 )
 
+#: How far a `Do` chain of form XObjects is followed. A form may draw another,
+#: and a malformed one may draw itself.
+_MAX_FORM_DEPTH = 8
+
 
 def _resolve_resource_budget(
     limits: PdfLoadLimits | None,
@@ -695,6 +699,9 @@ class ContentStreamParser:
         self._leading: float = 0.0
         self._pending_move: bool = False
         self._gs_stack: list[dict[str, str | None]] = []
+        #: How many form XObjects deep this parser is, so a form that draws
+        #: itself cannot recurse forever.
+        self._form_depth = 0
 
         self.WHITESPACE = " \t\n\r\x0c"
         self.DELIMITERS = "()<>[]{}/%"
@@ -823,6 +830,8 @@ class ContentStreamParser:
                     self._set_colorspace_name(operands[0], nonstroking=True)
                 elif token == "CS" and operands:
                     self._set_colorspace_name(operands[0], nonstroking=False)
+                elif token == "Do" and operands:
+                    self._show_form_xobject(operands[-1])
                 elif token in {"BMC", "BDC", "EMC"}:
                     self._handle_marked_content(token, operands)
                 elif token in {
@@ -1679,6 +1688,46 @@ class ContentStreamParser:
             yield token
             if token == "BI":
                 yield from self._read_inline_image()
+
+    def _show_form_xobject(self, operand: Any) -> None:
+        """Read the text a ``Do``-ed form XObject shows.
+
+        A form is part of the page it is drawn on -- the renderer walks into
+        one, and so must whatever is reading the page's text. Headers, footers,
+        stamps and anything a layout tool reuses live in forms, and skipping
+        them read those pages as blank.
+
+        The form's own ``/Resources`` govern inside it (ISO 32000-1 8.10.1),
+        falling back to the page's when it declares none.
+        """
+        if self._form_depth >= _MAX_FORM_DEPTH:
+            return
+        name = str(operand).lstrip("/")
+        xobjects = self._resources.get("XObject")
+        form = xobjects.get(name) if isinstance(xobjects, dict) else None
+        if not isinstance(form, dict) or form.get("Subtype") != "Form":
+            return
+        content = form.get("content")
+        if not isinstance(content, (bytes, bytearray)):
+            return
+        # 8.10.1: a form's /Resources should be a complete set, and where it is
+        # absent -- or empty, which older writers use to mean the same -- the
+        # page's stand in.
+        resources = form.get("Resources")
+        nested = ContentStreamParser(
+            bytes(content),
+            resources if isinstance(resources, dict) and resources else self._resources,
+            budget=self._budget,
+            hidden_oc_names=self._hidden_oc_names,
+        )
+        nested._form_depth = self._form_depth + 1
+        text = nested.extract_text()
+        if not text:
+            return
+        if self._buffer:
+            self._buffer.append("\n")
+        self._buffer.append(text)
+        self._last_shown_y = None
 
     def _read_inline_image(self) -> Iterator[Any]:
         """Lex a ``BI`` image as one thing and yield it with its ``EI``.
