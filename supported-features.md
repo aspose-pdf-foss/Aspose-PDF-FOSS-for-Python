@@ -1208,6 +1208,12 @@ Supported:
   (`lock=` → `/Lock`) names the fields the
   signature freezes (`action` of `All`/`Include`/`Exclude`, with `fields` for
   the latter two).
+- **Setting a field's value redraws that field.** An appearance stream is what
+  a reader draws (12.7.3.3 lets it ignore `/V` unless `/NeedAppearances` says
+  otherwise, and this library writes `/NeedAppearances false`), so assigning to
+  `Field.value` rebuilds the widgets of the field that changed — text, choice,
+  check box and radio alike — and leaves every other field's appearance,
+  including a hand-made one, as it was.
 - Regenerate field appearance streams from their values via
   `Document.generate_field_appearances()` or `Form.generate_appearances()`:
   text and choice fields are drawn from their `/V` and default appearance
@@ -1356,8 +1362,10 @@ Boundaries:
   an appearance-state subdictionary is resolved through `/AS`, and annotations
   flagged Hidden or NoView — and `Popup` subtypes — are skipped. Pass
   `draw_annotations=False` to `Page.render` / `Document.render_page` for the
-  page content alone. An annotation with no appearance draws nothing: the
-  renderer never invents one, so call `generate_appearances()` first.
+  page content alone. An annotation with **no** appearance is drawn from its own
+  properties instead (12.5.2) — the same appearance `generate_appearances()`
+  would store, built for the render and discarded, so drawing never writes to
+  the document.
 
 ## Attachments
 

@@ -11468,15 +11468,7 @@ class SimplePdf:
             annots.items.append(widget_ref)
         field.mapping[PdfName("Kids")] = PdfArray(kid_refs)
 
-        inherited = {
-            "da": self._get_cos_string(acro.mapping.get(PdfName("DA"))) or None,
-            "q": None,
-            "ft": None,
-            "ff": 0,
-            "v": None,
-            "rv": None,
-            "opt": None,
-        }
+        inherited = self._acroform_inherited(acro)
         self._gen_field_appearance_rec(field_ref, inherited, acro)
         acro.mapping[PdfName("NeedAppearances")] = PdfBoolean(False)
 
@@ -11612,8 +11604,12 @@ class SimplePdf:
 
         fields_ref = acroform.mapping.get(PdfName("Fields"))
         fields = self._resolve(fields_ref)
-        if isinstance(fields, PdfArray):
-            self._update_field_value_rec(fields, name, value)
+        if not isinstance(fields, PdfArray):
+            return
+        for field_ref in fields.items:
+            if self._update_field_value_rec(PdfArray([field_ref]), name, value):
+                self._refresh_field_appearance(field_ref, acroform)
+                return
 
     def _update_field_value_rec(
         self, fields_arr: Any, target_name: str, value: Any, prefix: str = ""
@@ -11723,6 +11719,44 @@ class SimplePdf:
                 return state.name.lstrip("/")
         return "Yes"
 
+    def _acroform_inherited(self, acro: PdfDictionary) -> dict[str, Any]:
+        """The field attributes an AcroForm hands down to the fields under it.
+
+        One definition, because the two that existed had drifted: the bulk
+        generator never seeded ``rv``, so a rich-text field reached by that path
+        could not inherit an ancestor's ``/RV`` while the same field reached
+        while being authored could.
+        """
+        return {
+            "da": self._get_cos_string(acro.mapping.get(PdfName("DA"))) or None,
+            "q": None,
+            "ft": None,
+            "ff": 0,
+            "v": None,
+            "rv": None,
+            "opt": None,
+        }
+
+    def _refresh_field_appearance(self, field_ref: Any, acro: PdfDictionary) -> None:
+        """Rebuild one field's widget appearances from the value it now holds.
+
+        An appearance stream *is* what a reader draws: unless the AcroForm sets
+        ``/NeedAppearances``, ISO 32000-1 12.7.3.3 lets a reader trust the
+        stream and never look at ``/V``. Changing a value without rebuilding
+        the stream therefore leaves the field showing its old value in every
+        reader that follows the rule -- while ours, and any other that
+        regenerates anyway, shows the new one. Disagreeing readers are worse
+        than either answer.
+        """
+        try:
+            self._gen_field_appearance_rec(
+                field_ref, self._acroform_inherited(acro), acro
+            )
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            logger.warning("Could not refresh field appearance", exc_info=True)
+
     def generate_field_appearances(self, *, drop_need_appearances: bool = True) -> int:
         """Regenerate ``/AP`` appearance streams for AcroForm fields from their values.
 
@@ -11749,14 +11783,7 @@ class SimplePdf:
         if not isinstance(fields, PdfArray):
             return 0
 
-        inherited = {
-            "da": self._get_cos_string(acro.mapping.get(PdfName("DA"))) or None,
-            "q": None,
-            "ft": None,
-            "ff": 0,
-            "v": None,
-            "opt": None,
-        }
+        inherited = self._acroform_inherited(acro)
         updated = 0
         for field_ref in fields.items:
             updated += self._gen_field_appearance_rec(field_ref, inherited, acro)

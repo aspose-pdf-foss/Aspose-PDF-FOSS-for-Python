@@ -9,6 +9,25 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Setting a form field's value left it drawing the old one.** An appearance
+  stream *is* what a reader draws: ISO 32000-1 12.7.3.3 lets it trust the
+  stream and never look at `/V` unless the AcroForm sets `/NeedAppearances`,
+  and this library writes `/NeedAppearances false` — a promise that the streams
+  are current. Assigning to `Field.value` wrote `/V` and stopped, so a filled
+  form showed its **authored** value in every reader that follows the rule
+  (a text field's stream still said `(Hello) Tj` after the value became
+  `CHANGED VALUE HERE`), while readers that regenerate anyway showed the new
+  one. The generator was already here — `generate_appearances()` runs it over
+  the whole form — and the setter now runs it over the one field it changed,
+  leaving every other field's appearance, including a hand-made one, alone.
+  Text, multiline, combo, list box, check box and radio all follow their value
+  now; verified with pikepdf and by rendering before and after in MuPDF.
+
+- **The two paths that build a field's inherited attributes had drifted.** The
+  bulk appearance generator never seeded `rv`, so a rich-text field reached
+  that way could not inherit an ancestor's `/RV` while the same field reached
+  while being authored could. There is one definition now.
+
 - **An annotation with no `/AP` was drawn as nothing.** ISO 32000-1 12.5.2
   gives an annotation the properties its appearance is made of — a `Square`'s
   `/IC` and `/C`, a `Line`'s `/L`, a `Highlight`'s `/QuadPoints` — and a reader
