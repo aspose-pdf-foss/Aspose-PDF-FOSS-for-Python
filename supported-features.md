@@ -814,6 +814,11 @@ Supported:
   map is available.
 - Use glyph-name fallbacks such as `uniXXXX` and `uXXXX`.
 - Use best-effort text extraction fallback for partially broken content streams.
+- **A malformed resource graph costs its own edge, not the page.** A form
+  XObject that names itself among its own `/Resources` is a cycle; the
+  reference is dropped, with a warning, and the page's other fonts, images and
+  text are read and drawn as usual. (A cyclic *page tree* is still an error --
+  there is no document behind one.)
 - **A form XObject's text is the page's text.** A form drawn with `Do` (8.10) is
   walked into, with its own `/Resources` governing inside it and the page's
   standing in where it declares none or declares an empty set; nested forms are

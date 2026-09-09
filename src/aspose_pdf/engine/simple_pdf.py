@@ -1631,7 +1631,17 @@ class SimplePdf:
             )
             obj_id = id(obj)
             if obj_id in active:
-                raise PdfParseException("COS resource graph contains a cycle")
+                # A resource graph that points back at itself is malformed,
+                # but it is *decoration hanging off a page*, not the page: a
+                # form that lists itself among its own resources should cost
+                # that one edge, not the page's fonts, its images, and its
+                # ability to be drawn at all. The edge is dropped and the rest
+                # is converted. (A cyclic **page tree** is a different matter
+                # and is still refused -- there is no document behind it.)
+                logger.warning(
+                    "Dropping a circular reference in a COS resource graph."
+                )
+                return {}
             active.add(obj_id)
             try:
                 result: dict[str, Any] = {}
@@ -1672,7 +1682,10 @@ class SimplePdf:
             )
             obj_id = id(obj)
             if obj_id in active:
-                raise PdfParseException("COS resource graph contains a cycle")
+                logger.warning(
+                    "Dropping a circular reference in a COS resource graph."
+                )
+                return {}
             active.add(obj_id)
             try:
                 result: dict[str, Any] = {}
@@ -1711,7 +1724,10 @@ class SimplePdf:
             )
             obj_id = id(obj)
             if obj_id in active:
-                raise PdfParseException("COS resource graph contains a cycle")
+                logger.warning(
+                    "Dropping a circular reference in a COS resource graph."
+                )
+                return []
             active.add(obj_id)
             try:
                 result_list: list[Any] = []

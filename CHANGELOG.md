@@ -9,6 +9,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **One circular reference in a page's resources cost the whole page.** A form
+  XObject whose own `/Resources` name that same form makes the resource graph
+  point back at itself — malformed, and writers do produce it. The converter
+  refused the whole graph, so the page lost its fonts, its images and its text;
+  and because the renderer converts a form's resources as it draws, `render()`,
+  `save_as_image()` and `to_svg()` **raised** rather than returning a page at
+  all. The offending edge is dropped now and everything beside it survives,
+  which is what pdfminer and MuPDF do; the drop is logged rather than silent. A
+  cyclic **page tree** is still refused: there is no document behind that one.
+
 - **Text drawn through a form XObject was not extracted at all.** A form is a
   piece of content a page draws with `Do` (ISO 32000-1 8.10) — headers,
   footers, stamps, and anything a layout tool reuses live in one. The renderer

@@ -60,9 +60,7 @@ def test_outline_tree_uses_configured_nesting_limit() -> None:
         }
     )
     outlines = PdfDictionary({PdfName("First"): first})
-    document = _document_with_catalog(
-        PdfDictionary({PdfName("Outlines"): outlines})
-    )
+    document = _document_with_catalog(PdfDictionary({PdfName("Outlines"): outlines}))
 
     extractor = CosExtractor(
         document,
@@ -89,9 +87,7 @@ def test_outline_tree_uses_configured_item_limit() -> None:
         }
     )
     document = _document_with_catalog(
-        PdfDictionary(
-            {PdfName("Outlines"): PdfDictionary({PdfName("First"): first})}
-        )
+        PdfDictionary({PdfName("Outlines"): PdfDictionary({PdfName("First"): first})})
     )
 
     extractor = CosExtractor(
@@ -108,11 +104,7 @@ def test_signature_field_cycle_is_rejected() -> None:
     field = _named_field("signature-parent")
     field[PdfName("Kids")] = PdfArray([field])
     catalog = PdfDictionary(
-        {
-            PdfName("AcroForm"): PdfDictionary(
-                {PdfName("Fields"): PdfArray([field])}
-            )
-        }
+        {PdfName("AcroForm"): PdfDictionary({PdfName("Fields"): PdfArray([field])})}
     )
     extractor = CosExtractor(_document_with_catalog(catalog), b"")
 
@@ -127,11 +119,7 @@ def test_signature_field_tree_uses_configured_nesting_limit() -> None:
     first = _named_field("first")
     first[PdfName("Kids")] = PdfArray([second])
     catalog = PdfDictionary(
-        {
-            PdfName("AcroForm"): PdfDictionary(
-                {PdfName("Fields"): PdfArray([first])}
-            )
-        }
+        {PdfName("AcroForm"): PdfDictionary({PdfName("Fields"): PdfArray([first])})}
     )
     extractor = CosExtractor(
         _document_with_catalog(catalog),
@@ -147,11 +135,7 @@ def test_form_field_cycle_is_rejected() -> None:
     field = _named_field("parent")
     field[PdfName("Kids")] = PdfArray([field])
     catalog = PdfDictionary(
-        {
-            PdfName("AcroForm"): PdfDictionary(
-                {PdfName("Fields"): PdfArray([field])}
-            )
-        }
+        {PdfName("AcroForm"): PdfDictionary({PdfName("Fields"): PdfArray([field])})}
     )
     extractor = CosExtractor(_document_with_catalog(catalog), b"")
 
@@ -166,11 +150,7 @@ def test_form_field_tree_uses_configured_item_limit() -> None:
     first = _named_field("first")
     first[PdfName("Kids")] = PdfArray([second])
     catalog = PdfDictionary(
-        {
-            PdfName("AcroForm"): PdfDictionary(
-                {PdfName("Fields"): PdfArray([first])}
-            )
-        }
+        {PdfName("AcroForm"): PdfDictionary({PdfName("Fields"): PdfArray([first])})}
     )
     extractor = CosExtractor(
         _document_with_catalog(catalog),
@@ -182,13 +162,40 @@ def test_form_field_tree_uses_configured_item_limit() -> None:
         extractor.extract_form_fields()
 
 
-def test_cos_resource_conversion_rejects_cycles() -> None:
+def test_cos_resource_conversion_drops_a_cycle_and_keeps_the_rest() -> None:
+    # A resource graph that points back at itself is malformed, but it is
+    # decoration hanging off a page, not the page. Refusing the whole
+    # conversion cost the page its fonts and its images -- and, through the
+    # renderer, its ability to be drawn at all -- over one bad edge. The edge
+    # is dropped instead, and everything beside it survives.
     resource = PdfDictionary()
     resource[PdfName("Loop")] = resource
+    resource[PdfName("Kept")] = PdfString(b"still here")
     pdf = _simple_pdf(PdfLoadLimits())
 
-    with pytest.raises(PdfParseException, match="cycle"):
-        pdf._convert_cos_to_dict(resource)
+    converted = pdf._convert_cos_to_dict(resource)
+
+    assert converted["Loop"] == {}
+    assert converted["Kept"] == b"still here"
+
+
+def test_a_cyclic_resource_array_is_dropped_too() -> None:
+    array = PdfArray([PdfString(b"first")])
+    array.items.append(array)
+    pdf = _simple_pdf(PdfLoadLimits())
+
+    assert pdf._convert_cos_to_dict(array) == [b"first", []]
+
+
+def test_the_conversion_still_stops_rather_than_looping() -> None:
+    # Two dictionaries that name each other: the drop has to break the cycle,
+    # not merely notice it.
+    first, second = PdfDictionary(), PdfDictionary()
+    first[PdfName("Other")] = second
+    second[PdfName("Back")] = first
+    pdf = _simple_pdf(PdfLoadLimits())
+
+    assert pdf._convert_cos_to_dict(first) == {"Other": {"Back": {}}}
 
 
 def test_cos_resource_conversion_uses_configured_nesting_limit() -> None:
@@ -280,11 +287,7 @@ def test_rasterizer_cid_width_range_is_bounded_before_expansion() -> None:
     rasterizer._load_limits = limits
     rasterizer._load_budget = rasterizer.pdf._load_budget
     cid_font = PdfDictionary(
-        {
-            PdfName("W"): PdfArray(
-                [PdfNumber(0), PdfNumber(10_000_000), PdfNumber(500)]
-            )
-        }
+        {PdfName("W"): PdfArray([PdfNumber(0), PdfNumber(10_000_000), PdfNumber(500)])}
     )
 
     with pytest.raises(PdfResourceLimitException, match="max_container_items"):
