@@ -9,6 +9,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`PdfFileEditor.insert` brought a page's drawing and nothing it drew with.**
+  It was the last of the model-only page copies, handing the engine a list of
+  page rectangles and a list of content bytes: the inserted page arrived with
+  no `/Resources`, so every font and image its content named resolved to no
+  object, and its annotations, links and form fields were dropped. `Document.
+  merge` and `PdfFileEditor.concatenate`/`extract` had already been moved onto
+  the real page import; this was the one left behind. It goes through the same
+  `SimplePdf.append` now, which grew an *at* so that inserting and appending
+  stay one routine rather than two, and an insert at the end is byte-for-byte
+  the document a merge produces. The model-only `insert_pages` had no callers
+  left and is gone.
+
 - **An incremental update to a file indexed by a cross-reference stream broke
   the chain.** The update always appended a *classic* `xref` table, and ISO
   32000-1 7.5.8.4 lets a classic trailer's `/Prev` name only a classic table —

@@ -545,7 +545,9 @@ Supported:
   to those pages -- annotations, the fields their widgets belong to, the optional
   content groups their content names -- and a bookmark only when the page it
   points at came too, remapped to where that page landed. The document's embedded
-  files are not part of a page subset.
+  files are not part of a page subset. **Inserting** places the imported pages
+  at a position rather than after the last one, which is the same import with a
+  different index -- an insert at the end is the document a merge produces.
 
 Boundaries:
 

@@ -7293,19 +7293,6 @@ class SimplePdf:
         # 2. Recursively update /Count in all ancestors (Structural Integrity fix)
         self._update_page_count_recursive(parent_ref, -1)
 
-    def insert_pages(
-        self,
-        index: int,
-        new_pages: list[tuple[float, float, float, float]],
-        new_contents: list[bytes] | None = None,
-    ) -> None:
-        """Insert multiple pages."""
-        self._ensure_not_disposed()
-        if new_contents is None:
-            new_contents = [b""] * len(new_pages)
-        for i, (rect, content) in enumerate(zip(new_pages, new_contents)):
-            self.insert(index + i, (rect, content))
-
     def add(self, page: Any) -> None:
         """Add a page to the end with COS synchronization."""
         self.insert(len(self.pages), page)
@@ -8334,7 +8321,12 @@ class SimplePdf:
     #: they are resolved and written onto the copy.
     _INHERITABLE_PAGE_KEYS = ("Resources", "MediaBox", "CropBox", "Rotate")
 
-    def append(self, other: SimplePdf, pages: Sequence[int] | None = None) -> None:
+    def append(
+        self,
+        other: SimplePdf,
+        pages: Sequence[int] | None = None,
+        at: int | None = None,
+    ) -> None:
         """Append another document's pages, as the pages they are.
 
         Appending used to carry across a page's rectangle and its content
@@ -8350,6 +8342,11 @@ class SimplePdf:
         content names -- while the document's embedded files do not: a subset
         of pages is a different document, and its attachments were not part of
         what was asked for. A bookmark comes only if the page it points at did.
+
+        *at* places them at a position rather than after the last page. That is
+        inserting rather than appending, but it is the same import either way
+        and the difference is one index, which is why there is no second
+        routine for it.
         """
         self._ensure_not_disposed()
         self._ensure_cos()
@@ -8366,14 +8363,16 @@ class SimplePdf:
         imported: dict[int, Any] = {}
         positions: dict[int, int] = {}
         copied: list[tuple[Any, Any]] = []
-        for index in selection:
-            self.insert(
-                len(self.pages), (other.pages[index], other.get_page_content(index))
-            )
+        target = (
+            len(self.pages) if at is None else max(0, min(int(at), len(self.pages)))
+        )
+        for offset, index in enumerate(selection):
+            where = target + offset
+            self.insert(where, (other.pages[index], other.get_page_content(index)))
             self._ensure_page_cache()
-            new_ref = PdfIndirectReference(self._page_refs[len(self.pages) - 1], 0)
+            new_ref = PdfIndirectReference(self._page_refs[where], 0)
             imported[other._page_refs[index]] = new_ref
-            positions[index] = len(self.pages) - 1
+            positions[index] = where
             copied.append((other._get_page_dict(index), new_ref))
 
         for source, new_ref in copied:

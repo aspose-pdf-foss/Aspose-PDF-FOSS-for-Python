@@ -396,7 +396,12 @@ class PdfFileEditor:
             if pos > len(base.pages):
                 pos = len(base.pages)
 
-            base.insert_pages(pos, to_insert.pages, to_insert.page_contents)
+            # The same page import the rest of the library uses. Passing the
+            # rectangles and the content bytes -- which is what this did --
+            # carried a page's *drawing* and nothing it drew with: no
+            # /Resources, so every font and image the content named resolved to
+            # nothing, and the annotations and form fields were dropped.
+            base.append(to_insert, at=pos)
             base.save(destination)
             return True
         except PDF_OPERATION_ERRORS as exc:

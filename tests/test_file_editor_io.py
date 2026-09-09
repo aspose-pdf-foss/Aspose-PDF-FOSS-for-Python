@@ -179,6 +179,11 @@ def test_insert_pages_into_target(tmp_path: Path):
     ok_insert = editor.insert(source, target, output, 2)
     assert ok_insert is True
     assert output.exists()
+    # Not merely written: the pages arrived. See
+    # tests/test_file_editor_insert.py for what they have to bring with them.
+    from aspose_pdf import Document
+
+    assert len(Document(str(output)).pages) == 3
 
 
 def test_delete_range_reduces_page_count(tmp_path: Path):
