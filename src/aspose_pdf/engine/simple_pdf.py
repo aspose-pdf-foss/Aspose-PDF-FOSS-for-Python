@@ -2630,16 +2630,53 @@ class SimplePdf:
             self._create_cos_page(i, rect, content)
         self._page_cache_valid = False
 
+    def _drop_removed_info_entries(self, info_dict: PdfDictionary) -> None:
+        """Remove ``/Info`` entries the caller took out of ``metadata``.
+
+        ``doc.info`` is a dictionary, so ``del``, ``pop``, ``clear`` and
+        assigning a smaller one all mean *remove that entry* -- but the sync
+        only ever wrote the keys it found, so nothing could be deleted through
+        it at all. A document stripped of its metadata before being shared kept
+        every entry, and no error said otherwise.
+
+        An entry ``doc.info`` never showed (an array, a dictionary -- anything
+        :func:`_info_cos_text` cannot render) is not the dictionary's to
+        remove: the caller cannot have deleted what they could not see. Those
+        stay, and are named in a warning when something else was removed, so
+        "I cleared the metadata" is never quietly untrue.
+        """
+        removed: list[str] = []
+        kept: list[str] = []
+        for key in list(info_dict.mapping):
+            name = key.name.lstrip("/")
+            if name in self.metadata:
+                continue
+            if _info_cos_text(self._resolve(info_dict.mapping[key])) is None:
+                kept.append(name)
+                continue
+            del info_dict.mapping[key]
+            removed.append(name)
+        if removed and kept:
+            logger.warning(
+                "Removed /Info %s; kept %s, whose values have no text form and "
+                "so were never in this document's info dictionary view.",
+                ", ".join(sorted(removed)),
+                ", ".join(sorted(kept)),
+            )
+
     def _sync_metadata_to_cos(self) -> None:
         """Write self.metadata into the COS /Info dictionary before serialization."""
-        if not self._cos_doc or not self.metadata:
+        if not self._cos_doc:
             return
         info_ref = self._cos_doc.trailer.mapping.get(PdfName("Info"))
         info_dict = self._resolve(info_ref) if info_ref else None
         if not isinstance(info_dict, PdfDictionary):
+            if not self.metadata:
+                return  # nothing to write and no dictionary to prune
             info_dict = PdfDictionary()
             new_ref = self._cos_doc.register_object(info_dict)
             self._cos_doc.trailer.mapping[PdfName("Info")] = new_ref
+        self._drop_removed_info_entries(info_dict)
         for k, v in self.metadata.items():
             name, text = _info_entry(k, v)
             key = PdfName(name)
@@ -3836,18 +3873,7 @@ class SimplePdf:
         # in-memory SimplePdf() that hasn't been persisted yet is intentionally
         # skipped here.
         if self._cos_doc is not None:
-            title_found = bool(self.metadata.get("Title"))
-            if not title_found:
-                # Also probe the COS /Info dict directly so that the title set
-                # by convert_to_pdfa() (which writes COS objects without
-                # touching self.metadata) is recognised.
-                info_ref = self._cos_doc.trailer.get(PdfName("Info"))
-                info_dict = self._resolve(info_ref)
-                if isinstance(info_dict, PdfDictionary):
-                    title_obj = self._resolve(info_dict.mapping.get(PdfName("Title")))
-                    if isinstance(title_obj, PdfString) and title_obj.value:
-                        title_found = True
-            if not title_found:
+            if not self.metadata.get("Title"):
                 problems.append("PDF/A requires a Title in metadata.")
 
         # 3. Prohibited: JavaScript and Actions
@@ -12827,29 +12853,12 @@ class SimplePdf:
         # annotation flags (set Print, clear Hidden/NoView/Invisible).
         self._pdfa_remediate_pages()
 
-        # 2. Ensure /Info has a /Title; create /Info if absent
-        title = self.metadata.get("Title", "").strip()
-        if not title:
-            # Also check the COS /Info directly (already-set title)
-            info_ref = self._cos_doc.trailer.get(PdfName("Info"))
-            info_dict_check = self._resolve(info_ref)
-            if isinstance(info_dict_check, PdfDictionary):
-                t = self._resolve(info_dict_check.mapping.get(PdfName("Title")))
-                if isinstance(t, PdfString) and t.value:
-                    title = decode_pdf_text_string(t)
-            if not title:
-                title = "Untitled"
-
-        info_ref = self._cos_doc.trailer.get(PdfName("Info"))
-        info_dict = self._resolve(info_ref)
-        if isinstance(info_dict, PdfDictionary):
-            existing_title = self._resolve(info_dict.mapping.get(PdfName("Title")))
-            if not (isinstance(existing_title, PdfString) and existing_title.value):
-                info_dict.mapping[PdfName("Title")] = PdfString(title)
-        else:
-            info_dict = PdfDictionary({PdfName("Title"): PdfString(title)})
-            new_info_ref = self._cos_doc.register_object(info_dict)
-            self._cos_doc.trailer.mapping[PdfName("Info")] = new_info_ref
+        # 2. Ensure /Info has a /Title. Through ``metadata``, which is the one
+        # thing that writes /Info: an entry put straight into the COS dict is
+        # invisible to ``doc.info`` and would be removed by the next save as a
+        # key the caller had deleted.
+        title = self.metadata.get("Title", "").strip() or "Untitled"
+        self.metadata["Title"] = title
 
         # 3. Inject XMP metadata stream into the catalog
         xmp_bytes = _make_pdfa_xmp(level, title)
@@ -13041,14 +13050,9 @@ class SimplePdf:
         if not title:
             title = "Untitled"
 
-        # /Info /Title
-        if isinstance(info_dict, PdfDictionary):
-            info_dict.mapping[PdfName("Title")] = PdfString(title)
-        else:
-            info_dict = PdfDictionary({PdfName("Title"): PdfString(title)})
-            self._cos_doc.trailer.mapping[PdfName("Info")] = (
-                self._cos_doc.register_object(info_dict)
-            )
+        # /Info /Title, through ``metadata`` for the reason given in
+        # ``convert_to_pdfa``: /Info has one writer.
+        self.metadata["Title"] = title
 
         # /StructTreeRoot shell
         struct_root = self._resolve(root.mapping.get(PdfName("StructTreeRoot")))

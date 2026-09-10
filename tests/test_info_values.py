@@ -287,3 +287,115 @@ def test_the_trapped_hint_does_not_leak_onto_other_entries():
     with pytest.raises(PdfValidationException) as excinfo:
         doc.save(io.BytesIO())
     assert "Trapped" not in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Taking an entry out of the dictionary takes it out of the file
+# ---------------------------------------------------------------------------
+
+
+def _info_object(written: bytes) -> bytes:
+    """The bytes of the object the trailer's ``/Info`` points at.
+
+    Found through the trailer rather than by object number: the writer
+    renumbers objects, so the number a fixture used is not the number it has
+    in the saved file.
+    """
+    match = re.search(rb"/Info (\d+) 0 R", written)
+    assert match, "the saved file has no /Info reference"
+    start = written.find(b"%s 0 obj" % match.group(1))
+    assert start != -1, "the /Info reference points at nothing"
+    return written[start : written.find(b"endobj", start)]
+
+
+@pytest.mark.parametrize(
+    "remove",
+    [
+        pytest.param(lambda doc: doc.info.clear(), id="clear"),
+        pytest.param(lambda doc: setattr(doc, "info", {}), id="assign-empty"),
+        pytest.param(lambda doc: doc.info.pop("Title"), id="pop-one"),
+        pytest.param(
+            lambda doc: setattr(doc, "info", {"Title": "only"}), id="assign-smaller"
+        ),
+    ],
+)
+def test_an_entry_taken_out_of_info_is_taken_out_of_the_file(remove):
+    doc = _typed_info_doc()
+    remove(doc)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    info = _info_object(buffer.getvalue())
+
+    for key, still_wanted in (
+        (b"/Title", "Title" in doc.info),
+        (b"/Trapped", "Trapped" in doc.info),
+        (b"/Revision", "Revision" in doc.info),
+        (b"/Approved", "Approved" in doc.info),
+    ):
+        assert (key in info) is still_wanted, f"{key!r} in {info!r}"
+
+
+def test_clearing_info_survives_the_round_trip(tmp_path):
+    doc = _typed_info_doc()
+    doc.info.clear()
+    path = tmp_path / "cleared.pdf"
+    doc.save(str(path))
+    assert Document(str(path)).info == {}
+
+
+def test_a_save_that_removes_nothing_removes_nothing(caplog):
+    doc = _typed_info_doc()
+    doc.info["Title"] = "changed"
+    with caplog.at_level("WARNING"):
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+    info = _info_object(buffer.getvalue())
+    assert b"/Trapped /True" in info
+    assert b"/Revision 7" in info
+    assert b"/Approved true" in info
+    # An untouched entry with no text form is not news; only a removal is.
+    assert "Removed /Info" not in caplog.text
+
+
+def test_what_could_not_be_shown_is_kept_and_named(caplog):
+    doc = _typed_info_doc()
+    doc.info.clear()
+    with caplog.at_level("WARNING"):
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+    assert b"/Tags [ (a) (b) ]" in _info_object(buffer.getvalue())
+    assert "Tags" in caplog.text
+    assert "Title" in caplog.text  # says what it did remove, too
+
+
+def test_no_warning_when_there_is_nothing_left_behind(caplog, tmp_path):
+    doc = _doc(Title="t", Author="a")
+    doc.save(str(tmp_path / "first.pdf"))
+    reloaded = Document(str(tmp_path / "first.pdf"))
+    reloaded.info.clear()
+    with caplog.at_level("WARNING"):
+        reloaded.save(str(tmp_path / "second.pdf"))
+
+    assert "Removed /Info" not in caplog.text
+    assert Document(str(tmp_path / "second.pdf")).info == {}
+
+
+def test_a_document_without_metadata_gains_no_empty_info_dictionary():
+    doc = Document()
+    doc.pages.add()
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    assert b"/Info" not in buffer.getvalue()
+
+
+def test_an_incremental_save_carries_the_removal(tmp_path):
+    doc = _typed_info_doc()
+    doc.info.clear()
+    path = tmp_path / "incremental.pdf"
+    doc.save(str(path), incremental=True)
+
+    written = path.read_bytes()
+    assert written.count(b"%%EOF") == 2  # the original revision is still there
+    assert Document(str(path)).info == {}

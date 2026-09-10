@@ -274,16 +274,19 @@ class TestSimplePdfConvertToPdfa:
     # --- /Info Title ---
 
     def test_title_set_in_info_when_missing(self):
+        """The guarantee is about the saved file, not about when COS is touched.
+
+        The conversion sets the title in ``metadata``, the one thing that
+        writes ``/Info``; the saved bytes are where it has to show up.
+        """
         pdf = _load_simple_pdf()
         # Ensure no title in metadata
         pdf.metadata.pop("Title", None)
         pdf.convert_to_pdfa("1b")
-        # Title must now be present in the COS /Info dict
-        info_ref = pdf._cos_doc.trailer.get(PdfName("Info"))
-        info_dict = pdf._resolve(info_ref)
-        assert isinstance(info_dict, PdfDictionary)
-        title_obj = pdf._resolve(info_dict.mapping.get(PdfName("Title")))
-        assert isinstance(title_obj, PdfString) and title_obj.value
+        assert pdf.metadata.get("Title")
+
+        written = pdf.to_bytes()
+        assert b"/Title" in written, "the saved PDF/A file has no /Title"
 
     def test_existing_title_is_preserved(self):
         pdf = _load_simple_pdf()

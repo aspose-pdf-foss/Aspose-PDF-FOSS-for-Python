@@ -80,6 +80,17 @@ Supported:
   boolean) and omitted where it is not (an array, a dictionary), and each
   keeps its original COS type through a save that does not change it. Change
   one and it is written as the text you set.
+- **Removing an entry from `Document.info` removes it from the file.** `del`,
+  `pop`, `clear()` and assigning a smaller dictionary all take effect on
+  `save` — including an incremental save, which appends the pruned `/Info`.
+  Previously nothing could be deleted through this API at all: the sync wrote
+  the keys it found and never removed any, so a document stripped of its
+  metadata before being shared kept every entry, silently. An entry with no
+  text form (an array, a dictionary) is the one exception — it was never shown
+  in `Document.info`, so it is not removed by editing it; a warning names what
+  stayed behind whenever something else was removed. `/Info` now has exactly
+  one writer, so a title added by `convert_to_pdfa` goes through the same
+  dictionary.
 - **A saved file says on its second line that it is binary.** The header is
   followed by a comment holding four bytes above 127 (ISO 32000-1 7.5.2), which
   is what tells a transfer in text mode or an editor weighing line-ending

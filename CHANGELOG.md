@@ -9,6 +9,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Metadata could not be removed at all: `doc.info.clear()` cleared nothing.**
+  The sync wrote every key it found in `Document.info` and never deleted one,
+  so `del`, `pop`, `clear()` and assigning a smaller dictionary all left the
+  file exactly as it was — a document stripped of its author and title before
+  being shared went out with both, and nothing said so. (`doc.info = {}` did
+  not even reach the sync, which returned early on an empty dictionary.) An
+  entry that is gone from the dictionary is now removed from `/Info`, on a full
+  save and on an incremental one; verified with pikepdf, exiftool and poppler,
+  which no longer see the stripped entries. An entry `Document.info` never
+  showed — an array, a dictionary, anything with no faithful text — is not
+  removed by editing what you could see, and a warning names what stayed
+  behind. `/Info` has one writer again: the title `convert_to_pdfa` adds goes
+  through `metadata` like everything else, rather than being written straight
+  into the COS dictionary where the next save would have taken it for a key the
+  caller had deleted.
+
 - **Opening a file and saving it turned its `/Trapped` flag into our own
   `repr`.** Every `/Info` value that was not a string was read with `str()` on
   the parser's object, so `/Trapped /True` arrived in `Document.info` as the

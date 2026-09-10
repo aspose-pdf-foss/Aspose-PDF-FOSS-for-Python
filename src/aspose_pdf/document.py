@@ -475,6 +475,12 @@ class Document:
         one of them keeps its original type on save unless you change it. An
         entry you *do* change is written as the text you set, since the type it
         used to have cannot be read back out of a string.
+
+        It is a dictionary in both directions: ``del``, ``pop``, ``clear`` and
+        assigning a smaller dictionary all remove those entries from the file
+        on :meth:`save`. An entry with no text form is the exception — you
+        cannot delete what was never shown to you, so it stays, and a warning
+        names it whenever something else was removed.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
