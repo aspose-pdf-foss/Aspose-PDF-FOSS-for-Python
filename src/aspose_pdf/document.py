@@ -517,6 +517,12 @@ class Document:
           packet (overwriting the mapped XMP properties).
         * ``"xmp_to_info"`` — copy the mapped XMP properties into ``/Info``.
 
+        Both date properties are typed, so a value that is not a date in the
+        source format is **not copied**: it is left where it is and logged,
+        rather than written into the other side as text it cannot hold. Dates
+        that do convert keep their precision — ``D:2026`` becomes ``2026``, not
+        ``2026-01-01``, since both formats truncate from the right.
+
         Returns ``self`` for chaining; changes persist on :meth:`save`.
         """
         self._ensure_not_disposed()

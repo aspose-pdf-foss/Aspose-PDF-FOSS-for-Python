@@ -9,6 +9,25 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A metadata sync invented dates and wrote non-dates into date fields.** The
+  `/Info` ↔ XMP synchronisation read a PDF date with a regex that was anchored
+  only at the start and defaulted every missing component: `D:2026` — a legal
+  date meaning that year (ISO 32000-1 7.9.4 truncates from the right) — became
+  `2026-01-01`, and `2026-09-10`, an ISO date that had found its way into
+  `/Info`, became **`2026-01-01`**: a wrong date that looks right. A stray
+  digit (`D:202609100`), an hour of 30, trailing prose — all were read as far
+  as they parsed. And when conversion failed outright the raw text was written
+  into `xmp:CreateDate` regardless, so `"10 September 2026"` ended up in a
+  property that holds a date, in the packet PDF/A conformance is judged on.
+  Both converters now match the whole string, check that every component is in
+  range, and preserve precision in both directions (`D:2026` ↔ `2026`); the one
+  thing they pad is a lone hour, because XMP's shortest time is `hh:mm`. What
+  is not a date is refused, and the sync **skips** it with a logged warning
+  instead of copying it — the neighbouring properties still sync. Verified
+  against pikepdf, exiftool and poppler: all three agree with the new readings,
+  and pikepdf itself mangles 10- and 12-digit dates (`D:2026091008` →
+  `2026-09-01T00:00:08`) where the other two agree with us.
+
 - **`info['CreationDate'] = datetime.now()` failed at save time, three frames
   down, naming nothing.** The document information dictionary maps names to
   **text strings** (ISO 32000-1 14.3.3), dates among them written in the

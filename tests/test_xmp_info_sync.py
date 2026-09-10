@@ -244,3 +244,175 @@ def test_sync_metadata_rejects_unknown_direction():
     doc = _loaded_doc()
     with pytest.raises(ValueError):
         doc.sync_metadata(direction="sideways")
+
+
+# ---------------------------------------------------------------------------
+# Date precision: neither format may gain components it was never given
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("pdf_date", "iso"),
+    [
+        ("D:2026", "2026"),
+        ("D:202609", "2026-09"),
+        ("D:20260910", "2026-09-10"),
+        ("D:202609100830", "2026-09-10T08:30"),
+        ("D:20260910083015", "2026-09-10T08:30:15"),
+        ("D:20260910083015Z", "2026-09-10T08:30:15Z"),
+        ("D:20260910083015+02'00'", "2026-09-10T08:30:15+02:00"),
+    ],
+)
+def test_a_truncated_date_keeps_its_precision_both_ways(pdf_date, iso):
+    assert pdf_date_to_iso8601(pdf_date) == iso
+    assert iso8601_to_pdf_date(iso) == pdf_date
+
+
+def test_a_year_only_pdf_date_does_not_gain_a_month_and_a_day():
+    """``D:2026`` says 2026, not the first of January."""
+    assert pdf_date_to_iso8601("D:2026") == "2026"
+    assert iso8601_to_pdf_date("2026") == "D:2026"
+
+
+def test_an_hour_without_minutes_gains_them_because_xmp_has_no_shorter_time():
+    """The only precision XMP cannot express, so the padding is the format's."""
+    assert pdf_date_to_iso8601("D:2026091008") == "2026-09-10T08:00"
+
+
+# ---------------------------------------------------------------------------
+# What is not a date is refused, not read as far as it parses
+# ---------------------------------------------------------------------------
+
+
+def test_an_iso_date_in_info_is_refused_not_read_as_its_year():
+    """The corruption this replaces: ``2026-09-10`` used to become 2026-01-01."""
+    got = pdf_date_to_iso8601("2026-09-10")
+    assert got != "2026-01-01"
+    assert got == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "D:202609100",  # odd digit count: one field is half there
+        "D:20260910083",
+        "D:20260910083015+02'00' (approx)",  # trailing prose
+        "10 September 2026",
+        "D:",
+        "D:abcd",
+    ],
+)
+def test_a_pdf_date_that_is_not_one_is_refused(text):
+    assert pdf_date_to_iso8601(text) == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "D:202613",  # month 13
+        "D:20260932",  # day 32
+        "D:2026091024",  # hour 24
+        "D:202609100860",  # minute 60
+        "D:20260910083060",  # second 60
+        "D:20260910083015+24'00'",  # offset hour 24
+        "D:20260910083015+02'60'",  # offset minute 60
+    ],
+)
+def test_one_component_one_past_its_range_is_enough_to_refuse(text):
+    """Each bound tested on its own: a neighbour must not be doing the work."""
+    assert pdf_date_to_iso8601(text) == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2026-13",  # month 13
+        "2026-09-32",  # day 32
+        "2026-09-10T24:00",  # hour 24
+        "2026-09-10T08:60",  # minute 60
+        "2026-09-10T08:30:60",  # second 60
+        "2026-09-10T08:30:15+24:00",  # offset hour 24
+        "2026-09-10T08:30:15+02:60",  # offset minute 60
+        "2026-09-10 and later",
+        "yesterday",
+    ],
+)
+def test_an_iso_date_that_is_not_one_is_refused(text):
+    assert iso8601_to_pdf_date(text) == ""
+
+
+def test_an_iso_time_without_a_day_is_refused():
+    """Flat optional groups would take the month's digits for the day."""
+    assert iso8601_to_pdf_date("2026-10T08:30") == ""
+    assert iso8601_to_pdf_date("2026T08:30") == ""
+
+
+def test_an_impossible_calendar_date_is_carried_not_dropped():
+    """A range check, not a calendar one: the file said the 29th, qpdf agrees."""
+    assert pdf_date_to_iso8601("D:20260229") == "2026-02-29"
+
+
+@pytest.mark.parametrize(
+    "offset", ["Z", "z", "+02'00'", "+02'00", "+0200", "+02:00", "+02"]
+)
+def test_every_offset_spelling_real_writers_produce_is_read(offset):
+    iso = pdf_date_to_iso8601(f"D:20260910083015{offset}")
+    assert iso.startswith("2026-09-10T08:30:15")
+    assert iso[19:] in ("Z", "+02:00")
+
+
+# ---------------------------------------------------------------------------
+# A value that is not a date is not written into a property that holds one
+# ---------------------------------------------------------------------------
+
+
+def test_info_to_xmp_skips_a_non_date_rather_than_writing_it_as_one(caplog):
+    with caplog.at_level("WARNING"):
+        packet = info_to_xmp({"Title": "kept", "CreationDate": "10 September 2026"})
+
+    assert packet.get("xmp", "CreateDate") is None
+    assert packet.get("dc", "title") is not None  # the rest of the sync ran
+    assert "CreationDate" in caplog.text
+    assert "10 September 2026" in caplog.text
+
+
+def test_info_to_xmp_leaves_an_existing_xmp_date_alone_when_info_has_junk():
+    packet = info_to_xmp({"CreationDate": "D:20240101120000Z"})
+    info_to_xmp({"CreationDate": "not a date"}, packet)
+    assert packet.get("xmp", "CreateDate").value == "2024-01-01T12:00:00Z"
+
+
+def test_xmp_to_info_skips_a_non_date_rather_than_writing_it_as_one(caplog):
+    packet = XmpPacket()
+    packet.set_value("xmp", "CreateDate", "sometime in 2026", uri=XMP_NS)
+    packet.set_value("pdf", "Producer", "kept", uri=PDF_NS)
+
+    with caplog.at_level("WARNING"):
+        info = xmp_to_info(packet)
+
+    assert "CreationDate" not in info
+    assert info["Producer"] == "kept"
+    assert "sometime in 2026" in caplog.text
+
+
+def test_a_junk_info_date_does_not_reach_the_saved_xmp_packet():
+    doc = _loaded_doc()
+    doc.info = {"Title": "Hello", "CreationDate": "sometime last year"}
+    doc.sync_metadata(direction="info_to_xmp")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    reloaded = Document()
+    reloaded.load_from(io.BytesIO(buffer.getvalue()))
+    xmp = reloaded.xmp_metadata
+    assert xmp.get("xmp", "CreateDate") is None
+    assert xmp.get("dc", "title").value.items[0].value == "Hello"
+    assert reloaded.info["CreationDate"] == "sometime last year"  # /Info untouched
+
+
+def test_an_offset_without_a_time_is_dropped_not_kept():
+    """An offset qualifies a time of day; with no time it says nothing."""
+    assert pdf_date_to_iso8601("D:2026Z") == "2026"
+    assert pdf_date_to_iso8601("D:202609+02'00'") == "2026-09"
+    assert iso8601_to_pdf_date("2026Z") == "D:2026"

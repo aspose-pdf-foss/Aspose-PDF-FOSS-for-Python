@@ -18,12 +18,15 @@ The public :mod:`aspose_pdf.xmp` module re-exports these names.
 
 from __future__ import annotations
 
+import logging
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "STANDARD_XMP_NAMESPACES",
@@ -1205,74 +1208,126 @@ _INFO_XMP_FIELDS: tuple[tuple[str, str, str, str, str], ...] = (
     ("ModDate", "xmp", _XMP_URI, "ModifyDate", "date"),
 )
 
+# A PDF date is ``D:YYYYMMDDHHmmSSOHH'mm'`` (ISO 32000-1 7.9.4) whose fields
+# are omitted **from the right**, so its digits come in pairs, four to fourteen
+# of them. What enforces that is the ``$``: without an end anchor a run of
+# optional pairs matches the first eight digits of nine and silently drops the
+# ninth. The nesting says the same thing structurally. The offset is ``Z``, or
+# a sign and an hour with the minutes written ``'mm'`` (7.9.4), ``'mm``, ``mm``
+# or ``:mm``, or left out; writers in the wild produce every one of those and
+# each is unambiguous, so all are read. Leniency about *spelling* is not the
+# same as inventing components, which is what the anchor and the range check
+# refuse.
 _PDF_DATE_RE = re.compile(
-    r"(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?(.*)$"
+    r"(?:D:)?"
+    r"(\d{4})(?:(\d{2})(?:(\d{2})(?:(\d{2})(?:(\d{2})(?:(\d{2}))?)?)?)?)?"
+    r"(?:(?P<zulu>[Zz])|(?P<sign>[+-])(?P<oh>\d{2})(?:['\:]?(?P<om>\d{2})'?)?)?$"
 )
+# The XMP date forms, likewise truncated from the right (XMP part 1, 8.2.2):
+# ``YYYY``, ``YYYY-MM``, ``YYYY-MM-DD``, then a time of at least ``hh:mm``.
+# Here the nesting *is* load-bearing: flat optional groups accept a time with
+# no day (``2026-10T08:30``), which would be written back as a PDF date whose
+# day is the month's digits.
 _ISO_DATE_RE = re.compile(
-    r"(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?"
-    r"(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?"
-    r"([Zz]|[+\-]\d{2}:?\d{2})?"
+    r"(\d{4})(?:-(\d{2})(?:-(\d{2})"
+    r"(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?)?)?"
+    r"(?:(?P<zulu>[Zz])|(?P<sign>[+-])(?P<oh>\d{2}):?(?P<om>\d{2}))?$"
 )
 
 
-def _pdf_tz_to_iso(rest: str) -> str:
-    """Convert a PDF date trailing timezone (``Z`` / ``+HH'mm'``) to ISO form."""
-    rest = rest.strip()
-    if not rest:
-        return ""
-    if rest[0] in "Zz":
-        return "Z"
-    if rest[0] in "+-":
-        digits = re.findall(r"\d{2}", rest)
-        if not digits:
-            return ""
-        hours = digits[0]
-        minutes = digits[1] if len(digits) > 1 else "00"
-        return f"{rest[0]}{hours}:{minutes}"
-    return ""
+def _date_parts_in_range(
+    month: str | None,
+    day: str | None,
+    hh: str | None,
+    mm: str | None,
+    ss: str | None,
+    off_h: str | None,
+    off_m: str | None,
+) -> bool:
+    """Whether every present component falls inside its own range.
+
+    Range, not calendar: ``20260229`` in a non-leap year is a claim the file
+    makes and is passed through, as qpdf and exiftool pass it, because the date
+    is otherwise usable. An hour of ``30`` is not a claim, it is a broken field.
+    """
+    for text, low, high in (
+        (month, 1, 12),
+        (day, 1, 31),
+        (hh, 0, 23),
+        (mm, 0, 59),
+        (ss, 0, 59),
+        (off_h, 0, 23),
+        (off_m, 0, 59),
+    ):
+        if text is not None and not low <= int(text) <= high:
+            return False
+    return True
 
 
 def pdf_date_to_iso8601(value: str) -> str:
     """Convert a PDF date (``D:YYYYMMDDHHmmSS+HH'mm'``) to an ISO-8601 string.
 
-    Returns ``""`` when *value* is empty or not recognisable as a PDF date.
-    Missing components default to the start of their range (month/day ``01``).
+    Returns ``""`` when *value* is not a PDF date -- including a string that
+    merely *starts* like one, such as an ISO date that found its way into
+    ``/Info``: ``"2026-09-10"`` is refused rather than read as the year 2026
+    and rendered ``"2026-01-01"``.
+
+    Precision is preserved, because both formats truncate from the right and
+    XMP has the shorter forms to say it with: ``D:2026`` is ``"2026"``, not
+    ``"2026-01-01"``. The one component this cannot preserve is a lone hour --
+    the shortest XMP time is ``hh:mm`` -- so ``D:2026091008`` gains ``:00``.
     """
     if not value:
         return ""
-    text = value.strip()
-    if text[:2].upper() == "D:":
-        text = text[2:]
-    match = _PDF_DATE_RE.match(text)
+    match = _PDF_DATE_RE.match(value.strip())
     if not match:
         return ""
-    year, month, day, hh, mm, ss, rest = match.groups()
-    iso = f"{year}-{month or '01'}-{day or '01'}"
-    if hh is not None:
-        iso += f"T{hh}:{mm or '00'}:{ss or '00'}"
-        iso += _pdf_tz_to_iso(rest or "")
+    year, month, day, hh, mm, ss = match.group(1, 2, 3, 4, 5, 6)
+    off_h, off_m = match.group("oh"), match.group("om")
+    if not _date_parts_in_range(month, day, hh, mm, ss, off_h, off_m):
+        return ""
+
+    iso = year
+    if month:
+        iso += f"-{month}"
+    if day:
+        iso += f"-{day}"
+    if hh:
+        iso += f"T{hh}:{mm or '00'}"
+        if ss:
+            iso += f":{ss}"
+        if match.group("zulu"):
+            iso += "Z"
+        elif off_h:
+            iso += f"{match.group('sign')}{off_h}:{off_m or '00'}"
     return iso
 
 
 def iso8601_to_pdf_date(value: str) -> str:
     """Convert an ISO-8601 date/time to a PDF date (``D:YYYYMMDDHHmmSS+HH'mm'``).
 
-    Returns ``""`` when *value* is empty or not recognisable.
+    Returns ``""`` when *value* is not an ISO-8601 date -- a string that only
+    begins with one included, so ``"2026-09-10 (approx)"`` is refused rather
+    than silently shortened. Precision is preserved in this direction too:
+    ``"2026"`` is ``D:2026``, not ``D:20260101``.
     """
     if not value:
         return ""
     match = _ISO_DATE_RE.match(value.strip())
     if not match:
         return ""
-    year, month, day, hh, mm, ss, tz = match.groups()
-    out = f"D:{year}{month or '01'}{day or '01'}"
-    if hh is not None:
-        out += f"{hh}{mm}{ss or '00'}"
-        if tz in ("Z", "z"):
+    year, month, day, hh, mm, ss = match.group(1, 2, 3, 4, 5, 6)
+    off_h, off_m = match.group("oh"), match.group("om")
+    if not _date_parts_in_range(month, day, hh, mm, ss, off_h, off_m):
+        return ""
+
+    out = f"D:{year}{month or ''}{day or ''}"
+    if hh:
+        out += f"{hh}{mm}{ss or ''}"
+        if match.group("zulu"):
             out += "Z"
-        elif tz:
-            digits = tz.replace(":", "")
-            out += f"{digits[0]}{digits[1:3]}'{digits[3:5] or '00'}'"
+        elif off_h:
+            out += f"{match.group('sign')}{off_h}'{off_m}'"
     return out
 
 
@@ -1314,7 +1369,20 @@ def info_to_xmp(
             continue
         text = str(raw)
         if kind == "date":
-            _set_field(packet, prefix, uri, name, pdf_date_to_iso8601(text) or text)
+            iso = pdf_date_to_iso8601(text)
+            if not iso:
+                logger.warning(
+                    "Not copying /Info %s to %s:%s: %r is not a PDF date "
+                    "(ISO 32000-1 7.9.4) and %s:%s holds a date.",
+                    info_key,
+                    prefix,
+                    name,
+                    text,
+                    prefix,
+                    name,
+                )
+                continue
+            _set_field(packet, prefix, uri, name, iso)
         elif kind == "alt":
             _set_field(
                 packet,
@@ -1336,7 +1404,7 @@ def info_to_xmp(
     return packet
 
 
-def _xmp_field_to_info_text(fld: XmpField, kind: str) -> str:
+def _xmp_field_to_info_text(fld: XmpField) -> str:
     """Reduce an XMP field value to the plain text stored in ``/Info``."""
     value = fld.value
     if isinstance(value, XmpArray):
@@ -1348,10 +1416,7 @@ def _xmp_field_to_info_text(fld: XmpField, kind: str) -> str:
         return ", ".join(str(item.value) for item in value.items)
     if isinstance(value, XmpStruct):
         return ""  # structured values have no flat /Info representation
-    text = "" if value is None else str(value)
-    if kind == "date" and text:
-        return iso8601_to_pdf_date(text) or text
-    return text
+    return "" if value is None else str(value)
 
 
 def xmp_to_info(packet: XmpPacket) -> dict[str, str]:
@@ -1367,7 +1432,22 @@ def xmp_to_info(packet: XmpPacket) -> dict[str, str]:
         fld = packet.get(prefix, name) or packet.get(uri, name)
         if fld is None:
             continue
-        text = _xmp_field_to_info_text(fld, kind)
-        if text:
-            info[info_key] = text
+        text = _xmp_field_to_info_text(fld)
+        if not text:
+            continue
+        if kind == "date":
+            pdf_date = iso8601_to_pdf_date(text)
+            if not pdf_date:
+                logger.warning(
+                    "Not copying %s:%s to /Info %s: %r is not an ISO-8601 "
+                    "date and /Info %s holds a PDF date string.",
+                    prefix,
+                    name,
+                    info_key,
+                    text,
+                    info_key,
+                )
+                continue
+            text = pdf_date
+        info[info_key] = text
     return info

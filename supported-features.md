@@ -1835,6 +1835,18 @@ Supported:
   `xmp:CreateDate`/`xmp:ModifyDate`, converting PDF dates to/from ISO-8601
   (keeping the two consistent is required for PDF/A). The underlying
   `aspose_pdf.xmp.info_to_xmp` / `xmp_to_info` helpers are public.
+- **Neither date conversion invents what it was not given.** Both formats
+  truncate a date from the right (ISO 32000-1 7.9.4, XMP part 1 8.2.2), so
+  `D:2026` converts to `2026` and back, not to `2026-01-01`; the only padding
+  is a lone hour gaining `:00`, because XMP's shortest time is `hh:mm`. A value
+  that is not a date in the source format — an ISO date sitting in `/Info`,
+  prose, a component out of range, a stray digit, trailing text — is refused by
+  `pdf_date_to_iso8601`/`iso8601_to_pdf_date` (they return `""`) and is
+  **skipped with a logged warning** by the sync rather than written into the
+  other side's typed date property. Component ranges are checked; an
+  impossible calendar day (`D:20260229`) is carried through, as qpdf and
+  exiftool carry it. Offsets are read as `Z`, `+HH'mm'`, `+HH'mm`, `+HHmm`,
+  `+HH:mm` or `+HH`, and written in the 7.9.4 form.
 
 Boundaries:
 
