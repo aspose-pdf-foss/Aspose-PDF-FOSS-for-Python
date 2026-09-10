@@ -1418,8 +1418,11 @@ class Document:
         document title is set — bringing the document into conformance with
         the requested PDF/A level.
 
-        Font embedding is not performed automatically; any fonts that are not
-        already embedded are reported as warnings in the returned list.
+        A **Standard-14** font that the document does not embed is embedded
+        from the bundled metric-compatible substitutes, since PDF/A requires
+        every font embedded and those are the ones a converter can supply. Any
+        *other* unembedded font is reported in the returned list instead: the
+        program is not in the file and cannot be invented.
 
         Parameters
         ----------

@@ -103,6 +103,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger("aspose_pdf")
 
 
+def _info_entry(key: Any, value: Any) -> tuple[str, str | bytes]:
+    """An ``/Info`` key and the text it carries, or a refusal that says why.
+
+    The document information dictionary maps **names** to **text strings**
+    (ISO 32000-1 14.3.3), dates among them, written in the
+    ``D:YYYYMMDDHHmmSSOHH'mm'`` form of 7.9.4. Anything else used to reach the
+    COS layer and fail there with ``PdfString value must be bytes or str`` (or
+    ``PdfName must be a string``) -- three frames from the assignment, naming
+    neither the entry nor what was expected, and at *save* time rather than
+    when it was set. Setting ``CreationDate`` to a ``datetime`` is the natural
+    mistake, so the refusal names it.
+    """
+    if not isinstance(key, str):
+        raise PdfValidationException(
+            f"Document info key must be a string, not {type(key).__name__}."
+        )
+    if isinstance(value, (str, bytes, bytearray)):
+        return key, value
+    hint = ""
+    if hasattr(value, "strftime"):
+        hint = (
+            " A date is written as a PDF date string, e.g. "
+            "value.strftime(\"D:%Y%m%d%H%M%S+00'00'\")."
+        )
+    raise PdfValidationException(
+        f"Document info entry {key!r} must be a string, not "
+        f"{type(value).__name__}.{hint}"
+    )
+
+
 @dataclass
 class _AuthoredFontResource:
     """Mutable COS objects associated with one authored font on one page."""
@@ -2565,7 +2595,8 @@ class SimplePdf:
             new_ref = self._cos_doc.register_object(info_dict)
             self._cos_doc.trailer.mapping[PdfName("Info")] = new_ref
         for k, v in self.metadata.items():
-            info_dict.mapping[PdfName(k)] = PdfString(v)
+            name, text = _info_entry(k, v)
+            info_dict.mapping[PdfName(name)] = PdfString(text)
 
     def _attachment_slots(self, catalog: PdfDictionary) -> dict[str, tuple]:
         """Object numbers each embedded file already occupies, keyed by name.

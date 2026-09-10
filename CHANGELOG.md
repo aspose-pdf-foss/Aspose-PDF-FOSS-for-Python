@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`info['CreationDate'] = datetime.now()` failed at save time, three frames
+  down, naming nothing.** The document information dictionary maps names to
+  **text strings** (ISO 32000-1 14.3.3), dates among them written in the
+  `D:YYYYMMDDHHmmSSOHH'mm'` form of 7.9.4 — but nothing checked, so a
+  `datetime`, an `int`, a `None` or a non-string key travelled down to the COS
+  layer and died there with `PdfString value must be bytes or str` (or
+  `PdfName must be a string`) on `save()`, long after the assignment that
+  caused it and without naming the entry, the type it got or what it wanted.
+  The contract is now checked where `/Info` is written, so it cannot be
+  bypassed: the refusal is a `PdfValidationException` naming the entry and the
+  offending type, and a value that looks like a date is additionally told how a
+  PDF date is spelled — `value.strftime("D:%Y%m%d%H%M%S+00'00'")`, a suggestion
+  a test takes out of the message and round-trips, so it stays true. `str`,
+  `bytes` and `bytearray` are accepted as before.
+
 - **One circular reference in a page's resources cost the whole page.** A form
   XObject whose own `/Resources` name that same form makes the resource graph
   point back at itself — malformed, and writers do produce it. The converter

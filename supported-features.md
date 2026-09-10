@@ -64,7 +64,12 @@ Supported:
   from the loaded document into the save.
 - Use `Document` as a context manager and release resources with `dispose()` or
   `close()`.
-- Read and write document info metadata.
+- Read and write document info metadata. `/Info` maps names to **text strings**
+  (ISO 32000-1 14.3.3), so `Document.info` accepts `str`, `bytes` or
+  `bytearray` values under string keys; anything else is refused with a
+  `PdfValidationException` naming the entry and the type it got, and a
+  date-like value is told the `D:YYYYMMDDHHmmSSOHH'mm'` spelling of 7.9.4
+  (`value.strftime("D:%Y%m%d%H%M%S+00'00'")`) rather than being coerced.
 - **A saved file says on its second line that it is binary.** The header is
   followed by a comment holding four bytes above 127 (ISO 32000-1 7.5.2), which
   is what tells a transfer in text mode or an editor weighing line-ending
