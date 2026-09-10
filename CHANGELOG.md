@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A document opened with `open_streaming` extracted no text, and could not
+  delete a page.** Streaming mode leaves `page_contents` empty on purpose --
+  content is decoded per page on demand -- but three paths read that list as
+  though it were the document. `extract_page_text` indexed it directly, so
+  every page of every streamed document extracted as `""`, silently, and
+  `Document.extract_text` counted it, so the whole document did too; the
+  page-text cursor reported no pages at all. `pages.delete` deleted from it
+  unconditionally and raised `IndexError: list assignment index out of range`
+  for **every index** — while the two parallel lists right below it were
+  already guarded for exactly this. Text now comes through `get_page_content`,
+  which serves both modes, page counts come from the pages, and deletion
+  shifts the page's identity without decoding anything: a streamed document
+  stays lazy through both. Deleting from a streamed document now matches the
+  eager path page for page across every deletion pattern tested.
+
 - **Metadata could not be removed at all: `doc.info.clear()` cleared nothing.**
   The sync wrote every key it found in `Document.info` and never deleted one,
   so `del`, `pop`, `clear()` and assigning a smaller dictionary all left the

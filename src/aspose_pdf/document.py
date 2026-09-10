@@ -688,6 +688,11 @@ class Document:
         :meth:`iter_page_content_streams`.  This is ideal for large PDFs where
         only a subset of pages needs to be processed.
 
+        Reading text and deleting pages work here as they do anywhere else,
+        and both keep the document lazy: ``extract_text`` decodes one page at
+        a time, and ``pages.delete`` shifts the page's identity without
+        decoding the rest of the file.
+
         The returned :class:`Document` is a normal context manager — use it
         with ``with`` to ensure resources are released::
 

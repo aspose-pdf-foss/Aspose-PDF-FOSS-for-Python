@@ -529,3 +529,23 @@ def test_a_page_from_another_document_is_refused():
 
     with pytest.raises(PdfValidationException, match="merge"):
         document.pages.insert(0, other.pages[0])
+
+
+def test_delete_takes_the_page_it_names_with_it(document):
+    """The count is not the point -- *which* page went is.
+
+    Nothing checked this: with the deleted page's cached content left behind,
+    every remaining page would show its neighbour's, and all the delete tests
+    still passed.
+    """
+    for index in range(3):
+        document.pages.add().add_text(f"PAGE-{index}", x=20, y=700)
+
+    document.pages.delete(1)
+
+    assert [page.extract_text().strip() for page in document.pages] == [
+        "PAGE-0",
+        "PAGE-2",
+    ]
+    engine = document._engine_pdf
+    assert len(engine.page_contents) == len(engine.pages)

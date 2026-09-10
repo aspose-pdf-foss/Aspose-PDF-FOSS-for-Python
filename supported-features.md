@@ -139,6 +139,14 @@ Supported:
   tree with the model, so a document salvaged from a truncated file writes the
   pages it claims to have.
 - Open documents in streaming/lazy mode and decode page content on demand.
+- **A streamed document reads and edits like any other, and stays lazy doing
+  it.** `extract_text` on a page or the whole document decodes one page at a
+  time (it used to return the empty string for every page of a document opened
+  this way, because the text path read the not-yet-filled content cache
+  instead of asking for the page), the page-text cursor walks it, and
+  `pages.delete` removes a page without decoding the rest of the file (it used
+  to raise `IndexError` from an internal list, for every index). Editing a
+  page's content still materialises the document, as it must.
 - **Merge `Document` instances.** A merged page is *imported*: its dictionary
   is copied into this document's object graph along with everything it reaches
   -- resources above all, without which its content names fonts and images that

@@ -7277,9 +7277,14 @@ class SimplePdf:
         parse-with-resources dance.
         """
         self._ensure_not_disposed()
-        if page_index < 0 or page_index >= len(self.page_contents):
+        if page_index < 0 or page_index >= len(self.pages):
             return ""
-        stream = self.page_contents[page_index]
+        # Through ``get_page_content``, which serves both modes: reading
+        # ``page_contents`` directly meant a document opened with
+        # ``open_streaming`` -- where that list is empty until something
+        # materialises it -- extracted **no text at all**, from any page,
+        # silently returning "" rather than decoding the page on demand.
+        stream = self.get_page_content(page_index)
         resources = {}
         if self._cos_doc:
             try:
@@ -7315,8 +7320,11 @@ class SimplePdf:
         """Extract plain text from page contents, one page per line group."""
         if self._extracted_text is not None:
             return self._extracted_text
+        # ``len(self.pages)`` is the page count; ``page_contents`` is a cache
+        # that is empty while the document is lazy, which is how a document
+        # opened with ``open_streaming`` used to extract as the empty string.
         self._extracted_text = "\n".join(
-            self.extract_page_text(index) for index in range(len(self.page_contents))
+            self.extract_page_text(index) for index in range(len(self.pages))
         )
         self._page_text_cursor = 0
         return self._extracted_text
@@ -7329,13 +7337,13 @@ class SimplePdf:
     def get_next_page_text(self) -> str:
         """Return text for next page, advancing cursor."""
         self._ensure_not_disposed()
-        if self._page_text_cursor >= len(self.page_contents):
+        if self._page_text_cursor >= len(self.pages):
             raise StopIteration("No more pages")
         self._page_text_cursor += 1
         return self.extract_page_text(self._page_text_cursor - 1)
 
     def has_next_page_text(self) -> bool:
-        return self._page_text_cursor < len(self.page_contents)
+        return self._page_text_cursor < len(self.pages)
 
     # ---------------------------------------------------------------------------
     # Page manipulation
@@ -7385,7 +7393,14 @@ class SimplePdf:
             raise PdfValidationException("Index out of range")
 
         del self.pages[index]
-        del self.page_contents[index]
+        # ``page_contents`` is empty while the document is lazy -- content is
+        # decoded per page through ``_page_obj_ids``, which is kept in step
+        # just below. Deleting from it unconditionally is what made
+        # ``open_streaming(...)`` + ``pages.delete(...)`` raise ``IndexError``
+        # for every index. Materialising instead would decode every page of
+        # the document streaming mode exists to avoid loading.
+        if index < len(self.page_contents):
+            del self.page_contents[index]
 
         if hasattr(self, "_page_obj_ids") and index < len(self._page_obj_ids):
             del self._page_obj_ids[index]

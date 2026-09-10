@@ -350,3 +350,112 @@ def test_from_file_lazy_page_count(tmp_path):
 def test_from_file_lazy_nonexistent_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         SimplePdf.from_file_lazy(tmp_path / "missing.pdf")
+
+
+# ---------------------------------------------------------------------------
+# Editing in streaming mode
+#
+# Every test above reads. Deleting a page raised ``IndexError`` from an
+# internal list for every index, in every document opened this way, because
+# ``page_contents`` is empty until something materialises it -- and deletion
+# never did.
+# ---------------------------------------------------------------------------
+
+
+def _numbered_pdf(tmp_path: Path, count: int = 6) -> Path:
+    """A document whose pages say which page they are."""
+    doc = Document()
+    for index in range(count):
+        doc.pages.add().add_text(f"PAGE-{index}", x=20, y=700)
+    path = tmp_path / "numbered.pdf"
+    doc.save(str(path))
+    return path
+
+
+def _text_after(path: Path, deletions, opener) -> list[str]:
+    doc = opener(str(path))
+    for index in deletions:
+        doc.pages.delete(index)
+    out = path.with_name(f"out_{id(doc)}.pdf")
+    doc.save(str(out))
+    return [page.extract_text().strip() for page in Document(str(out)).pages]
+
+
+def test_deleting_a_page_from_a_streamed_document_works(tmp_path):
+    path = _numbered_pdf(tmp_path, 3)
+    with Document.open_streaming(path) as doc:
+        doc.pages.delete(1)
+        assert doc.page_count == 2
+
+
+@pytest.mark.parametrize(
+    "deletions", [(0,), (5,), (0, 0), (2, 2), (1, 3), (4, 0), (0, 1, 2)]
+)
+def test_streaming_deletion_matches_the_eager_path(tmp_path, deletions):
+    """The eager path is the reference: the same deletions, the same pages."""
+    path = _numbered_pdf(tmp_path)
+    assert _text_after(path, deletions, Document.open_streaming) == _text_after(
+        path, deletions, Document
+    )
+
+
+def test_deleting_a_page_does_not_decode_the_whole_document(tmp_path):
+    """The point of streaming mode. Materialising instead would decode every
+    page of the file the caller opened this way to avoid loading."""
+    path = _numbered_pdf(tmp_path)
+    with Document.open_streaming(path) as doc:
+        doc.pages.delete(2)
+        doc.pages.delete(0)
+        assert doc._engine_pdf._lazy is True
+        assert doc._engine_pdf.page_contents == []
+
+
+def test_text_extraction_works_in_streaming_mode(tmp_path):
+    """It returned "" for every page, from any document opened this way."""
+    path = _numbered_pdf(tmp_path, 3)
+    with Document.open_streaming(path) as streamed, Document(str(path)) as eager:
+        assert [p.extract_text().strip() for p in streamed.pages] == [
+            "PAGE-0",
+            "PAGE-1",
+            "PAGE-2",
+        ]
+        assert streamed.extract_text() == eager.extract_text()
+
+
+def test_the_page_text_cursor_walks_a_streamed_document(tmp_path):
+    path = _numbered_pdf(tmp_path, 3)
+    with Document.open_streaming(path) as doc:
+        engine = doc._engine_pdf
+        assert engine.has_next_page_text() is True
+        assert [engine.get_next_page_text().strip() for _ in range(3)] == [
+            "PAGE-0",
+            "PAGE-1",
+            "PAGE-2",
+        ]
+        assert engine.has_next_page_text() is False
+
+
+def test_extracting_text_does_not_decode_the_whole_document(tmp_path):
+    path = _numbered_pdf(tmp_path, 4)
+    with Document.open_streaming(path) as doc:
+        doc.pages[1].extract_text()
+        assert doc._engine_pdf._lazy is True
+        assert doc._engine_pdf.page_contents == []
+
+
+def test_content_still_follows_the_pages_after_a_streamed_deletion(tmp_path):
+    path = _numbered_pdf(tmp_path, 4)
+    with Document.open_streaming(path) as doc:
+        doc.pages.delete(1)
+        assert [page.extract_text().strip() for page in doc.pages] == [
+            "PAGE-0",
+            "PAGE-2",
+            "PAGE-3",
+        ]
+
+
+def test_clearing_the_pages_of_a_streamed_document_works(tmp_path):
+    path = _numbered_pdf(tmp_path, 3)
+    with Document.open_streaming(path) as doc:
+        doc.pages.clear()
+        assert doc.page_count == 0
