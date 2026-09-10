@@ -461,7 +461,21 @@ class Document:
 
     @property
     def info(self) -> dict[str, str]:
-        """Get or set the document metadata (info dictionary)."""
+        """Get or set the document metadata (info dictionary).
+
+        A ``dict`` of text: ``/Info`` holds text strings (ISO 32000-1 14.3.3),
+        with dates written ``D:YYYYMMDDHHmmSSOHH'mm'`` (7.9.4) and
+        ``Trapped`` written as a name — pass ``"True"``, ``"False"`` or
+        ``"Unknown"`` for it and the name is what reaches the file. A value of
+        another type is refused on :meth:`save` with a message naming the
+        entry.
+
+        A producer's own entries are shown as text where text is faithful (a
+        number, a boolean) and left out where it is not (an array), and every
+        one of them keeps its original type on save unless you change it. An
+        entry you *do* change is written as the text you set, since the type it
+        used to have cannot be read back out of a string.
+        """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             return {}

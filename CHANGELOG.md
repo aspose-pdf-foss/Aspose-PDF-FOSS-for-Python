@@ -9,6 +9,24 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Opening a file and saving it turned its `/Trapped` flag into our own
+  `repr`.** Every `/Info` value that was not a string was read with `str()` on
+  the parser's object, so `/Trapped /True` arrived in `Document.info` as the
+  text `"PdfName(/True)"` and was written back as the *string*
+  `(PdfName\(/True\))`. No API call was needed: a plain load-and-save
+  destroyed it, and the same happened to a producer's own entries — a boolean
+  became `(PdfBoolean(True))`, an array became a string holding a list of
+  reprs. A consumer asking whether the document is trapped got a string that
+  cannot equal `/True`, which pikepdf confirms. One rendering rule now serves
+  both directions: a name reads as its text, a boolean as `true`/`false`, a
+  number as its digits, and a value with no faithful text (an array, a
+  dictionary) is left out of `Document.info` instead of being flattened into
+  it. On save an entry whose text has not changed is left exactly as the file
+  had it, whatever its type, and `/Trapped` is written as a **name** — `"true"`,
+  `"True"` and `"/True"` all reaching `/True`, an unrecognised value passed
+  through as a name, an empty one as the entry's own default `/Unknown`.
+  Verified with pikepdf and exiftool, which now read the flag they should.
+
 - **A metadata sync invented dates and wrote non-dates into date fields.** The
   `/Info` ↔ XMP synchronisation read a PDF date with a regex that was anchored
   only at the start and defaulted every missing component: `D:2026` — a legal

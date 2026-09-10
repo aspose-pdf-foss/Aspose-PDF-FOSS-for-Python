@@ -146,3 +146,144 @@ def test_an_empty_string_is_a_string(tmp_path):
     reloaded = _save_reload(doc, tmp_path)
     assert reloaded.info.get("Title", "") == ""
     assert reloaded.info["Subject"] == "kept"
+
+
+# ---------------------------------------------------------------------------
+# /Trapped is a name, and the types a producer's own entries carry
+# ---------------------------------------------------------------------------
+
+
+def _pdf_with_typed_info() -> bytes:
+    """A file whose ``/Info`` carries a name, a number, a boolean and an array.
+
+    Hand-built rather than produced by this library: the point is to load types
+    that ``doc.info`` cannot set, so writing the fixture with our own writer
+    would test nothing. 14.3.3 types ``/Trapped`` as a name and lets a producer
+    add entries of its own of any type.
+    """
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+        b"<< /Title (t) /Trapped /True /Revision 7 /Approved true "
+        b"/Tags [(a) (b)] >>",
+    ]
+    out = bytearray(b"%PDF-1.7\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref_at = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += (
+        b"trailer\n<< /Size %d /Root 1 0 R /Info 4 0 R >>\nstartxref\n%d\n%%%%EOF\n"
+        % (len(objects) + 1, xref_at)
+    )
+    return bytes(out)
+
+
+def _typed_info_doc() -> Document:
+    doc = Document()
+    doc.load_from(io.BytesIO(_pdf_with_typed_info()))
+    return doc
+
+
+def test_info_renders_each_type_as_text_never_as_a_repr():
+    info = _typed_info_doc().info
+    assert info["Trapped"] == "True"  # not "PdfName(/True)"
+    assert info["Approved"] == "true"
+    assert info["Revision"] == "7"
+    assert info["Title"] == "t"
+    assert not any("Pdf" in value for value in info.values())
+
+
+def test_an_entry_with_no_faithful_text_is_not_shown_as_one():
+    """An array has no text rendering; it stays in the file instead."""
+    assert "Tags" not in _typed_info_doc().info
+
+
+def test_a_save_that_touches_nothing_keeps_every_info_type():
+    doc = _typed_info_doc()
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    written = buffer.getvalue()
+
+    assert b"/Trapped /True" in written
+    assert b"/Revision 7" in written
+    assert b"/Approved true" in written
+    assert b"/Tags [ (a) (b) ]" in written
+    assert b"PdfName" not in written
+    assert b"(True)" not in written
+
+
+@pytest.mark.parametrize(
+    ("value", "written"),
+    [
+        ("True", b"/Trapped /True"),
+        ("true", b"/Trapped /True"),
+        ("/True", b"/Trapped /True"),
+        ("False", b"/Trapped /False"),
+        ("/false", b"/Trapped /False"),
+        ("Unknown", b"/Trapped /Unknown"),
+        ("", b"/Trapped /Unknown"),
+        (b"True", b"/Trapped /True"),
+    ],
+)
+def test_trapped_is_written_as_the_name_a_reader_compares_against(value, written):
+    doc = _doc(Trapped=value)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    assert written in buffer.getvalue()
+
+
+def test_a_trapped_value_outside_the_three_is_kept_as_a_name():
+    """Still the right type; what the file says is not ours to reinterpret."""
+    doc = _doc(Trapped="Partly")
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    assert b"/Trapped /Partly" in buffer.getvalue()
+
+
+def test_trapped_round_trips_without_its_slash(tmp_path):
+    reloaded = _save_reload(_doc(Trapped="True"), tmp_path)
+    assert reloaded.info["Trapped"] == "True"
+
+
+def test_changing_a_loaded_trapped_still_writes_a_name():
+    doc = _typed_info_doc()
+    doc.info["Trapped"] = "False"
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    assert b"/Trapped /False" in buffer.getvalue()
+
+
+def test_changing_a_producers_own_entry_writes_it_as_the_text_it_now_is():
+    """The deliberate half: a value set through a text API is text.
+
+    Preserved only while untouched -- guessing a number back out of a string
+    is the invention this boundary exists to refuse.
+    """
+    doc = _typed_info_doc()
+    doc.info["Revision"] = "8"
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    assert b"/Revision (8)" in buffer.getvalue()
+
+
+@pytest.mark.parametrize("value", [True, False, 1, None])
+def test_a_non_string_trapped_is_told_the_three_names(value):
+    doc = _doc(Trapped=value)
+    with pytest.raises(PdfValidationException) as excinfo:
+        doc.save(io.BytesIO())
+    message = str(excinfo.value)
+    assert "'Trapped'" in message
+    assert '"True"' in message and '"Unknown"' in message
+
+
+def test_the_trapped_hint_does_not_leak_onto_other_entries():
+    doc = _doc(Title=True)
+    with pytest.raises(PdfValidationException) as excinfo:
+        doc.save(io.BytesIO())
+    assert "Trapped" not in str(excinfo.value)

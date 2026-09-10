@@ -103,6 +103,47 @@ if TYPE_CHECKING:
 logger = logging.getLogger("aspose_pdf")
 
 
+def _info_cos_text(value: Any) -> str | None:
+    """The text ``doc.info`` shows for an ``/Info`` value, or ``None``.
+
+    ``/Info`` is mostly text strings, but 14.3.3 types ``/Trapped`` as a
+    **name** and lets a producer add entries of its own of any type at all.
+    Rendering one used to be ``str(value)`` on whatever the parser returned, so
+    a name arrived as ``"PdfName(/True)"`` -- the repr of a COS wrapper -- and
+    was written back out as a *string* containing it. Every type gets its own
+    rendering here, and what has no faithful text (an array, a dictionary, a
+    null) gets ``None``: it stays in the file untouched rather than being
+    flattened into a string.
+    """
+    if isinstance(value, PdfString):
+        return decode_pdf_text_string(value)
+    if isinstance(value, PdfName):
+        return value.name.lstrip("/")
+    if isinstance(value, PdfBoolean):
+        return "true" if value.value else "false"
+    if isinstance(value, PdfNumber):
+        return str(value.value)
+    return None
+
+
+def _trapped_name(text: str) -> str:
+    """The ``/Trapped`` name for *text*.
+
+    14.3.3 types the entry as a name whose values are ``/True``, ``/False``
+    and ``/Unknown``, so ``"true"``, ``"True"`` and ``"/True"`` all mean the
+    same thing and are written the one way a reader compares against. A value
+    outside the three is passed through as a name rather than replaced: what
+    the file says is not ours to reinterpret, and it was the *type* that was
+    wrong. An empty value is the entry's own default, ``/Unknown``.
+    """
+    stripped = text.strip().lstrip("/")
+    if not stripped:
+        return "Unknown"
+    return {"true": "True", "false": "False", "unknown": "Unknown"}.get(
+        stripped.lower(), stripped
+    )
+
+
 def _info_entry(key: Any, value: Any) -> tuple[str, str | bytes]:
     """An ``/Info`` key and the text it carries, or a refusal that says why.
 
@@ -126,6 +167,11 @@ def _info_entry(key: Any, value: Any) -> tuple[str, str | bytes]:
         hint = (
             " A date is written as a PDF date string, e.g. "
             "value.strftime(\"D:%Y%m%d%H%M%S+00'00'\")."
+        )
+    elif key == "Trapped":
+        hint = (
+            ' /Trapped is written as a name (14.3.3): pass "True", "False"'
+            ' or "Unknown".'
         )
     raise PdfValidationException(
         f"Document info entry {key!r} must be a string, not "
@@ -2596,7 +2642,20 @@ class SimplePdf:
             self._cos_doc.trailer.mapping[PdfName("Info")] = new_ref
         for k, v in self.metadata.items():
             name, text = _info_entry(k, v)
-            info_dict.mapping[PdfName(name)] = PdfString(text)
+            key = PdfName(name)
+            existing = self._resolve(info_dict.mapping.get(key))
+            if existing is not None and _info_cos_text(existing) == text:
+                # Unchanged since it was read: leave the file's own object
+                # alone, whatever its type. Rewriting it as a string is how a
+                # producer's `/Revision 7` or `/Approved true` used to become
+                # `(7)` and `(true)` on a save that touched nothing.
+                continue
+            if name == "Trapped":
+                if isinstance(text, (bytes, bytearray)):
+                    text = bytes(text).decode("latin-1")
+                info_dict.mapping[key] = PdfName(_trapped_name(text))
+                continue
+            info_dict.mapping[key] = PdfString(text)
 
     def _attachment_slots(self, catalog: PdfDictionary) -> dict[str, tuple]:
         """Object numbers each embedded file already occupies, keyed by name.
@@ -14923,7 +14982,7 @@ class CosExtractor:
         return matrix_map, rect_map
 
     def extract_metadata(self) -> dict[str, str]:
-        from .cos import PdfDictionary, PdfName, PdfNumber, PdfString
+        from .cos import PdfDictionary, PdfName
 
         info_ref = self._doc.trailer.mapping.get(PdfName("Info"))
         info = self._resolve(info_ref) if info_ref else None
@@ -14931,14 +14990,9 @@ class CosExtractor:
             return {}
         metadata: dict[str, str] = {}
         for k, v in info.mapping.items():
-            key = k.name.lstrip("/")
-            v_resolved = self._resolve(v)
-            if isinstance(v_resolved, PdfString):
-                metadata[key] = decode_pdf_text_string(v_resolved)
-            elif isinstance(v_resolved, PdfNumber):
-                metadata[key] = str(v_resolved.value)
-            else:
-                metadata[key] = str(v_resolved) if v_resolved else ""
+            text = _info_cos_text(self._resolve(v))
+            if text is not None:
+                metadata[k.name.lstrip("/")] = text
         return metadata
 
     def encryption_algorithm_name(self) -> str:

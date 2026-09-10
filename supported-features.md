@@ -70,6 +70,16 @@ Supported:
   `PdfValidationException` naming the entry and the type it got, and a
   date-like value is told the `D:YYYYMMDDHHmmSSOHH'mm'` spelling of 7.9.4
   (`value.strftime("D:%Y%m%d%H%M%S+00'00'")`) rather than being coerced.
+- **`/Trapped` is written as a name, and a producer's own entries keep their
+  type.** 14.3.3 types `/Trapped` as a name (`/True`, `/False`, `/Unknown`),
+  so `info["Trapped"] = "True"` (or `"true"`, or `"/True"`) writes `/Trapped
+  /True` — the token a reader compares against — and reads back as `"True"`.
+  A value outside the three is still written as a name rather than replaced.
+  `/Info` may also carry entries of a producer's own of any type: those are
+  shown in `Document.info` as text where text is faithful (a number, a
+  boolean) and omitted where it is not (an array, a dictionary), and each
+  keeps its original COS type through a save that does not change it. Change
+  one and it is written as the text you set.
 - **A saved file says on its second line that it is binary.** The header is
   followed by a comment holding four bytes above 127 (ISO 32000-1 7.5.2), which
   is what tells a transfer in text mode or an editor weighing line-ending
