@@ -177,14 +177,23 @@ def test_the_whole_document_s_text_carries_it_too():
     assert "inner text" in document.extract_text()
 
 
-def test_the_layout_exports_do_not_reach_inside_a_form_yet():
-    # `to_html`/`to_markdown` and `replace_text` work from byte offsets into
-    # one content stream -- to wrap a run in marked content, or to splice a
-    # replacement in place. A form is a different stream, so an offset into it
-    # means nothing to the page, and reaching in needs more than reading does.
-    # Stated rather than silent: see supported-features.md.
+def test_the_layout_exports_read_inside_a_form():
+    # The export works from byte ranges in the page's stream, where a form is
+    # one `Do`; it used to drop every word inside one while `extract_text`
+    # kept them. A form's text objects now join the page's own.
     document = _document(b"/Fm1 Do\n", {6: _form(_shows(b"inner text"), _OWN_FONT)})
-    assert "inner text" not in document.pages[0].to_html(embed_images=False)
+    page = document.pages[0]
+    assert "inner text" in page.to_html(embed_images=False)
+    assert "inner text" in page.to_markdown(embed_images=False)
+
+
+def test_replace_text_does_not_reach_inside_a_form_yet():
+    # `replace_text` splices a replacement into the stream at a byte offset,
+    # and a form is a different stream -- often one shared by every page that
+    # shows the same header, so editing it "on this page" would edit all of
+    # them. That is a decision to make, not plumbing to add. Stated rather
+    # than silent: see supported-features.md.
+    document = _document(b"/Fm1 Do\n", {6: _form(_shows(b"inner text"), _OWN_FONT)})
     assert document.pages[0].replace_text("inner", "outer") == 0
 
 
@@ -242,3 +251,143 @@ def test_a_chain_of_forms_is_followed_to_a_bound():
     # It stops rather than running away; whether it reaches the bottom of a
     # chain deeper than the bound is not promised.
     assert isinstance(_text(document), str)
+
+
+# --- the layout exports (to_html / to_markdown) -----------------------------
+#
+# The export infers structure from positions, so a form's text has to land
+# where the form puts it on the page: the form's /Matrix, then the CTM its
+# `Do` ran under. Reading order is the check -- MuPDF's, on every case here.
+
+
+def _lines(document: Document) -> list[str]:
+    markdown = document.pages[0].to_markdown(embed_images=False)
+    return [line for line in markdown.splitlines() if line.strip()]
+
+
+_BODY = b"BT /F1 12 Tf 40 100 Td (body text) Tj ET\n"
+
+
+def test_a_header_form_placed_by_cm_sorts_above_the_body():
+    document = _document(
+        _BODY + b"q 1 0 0 1 0 180 cm /Fm1 Do Q\n",
+        {6: _form(b"BT /F1 12 Tf 40 0 Td (header) Tj ET", _OWN_FONT)},
+    )
+    assert _lines(document) == ["header", "body text"]
+
+
+def test_a_form_placed_by_its_own_matrix_sorts_where_it_lands():
+    placed = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 400 200] "
+        b"/Matrix [1 0 0 1 0 180] /Resources << /Font << /F1 5 0 R >> >> "
+    )
+    body = b"BT /F1 12 Tf 40 0 Td (header) Tj ET"
+    form = placed + b"/Length %d >>\nstream\n" % len(body) + body + b"\nendstream"
+    document = _document(_BODY + b"/Fm1 Do\n", {6: form})
+    assert _lines(document) == ["header", "body text"]
+
+
+def test_a_footer_form_sorts_below_the_body_whatever_the_stream_order():
+    document = _document(
+        b"/Fm1 Do\n" + _BODY,
+        {6: _form(b"BT /F1 12 Tf 40 20 Td (footer) Tj ET", _OWN_FONT)},
+    )
+    assert _lines(document) == ["body text", "footer"]
+
+
+def test_the_export_reads_a_form_inside_a_form():
+    document = _document(
+        _BODY + b"/Fm1 Do\n",
+        {
+            6: _form(b"/Fm2 Do", b"/XObject << /Fm2 7 0 R >> "),
+            7: _form(b"BT /F1 12 Tf 40 180 Td (nested) Tj ET", _OWN_FONT),
+        },
+    )
+    assert _lines(document) == ["nested", "body text"]
+
+
+@pytest.mark.parametrize("resources", [None, b""])
+def test_the_export_lets_the_page_s_resources_stand_in(resources):
+    document = _document(
+        b"/Fm1 Do\n",
+        {6: _form(b"BT /F1 14 Tf 40 150 Td (caf\xe9) Tj ET", resources)},
+    )
+    assert _lines(document) == ["café"]
+
+
+def test_the_export_decodes_a_form_s_text_with_the_form_s_font():
+    document = _document(
+        b"/Fm1 Do\n",
+        {
+            6: _form(
+                b"BT /F1 14 Tf 40 150 Td (caf\xe9) Tj ET",
+                b"/Font << /F1 7 0 R >> ",
+            ),
+            7: _FONT,
+        },
+    )
+    assert _lines(document) == ["café"]
+
+
+def test_the_export_keeps_a_form_s_text_apart_from_the_page_s():
+    # Both text objects start at the same byte offset in their own streams --
+    # the page's and the form's. Keyed by offset, one overwrote the other.
+    same_offset = b"BT /F1 12 Tf 40 %d Td (%s) Tj ET"
+    document = _document(
+        same_offset % (100, b"page words") + b"\n/Fm1 Do\n",
+        {6: _form(same_offset % (180, b"form words"), _OWN_FONT)},
+    )
+    assert _lines(document) == ["form words", "page words"]
+
+
+def test_a_form_drawing_itself_stops_in_the_export_too():
+    document = _document(b"/Fm1 Do\n", {6: _form(_shows(b"loop") + b" /Fm1 Do", None)})
+    text = " ".join(_lines(document))
+    assert "loop" in text
+    assert text.count("loop") <= _MAX_FORM_DEPTH + 1
+
+
+def test_a_form_s_matrix_applies_before_the_ctm_it_is_drawn_under():
+    # 8.10.1: form space -> /Matrix -> the CTM at `Do`. Translations alone
+    # commute and cannot tell the order apart; a scale can. Under a CTM that
+    # doubles, a /Matrix lift of 80 lands the text at y 160, above the body at
+    # 100 -- applied the other way round it would land at 80, below it.
+    placed = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 400 200] "
+        b"/Matrix [1 0 0 1 0 80] /Resources << /Font << /F1 5 0 R >> >> "
+    )
+    body = b"BT /F1 12 Tf 20 0 Td (lifted) Tj ET"
+    form = placed + b"/Length %d >>\nstream\n" % len(body) + body + b"\nendstream"
+    document = _document(_BODY + b"q 2 0 0 2 0 0 cm /Fm1 Do Q\n", {6: form})
+    assert _lines(document) == ["lifted", "body text"]
+
+
+def test_a_malformed_form_matrix_is_read_as_identity():
+    placed = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 400 200] "
+        b"/Matrix [1 0 0 1] /Resources << /Font << /F1 5 0 R >> >> "
+    )
+    body = b"BT /F1 12 Tf 40 180 Td (still read) Tj ET"
+    form = placed + b"/Length %d >>\nstream\n" % len(body) + body + b"\nendstream"
+    document = _document(_BODY + b"/Fm1 Do\n", {6: form})
+    assert _lines(document) == ["still read", "body text"]
+
+
+def test_the_export_follows_only_a_form_even_when_handed_content():
+    # The same rule the parser keeps: an XObject that is not a form is not a
+    # content stream, whatever bytes a caller attaches to it.
+    from aspose_pdf.engine.auto_tag import find_layout_elements
+    from aspose_pdf.engine.text_export import _expand_forms
+
+    resources = {
+        "XObject": {
+            "Im1": {
+                "Subtype": "Image",
+                "content": b"BT /F1 12 Tf (should not be read) Tj ET",
+            }
+        }
+    }
+    elements = find_layout_elements(b"q 10 0 0 10 0 0 cm /Im1 Do Q")
+    expanded, sources = _expand_forms(elements, resources, limits=None, budget=None)
+    assert [e.kind for e in expanded] == ["xobject"]
+    assert sources == {}

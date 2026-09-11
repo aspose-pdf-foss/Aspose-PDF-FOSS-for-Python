@@ -153,6 +153,7 @@ class LayoutElement:
     text_head: str = ""  # leading shown text of the object, for list sniffing
     width: float = 0.0  # placed width of an image, in page units
     height: float = 0.0  # ... and its height
+    ctm: Matrix | None = None  # the CTM a ``Do`` ran under, for a form's content
     column: int = 0  # table cell: index of the column anchor it sits on
     span: int = 1  # table cell: how many columns it covers
     depth: int = 0  # list item: nesting level, from its indentation
@@ -705,6 +706,7 @@ def find_layout_elements(
                         name=last_name[0],
                         width=placed_w,
                         height=placed_h,
+                        ctm=ctm,
                     )
                 )
 

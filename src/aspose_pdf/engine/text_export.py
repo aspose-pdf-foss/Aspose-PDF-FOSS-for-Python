@@ -33,7 +33,10 @@ from aspose_pdf.exceptions import PDF_OPERATION_ERRORS, PdfResourceLimitExceptio
 
 from .auto_tag import (
     LayoutElement,
+    Matrix,
     TextObject,
+    _apply,
+    _mul,
     choose_tags,
     detect_columns,
     detect_tables,
@@ -43,6 +46,7 @@ from .auto_tag import (
     is_list_item,
     list_marker,
 )
+from .content_stream_parser import _MAX_FORM_DEPTH
 
 __all__ = ["Block", "page_blocks", "to_html", "to_markdown"]
 
@@ -186,7 +190,11 @@ def page_blocks(
 
     limits = getattr(pdf, "_load_limits", None)
     budget = getattr(pdf, "_load_budget", None)
+    resources = _plain_resources(pdf, page_index)
     elements = find_layout_elements(content, limits=limits, budget=budget)
+    elements, sources = _expand_forms(
+        elements, resources, limits=limits, budget=budget
+    )
     text_elements = [e for e in elements if e.kind == "text"]
     tags = choose_tags(
         [
@@ -215,12 +223,16 @@ def page_blocks(
     if not tagged:
         return []
 
-    resources = _plain_resources(pdf, page_index)
+    # Keyed by the element, not by its byte offset: text from a form has an
+    # offset in the *form's* stream, which would collide with the page's.
     texts: dict[int, str] = {}
     for element in tagged:
         if element.kind == "text":
-            texts[element.start] = _element_text(
-                content, element, resources, limits, budget
+            source, source_resources = sources.get(
+                id(element), (content, resources)
+            )
+            texts[id(element)] = _element_text(
+                source, element, source_resources, limits, budget
             )
 
     blocks: list[Block] = []
@@ -234,6 +246,89 @@ def page_blocks(
                     _flow_blocks(pdf, page_index, flow, texts, include_images)
                 )
     return [block for block in blocks if _has_content(block)]
+
+
+def _expand_forms(
+    elements: list[LayoutElement],
+    resources: dict,
+    *,
+    limits: Any,
+    budget: Any,
+    depth: int = 0,
+) -> tuple[list[LayoutElement], dict[int, tuple[bytes, dict]]]:
+    """Replace each form XObject a page paints with the text the form shows.
+
+    A form is part of the page it is drawn on (ISO 32000-1 8.10), and headers,
+    footers and stamps are usually forms. The layout scan reads the page's own
+    stream, where a form is a single ``Do``, so an export used to drop every
+    word inside one -- while :meth:`Document.extract_text` kept them, since the
+    text reader walks into forms. Each text object a form shows now joins the
+    page's own, anchored where it lands on the page: the form's ``/Matrix``
+    and then the CTM its ``Do`` ran under, so a header sorts above the body it
+    heads.
+
+    Returns the expanded elements and, for each one that came out of a form,
+    the stream and resources to decode it with. The form's own ``/Resources``
+    govern inside it, the parent's where it declares none or an empty set --
+    the rule the text reader follows. Images inside a form are not carried:
+    a figure is resolved by name in the *page's* resources, and a form's names
+    are its own.
+    """
+    expanded: list[LayoutElement] = []
+    sources: dict[int, tuple[bytes, dict]] = {}
+    for element in elements:
+        form = _form_named(element, resources)
+        if form is None:
+            expanded.append(element)
+            continue
+        if depth >= _MAX_FORM_DEPTH:
+            continue
+        content = bytes(form["content"])
+        own = form.get("Resources")
+        form_resources = own if isinstance(own, dict) and own else resources
+        placement = _mul(_form_matrix(form), element.ctm or _IDENTITY_MATRIX)
+        inner, inner_sources = _expand_forms(
+            find_layout_elements(content, limits=limits, budget=budget),
+            form_resources,
+            limits=limits,
+            budget=budget,
+            depth=depth + 1,
+        )
+        sources.update(inner_sources)
+        for child in inner:
+            if child.kind != "text":
+                continue
+            child.x, child.y = _apply(placement, child.x, child.y)
+            sources.setdefault(id(child), (content, form_resources))
+            expanded.append(child)
+    return expanded, sources
+
+
+_IDENTITY_MATRIX: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def _form_named(element: LayoutElement, resources: dict) -> dict | None:
+    """The form XObject an ``xobject`` element paints, or ``None``."""
+    if element.kind != "xobject" or not element.name:
+        return None
+    xobjects = resources.get("XObject")
+    form = xobjects.get(element.name.lstrip("/")) if isinstance(xobjects, dict) else None
+    if not isinstance(form, dict) or form.get("Subtype") != "Form":
+        return None
+    if not isinstance(form.get("content"), (bytes, bytearray)):
+        return None
+    return form
+
+
+def _form_matrix(form: dict) -> Matrix:
+    """A form's ``/Matrix`` (8.10.1), identity where absent or malformed."""
+    raw = form.get("Matrix")
+    if isinstance(raw, (list, tuple)) and len(raw) == 6:
+        try:
+            return tuple(float(v) for v in raw)  # type: ignore[return-value]
+        except (TypeError, ValueError):
+            pass
+    return _IDENTITY_MATRIX
 
 
 def _plain_resources(pdf: Any, page_index: int) -> dict:
@@ -284,7 +379,7 @@ def _table_block(rows: list[list[LayoutElement]], texts: dict[int, str]) -> Bloc
         row_spans = [1] * width
         for element in sorted(row, key=lambda e: e.x):
             if 0 <= element.column < width:
-                line[element.column] = texts.get(element.start, "")[:_MAX_CELL_CHARS]
+                line[element.column] = texts.get(id(element), "")[:_MAX_CELL_CHARS]
                 row_spans[element.column] = element.span
         cells.append(line)
         spans.append(row_spans)
@@ -316,7 +411,7 @@ def _flow_blocks(
                 blocks.append(_figure_block(pdf, page_index, group[0]))
             continue
         text = " ".join(
-            part for part in (texts.get(e.start, "") for e in group) if part
+            part for part in (texts.get(id(e), "") for e in group) if part
         ).strip()
         if not text:
             continue

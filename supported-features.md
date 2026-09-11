@@ -864,6 +864,15 @@ Supported:
   standing in where it declares none or declares an empty set; nested forms are
   followed to a bounded depth. An image XObject is not a content stream and is
   not read as one.
+  The **HTML and Markdown exports** carry it too. Their layout analysis reads
+  the page's own stream, where a form is a single `Do`, so they used to drop
+  every word inside one while `extract_text` kept them; each text object a
+  form shows now joins the page's own, anchored where it lands on the page --
+  the form's `/Matrix`, then the CTM its `Do` ran under -- so a header sorts
+  above the body and a footer below it, as MuPDF orders them. Nested forms are
+  followed to the same bound the text reader uses; images inside a form are
+  not exported as figures, since a figure is resolved by name in the page's
+  resources and a form's names are its own.
 - **An inline image's samples are not read as tokens.** The bytes between `ID`
   and `EI` are the image, and they can spell any operator or open a string that
   closes nowhere, so a reader that lexes them loses the rest of the page. Where
@@ -984,9 +993,11 @@ Boundaries:
   usable metrics keep positioning operators as run boundaries, and phrases
   split across columns, rise changes, or CTM changes are not matched. It edits
   a **page's own** content stream: text drawn through a form XObject is read
-  (see text extraction) but not rewritten, because a replacement is spliced at a
-  byte offset into one stream and a form is another. The same holds for the
-  HTML/Markdown exports, whose layout analysis works from those offsets. Type0
+  (see text extraction) but not rewritten. A replacement is spliced at a byte
+  offset into one stream and a form is another -- and a form is often shared
+  by every page that shows the same header, so editing it "on this page" would
+  edit all of them; that is a decision, not missing plumbing. (The HTML and
+  Markdown exports, which only *read*, do reach inside forms -- see below.) Type0
   editing covers any font with a `ToUnicode` CMap, embedded CIDFontType2 fonts
   under an Identity encoding reconstructed from the font program, and the exact
   bundled predefined names listed above for CIDFontType0 or CIDFontType2.

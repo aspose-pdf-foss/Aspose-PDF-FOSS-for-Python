@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **HTML and Markdown export dropped every word inside a form XObject.**
+  Headers, footers and stamps usually live in forms, and the export's layout
+  analysis reads the page's own content stream, where a form is one `Do` -- so
+  those words vanished from `to_html` and `to_markdown` while `extract_text`,
+  which walks into forms, kept them: two of our outputs disagreeing on the same
+  page. Each text object a form shows now joins the page's own, positioned
+  where it lands (the form's `/Matrix`, then the CTM of its `Do`) so it sorts
+  into reading order, and decoded with the form's own resources, or the page's
+  where it declares none. Text is keyed by element rather than by byte offset,
+  since a form's offsets are into its own stream and collided with the page's.
+  Reading order matches MuPDF on every case tested: placed by `cm`, by
+  `/Matrix`, by both under a scale, nested, a footer drawn first. `replace_text`
+  still does not edit inside forms, and now says why: a form is often shared by
+  every page that shows it.
+
 - **Outlined text rendered solid.** Table 106 gives four rendering modes that
   stroke a glyph -- `Tr` 1 (stroke), 2 (fill then stroke), and their clipping
   twins 5 and 6 -- and the renderer had all four fall through to the fill. An
