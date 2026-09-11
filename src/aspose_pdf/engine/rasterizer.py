@@ -253,6 +253,12 @@ class RasterizedPage:
         return out
 
 
+# ISO 32000-1 9.3.6 table 106. Mode 3 paints nothing and mode 7 only clips;
+# the clipping modes (4-7) paint exactly as their non-clipping counterparts.
+_FILLING_TEXT_MODES = frozenset({0, 2, 4, 6})
+_STROKING_TEXT_MODES = frozenset({1, 2, 5, 6})
+
+
 @dataclass
 class _TextState:
     in_text: bool = False
@@ -2449,18 +2455,46 @@ class _PageRasterizer:
             self._text_clip.extend(pixel_contours)
         if text.rendering_mode == 7:
             return
-        # A pattern is a colour, so text painted with one is painted with the
-        # pattern -- the glyph outlines are the region, exactly as a path's
-        # subpaths are.
-        if self.state.fill_tiling is not None:
-            self._fill_tiling(user_contours, self.state.fill_tiling, depth)
-        elif self.state.fill_shading is not None:
-            self._fill_subpaths_shading(
-                user_contours, self.state.fill_shading, self.state.fill_alpha
-            )
-        else:
-            self._fill_contours_nonzero(
-                pixel_contours, self.state.fill_color, self.state.fill_alpha
+        if text.rendering_mode in _FILLING_TEXT_MODES:
+            # A pattern is a colour, so text painted with one is painted with
+            # the pattern -- the glyph outlines are the region, exactly as a
+            # path's subpaths are.
+            if self.state.fill_tiling is not None:
+                self._fill_tiling(user_contours, self.state.fill_tiling, depth)
+            elif self.state.fill_shading is not None:
+                self._fill_subpaths_shading(
+                    user_contours, self.state.fill_shading, self.state.fill_alpha
+                )
+            else:
+                self._fill_contours_nonzero(
+                    pixel_contours, self.state.fill_color, self.state.fill_alpha
+                )
+        if text.rendering_mode in _STROKING_TEXT_MODES:
+            self._stroke_glyph_outline(user_contours)
+
+    def _stroke_glyph_outline(self, user_contours: list[list[Point]]) -> None:
+        """Stroke a glyph's outline with the pen the graphics state carries.
+
+        The stroking modes of table 106 (``Tr`` 1, 2, 5 and 6) draw the glyph's
+        *outline* with the stroke colour and the current line width -- outlined
+        headline text, a hollow watermark. Every one of them used to fall
+        through to the fill, so they came out as solid filled text in the fill
+        colour: mode 1 painted what it was told not to paint at all.
+
+        Each contour is closed before it is stroked. A glyph's contour is a
+        loop, but only the TrueType backend returns it that way -- the CFF and
+        Type 1 charstring interpreters end a contour where the drawing ended,
+        so an embedded ``/FontFile3`` stroked without this would come out with
+        one side of every loop missing.
+        """
+        closed = [
+            contour + contour[:1] if contour[0] != contour[-1] else contour
+            for contour in user_contours
+            if contour
+        ]
+        if closed:
+            self._stroke_subpaths(
+                closed, self.state.stroke_color, self.state.stroke_alpha
             )
 
     def _fill_contours_nonzero(
@@ -2503,9 +2537,13 @@ class _PageRasterizer:
             # The box stands in for a glyph we could not outline; a clipping
             # mode has to clip to *something* or the page below vanishes.
             self._text_clip.append(polygon)
-        if text.rendering_mode != 7:
+        if text.rendering_mode in _FILLING_TEXT_MODES:
             self._fill_polygon_pixels(
                 polygon, self.state.fill_color, self.state.fill_alpha
+            )
+        if text.rendering_mode in _STROKING_TEXT_MODES:
+            self._stroke_glyph_outline(
+                [[self._pixel_to_user(x, y) for x, y in polygon]]
             )
 
     # -- embedded TrueType font resolution --------------------------------

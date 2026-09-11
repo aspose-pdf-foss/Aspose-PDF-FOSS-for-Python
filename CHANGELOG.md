@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Outlined text rendered solid.** Table 106 gives four rendering modes that
+  stroke a glyph -- `Tr` 1 (stroke), 2 (fill then stroke), and their clipping
+  twins 5 and 6 -- and the renderer had all four fall through to the fill. An
+  outlined headline or a hollow watermark came out as solid filled text, in the
+  *fill* colour, which mode 1 explicitly does not use. The glyph's outline is
+  now stroked with the stroke colour and the graphics state's pen; mode 2 fills
+  and then strokes; the clipping twins paint exactly as their counterparts.
+  Measured against pdfium and MuPDF, which agree with each other to within a
+  fraction of a percent on all eight modes, every mode now matches. The SVG
+  export already had this right, which is where the two disagreed.
+  Contours are closed before stroking: only the TrueType backend returns a
+  closed loop, so an embedded CFF or Type 1 glyph would otherwise be drawn with
+  one side of every loop missing.
+
 - **A document opened with `open_streaming` extracted no text, and could not
   delete a page.** Streaming mode leaves `page_contents` empty on purpose --
   content is decoded per page on demand -- but three paths read that list as

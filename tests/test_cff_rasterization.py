@@ -442,3 +442,71 @@ def test_render_cid_keyed_cff_glyph():
     raster = _render_first_page(pdf)
 
     assert raster.get_pixel(20, 20) == (0, 0, 0)  # glyph body filled
+
+
+def test_stroking_a_cff_glyph_closes_its_contour():
+    """``Tr 1`` on an embedded CFF must draw the whole loop.
+
+    The TrueType backend ends a contour where it began; the Type 2 charstring
+    interpreter does not -- ``closepath`` is implied, so the returned contour
+    stops at the last drawn point. Stroked as it comes, every loop is missing
+    the side between its last point and its first: here, the left edge of a
+    rectangular glyph.
+    """
+    cff = _make_simple_cff(
+        [b"\x0e", _box_charstring(100, 100, 900, 900)], encoding={0x41: 1}
+    )
+    pdf = SimplePdf()
+    pdf.pages = [(0, 0, 40, 40)]
+    pdf.page_contents = [b"BT /F1 30 Tf 1 w 1 Tr 1 0 0 1 5 5 Tm (A) Tj ET"]
+    pdf._ensure_cos()
+    cos = pdf._cos_doc
+    ff = cos.register_object(
+        PdfStream(
+            cff,
+            {
+                PdfName("Length"): PdfNumber(len(cff)),
+                PdfName("Subtype"): PdfName("Type1C"),
+            },
+        )
+    )
+    descriptor = cos.register_object(
+        PdfDictionary(
+            {
+                PdfName("Type"): PdfName("FontDescriptor"),
+                PdfName("FontName"): PdfName("Test"),
+                PdfName("FontFile3"): ff,
+            }
+        )
+    )
+    font = cos.register_object(
+        PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Font"),
+                PdfName("Subtype"): PdfName("Type1"),
+                PdfName("BaseFont"): PdfName("Test"),
+                PdfName("FirstChar"): PdfNumber(0x41),
+                PdfName("Widths"): PdfArray([PdfNumber(1000)]),
+                PdfName("FontDescriptor"): descriptor,
+            }
+        )
+    )
+    pdf._get_page_dict(0).mapping[PdfName("Resources")] = PdfDictionary(
+        {PdfName("Font"): PdfDictionary({PdfName("F1"): font})}
+    )
+
+    raster = _render_first_page(pdf)
+
+    def ink(x0, y0, x1, y1):
+        # Any ink, not pure black: a one-unit pen is thinner than a pixel and
+        # arrives antialiased.
+        return sum(
+            raster.get_pixel(x, y) != (255, 255, 255)
+            for y in range(y0, y1)
+            for x in range(x0, x1)
+        )
+
+    # The glyph's box spans roughly x 7..32, y 8..33 on this 40x40 page.
+    assert ink(6, 14, 10, 26) > 0, "left edge missing: the loop was left open"
+    assert ink(29, 14, 34, 26) > 0, "right edge missing: not stroked at all"
+    assert ink(12, 14, 28, 26) == 0, "the middle is filled: mode 1 must not fill"

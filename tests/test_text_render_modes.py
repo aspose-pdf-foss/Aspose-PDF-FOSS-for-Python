@@ -82,6 +82,70 @@ def _shown(mode: int, *, after: bytes = b"") -> bytes:
     ) + after
 
 
+def _colours(content: bytes) -> tuple[int, int]:
+    """Sampled pixels of the fill colour and of the stroke colour."""
+    raster = _document(content).pages[0].render(antialias=False)
+    blue = red = 0
+    for y in range(0, 200, 2):
+        for x in range(0, 200, 2):
+            pixel = raster.get_pixel(x, y)
+            if pixel == _BLUE:
+                blue += 1
+            elif pixel == (255, 0, 0):
+                red += 1
+    return blue, red
+
+
+# --- the four painting modes ------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", [0, 4])
+def test_a_filling_mode_paints_the_letter_in_the_fill_colour(mode):
+    blue, red = _colours(_shown(mode))
+    assert blue > 0
+    assert red == 0
+
+
+@pytest.mark.parametrize("mode", [1, 5])
+def test_a_stroking_mode_draws_the_outline_in_the_stroke_colour(mode):
+    """Table 106 mode 1 strokes and does *not* fill.
+
+    Every stroking mode used to fall through to the fill, so an outlined
+    headline came out solid, in the fill colour -- the one colour mode 1 says
+    not to use.
+    """
+    blue, red = _colours(_shown(mode))
+    assert red > 0
+    assert blue == 0
+
+
+@pytest.mark.parametrize("mode", [2, 6])
+def test_fill_then_stroke_uses_both_colours(mode):
+    blue, red = _colours(_shown(mode))
+    assert blue > 0
+    assert red > 0
+
+
+def test_an_outline_is_lighter_than_the_letter_and_both_together_are_heavier():
+    """The relationship pdfium and MuPDF both draw: 1 < 0 < 2."""
+    outline = _ink(_shown(1))
+    filled = _ink(_shown(0))
+    both = _ink(_shown(2))
+    assert outline < filled < both
+
+
+def test_the_pen_that_strokes_a_glyph_is_the_graphics_state_pen():
+    thin = _ink(b"BT /F1 60 Tf 1 0 0 RG 0.4 w 1 Tr 20 80 Td (OBI) Tj ET\n")
+    thick = _ink(b"BT /F1 60 Tf 1 0 0 RG 6 w 1 Tr 20 80 Td (OBI) Tj ET\n")
+    assert thick > thin
+
+
+def test_a_clipping_variant_paints_exactly_like_its_counterpart():
+    assert _colours(_shown(4)) == _colours(_shown(0))
+    assert _colours(_shown(5)) == _colours(_shown(1))
+    assert _colours(_shown(6)) == _colours(_shown(2))
+
+
 # --- the four clipping modes ------------------------------------------------
 
 

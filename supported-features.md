@@ -462,9 +462,15 @@ Supported:
   decided by the rule its operator names (8.5.3.3) -- nonzero for `f`/`B`/`W`,
   even-odd for `f*`/`B*`/`W*` -- across all of its subpaths together, so a
   shape with a hole has one, and the same two rules apply to a clipping path.
-  All eight **text rendering modes** (table 106) are honoured, including the
-  four that clip: modes 4-7 add the glyphs they show to the clipping path,
-  which takes effect at `ET` and is restored by `Q` like any other clip.
+  All eight **text rendering modes** (table 106) are honoured, in both of
+  their halves. The four that **stroke** -- 1, 2, 5 and 6 -- draw the glyph's
+  outline with the stroke colour and the graphics state's pen, so outlined
+  headline text and hollow watermarks come out hollow (until this was fixed
+  they fell through to the fill and came out solid, in the fill colour mode 1
+  says not to use); mode 2 fills and then strokes. The four that **clip** --
+  4-7 -- add the glyphs they show to the clipping path, which takes effect at
+  `ET` and is restored by `Q` like any other clip, and each paints exactly as
+  its non-clipping counterpart does.
   The **text state** -- font and size, `Tc`, `Tw`, `Tz`, `TL`, `Tr`, `Ts` -- is
   graphics state (9.3.1), so it outlives a text object and follows `q`/`Q`;
   `BT` initialises the text and text-line matrices and nothing else (9.4.1).
