@@ -1265,6 +1265,10 @@ class SimplePdf:
     # (certificate, private_key) the document was opened with, for a
     # public-key (/Adobe.PubSec) file. Kept so decrypt() can re-derive the key.
     _credential: tuple[Any, Any] | None = None
+    # The owner password given to ``encrypt`` in this session. ``password``
+    # holds the user password; the owner password also unlocks the protection
+    # it sets, and ``decrypt``/``change_passwords`` have to know it to say so.
+    _owner_password: str | None = None
     # Recipients to encrypt for on the next save: [(certificate, /P)].
     _recipients: list[tuple[Any, int]] | None = None
     # The CMS envelopes those recipients produced. The file key is a hash over
@@ -3501,6 +3505,7 @@ class SimplePdf:
         self.encryption_algorithm = algorithm
 
         owner_password = owner_password or user_password
+        self._owner_password = owner_password
 
         # The file key is derived from the first element of the trailer /ID
         # (Algorithm 3.2 step (f)), so derivation and the /ID actually written
@@ -4236,10 +4241,10 @@ class SimplePdf:
     def decrypt(self, password: str) -> None:
         """Decrypt the document with password."""
         self._ensure_not_disposed()
+        if not self._password_unlocks(password):
+            raise PdfSecurityException("Incorrect password")
         if not self.encrypted:
             return
-        if self.password and password != self.password:
-            raise PdfSecurityException("Incorrect password")
         if self._cos_doc is not None and self.encryption_key is None:
             probe = CosExtractor(
                 self._cos_doc,
@@ -4287,6 +4292,7 @@ class SimplePdf:
         """Remove password protection, so the next save writes a plain file."""
         self._ensure_not_disposed()
         self.password = None
+        self._owner_password = None
         self.encrypted = False
         self.encryption_key = None
         self._drop_encryption_from_cos()
@@ -4314,11 +4320,59 @@ class SimplePdf:
         new_user_password: str,
         new_owner_password: str | None = None,
     ) -> None:
-        """Change document passwords."""
+        """Change document passwords, keeping everything else the protection says.
+
+        The new passwords guard the same permissions with the same cipher. It
+        used to re-encrypt with ``encrypt``'s defaults, so changing a password
+        on a document that forbade printing and copying produced one that
+        allowed both (``/P`` -4) -- and moved it to AES-256 whatever it had
+        been. A document with no protection simply gains one, with the
+        defaults, since there is nothing to keep.
+        """
         self._ensure_not_disposed()
-        if self.password and old_password != self.password:
+        if not self._password_unlocks(old_password):
             raise PdfSecurityException("Incorrect old password")
-        self.encrypt(new_user_password, new_owner_password)
+        protected = self.encrypted or self._loaded_protection_active()
+        self.encrypt(
+            new_user_password,
+            new_owner_password or "",
+            permissions=self.P if protected else -4,
+            algorithm=self.encryption_algorithm if protected else "AES-256",
+        )
+
+    def _loaded_protection_active(self) -> bool:
+        """Whether the ``/Encrypt`` the document was loaded with still applies."""
+        return self._cos_doc is not None and (
+            PdfName("Encrypt") in self._cos_doc.trailer.mapping
+        )
+
+    def _password_unlocks(self, password: str) -> bool:
+        """Whether *password* opens the protection this document now carries.
+
+        Protection set in this session is checked against the passwords it was
+        given, user or owner. Protection the document was loaded with is
+        checked against its own ``/Encrypt`` dictionary, which knows both. A
+        certificate-protected document is unlocked by its credential, not by a
+        password, and a document with no protection has nothing to unlock.
+
+        ``decrypt`` used to skip this for a loaded document -- its ``encrypted``
+        flag describes what the *next save* will do, and is off after a load --
+        so ``decrypt("anything")`` took the protection off.
+        """
+        if self.encrypted:
+            if self._recipients:
+                return True
+            return password in (self.password, self._owner_password)
+        if self._loaded_protection_active():
+            probe = CosExtractor(
+                self._cos_doc,
+                self._raw_bytes or b"",
+                limits=self._load_limits,
+                budget=self._load_budget,
+                credential=self._credential,
+            )
+            return probe.encryption_password_allows_access(password)
+        return True
 
     # ---------------------------------------------------------------------------
     # Page content authoring

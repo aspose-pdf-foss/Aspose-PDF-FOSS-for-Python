@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Changing a document's passwords lifted every permission restriction, and
+  `decrypt` accepted any password.** `change_passwords` re-encrypted with
+  `encrypt`'s defaults, so a document that forbade printing and copying came
+  out of a routine password change allowing both -- `/P` -4, confirmed with
+  qpdf on files from both qpdf and this library -- and moved to AES-256
+  whatever cipher it had used. It now keeps the permissions and the cipher and
+  changes only the passwords. `Document.decrypt(password)` checked its
+  argument behind a flag that is off after a load, so on any loaded document
+  `decrypt("anything")` took the protection off; it now accepts only the user
+  or the owner password, checked against the file's own `/Encrypt`, and
+  refuses the rest. Both methods now agree on which passwords count: either
+  of the document's, where `change_passwords` had accepted only the one the
+  document was opened with, and an owner password given to `encrypt` in this
+  session could not `decrypt` at all.
+
 - **A save that failed destroyed the file it was saving over.** Every PDF save
   to a path wrote with `Path.write_bytes`, which truncates its target before
   writing. Saving a document over the file it came from -- what

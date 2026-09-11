@@ -1841,6 +1841,12 @@ class Document:
         plain file. Opening an encrypted document already unlocks it for
         reading, and a re-save keeps the protection it came with -- taking the
         lock off is this explicit call.
+
+        *password* must open the protection: the user or the owner password,
+        whichever the document was opened with. Anything else raises
+        :class:`~aspose_pdf.exceptions.PdfSecurityException` and leaves the
+        protection in place. (A document certificate-protected in this session
+        needs no password to take that protection off again.)
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -1856,7 +1862,20 @@ class Document:
         new_user_password: str,
         new_owner_password: str | None = None,
     ) -> Document:
-        """Change document passwords."""
+        """Change the document's passwords and keep everything else.
+
+        *old_password* may be the user or the owner password. The new
+        passwords guard the **same permissions with the same cipher** the
+        document already had; only the passwords change. As with
+        :meth:`encrypt`, an omitted *new_owner_password* makes the new user
+        password the owner password too. A document with no protection gains
+        one with :meth:`encrypt`'s defaults.
+
+        Raises
+        ------
+        PdfSecurityException
+            If *old_password* opens neither the user nor the owner side.
+        """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")

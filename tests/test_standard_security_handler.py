@@ -259,3 +259,105 @@ def test_algorithm_spellings_normalize(spelling: str, expected: str) -> None:
     document.encrypt("user", algorithm=spelling)
     assert document._engine_pdf.encryption_algorithm == expected
     document.dispose()
+
+
+# ---------------------------------------------------------------------------
+# What a password may do to the protection
+#
+# `decrypt(password)` took the protection off a loaded document whatever
+# password it was given: its check sat behind an `encrypted` flag that
+# describes the *next save* and is off after a load. And `change_passwords`
+# re-encrypted with `encrypt`'s defaults, so a document that forbade printing
+# and copying came out allowing both (/P -4), moved to AES-256 on the way.
+# ---------------------------------------------------------------------------
+
+
+def _cipher(document: Document) -> str:
+    return document._engine_pdf.encryption_algorithm
+
+
+def _saved(document: Document, tmp_path: Path, name: str = "out.pdf") -> Path:
+    out = tmp_path / name
+    document.save(str(out))
+    return out
+
+
+@pytest.mark.parametrize("name,label", READABLE)
+def test_decrypt_refuses_a_password_that_does_not_open_the_document(
+    name: str, label: str, tmp_path: Path
+) -> None:
+    document = Document(FIXTURES / name, password="user")
+    with pytest.raises(PdfSecurityException):
+        document.decrypt("not-the-password")
+    # ...and the protection is still there.
+    with pytest.raises(PdfSecurityException):
+        Document(str(_saved(document, tmp_path)))
+
+
+@pytest.mark.parametrize("opened_with,decrypted_with", [("user", "owner"), ("owner", "user")])
+def test_decrypt_accepts_either_of_the_document_s_passwords(
+    opened_with: str, decrypted_with: str, tmp_path: Path
+) -> None:
+    document = Document(FIXTURES / "fixtures_encrypted_aes_256_r6.pdf", password=opened_with)
+    document.decrypt(decrypted_with)
+    plain = Document(str(_saved(document, tmp_path)))
+    assert not plain.is_encrypted
+    assert b"SECRET42" in plain.pages[0].content
+
+
+@pytest.mark.parametrize("name,label", READABLE)
+def test_change_passwords_keeps_the_permissions_and_the_cipher(
+    name: str, label: str, tmp_path: Path
+) -> None:
+    original = Document(FIXTURES / name, password="owner")
+    permissions, cipher = original.permissions, _cipher(original)
+    assert permissions != -4, "the fixture must restrict something to test this"
+
+    original.change_passwords("owner", "new-user", "new-owner")
+    out = _saved(original, tmp_path)
+
+    reopened = Document(str(out), password="new-user")
+    assert reopened.permissions == permissions, label
+    assert _cipher(reopened) == cipher, label
+    assert b"SECRET42" in reopened.pages[0].content
+    Document(str(out), password="new-owner")
+    with pytest.raises(PdfSecurityException):
+        Document(str(out), password="user")
+
+
+def test_change_passwords_accepts_the_user_password_as_the_old_one() -> None:
+    document = Document(FIXTURES / "fixtures_encrypted_aes_128.pdf", password="owner")
+    document.change_passwords("user", "new-user", "new-owner")
+
+
+def test_change_passwords_refuses_a_wrong_old_password() -> None:
+    document = Document(FIXTURES / "fixtures_encrypted_aes_128.pdf", password="owner")
+    with pytest.raises(PdfSecurityException):
+        document.change_passwords("not-the-password", "new-user", "new-owner")
+
+
+def test_protection_set_in_this_session_is_unlocked_by_either_password() -> None:
+    for password in ("user", "owner"):
+        document = Document()
+        document.pages.add()
+        document.encrypt("user", "owner", permissions=-24)
+        document.decrypt(password)
+
+    document = Document()
+    document.pages.add()
+    document.encrypt("user", "owner", permissions=-24)
+    with pytest.raises(PdfSecurityException):
+        document.decrypt("not-the-password")
+
+
+def test_changing_passwords_on_an_unprotected_document_uses_the_defaults(
+    tmp_path: Path,
+) -> None:
+    # Nothing to keep, so the protection it gains is encrypt's default --
+    # AES-256 with every permission -- not whatever an unused field holds.
+    document = Document()
+    document.pages.add()
+    document.change_passwords("", "new-user", "new-owner")
+    reopened = Document(str(_saved(document, tmp_path)), password="new-user")
+    assert _cipher(reopened) == "AES-256"
+    assert reopened.permissions == -4

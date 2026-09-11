@@ -1535,6 +1535,19 @@ Supported:
   than being rebuilt from an in-memory model. `Document.decrypt(password)` is
   the counterpart of `encrypt`: it takes the protection off, `/O` and `/U`
   included, so the next save writes a plain file.
+- **A password has to be right to change the protection, and changing it keeps
+  what the protection said.** `decrypt` and `change_passwords` accept the
+  user or the owner password -- checked against the file's own `/Encrypt`
+  for a loaded document, against the passwords given for one encrypted in
+  this session -- and refuse anything else. `decrypt` used to ignore its
+  argument on a loaded document, so `decrypt("anything")` removed the
+  protection. `change_passwords` keeps the document's **permissions and
+  cipher**: it used to re-encrypt with `encrypt`'s defaults, so changing a
+  password on a file that forbade printing and copying produced one that
+  allowed both (`/P` -4) and switched it to AES-256. Checked with qpdf on
+  every revision: `/P` survives exactly, the cipher family is kept (a
+  revision-5 AES-256 file comes out as standard revision 6, and 40-bit RC4 as
+  128-bit), and the new passwords take the user and owner roles.
 - **Open every standard security handler flavour**, whichever tool wrote it:
   40-bit RC4 (`/V 1 /R 2`), 128-bit RC4 (`/V 2 /R 3`, and `/V 4` with a `/V2`
   crypt filter), AES-128 (`/V 4 /R 4`, `AESV2`) and AES-256 (`/V 5`, both the

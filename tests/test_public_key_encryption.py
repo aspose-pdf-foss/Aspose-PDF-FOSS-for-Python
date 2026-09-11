@@ -526,3 +526,14 @@ def test_certificates_are_matched_by_issuer_and_serial(alice, bob):
     assert open_envelopes(envelopes, alice[0], alice[1]).seed == seed
     with pytest.raises(PdfSecurityException, match="not a recipient"):
         open_envelopes(envelopes, bob[0], bob[1])
+
+
+def test_a_password_does_not_stand_between_a_session_and_its_own_recipients(alice):
+    # Protection this session set for certificates is not a password's to
+    # unlock: taking it off again needs no password, whatever string is passed
+    # -- as before the password check on `decrypt` was made real.
+    document = Document()
+    document.pages.add().add_text(_TEXT, 72, 700, font_size=14)
+    document.encrypt_for_recipients([Recipient(alice[0])])
+    document.decrypt("any string at all")
+    assert b"/Encrypt" not in document._engine_pdf.to_bytes()
