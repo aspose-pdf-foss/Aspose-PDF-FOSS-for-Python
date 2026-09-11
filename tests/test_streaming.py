@@ -459,3 +459,103 @@ def test_clearing_the_pages_of_a_streamed_document_works(tmp_path):
     with Document.open_streaming(path) as doc:
         doc.pages.clear()
         assert doc.page_count == 0
+
+
+# ---------------------------------------------------------------------------
+# PDF/A and repair in streaming mode
+#
+# Three more paths read the lazy cache as though it were the document. The
+# conversion rewrote no CMYK on a streamed document and left it under the sRGB
+# OutputIntent it had just installed; the validator skipped the same content
+# scan and passed that file; and repair() padded the cache with empty pages.
+# ---------------------------------------------------------------------------
+
+_CMYK_CONTENT = b"0.1 0.9 0.8 0 k 20 20 100 60 re f\n0 0 0 1 K 4 w 20 100 m 160 100 l S\n"
+
+
+def _cmyk_pdf(tmp_path: Path) -> Path:
+    """A page painted with DeviceCMYK operators, and no OutputIntent yet."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 150] /Contents 4 0 R >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(_CMYK_CONTENT), _CMYK_CONTENT),
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref_at = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref_at,
+    )
+    path = tmp_path / "cmyk.pdf"
+    path.write_bytes(bytes(out))
+    return path
+
+
+def _colour_operators(content: bytes) -> set[bytes]:
+    import re
+
+    return set(re.findall(rb"(?<![A-Za-z])(k|K|rg|RG)(?![A-Za-z])", content))
+
+
+def test_converting_a_streamed_document_to_pdfa_rewrites_its_cmyk(tmp_path):
+    path = _cmyk_pdf(tmp_path)
+    out = tmp_path / "pdfa.pdf"
+    with Document.open_streaming(path) as doc:
+        doc.convert_to_pdfa("1b")
+        doc.save(str(out))
+
+    converted = Document(str(out))
+    assert _colour_operators(converted.pages[0].content) == {b"rg", b"RG"}
+    assert converted.validate_pdfa("1b").is_valid
+
+
+def test_a_streamed_conversion_writes_what_an_eager_one_writes(tmp_path):
+    path = _cmyk_pdf(tmp_path)
+    contents = []
+    for opener in (Document, Document.open_streaming):
+        doc = opener(str(path))
+        doc.convert_to_pdfa("1b")
+        out = tmp_path / f"converted_{len(contents)}.pdf"
+        doc.save(str(out))
+        contents.append(Document(str(out)).pages[0].content)
+    assert contents[0] == contents[1]
+
+
+def test_validating_a_streamed_document_scans_its_content(tmp_path):
+    """The false pass: CMYK content under an RGB OutputIntent."""
+    path = _cmyk_pdf(tmp_path)
+    # A real sRGB OutputIntent, from the eager conversion, then CMYK put back
+    # into the content underneath it.
+    doc = Document(str(path))
+    doc.convert_to_pdfa("1b")
+    doc._engine_pdf._set_page_content(0, _CMYK_CONTENT)
+    bad = tmp_path / "cmyk_under_srgb.pdf"
+    doc.save(str(bad))
+
+    eager = Document(str(bad)).validate_pdfa("1b")
+    with Document.open_streaming(bad) as streamed:
+        lazy = streamed.validate_pdfa("1b")
+    assert not eager.is_valid
+    assert not lazy.is_valid
+    assert lazy.errors == eager.errors
+
+
+def test_repair_leaves_a_streamed_document_readable_and_lazy(tmp_path):
+    path = _numbered_pdf(tmp_path, 3)
+    with Document.open_streaming(path) as doc:
+        doc.repair()
+        assert [page.extract_text().strip() for page in doc.pages] == [
+            "PAGE-0",
+            "PAGE-1",
+            "PAGE-2",
+        ]
+        assert doc._engine_pdf._lazy is True
+        assert doc._engine_pdf.page_contents == []

@@ -146,7 +146,13 @@ Supported:
   instead of asking for the page), the page-text cursor walks it, and
   `pages.delete` removes a page without decoding the rest of the file (it used
   to raise `IndexError` from an internal list, for every index). Editing a
-  page's content still materialises the document, as it must.
+  page's content still materialises the document, as it must. PDF/A
+  conversion and validation see a streamed document's content too:
+  `convert_to_pdfa` rewrites its CMYK operators exactly as it does for an
+  eagerly loaded one (the output is identical apart from IDs and timestamps),
+  and `validate_pdfa` scans its content for device colour -- it used to skip
+  that scan in streaming mode and pass a file the eager validator rejects.
+  `repair()` leaves a streamed document lazy and readable.
 - **Merge `Document` instances.** A merged page is *imported*: its dictionary
   is copied into this document's object graph along with everything it reaches
   -- resources above all, without which its content names fonts and images that

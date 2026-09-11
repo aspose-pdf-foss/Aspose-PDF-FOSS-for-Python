@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A streamed document converted to PDF/A came out non-conformant, and the
+  validator, also streamed, called it valid.** Three more paths read streaming
+  mode's deliberately empty content cache as though it were the document.
+  `convert_to_pdfa` iterated that cache to rewrite DeviceCMYK operators, so on
+  a document opened with `open_streaming` it rewrote nothing -- and left the
+  CMYK content under the sRGB OutputIntent it had just installed.
+  `validate_pdfa` skipped its device-colour scan of page content the same way,
+  so that exact file passed when opened streamed and failed when opened
+  eagerly: convert and check in streaming mode, and a non-conformant file is
+  reported conformant. And `repair()` padded the empty cache with one blank
+  entry per page, after which every page of the document read as empty. All
+  three now read each page through `get_page_content`; a streamed conversion
+  writes what an eager one writes (identical apart from IDs and timestamps,
+  pixel-identical under pdfium).
+
 - **HTML and Markdown export dropped every word inside a form XObject.**
   Headers, footers and stamps usually live in forms, and the export's layout
   analysis reads the page's own content stream, where a form is one `Do` -- so

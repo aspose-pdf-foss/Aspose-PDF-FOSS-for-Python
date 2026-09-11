@@ -3995,10 +3995,14 @@ class SimplePdf:
                     _scan_resources_for_device_colors(
                         page_resources, rgb_flag, cmyk_flag, gray_flag
                     )
-                if i < len(self.page_contents):
-                    _scan_content_for_device_colors(
-                        self.page_contents[i], rgb_flag, cmyk_flag, gray_flag
-                    )
+                # Through ``get_page_content``: ``page_contents`` is empty while
+                # a document is lazy, and reading it here skipped the scan on
+                # every page of a streamed document -- which then passed with
+                # CMYK content under an RGB OutputIntent that the same file,
+                # opened eagerly, fails.
+                _scan_content_for_device_colors(
+                    self.get_page_content(i), rgb_flag, cmyk_flag, gray_flag
+                )
             has_rgb = rgb_flag[0]
             has_cmyk = cmyk_flag[0]
             has_gray = gray_flag[0]
@@ -9124,11 +9128,15 @@ class SimplePdf:
         if not self.pages:
             self.pages = [(0, 0, 612, 792)]
 
-        # 2. Ensure page_contents matches pages count
-        while len(self.page_contents) < len(self.pages):
-            self.page_contents.append(b"")
-        while len(self.page_contents) > len(self.pages):
-            self.page_contents.pop()
+        # 2. Ensure page_contents matches pages count. Not while the document
+        # is lazy: its cache is empty on purpose, and padding it with b"" made
+        # every page of a streamed document read as blank from then on, since
+        # ``get_page_content`` trusts a cache entry that is there.
+        if not (self._lazy and not self.page_contents):
+            while len(self.page_contents) < len(self.pages):
+                self.page_contents.append(b"")
+            while len(self.page_contents) > len(self.pages):
+                self.page_contents.pop()
 
         # 3. Ensure metadata is a dict
         if not isinstance(self.metadata, dict):
@@ -13533,8 +13541,13 @@ class SimplePdf:
         """
         if not self._cos_doc:
             return
-        for i in range(len(self.page_contents)):
-            rewritten = self._rewrite_cmyk_content(self.page_contents[i])
+        # Every page, read through ``get_page_content``: counting
+        # ``page_contents`` rewrote nothing on a streamed document, which came
+        # out of ``convert_to_pdfa`` with its CMYK operators intact under the
+        # sRGB OutputIntent the conversion had just installed. Only a page that
+        # is actually rewritten materialises the document.
+        for i in range(len(self.pages)):
+            rewritten = self._rewrite_cmyk_content(self.get_page_content(i))
             if rewritten is not None:
                 self._set_page_content(i, rewritten)
         # Image and form XObjects reachable from page resources. The COS
