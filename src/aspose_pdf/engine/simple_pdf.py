@@ -11132,6 +11132,19 @@ class SimplePdf:
         sy = (ry1 - ry0) / th if th else 1.0
         return (sx, 0.0, 0.0, sy, rx0 - sx * tx0, ry0 - sy * ty0)
 
+    def _need_appearances_requested(self) -> bool:
+        """Whether the AcroForm's ``/NeedAppearances`` is ``true``."""
+        if self._cos_doc is None:
+            return False
+        root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(root, PdfDictionary):
+            return False
+        acro = self._resolve(root.mapping.get(PdfName("AcroForm")))
+        if not isinstance(acro, PdfDictionary):
+            return False
+        flag = self._resolve(acro.mapping.get(PdfName("NeedAppearances")))
+        return isinstance(flag, PdfBoolean) and bool(flag.value)
+
     def flatten(self) -> None:
         """Flatten annotations and form fields into static page content.
 
@@ -11152,9 +11165,17 @@ class SimplePdf:
         from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
 
         # Give shape/markup annotations and form fields a renderable appearance
-        # before flattening so their content is not silently dropped.
+        # before flattening so their content is not silently dropped. A field
+        # that already has one keeps it: flattening puts the appearance the
+        # document carries onto the page (12.5.5), and rebuilding every field
+        # from its value replaced a foreign form's own drawing -- its font
+        # sizes, its /MK rotation -- with ours. Only /NeedAppearances, the
+        # document asking for appearances to be constructed (12.7.3.3), means
+        # rebuild them all.
         self.generate_appearances()
-        self.generate_field_appearances()
+        self.generate_field_appearances(
+            keep_existing=not self._need_appearances_requested()
+        )
 
         # 1. Process each page
         for i in range(len(self.pages)):
@@ -12136,8 +12157,16 @@ class SimplePdf:
         except PDF_OPERATION_ERRORS:
             logger.warning("Could not refresh field appearance", exc_info=True)
 
-    def generate_field_appearances(self, *, drop_need_appearances: bool = True) -> int:
+    def generate_field_appearances(
+        self, *, drop_need_appearances: bool = True, keep_existing: bool = False
+    ) -> int:
         """Regenerate ``/AP`` appearance streams for AcroForm fields from their values.
+
+        With *keep_existing*, a text, choice or signature widget that already
+        has a normal appearance keeps it, and only the ones without get built;
+        check boxes and radio buttons have their ``/AS`` pointed at their value
+        either way, since that selects among appearances rather than replacing
+        one.
 
         Builds the variable-text appearance of every text and choice field from
         its ``/V`` and ``/DA`` — so the value is visible without relying on the
@@ -12165,14 +12194,21 @@ class SimplePdf:
         inherited = self._acroform_inherited(acro)
         updated = 0
         for field_ref in fields.items:
-            updated += self._gen_field_appearance_rec(field_ref, inherited, acro)
+            updated += self._gen_field_appearance_rec(
+                field_ref, inherited, acro, keep_existing=keep_existing
+            )
 
         if updated and drop_need_appearances:
             acro.mapping[PdfName("NeedAppearances")] = PdfBoolean(False)
         return updated
 
     def _gen_field_appearance_rec(
-        self, field_ref: Any, inherited: dict[str, Any], acro: PdfDictionary
+        self,
+        field_ref: Any,
+        inherited: dict[str, Any],
+        acro: PdfDictionary,
+        *,
+        keep_existing: bool = False,
     ) -> int:
         field = self._resolve(field_ref)
         if not isinstance(field, PdfDictionary):
@@ -12204,12 +12240,15 @@ class SimplePdf:
         kids = self._resolve(field.mapping.get(PdfName("Kids")))
         if isinstance(kids, PdfArray) and kids.items:
             for kid_ref in kids.items:
-                count += self._gen_field_appearance_rec(kid_ref, child, acro)
+                count += self._gen_field_appearance_rec(
+                    kid_ref, child, acro, keep_existing=keep_existing
+                )
         elif PdfName("Rect") in field.mapping:
             # Terminal (merged field + widget) annotation.
             try:
                 if self._set_widget_appearance(
-                    field, ft, ff or 0, q or 0, v, da, acro, opt, rv
+                    field, ft, ff or 0, q or 0, v, da, acro, opt, rv,
+                    keep_existing=keep_existing,
                 ):
                     count += 1
             except PdfResourceLimitException:
@@ -12229,7 +12268,15 @@ class SimplePdf:
         acro: PdfDictionary,
         opt: Any = None,
         rv: Any = None,
+        *,
+        keep_existing: bool = False,
     ) -> bool:
+        if (
+            keep_existing
+            and ft in ("Tx", "Ch", "Sig")
+            and self._has_normal_appearance(widget)
+        ):
+            return False
         rect = self._get_cos_rect(widget.mapping.get(PdfName("Rect")))
         llx, urx = min(rect[0], rect[2]), max(rect[0], rect[2])
         lly, ury = min(rect[1], rect[3]), max(rect[1], rect[3])
@@ -12259,6 +12306,18 @@ class SimplePdf:
             )
             return True
         return False
+
+    def _has_normal_appearance(self, widget: PdfDictionary) -> bool:
+        """Whether *widget* already says how it looks (an ``/AP /N`` stream)."""
+        ap = self._resolve(widget.mapping.get(PdfName("AP")))
+        if not isinstance(ap, PdfDictionary):
+            return False
+        normal = self._resolve(ap.mapping.get(PdfName("N")))
+        if isinstance(normal, PdfStream):
+            return True
+        return isinstance(normal, PdfDictionary) and any(
+            isinstance(self._resolve(v), PdfStream) for v in normal.mapping.values()
+        )
 
     def _set_text_widget_appearance(
         self,

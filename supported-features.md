@@ -489,6 +489,18 @@ Supported:
   4-7 -- add the glyphs they show to the clipping path, which takes effect at
   `ET` and is restored by `Q` like any other clip, and each paints exactly as
   its non-clipping counterpart does.
+  **Transforms compose in the order the specification writes them**: `cm` is
+  `CTM' = M * CTM` (8.4.4), `Td`/`TD`/`T*` update the line matrix and every
+  glyph advance the text matrix as `[1 0 0 1 tx ty] * Tm` (9.4.2, 9.4.4), and
+  a form is painted under `Matrix * CTM` (8.10.1) -- the newer matrix applies
+  first. The renderer used to apply it last, which showed only when the two
+  did not commute: a `cm` inside a scaled `cm` (the shape Microsoft's
+  print-to-PDF writes for every image) landed off the page, text set with a
+  scaled `Tm` and a unit font size piled its glyphs into one place, `Td` under
+  a rotated `Tm` moved the wrong way, and a form with a scaling or rotating
+  `/Matrix` vanished. The image placement scanner had the same inversion in
+  its own helper. Checked with a sweep of thirteen non-commuting cases against
+  pdfium and MuPDF, all within a pixel.
   The **text state** -- font and size, `Tc`, `Tw`, `Tz`, `TL`, `Tr`, `Ts` -- is
   graphics state (9.3.1), so it outlives a text object and follows `q`/`Q`;
   `BT` initialises the text and text-line matrices and nothing else (9.4.1).
@@ -1343,6 +1355,17 @@ Supported:
 - Flatten form fields and annotations into static page content (generating
   missing appearances first), mapping each appearance form's `/BBox` onto the
   widget `/Rect`.
+- **Flattening keeps the appearance a form already carries.** A widget with
+  its own `/AP` is flattened with that drawing (12.5.5); only a widget without
+  one gets a generated appearance, and only `/NeedAppearances true` (12.7.3.3)
+  has every field rebuilt from its value. Flattening used to rebuild every
+  text and choice field first, so a form written by another producer came out
+  in *our* drawing of it -- different font sizes, its `/MK` rotation lost, a
+  selection bar added to a list. A MuPDF-written form flattened here now
+  renders, in MuPDF, pixel-identical to the live form. A value set through
+  this library still shows: setting it rebuilds that field's appearance at
+  once. `generate_field_appearances(keep_existing=True)` exposes the same
+  choice.
 - Extract unsigned form fields and annotations with `UnsignedContentAbsorber`.
 
 Boundaries:

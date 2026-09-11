@@ -22,16 +22,24 @@ def pdf_scalar_to_decimal(x: int | float) -> Decimal:
 def multiply_pdf_affine(
     a: tuple[Decimal, ...], b: tuple[Decimal, ...]
 ) -> tuple[Decimal, ...]:
-    """Multiply PDF affines: ``new_ctm = a * b`` (each is a,b,c,d,e,f)."""
+    """Multiply PDF affines: ``new_ctm = a * b`` (each is a,b,c,d,e,f).
+
+    ISO 32000-1's product, which applies *a* first and then *b*: ``cm`` is
+    ``CTM' = M * CTM`` (8.4.4). The formula used to compute the other order --
+    *b* first -- contradicting this docstring, so an image placed with a
+    ``cm`` inside a scaled ``cm`` was reported at its unscaled position (the
+    size came out right, since scales commute with each other, which is how it
+    went unnoticed).
+    """
     with localcontext() as ctx:
         ctx.prec = _PDF_AFFINE_PREC
         return (
-            a[0] * b[0] + a[2] * b[1],
-            a[1] * b[0] + a[3] * b[1],
-            a[0] * b[2] + a[2] * b[3],
-            a[1] * b[2] + a[3] * b[3],
-            a[0] * b[4] + a[2] * b[5] + a[4],
-            a[1] * b[4] + a[3] * b[5] + a[5],
+            a[0] * b[0] + a[1] * b[2],
+            a[0] * b[1] + a[1] * b[3],
+            a[2] * b[0] + a[3] * b[2],
+            a[2] * b[1] + a[3] * b[3],
+            a[4] * b[0] + a[5] * b[2] + b[4],
+            a[4] * b[1] + a[5] * b[3] + b[5],
         )
 
 

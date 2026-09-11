@@ -327,3 +327,30 @@ def test_build_type0_font_marks_bundled_vertical_cmap():
     assert font is not None
     assert font.vertical is True
     assert font.vertical_metrics_1000 is not None
+
+
+def test_vertical_advances_follow_a_scaled_tm_like_a_sized_font():
+    # 9.4.4: the advance is [1 0 0 1 0 ty] * Tm -- in text space, so scaled by
+    # Tm. A font selected at size 1 and scaled by Tm must set its vertical run
+    # exactly as the same font selected at size 20.
+    single_cid, double_cid = _cids_for(_SINGLE_BYTE_CODE, _DOUBLE_BYTE_CODE)
+    cid_gid = {single_cid: 1, double_cid: 2}
+    widths = {single_cid: 600.0, double_cid: 600.0}
+
+    def ink(content: bytes):
+        pdf, _, _ = _make_cjk_pdf(
+            encoding="90ms-RKSJ-V", content=content, cid_gid=cid_gid, widths=widths
+        )
+        raster = _render(pdf)
+        painted = [
+            (x, y)
+            for y in range(raster.height)
+            for x in range(raster.width)
+            if raster.get_pixel(x, y) != (255, 255, 255)
+        ]
+        return painted
+
+    by_matrix = ink(b"BT 20 0 0 20 10 38 Tm /F0 1 Tf <41889F> Tj ET")
+    by_size = ink(b"BT 1 0 0 1 10 38 Tm /F0 20 Tf <41889F> Tj ET")
+    assert by_size, "the vertical run must reach the page"
+    assert by_matrix == by_size

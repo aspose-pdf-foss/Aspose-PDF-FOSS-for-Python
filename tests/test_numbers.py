@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import re
+import zlib
 
 import pytest
 
@@ -188,3 +189,119 @@ def test_a_content_stream_and_a_cos_entry_spell_a_number_the_same_way():
     data = _saved(document)
 
     assert b"10.5" in data and b"20.25" in data and b"30.125" in data
+
+
+# --- reading: every spelling 7.3.3 allows ------------------------------------
+#
+# The same clause gives "-.002" among its own examples of a real, and MuPDF and
+# Ghostscript both write a real that starts with its period. The COS tokenizer
+# dispatched on a digit or a sign and nothing else, so one such number --
+# `/MK << /BG [1 1 .8] >>` in a form MuPDF wrote -- made the whole document fail
+# to open. And a number with nothing after it, which is how the last member of
+# an object stream ends, sent the reference lookahead past the end.
+
+
+def _read(text: str):
+    from aspose_pdf.engine.pdf_parser_cos import _Tokenizer
+
+    return _Tokenizer(text).read()
+
+
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [(".5", 0.5), ("-.002", -0.002), ("+.75", 0.75), ("4.", 4.0), ("-4.", -4.0), (".0", 0.0)],
+)
+def test_every_spelling_of_a_real_is_read(text, value):
+    assert _read(text).value == value
+
+
+def test_a_leading_period_real_inside_an_array_and_a_dictionary():
+    from aspose_pdf.engine.cos import PdfName
+
+    array = _read("[1 .5 -.25 +.75]")
+    assert [item.value for item in array.items] == [1, 0.5, -0.25, 0.75]
+    colours = _read("<< /BG [1 1 .8] >>")
+    assert [item.value for item in colours[PdfName("BG")].items] == [1, 1, 0.8]
+
+
+def test_a_reference_followed_by_a_leading_period_real():
+    from aspose_pdf.engine.cos import PdfIndirectReference
+
+    first, second = _read("[1 0 R .5]").items
+    assert isinstance(first, PdfIndirectReference)
+    assert second.value == 0.5
+
+
+@pytest.mark.parametrize("text", ["12", "12 ", "-.5", "7 0"])
+def test_a_number_with_nothing_after_it(text):
+    assert _read(text).value == float(text.split()[0])
+
+
+def _objstm_file(last_member: bytes) -> bytes:
+    """An object stream whose final member is *last_member*, nothing after it."""
+    import struct
+
+    m5 = b"<< /Answer 6 0 R >>"
+    header = b"5 0 6 %d " % (len(m5) + 1)
+    body = zlib.compress(header + m5 + b" " + last_member)
+    objects = {
+        1: b"<< /Type /Catalog /Pages 2 0 R /Extra 5 0 R >>",
+        2: b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] >>",
+        4: b"<< /Type /ObjStm /N 2 /First %d /Filter /FlateDecode /Length %d >>\n"
+        b"stream\n" % (len(header), len(body))
+        + body
+        + b"\nendstream",
+    }
+    out = bytearray(b"%PDF-1.7\n")
+    offsets = {}
+    for number in sorted(objects):
+        offsets[number] = len(out)
+        out += b"%d 0 obj\n" % number + objects[number] + b"\nendobj\n"
+    rows = [(0, 0, 65535)] + [(1, offsets[n], 0) for n in (1, 2, 3, 4)]
+    rows += [(2, 4, 0), (2, 4, 1)]
+    xref_at = len(out)
+    rows.append((1, xref_at, 0))
+    table = zlib.compress(b"".join(struct.pack(">BIH", *row) for row in rows))
+    out += (
+        b"7 0 obj\n<< /Type /XRef /Size 8 /W [1 4 2] /Root 1 0 R /Filter "
+        b"/FlateDecode /Length %d >>\nstream\n" % len(table)
+        + table
+        + b"\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n" % xref_at
+    )
+    return bytes(out)
+
+
+@pytest.mark.parametrize(("member", "value"), [(b"42", 42), (b".5", 0.5)])
+def test_a_number_that_ends_an_object_stream_is_read(member, value):
+    # qpdf reads both; a stream's /Length is the usual number stored this way.
+    from aspose_pdf.engine.cos import PdfName
+
+    document = Document(io.BytesIO(_objstm_file(member)))
+    engine = document._engine_pdf
+    root = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+    extra = engine._resolve(root.mapping[PdfName("Extra")])
+    assert engine._resolve(extra.mapping[PdfName("Answer")]).value == value
+
+
+def test_a_document_with_a_leading_period_real_opens():
+    content = b"0 0 1 rg 0 0 10 10 re f"
+    objects = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /UserUnit 1 "
+        b"/Annots [5 0 R] /Contents 4 0 R >>",
+        4: b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+        5: b"<< /Type /Annot /Subtype /Square /Rect [5 5 20 20] /C [0 0 .8] >>",
+    }
+    out = bytearray(b"%PDF-1.7\n")
+    offsets = {}
+    for number in sorted(objects):
+        offsets[number] = len(out)
+        out += b"%d 0 obj\n" % number + objects[number] + b"\nendobj\n"
+    start = len(out)
+    out += b"xref\n0 6\n0000000000 65535 f \n"
+    out += b"".join(b"%010d 00000 n \n" % offsets[n] for n in sorted(objects))
+    out += b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % start
+    document = Document(io.BytesIO(bytes(out)))
+    assert len(document.pages) == 1

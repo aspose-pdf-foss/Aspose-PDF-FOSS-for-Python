@@ -9,6 +9,38 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The renderer composed transforms in the wrong order.** ISO 32000-1 writes
+  `cm` as `CTM' = M * CTM`, `Td` as `Tlm = [1 0 0 1 tx ty] * Tlm`, a glyph
+  advance as `Tm = [1 0 0 1 tx 0] * Tm` and a form as painted under
+  `Matrix * CTM`: the newer matrix applies first. Ten sites applied it last.
+  Nothing showed while the transforms commuted, which is why no test or sweep
+  caught it; when they did not, a `cm` inside a scaled `cm` -- how Microsoft's
+  print-to-PDF places every image -- drew off the page, a word set with
+  `20 0 0 20 x y Tm /F1 1 Tf` piled its letters on top of each other, `Td` and
+  `T*` under a rotated or scaled `Tm` moved lines the wrong way, and any form
+  XObject with a scaling or rotating `/Matrix` vanished outright. A new helper
+  states the product in the specification's order, and a sweep of thirteen
+  non-commuting cases now agrees with pdfium and MuPDF to a pixel (it
+  disagreed on all thirteen before). `ImagePlacementAbsorber` had the same
+  inversion in its own helper, whose formula contradicted its docstring, and
+  reported such an image at its unscaled position. The glyph-box fallback for
+  an unresolvable font also drew nothing under a scaled `Tm`: its padding had
+  a floor of half a *text-space* unit, the whole box at size 1.
+- **One real written as `.8` made a document impossible to open.** ISO 32000-1
+  7.3.3 lists `-.002` among its own examples of a real, and MuPDF and
+  Ghostscript write them; the COS tokenizer recognised a number only by a
+  digit or a sign, so `/MK << /BG [1 1 .8] >>` in a MuPDF-written form failed
+  the whole file. And a number with nothing after it -- the last member of an
+  object stream, typically a stream's `/Length` -- sent the reference
+  lookahead past the end of the input, so the object was lost.
+- **Flattening replaced a form's own appearance with ours.** Every text and
+  choice field was rebuilt from its value before flattening, so a form from
+  another producer was flattened with a different drawing -- font sizes
+  changed, `/MK` rotation lost, a selection bar added to list boxes. A widget
+  that carries an appearance now keeps it, as 12.5.5 describes, and only
+  `/NeedAppearances true` rebuilds them; MuPDF renders its own form, flattened
+  here, pixel-identical to the live form.
+
 - **Saving a signed document broke its signatures, even unchanged.** `save()`
   rewrote every document in full, and a rewrite moves every byte a signature
   covers: open a signed PDF, save it without touching it, and pyHanko reports

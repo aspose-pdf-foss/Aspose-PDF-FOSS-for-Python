@@ -1229,7 +1229,7 @@ class _PageRasterizer:
         if op == "cm" and len(operands) >= 6:
             vals = _last_numbers(operands, 6)
             if vals:
-                self.state.ctm = _multiply(tuple(vals), self.state.ctm)
+                self.state.ctm = _concat(tuple(vals), self.state.ctm)
             return
         if op == "w" and operands:
             number = _number(operands[-1])
@@ -2236,13 +2236,13 @@ class _PageRasterizer:
                 tx, ty = vals
                 if op == "TD":
                     text.leading = -ty
-                text.line_matrix = _multiply(
+                text.line_matrix = _concat(
                     (1.0, 0.0, 0.0, 1.0, tx, ty), text.line_matrix
                 )
                 text.text_matrix = text.line_matrix
             return
         if op == "T*":
-            text.line_matrix = _multiply(
+            text.line_matrix = _concat(
                 (1.0, 0.0, 0.0, 1.0, 0.0, -text.leading), text.line_matrix
             )
             text.text_matrix = text.line_matrix
@@ -2258,7 +2258,7 @@ class _PageRasterizer:
                     adjust = (
                         -float(item) / 1000.0 * text.font_size * text.horizontal_scale
                     )
-                    text.text_matrix = _multiply(
+                    text.text_matrix = _concat(
                         (1.0, 0.0, 0.0, 1.0, adjust, 0.0), text.text_matrix
                     )
             return
@@ -2325,7 +2325,7 @@ class _PageRasterizer:
                             offset=(-v1x / 1000.0 * size, -v1y / 1000.0 * size),
                         )
                 advance = w1y / 1000.0 * size + text.char_spacing
-                text.text_matrix = _multiply(
+                text.text_matrix = _concat(
                     (1.0, 0.0, 0.0, 1.0, 0.0, advance), text.text_matrix
                 )
                 continue
@@ -2337,7 +2337,7 @@ class _PageRasterizer:
             if applies_word:
                 advance += text.word_spacing
             advance *= text.horizontal_scale
-            text.text_matrix = _multiply(
+            text.text_matrix = _concat(
                 (1.0, 0.0, 0.0, 1.0, advance, 0.0), text.text_matrix
             )
 
@@ -2398,13 +2398,13 @@ class _PageRasterizer:
             glyph_w = text.font_size * 0.6 * text.horizontal_scale
             if ch == " ":
                 advance = glyph_w + text.char_spacing + text.word_spacing
-                text.text_matrix = _multiply(
+                text.text_matrix = _concat(
                     (1.0, 0.0, 0.0, 1.0, advance, 0.0), text.text_matrix
                 )
                 continue
             self._draw_glyph_box(glyph_w, text.font_size)
             advance = glyph_w + text.char_spacing
-            text.text_matrix = _multiply(
+            text.text_matrix = _concat(
                 (1.0, 0.0, 0.0, 1.0, advance, 0.0), text.text_matrix
             )
 
@@ -2525,7 +2525,11 @@ class _PageRasterizer:
         base = _multiply(self.state.ctm, text.text_matrix)
         if text.rise:
             base = _multiply(base, (1.0, 0.0, 0.0, 1.0, 0.0, text.rise))
-        pad = max(0.5, height * 0.08)
+        # A proportion of the box, nothing absolute: these are text-space
+        # units, so a floor of half a unit swallowed the whole box when a font
+        # was selected at size 1 and scaled by Tm instead -- a common way to
+        # set text -- and the fallback drew nothing.
+        pad = height * 0.08
         corners = [
             _transform_point(base, pad, pad),
             _transform_point(base, max(pad, width - pad), pad),
@@ -3914,7 +3918,7 @@ class _PageRasterizer:
         except Exception:
             content = stream.content
         saved = copy.deepcopy(self.state)
-        self.state.ctm = _multiply(matrix, self.state.ctm)
+        self.state.ctm = _concat(matrix, self.state.ctm)
         self._interpret(
             content, form_resources, form_resources_plain, depth=depth + 1
         )
@@ -3934,7 +3938,7 @@ class _PageRasterizer:
         if not isinstance(bbox, PdfArray) or len(bbox.items) < 4:
             return None
         v = [self._cos_number(it) or 0.0 for it in bbox.items[:4]]
-        full = _multiply(matrix, self.state.ctm)
+        full = _concat(matrix, self.state.ctm)
         corners = [(v[0], v[1]), (v[2], v[1]), (v[2], v[3]), (v[0], v[3])]
         dev = [
             self._user_to_pixel(*_transform_point(full, ux, uy)) for ux, uy in corners
@@ -4594,7 +4598,29 @@ def _last_numbers(operands: Sequence[Any], count: int) -> list[float] | None:
     return [float(v) for v in vals if v is not None]
 
 
+def _concat(first: Matrix, then: Matrix) -> Matrix:
+    """ISO 32000-1's ``first * then``: the transform that applies *first*, then *then*.
+
+    Written the way the specification writes it, so each use reads against it
+    directly -- ``cm`` is ``CTM' = M * CTM`` (8.4.4), ``Td`` is
+    ``Tlm = [1 0 0 1 tx ty] * Tlm`` (9.4.2), a glyph advance is
+    ``Tm = [1 0 0 1 tx 0] * Tm`` (9.4.4), and a form is painted under
+    ``Matrix * CTM`` (8.10.1). Those sites used to call :func:`_multiply` with
+    the specification's operands in the specification's order, which is the
+    reverse of what it computes -- so a ``cm`` inside a scaled ``cm``, text set
+    with a scaled or rotated ``Tm``, and any form with a scaling or rotating
+    ``/Matrix`` were all placed wrong or off the page, whenever the two
+    transforms did not commute.
+    """
+    return _multiply(then, first)
+
+
 def _multiply(a: Matrix, b: Matrix) -> Matrix:
+    """Compose so that *b* applies first and *a* second -- ``p -> a(b(p))``.
+
+    That is ISO 32000-1's ``b * a``; where a site follows the specification's
+    notation, :func:`_concat` says it in that order.
+    """
     return (
         a[0] * b[0] + a[2] * b[1],
         a[1] * b[0] + a[3] * b[1],

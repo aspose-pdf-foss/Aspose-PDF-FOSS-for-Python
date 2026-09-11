@@ -925,3 +925,124 @@ def test_rich_text_flag_off_uses_plain_value():
     content = _ap_content(engine, field)
     assert b"(plainval) Tj" in content
     assert b"ignored" not in content
+
+
+# ---------------------------------------------------------------------------
+# Flattening keeps the appearance a document already carries
+#
+# Flattening puts a widget's appearance onto the page (12.5.5). It used to
+# rebuild every text and choice field from its value first, so a form written
+# by another producer was flattened with *our* drawing of it -- different font
+# sizes, its /MK rotation lost, a selection bar added to a list box -- instead
+# of its own. MuPDF shows the flattened copy of its own form pixel-identical to
+# the live form now. Only /NeedAppearances (12.7.3.3) asks for a rebuild.
+# ---------------------------------------------------------------------------
+
+_PRODUCER_DRAWING = b"1 0 0 rg 0 0 200 20 re f"  # a red box, and no text
+
+
+def _form_with_producer_appearance(*, need_appearances=False, with_ap=True, value=b"typed value"):
+    obj1 = b"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>"
+    obj2 = b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>"
+    obj3 = (
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 100] "
+        b"/Annots [5 0 R] /Resources << >> /Contents 7 0 R >>"
+    )
+    flag = b" /NeedAppearances true" if need_appearances else b""
+    obj4 = b"<< /Fields [5 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 6 0 R >> >>" + flag + b" >>"
+    ap = b" /AP << /N 8 0 R >>" if with_ap else b""
+    obj5 = (
+        b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [100 40 300 60] "
+        b"/DA (/Helv 12 Tf 0 g) /V (" + value + b") /P 3 0 R" + ap + b" >>"
+    )
+    obj6 = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+    obj7 = b"<< /Length 0 >>\nstream\n\nendstream"
+    obj8 = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 200 20] /Length %d >>\n"
+        b"stream\n%s\nendstream" % (len(_PRODUCER_DRAWING), _PRODUCER_DRAWING)
+    )
+    return _assemble_pdf(
+        [(1, obj1), (2, obj2), (3, obj3), (4, obj4), (5, obj5), (6, obj6), (7, obj7), (8, obj8)]
+    )
+
+
+def _flattened(data: bytes, edit=None) -> Document:
+    document = Document()
+    document.load_from(data)
+    if edit is not None:
+        edit(document)
+    document.flatten()
+    output = io.BytesIO()
+    document.save(output)
+    return Document(io.BytesIO(output.getvalue()))
+
+
+def _is_red_at_the_widget(document: Document) -> bool:
+    raster = document.pages[0].render(dpi=72, antialias=False)
+    return raster.get_pixel(200, 50) == (255, 0, 0)  # (200, 50) is inside the widget
+
+
+def test_flattening_keeps_the_appearance_the_document_carries():
+    flat = _flattened(_form_with_producer_appearance())
+    assert _is_red_at_the_widget(flat)
+    assert "typed value" not in flat.pages[0].extract_text()
+
+
+def test_need_appearances_asks_for_them_to_be_rebuilt():
+    flat = _flattened(_form_with_producer_appearance(need_appearances=True))
+    assert "typed value" in flat.pages[0].extract_text()
+    assert not _is_red_at_the_widget(flat)
+
+
+def test_a_widget_without_an_appearance_still_gets_one():
+    flat = _flattened(_form_with_producer_appearance(with_ap=False))
+    assert "typed value" in flat.pages[0].extract_text()
+
+
+def test_a_value_changed_through_the_api_is_what_gets_flattened():
+    # Setting a value rebuilds that field's appearance there and then, so the
+    # kept appearance is already the new one.
+    def edit(document):
+        document.form["name"].value = "changed here"
+
+    flat = _flattened(_form_with_producer_appearance(), edit)
+    text = flat.pages[0].extract_text()
+    assert "changed here" in text
+    assert "typed value" not in text
+
+
+def test_generate_field_appearances_can_keep_what_is_there():
+    engine = SimplePdf.from_bytes(_form_with_producer_appearance())
+    assert engine.generate_field_appearances(keep_existing=True) == 0
+    assert engine.generate_field_appearances() == 1
+
+
+def test_a_kid_widget_keeps_its_appearance_too():
+    # The field and its widget as separate dictionaries -- the shape a field
+    # with more than one widget, or a producer that always separates them,
+    # writes. The kept appearance belongs to the widget, below the field.
+    obj1 = b"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>"
+    obj2 = b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>"
+    obj3 = (
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 100] "
+        b"/Annots [5 0 R] /Resources << >> /Contents 7 0 R >>"
+    )
+    obj4 = b"<< /Fields [9 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 6 0 R >> >> >>"
+    obj5 = (
+        b"<< /Type /Annot /Subtype /Widget /Rect [100 40 300 60] /Parent 9 0 R "
+        b"/P 3 0 R /AP << /N 8 0 R >> >>"
+    )
+    obj6 = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+    obj7 = b"<< /Length 0 >>\nstream\n\nendstream"
+    obj8 = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 200 20] /Length %d >>\n"
+        b"stream\n%s\nendstream" % (len(_PRODUCER_DRAWING), _PRODUCER_DRAWING)
+    )
+    obj9 = b"<< /FT /Tx /T (name) /DA (/Helv 12 Tf 0 g) /V (typed value) /Kids [5 0 R] >>"
+    data = _assemble_pdf(
+        [(1, obj1), (2, obj2), (3, obj3), (4, obj4), (5, obj5), (6, obj6),
+         (7, obj7), (8, obj8), (9, obj9)]
+    )
+    flat = _flattened(data)
+    assert _is_red_at_the_widget(flat)
+    assert "typed value" not in flat.pages[0].extract_text()

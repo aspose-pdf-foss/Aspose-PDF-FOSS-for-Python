@@ -292,8 +292,12 @@ class _Tokenizer:
             return self._read_literal_string()
         if ch == "/":
             return self._read_name()
-        if ch.isdigit() or ch == "-" or ch == "+":
-            # Could be a number or an indirect reference; resolve later.
+        if ch.isdigit() or ch in "+-.":
+            # Could be a number or an indirect reference; resolve later. A real
+            # may begin with its period -- ISO 32000-1 7.3.3 gives ".002" and
+            # "-.002" as examples, and MuPDF and Ghostscript write them -- and
+            # leaving "." out here made one such number, anywhere in a file,
+            # fail the whole document.
             return self._read_number_or_reference()
         if ch in "tf":
             # true / false
@@ -345,8 +349,13 @@ class _Tokenizer:
         saved = self.pos
         first = self._read_number()
         self._consume_whitespace()
-        # check for second number
-        if self._peek().isdigit() or self._peek() in "+-":
+        # A second number only if there is a character to start one. At the
+        # end of the input _peek() is "", and "" in "+-" is True, so a number
+        # with nothing after it -- the last member of an object stream, often a
+        # stream's /Length -- used to send the lookahead past the end and lose
+        # the object.
+        following = self._peek()
+        if following and (following.isdigit() or following in "+-"):
             second = self._read_number()
             self._consume_whitespace()
             if self.s.startswith("R", self.pos):
