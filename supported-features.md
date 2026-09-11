@@ -1602,6 +1602,20 @@ Supported:
   revocation and timestamps are `PdfSignature.validate(...)`'s job — and returns
   `False` for anything it cannot verify.
 - Detect meaningful unsigned incremental changes after signed revisions.
+- **Saving a signed document keeps its signatures.** `save()` writes an
+  incremental update by default whenever the file carries signatures a
+  rewrite would break -- its `/SigFlags` says *AppendOnly* (ISO 32000-1
+  12.7.2), or a field is signed even without the flag -- so an untouched
+  signed document saves back byte for byte and an edited one gains a revision
+  on top of the signed bytes. It used to rewrite every document in full, which
+  moves every byte a signature covers: opening a signed document and saving
+  it, even unchanged, broke its signatures silently, in a file that still
+  said AppendOnly. Checked with pyHanko on documents signed by this library
+  and by pyHanko itself: untouched saves come back byte-identical and intact,
+  and a metadata edit is classified as pyHanko's most benign modification
+  level. `save(..., incremental=False)` still rewrites in full when asked, and
+  logs that the signatures will not survive; so does a save that changes the
+  document's protection, which no incremental update can express.
 - Create self-signed certificates and PKCS#7 signing payloads through the
   signing helpers, optionally embedding an intermediate-CA chain.
 - Cryptographically verify the signer (CMS/PKCS#7 signed attributes and

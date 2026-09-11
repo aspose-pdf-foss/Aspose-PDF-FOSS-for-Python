@@ -9,6 +9,24 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Saving a signed document broke its signatures, even unchanged.** `save()`
+  rewrote every document in full, and a rewrite moves every byte a signature
+  covers: open a signed PDF, save it without touching it, and pyHanko reports
+  the signature as no longer intact -- in a file whose `/SigFlags 3` still
+  declared *AppendOnly*, the flag ISO 32000-1 defines for exactly this. The
+  default is now to append: `incremental` defaults to `None`, which writes an
+  incremental update whenever the file carries signatures (the AppendOnly bit,
+  or a signed field), and a full rewrite otherwise. An untouched signed
+  document now saves back byte for byte; an edited one gains a revision on top
+  of the signed bytes and its signatures stay valid. Verified with pyHanko on
+  documents signed by this library and by pyHanko. `incremental=False` still
+  forces a full rewrite and now warns that it invalidates the signatures, as
+  does a save that must rewrite because the protection is changing.
+  **Behaviour change:** a signed document saved with default arguments is
+  now appended to rather than rewritten, so an optimisation run on one
+  (`optimize()` then `save()`) grows the file unless `incremental=False` is
+  passed.
+
 - **Changing a document's passwords lifted every permission restriction, and
   `decrypt` accepted any password.** `change_passwords` re-encrypted with
   `encrypt`'s defaults, so a document that forbade printing and copying came

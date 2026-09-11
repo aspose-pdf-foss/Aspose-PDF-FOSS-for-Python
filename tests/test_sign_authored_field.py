@@ -337,3 +337,163 @@ def test_valid_property_rejects_a_replaced_signature_blob(creds):
         sub_filter=sig.sub_filter,
     )
     assert forged.valid is False
+
+
+# ---------------------------------------------------------------------------
+# Saving a signed document keeps its signatures
+#
+# `save()` used to be a full rewrite for every document, and a rewrite moves
+# every byte a signature covers: open a signed document, save it untouched,
+# and the signature no longer verified -- silently, in a file that still said
+# /SigFlags 3, *AppendOnly*, the flag that tells a writer not to do that
+# (ISO 32000-1 12.7.2). pyHanko agrees with every verdict below.
+# ---------------------------------------------------------------------------
+
+
+def _signed(creds) -> bytes:
+    cert, key = creds
+    return sign_field(_authored(), "Signature1", cert, key)
+
+
+def _saved(document: Document, **kwargs) -> bytes:
+    output = BytesIO()
+    document.save(output, **kwargs)
+    return output.getvalue()
+
+
+def _status(pdf_bytes: bytes, cert) -> ValidationStatus:
+    return SimplePdf.from_bytes(pdf_bytes).signatures[0].validate(_options(cert)).status
+
+
+def test_saving_a_signed_document_untouched_gives_back_its_bytes(creds):
+    signed = _signed(creds)
+    assert _saved(Document().load_from(signed)) == signed
+
+
+def test_an_edit_to_a_signed_document_is_appended_and_the_signature_holds(creds):
+    signed = _signed(creds)
+    document = Document().load_from(signed)
+    document.info["Title"] = "edited after signing"
+    edited = _saved(document)
+
+    assert edited.startswith(signed)
+    assert edited.count(b"%%EOF") == signed.count(b"%%EOF") + 1
+    assert _status(edited, creds[0]) is ValidationStatus.VALID
+    assert Document().load_from(edited).info["Title"] == "edited after signing"
+
+
+def test_asking_for_a_full_rewrite_still_gets_one_and_says_what_it_breaks(creds, caplog):
+    signed = _signed(creds)
+    document = Document().load_from(signed)
+    with caplog.at_level("WARNING"):
+        rewritten = _saved(document, incremental=False)
+
+    assert rewritten.count(b"%%EOF") == 1
+    assert "signatures" in caplog.text
+    assert _status(rewritten, creds[0]) is ValidationStatus.INVALID
+
+
+def test_a_document_without_signatures_is_still_written_in_full(caplog):
+    document = Document().load_from(_authored())  # an empty field, unsigned
+    document.info["Title"] = "plain"
+    with caplog.at_level("WARNING"):
+        written = _saved(document)
+    assert written.count(b"%%EOF") == 1
+    assert "signatures" not in caplog.text
+
+
+def test_a_signature_without_the_append_only_flag_is_still_honoured(creds):
+    # A producer that signs but does not set /SigFlags bit 2: the signed field
+    # itself is the evidence.
+    signed = _signed(creds)
+    marker = b"/SigFlags 3"
+    assert marker in signed
+    unflagged = signed.replace(marker, b"/SigFlags 1")
+    document = Document().load_from(unflagged)
+    assert document._engine_pdf.existing_signatures_bind()
+    assert _saved(document) == unflagged
+
+
+def test_when_an_append_is_impossible_the_rewrite_says_so(creds, caplog):
+    # Taking the protection off (or putting it on) re-keys every object, which
+    # an incremental update cannot express -- so the save is a rewrite, and
+    # the caller is told the signatures will not survive it.
+    signed = _signed(creds)
+    document = Document().load_from(signed)
+    document.encrypt("user", "owner")
+    with caplog.at_level("WARNING"):
+        written = _saved(document)
+    assert written.count(b"%%EOF") == 1
+    assert "no longer verify" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "prepare",
+    [
+        pytest.param(lambda d, c: None, id="untouched"),
+        pytest.param(lambda d, c: d.encrypt("user", "owner"), id="protection-added"),
+        pytest.param(
+            lambda d, c: setattr(d._engine_pdf, "signing_creds", c),
+            id="waiting-to-be-signed",
+        ),
+    ],
+)
+def test_can_append_agrees_with_the_incremental_writer(creds, prepare):
+    document = Document().load_from(_signed(creds))
+    prepare(document, creds)
+    engine = document._engine_pdf
+    try:
+        engine.to_bytes_incremental()
+        wrote = True
+    except PdfSecurityException:
+        wrote = False
+    assert engine.can_append() is wrote
+
+
+def test_the_append_only_flag_alone_is_honoured():
+    # The spec's own signal, with no signed field to back it up: a producer
+    # that says "append only" is taken at its word.
+    authored = _authored()
+    assert b"/SigFlags 1" in authored
+    flagged = authored.replace(b"/SigFlags 1", b"/SigFlags 3")
+    document = Document().load_from(flagged)
+    assert document._engine_pdf.existing_signatures_bind()
+    assert _saved(document) == flagged
+
+
+def test_a_signed_field_nested_under_a_parent_is_found():
+    # A hierarchical field name puts the signature on a kid of the field the
+    # AcroForm lists, and there is no /SigFlags to say so.
+    from aspose_pdf.engine.cos import PdfNumber, PdfString
+
+    pdf = SimplePdf()
+    pdf.pages = [(0, 0, 200, 200)]
+    pdf.page_contents = [b""]
+    pdf._ensure_cos()
+    cos = pdf._cos_doc
+    signature = cos.register_object(
+        PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Sig"),
+                PdfName("ByteRange"): PdfArray([PdfNumber(0)] * 4),
+            }
+        )
+    )
+    child = cos.register_object(
+        PdfDictionary({PdfName("T"): PdfString(b"Sig1"), PdfName("V"): signature})
+    )
+    parent = cos.register_object(
+        PdfDictionary(
+            {
+                PdfName("T"): PdfString(b"Signatures"),
+                PdfName("FT"): PdfName("Sig"),
+                PdfName("Kids"): PdfArray([child]),
+            }
+        )
+    )
+    root = pdf._resolve(cos.trailer.mapping[PdfName("Root")])
+    root.mapping[PdfName("AcroForm")] = PdfDictionary(
+        {PdfName("Fields"): PdfArray([parent])}
+    )
+    pdf._raw_bytes = b"%PDF-1.7\n"  # loaded from somewhere: there is a base to append to
+    assert pdf.existing_signatures_bind()

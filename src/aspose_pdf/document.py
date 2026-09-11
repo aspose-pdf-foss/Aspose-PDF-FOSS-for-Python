@@ -5,6 +5,7 @@ This module provides the main Document class that wraps the native PDF engine.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Generator, Iterator, Sequence
 from pathlib import Path
 from typing import (
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
     from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.xmp import XmpPacket
+
+logger = logging.getLogger(__name__)
 
 
 def _is_svg_save_format(value: Any) -> bool:
@@ -1582,7 +1585,7 @@ class Document:
         save_format: Any = None,
         *,
         overwrite: bool = False,
-        incremental: bool = False,
+        incremental: bool | None = None,
     ) -> Document:
         """Save the document to a file path or a binary stream.
 
@@ -1603,7 +1606,13 @@ class Document:
             staged beside it and renamed over it -- so a save that fails, for
             want of disk space or anything else, leaves it exactly as it was,
             including when it is the file this document was loaded from.
-        incremental : bool
+        incremental : bool or None
+            ``None`` (the default) writes an incremental update when the file
+            carries signatures that a rewrite would break -- its ``/SigFlags``
+            says *AppendOnly* (ISO 32000-1 12.7.2) or a field is signed -- and a
+            full rewrite otherwise, so opening a signed document and saving it
+            keeps its signatures valid. ``False`` asks for a full rewrite
+            regardless, and logs a warning naming what it invalidates.
             When ``True``, write a byte-preserving incremental update: the
             original file bytes are emitted verbatim and only the objects added
             or modified since load are appended as a new revision chained
@@ -1653,6 +1662,7 @@ class Document:
 
         self._flush_outlines()
 
+        incremental = self._choose_incremental(incremental)
         if incremental:
             data = self._engine_pdf.to_bytes_incremental()
             if hasattr(destination, "write"):
@@ -1705,6 +1715,37 @@ class Document:
         if self._engine_pdf is None:
             return ""
         return self._engine_pdf.extract_text()
+
+    def _choose_incremental(self, requested: bool | None) -> bool:
+        """Decide how :meth:`save` writes, honouring signatures already there.
+
+        A full save used to be the default for every document, and it rewrites
+        every byte offset -- so opening a signed document and saving it, even
+        untouched, broke every signature in it, silently, while the file it
+        wrote still carried ``/SigFlags 3``: *AppendOnly*, the flag that says a
+        writer must not do exactly that.
+        """
+        engine = self._engine_pdf
+        binds = engine.existing_signatures_bind()
+        if requested is None:
+            if not binds:
+                return False
+            if engine.can_append():
+                return True
+            logger.warning(
+                "Saving with a full rewrite: this document carries signatures, "
+                "but its protection is being changed (or it is about to be "
+                "signed), which an incremental update cannot express. The "
+                "existing signatures will no longer verify."
+            )
+            return False
+        if not requested and binds:
+            logger.warning(
+                "Saving with a full rewrite as asked: the existing signatures "
+                "in this document will no longer verify. Save without "
+                "incremental=False to keep them."
+            )
+        return requested
 
     def _flush_outlines(self) -> None:
         """Put the live outline collection back where the engine reads it.

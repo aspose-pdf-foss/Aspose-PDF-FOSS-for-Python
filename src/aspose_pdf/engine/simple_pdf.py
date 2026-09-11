@@ -180,6 +180,9 @@ def _info_entry(key: Any, value: Any) -> tuple[str, str | bytes]:
     )
 
 
+# Enough for any real form; a field tree cannot make the check unbounded.
+_SIGNED_FIELD_SCAN_LIMIT = 10_000
+
 @dataclass
 class _AuthoredFontResource:
     """Mutable COS objects associated with one authored font on one page."""
@@ -3197,6 +3200,58 @@ class SimplePdf:
                 for kid in reversed(kids.items):
                     stack.append((kid, name))
             yield name, entry
+
+    def existing_signatures_bind(self) -> bool:
+        """Whether the loaded file carries signatures a full rewrite would break.
+
+        ISO 32000-1 12.7.2, table 219: ``/SigFlags`` bit 2, *AppendOnly*, says
+        the file "contains signatures that may be invalidated if the file is
+        saved (written) in a way that alters its previous contents, as opposed
+        to an incremental update". A signed field -- one whose ``/V`` is a
+        signature dictionary, which carries a ``/ByteRange`` -- says the same
+        for a producer that did not set the flag.
+        """
+        if self._raw_bytes is None or self._cos_doc is None:
+            return False
+        root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(root, PdfDictionary):
+            return False
+        acro = self._resolve(root.mapping.get(PdfName("AcroForm")))
+        if not isinstance(acro, PdfDictionary):
+            return False
+        flags = self._resolve(acro.mapping.get(PdfName("SigFlags")))
+        if isinstance(flags, PdfNumber) and int(flags.value) & 2:
+            return True
+        pending = list(self._resolve_list(acro.mapping.get(PdfName("Fields"))))
+        visited = 0
+        while pending and visited < _SIGNED_FIELD_SCAN_LIMIT:
+            node = self._resolve(pending.pop())
+            visited += 1
+            if not isinstance(node, PdfDictionary):
+                continue
+            value = self._resolve(node.mapping.get(PdfName("V")))
+            if isinstance(value, PdfDictionary) and PdfName("ByteRange") in value.mapping:
+                return True
+            pending.extend(self._resolve_list(node.mapping.get(PdfName("Kids"))))
+        return False
+
+    def can_append(self) -> bool:
+        """Whether :meth:`to_bytes_incremental` can write this document.
+
+        The same three refusals it makes, asked without attempting the write:
+        a document waiting to be signed, and a change of protection -- adding
+        it, re-keying it, or taking it off -- which the preserved prefix cannot
+        follow. A document with nothing to append to is not appendable either.
+        """
+        if self._raw_bytes is None or self._cos_doc is None or self.signing_creds:
+            return False
+        if self.encrypted:
+            return False
+        return not (self._original_encrypted and not self._loaded_protection_active())
+
+    def _resolve_list(self, value: Any) -> list:
+        resolved = self._resolve(value)
+        return list(resolved.items) if isinstance(resolved, PdfArray) else []
 
     def to_bytes_incremental(self) -> bytes:
         """Serialize the document as a byte-preserving incremental update.

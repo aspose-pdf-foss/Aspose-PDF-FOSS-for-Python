@@ -15,6 +15,14 @@ class DummyEngine:
     def to_bytes(self):
         return b"%PDF-1.4\n%%EOF"
 
+    # What `Document.save` asks before choosing how to write: a document with
+    # no signatures in it is written in full.
+    def existing_signatures_bind(self):
+        return False
+
+    def can_append(self):
+        return False
+
 
 def _make_doc(monkeypatch):
     doc = Document()
