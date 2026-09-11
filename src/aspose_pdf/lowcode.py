@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from aspose_pdf.document import Document
+from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.exceptions import AsposePdfException
 from aspose_pdf.facades import PdfExtractor
 from aspose_pdf.load_limits import (
@@ -122,7 +123,7 @@ class FileDataSource(DataSource):
     def write_bytes(self, data: bytes) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_bytes(data)
+            write_file_atomically(self.path, data)
         except OSError as exc:
             raise AsposePdfException(
                 f"Could not write output file {self.path}: {exc}"

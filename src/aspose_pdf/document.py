@@ -23,6 +23,7 @@ from aspose_pdf._compat_surface import (
     require_pdf_save_format as _require_pdf_save_format,
 )
 from aspose_pdf.attachments import AF_RELATIONSHIPS, FileSpecification
+from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
     _effective_encryption_password,
@@ -1597,7 +1598,11 @@ class Document:
             raise instead of writing a mislabelled PDF.
         overwrite : bool
             Only relevant when *destination* is a path.  When ``False`` (the
-            default) an existing file raises :exc:`FileExistsError`.
+            default) an existing file raises :exc:`FileExistsError`. When
+            ``True`` the file is replaced in one step -- the new bytes are
+            staged beside it and renamed over it -- so a save that fails, for
+            want of disk space or anything else, leaves it exactly as it was,
+            including when it is the file this document was loaded from.
         incremental : bool
             When ``True``, write a byte-preserving incremental update: the
             original file bytes are emitted verbatim and only the objects added
@@ -1656,7 +1661,7 @@ class Document:
                 path = Path(destination)
                 if path.exists() and not overwrite:
                     raise FileExistsError(f"File already exists: {path}")
-                path.write_bytes(data)
+                write_file_atomically(path, data)
             return self
 
         if hasattr(destination, "write"):

@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A save that failed destroyed the file it was saving over.** Every PDF save
+  to a path wrote with `Path.write_bytes`, which truncates its target before
+  writing. Saving a document over the file it came from -- what
+  `overwrite=True` is for -- therefore erased the original the moment the
+  write began, and a write that then failed left nothing behind. Reproduced on
+  a real, nearly full volume: the save raised `ENOSPC` and the only copy of the
+  document was a **0-byte file** that no longer opened. Full saves, incremental
+  saves and the low-code plugins' file output now go through one writer that
+  stages the bytes beside the target, fsyncs them and renames them over it, so
+  the same save now fails with the same `ENOSPC` and the original is untouched,
+  with no staging file left behind. Symlinks, permission bits and the refusal
+  to write a read-only file behave as before.
+
 - **A streamed document converted to PDF/A came out non-conformant, and the
   validator, also streamed, called it valid.** Three more paths read streaming
   mode's deliberately empty content cache as though it were the document.

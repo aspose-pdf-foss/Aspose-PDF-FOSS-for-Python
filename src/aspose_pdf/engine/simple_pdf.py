@@ -84,6 +84,7 @@ from .encryption import (
     decrypt_object_in_place,
     normalize_encryption_algorithm,
 )
+from .file_output import write_file_atomically
 from .filters import StreamDecoder
 from .incremental_update import IncrementalUpdate
 from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
@@ -2378,7 +2379,7 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     def save(self, path: str | Path) -> None:
         self._ensure_not_disposed()
-        Path(path).write_bytes(self.to_bytes())
+        write_file_atomically(path, self.to_bytes())
 
     def save_cos(self, path: str | Path) -> None:
         """Save PDF using the generic COS writer (preserves all data)."""
@@ -2387,7 +2388,7 @@ class SimplePdf:
             raise AsposePdfException("No COS document loaded (use load_cos)")
         writer = PdfCosWriter(self._cos_doc)
         data = writer.write()
-        Path(path).write_bytes(data)
+        write_file_atomically(path, data)
 
     def _register_at(self, obj: Any, number: int | None) -> PdfIndirectReference:
         """Register *obj*, taking over object *number* when one was offered.
@@ -3091,7 +3092,7 @@ class SimplePdf:
 
         # Build incremental update
         data = self.to_bytes_incremental()
-        Path(path).write_bytes(data)
+        write_file_atomically(path, data)
 
     def _to_bytes_signed(self) -> bytes:
         """Serialize the document and sign it through :func:`sign_field`.

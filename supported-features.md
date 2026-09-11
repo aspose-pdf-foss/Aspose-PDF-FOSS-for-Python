@@ -33,6 +33,18 @@ Supported:
   missing password instead of yielding an empty document.
 - Save PDFs to a path or writable binary stream, with overwrite protection for
   existing path targets.
+- **Saving over a file never costs the file that was there.** A path save --
+  full or incremental, and the low-code plugins' file output -- stages the new
+  bytes beside the target, flushes them to the device and renames them over it
+  in one step, so a full disk, a killed process or a failed volume leaves the
+  target byte for byte as it was. It used to truncate first and write second:
+  saving a document over its own file on a volume without room for the new
+  version failed with `ENOSPC` and left an empty file where the only copy had
+  been. A symlink is written through, an existing file keeps its permission
+  bits, a new one gets the mode `open()` would give it, and a read-only file is
+  refused. A replaced file is a new inode, so other hard links to it keep the
+  old content; where the directory cannot take a new file the save falls back
+  to writing in place.
 - Save a byte-preserving incremental update with `save(..., incremental=True)`:
   the original file bytes are emitted verbatim and only objects added or
   modified since load are appended as a new revision chained through `/Prev`, so
