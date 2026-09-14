@@ -47,6 +47,7 @@ from .image_export import (
     TiffPage,
     apply_decode,
     cmyk_to_rgb,
+    convert_samples_to_rgb,
     ext_from_magic,
     gray_to_rgb,
     indexed_to_rgb,
@@ -59,7 +60,13 @@ from .image_export import (
 )
 from .jpeg_encoder import encode as jpeg_encode
 from .optional_content import OptionalContent
-from .shading import Shading, build_color_converter, build_function, build_shading
+from .shading import (
+    Shading,
+    build_color_converter,
+    build_function,
+    build_shading,
+    image_sample_ranges,
+)
 from .std_font_data import load_substitute_sfnt, resolve_substitute_key
 from .type1_outlines import Type1Outlines
 
@@ -262,6 +269,10 @@ _COLOUR_OPERATORS = frozenset(
     {"rg", "RG", "g", "G", "k", "K", "sc", "SC", "scn", "SCN", "cs", "CS"}
 )
 _D1_GLYPH = re.compile(rb"\s*(?:[-+.\d]+\s+){6}d1\b")
+
+# Image colour spaces whose samples need converting through the space's own
+# converter rather than reading as grey, RGB or CMYK.
+_CONVERTED_IMAGE_SPACES = frozenset({"Lab", "Separation", "DeviceN", "NChannel"})
 
 _FILLING_TEXT_MODES = frozenset({0, 2, 4, 6})
 _STROKING_TEXT_MODES = frozenset({1, 2, 5, 6})
@@ -4336,15 +4347,15 @@ class _PageRasterizer:
             meta["n_comps"] = 1
             meta["image_mask"] = True
         else:
-            kind, comps, palette, base_comps = self._colorspace_meta(
-                self._resolve(m.get(PdfName("ColorSpace")))
-            )
+            space = self._resolve(m.get(PdfName("ColorSpace")))
+            kind, comps, palette, base_comps = self._colorspace_meta(space)
             meta["cs_kind"] = kind
             if comps is not None:
                 meta["n_comps"] = comps
             if palette is not None:
                 meta["palette"] = palette
                 meta["palette_base_comps"] = base_comps or 3
+            meta.update(self._converted_image_space(space))
         meta["filter"] = self._terminal_filter(m.get(PdfName("Filter")))
         decode = self._resolve(m.get(PdfName("Decode")))
         if isinstance(decode, PdfArray):
@@ -4354,6 +4365,52 @@ class _PageRasterizer:
                 vals.append(float(num or 0.0))
             meta["decode"] = vals
         return meta
+
+    def _converted_image_space(self, space: Any) -> dict:
+        """What decoding an image needs when its samples are not device colour.
+
+        A Lab, Separation or DeviceN image -- or an Indexed one whose palette
+        is in one of those -- holds components that only mean a colour once
+        converted. The decoder knew palettes, grey, RGB and CMYK and nothing
+        else, so it read a Separation or DeviceN image's tints as grey or RGB
+        and a Lab image's L*, a* and b* as red, green and blue. The converter
+        these spaces already had for filling is attached here, with the ranges
+        an image's default ``/Decode`` spans (Table 90).
+        """
+        space = self._resolve(space)
+        if not isinstance(space, PdfArray) or not space.items:
+            return {}
+        head = self._cos_name(space.items[0])
+        base_head = head
+        if head in ("Indexed", "I") and len(space.items) >= 2:
+            base = self._resolve(space.items[1])
+            base_head = (
+                self._cos_name(base.items[0])
+                if isinstance(base, PdfArray) and base.items
+                else None
+            )
+        if base_head not in _CONVERTED_IMAGE_SPACES:
+            return {}
+        try:
+            converter = build_color_converter(
+                self.pdf, space, limits=self._load_limits, budget=self._load_budget
+            )
+        except PdfResourceLimitException:
+            raise
+        except Exception:
+            return {}
+        if head in ("Indexed", "I"):
+            # An index spans [0, 2^bpc - 1] by default, whatever its palette holds.
+            return {"converter": converter, "component_ranges": None, "n_comps": 1}
+        ranges = image_sample_ranges(self.pdf, space)
+        return {
+            "converter": converter,
+            "component_ranges": ranges,
+            "n_comps": len(ranges),
+            # The kind a fill in this space has, so a spot image overprints as
+            # a spot fill does.
+            "cs_kind": self._color_space_kind(space),
+        }
 
     def _colorspace_meta(
         self, cs: Any
@@ -4547,6 +4604,13 @@ def _decode_image_to_rgb(
     kind = meta.get("cs_kind") or "rgb"
     comps = int(meta.get("n_comps") or (1 if kind == "gray" else 3))
     decode = meta.get("decode")
+    converter = meta.get("converter")
+    if converter is not None:
+        samples = to_8bpc_bytes(data, bpc, width, height, comps)
+        rgb = convert_samples_to_rgb(
+            samples, width, height, comps, bpc, decode, meta.get("component_ranges"), converter
+        )
+        return (width, height, rgb)
     if kind == "indexed" and meta.get("palette") is not None:
         rgb = indexed_to_rgb(
             data,

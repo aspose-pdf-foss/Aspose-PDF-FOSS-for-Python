@@ -18,7 +18,13 @@ from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream, PdfString
 
-__all__ = ["Shading", "build_color_converter", "build_shading"]
+__all__ = [
+    "Shading",
+    "build_color_converter",
+    "build_shading",
+    "color_component_ranges",
+    "image_sample_ranges",
+]
 
 Color = tuple[int, int, int]
 Point = tuple[float, float]
@@ -97,6 +103,86 @@ def _components_to_rgb(comps: list[float]) -> Color:
     return (0, 0, 0)
 
 
+# CIE L*a*b* (ISO 32000-1 8.6.5.4). pdfium and MuPDF both render a Lab colour
+# relative to its space's own white -- a D50 and a D65 space give the same
+# pixels, and L*=100 is display white in either -- which is what converting
+# against a fixed D65 reference white does. Neither clamps a* and b* to
+# /Range when filling, so neither does this; an image's samples reach the
+# range through its /Decode.
+_LAB_REFERENCE_WHITE = (0.9505, 1.0, 1.0890)
+_LAB_EPSILON = 6.0 / 29.0
+
+
+def _lab_to_rgb(lightness: float, a_star: float, b_star: float) -> Color:
+    fy = (lightness + 16.0) / 116.0
+    fx = fy + a_star / 500.0
+    fz = fy - b_star / 200.0
+
+    def linear(t: float) -> float:
+        if t > _LAB_EPSILON:
+            return t * t * t
+        return 3.0 * _LAB_EPSILON * _LAB_EPSILON * (t - 4.0 / 29.0)
+
+    x = _LAB_REFERENCE_WHITE[0] * linear(fx)
+    y = _LAB_REFERENCE_WHITE[1] * linear(fy)
+    z = _LAB_REFERENCE_WHITE[2] * linear(fz)
+    red = 3.2406 * x - 1.5372 * y - 0.4986 * z
+    green = -0.9689 * x + 1.8758 * y + 0.0415 * z
+    blue = 0.0557 * x - 0.2040 * y + 1.0570 * z
+    return (_byte(255 * _srgb_encode(red)), _byte(255 * _srgb_encode(green)), _byte(255 * _srgb_encode(blue)))
+
+
+def _srgb_encode(linear: float) -> float:
+    linear = min(1.0, max(0.0, linear))
+    if linear <= 0.0031308:
+        return 12.92 * linear
+    return 1.055 * linear ** (1.0 / 2.4) - 0.055
+
+
+def color_component_ranges(pdf: Any, cs_obj: Any) -> list[tuple[float, float]]:
+    """Each component's ``(min, max)`` in *cs_obj*.
+
+    What a byte or a sample spans when it is scaled into the space: an
+    ``/Indexed`` palette entry (8.6.6.3) and an image's default ``/Decode``
+    (Table 90). ``[0, 1]`` for every component, except Lab, whose L* spans
+    ``[0, 100]`` and whose a* and b* span its ``/Range`` -- read as ``[0, 1]``,
+    an L* of 100 arrived as 1 and every Lab palette and image came out near
+    black.
+    """
+    cs = pdf._resolve(cs_obj)
+    if isinstance(cs, PdfArray) and cs.items:
+        head = pdf._resolve(cs.items[0])
+        if isinstance(head, PdfName) and head.name.lstrip("/") == "Lab":
+            a_lo, a_hi, b_lo, b_hi = -100.0, 100.0, -100.0, 100.0
+            params = pdf._resolve(cs.items[1]) if len(cs.items) >= 2 else None
+            if isinstance(params, PdfDictionary):
+                bounds = pdf._resolve(params.mapping.get(PdfName("Range")))
+                if isinstance(bounds, PdfArray) and len(bounds.items) >= 4:
+                    values = [_num(pdf, item) for item in bounds.items[:4]]
+                    if all(v is not None for v in values):
+                        a_lo, a_hi, b_lo, b_hi = values  # type: ignore[assignment]
+            return [(0.0, 100.0), (a_lo, a_hi), (b_lo, b_hi)]
+    return [(0.0, 1.0)] * _color_component_count(pdf, cs_obj)
+
+
+def image_sample_ranges(pdf: Any, cs_obj: Any) -> list[tuple[float, float]]:
+    """What an image's samples span when it has no ``/Decode`` of its own.
+
+    As :func:`color_component_ranges`, except for Lab. Table 90 gives a Lab
+    image the default ``[0 100 amin amax bmin bmax]`` from its ``/Range``, but
+    pdfium and MuPDF both read a* and b* as the byte less 128 whatever the
+    range says -- two Lab images differing only in ``/Range`` render the same
+    in both -- and a file is made to look right in those, so this follows them.
+    A palette entry (8.6.6.3) keeps the range, where pdfium does too.
+    """
+    cs = pdf._resolve(cs_obj)
+    if isinstance(cs, PdfArray) and cs.items:
+        head = pdf._resolve(cs.items[0])
+        if isinstance(head, PdfName) and head.name.lstrip("/") == "Lab":
+            return [(0.0, 100.0), (-128.0, 127.0), (-128.0, 127.0)]
+    return color_component_ranges(pdf, cs_obj)
+
+
 def _color_converter(
     pdf: Any,
     cs_obj: Any,
@@ -126,6 +212,8 @@ def _color_converter(
             return lambda comps, _c=count: _components_to_rgb(
                 comps[:_c] if len(comps) >= _c else comps
             )
+        if head_name == "Lab":
+            return lambda comps: _lab_to_rgb(*[*list(comps), 0.0, 0.0, 0.0][:3])
         if head_name in ("Indexed", "I") and len(cs.items) >= 4:
             # Indexed is not a shading space, but it *is* a fill space: an
             # `scn` operand is a palette index, not a colour component, and
@@ -134,10 +222,13 @@ def _color_converter(
                 pdf, cs.items[1], limits=limits, budget=budget, seen=nested_seen
             )
             base_count = _color_component_count(pdf, cs.items[1])
+            base_ranges = color_component_ranges(pdf, cs.items[1])
             palette = _indexed_palette(pdf, cs.items[3])
             hival = int(_num(pdf, cs.items[2]) or 0)
 
-            def indexed(comps, _base=base, _n=base_count, _p=palette, _h=hival):
+            def indexed(
+                comps, _base=base, _n=base_count, _p=palette, _h=hival, _r=base_ranges
+            ):
                 if not comps or not _p:
                     return (0, 0, 0)
                 index = int(max(0, min(_h, round(comps[0]))))
@@ -145,7 +236,10 @@ def _color_converter(
                 entry = _p[start : start + _n]
                 if len(entry) < _n:
                     return (0, 0, 0)
-                return _base([value / 255.0 for value in entry])
+                # 8.6.6.3: a byte spans its base component's range.
+                return _base(
+                    [lo + value / 255.0 * (hi - lo) for value, (lo, hi) in zip(entry, _r)]
+                )
 
             return indexed
         if head_name == "Separation" and len(cs.items) >= 4:

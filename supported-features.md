@@ -322,10 +322,12 @@ Supported (honored options):
   using the dependency-free encoder (`engine/jpeg_encoder.py`, with per-image
   optimized Huffman tables). Images are
   rewritten only when the result is smaller, so already-small or incompressible
-  images are left as-is. Masks, soft-mask targets, images with a `/Decode`
-  array, Indexed/Lab colour, and opaque codecs (JPX/CCITT/JBIG2) are
-  skipped so colour and transparency are never altered unexpectedly; DeviceCMYK
-  is recompressed (as Adobe-marked 4-channel JPEG), but ICC-based CMYK is not.
+  images are left as-is. Masks (`/SMask` and `/Mask` targets, stencils) are
+  never JPEG-encoded and images whose `/Decode` does more than invert are
+  skipped, so colour and transparency are never altered
+  unexpectedly; palette, Lab, Separation and DeviceN images are converted to
+  device colour first, and CMYK is recompressed as Adobe-marked 4-channel JPEG
+  (see the image recompression notes below).
 - `image_max_dimension` (pixels, default off) — cap the longest side of an
   image, box-averaging it down first (aspect ratio preserved). Combined with
   `image_compression_quality` the downscale happens before JPEG encoding; on its
@@ -351,12 +353,14 @@ Boundaries:
 - Image recompression uses a baseline JPEG encoder for DeviceRGB / DeviceGray
   (and ICCBased with N=1/3, 4:2:0 chroma) and DeviceCMYK — device or **ICCBased
   with N=4** — full-resolution and Adobe-marked. A `/Decode` array that only
-  inverts (`[1 0]` per component) is folded into the samples and dropped; any
-  other sample remapping is left untouched. Everything else is brought to
-  device samples first and then recompressed: an **Indexed** image has its
-  palette folded into the samples (the space becomes `DeviceRGB`), **Lab**,
-  **Separation**, **DeviceN** and other non-device spaces are converted through
-  the same colour machinery the renderer uses, **1/2/4/16-bit** samples are
+  inverts (`[1 0]` per component) is folded into the samples and dropped --
+  inverted in place for device samples, applied on the way to device colour
+  for converted ones -- and any other sample remapping is left untouched.
+  Everything else is brought to device samples first and then recompressed: an
+  **Indexed** image has its palette folded into the samples (the space becomes
+  `DeviceRGB`), **Lab**, **Separation**, **DeviceN** and other non-device spaces
+  are converted through the same conversion the renderer and the image
+  exporter use, so all three produce the same pixels, **1/2/4/16-bit** samples are
   normalised to 8, and a **CCITT**, **JBIG2** or **JPEG 2000** payload is
   decoded like any other filter. A **stencil** (`/ImageMask`) is a shape rather
   than a picture, so it is only ever downscaled -- coverage averaged per
@@ -527,8 +531,16 @@ Supported:
   (colour-key masking) that drops a pixel when every component falls in its
   range. `/SMask` wins where a file writes both. **`/Decode` is applied generally** (8.9.5.2) --
   per component, at any bit depth, before the colour conversion, and in *index*
-  space for `/Indexed` -- by the renderer, the SVG export and the image
-  exporter alike. Text shown with an embedded font is filled from its
+  space for `/Indexed`, where the mapped value is truncated to an index as
+  pdfium and MuPDF do -- by the renderer, the SVG export and the image
+  exporter alike. An image in **Lab**, **Separation**, **DeviceN** or
+  **NChannel** -- or a palette over one of them -- is converted sample by
+  sample through the space (a Lab image's a\* and b\* read as the byte less
+  128 when it has no `/Decode`, as in pdfium and MuPDF, whatever its `/Range`),
+  and a spot or DeviceN image takes part in the overprint preview as a fill in
+  that space does. An index beyond a palette paints black over a device base
+  (pdfium) and the last entry over a converted one (MuPDF); the two
+  references split there. Text shown with an embedded font is filled from its
   real glyph outlines for all three program formats -- TrueType `glyf`
   (`/FontFile2`, simple and composite), CFF (`/FontFile3`, name-keyed and
   CID-keyed Type 2 charstrings with subroutines and flex), and Type 1
@@ -617,8 +629,13 @@ Supported:
   edges, optional color functions, and bounded materialization. Curved patches
   use device-scale-adaptive subdivision up to 64-by-64 cells, with geometry and
   component-error thresholds checked before bounded triangle materialization.
+- Convert **CIE L\*a\*b\*** colour (8.6.5.4) to sRGB for fills, strokes,
+  shadings, palettes and images, as pdfium and MuPDF render it: relative to the
+  space's own white, so a D50 and a D65 space paint alike and L\* 100 is white,
+  and without clamping a fill to `/Range`; a palette entry spans the base's
+  `/Range` (8.6.6.3).
 - Resolve Separation, DeviceN, and NChannel colours through their tint
-  transforms for path fills and shadings. `/OP`, `/op`, and `/OPM` drive a
+  transforms for path fills, shadings and images. `/OP`, `/op`, and `/OPM` drive a
   composite overprint preview for spot/DeviceN paints and DeviceCMYK mode 1;
   this uses multiplicative ink approximation on the RGB backdrop.
 - Fill with tiling patterns (`PatternType 1`): the pattern cell is repeated on
@@ -1238,7 +1255,9 @@ Supported:
   JPEG bytes (`.jpg`). The output suffix is adjusted to the produced format when
   the requested one would mislabel the file.
 - Convert image colour spaces during reconstruction: **CMYK → RGB**, **Indexed →
-  RGB** (palette lookup, including a CMYK base), and **Gray ↔ RGB**. `save`/
+  RGB** (palette lookup, including a CMYK base), **Lab**, **Separation** and
+  **DeviceN → RGB** (and palettes over them, with `/Decode` applied) -- the
+  pixels the renderer shows, in eager and streaming mode alike -- and **Gray ↔ RGB**. `save`/
   `save_image` also accept `color_space="RGB"`/`"Gray"` to force a conversion.
 - Decode **baseline and progressive** DCT/JPEG to pixels with a
   **dependency-free** decoder (`aspose_pdf.engine.dct`): grayscale, YCbCr/RGB and

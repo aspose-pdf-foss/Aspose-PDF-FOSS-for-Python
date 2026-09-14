@@ -454,8 +454,9 @@ def test_decode_indices_defaults_to_the_whole_index_range():
     assert decode_indices([0, 1, 2, 3], None, 2) == [0, 1, 2, 3]
     assert decode_indices([0, 1, 2, 3], [3, 0], 2) == [3, 2, 1, 0]
     # [0 1] is the *colour* default and means something else here: it squeezes
-    # four indices into the first two entries of the palette.
-    assert decode_indices([0, 1, 2, 3], [0, 1], 2) == [0, 0, 1, 1]
+    # four indices into the first two entries of the palette, truncating as
+    # pdfium does -- only the top sample reaches entry 1.
+    assert decode_indices([0, 1, 2, 3], [0, 1], 2) == [0, 0, 0, 1]
 
 
 def test_which_sample_a_stencil_paints():

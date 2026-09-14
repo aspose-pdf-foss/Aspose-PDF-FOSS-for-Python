@@ -9,6 +9,29 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Lab colour was painted as RGB, and Lab, Separation and DeviceN images as
+  their raw components.** The shared colour converter counted Lab's three
+  components and read them as red, green and blue, so `60 40 -30 sc` filled
+  yellow where pdfium and MuPDF paint mauve, and every Lab shading was wrong.
+  The image decoder knew grey, RGB, CMYK and device palettes and nothing else:
+  a Separation or DeviceN image's tints were drawn as grey or RGB, and a Lab
+  image or a palette over Lab, read as bytes over 255 when L\* spans 0-100,
+  came out near black. `optimize(image_compression_quality=...)` baked that
+  into the file -- a Lab photo was rewritten as a near-black DeviceRGB JPEG --
+  and `save_image` exported it. Lab now converts to sRGB as both references
+  render it (relative to the space's own white, unclamped by `/Range` for
+  fills; image a\* and b\* as the byte less 128; palette entries over the
+  base `/Range`), and one sample conversion serves the renderer, image export
+  (eager and streamed) and `optimize`, which agree pixel for pixel. A spot or
+  DeviceN image now joins the overprint preview as a fill in its space does.
+- **A palette image's `/Decode` rounded to an index.** Both references
+  truncate `Dmin + s * (Dmax - Dmin) / (2^bpc - 1)`: `[1 0]` on 8-bit samples
+  selects entry 1 for sample 0 and entry 0 for the rest, where every cell came
+  out as entry 1. Image export and `optimize` ignored a palette's `/Decode`
+  entirely, and `optimize` inverted an image with `/Decode [1 0]` twice once
+  its samples had been converted -- a Separation image came out as its
+  negative. The array is now applied once, wherever the samples are mapped.
+
 - **Type 3 fonts rendered as black boxes.** The renderer knew TrueType, Type 1
   and CID fonts, and drew a placeholder box for any glyph it could not outline
   -- including every Type 3 glyph, which is not an outline but a content

@@ -20,6 +20,7 @@ its prior behaviour.
 
 from __future__ import annotations
 
+import math
 import struct
 import zlib
 from collections.abc import Iterable, Sequence
@@ -400,6 +401,55 @@ def rgb_to_gray(data: bytes) -> bytes:
     return bytes(out)
 
 
+def convert_samples_to_rgb(
+    samples: bytes,
+    width: int,
+    height: int,
+    comps: int,
+    bpc: int,
+    decode: list[float] | None,
+    ranges: list[tuple[float, float]] | None,
+    converter: Any,
+) -> bytes:
+    """RGB bytes for 8-bit-widened *samples* in a space that needs converting.
+
+    Each sample is mapped through ``/Decode`` -- or, where the image has none,
+    through the space's own component *ranges* (ISO 32000-1 Table 90; ``None``
+    for an index, which spans ``[0, 2^bpc - 1]``) -- and the components that
+    gives through *converter*, once per distinct sample. The renderer, image
+    export and ``optimize`` all come through here: a Lab image's L* spans
+    ``[0, 100]``, and read as a byte over 255 it came out near black.
+    """
+    need = width * height * comps
+    if len(samples) < need:
+        samples = bytes(samples) + bytes(need - len(samples))
+    top = (1 << bpc) - 1
+    if ranges is not None and (decode is None or len(decode) < 2 * comps):
+        decode = [bound for pair in ranges for bound in pair]
+    out = bytearray(width * height * 3)
+    cache: dict[bytes, tuple] = {}
+    for pixel in range(width * height):
+        key = bytes(samples[pixel * comps : pixel * comps + comps])
+        color = cache.get(key)
+        if color is None:
+            if ranges is None:
+                # An index, through the same rule a device palette's takes.
+                values = decode_indices([round(key[0] * top / 255)], decode, bpc)
+            else:
+                values = [
+                    decode[2 * i] + key[i] / 255.0 * (decode[2 * i + 1] - decode[2 * i])
+                    for i in range(comps)
+                ]
+            try:
+                color = tuple(converter(values))
+            except (TypeError, ValueError, ZeroDivisionError, IndexError):
+                color = (0, 0, 0)
+            if len(cache) < 65536:
+                cache[key] = color
+        out[pixel * 3 : pixel * 3 + 3] = bytes(max(0, min(255, int(v))) for v in color[:3])
+    return bytes(out)
+
+
 def indexed_to_rgb(
     data: bytes,
     palette: bytes,
@@ -570,7 +620,10 @@ def decode_indices(indices: list[int], decode: Any, bpc: int) -> list[int]:
     """Remap ``/Indexed`` samples, whose ``/Decode`` is in *index* space.
 
     Its default is ``[0, 2**bpc - 1]`` rather than ``[0 1]``, because what a
-    sample selects here is a palette entry and not a colour component.
+    sample selects here is a palette entry and not a colour component. The
+    mapped value is truncated to an index, not rounded: ``[1 0]`` on 8-bit
+    samples picks entry 1 for sample 0 and entry 0 for every other, as pdfium
+    and MuPDF both draw it.
     """
     maxv = (1 << bpc) - 1
     if not isinstance(decode, (list, tuple)) or len(decode) < 2 or maxv <= 0:
@@ -582,9 +635,9 @@ def decode_indices(indices: list[int], decode: Any, bpc: int) -> list[int]:
         return indices
     if dmin == 0.0 and dmax == float(maxv):
         return indices
-    span = (dmax - dmin) / maxv
     return [
-        min(maxv, max(0, round(dmin + value * span))) for value in indices
+        min(maxv, max(0, math.floor(dmin + value * (dmax - dmin) / maxv)))
+        for value in indices
     ]
 
 

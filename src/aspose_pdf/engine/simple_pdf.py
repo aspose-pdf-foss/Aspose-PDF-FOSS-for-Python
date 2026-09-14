@@ -7330,9 +7330,13 @@ class SimplePdf:
         from .image_export import reconstruct_image_file, resolve_output_path
 
         path = Path(path)
+        meta, decoded = self._image_meta.get(name), self.images[name]
+        converted = self._converted_image_for_export(meta)
+        if converted is not None:
+            meta, decoded = converted
         out_bytes, produced_ext = reconstruct_image_file(
-            self._image_meta.get(name),
-            self.images[name],
+            meta,
+            decoded,
             path.suffix,
             color_space,
             limits=self._load_limits,
@@ -7341,6 +7345,41 @@ class SimplePdf:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(out_bytes)
         return out_path
+
+    def _converted_image_for_export(
+        self, meta: dict | None
+    ) -> tuple[dict, bytes] | None:
+        """Device-RGB metadata and samples for an image in a converted space.
+
+        The metadata captured at load names Lab as RGB and Separation as grey,
+        so a Lab, Separation or DeviceN image -- or a palette over one -- was
+        exported as its raw components painted as colour. Those go through the
+        same conversion the renderer and ``optimize`` use; anything else, or an
+        image whose stream cannot be found, is left to the metadata as before.
+        """
+        from .cos import PdfName, PdfStream
+
+        if not meta or self._cos_doc is None or meta.get("object_number") is None:
+            return None
+        stream = self._resolve(self._cos_doc.objects.get(meta["object_number"]))
+        if not isinstance(stream, PdfStream):
+            return None
+        if not self._is_converted_image_space(stream.mapping.get(PdfName("ColorSpace"))):
+            return None
+        width, height = int(meta.get("width") or 0), int(meta.get("height") or 0)
+        if width <= 0 or height <= 0:
+            return None
+        brought = self._image_device_samples(stream, width, height)
+        if brought is None:
+            return None
+        samples, _comps, _space = brought
+        rgb_meta = {
+            key: value
+            for key, value in meta.items()
+            if key not in ("palette", "palette_base_comps", "decode")
+        }
+        rgb_meta.update({"cs_kind": "rgb", "n_comps": 3, "bpc": 8, "filter": None})
+        return rgb_meta, samples
 
     def get_attach_names(self) -> list[str]:
         """Return list of attachment names."""
@@ -9883,7 +9922,10 @@ class SimplePdf:
             return False
         samples, comps, space = brought
 
-        if inverted:
+        if inverted and space is None:
+            # Still in the image's own device space. Samples that were converted
+            # -- a palette expanded, a tint or Lab value mapped -- went through
+            # the /Decode on the way, and inverting them again undid it.
             samples = bytes(255 - value for value in samples)
         if resized:
             samples = downscale(samples, width, height, comps, new_w, new_h)
@@ -9939,7 +9981,7 @@ class SimplePdf:
         exactly as it was.
         """
         from . import dct
-        from .cos import PdfName
+        from .cos import PdfArray, PdfName
         from .image_export import to_8bpc_bytes
 
         m = stream.mapping
@@ -9992,7 +10034,15 @@ class SimplePdf:
         if len(samples) < need:
             return None
         samples = samples[:need]
-        return self._samples_to_device(cs_obj, samples, bpc, width, height)
+        decode_obj = self._resolve(m.get(PdfName("Decode")))
+        decode = (
+            [float(self._get_number(v) or 0.0) for v in decode_obj.items]
+            if isinstance(decode_obj, PdfArray)
+            else None
+        )
+        return self._samples_to_device(
+            cs_obj, samples, bpc, width, height, decode=decode
+        )
 
     def _image_source_components(self, cs_obj: Any) -> int | None:
         """How many components a sample carries in the image's own space."""
@@ -10017,11 +10067,23 @@ class SimplePdf:
         return None
 
     def _samples_to_device(
-        self, cs_obj: Any, samples: bytes, bpc: int, width: int, height: int
+        self,
+        cs_obj: Any,
+        samples: bytes,
+        bpc: int,
+        width: int,
+        height: int,
+        *,
+        decode: list[float] | None = None,
     ) -> tuple[bytes, int, str | None] | None:
         """Convert samples out of a non-device space, or pass them through."""
         from .cos import PdfArray, PdfStream
-        from .image_export import indexed_to_rgb
+        from .image_export import (
+            convert_samples_to_rgb,
+            decode_indices,
+            indexed_to_rgb,
+        )
+        from .shading import image_sample_ranges
 
         direct = self._cs_components(cs_obj)
         if direct is not None:
@@ -10032,7 +10094,8 @@ class SimplePdf:
             return None
         head = self._get_name(cs.items[0])
 
-        if head in ("Indexed", "I") and len(cs.items) >= 4:
+        converted = self._is_converted_image_space(cs)
+        if head in ("Indexed", "I") and len(cs.items) >= 4 and not converted:
             base_comps = self._cs_components(cs.items[1]) or 3
             lookup = self._resolve(cs.items[3])
             if isinstance(lookup, PdfStream):
@@ -10049,34 +10112,51 @@ class SimplePdf:
             # ``indexed_to_rgb`` wants the original indices, not the 8-bit
             # widening: a 4-bit index of 3 must stay 3, not become 51.
             indices = self._reduce_indices(samples, bpc)
+            if decode is not None:
+                indices = bytes(decode_indices(list(indices), decode, bpc))
             rgb = indexed_to_rgb(indices, palette, 8, width, height, base_comps)
             if len(rgb) < width * height * 3:
                 return None
             return rgb[: width * height * 3], 3, "DeviceRGB"
 
+        # Everything else only means a colour through the space's converter, fed
+        # component values -- through the image's /Decode, and over the range
+        # each component spans (a Lab L* runs to 100, an index to 2^bpc - 1)
+        # rather than as bytes over 255.
         converter = self._device_converter(cs_obj)
         if converter is None:
             return None
-        comps = self._image_source_components(cs_obj) or 1
-        out = bytearray(width * height * 3)
-        cache: dict[tuple, tuple[int, int, int]] = {}
-        for pixel in range(width * height):
-            start = pixel * comps
-            key = bytes(samples[start : start + comps])
-            color = cache.get(key)
-            if color is None:
-                try:
-                    color = converter([value / 255.0 for value in key])
-                except PdfResourceLimitException:
-                    raise
-                except (TypeError, ValueError, ZeroDivisionError):
-                    return None
-                if len(cache) < 4096:
-                    cache[key] = color
-            out[pixel * 3 : pixel * 3 + 3] = bytes(
-                max(0, min(255, int(value))) for value in color
-            )
-        return bytes(out), 3, "DeviceRGB"
+        if head in ("Indexed", "I"):
+            comps, ranges = 1, None
+        elif converted:
+            ranges = image_sample_ranges(self, cs_obj)
+            comps = len(ranges)
+        else:
+            comps = self._image_source_components(cs_obj) or 1
+            ranges = [(0.0, 1.0)] * comps
+        rgb = convert_samples_to_rgb(
+            samples, width, height, comps, bpc, decode, ranges, converter
+        )
+        return rgb, 3, "DeviceRGB"
+
+    def _is_converted_image_space(self, cs: Any) -> bool:
+        """Whether *cs* (or the base of an Indexed *cs*) needs a converter.
+
+        Lab, Separation and DeviceN/NChannel samples are components, not device
+        colour; so are the palette entries of an Indexed space over one of them.
+        """
+        from .cos import PdfArray
+
+        cs = self._resolve(cs)
+        if not isinstance(cs, PdfArray) or not cs.items:
+            return False
+        head = self._get_name(cs.items[0])
+        if head in ("Indexed", "I") and len(cs.items) >= 2:
+            base = self._resolve(cs.items[1])
+            if not isinstance(base, PdfArray) or not base.items:
+                return False
+            head = self._get_name(base.items[0])
+        return head in ("Lab", "Separation", "DeviceN", "NChannel")
 
     @staticmethod
     def _reduce_indices(samples: bytes, bpc: int) -> bytes:
@@ -14556,6 +14636,12 @@ class CosExtractor:
                                 self._image_meta[img_name] = self._resolve_image_meta(
                                     img_obj
                                 )
+                                if isinstance(ref, PdfIndirectReference):
+                                    # Where the stream itself lives, for the
+                                    # conversions the metadata cannot carry.
+                                    self._image_meta[img_name]["object_number"] = (
+                                        ref.object_number
+                                    )
                                 page_image_map.setdefault(page_idx, []).append(img_name)
 
                 # -- Fonts --------------------------------------------------
@@ -14893,6 +14979,12 @@ class CosExtractor:
                                 self._image_meta[img_name] = self._resolve_image_meta(
                                     img_obj
                                 )
+                                if isinstance(ref, PdfIndirectReference):
+                                    # Where the stream itself lives, for the
+                                    # conversions the metadata cannot carry.
+                                    self._image_meta[img_name]["object_number"] = (
+                                        ref.object_number
+                                    )
                                 page_image_map.setdefault(page_idx, []).append(img_name)
 
                 # Collect Font metadata
