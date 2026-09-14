@@ -217,3 +217,125 @@ def test_symbol_glyphs_differ_from_latin() -> None:
         for x in range(symbol.width)
     )
     assert differs
+
+
+# --- Symbol and ZapfDingbats keep their built-in encoding -------------------
+#
+# A named /Encoding on these fonts is a Latin code page they have no glyphs
+# for. Overlaid on the built-in encoding, it turned the ZapfDingbats check mark
+# MuPDF writes as (3) under /WinAnsiEncoding into the glyph "three" and drew
+# nothing -- MuPDF's check boxes rendered empty. pdfium and MuPDF keep the
+# built-in encoding whatever base is named; /Differences still apply, naming
+# glyphs of the font's own.
+
+
+def _render_font(font_dict: bytes, shown: bytes):
+    import io
+
+    content = b"BT /F1 40 Tf 10 20 Td (" + shown + b") Tj ET"
+    objects = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        3: (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 80] /Resources "
+            b"<< /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+        4: b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+        5: font_dict,
+    }
+    raw = bytearray(b"%PDF-1.7\n")
+    offsets = {}
+    for number in sorted(objects):
+        offsets[number] = len(raw)
+        raw += b"%d 0 obj\n" % number + objects[number] + b"\nendobj\n"
+    start = len(raw)
+    raw += b"xref\n0 6\n0000000000 65535 f \n"
+    raw += b"".join(b"%010d 00000 n \n" % offsets[n] for n in sorted(objects))
+    raw += b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % start
+    raster = Document(io.BytesIO(bytes(raw))).pages[0].render(antialias=False)
+    return [raster.get_pixel(x, y) for y in range(raster.height) for x in range(raster.width)]
+
+
+def _font(base: bytes, encoding: bytes = b"") -> bytes:
+    return b"<< /Type /Font /Subtype /Type1 /BaseFont /" + base + encoding + b" >>"
+
+
+@pytest.mark.parametrize(
+    "encoding", [b"WinAnsiEncoding", b"StandardEncoding", b"MacRomanEncoding"]
+)
+@pytest.mark.parametrize(("base", "shown"), [(b"ZapfDingbats", b"34n"), (b"Symbol", b"abp")])
+def test_a_named_encoding_does_not_replace_the_built_in_one(base, shown, encoding):
+    named = _render_font(_font(base, b" /Encoding /" + encoding), shown)
+    builtin = _render_font(_font(base), shown)
+    assert any(p != (255, 255, 255) for p in builtin)
+    assert named == builtin
+
+
+def test_a_difference_naming_a_dingbat_draws_that_dingbat():
+    # a20 is the heavy check mark, code 52 ("4") in the built-in encoding; no
+    # Adobe Glyph List name, so it resolves through the font's own names.
+    remapped = _render_font(
+        _font(b"ZapfDingbats", b" /Encoding << /Differences [51 /a20] >>"), b"3"
+    )
+    direct = _render_font(_font(b"ZapfDingbats"), b"4")
+    assert remapped == direct
+
+
+def test_a_difference_on_top_of_a_named_base_still_applies():
+    remapped = _render_font(
+        _font(
+            b"ZapfDingbats",
+            b" /Encoding << /BaseEncoding /WinAnsiEncoding /Differences [51 /a20] >>",
+        ),
+        b"3",
+    )
+    assert remapped == _render_font(_font(b"ZapfDingbats"), b"4")
+
+
+def test_a_difference_naming_a_symbol_glyph_draws_that_glyph():
+    remapped = _render_font(_font(b"Symbol", b" /Encoding << /Differences [97 /beta] >>"), b"a")
+    assert remapped == _render_font(_font(b"Symbol"), b"b")
+
+
+@pytest.mark.parametrize("glyph", [b"Lslash", b"checkmark", b"uni2714", b"foobar"])
+def test_a_difference_naming_a_glyph_the_font_lacks_draws_nothing(glyph):
+    # As pdfium does. Even "checkmark" and "uni2714", which the Adobe Glyph List
+    # maps to check marks: ZapfDingbats has no glyphs by those names.
+    missing = _render_font(
+        _font(b"ZapfDingbats", b" /Encoding << /Differences [51 /" + glyph + b"] >>"), b"3"
+    )
+    assert all(p == (255, 255, 255) for p in missing)
+
+
+def test_the_glyph_name_tables_cover_exactly_the_encoded_codes():
+    from aspose_pdf.engine.symbol_encodings import (
+        SYMBOL_GLYPH_NAMES,
+        SYMBOL_TO_UNICODE,
+        ZAPF_DINGBATS_GLYPH_NAMES,
+        ZAPF_DINGBATS_TO_UNICODE,
+    )
+
+    for names, codes in (
+        (SYMBOL_GLYPH_NAMES, SYMBOL_TO_UNICODE),
+        (ZAPF_DINGBATS_GLYPH_NAMES, ZAPF_DINGBATS_TO_UNICODE),
+    ):
+        assert set(names) == set(codes)
+        assert len(set(names.values())) == len(names)  # a name names one code
+
+
+@pytest.mark.parametrize(
+    ("font", "glyph", "codepoint"),
+    [
+        ("dingbats", "a1", 0x2701),
+        ("dingbats", "a20", 0x2714),
+        ("dingbats", "a191", 0x27BE),
+        ("dingbats", "three", None),
+        ("symbol", "alpha", 0x03B1),
+        ("symbol", "Delta", 0x0394),  # the table's alias, not the AGL's U+2206
+        ("helvetica", "A", None),
+    ],
+)
+def test_builtin_glyph_to_unicode(font, glyph, codepoint):
+    from aspose_pdf.engine.symbol_encodings import builtin_glyph_to_unicode
+
+    assert builtin_glyph_to_unicode(font, glyph) == codepoint

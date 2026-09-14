@@ -548,7 +548,14 @@ Supported:
   Helvetica/Times/Courier families, and DejaVu Sans shape subsets (Bitstream
   Vera license) for Symbol and ZapfDingbats, indexed through those fonts'
   built-in encodings -- so common text, Greek/math symbols and dingbats all
-  render as real glyphs.
+  render as real glyphs. A *named* `/Encoding` on Symbol or ZapfDingbats
+  (WinAnsi, Standard, MacRoman) does not replace the built-in one, as in
+  pdfium and MuPDF: it is a Latin code page those fonts have no glyphs for,
+  and overlaying it used to leave the check marks MuPDF writes as `(3)` under
+  `/WinAnsiEncoding` with nothing to draw -- MuPDF's check boxes rendered
+  empty. `/Differences` still apply and are read in the font's own glyph
+  names (`a20` is ZapfDingbats' heavy check mark); a name the font does not
+  have draws nothing, as in pdfium (MuPDF keeps the built-in glyph).
 - Choose the output colour form with `mode=`: `"rgb"` (default), `"gray"`
   (Rec. 601 luminance) or `"bilevel"` (1 bit per pixel, thresholded at
   `threshold=`, default 128 -- a plain cut, not dithering). JPEG has no bilevel

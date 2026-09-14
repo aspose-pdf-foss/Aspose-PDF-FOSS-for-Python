@@ -2763,6 +2763,48 @@ class _PageRasterizer:
             code_to_unicode=lambda code, _m=code_to_unicode: _m.get(code),
         )
 
+    def _symbolic_code_to_unicode(
+        self, font_dict: PdfDictionary, key: str, builtin: dict[int, int]
+    ) -> dict[int, int]:
+        """Codes of a Symbol or ZapfDingbats font, through its built-in encoding.
+
+        A *named* ``/Encoding`` -- WinAnsi, Standard, MacRoman -- is a Latin
+        code page, and these fonts have no Latin glyphs to put in it: overlaid
+        on the built-in encoding, it turned the ZapfDingbats check mark MuPDF
+        writes as ``(3)`` under ``/WinAnsiEncoding`` into the glyph ``three``,
+        which the font does not have, and nothing was drawn. pdfium and MuPDF
+        keep the built-in encoding for these fonts whatever base is named, and
+        so does this.
+
+        ``/Differences`` still apply, and name glyphs of the font's own:
+        ``a20`` is ZapfDingbats' heavy check mark and no Adobe Glyph List name.
+        A name the font does not have leaves its code with nothing to draw, as
+        a difference naming a missing glyph does (pdfium; MuPDF keeps the
+        built-in glyph instead) -- even ``checkmark``, which the Adobe Glyph
+        List knows but ZapfDingbats does not.
+        """
+        from .symbol_encodings import builtin_glyph_to_unicode
+
+        code_to_unicode = dict(builtin)
+        names = None
+        if hasattr(self.pdf, "_simple_encoding_names"):
+            try:
+                names = self.pdf._simple_encoding_names(font_dict)
+            except PdfResourceLimitException:
+                raise
+            except Exception:
+                names = None
+        if names is None:
+            return code_to_unicode
+        _base, differences, _late = names
+        for code, glyph in differences.items():
+            uni = builtin_glyph_to_unicode(key, glyph)
+            if uni is None:
+                code_to_unicode.pop(code, None)
+            else:
+                code_to_unicode[code] = uni
+        return code_to_unicode
+
     def _substitute_code_to_gid(
         self, font_dict: PdfDictionary, outlines: TrueTypeOutlines, key: str
     ) -> tuple[Callable[[int], int | None], dict[int, int]]:
@@ -2776,7 +2818,7 @@ class _PageRasterizer:
         # PDF /Encoding (named base and/or /Differences) the document declares.
         builtin = substitute_code_to_unicode(key)
         if builtin is not None:
-            code_to_unicode = dict(builtin)
+            code_to_unicode = self._symbolic_code_to_unicode(font_dict, key, builtin)
         else:
             code_to_unicode = {}
             for code in range(256):
@@ -2784,7 +2826,7 @@ class _PageRasterizer:
                     code_to_unicode[code] = ord(bytes([code]).decode("cp1252"))
                 except (UnicodeDecodeError, TypeError):
                     pass
-        if hasattr(self.pdf, "_simple_code_to_unicode"):
+        if builtin is None and hasattr(self.pdf, "_simple_code_to_unicode"):
             try:
                 explicit = self.pdf._simple_code_to_unicode(font_dict) or {}
                 code_to_unicode.update(explicit)

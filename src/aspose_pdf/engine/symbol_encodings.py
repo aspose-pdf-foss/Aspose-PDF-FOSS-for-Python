@@ -19,6 +19,14 @@ The remaining private-use codes (Symbol's radical/arrow extenders and
 big-delimiter pieces, U+F8E5-F8FE) have no canonical equivalent and degrade to
 the renderer's glyph-box fallback.
 
+``SYMBOL_GLYPH_NAMES`` / ``ZAPF_DINGBATS_GLYPH_NAMES`` give the glyph *name*
+at each code of the same built-in encodings (from the fonts' Adobe AFM
+encoding vectors, as distributed with ReportLab), covering exactly the codes of
+the Unicode tables above. A ``/Differences`` entry names a glyph of the font's
+own -- ``a20`` in ZapfDingbats is no Adobe Glyph List name -- so these resolve
+it: name -> built-in code -> Unicode, which also keeps Symbol's re-aliased
+codepoints consistent whichever way a glyph is reached.
+
 ``STANDARD_ENCODING_NAMES`` maps Adobe StandardEncoding codes to glyph names,
 used by the Type 1 ``seac`` accent-composition operator (whose base/accent
 character codes are defined in terms of StandardEncoding).
@@ -28,8 +36,11 @@ from __future__ import annotations
 
 __all__ = [
     "STANDARD_ENCODING_NAMES",
+    "SYMBOL_GLYPH_NAMES",
     "SYMBOL_TO_UNICODE",
+    "ZAPF_DINGBATS_GLYPH_NAMES",
     "ZAPF_DINGBATS_TO_UNICODE",
+    "builtin_glyph_to_unicode",
 ]
 
 SYMBOL_TO_UNICODE: dict[int, int] = {
@@ -104,6 +115,107 @@ ZAPF_DINGBATS_TO_UNICODE: dict[int, int] = {
     0xFB: 0x27BB, 0xFC: 0x27BC, 0xFD: 0x27BD, 0xFE: 0x27BE,
 }
 
+ZAPF_DINGBATS_GLYPH_NAMES: dict[int, str] = {
+    0x20: "space", 0x21: "a1", 0x22: "a2", 0x23: "a202", 0x24: "a3", 0x25: "a4",
+    0x26: "a5", 0x27: "a119", 0x28: "a118", 0x29: "a117", 0x2A: "a11", 0x2B: "a12",
+    0x2C: "a13", 0x2D: "a14", 0x2E: "a15", 0x2F: "a16", 0x30: "a105", 0x31: "a17",
+    0x32: "a18", 0x33: "a19", 0x34: "a20", 0x35: "a21", 0x36: "a22", 0x37: "a23",
+    0x38: "a24", 0x39: "a25", 0x3A: "a26", 0x3B: "a27", 0x3C: "a28", 0x3D: "a6",
+    0x3E: "a7", 0x3F: "a8", 0x40: "a9", 0x41: "a10", 0x42: "a29", 0x43: "a30",
+    0x44: "a31", 0x45: "a32", 0x46: "a33", 0x47: "a34", 0x48: "a35", 0x49: "a36",
+    0x4A: "a37", 0x4B: "a38", 0x4C: "a39", 0x4D: "a40", 0x4E: "a41", 0x4F: "a42",
+    0x50: "a43", 0x51: "a44", 0x52: "a45", 0x53: "a46", 0x54: "a47", 0x55: "a48",
+    0x56: "a49", 0x57: "a50", 0x58: "a51", 0x59: "a52", 0x5A: "a53", 0x5B: "a54",
+    0x5C: "a55", 0x5D: "a56", 0x5E: "a57", 0x5F: "a58", 0x60: "a59", 0x61: "a60",
+    0x62: "a61", 0x63: "a62", 0x64: "a63", 0x65: "a64", 0x66: "a65", 0x67: "a66",
+    0x68: "a67", 0x69: "a68", 0x6A: "a69", 0x6B: "a70", 0x6C: "a71", 0x6D: "a72",
+    0x6E: "a73", 0x6F: "a74", 0x70: "a203", 0x71: "a75", 0x72: "a204", 0x73: "a76",
+    0x74: "a77", 0x75: "a78", 0x76: "a79", 0x77: "a81", 0x78: "a82", 0x79: "a83",
+    0x7A: "a84", 0x7B: "a97", 0x7C: "a98", 0x7D: "a99", 0x7E: "a100", 0x80: "a89",
+    0x81: "a90", 0x82: "a93", 0x83: "a94", 0x84: "a91", 0x85: "a92", 0x86: "a205",
+    0x87: "a85", 0x88: "a206", 0x89: "a86", 0x8A: "a87", 0x8B: "a88", 0x8C: "a95",
+    0x8D: "a96", 0xA1: "a101", 0xA2: "a102", 0xA3: "a103", 0xA4: "a104", 0xA5: "a106",
+    0xA6: "a107", 0xA7: "a108", 0xA8: "a112", 0xA9: "a111", 0xAA: "a110", 0xAB: "a109",
+    0xAC: "a120", 0xAD: "a121", 0xAE: "a122", 0xAF: "a123", 0xB0: "a124", 0xB1: "a125",
+    0xB2: "a126", 0xB3: "a127", 0xB4: "a128", 0xB5: "a129", 0xB6: "a130", 0xB7: "a131",
+    0xB8: "a132", 0xB9: "a133", 0xBA: "a134", 0xBB: "a135", 0xBC: "a136", 0xBD: "a137",
+    0xBE: "a138", 0xBF: "a139", 0xC0: "a140", 0xC1: "a141", 0xC2: "a142", 0xC3: "a143",
+    0xC4: "a144", 0xC5: "a145", 0xC6: "a146", 0xC7: "a147", 0xC8: "a148", 0xC9: "a149",
+    0xCA: "a150", 0xCB: "a151", 0xCC: "a152", 0xCD: "a153", 0xCE: "a154", 0xCF: "a155",
+    0xD0: "a156", 0xD1: "a157", 0xD2: "a158", 0xD3: "a159", 0xD4: "a160", 0xD5: "a161",
+    0xD6: "a163", 0xD7: "a164", 0xD8: "a196", 0xD9: "a165", 0xDA: "a192", 0xDB: "a166",
+    0xDC: "a167", 0xDD: "a168", 0xDE: "a169", 0xDF: "a170", 0xE0: "a171", 0xE1: "a172",
+    0xE2: "a173", 0xE3: "a162", 0xE4: "a174", 0xE5: "a175", 0xE6: "a176", 0xE7: "a177",
+    0xE8: "a178", 0xE9: "a179", 0xEA: "a193", 0xEB: "a180", 0xEC: "a199", 0xED: "a181",
+    0xEE: "a200", 0xEF: "a182", 0xF1: "a201", 0xF2: "a183", 0xF3: "a184", 0xF4: "a197",
+    0xF5: "a185", 0xF6: "a194", 0xF7: "a198", 0xF8: "a186", 0xF9: "a195", 0xFA: "a187",
+    0xFB: "a188", 0xFC: "a189", 0xFD: "a190", 0xFE: "a191",
+}
+
+SYMBOL_GLYPH_NAMES: dict[int, str] = {
+    0x20: "space", 0x21: "exclam", 0x22: "universal", 0x23: "numbersign",
+    0x24: "existential", 0x25: "percent", 0x26: "ampersand", 0x27: "suchthat",
+    0x28: "parenleft", 0x29: "parenright", 0x2A: "asteriskmath", 0x2B: "plus",
+    0x2C: "comma", 0x2D: "minus", 0x2E: "period", 0x2F: "slash", 0x30: "zero",
+    0x31: "one", 0x32: "two", 0x33: "three", 0x34: "four", 0x35: "five", 0x36: "six",
+    0x37: "seven", 0x38: "eight", 0x39: "nine", 0x3A: "colon", 0x3B: "semicolon",
+    0x3C: "less", 0x3D: "equal", 0x3E: "greater", 0x3F: "question", 0x40: "congruent",
+    0x41: "Alpha", 0x42: "Beta", 0x43: "Chi", 0x44: "Delta", 0x45: "Epsilon",
+    0x46: "Phi", 0x47: "Gamma", 0x48: "Eta", 0x49: "Iota", 0x4A: "theta1",
+    0x4B: "Kappa", 0x4C: "Lambda", 0x4D: "Mu", 0x4E: "Nu", 0x4F: "Omicron", 0x50: "Pi",
+    0x51: "Theta", 0x52: "Rho", 0x53: "Sigma", 0x54: "Tau", 0x55: "Upsilon",
+    0x56: "sigma1", 0x57: "Omega", 0x58: "Xi", 0x59: "Psi", 0x5A: "Zeta",
+    0x5B: "bracketleft", 0x5C: "therefore", 0x5D: "bracketright", 0x5E: "perpendicular",
+    0x5F: "underscore", 0x60: "radicalex", 0x61: "alpha", 0x62: "beta", 0x63: "chi",
+    0x64: "delta", 0x65: "epsilon", 0x66: "phi", 0x67: "gamma", 0x68: "eta",
+    0x69: "iota", 0x6A: "phi1", 0x6B: "kappa", 0x6C: "lambda", 0x6D: "mu", 0x6E: "nu",
+    0x6F: "omicron", 0x70: "pi", 0x71: "theta", 0x72: "rho", 0x73: "sigma", 0x74: "tau",
+    0x75: "upsilon", 0x76: "omega1", 0x77: "omega", 0x78: "xi", 0x79: "psi",
+    0x7A: "zeta", 0x7B: "braceleft", 0x7C: "bar", 0x7D: "braceright", 0x7E: "similar",
+    0xA0: "Euro", 0xA1: "Upsilon1", 0xA2: "minute", 0xA3: "lessequal", 0xA4: "fraction",
+    0xA5: "infinity", 0xA6: "florin", 0xA7: "club", 0xA8: "diamond", 0xA9: "heart",
+    0xAA: "spade", 0xAB: "arrowboth", 0xAC: "arrowleft", 0xAD: "arrowup",
+    0xAE: "arrowright", 0xAF: "arrowdown", 0xB0: "degree", 0xB1: "plusminus",
+    0xB2: "second", 0xB3: "greaterequal", 0xB4: "multiply", 0xB5: "proportional",
+    0xB6: "partialdiff", 0xB7: "bullet", 0xB8: "divide", 0xB9: "notequal",
+    0xBA: "equivalence", 0xBB: "approxequal", 0xBC: "ellipsis", 0xBD: "arrowvertex",
+    0xBE: "arrowhorizex", 0xBF: "carriagereturn", 0xC0: "aleph", 0xC1: "Ifraktur",
+    0xC2: "Rfraktur", 0xC3: "weierstrass", 0xC4: "circlemultiply", 0xC5: "circleplus",
+    0xC6: "emptyset", 0xC7: "intersection", 0xC8: "union", 0xC9: "propersuperset",
+    0xCA: "reflexsuperset", 0xCB: "notsubset", 0xCC: "propersubset",
+    0xCD: "reflexsubset", 0xCE: "element", 0xCF: "notelement", 0xD0: "angle",
+    0xD1: "gradient", 0xD2: "registerserif", 0xD3: "copyrightserif",
+    0xD4: "trademarkserif", 0xD5: "product", 0xD6: "radical", 0xD7: "dotmath",
+    0xD8: "logicalnot", 0xD9: "logicaland", 0xDA: "logicalor", 0xDB: "arrowdblboth",
+    0xDC: "arrowdblleft", 0xDD: "arrowdblup", 0xDE: "arrowdblright",
+    0xDF: "arrowdbldown", 0xE0: "lozenge", 0xE1: "angleleft", 0xE2: "registersans",
+    0xE3: "copyrightsans", 0xE4: "trademarksans", 0xE5: "summation",
+    0xE6: "parenlefttp", 0xE7: "parenleftex", 0xE8: "parenleftbt",
+    0xE9: "bracketlefttp", 0xEA: "bracketleftex", 0xEB: "bracketleftbt",
+    0xEC: "bracelefttp", 0xED: "braceleftmid", 0xEE: "braceleftbt", 0xEF: "braceex",
+    0xF1: "angleright", 0xF2: "integral", 0xF3: "integraltp", 0xF4: "integralex",
+    0xF5: "integralbt", 0xF6: "parenrighttp", 0xF7: "parenrightex",
+    0xF8: "parenrightbt", 0xF9: "bracketrighttp", 0xFA: "bracketrightex",
+    0xFB: "bracketrightbt", 0xFC: "bracerighttp", 0xFD: "bracerightmid",
+    0xFE: "bracerightbt",
+}
+
+
+def builtin_glyph_to_unicode(font: str, glyph: str) -> int | None:
+    """The Unicode of *glyph* in the built-in encoding of ``symbol`` or ``dingbats``.
+
+    ``None`` when the font has no glyph by that name.
+    """
+    if font == "symbol":
+        codes, names = SYMBOL_TO_UNICODE, _SYMBOL_CODE_BY_NAME
+    elif font == "dingbats":
+        codes, names = ZAPF_DINGBATS_TO_UNICODE, _ZAPF_DINGBATS_CODE_BY_NAME
+    else:
+        return None
+    code = names.get(glyph)
+    return None if code is None else codes.get(code)
+
+
 STANDARD_ENCODING_NAMES: dict[int, str] = {
     0x20: "space", 0x21: "exclam", 0x22: "quotedbl", 0x23: "numbersign",
     0x24: "dollar", 0x25: "percent", 0x26: "ampersand", 0x27: "quoteright",
@@ -140,4 +252,9 @@ STANDARD_ENCODING_NAMES: dict[int, str] = {
     0xE9: "Oslash", 0xEA: "OE", 0xEB: "ordmasculine", 0xF1: "ae",
     0xF5: "dotlessi", 0xF8: "lslash", 0xF9: "oslash", 0xFA: "oe",
     0xFB: "germandbls",
+}
+
+_SYMBOL_CODE_BY_NAME = {name: code for code, name in SYMBOL_GLYPH_NAMES.items()}
+_ZAPF_DINGBATS_CODE_BY_NAME = {
+    name: code for code, name in ZAPF_DINGBATS_GLYPH_NAMES.items()
 }

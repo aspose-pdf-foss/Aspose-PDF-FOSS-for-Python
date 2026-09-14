@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Check boxes written by MuPDF rendered empty.** MuPDF draws a check mark as
+  ZapfDingbats `(3)` and declares the font with `/Encoding /WinAnsiEncoding`.
+  The renderer overlaid that named Latin encoding on the font's built-in one,
+  so code 0x33 became the glyph `three`, which ZapfDingbats does not have, and
+  nothing was drawn -- on the live form and in the flattened copy alike. The
+  same happened to Symbol under any named base. pdfium and MuPDF keep the
+  built-in encoding for these two fonts whatever base is named, and now so do
+  we: WinAnsi, Standard and MacRoman render exactly like no `/Encoding`.
+  `/Differences` still apply, and are now read in the font's own glyph names
+  -- `a20`, the heavy check mark, is no Adobe Glyph List name and used to be
+  ignored -- through new code-to-glyph-name tables for both fonts (from their
+  Adobe AFM encoding vectors, checked to cover exactly the codes of the
+  existing Unicode tables). A difference naming a glyph the font lacks draws
+  nothing, as in pdfium.
+
 - **The renderer composed transforms in the wrong order.** ISO 32000-1 writes
   `cm` as `CTM' = M * CTM`, `Td` as `Tlm = [1 0 0 1 tx ty] * Tlm`, a glyph
   advance as `Tm = [1 0 0 1 tx 0] * Tm` and a form as painted under
