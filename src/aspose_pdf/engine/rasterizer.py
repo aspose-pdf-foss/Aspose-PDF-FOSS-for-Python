@@ -13,6 +13,7 @@ import contextlib
 import copy
 import itertools
 import math
+import re
 import struct
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -255,6 +256,13 @@ class RasterizedPage:
 
 # ISO 32000-1 9.3.6 table 106. Mode 3 paints nothing and mode 7 only clips;
 # the clipping modes (4-7) paint exactly as their non-clipping counterparts.
+# Type 3 glyph procedures (9.6.5): a d1 glyph is a shape whose colour
+# operators are ignored; procedures nest when a glyph shows text of its own.
+_COLOUR_OPERATORS = frozenset(
+    {"rg", "RG", "g", "G", "k", "K", "sc", "SC", "scn", "SCN", "cs", "CS"}
+)
+_D1_GLYPH = re.compile(rb"\s*(?:[-+.\d]+\s+){6}d1\b")
+
 _FILLING_TEXT_MODES = frozenset({0, 2, 4, 6})
 _STROKING_TEXT_MODES = frozenset({1, 2, 5, 6})
 
@@ -459,6 +467,18 @@ class _Canvas:
             # Never floor to zero, though: zero is what says "nothing has ever
             # reached here", and the flatten relies on that being exactly true.
             self.alpha[idx] = max(1, int(output_alpha * 255.0))
+
+
+@dataclass
+class _Type3Font:
+    """What drawing a Type 3 font needs from its dictionary."""
+
+    matrix: Matrix
+    procs: PdfDictionary
+    names: dict[int, str]
+    first_char: int
+    widths: list[float]
+    resources: PdfDictionary | None
 
 
 @dataclass
@@ -789,6 +809,12 @@ class _PageRasterizer:
         self.resources_cos = self._page_resources_cos()
         self.resources_plain = self._page_resources_plain()
         self._font_cache: dict[str, _GlyphFont | None] = {}
+        # Type 3 fonts by font dictionary, and how deep glyph procedures nest
+        # (a glyph may show text in a Type 3 font of its own).
+        self._type3_cache: dict[int, _Type3Font | None] = {}
+        self._type3_depth = 0
+        # While a d1 glyph procedure runs, colour is the text's, not its own.
+        self._type3_colour_locked = False
         self._color_converter_cache: dict[int, Callable[[list[float]], Color]] = {}
         self._pattern_depth = 0
         # Guards against a soft-mask group that itself sets a soft mask.
@@ -1235,6 +1261,11 @@ class _PageRasterizer:
             number = _number(operands[-1])
             if number is not None:
                 self.state.line_width = max(0.0, number)
+            return
+        if self._type3_colour_locked and op in _COLOUR_OPERATORS:
+            # 9.6.5: a glyph described with d1 is a shape only, painted in the
+            # colour in effect where the text is shown; its colour operators
+            # "shall be ignored".
             return
         if op in ("rg", "g", "k", "RG", "G", "K"):
             self._set_color(op, operands)
@@ -2286,13 +2317,17 @@ class _PageRasterizer:
         resources_plain: dict,
     ) -> None:
         text = self.state.text
-        # Mode 3 is invisible and mode 7 clips without painting; neither puts
-        # anything on the page, but 7 still has outlines to collect.
-        if text.rendering_mode == 3:
-            return
         if not isinstance(raw, (bytes, bytearray)):
             return
         raw = bytes(raw)
+        # Mode 3 paints nothing, but its glyphs still take up room: the text
+        # matrix advances past them exactly as past visible ones (9.4.4). It
+        # used to return here, so "3 Tr (hidden) Tj 0 Tr (seen) Tj" drew the
+        # seen word on top of the hidden one. The glyph painters skip mode 3.
+        type3 = self._type3_font(text.font_name, resources_cos)
+        if type3 is not None:
+            self._show_type3_text(raw, type3, resources_cos, resources_plain)
+            return
         font = self._resolve_glyph_font(text.font_name, resources_cos)
         if font is None:
             self._show_text_boxes(raw)
@@ -2387,6 +2422,158 @@ class _PageRasterizer:
         if self.state.text.rendering_mode >= 4 and self._text_clip is None:
             self._text_clip = []
 
+    def _type3_font(
+        self, name: str | None, resources_cos: PdfDictionary | None
+    ) -> _Type3Font | None:
+        """The Type 3 font *name* selects in *resources_cos*, or ``None``.
+
+        Cached by font dictionary rather than by resource name: a form's own
+        ``/F1`` is not the page's.
+        """
+        if name is None or resources_cos is None:
+            return None
+        fonts = self._resource_dict(resources_cos, "Font")
+        if fonts is None:
+            return None
+        font_dict = self._resolve(fonts.mapping.get(PdfName(name)))
+        if not isinstance(font_dict, PdfDictionary):
+            return None
+        if self._cos_name(font_dict.mapping.get(PdfName("Subtype"))) != "Type3":
+            return None
+        key = id(font_dict)
+        if key not in self._type3_cache:
+            self._type3_cache[key] = self._build_type3_font(font_dict)
+        return self._type3_cache[key]
+
+    def _build_type3_font(self, font_dict: PdfDictionary) -> _Type3Font | None:
+        matrix = _cos_matrix(self._resolve(font_dict.mapping.get(PdfName("FontMatrix"))))
+        procs = self._resolve(font_dict.mapping.get(PdfName("CharProcs")))
+        if matrix is None or not isinstance(procs, PdfDictionary):
+            return None
+        names: dict[int, str] = {}
+        if hasattr(self.pdf, "_simple_encoding_names"):
+            try:
+                resolved = self.pdf._simple_encoding_names(font_dict)
+            except PdfResourceLimitException:
+                raise
+            except Exception:
+                resolved = None
+            if resolved is not None:
+                base, differences, _late = resolved
+                names.update(base)
+                names.update(differences)
+        first = self._cos_number(font_dict.mapping.get(PdfName("FirstChar")))
+        widths_obj = self._resolve(font_dict.mapping.get(PdfName("Widths")))
+        widths: list[float] = []
+        if isinstance(widths_obj, PdfArray):
+            widths = [self._cos_number(w) or 0.0 for w in widths_obj.items]
+        resources = self._resolve(font_dict.mapping.get(PdfName("Resources")))
+        return _Type3Font(
+            matrix=matrix,
+            procs=procs,
+            names=names,
+            first_char=int(first) if first is not None else 0,
+            widths=widths,
+            resources=resources if isinstance(resources, PdfDictionary) else None,
+        )
+
+    def _show_type3_text(
+        self,
+        raw: bytes,
+        font: _Type3Font,
+        resources_cos: PdfDictionary | None,
+        resources_plain: dict,
+    ) -> None:
+        """Show *raw* in a Type 3 font: each glyph is a content stream (9.6.5).
+
+        The glyph procedure runs under ``FontMatrix * text space * Tm * CTM``,
+        with the font's own ``/Resources`` or, where it has none, those the
+        text is shown with. Type 3 glyphs used to fall through to the box
+        placeholder -- every label of a matplotlib chart, whose PDF backend
+        writes Type 3 fonts by default, came out as a row of black boxes.
+        """
+        text = self.state.text
+        if font.resources is not None:
+            proc_resources_cos = font.resources
+            proc_resources_plain = (
+                self.pdf._convert_cos_to_dict(font.resources) or {}
+                if hasattr(self.pdf, "_convert_cos_to_dict")
+                else {}
+            )
+        else:
+            proc_resources_cos, proc_resources_plain = resources_cos, resources_plain
+        fm = font.matrix
+        for code in raw:
+            self._open_text_clip()
+            name = font.names.get(code)
+            ref = font.procs.mapping.get(PdfName(name)) if name else None
+            proc = self._resolve(ref) if ref is not None else None
+            # A glyph that shows text in its own font nests; the interpreter's
+            # depth bound, fed by the glyph depth below, is what ends it.
+            if isinstance(proc, PdfStream) and text.rendering_mode not in (3, 7):
+                self._run_type3_glyph(
+                    proc, ref, fm, proc_resources_cos, proc_resources_plain
+                )
+            index = code - font.first_char
+            width = font.widths[index] if 0 <= index < len(font.widths) else 0.0
+            advance = width * fm[0] * text.font_size + text.char_spacing
+            if code == 32:
+                advance += text.word_spacing
+            advance *= text.horizontal_scale
+            text.text_matrix = _concat((1.0, 0.0, 0.0, 1.0, advance, 0.0), text.text_matrix)
+
+    def _run_type3_glyph(
+        self,
+        proc: PdfStream,
+        ref: Any,
+        font_matrix: Matrix,
+        resources_cos: PdfDictionary | None,
+        resources_plain: dict,
+    ) -> None:
+        text = self.state.text
+        text_space = (
+            text.font_size * text.horizontal_scale, 0.0, 0.0, text.font_size, 0.0, text.rise,
+        )
+        placement = _concat(
+            font_matrix, _concat(text_space, _concat(text.text_matrix, self.state.ctm))
+        )
+        try:
+            content = (
+                self.pdf._decode_cos_stream(proc, ref)
+                if hasattr(self.pdf, "_decode_cos_stream")
+                else proc.content
+            )
+        except PdfResourceLimitException:
+            raise
+        except Exception:
+            content = proc.content
+        if not isinstance(content, (bytes, bytearray)):
+            return
+        # The procedure runs on a copy of the graphics state, and the state the
+        # text is being shown in is put back by identity afterwards. Replacing
+        # it with a restored copy instead left every holder of the old text
+        # state -- the TJ loop applying kerning, the loop advancing glyphs --
+        # writing to an object nothing draws with, so a Type 3 run lost its
+        # kerning and its glyphs piled up.
+        outer_state = self.state
+        saved_lock = self._type3_colour_locked
+        saved_path = self.path
+        saved_stack = self.state_stack
+        self._type3_colour_locked = saved_lock or bool(_D1_GLYPH.match(bytes(content)))
+        self._type3_depth += 1
+        try:
+            self.state = copy.deepcopy(outer_state)
+            self.state.ctm = placement
+            self.state_stack = []
+            self.path = _Path()
+            self._interpret(bytes(content), resources_cos, resources_plain, depth=self._type3_depth)
+        finally:
+            self._type3_depth -= 1
+            self._type3_colour_locked = saved_lock
+            self.state = outer_state
+            self.state_stack = saved_stack
+            self.path = saved_path
+
     def _show_text_boxes(self, raw: bytes) -> None:
         """Fallback for non-TrueType fonts: draw a box per visible glyph."""
         text = self.state.text
@@ -2421,7 +2608,9 @@ class _PageRasterizer:
         writing to apply the CID position vector).
         """
         text = self.state.text
-        if units_per_em <= 0 or text.font_size == 0:
+        # Invisible text paints nothing whatever the check below it says; this
+        # only spares the outline work, which an OCR layer has a lot of.
+        if units_per_em <= 0 or text.font_size == 0 or text.rendering_mode == 3:
             return
         scale = text.font_size / units_per_em
         # glyph space -> text space: scale by font size, apply horizontal
@@ -2522,6 +2711,8 @@ class _PageRasterizer:
 
     def _draw_glyph_box(self, width: float, height: float) -> None:
         text = self.state.text
+        if text.rendering_mode == 3:
+            return
         base = _multiply(self.state.ctm, text.text_matrix)
         if text.rise:
             base = _multiply(base, (1.0, 0.0, 0.0, 1.0, 0.0, text.rise))

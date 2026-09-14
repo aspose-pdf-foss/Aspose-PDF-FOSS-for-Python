@@ -556,6 +556,16 @@ Supported:
   empty. `/Differences` still apply and are read in the font's own glyph
   names (`a20` is ZapfDingbats' heavy check mark); a name the font does not
   have draws nothing, as in pdfium (MuPDF keeps the built-in glyph).
+  **Type 3 fonts** (9.6.5) are drawn from their glyph procedures: each glyph's
+  content stream runs under `FontMatrix * text space * Tm * CTM`, with the
+  font's own `/Resources` or those the text is shown with, advancing by
+  `/Widths` and honouring `Tc`, `Tw`, `Tz` and `TJ` kerning; a `d1` glyph is a
+  shape painted in the text's colour, its own colour operators ignored, and a
+  glyph may show text in a Type 3 font of its own. They used to be drawn as
+  placeholder boxes -- every label of a matplotlib chart, whose PDF backend
+  writes Type 3 fonts by default, came out black-boxed -- while SVG export had
+  them right. **Invisible text** (`Tr 3`) advances like any other, so a
+  visible word after an invisible one lands after it rather than on top.
 - Choose the output colour form with `mode=`: `"rgb"` (default), `"gray"`
   (Rec. 601 luminance) or `"bilevel"` (1 bit per pixel, thresholded at
   `threshold=`, default 128 -- a plain cut, not dithering). JPEG has no bilevel

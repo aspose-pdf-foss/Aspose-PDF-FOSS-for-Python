@@ -9,6 +9,23 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Type 3 fonts rendered as black boxes.** The renderer knew TrueType, Type 1
+  and CID fonts, and drew a placeholder box for any glyph it could not outline
+  -- including every Type 3 glyph, which is not an outline but a content
+  stream (ISO 32000-1 9.6.5). matplotlib's PDF backend writes Type 3 fonts by
+  default, so every title, axis label and tick number of a matplotlib chart
+  came out as a row of boxes; SVG export, a separate path, drew them right.
+  Glyph procedures now run under `FontMatrix * text space * Tm * CTM`, with the
+  font's `/Resources` (or the page's), advancing by `/Widths` with character
+  and word spacing, horizontal scaling and `TJ` kerning applied; a `d1` glyph
+  ignores its own colour operators and paints in the text's colour; a glyph may
+  show text in another Type 3 font. A real matplotlib chart and ten targeted
+  cases (colour, flipped and non-uniform font matrices, rotation, kerning,
+  widths, font resources, nesting, invisible text) agree with pdfium and MuPDF.
+- **Invisible text did not advance.** `Tr 3` returned before moving the text
+  matrix, so `3 Tr (hidden) Tj 0 Tr (seen) Tj` drew the visible word on top of
+  the invisible one -- in any font. It now takes up the room it always had.
+
 - **Check boxes written by MuPDF rendered empty.** MuPDF draws a check mark as
   ZapfDingbats `(3)` and declares the font with `/Encoding /WinAnsiEncoding`.
   The renderer overlaid that named Latin encoding on the font's built-in one,
