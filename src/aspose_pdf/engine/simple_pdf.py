@@ -2550,6 +2550,28 @@ class SimplePdf:
         action.mapping[PdfName("D")] = explicit
         return ("A", action)
 
+    def _with_named_destinations_resolved(self, obj: PdfDictionary) -> dict[Any, Any]:
+        """*obj*'s entries, a named destination replaced by the one it names.
+
+        For copying into another document, which does not receive this one's
+        names: a link's ``/Dest`` or a ``/GoTo`` action's ``/D`` given as a name
+        would go nowhere there, or wherever that document uses the same name.
+        A name this document does not define becomes ``null``. A remote
+        (``/GoToR``) destination names a place in its own file and is left alone.
+        """
+        mapping = obj.mapping
+        if PdfName("Dest") in mapping:
+            key = PdfName("Dest")
+        elif PdfName("D") in mapping and self._resolve(mapping.get(PdfName("S"))) == PdfName("GoTo"):
+            key = PdfName("D")
+        else:
+            return mapping
+        name = self._resolve(mapping[key])
+        if not isinstance(name, (PdfString, PdfName)):
+            return mapping
+        explicit = explicit_destination(name, self._resolve, self._named_destinations())
+        return {**mapping, key: PdfNull() if explicit is None else explicit}
+
     def _named_destinations(self) -> dict[Any, Any]:
         """The catalog's named destinations, read once per catalog."""
         if self._cos_doc is None:
@@ -8958,16 +8980,28 @@ class SimplePdf:
         An indirect reference is registered before its target is copied, so a
         graph that points back at itself -- which any page with annotations
         does -- is copied once rather than followed forever.
+
+        The pages being copied are in *imported* before anything else is. A
+        reference to any other page of *other* -- a link to a page that was not
+        taken -- becomes ``null``, as qpdf writes it: copied, the page came
+        along with its content as an orphan, and a table of contents linking
+        every page brought the whole source document into an extract of one.
         """
         self._load_budget.check(_depth, "max_nesting_depth", "imported object depth")
         if isinstance(obj, PdfIndirectReference):
             existing = imported.get(obj.object_number)
             if existing is not None:
                 return existing
+            target = other._resolve(obj)
+            if (
+                isinstance(target, PdfDictionary)
+                and other._get_name(target.mapping.get(PdfName("Type"))) == "Page"
+            ):
+                return PdfNull()
             placeholder = self._cos_doc.register_object(PdfNull())
             imported[obj.object_number] = placeholder
             self._cos_doc.objects[placeholder.object_number] = self._import_object(
-                other, other._resolve(obj), imported, _depth
+                other, target, imported, _depth
             )
             return placeholder
         if isinstance(obj, PdfStream):
@@ -8990,7 +9024,9 @@ class SimplePdf:
             return PdfDictionary(
                 {
                     key: self._import_object(other, value, imported, _depth + 1)
-                    for key, value in obj.mapping.items()
+                    for key, value in other._with_named_destinations_resolved(
+                        obj
+                    ).items()
                 }
             )
         if isinstance(obj, PdfArray):

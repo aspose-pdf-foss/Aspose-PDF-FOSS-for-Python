@@ -171,7 +171,8 @@ Supported:
   resolve to nothing -- each object copied once, references remapped, and
   attributes it inherited from an ancestor of its own page tree resolved onto
   it. Its annotations come with it, a link among them still pointing at the
-  page it pointed at. The structures those pages belong to come too: form
+  page it pointed at -- or at nothing (`null`, as qpdf writes it) when that page
+  was not among those copied, rather than dragging the page in as an orphan. The structures those pages belong to come too: form
   fields (a widget whose field is not in `/AcroForm /Fields` is a control the
   form does not know about), optional content groups (one missing from
   `/OCProperties` is not a layer a viewer offers to switch), bookmarks
@@ -668,8 +669,10 @@ Boundaries:
   labels, the viewer preferences and the structure tree stay this document's;
   a merge appends pages, and taking the other document's title or its tagging
   would be a different operation. Named destinations (`/Dests`) are not merged
-  either, so a bookmark or link of the source that goes by name rather than by
-  page reference is preserved as it stands and resolves to nothing here.
+  either, so a bookmark or link of the source that goes by name is carried
+  across as the destination the name stood for there (a name the source does
+  not define becomes no target); a remote `/GoToR` name, which belongs to the
+  other file, is left as it is.
   Because the tree does not come, the **key into it does not either**: an
   imported page gives up its `/StructParents`, and its annotations their
   `/StructParent` (14.7.4.4). Those are indices into the *source* document's

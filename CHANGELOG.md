@@ -9,6 +9,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Extracting a page copied every page its links pointed at.** Importing a
+  page followed its link annotations' page references, so a link to a page
+  that was not being copied brought that page -- content and resources -- into
+  the result as an orphan no page tree lists. Extracting a table-of-contents
+  page from a 60-page document wrote a 40 KB file from a 32 KB source, holding
+  all 60 pages. Such a reference now becomes `null`, as qpdf writes it (16 KB,
+  one page). Links by *name* were copied as names, which the source catalog
+  alone defines: in an extract they went nowhere, and in a merge they resolved
+  against the other document's names, sending a second copy's links into the
+  first copy. They are now carried as the destinations they name, as
+  bookmarks are.
+
 - **Bookmarks by name, by action or with no target read as page 1, and saving
   made that true.** `OutlineItem.page_index` was read from a `/Dest` array
   only, so a bookmark naming its destination -- through the `/Names /Dests`
