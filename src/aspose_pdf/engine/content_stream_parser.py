@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import codecs
 import math
-import re
 from collections import deque
 from collections.abc import Iterator
 from decimal import Decimal
@@ -54,44 +53,129 @@ def _resolve_resource_budget(
     return budget
 
 
-def _iter_cmap_lines(text: str) -> Iterator[str]:
-    """Yield CR/LF-delimited lines without first materializing every line."""
-    start = 0
-    i = 0
+class _CMapString:
+    """A ``(string)`` in a CMap: it is data, never an operator or a name."""
+
+
+_CMAP_STRING = _CMapString()
+_CMAP_WHITESPACE = frozenset(" \t\r\n\f\x00")
+_CMAP_DELIMITERS = frozenset("()<>[]{}/%")
+
+
+def _cmap_tokens(text: str, budget: _LoadBudget, context: str) -> Iterator[Any]:
+    """The tokens of a CMap (Adobe Technical Note 5014; ISO 32000-1 9.7.5).
+
+    ``<hex>`` arrives as :class:`bytes` (whitespace inside ignored, an odd
+    final digit taken as followed by 0, as 7.3.4.3 says), an integer as
+    :class:`int`, a name as ``"/Name"``, and an operator or any other word --
+    ``beginbfchar``, ``def``, ``[`` -- as itself. Comments are dropped and a
+    string is one opaque token.
+
+    CMaps are PostScript, so line breaks mean nothing: the readers used to go
+    line by line and matched an operator only at the end of a line, and a CMap
+    written on one line, or with entries on its ``begin``/``end`` lines, gave
+    no mappings at all.
+    """
     n = len(text)
-    while i < n:
-        if text[i] not in "\r\n":
-            i += 1
+    pos = 0
+    count = 0
+    while pos < n:
+        ch = text[pos]
+        if ch in _CMAP_WHITESPACE:
+            pos += 1
             continue
-        yield text[start:i]
-        if text[i] == "\r" and i + 1 < n and text[i + 1] == "\n":
-            i += 1
-        i += 1
-        start = i
-    if start < n:
-        yield text[start:]
+        if ch == "%":
+            while pos < n and text[pos] not in "\r\n":
+                pos += 1
+            continue
+        count += 1
+        budget.check(count, "max_container_items", f"{context} tokens")
+        if ch == "(":
+            depth = 0
+            while pos < n:
+                c = text[pos]
+                if c == "\\":
+                    pos += 2
+                    continue
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                    if depth == 0:
+                        pos += 1
+                        break
+                pos += 1
+            yield _CMAP_STRING
+            continue
+        if ch == "<":
+            if text.startswith("<<", pos):
+                pos += 2
+                yield "<<"
+                continue
+            end = text.find(">", pos + 1)
+            if end < 0:
+                end = n
+            digits = "".join(text[pos + 1 : end].split())
+            pos = end + 1
+            if len(digits) % 2:
+                digits += "0"
+            try:
+                yield bytes.fromhex(digits)
+            except ValueError:
+                yield _CMAP_STRING
+            continue
+        if ch == ">":
+            pos += 2 if text.startswith(">>", pos) else 1
+            yield ">>"
+            continue
+        if ch in "[]{}":
+            pos += 1
+            yield ch
+            continue
+        start = pos
+        pos += 1
+        while pos < n and text[pos] not in _CMAP_WHITESPACE and text[pos] not in _CMAP_DELIMITERS:
+            pos += 1
+        word = text[start:pos]
+        if word.isdigit() or (word[:1] in "+-" and word[1:].isdigit()):
+            yield int(word)
+        else:
+            yield word
 
 
-def _cmap_lines(
-    text: str,
-    budget: _LoadBudget,
-    context: str,
-) -> list[str]:
-    """Return bounded, nonempty CMap lines with comments removed."""
-    lines: list[str] = []
-    for raw in _iter_cmap_lines(text):
-        if "%" in raw:
-            raw = raw.split("%", 1)[0]
-        stripped = raw.strip()
-        if not stripped:
+def _cmap_blocks(
+    text: str, kinds: frozenset[str], budget: _LoadBudget, context: str
+) -> Iterator[tuple[str, list[Any]]]:
+    """Each ``begin<kind> ... end<kind>`` block of *kinds* with its operands.
+
+    A ``[ ... ]`` among the operands arrives as one list. A block that never
+    reaches its ``end`` gives nothing, as pdfium and pdfminer read it.
+    """
+    kind: str | None = None
+    operands: list[Any] = []
+    array: list[Any] | None = None
+    for token in _cmap_tokens(text, budget, context):
+        if isinstance(token, str) and token[:1] != "/":
+            if token.startswith("begin"):
+                kind = token[5:] if token[5:] in kinds else None
+                operands, array = [], None
+                continue
+            if kind is not None and token == "end" + kind:
+                yield kind, operands
+                kind = None
+                continue
+        if kind is None:
             continue
-        budget.check(
-            len(lines) + 1,
-            "max_container_items",
-            f"{context} nonempty lines",
-        )
-        lines.append(stripped)
-    return lines
+        if token == "[":
+            array = []
+        elif token == "]":
+            if array is not None:
+                operands.append(array)
+            array = None
+        elif array is not None:
+            array.append(token)
+        else:
+            operands.append(token)
 
 
 def _check_cmap_input(
@@ -308,6 +392,25 @@ def load_cid_vertical_metrics(
     return out
 
 
+def _utf16_destination(destination: bytes, offset: int = 0) -> str | None:
+    """A ToUnicode destination string, its last code unit moved on by *offset*.
+
+    9.10.3: across a ``bfrange`` the destination's last byte -- in practice its
+    last UTF-16 unit -- counts up, so ``<00660066>`` gives "ff", "fg", "fh" and
+    a surrogate pair ``<D835DC00>`` gives U+1D400 onwards. Read as one integer,
+    both overflowed ``chr`` and the whole range was dropped.
+    """
+    if not destination or len(destination) % 2:
+        return None
+    last = int.from_bytes(destination[-2:], "big") + offset
+    if last > 0xFFFF:
+        return None
+    try:
+        return (destination[:-2] + last.to_bytes(2, "big")).decode("utf-16-be")
+    except UnicodeError:
+        return None
+
+
 def parse_to_unicode_cmap(
     cmap_bytes: bytes,
     *,
@@ -318,126 +421,48 @@ def parse_to_unicode_cmap(
     active_budget = _resolve_resource_budget(limits, budget)
     _check_cmap_input(cmap_bytes, active_budget, "ToUnicode CMap")
     mapping: dict[bytes, str] = {}
-    try:
-        text = cmap_bytes.decode("utf-8", errors="ignore")
-    except UnicodeError:
-        return mapping
-
-    lines = _cmap_lines(text, active_budget, "ToUnicode CMap")
-    mode = None
-    for line in lines:
-        if line.endswith("beginbfchar"):
-            mode = "bfchar"
-            continue
-        if line.endswith("endbfchar"):
-            mode = None
-            continue
-        if line.endswith("beginbfrange"):
-            mode = "bfrange"
-            continue
-        if line.endswith("endbfrange"):
-            mode = None
-            continue
-
-        if mode == "bfchar":
-            matches = iter(re.finditer(r"<([0-9A-Fa-f]+)>", line))
-            for src_match in matches:
-                dst_match = next(matches, None)
-                if dst_match is None:
-                    break
-                try:
-                    src = bytes.fromhex(src_match.group(1))
-                    dst = bytes.fromhex(dst_match.group(1)).decode("utf-16-be")
-                    _put_bounded(
-                        mapping,
-                        src,
-                        dst,
-                        active_budget,
-                        "ToUnicode CMap mappings",
-                    )
-                except (ValueError, TypeError, UnicodeError):
-                    pass
-        elif mode == "bfrange":
-            # Array form is matched by the second pass below.
-            if "[" in line:
-                continue
-            matches = iter(re.finditer(r"<([0-9A-Fa-f]+)>", line))
-            for start_match in matches:
-                end_match = next(matches, None)
-                dst_match = next(matches, None)
-                if end_match is None or dst_match is None:
-                    break
-                try:
-                    start_src = bytes.fromhex(start_match.group(1))
-                    end_src = bytes.fromhex(end_match.group(1))
-                    dst_hex = dst_match.group(1)
-
-                    if len(start_src) != len(end_src):
-                        continue
-
-                    dst_start_val = int(dst_hex, 16)
-                    start_int = int.from_bytes(start_src, "big")
-                    end_int = int.from_bytes(end_src, "big")
-                    if end_int < start_int:
-                        continue
-                    active_budget.check(
-                        end_int - start_int + 1,
-                        "max_container_items",
-                        "ToUnicode bfrange entries",
-                    )
-
-                    src_len = len(start_src)
-
-                    for idx, code in enumerate(range(start_int, end_int + 1)):
-                        src_bytes = code.to_bytes(src_len, "big")
-                        dst_char = chr(dst_start_val + idx)
-                        _put_bounded(
-                            mapping,
-                            src_bytes,
-                            dst_char,
-                            active_budget,
-                            "ToUnicode CMap mappings",
-                        )
-                except (ValueError, TypeError, OverflowError, UnicodeError):
-                    pass
-    # bfrange with destination array (often one line): <s> <e> [ <h1> <h2> ... ]
-    for m in re.finditer(
-        r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]+)\]",
-        text,
+    text = cmap_bytes.decode("latin-1")
+    context = "ToUnicode CMap mappings"
+    for kind, operands in _cmap_blocks(
+        text, frozenset({"bfchar", "bfrange"}), active_budget, "ToUnicode CMap"
     ):
-        try:
-            start_src = bytes.fromhex(m.group(1))
-            end_src = bytes.fromhex(m.group(2))
-            inner = m.group(3)
-            if len(start_src) != len(end_src):
+        if kind == "bfchar":
+            for src, dst in zip(operands[0::2], operands[1::2]):
+                if not isinstance(src, bytes) or not isinstance(dst, bytes):
+                    continue
+                value = _utf16_destination(dst)
+                if value is not None:
+                    _put_bounded(mapping, src, value, active_budget, context)
+            continue
+        for low, high, dst in zip(operands[0::3], operands[1::3], operands[2::3]):
+            if not isinstance(low, bytes) or not isinstance(high, bytes):
                 continue
-            start_int = int.from_bytes(start_src, "big")
-            end_int = int.from_bytes(end_src, "big")
-            if end_int < start_int:
+            if not low:
+                continue
+            # Codes take the low bound's length; pdfium and MuPDF do not
+            # insist that the high bound match it.
+            start = int.from_bytes(low, "big")
+            end = int.from_bytes(high, "big")
+            if end < start:
                 continue
             active_budget.check(
-                end_int - start_int + 1,
-                "max_container_items",
-                "ToUnicode bfrange entries",
+                end - start + 1, "max_container_items", "ToUnicode bfrange entries"
             )
-            src_len = len(start_src)
-            for idx, dst_match in enumerate(
-                re.finditer(r"<([0-9A-Fa-f]+)>", inner)
-            ):
-                code = start_int + idx
-                if code > end_int:
+            for offset, code in enumerate(range(start, end + 1)):
+                if isinstance(dst, list):
+                    # One destination per code, each used as it stands.
+                    if offset >= len(dst):
+                        break
+                    item = dst[offset]
+                    value = _utf16_destination(item) if isinstance(item, bytes) else None
+                elif isinstance(dst, bytes):
+                    value = _utf16_destination(dst, offset)
+                else:
                     break
-                src_bytes = code.to_bytes(src_len, "big")
-                dst = bytes.fromhex(dst_match.group(1)).decode("utf-16-be")
-                _put_bounded(
-                    mapping,
-                    src_bytes,
-                    dst,
-                    active_budget,
-                    "ToUnicode CMap mappings",
-                )
-        except (ValueError, TypeError, IndexError, OverflowError, UnicodeError):
-            pass
+                if value is not None:
+                    _put_bounded(
+                        mapping, code.to_bytes(len(low), "big"), value, active_budget, context
+                    )
     return mapping
 
 
@@ -458,97 +483,52 @@ def parse_encoding_cmap(
     _check_cmap_input(cmap_bytes, active_budget, "CID Encoding CMap")
     code_to_cid: dict[bytes, int] = {}
     lengths: set[int] = set()
-    try:
-        text = cmap_bytes.decode("latin-1", errors="ignore")
-    except UnicodeError:
-        return code_to_cid, []
-
-    lines = _cmap_lines(text, active_budget, "CID Encoding CMap")
-
-    mode = None
-    for line in lines:
-        if line.endswith("begincodespacerange"):
-            mode = "csr"
-            continue
-        if line.endswith("begincidrange"):
-            mode = "cidrange"
-            continue
-        if line.endswith("begincidchar"):
-            mode = "cidchar"
-            continue
-        if line.startswith("end"):
-            mode = None
-            continue
-
-        if mode == "csr":
-            for match in re.finditer(r"<([0-9A-Fa-f]+)>", line):
-                hex_str = match.group(1)
-                if len(hex_str) % 2 == 0:
+    text = cmap_bytes.decode("latin-1")
+    for kind, operands in _cmap_blocks(
+        text,
+        frozenset({"codespacerange", "cidrange", "cidchar"}),
+        active_budget,
+        "CID Encoding CMap",
+    ):
+        if kind == "codespacerange":
+            for bound in operands:
+                if isinstance(bound, bytes) and bound:
                     _add_bounded(
-                        lengths,
-                        len(hex_str) // 2,
-                        active_budget,
-                        "CID Encoding CMap code lengths",
+                        lengths, len(bound), active_budget, "CID Encoding CMap code lengths"
                     )
-        elif mode == "cidrange":
-            m = re.match(
-                r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(\d+)", line
-            )
-            if not m or len(m.group(1)) % 2 or len(m.group(2)) % 2:
-                continue
-            try:
-                lo = bytes.fromhex(m.group(1))
-                hi = bytes.fromhex(m.group(2))
-                cid0 = int(m.group(3))
-            except ValueError:
-                continue
-            if len(lo) != len(hi):
-                continue
-            n = len(lo)
-            a, b = int.from_bytes(lo, "big"), int.from_bytes(hi, "big")
-            if b < a:
-                continue
-            active_budget.check(
-                b - a + 1,
-                "max_container_items",
-                "CID Encoding CMap range entries",
-            )
-            _add_bounded(
-                lengths,
-                n,
-                active_budget,
-                "CID Encoding CMap code lengths",
-            )
-            for i, code in enumerate(range(a, b + 1)):
-                _put_bounded(
-                    code_to_cid,
-                    code.to_bytes(n, "big"),
-                    cid0 + i,
-                    active_budget,
-                    "CID Encoding CMap mappings",
+        elif kind == "cidrange":
+            for low, high, cid in zip(operands[0::3], operands[1::3], operands[2::3]):
+                if not (isinstance(low, bytes) and isinstance(high, bytes)):
+                    continue
+                if not isinstance(cid, int) or not low or len(low) != len(high):
+                    continue
+                a, b = int.from_bytes(low, "big"), int.from_bytes(high, "big")
+                if b < a:
+                    continue
+                active_budget.check(
+                    b - a + 1, "max_container_items", "CID Encoding CMap range entries"
                 )
-        elif mode == "cidchar":
-            m = re.match(r"<([0-9A-Fa-f]+)>\s*(\d+)", line)
-            if not m or len(m.group(1)) % 2:
-                continue
-            try:
-                code = bytes.fromhex(m.group(1))
-            except ValueError:
-                continue
-            _put_bounded(
-                code_to_cid,
-                code,
-                int(m.group(2)),
-                active_budget,
-                "CID Encoding CMap mappings",
-            )
-            _add_bounded(
-                lengths,
-                len(code),
-                active_budget,
-                "CID Encoding CMap code lengths",
-            )
-
+                _add_bounded(
+                    lengths, len(low), active_budget, "CID Encoding CMap code lengths"
+                )
+                for offset, code in enumerate(range(a, b + 1)):
+                    _put_bounded(
+                        code_to_cid,
+                        code.to_bytes(len(low), "big"),
+                        cid + offset,
+                        active_budget,
+                        "CID Encoding CMap mappings",
+                    )
+        else:
+            for code, cid in zip(operands[0::2], operands[1::2]):
+                if not isinstance(code, bytes) or not code or not isinstance(cid, int):
+                    continue
+                _put_bounded(
+                    code_to_cid, code, cid, active_budget, "CID Encoding CMap mappings"
+                )
+                _add_bounded(
+                    lengths, len(code), active_budget, "CID Encoding CMap code lengths"
+                )
     return code_to_cid, sorted(lengths)
 
 
@@ -561,14 +541,13 @@ def parse_encoding_cmap_wmode(
     """Return an embedded Encoding CMap's bounded ``WMode`` value."""
     active_budget = _resolve_resource_budget(limits, budget)
     _check_cmap_input(cmap_bytes, active_budget, "CID Encoding CMap")
-    try:
-        text = cmap_bytes.decode("latin-1", errors="ignore")
-    except UnicodeError:
-        return 0
-    for line in _cmap_lines(text, active_budget, "CID Encoding CMap"):
-        match = re.fullmatch(r"/WMode\s+([01])\s+def", line)
-        if match is not None:
-            return int(match.group(1))
+    window: deque[Any] = deque(maxlen=3)
+    for token in _cmap_tokens(
+        cmap_bytes.decode("latin-1"), active_budget, "CID Encoding CMap"
+    ):
+        window.append(token)
+        if len(window) == 3 and window[0] == "/WMode" and window[2] == "def":
+            return window[1] if window[1] in (0, 1) else 0
     return 0
 
 
@@ -581,40 +560,20 @@ def parse_encoding_cmap_codespaces(
     """Return validated codespace ranges from an embedded Encoding CMap."""
     active_budget = _resolve_resource_budget(limits, budget)
     _check_cmap_input(cmap_bytes, active_budget, "CID Encoding CMap")
-    try:
-        text = cmap_bytes.decode("latin-1", errors="ignore")
-    except UnicodeError:
-        return ()
     ranges: list[tuple[bytes, bytes]] = []
-    in_codespace = False
-    for line in _cmap_lines(text, active_budget, "CID Encoding CMap"):
-        if line.endswith("begincodespacerange"):
-            in_codespace = True
-            continue
-        if line.startswith("endcodespacerange"):
-            in_codespace = False
-            continue
-        if not in_codespace:
-            continue
-        for match in re.finditer(
-            r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
-            line,
-        ):
-            low_hex, high_hex = match.groups()
-            if (
-                len(low_hex) != len(high_hex)
-                or not low_hex
-                or len(low_hex) % 2
-            ):
+    for _kind, operands in _cmap_blocks(
+        cmap_bytes.decode("latin-1"),
+        frozenset({"codespacerange"}),
+        active_budget,
+        "CID Encoding CMap",
+    ):
+        for low, high in zip(operands[0::2], operands[1::2]):
+            if not (isinstance(low, bytes) and isinstance(high, bytes)):
                 continue
-            low = bytes.fromhex(low_hex)
-            high = bytes.fromhex(high_hex)
-            if low > high:
+            if not low or len(low) != len(high) or low > high:
                 continue
             active_budget.check(
-                len(ranges) + 1,
-                "max_container_items",
-                "CID Encoding CMap codespaces",
+                len(ranges) + 1, "max_container_items", "CID Encoding CMap codespaces"
             )
             ranges.append((low, high))
     return tuple(ranges)

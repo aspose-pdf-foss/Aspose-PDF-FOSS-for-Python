@@ -20,7 +20,7 @@ def test_cmap_input_uses_decoded_stream_limit() -> None:
         parse_to_unicode_cmap(b"abcd", limits=limits)
 
 
-def test_cmap_nonempty_lines_are_bounded() -> None:
+def test_cmap_tokens_are_bounded() -> None:
     limits = PdfLoadLimits(max_container_items=2)
 
     with pytest.raises(PdfResourceLimitException, match="max_container_items"):

@@ -819,7 +819,7 @@ class _PageRasterizer:
         self._text_clip: list[list[Point]] | None = None
         self.resources_cos = self._page_resources_cos()
         self.resources_plain = self._page_resources_plain()
-        self._font_cache: dict[str, _GlyphFont | None] = {}
+        self._font_cache: dict[int, _GlyphFont | None] = {}
         # Type 3 fonts by font dictionary, and how deep glyph procedures nest
         # (a glyph may show text in a Type 3 font of its own).
         self._type3_cache: dict[int, _Type3Font | None] = {}
@@ -2757,26 +2757,31 @@ class _PageRasterizer:
     def _resolve_glyph_font(
         self, name: str | None, resources_cos: PdfDictionary | None
     ) -> _GlyphFont | None:
+        """The outline font *name* selects in *resources_cos*, or ``None``.
+
+        Cached by font dictionary rather than by resource name: a form's own
+        ``/F1`` is not the page's, and keyed by name whichever was drawn first
+        drew both.
+        """
         if name is None or resources_cos is None:
             return None
-        if name in self._font_cache:
-            return self._font_cache[name]
-        try:
-            font = self._build_glyph_font(name, resources_cos)
-        except (struct.error, IndexError, ValueError, TypeError, KeyError):
-            font = None
-        self._font_cache[name] = font
-        return font
-
-    def _build_glyph_font(
-        self, name: str, resources_cos: PdfDictionary
-    ) -> _GlyphFont | None:
         fonts = self._resource_dict(resources_cos, "Font")
         if fonts is None:
             return None
         font_dict = self._resolve(fonts.mapping.get(PdfName(name)))
         if not isinstance(font_dict, PdfDictionary):
             return None
+        key = id(font_dict)
+        if key in self._font_cache:
+            return self._font_cache[key]
+        try:
+            font = self._build_glyph_font(font_dict)
+        except (struct.error, IndexError, ValueError, TypeError, KeyError):
+            font = None
+        self._font_cache[key] = font
+        return font
+
+    def _build_glyph_font(self, font_dict: PdfDictionary) -> _GlyphFont | None:
         subtype = self._cos_name(font_dict.mapping.get(PdfName("Subtype")))
         if subtype == "Type0":
             return self._build_type0_font(font_dict)

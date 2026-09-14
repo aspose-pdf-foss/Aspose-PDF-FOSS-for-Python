@@ -185,7 +185,6 @@ class _GraphicsWalker:
         self.text_hscale = 1.0
         self.text_rise = 0.0
         self.text_render_mode = 0
-        self._font_cache: dict[str, Any] = {}
         self._resolver: Any = _MISSING
         self.line_width = 1.0
         self.points: list[Point] = []
@@ -543,13 +542,12 @@ class _GraphicsWalker:
 
         Font metrics are the renderer's, not a second set: the same resolution
         that decides which glyphs get painted decides how wide the run is, so a
-        reported box and the ink agree.
+        reported box and the ink agree -- and the renderer caches each font by
+        its dictionary, where a cache here by resource name gave a form's
+        ``/F1`` the page's.
         """
         if not name or not isinstance(resources, PdfDictionary):
             return None
-        cached = self._font_cache.get(name, _MISSING)
-        if cached is not _MISSING:
-            return cached
         font = None
         resolver = self._font_resolver()
         if resolver is not None:
@@ -559,7 +557,6 @@ class _GraphicsWalker:
                 raise
             except PDF_OPERATION_ERRORS:
                 font = None
-        self._font_cache[name] = font
         return font
 
     def _font_resolver(self):

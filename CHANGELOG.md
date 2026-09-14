@@ -9,6 +9,27 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Text in a CMap written without line breaks came out as raw codes.** Every
+  CMap reader -- ToUnicode, and an embedded Encoding CMap's codespaces,
+  `cidrange`, `cidchar` and `WMode` -- went line by line and recognised an
+  operator only at the end of a line. A one-line CMap, an entry on the
+  `beginbfchar` line or an entry split over two lines gave no mappings, so
+  extraction, search and substitute-glyph rendering saw codes like
+  `\x01\x02`. They now share one PostScript tokenizer (comments and strings
+  skipped, whitespace inside hex strings ignored, an odd final digit padded).
+  `bfrange` destinations were also read as one integer, which dropped every
+  ligature range (`<00660066>`) and surrogate-pair range (`<D835DC00>`); they
+  now count up in the last UTF-16 unit. Thirteen layouts extract exactly as
+  pdfium, MuPDF and pdfminer.six do; on malformed CMaps where they disagree the
+  majority reading is used. Text from twenty PDFs written by ReportLab, PyMuPDF,
+  cairo and matplotlib is unchanged.
+- **A form's `/F1` was drawn in the page's `/F1`.** The renderer cached outline
+  fonts by resource name, so when a page and a form XObject it draws both name
+  a font `/F1` -- most generators name their first font that -- whichever ran
+  first drew both; GraphicsAbsorber measured text boxes through a second
+  name-keyed cache. Fonts are now cached by font dictionary, as Type 3 fonts
+  already were.
+
 - **Lab colour was painted as RGB, and Lab, Separation and DeviceN images as
   their raw components.** The shared colour converter counted Lab's three
   components and read them as red, green and blue, so `60 40 -30 sc` filled

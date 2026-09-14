@@ -232,7 +232,7 @@ uses the bounded defaults below. Every field accepts a positive integer or
 | `max_objects` | 250,000 | Object slots and object counts from traditional/reconstructed xref data, xref streams, and object streams. |
 | `max_xref_sections` | 256 | Incremental-update xref sections followed through `/Prev`. |
 | `max_nesting_depth` | 100 | Nested COS/content values and recursive page, outline, form, signature, annotation, resource, and function graphs. |
-| `max_container_items` | 1,000,000 | Parsed container items and materialized mappings, ranges, graph nodes, CMap lines, CID widths, and sampled-function entries. |
+| `max_container_items` | 1,000,000 | Parsed container items and materialized mappings, ranges, graph nodes, CMap tokens, CID widths, and sampled-function entries. |
 | `max_object_bytes` | 128 MiB | Encoded body size of one indirect object. |
 | `max_decoded_stream_bytes` | 128 MiB | Decoded output of one PDF stream. |
 | `max_codec_work_bytes` | 512 MiB | Estimated temporary working set for DCT, JPX, CCITT, JBIG2, image conversion, and sampled-function paths. |
@@ -898,7 +898,14 @@ Supported:
   operators inside `BT`/`ET`.
 - Decode WinAnsi and other simple encodings used by tested fonts.
 - Decode `ToUnicode` CMaps, including `bfchar`, `bfrange`, comments, multiple
-  pairs per line, and Unicode/CJK mappings.
+  pairs per line, and Unicode/CJK mappings. CMaps are read as PostScript
+  tokens, not lines, so a CMap written on one line or with entries on its
+  `begin`/`end` lines decodes the same, and so does an embedded Encoding CMap's
+  codespaces, `cidrange`, `cidchar` and `WMode`. A `bfrange` destination counts
+  up in its last UTF-16 unit (a ligature `<00660066>` gives "ff", "fg", ...; a
+  surrogate pair gives astral characters). Malformed entries are skipped one
+  by one; where pdfium, MuPDF and pdfminer disagree on a malformed CMap
+  (a block with no `end`, a range past U+FFFF) the majority reading is used.
 - Resolve bundled Adobe predefined CJK CMaps without `ToUnicode`. **Every
   encoding CMap** the Adobe Japan1, Korea1, GB1 and CNS1 collections define is
   bundled, in both `-H` and `-V` form — the Unicode families (`UCS2`, `UTF8`,
