@@ -9,6 +9,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A page with comments could not be read, flattened or edited.** A sticky
+  note's `/Popup` is an annotation whose `/Parent` is the note, and a reply's
+  `/IRT` is the note it answers. The annotation property channel inlined
+  whatever an entry referenced, so reading a note walked note -> popup -> note
+  and raised `Annotation property graph contains a cycle`: `page.annotations`,
+  `Document.flatten()` and `annotations.delete()` failed on every page carrying
+  a comment written by Acrobat or MuPDF. Another annotation, like a page, is
+  now never a property value (typed `/Annot`, or untyped with `/Subtype` and
+  `/Rect`); editing a note and saving keeps its popup and replies linked, as
+  pikepdf and PyMuPDF read the result.
+
 - **Text in a CMap written without line breaks came out as raw codes.** Every
   CMap reader -- ToUnicode, and an embedded Encoding CMap's codespaces,
   `cidrange`, `cidchar` and `WMode` -- went line by line and recognised an

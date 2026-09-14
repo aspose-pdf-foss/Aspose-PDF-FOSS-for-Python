@@ -1455,6 +1455,10 @@ Supported:
 - Read and set type-specific annotation properties through
   `Annotation.properties`, `Annotation.get_property`, and
   `Annotation.set_property`; mark PDF name values with `annotations.Name`.
+  An entry that names a page or another annotation -- a note's `/Popup`, a
+  popup's `/Parent`, a reply's `/IRT` -- is not surfaced as a property (each
+  annotation is read from the page's `/Annots` in its own right), and editing
+  other properties leaves those references as they were.
 - Read a **destination** back as the typed object it was written from: a
   `/Dest`, or the `/D` of a `/GoTo` action, whose page belongs to this document
   becomes the matching `aspose_pdf.interactive` destination carrying the page

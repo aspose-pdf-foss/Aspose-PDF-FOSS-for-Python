@@ -8043,6 +8043,14 @@ class SimplePdf:
             # destination belongs is handled as an array below; this is every
             # other place a reference to one turns up.
             return None
+        if isinstance(obj, PdfDictionary) and self._is_annotation_dict(obj):
+            # Nor is another annotation. A note's /Popup is an annotation
+            # whose /Parent is the note, and a reply's /IRT is the note it
+            # answers: inlined, the walk went note -> popup -> note -> popup
+            # and raised "cycle" for every comment Acrobat writes. Each of
+            # them is on the page's own /Annots and read there; an update
+            # writes only the entries it changes, so these references stay.
+            return None
         if isinstance(obj, PdfBoolean):
             return obj.value
         if isinstance(obj, PdfNumber):
@@ -8311,6 +8319,18 @@ class SimplePdf:
             return refs.index(ref.object_number)
         except ValueError:
             return None
+
+    def _is_annotation_dict(self, obj: PdfDictionary) -> bool:
+        """Whether *obj* is an annotation dictionary (ISO 32000-1 12.5.2).
+
+        ``/Type /Annot`` is optional, so an untyped dictionary with the two
+        entries every annotation must have -- ``/Subtype`` and ``/Rect`` --
+        counts too.
+        """
+        kind = self._get_name(obj.mapping.get(PdfName("Type")))
+        if kind is not None:
+            return kind == "Annot"
+        return PdfName("Subtype") in obj.mapping and PdfName("Rect") in obj.mapping
 
     def _destination_from_cos(self, obj: Any) -> Any:
         """This document's view of :func:`destination_from_cos`."""
