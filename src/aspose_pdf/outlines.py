@@ -12,8 +12,9 @@ class OutlineItem:
     ----------
     title : str
         Display text of the bookmark.
-    page_index : int
-        Zero-based index of the destination page.
+    page_index : int or None
+        Zero-based index of the destination page; ``None`` for a bookmark
+        that lands on no page of this document.
     is_bold : bool
         Whether the bookmark title should be rendered in bold.
     is_italic : bool
@@ -25,7 +26,7 @@ class OutlineItem:
     def __init__(
         self,
         title: str,
-        page_index: int = 0,
+        page_index: int | None = 0,
         *,
         is_bold: bool = False,
         is_italic: bool = False,
@@ -39,18 +40,25 @@ class OutlineItem:
         # two public ways of naming a target drop it, because the caller has
         # then said where the bookmark goes.
         self._loaded_target: tuple[str, object] | None = None
-        self._page_index = int(page_index)
+        self._page_index = None if page_index is None else int(page_index)
         self._destination = destination
         self.children: list[OutlineItem] = []
 
     @property
-    def page_index(self) -> int:
-        """Zero-based index of the destination page."""
+    def page_index(self) -> int | None:
+        """Zero-based index of the page the bookmark lands on.
+
+        ``None`` when it lands on no page of this document: it has no target,
+        its action goes elsewhere (a URI, a script), or it names a destination
+        the document does not define. Such a bookmark used to read as page 0,
+        and saving wrote a jump to page 1 into one that had no target at all.
+        Setting ``None`` makes a bookmark with no target.
+        """
         return self._page_index
 
     @page_index.setter
-    def page_index(self, value: int) -> None:
-        self._page_index = int(value)
+    def page_index(self, value: int | None) -> None:
+        self._page_index = None if value is None else int(value)
         self._destination = None
         self._loaded_target = None
 

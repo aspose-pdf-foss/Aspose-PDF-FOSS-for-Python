@@ -189,8 +189,14 @@ Supported:
   and deletes rather than through an index another edit has moved.
   `OutlineItem.destination` reads the target back typed
   (`aspose_pdf.interactive`) where there is a class for it, and `page_index`
-  reads the page's current position. Setting either replaces the target, since
-  the caller has then said where the bookmark goes.
+  reads the page's current position -- through a `/GoTo` action and through a
+  **named destination** (the `/Names /Dests` tree or the older `/Dests`
+  dictionary), as pdfium and MuPDF resolve them -- or `None` for a bookmark
+  that lands on no page of this document (no target, a URI, an undefined name,
+  a remote destination). Setting either replaces the target, since the caller
+  has then said where the bookmark goes; `page_index = None` leaves a bookmark
+  with no target. Merging carries a named bookmark across as the destination it
+  names, since the other document's names do not come with it.
 - **A literal string keeps its parentheses and backslashes.** Escapes inside
   `( ... )` are decoded per ISO 32000-1 7.3.4.2 -- `\n \r \t \b \f \( \) \\`,
   octal `\ddd`, and a backslash before an end-of-line as a line continuation --

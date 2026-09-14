@@ -9,6 +9,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Bookmarks by name, by action or with no target read as page 1, and saving
+  made that true.** `OutlineItem.page_index` was read from a `/Dest` array
+  only, so a bookmark naming its destination -- through the `/Names /Dests`
+  tree most writers use, or the older `/Dests` dictionary, directly or in a
+  `/GoTo` action -- read as page 0, and so did every bookmark that lands on no
+  page: one with no target (ISO 32000-1 makes both `/Dest` and `/A` optional),
+  a URI, an undefined name. Opening and saving a document gave a target-less
+  bookmark a jump to page 1 -- a PyMuPDF page deletion leaves exactly such
+  bookmarks. Named destinations now resolve as in pdfium and MuPDF,
+  `page_index` is `None` where a bookmark lands on no page, and such bookmarks
+  are written back as they were. Merging carried a named bookmark across as
+  its name, which the merged document resolved against its own names -- a
+  second copy of a file sent its bookmarks into the first copy's pages -- and
+  dropped page-less bookmarks; names are now carried as the destinations they
+  name.
+
 - **A page with comments could not be read, flattened or edited.** A sticky
   note's `/Popup` is an annotation whose `/Parent` is the note, and a reply's
   `/IRT` is the note it answers. The annotation property channel inlined

@@ -1230,6 +1230,101 @@ def action_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
 _UNRESOLVED_DESTINATION = object()
 
 
+def named_destinations(catalog: Any, resolve: Any, budget: _LoadBudget) -> dict[Any, Any]:
+    """Every named destination the catalog defines (ISO 32000-1 12.3.2.3).
+
+    Keyed ``bytes`` for the ``/Names /Dests`` name tree (PDF 1.2) and ``str``
+    for the older ``/Dests`` dictionary (PDF 1.1). A value is the entry as
+    written: the destination array, or a dictionary holding it as ``/D``.
+    """
+    found: dict[Any, Any] = {}
+    if not isinstance(catalog, PdfDictionary):
+        return found
+    legacy = resolve(catalog.mapping.get(PdfName("Dests")))
+    if isinstance(legacy, PdfDictionary):
+        for key, value in legacy.mapping.items():
+            if isinstance(key, PdfName):
+                _put_named(found, key.name.lstrip("/"), value, budget)
+    names = resolve(catalog.mapping.get(PdfName("Names")))
+    tree = resolve(names.mapping.get(PdfName("Dests"))) if isinstance(names, PdfDictionary) else None
+    stack = [(tree, 1)]
+    seen: set[int] = set()
+    while stack:
+        node, depth = stack.pop()
+        if not isinstance(node, PdfDictionary) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        budget.check(depth, "max_nesting_depth", "named destination tree depth")
+        pairs = resolve(node.mapping.get(PdfName("Names")))
+        if isinstance(pairs, PdfArray):
+            for key, value in zip(pairs.items[0::2], pairs.items[1::2]):
+                key = resolve(key)
+                if isinstance(key, PdfString):
+                    _put_named(found, key.value, value, budget)
+        kids = resolve(node.mapping.get(PdfName("Kids")))
+        if isinstance(kids, PdfArray):
+            stack.extend((resolve(kid), depth + 1) for kid in kids.items)
+    return found
+
+
+def _put_named(found: dict[Any, Any], key: Any, value: Any, budget: _LoadBudget) -> None:
+    if key not in found:
+        budget.check(len(found) + 1, "max_container_items", "named destinations")
+        found[key] = value
+
+
+def explicit_destination(target: Any, resolve: Any, named: dict[Any, Any]) -> Any:
+    """The destination array *target* stands for, following a name; else ``None``.
+
+    A string is looked up in the name tree first and a name in the ``/Dests``
+    dictionary first, each falling back to the other, since writers mix the
+    two up and pdfium and MuPDF accept either.
+    """
+    target = resolve(target)
+    if isinstance(target, PdfArray):
+        return target
+    if isinstance(target, PdfString):
+        keys: tuple[Any, ...] = (target.value, target.value.decode("latin-1"))
+    elif isinstance(target, PdfName):
+        name = target.name.lstrip("/")
+        keys = (name, name.encode("latin-1", "replace"))
+    else:
+        return None
+    for key in keys:
+        if key in named:
+            entry = resolve(named[key])
+            if isinstance(entry, PdfDictionary):
+                entry = resolve(entry.mapping.get(PdfName("D")))
+            return entry if isinstance(entry, PdfArray) else None
+    return None
+
+
+def loaded_target_page_reference(loaded: Any, resolve: Any, named: dict[Any, Any]) -> Any:
+    """The page reference an outline item's loaded target lands on, or ``None``.
+
+    Through a ``/GoTo`` action's ``/D`` and through a named destination --
+    reading only a ``/Dest`` array put every bookmark written as an action or
+    by name on page 1. ``None`` for no target, an action that goes somewhere
+    else, a name the document does not define, and a remote destination, whose
+    page is a number in another file.
+    """
+    if loaded is None:
+        return None
+    key, raw = loaded
+    target = resolve(raw)
+    if key == "A":
+        if not isinstance(target, PdfDictionary):
+            return None
+        if resolve(target.mapping.get(PdfName("S"))) != PdfName("GoTo"):
+            return None
+        target = target.mapping.get(PdfName("D"))
+    array = explicit_destination(target, resolve, named)
+    if array is None or not array.items:
+        return None
+    page = array.items[0]
+    return page if isinstance(page, PdfIndirectReference) else None
+
+
 # ---------------------------------------------------------------------------
 # SimplePdf - main document class
 # ---------------------------------------------------------------------------
@@ -2421,15 +2516,51 @@ class SimplePdf:
         destination, and a remote destination -- whose page is a *number* in
         another file.
         """
+        return loaded_target_page_reference(
+            loaded, self._resolve, self._named_destinations()
+        )
+
+    def _explicit_loaded_target(self, loaded: Any) -> Any:
+        """*loaded* with a named destination replaced by the one it names.
+
+        ``None`` when the name is not defined here; any other target is
+        returned as it is.
+        """
         if loaded is None:
             return None
-        obj = self._resolve(loaded[1])
-        if isinstance(obj, PdfDictionary):
-            obj = self._resolve(obj.mapping.get(PdfName("D")))
-        if not isinstance(obj, PdfArray) or not obj.items:
+        key, raw = loaded
+        target = self._resolve(raw)
+        named = self._named_destinations()
+        if key == "Dest":
+            if not isinstance(target, (PdfString, PdfName)):
+                return loaded
+            explicit = explicit_destination(target, self._resolve, named)
+            return None if explicit is None else ("Dest", explicit)
+        if not isinstance(target, PdfDictionary):
+            return loaded
+        name = self._resolve(target.mapping.get(PdfName("D")))
+        if self._resolve(target.mapping.get(PdfName("S"))) != PdfName("GoTo") or not isinstance(
+            name, (PdfString, PdfName)
+        ):
+            return loaded
+        explicit = explicit_destination(name, self._resolve, named)
+        if explicit is None:
             return None
-        page = obj.items[0]
-        return page if isinstance(page, PdfIndirectReference) else None
+        action = PdfDictionary(dict(target.mapping))
+        action.mapping[PdfName("D")] = explicit
+        return ("A", action)
+
+    def _named_destinations(self) -> dict[Any, Any]:
+        """The catalog's named destinations, read once per catalog."""
+        if self._cos_doc is None:
+            return {}
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        cached = getattr(self, "_named_destination_cache", None)
+        if cached is not None and cached[0] is catalog:
+            return cached[1]
+        found = named_destinations(catalog, self._resolve, self._load_budget)
+        self._named_destination_cache = (catalog, found)
+        return found
 
     def _loaded_target_still_lands(self, loaded: Any) -> bool:
         """True unless the target names a page this document no longer has.
@@ -2544,16 +2675,25 @@ class SimplePdf:
             item_ref = self._register_at(outline_dict, next_slot())
             loaded = item.get("loaded_target")
             target = item.get("target")
-            if loaded is not None and self._loaded_target_still_lands(loaded):
+            page_index = item.get("page_index", 0)
+            if loaded is not None and (
+                page_index is None or self._loaded_target_still_lands(loaded)
+            ):
                 # What the file held, unchanged -- including the page it names
                 # by reference, so the bookmark follows its page rather than an
-                # index that another edit has since moved out from under it.
+                # index that another edit has since moved out from under it. A
+                # target that landed on no page when it was read is written back
+                # as it was, having no index to fall back to.
                 outline_dict.mapping[PdfName(loaded[0])] = loaded[1]
             elif target is not None:
                 cos_target, key = self._interactive_target_cos(target)
                 outline_dict.mapping[PdfName(key)] = cos_target
+            elif page_index is None:
+                # A bookmark with no target at all (Table 153 makes both /Dest
+                # and /A optional). Saving used to give it one: page 1.
+                pass
             else:
-                page_ref = self._make_page_ref(item.get("page_index", 0))
+                page_ref = self._make_page_ref(page_index)
                 outline_dict.mapping[PdfName("Dest")] = PdfArray(
                     [page_ref, PdfName("Fit")]
                 )
@@ -9027,7 +9167,12 @@ class SimplePdf:
         document was taken -- and neither does the bookmark: pointing it at
         whatever now sits at its old index would send the reader somewhere the
         original never named. Its children go with it, since a bookmark tree
-        cannot skip a level.
+        cannot skip a level. A bookmark that lands on no page -- a URI, no
+        target -- is not tied to one and comes across as it is.
+
+        A named destination is carried as the destination it names: the other
+        document's names are not merged, so the name would mean nothing here,
+        or whatever this document happens to call by the same name.
         """
         source_items = other.outline_items()
         if not source_items:
@@ -9036,16 +9181,21 @@ class SimplePdf:
         def retargeted(items: list[dict]) -> list[dict]:
             out = []
             for item in items:
-                index = positions.get(item.get("page_index", 0))
-                if index is None:
+                page = item.get("page_index", 0)
+                index = None if page is None else positions.get(page)
+                if page is not None and index is None:
                     continue
                 entry = dict(item)
-                loaded = item.get("loaded_target")
-                if loaded is not None:
-                    entry["loaded_target"] = (
-                        loaded[0],
-                        self._import_object(other, loaded[1], imported),
-                    )
+                loaded = other._explicit_loaded_target(item.get("loaded_target"))
+                if page is None and other._loaded_target_page(loaded) is not None:
+                    # It names a page the other document does not have: a dead
+                    # link, and importing it would copy that page's object in.
+                    loaded = None
+                entry["loaded_target"] = (
+                    None
+                    if loaded is None
+                    else (loaded[0], self._import_object(other, loaded[1], imported))
+                )
                 target = item.get("target")
                 if target is not None and hasattr(target, "page"):
                     entry["target"] = replace(target, page=index)
@@ -15698,6 +15848,7 @@ class CosExtractor:
             return []
         return self._collect_outline_items(
             first_ref,
+            named=named_destinations(root, self._resolve, self._budget),
             _visited=set(),
             _node_count=[0],
         )
@@ -15707,6 +15858,7 @@ class CosExtractor:
         item_ref: Any,
         depth: int = 0,
         *,
+        named: dict[Any, Any] | None = None,
         _visited: set[tuple[str, int]] | None = None,
         _node_count: list[int] | None = None,
     ) -> list[dict]:
@@ -15719,7 +15871,7 @@ class CosExtractor:
             references a missing object, or nests deeper than
             :data:`OUTLINE_TREE_MAX_DEPTH`.
         """
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfString
+        from .cos import PdfDictionary, PdfName, PdfNumber, PdfString
 
         if depth > OUTLINE_TREE_MAX_DEPTH:
             raise PdfParseException(
@@ -15770,7 +15922,6 @@ class CosExtractor:
             # API has a class for it and the page index it lands on.
             loaded_target = None
             target = None
-            page_index = 0
             for key in ("Dest", "A"):
                 raw = item.mapping.get(PdfName(key))
                 if raw is None:
@@ -15778,10 +15929,12 @@ class CosExtractor:
                 loaded_target = (key, raw)
                 target = self._outline_target(key, self._resolve(raw))
                 break
-            dest = self._resolve(item.mapping.get(PdfName("Dest")))
-            if isinstance(dest, PdfArray) and len(dest.items) > 0:
-                page_ref = dest.items[0]
-                page_index = self._page_ref_to_index(page_ref)
+            # ``None`` where it lands on no page of this document: no target,
+            # a URI, a name nobody defined, a page that is not in the tree.
+            page_ref = loaded_target_page_reference(
+                loaded_target, self._resolve, named
+            )
+            page_index = None if page_ref is None else self._outline_page_index(page_ref)
 
             # Style flags (/F bit 1 = italic, bit 2 = bold)
             flags = 0
@@ -15796,6 +15949,7 @@ class CosExtractor:
                 children = self._collect_outline_items(
                     first_child,
                     depth + 1,
+                    named=named,
                     _visited=visited,
                     _node_count=node_count,
                 )
@@ -15836,17 +15990,6 @@ class CosExtractor:
             return ids.index(ref.object_number)
         except ValueError:
             return None
-
-    def _page_ref_to_index(self, page_ref: Any) -> int:
-        """Map a page object reference to a zero-based page index."""
-        _ = self._resolve(page_ref)  # resolved
-        if isinstance(page_ref, PdfIndirectReference):
-            obj_num = page_ref.object_number
-            # Use the cached page object ID list if available
-            cached = getattr(self, "_page_obj_ids", [])
-            if obj_num in cached:
-                return cached.index(obj_num)
-        return 0
 
     def extract_signature(self) -> dict[str, str] | None:
         from .cos import PdfDictionary, PdfName, PdfString
@@ -16558,15 +16701,15 @@ class PdfWriterV0:
 
         # --- Phase 4: write each node ---
         for node in nodes:
-            page_idx = max(0, min(node["page_index"], page_count - 1))
-            page_obj_id = first_page_obj_id + page_idx
             flags = (1 if node["is_italic"] else 0) | (2 if node["is_bold"] else 0)
 
             parts = [
                 f"/Title {self._string_literal(node['title'])}",
                 f"/Parent {node['parent_id']} 0 R",
-                f"/Dest [{page_obj_id} 0 R /Fit]",
             ]
+            if node["page_index"] is not None:
+                page_idx = max(0, min(node["page_index"], page_count - 1))
+                parts.append(f"/Dest [{first_page_obj_id + page_idx} 0 R /Fit]")
             if node["prev_id"]:
                 parts.append(f"/Prev {node['prev_id']} 0 R")
             if node["next_id"]:
