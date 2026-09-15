@@ -162,67 +162,66 @@ def _skip_pdf_whitespace_and_comments(data, pos: int, limit: int) -> int:
     return pos
 
 
-def _find_rightmost_endstream_token(data, stream_start: int, content_end: int) -> int:
-    """Locate the closing ``endstream`` keyword within ``[stream_start, content_end)``.
+_AFTER_ENDSTREAM = re.compile(rb"endobj|\d+\s+\d+\s+obj|xref|trailer|startxref")
 
-    Without a trusted ``/Length``, naive substring search can match ``endstream`` bytes
-    inside stream content or in a later object. We bound the search to the
-    current object's body and prefer the **rightmost** token-shaped occurrence (closest to
-    ``endobj``), which matches usual PDF layout when the payload contains false positives.
+
+def _find_closing_endstream(data, stream_start: int) -> int:
+    """Offset of the ``endstream`` that closes the stream starting at *stream_start*.
+
+    Used when ``/Length`` cannot be trusted. The first token-shaped ``endstream``
+    followed -- past white-space and comments -- by ``endobj`` closes it, or, where
+    a writer left ``endobj`` out, by the next object, the cross-reference section
+    or the end of the file. The word can occur in the data itself -- an
+    uncompressed content stream may well say ``endstream`` or ``endobj`` -- and
+    such an occurrence is followed by more data, not by one of those; and the
+    stream's own keyword comes before any later object's, so the search never
+    reaches into the next object.
     """
-    if stream_start > content_end:
-        raise PdfParseException("malformed stream: invalid object span")
-    window = data[stream_start:content_end]
-    wlen = len(window)
     tok, tlen = _ENDSTREAM_KW, len(_ENDSTREAM_KW)
-    pos = wlen
-    while pos > 0:
-        rel = window.rfind(tok, 0, pos)
-        if rel < 0:
-            break
-        before_ok = rel == 0 or window[rel - 1] in _PDF_WS
-        after_idx = rel + tlen
-        after_ok = after_idx == wlen or (
-            window[after_idx] in _PDF_WS or window[after_idx] in b"()<>[]{}/%"
-        )
+    n = len(data)
+    pos = stream_start
+    while True:
+        at = data.find(tok, pos)
+        if at < 0:
+            raise PdfParseException("endstream not found for stream")
+        after = at + tlen
+        before_ok = at == stream_start or data[at - 1] in _PDF_WS
+        after_ok = after == n or data[after] in _PDF_WS or data[after] in b"()<>[]{}/%"
         if before_ok and after_ok:
-            return stream_start + rel
-        pos = rel
-    raise PdfParseException("endstream not found in object")
+            k = _skip_pdf_whitespace_and_comments(data, after, n)
+            if k == n or _AFTER_ENDSTREAM.match(data, k):
+                return at
+        pos = after
 
 
-def _extract_stream_bytes(
-    data,
-    stream_start: int,
-    content_end: int,
-    declared_length: int | None,
-) -> bytes:
-    """Stream payload bytes for ``stream`` … ``endstream`` within one indirect object."""
-    if stream_start > content_end:
-        raise PdfParseException("malformed stream: stream starts after endobj boundary")
+def _extract_stream_bytes(data, stream_start: int, declared_length: int | None) -> bytes:
+    """Stream payload bytes for ``stream`` ... ``endstream`` (ISO 32000-1 7.3.8.1).
+
+    ``/Length`` is trusted when ``endstream`` follows the bytes it counts, even
+    past an ``endobj`` that belongs to the data: the object used to end at the
+    first ``endobj`` found, so a content stream merely containing that word made
+    the document unreadable. A ``/Length`` that is wrong -- too long, too short,
+    negative, the most common damage a transfer does to a file -- is replaced by
+    the closing ``endstream``, as pdfium, MuPDF and qpdf do, where it used to
+    fail the whole document. Found that way, the end-of-line before the keyword
+    is left out: 7.3.8.1 says it is not part of the data.
+    """
     tok, tlen = _ENDSTREAM_KW, len(_ENDSTREAM_KW)
-
+    n = len(data)
     if declared_length is not None:
-        if declared_length < 0:
-            raise PdfParseException("stream /Length must be non-negative")
-        if stream_start + declared_length > content_end:
-            raise PdfParseException(
-                "stream /Length extends past object; malformed stream boundaries"
-            )
-        j = _skip_pdf_whitespace(data, stream_start + declared_length, content_end)
-        if j + tlen > content_end or data[j : j + tlen] != tok:
-            raise PdfParseException(
-                "stream /Length does not align with endstream keyword (malformed stream)"
-            )
-        k = _skip_pdf_whitespace_and_comments(data, j + tlen, content_end)
-        if k != content_end:
-            raise PdfParseException("unexpected data after endstream in stream object")
-        return bytes(data[stream_start : stream_start + declared_length])
-
-    end_at = _find_rightmost_endstream_token(data, stream_start, content_end)
-    k = _skip_pdf_whitespace_and_comments(data, end_at + tlen, content_end)
-    if k != content_end:
-        raise PdfParseException("unexpected data after endstream in stream object")
+        if declared_length >= 0:
+            j = _skip_pdf_whitespace(data, stream_start + declared_length, n)
+            if data[j : j + tlen] == tok:
+                return bytes(data[stream_start : stream_start + declared_length])
+        logger.warning(
+            "stream /Length %d does not reach endstream; reading to the keyword",
+            declared_length,
+        )
+    end_at = _find_closing_endstream(data, stream_start)
+    if end_at > stream_start and data[end_at - 1] == 0x0A:
+        end_at -= 2 if end_at - 1 > stream_start and data[end_at - 2] == 0x0D else 1
+    elif end_at > stream_start and data[end_at - 1] == 0x0D:
+        end_at -= 1
     return bytes(data[stream_start:end_at])
 
 
@@ -573,6 +572,8 @@ class PdfCosParser:
             int, tuple[int, int]
         ] = {}  # obj_num -> (objstm_num, index)
         self.trailer: PdfDictionary = PdfDictionary()
+        #: Offsets of streams whose indirect ``/Length`` is being resolved.
+        self._resolving_lengths: set[int] = set()
 
     # ---------------------------------------------------------------------
     # Public API
@@ -1256,11 +1257,11 @@ class PdfCosParser:
         if not obj_header_match:
             raise PdfParseException(f"Object header not found at offset {offset}")
         content_start = obj_header_match.end()
-        # Find the position of "endobj"
+        # Find the position of "endobj". A writer that left it out -- after the
+        # last object, say -- is read to the end of the data; the tokenizer
+        # stops at the end of the one object either way.
         end_match = _ENDOBJ_RE.search(self._data, content_start)
-        if not end_match:
-            raise PdfParseException("endobj not found for object")
-        content_end = end_match.start()
+        content_end = end_match.start() if end_match else len(self._data)
         self._budget.check(
             content_end - content_start,
             "max_object_bytes",
@@ -1289,16 +1290,12 @@ class PdfCosParser:
                 else:
                     tokenizer._consume()
             # Length entry gives byte count
-            length_obj = obj.mapping.get(PdfName("Length"))
-            if isinstance(length_obj, PdfNumber):
-                length = int(length_obj.value)
-            else:
-                # Fallback - locate endstream within this object only
-                length = None
+            length = self._stream_length(obj.mapping.get(PdfName("Length")), offset)
             # Extract stream bytes from original data (preserve raw bytes)
             stream_start = content_start + tokenizer.pos
-            stream_bytes = _extract_stream_bytes(
-                self._data, stream_start, content_end, length
+            stream_bytes = _extract_stream_bytes(self._data, stream_start, length)
+            self._budget.check(
+                len(stream_bytes), "max_object_bytes", "stream bytes"
             )
             # Construct PdfStream object. The bytes are as they sit in the
             # file, so they are still ciphertext when the document is
@@ -1307,6 +1304,34 @@ class PdfCosParser:
             stream_obj.content_decrypted = False
             return stream_obj
         return obj
+
+    def _stream_length(self, length_obj: Any, offset: int) -> int | None:
+        """``/Length`` as a number, following an indirect reference to one.
+
+        pdfTeX, matplotlib and many others write ``/Length 12 0 R``. Unresolved,
+        such a stream was measured by its ``endstream`` keyword instead, which is
+        right almost always but not where the data itself ends in an end-of-line
+        byte the writer did not follow with one of its own. ``None`` -- read to
+        the keyword -- when the number cannot be had, including a length that
+        refers back to the stream being read.
+        """
+        if isinstance(length_obj, PdfNumber):
+            return int(length_obj.value)
+        if not isinstance(length_obj, PdfIndirectReference) or not self._objects:
+            return None
+        resolving = self._resolving_lengths
+        if offset in resolving:
+            return None
+        resolving.add(offset)
+        try:
+            target = self._objects.get(length_obj.object_number)
+        except PdfResourceLimitException:
+            raise
+        except (PdfParseException, KeyError, ValueError, IndexError):
+            target = None
+        finally:
+            resolving.discard(offset)
+        return int(target.value) if isinstance(target, PdfNumber) else None
 
     # ---------------------------------------------------------------------
     # End of class

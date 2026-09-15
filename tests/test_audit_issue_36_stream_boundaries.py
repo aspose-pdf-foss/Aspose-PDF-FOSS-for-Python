@@ -1,4 +1,10 @@
-"""AUDIT #36: Stream /Length and endstream detection must stay within the object (COS)."""
+"""AUDIT #36: Stream /Length and endstream detection must stay within the object (COS).
+
+A wrong ``/Length`` used to raise, and with it the whole document failed to
+open; pdfium, MuPDF and qpdf read to the closing ``endstream`` instead, and so
+does this parser now -- still never past the stream's own keyword into a later
+object. The end-of-line before ``endstream`` is not data (ISO 32000-1 7.3.8.1).
+"""
 
 from __future__ import annotations
 
@@ -28,28 +34,35 @@ def test_stream_correct_length_loads():
     assert stm.content == payload
 
 
-def test_stream_length_misaligned_raises():
-    """Declared length must end immediately before ``endstream`` (whitespace only)."""
+@pytest.mark.parametrize(
+    "length",
+    [2, 99999, -1],
+    ids=["too-short", "past-the-object", "negative"],
+)
+def test_a_wrong_length_reads_to_the_closing_keyword(length, caplog):
     payload = b"ABCDEF"
-    inner = b"<< /Length 2 >>\n"  # too short: leaves ``CDEF`` before keyword
+    inner = b"<< /Length %d >>\n" % length
     doc = PdfCosParser(_pdf_with_stream(inner_dict=inner, payload=payload)).parse()
-    with pytest.raises(PdfParseException, match="align"):
-        _ = doc.objects[1]
+    assert doc.objects[1].content == payload
+    assert "does not reach endstream" in caplog.text
 
 
-def test_stream_length_past_object_raises():
-    """/Length must not extend beyond the bytes reserved for this object body."""
-    payload = b"X"
-    inner = b"<< /Length 99999 >>\n"
+def test_a_correct_length_is_trusted_past_an_endobj_in_the_data():
+    """The object used to end at the first ``endobj``, here inside the data."""
+    payload = b"(endobj) Tj (endstream endobj) Tj"
+    inner = b"<< /Length %d >>\n" % len(payload)
     doc = PdfCosParser(_pdf_with_stream(inner_dict=inner, payload=payload)).parse()
-    with pytest.raises(PdfParseException, match="extends past object"):
-        _ = doc.objects[1]
+    assert doc.objects[1].content == payload
 
 
-def test_stream_negative_length_raises():
-    inner = b"<< /Length -1 >>\n"
-    doc = PdfCosParser(_pdf_with_stream(inner_dict=inner, payload=b"")).parse()
-    with pytest.raises(PdfParseException, match="non-negative"):
+def test_a_stream_with_no_endstream_is_still_an_error():
+    header = b"%PDF-1.7\n"
+    obj = b"1 0 obj\n<< /Length 999 >>\nstream\nno keyword follows\nendobj\n"
+    xref_pos = len(header) + len(obj)
+    pdf = header + obj + b"xref\n0 2\n0000000000 65535 f \n%010d 00000 n \n" % len(header)
+    pdf += b"trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF" % xref_pos
+    doc = PdfCosParser(pdf).parse()
+    with pytest.raises(PdfParseException, match="endstream not found"):
         _ = doc.objects[1]
 
 
@@ -60,7 +73,7 @@ def test_stream_without_length_uses_rightmost_endstream_token():
     inner = b"<< >>\n"
     doc = PdfCosParser(_pdf_with_stream(inner_dict=inner, payload=payload)).parse()
     stm = doc.objects[1]
-    assert stm.content == payload + b"\n"
+    assert stm.content == payload
 
 
 def test_stream_without_length_bounded_to_object_not_later_file():
@@ -81,4 +94,4 @@ def test_stream_without_length_bounded_to_object_not_later_file():
     pdf = body + xref + trailer + startxref
     doc = PdfCosParser(pdf).parse()
     stm1 = doc.objects[1]
-    assert stm1.content == b"ONLY_A\n"
+    assert stm1.content == b"ONLY_A"

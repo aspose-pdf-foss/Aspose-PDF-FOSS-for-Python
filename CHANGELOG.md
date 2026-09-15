@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **One stream could make a document unopenable.** An object was taken to end at
+  the first `endobj` after its header, so a content stream that merely contains
+  the word `endobj` -- in a comment, in a string -- had its correct `/Length`
+  rejected as running past the object, and the document failed to open. A
+  wrong `/Length` (too long, too short or negative, the usual damage from a
+  transfer that rewrites line endings) failed it the same way, as did an
+  object missing its `endobj` before the cross-reference table. pdfium, MuPDF
+  and qpdf read all of these. `/Length` is now trusted when `endstream` follows
+  it, a wrong one is replaced by the closing `endstream` (never one inside the
+  data, never a later object's), and an indirect `/Length` is followed: streams
+  measured by one -- pdfTeX and matplotlib write them -- now hold exactly the
+  bytes qpdf reads instead of the end-of-line before `endstream`.
+
 - **Hybrid-reference files lost everything kept in object streams, and saving
   one broke it.** A file written to stay readable by PDF 1.4 software (ISO
   32000-1 7.5.8.4) indexes its objects in object streams in a cross-reference

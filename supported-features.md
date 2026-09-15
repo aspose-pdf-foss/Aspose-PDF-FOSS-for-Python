@@ -67,6 +67,14 @@ Supported:
   update stays deleted. A **full** save carries only the trailer keys that name
   something in the file it is writing — `/Root`, `/Info`, `/ID`, `/Encrypt` —
   never a `/Prev` into a revision it does not have.
+- **A stream ends where its `/Length` says, or at `endstream`** (ISO 32000-1
+  7.3.8.1). A `/Length` is trusted when `endstream` follows the bytes it counts
+  -- also past an `endobj` that is part of the data -- and an indirect one is
+  followed. A wrong one (too long, too short, negative) is logged and replaced
+  by the closing keyword: the first token-shaped `endstream` followed by
+  `endobj`, or by the next object, `xref` or the end of the file where a writer
+  left `endobj` out. Found that way, the end-of-line before the keyword is not
+  data.
 - **Hybrid-reference files** (ISO 32000-1 7.5.8.4) are read as the one revision
   they are: the trailer's `/XRefStm` cross-reference stream indexes the objects
   in object streams that the classic table, kept for PDF 1.4 readers, leaves
