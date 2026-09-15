@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Signing a document that had been updated before could destroy it.** The
+  incremental-update builder behind signing, the `/DSS` and document
+  timestamps took its next object number from the newest cross-reference
+  section, which lists only what that revision changed. After any earlier
+  update that rewrote a low-numbered object -- a catalog touched by a save, a
+  field filled in by another tool -- it handed out numbers older revisions
+  still owned: signing gave the signature dictionary the page's number, the new
+  revision replaced the page, pdfium could not open the result and MuPDF found
+  no text in it, while the signature itself validated. The appended revision's
+  `/Size` shrank with it. New objects are now numbered above the trailer's
+  `/Size` and every object header in the file. Signing files written by this
+  library, qpdf (object streams, linearized, QDF), MuPDF, a hybrid-reference
+  layout and a two-revision file now validates intact in pyHanko and opens in
+  pdfium, MuPDF and qpdf.
+
 - **A PDF with anything in front of its header did not open.** The reader
   required the data to start with `%PDF-`, where Acrobat accepts the header
   anywhere in the first 1024 bytes and pdfium, MuPDF and qpdf read such files.

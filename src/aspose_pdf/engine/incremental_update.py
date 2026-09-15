@@ -26,6 +26,9 @@ from typing import Any
 from aspose_pdf.exceptions import PdfParseException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
+_SIZE_ENTRY = re.compile(rb"/Size\s+(\d+)")
+_OBJECT_HEADER_LINE = re.compile(rb"(?:^|[\r\n])\s*(\d+)\s+\d+\s+obj\b")
+
 
 @dataclass
 class IncrementalUpdate:
@@ -67,11 +70,17 @@ class IncrementalUpdate:
         self.original_eof_offset = self.find_last_eof()
         startxref = self.find_startxref()
         self._parse_existing_objects(startxref)
-        # The next object number is one greater than the highest existing.
+        # The next object number is one greater than the highest in the
+        # *file*. The newest cross-reference section lists only what its own
+        # revision changed, so taken alone it offered numbers older revisions
+        # still own: signing a document whose last update rewrote its catalog
+        # gave the signature dictionary the page's number, and the page was
+        # gone. The trailer's /Size covers the whole file (ISO 32000-1 7.5.5);
+        # the object headers present stand in where a writer got it wrong.
         self.next_obj_num = max(
-            (obj for obj, _, _ in self.xref_entries),
-            default=0,
-        ) + 1
+            self._declared_size(startxref),
+            self._highest_object_header() + 1,
+        )
 
     # ------------------------------------------------------------------
     # Parsing helpers
@@ -99,6 +108,25 @@ class IncrementalUpdate:
         if last_match is None:
             raise PdfParseException("PDF does not contain a startxref")
         return int(last_match.group(1))
+
+    def _declared_size(self, startxref: int) -> int:
+        """The ``/Size`` the newest trailer (or cross-reference stream) declares."""
+        data = self.original_data
+        if not 0 <= startxref < len(data):
+            return 0
+        end = data.find(b"startxref", startxref)
+        match = _SIZE_ENTRY.search(data, startxref, end if end > 0 else len(data))
+        return int(match.group(1)) if match else 0
+
+    def _highest_object_header(self) -> int:
+        """The highest ``N G obj`` number that starts a line anywhere in the file."""
+        highest = 0
+        for match in _OBJECT_HEADER_LINE.finditer(self.original_data):
+            number = int(match.group(1))
+            if number > highest:
+                self.budget.check_object_id(number)
+                highest = number
+        return highest
 
     def _parse_existing_objects(self, startxref: int) -> None:
         """Populate ``xref_entries`` with existing object metadata."""

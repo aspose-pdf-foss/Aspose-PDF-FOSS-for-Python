@@ -1787,6 +1787,11 @@ Supported:
   **PAdES-LTA**; document timestamps are validated as RFC 3161 tokens over their
   own ByteRange. The compromise detector treats DSS/archive-timestamp
   incremental updates as legitimate rather than as tampering.
+- A revision appended by signing, the `/DSS` or a document timestamp numbers
+  its new objects above the trailer's `/Size` and every object header in the
+  file, never with a number an earlier revision still owns -- whatever the file
+  has been through: several updates, object streams, a hybrid-reference layout
+  or linearization. Signatures over all of these validate intact in pyHanko.
 - Inspect structured validation results via `PdfSignature.validate(...)`
   (signer, trust status, revocation status, timestamp, certification level,
   PAdES level).
