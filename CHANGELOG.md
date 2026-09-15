@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **ReportLab documents opened without their metadata, and encrypted ones did
+  not open at all.** ReportLab writes a comment into the trailer dictionary of
+  every file (`% ReportLab generated PDF document -- digest (opensource)`), and
+  the object tokenizer did not treat `%` as the start of a comment, which ISO
+  32000-1 7.2.3 allows anywhere white-space may stand. The trailer failed, the
+  reader rebuilt the cross-reference table by scanning the file, and the scan
+  parsed the trailer with the same tokenizer and lost it again: title and
+  author were gone, and an encrypted ReportLab file -- whose `/Encrypt` is in
+  that trailer -- failed with a resource-limit error under either password.
+  Comments are now white-space in objects and trailers alike (form feed too),
+  and the trailer extractor steps over comments and strings holding `<<`, `>>`
+  or `(`. pdfium, MuPDF and qpdf read every case in the new tests; text and
+  metadata from the rest of a mixed corpus are unchanged.
+
 - **Extracting a page copied every page its links pointed at.** Importing a
   page followed its link annotations' page references, so a link to a page
   that was not being copied brought that page -- content and resources -- into

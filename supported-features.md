@@ -67,6 +67,13 @@ Supported:
   update stays deleted. A **full** save carries only the trailer keys that name
   something in the file it is writing — `/Root`, `/Info`, `/ID`, `/Encrypt` —
   never a `/Prev` into a revision it does not have.
+- **Comments are white-space wherever they stand** (ISO 32000-1 7.2.3): inside a
+  dictionary or array, between the numbers of a reference, before `stream`,
+  and in the trailer, where ReportLab writes one into every file. Form feed is
+  white-space too. A comment or literal string holding `<<`, `>>` or `(` does
+  not end or open anything, so a well-formed trailer is read as it stands
+  rather than rebuilt by scanning the file -- a rebuild that used to lose the
+  document information and, for an encrypted file, `/Encrypt` itself.
 - **A save reproduces what it was given.** Outlines and attachments are held in
   the model rather than the COS graph and are rebuilt on every save; the
   rebuild takes over the object numbers the previous copy occupied, so opening

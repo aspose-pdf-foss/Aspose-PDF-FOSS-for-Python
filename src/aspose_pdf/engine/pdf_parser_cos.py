@@ -85,7 +85,9 @@ def _cos_dictionary_bytes_at(
     """Return the PDF dictionary bytes starting at *start*, using balanced ``<<``/``>>``.
 
     A DOTALL non-greedy regex such as ``<<.*?>>`` stops at the first ``>>``, which
-    breaks trailers (and other dicts) that contain nested dictionaries.
+    breaks trailers (and other dicts) that contain nested dictionaries. A ``<<``
+    or ``>>`` inside a literal string or a comment is not a delimiter either, so
+    both are stepped over whole.
     """
     if start < 0 or start + 2 > len(data) or data[start : start + 2] != b"<<":
         return None
@@ -93,6 +95,26 @@ def _cos_dictionary_bytes_at(
     i = start + 2
     n = len(data)
     while i < n:
+        if data[i] == 0x25:  # '%' -- a comment runs to the end of its line
+            while i < n and data[i] not in b"\r\n":
+                i += 1
+            continue
+        if data[i] == 0x28:  # '(' -- a literal string, balanced, with escapes
+            nesting = 0
+            while i < n:
+                byte = data[i]
+                if byte == 0x5C:  # '\\'
+                    i += 2
+                    continue
+                if byte == 0x28:
+                    nesting += 1
+                elif byte == 0x29:
+                    nesting -= 1
+                    if nesting == 0:
+                        i += 1
+                        break
+                i += 1
+            continue
         if i + 1 < n and data[i : i + 2] == b"<<":
             depth += 1
             if max_depth is not None and depth > max_depth:
@@ -265,8 +287,24 @@ class _Tokenizer:
         self.pos += n
 
     def _consume_whitespace(self) -> None:
-        while self.pos < self.len and self.s[self.pos] in " \t\r\n\0":
-            self.pos += 1
+        """Skip white-space and comments (ISO 32000-1 7.2.2, 7.2.3).
+
+        A comment may stand anywhere white-space may, and ReportLab writes one
+        into every trailer dictionary: read as a token, it failed the trailer,
+        and the reconstruction that followed lost it too -- the document
+        information, the file identifier and, in an encrypted file, the
+        ``/Encrypt`` entry without which it cannot be opened at all. Form feed
+        is white-space as well.
+        """
+        while self.pos < self.len:
+            ch = self.s[self.pos]
+            if ch in " \t\r\n\f\0":
+                self.pos += 1
+            elif ch == "%":
+                while self.pos < self.len and self.s[self.pos] not in "\r\n":
+                    self.pos += 1
+            else:
+                break
 
     def _match(self, text: str) -> bool:
         if self.s.startswith(text, self.pos):
