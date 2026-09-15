@@ -67,6 +67,11 @@ Supported:
   update stays deleted. A **full** save carries only the trailer keys that name
   something in the file it is writing — `/Root`, `/Info`, `/ID`, `/Encrypt` —
   never a `/Prev` into a revision it does not have.
+- **Hybrid-reference files** (ISO 32000-1 7.5.8.4) are read as the one revision
+  they are: the trailer's `/XRefStm` cross-reference stream indexes the objects
+  in object streams that the classic table, kept for PDF 1.4 readers, leaves
+  out, and the table's own in-use entries answer first. A `/XRefStm` that does
+  not parse is ignored, as a PDF 1.4 reader ignores it.
 - **Comments are white-space wherever they stand** (ISO 32000-1 7.2.3): inside a
   dictionary or array, between the numbers of a reference, before `stream`,
   and in the trailer, where ReportLab writes one into every file. Form feed is

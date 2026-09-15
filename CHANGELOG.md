@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Hybrid-reference files lost everything kept in object streams, and saving
+  one broke it.** A file written to stay readable by PDF 1.4 software (ISO
+  32000-1 7.5.8.4) indexes its objects in object streams in a cross-reference
+  stream named by the trailer's `/XRefStm`, and lists only the rest in its
+  classic table. `/XRefStm` was never read, so those objects -- typically the
+  page tree, fonts and document information -- did not exist: the document
+  opened with no text and no title, and a full save wrote a file without its
+  page tree, which qpdf and MuPDF refuse to open. The stream is now merged
+  into its revision, the table's in-use entries answering first; a broken
+  `/XRefStm` is ignored. qpdf, MuPDF and pdfium agree on every layout tested
+  but one, where the table lists the packed objects as free; there this reads
+  as pdfium does.
+
 - **ReportLab documents opened without their metadata, and encrypted ones did
   not open at all.** ReportLab writes a comment into the trailer dictionary of
   every file (`% ReportLab generated PDF document -- digest (opensource)`), and

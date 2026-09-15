@@ -614,6 +614,7 @@ class PdfCosParser:
                 outer, self._compressed_objects = self._compressed_objects, {}
                 try:
                     xref_table, trailer = self._parse_xref_section(current_offset)
+                    self._merge_hybrid_xref_stream(xref_table, trailer)
                     section_compressed = self._compressed_objects
                 finally:
                     self._compressed_objects = outer
@@ -813,6 +814,42 @@ class PdfCosParser:
                 if xref_table.get(member_num, 0) > 0:
                     continue
                 self._compressed_objects[member_num] = (stm_obj_num, idx)
+
+    def _merge_hybrid_xref_stream(
+        self, xref_table: dict[int, int], trailer: PdfDictionary
+    ) -> None:
+        """Add a hybrid-reference file's ``/XRefStm`` entries to its section.
+
+        ISO 32000-1 7.5.8.4: a file readable by PDF 1.4 software keeps its
+        classic table for the objects such software can reach and indexes the
+        rest -- those in object streams -- in a cross-reference stream named by
+        the trailer's ``/XRefStm``. It is one revision: the stream answers for
+        the objects the table does not list in use. Ignoring it left every
+        object in an object stream unresolved, so such a document opened with
+        no text, no metadata and whatever else lived there. A stream that does
+        not parse is ignored, as a PDF 1.4 reader ignores it.
+        """
+        location = trailer.mapping.get(PdfName("XRefStm"))
+        if not isinstance(location, PdfNumber):
+            return
+        offset = int(location.value)
+        if offset < 0 or offset >= len(self._data):
+            return
+        compressed, self._compressed_objects = self._compressed_objects, {}
+        try:
+            stream_table, _stream_trailer = self._parse_xref_stream(offset)
+            stream_compressed = self._compressed_objects
+        except PdfResourceLimitException:
+            raise
+        except (PdfParseException, ValueError, IndexError, zlib.error):
+            return
+        finally:
+            self._compressed_objects = compressed
+        # The table answers first: its in-use entries are kept, and the merge
+        # into the chain lets a plain entry claim a number before a packed one.
+        for obj_num, obj_offset in stream_table.items():
+            xref_table.setdefault(obj_num, obj_offset)
+        self._compressed_objects.update(stream_compressed)
 
     def _parse_xref_section(self, offset: int) -> tuple[dict[int, int], PdfDictionary]:
         """Parse an xref section at the given offset.
