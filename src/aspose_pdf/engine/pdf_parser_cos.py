@@ -135,6 +135,28 @@ def _cos_dictionary_bytes_at(
 
 
 _PDF_WS = b" \t\n\r\f\x00"
+
+#: How far into the data the header may start. Acrobat's own rule (PDF Reference
+#: 1.7, implementation note 13), and where pdfium stops looking; anything in
+#: front of it -- a mail or HTTP header left in a saved attachment, a stray BOM
+#: -- is not part of the document.
+_HEADER_WINDOW = 1024
+
+
+def pdf_header_offset(data) -> int | None:
+    """Where ``%PDF-`` starts within the first 1024 bytes, or ``None``."""
+    at = bytes(data[:_HEADER_WINDOW]).find(b"%PDF-")
+    return None if at < 0 else at
+
+
+def pdf_header_version(data) -> str | None:
+    """The version the header line names, e.g. ``"1.7"``."""
+    at = pdf_header_offset(data)
+    if at is None:
+        return None
+    line = bytes(data[at : at + 32]).split(b"\n")[0].split(b"\r")[0]
+    version = line[5:].strip().decode("ascii", errors="ignore")
+    return version or None
 _ENDSTREAM_KW = b"endstream"
 _OBJECT_HEADER_RE = re.compile(rb"(\d+)\s+(\d+)\s+obj")
 _ENDOBJ_RE = re.compile(rb"endobj")
@@ -584,10 +606,12 @@ class PdfCosParser:
             self._compressed_objects.clear()
             startxref_offset = self._find_startxref()
             xref_offset = self._read_int_at(startxref_offset)
+            shift = self._offset_shift(xref_offset)
+            doc.offset_shift = shift
 
             # Process xref chain (may include multiple /Prev sections)
             all_xref: dict[int, int] = {}
-            current_offset = xref_offset
+            current_offset = xref_offset + shift
             trailer_dict = None
             seen_xref_offsets: set[int] = set()
             #: Object numbers a newer section has already answered for.
@@ -615,7 +639,7 @@ class PdfCosParser:
                 outer, self._compressed_objects = self._compressed_objects, {}
                 try:
                     xref_table, trailer = self._parse_xref_section(current_offset)
-                    self._merge_hybrid_xref_stream(xref_table, trailer)
+                    self._merge_hybrid_xref_stream(xref_table, trailer, shift)
                     section_compressed = self._compressed_objects
                 finally:
                     self._compressed_objects = outer
@@ -628,7 +652,7 @@ class PdfCosParser:
                 for obj_num, off in xref_table.items():
                     if obj_num not in claimed:
                         claimed.add(obj_num)
-                        all_xref[obj_num] = off
+                        all_xref[obj_num] = off + shift
                 for obj_num, location in section_compressed.items():
                     if obj_num not in claimed:
                         claimed.add(obj_num)
@@ -641,7 +665,7 @@ class PdfCosParser:
                 # Check for /Prev
                 prev_ref = trailer.mapping.get(PdfName("Prev"))
                 if isinstance(prev_ref, PdfNumber):
-                    current_offset = int(prev_ref.value)
+                    current_offset = int(prev_ref.value) + shift
                 else:
                     current_offset = None
 
@@ -816,8 +840,35 @@ class PdfCosParser:
                     continue
                 self._compressed_objects[member_num] = (stm_obj_num, idx)
 
+    def _offset_shift(self, xref_offset: int) -> int:
+        """How far every offset in the file is off, if bytes were put before it.
+
+        Something prepended to a finished file -- a mail or HTTP header left in
+        front of a saved attachment -- moves every byte but changes no offset,
+        so ``startxref`` points that many bytes short. When it does not land on
+        a cross-reference section but lands on one moved by the header's
+        position, that position is the shift; qpdf, MuPDF and pdfium all read
+        such a file. A file whose offsets were written with the prefix already
+        there needs none.
+        """
+        header_at = pdf_header_offset(self._data)
+        if not header_at:
+            return 0
+        if self._looks_like_xref_section(xref_offset):
+            return 0
+        if self._looks_like_xref_section(xref_offset + header_at):
+            return header_at
+        return 0
+
+    def _looks_like_xref_section(self, offset: int) -> bool:
+        if offset < 0 or offset >= len(self._data):
+            return False
+        return self._data[offset : offset + 4] == b"xref" or bool(
+            _OBJECT_HEADER_RE.match(self._data, offset)
+        )
+
     def _merge_hybrid_xref_stream(
-        self, xref_table: dict[int, int], trailer: PdfDictionary
+        self, xref_table: dict[int, int], trailer: PdfDictionary, shift: int = 0
     ) -> None:
         """Add a hybrid-reference file's ``/XRefStm`` entries to its section.
 
@@ -833,7 +884,7 @@ class PdfCosParser:
         location = trailer.mapping.get(PdfName("XRefStm"))
         if not isinstance(location, PdfNumber):
             return
-        offset = int(location.value)
+        offset = int(location.value) + shift
         if offset < 0 or offset >= len(self._data):
             return
         compressed, self._compressed_objects = self._compressed_objects, {}

@@ -67,6 +67,14 @@ Supported:
   update stays deleted. A **full** save carries only the trailer keys that name
   something in the file it is writing — `/Root`, `/Info`, `/ID`, `/Encrypt` —
   never a `/Prev` into a revision it does not have.
+- **Bytes in front of the header** are skipped: `%PDF-` may start anywhere in
+  the first 1024 bytes, Acrobat's rule and pdfium's limit. When the prefix was
+  added after the file was written -- a mail or HTTP header left in front of a
+  saved attachment -- every offset is short by its length; `startxref`, the
+  table, `/Prev` and `/XRefStm` are then all moved by the header's position.
+  An incremental save of such a file writes it whole instead, without the
+  prefix, since an appended revision could not chain to offsets that are all
+  wrong; signing one is not supported.
 - **A stream ends where its `/Length` says, or at `endstream`** (ISO 32000-1
   7.3.8.1). A `/Length` is trusted when `endstream` follows the bytes it counts
   -- also past an `endobj` that is part of the data -- and an indirect one is

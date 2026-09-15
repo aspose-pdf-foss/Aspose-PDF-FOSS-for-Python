@@ -88,7 +88,7 @@ from .file_output import write_file_atomically
 from .filters import StreamDecoder
 from .incremental_update import IncrementalUpdate
 from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
-from .pdf_parser_cos import PdfCosParser
+from .pdf_parser_cos import PdfCosParser, pdf_header_offset, pdf_header_version
 from .pdf_writer_cos import PdfCosWriter
 from .pubsec import PUBSEC_FILTER, subfilter_for
 from .signing import SigningUtils
@@ -2030,8 +2030,10 @@ class SimplePdf:
         budget.check_input(len(data))
         if isinstance(data, bytearray):
             data = bytes(data)
-        if data[0:5] != b"%PDF-":
-            raise PdfParseException("Data does not start with a PDF header")
+        if pdf_header_offset(data) is None:
+            raise PdfParseException(
+                "Data does not start with a PDF header (none in the first 1024 bytes)"
+            )
 
         cos_doc = PdfCosParser(
             data, limits=resolved_limits, budget=budget
@@ -2078,14 +2080,9 @@ class SimplePdf:
 
         # --- Feature 5 metadata ---
         # PDF version from header (e.g. b"%PDF-1.4\n...")
-        try:
-            header_window = data[:20]
-            eol = header_window.index(b"\n")
-            header_line = data[:eol].rstrip()
-            if header_line.startswith(b"%PDF-"):
-                pdf.pdf_version = header_line[5:].decode("ascii", errors="ignore")
-        except (ValueError, UnicodeDecodeError):
-            pass
+        version = pdf_header_version(data)
+        if version:
+            pdf.pdf_version = version
 
         pdf.file_id = extractor.extract_file_id()
         pdf._outlines_data = extractor.extract_outlines()
@@ -2239,14 +2236,11 @@ class SimplePdf:
             pdf.metadata = extractor.extract_metadata()
 
             try:
-                eol = mm.find(b"\n", 0)
-                header_line = bytes(mm[:eol]).rstrip() if eol > 0 else b""
-                if header_line.startswith(b"%PDF-"):
-                    pdf.pdf_version = header_line[5:].decode(
-                        "ascii", errors="ignore"
-                    )
+                version = pdf_header_version(mm)
             except (ValueError, TypeError, OSError):
-                pass
+                version = None
+            if version:
+                pdf.pdf_version = version
 
             pdf.file_id = extractor.extract_file_id()
             pdf._outlines_data = extractor.extract_outlines()
@@ -3455,6 +3449,13 @@ class SimplePdf:
         if self._cos_doc is None:
             # Minimal/parse-only document with no object graph to diff against.
             return bytes(raw)
+        if getattr(self._cos_doc, "offset_shift", 0):
+            # The file's offsets are all short by whatever was put in front of
+            # it, and an appended revision would have to be written short by as
+            # much to chain to them. Whatever signature it had was already
+            # broken by the prefix, so nothing is lost by writing it whole -- a
+            # file whose offsets are right again.
+            return self.to_bytes()
 
         if self.encrypted:
             # encrypt() or change_passwords() derives a fresh file key, so every

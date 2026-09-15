@@ -9,6 +9,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A PDF with anything in front of its header did not open.** The reader
+  required the data to start with `%PDF-`, where Acrobat accepts the header
+  anywhere in the first 1024 bytes and pdfium, MuPDF and qpdf read such files.
+  A prefix left by a mail client or an HTTP capture usually arrives after the
+  file was written, so every offset in it is short by the prefix's length; the
+  parser now notices when `startxref` lands on a cross-reference section only
+  once moved by the header's position, and moves every offset -- table,
+  `/Prev`, `/XRefStm` -- by as much. Saving such a file incrementally writes it
+  whole instead, so its offsets are right again. The version is read from the
+  header wherever it stands.
+
 - **One stream could make a document unopenable.** An object was taken to end at
   the first `endobj` after its header, so a content stream that merely contains
   the word `endobj` -- in a comment, in a string -- had its correct `/Length`

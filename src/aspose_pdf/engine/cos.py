@@ -301,6 +301,9 @@ class PdfDocument:
         self.objects: dict[int, Any] = {}
         self.trailer: PdfDictionary = PdfDictionary()
         self.xref_table: dict[int, int] = {}
+        #: Bytes every offset in the file is short by: something was put in
+        #: front of the header after the offsets were written.
+        self.offset_shift: int = 0
 
     def get_object(self, ref: PdfIndirectReference) -> Any:
         """Return the object for *ref*, or ``None`` if it cannot be loaded."""
