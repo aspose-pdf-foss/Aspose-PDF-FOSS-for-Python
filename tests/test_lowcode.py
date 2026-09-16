@@ -42,6 +42,11 @@ def _page_count(data: bytes) -> int:
         pdf.dispose()
 
 
+class _ShortWriter(io.BytesIO):
+    def write(self, data):
+        return super().write(data[:2])
+
+
 # ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
@@ -81,6 +86,14 @@ def test_stream_source_replaces_existing_seekable_content():
     StreamDataSource(write_buf).write_bytes(b"new")
 
     assert write_buf.getvalue() == b"new"
+
+
+def test_stream_source_retries_short_writes():
+    write_buf = _ShortWriter()
+
+    StreamDataSource(write_buf).write_bytes(b"complete")
+
+    assert write_buf.getvalue() == b"complete"
 
 
 def test_base_data_source_rejects_io():
@@ -124,6 +137,14 @@ def test_operation_result_save_to_path_stream_and_source(tmp_path):
     sink = ByteArrayDataSource()
     result.save(sink)
     assert sink.read_bytes() == b"data"
+
+
+def test_operation_result_retries_short_stream_writes():
+    stream = _ShortWriter()
+
+    OperationResult(b"complete").save(stream)
+
+    assert stream.getvalue() == b"complete"
 
 
 def test_operation_result_save_rejects_bad_destination():

@@ -103,6 +103,21 @@ class DataSource:
         )
 
 
+def _write_all(stream: BinaryIO, data: bytes) -> None:
+    """Write all of *data*, rejecting streams that stop making progress."""
+    remaining = memoryview(data)
+    while remaining:
+        written = stream.write(remaining)
+        if (
+            isinstance(written, bool)
+            or not isinstance(written, int)
+            or written <= 0
+            or written > len(remaining)
+        ):
+            raise AsposePdfException("Stream write did not consume the supplied bytes")
+        remaining = remaining[written:]
+
+
 class FileDataSource(DataSource):
     """A data source backed by a file on disk."""
 
@@ -148,7 +163,7 @@ class StreamDataSource(DataSource):
         if self.stream.seekable():
             self.stream.seek(0)
             self.stream.truncate(0)
-        self.stream.write(data)
+        _write_all(self.stream, data)
 
 
 class ByteArrayDataSource(DataSource):
@@ -226,7 +241,7 @@ class OperationResult:
         elif isinstance(destination, (str, Path)):
             FileDataSource(destination).write_bytes(data)
         elif hasattr(destination, "write"):
-            destination.write(data)
+            _write_all(destination, data)
         else:
             raise TypeError(
                 "destination must be a DataSource, path, or writable stream"
