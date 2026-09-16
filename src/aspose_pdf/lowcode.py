@@ -194,9 +194,13 @@ def _read_source_bytes(source: DataSource, limits: PdfLoadLimits) -> bytes:
         inspect.signature(reader).bind(limits=limits)
     except (TypeError, ValueError):
         data = reader()
-        _LoadBudget(limits).check_input(len(data))
-        return data
-    return reader(limits=limits)
+    else:
+        data = reader(limits=limits)
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise AsposePdfException("DataSource.read_bytes() must return bytes")
+    payload = bytes(data)
+    _LoadBudget(limits).check_input(len(payload))
+    return payload
 
 
 # ---------------------------------------------------------------------------

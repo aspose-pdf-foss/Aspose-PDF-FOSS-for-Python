@@ -47,6 +47,11 @@ class _ShortWriter(io.BytesIO):
         return super().write(data[:2])
 
 
+class _TextDataSource(DataSource):
+    def read_bytes(self):
+        return "not binary"
+
+
 # ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
@@ -102,6 +107,14 @@ def test_base_data_source_rejects_io():
         base.read_bytes()
     with pytest.raises(NotImplementedError):
         base.write_bytes(b"x")
+
+
+def test_custom_source_must_return_binary_data():
+    options = MergeOptions()
+    options.add_input(_TextDataSource())
+
+    with pytest.raises(AsposePdfException, match="must return bytes"):
+        Merger().process(options)
 
 
 # ---------------------------------------------------------------------------

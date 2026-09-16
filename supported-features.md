@@ -2164,7 +2164,9 @@ Supported:
   (`FileDataSource`), in-memory bytes (`ByteArrayDataSource`), and binary
   streams (`StreamDataSource`). Writing a seekable stream replaces its existing
   contents instead of leaving stale trailing bytes, and short stream writes are
-  retried until the complete result has been delivered.
+  retried until the complete result has been delivered. Custom input data
+  sources must return bytes-like data, which is checked against the same input
+  size limit before parsing.
 - Collect results through a `ResultContainer` of `OperationResult` objects,
   each of which can be saved to a data source, path, or stream, or read as
   bytes/text. Every plugin also writes results to configured output data
