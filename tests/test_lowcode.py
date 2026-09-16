@@ -246,6 +246,17 @@ def test_splitter_single_page_input():
     assert len(result) == 1
 
 
+def test_splitter_processes_every_input_in_order():
+    options = SplitOptions()
+    options.add_input(ByteArrayDataSource(_pdf_bytes(2)))
+    options.add_input(ByteArrayDataSource(_pdf_bytes(3)))
+
+    result = Splitter().process(options)
+
+    assert len(result) == 5
+    assert all(_page_count(item.to_array()) == 1 for item in result)
+
+
 def test_splitter_writes_outputs_paired_by_position():
     options = SplitOptions()
     options.add_input(ByteArrayDataSource(_pdf_bytes(3)))

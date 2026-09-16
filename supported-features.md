@@ -2167,9 +2167,9 @@ Supported:
   each of which can be saved to a data source, path, or stream, or read as
   bytes/text. Every plugin also writes results to configured output data
   sources, paired by position.
-- `Merger` concatenates all inputs; `Splitter` emits one document per page;
-  `Optimizer` compresses and garbage-collects each input; `TextExtractor`
-  returns extracted text per input.
+- `Merger` concatenates all inputs; `Splitter` emits one document per page from
+  every input, preserving input and page order; `Optimizer` compresses and
+  garbage-collects each input; `TextExtractor` returns extracted text per input.
 
 Boundaries:
 

@@ -300,7 +300,7 @@ class OptimizeOptions(PluginOptions):
 
 
 class SplitOptions(PluginOptions):
-    """Options for :class:`Splitter`: split the first input into single pages."""
+    """Options for :class:`Splitter`: split every input into single pages."""
 
 
 class TextExtractorOptions(PluginOptions):
@@ -392,30 +392,30 @@ class Optimizer(PdfPlugin):
 
 
 class Splitter(PdfPlugin):
-    """Split the first input PDF into one document per page."""
+    """Split every input PDF into one document per page."""
 
     def process(self, options: SplitOptions) -> ResultContainer:
         self._require_inputs(options)
         from aspose_pdf.engine.simple_pdf import SimplePdf
 
         limits = _coerce_limits(getattr(options, "limits", None))
-        source = options.inputs[0]
-        pdf = SimplePdf.from_bytes(
-            _read_source_bytes(source, limits), limits=limits
-        )
         results: list[OperationResult] = []
-        try:
-            page_count = len(pdf.pages)
-            for index in range(page_count):
-                single = pdf.extract_pages([index])
-                try:
-                    single._load_limits = pdf.load_limits
-                    single._load_budget = pdf._load_budget
-                    results.append(OperationResult(single.to_bytes()))
-                finally:
-                    single.dispose()
-        finally:
-            pdf.dispose()
+        for source in options.inputs:
+            pdf = SimplePdf.from_bytes(
+                _read_source_bytes(source, limits), limits=limits
+            )
+            try:
+                page_count = len(pdf.pages)
+                for index in range(page_count):
+                    single = pdf.extract_pages([index])
+                    try:
+                        single._load_limits = pdf.load_limits
+                        single._load_budget = pdf._load_budget
+                        results.append(OperationResult(single.to_bytes()))
+                    finally:
+                        single.dispose()
+            finally:
+                pdf.dispose()
         self._emit(results, options.outputs)
         return ResultContainer(results)
 
