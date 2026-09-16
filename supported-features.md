@@ -489,6 +489,24 @@ Supported:
   `alt=...`, and `actual_text=...`; the writer emits `BDC`/`EMC` marked
   content and maintains `/StructTreeRoot`, page `/StructParents`, and the
   `/ParentTree`.
+- **Appended content is drawn where it was put, whatever the page left
+  behind.** Everything a content stream draws inherits the graphics state the
+  content before it left, so a page whose own content ends with a `cm` never
+  undone, a clipping path, a dash pattern, a text rendering mode such as
+  `3 Tr`, a `q` never closed or a text object never ended would pass all of
+  that on to what is added after it: text placed at a point landed elsewhere or
+  off the page, shapes were clipped away, text was invisible. The page's
+  content is now read once before the first addition, and when it leaves any
+  such state behind, it is saved before that content and restored after it --
+  a `q` stream in front of `/Contents`, the `Q`s (and an `ET`) at the head of
+  what is appended. The page's own streams are referenced, never rewritten, so
+  an incremental save still only appends, and a page that leaves nothing behind
+  -- including everything this library authors -- is not touched. A `Q` with
+  nothing to restore is given a `q` of its own when that changes nothing; one
+  that follows a change the page made cannot be matched without undoing that
+  change, so such a page is only closed, not wrapped. A page also gets its own
+  `/Contents` array rather than an edit of the one it had, so pages sharing an
+  array no longer all receive what was added to one of them.
 - Collect the **graphic elements** of a page or document with
   `aspose_pdf.graphics.GraphicsAbsorber`: every painted path and placed image
   comes back as a `GraphicElement` with its bounding box in page (user) space,
@@ -1115,8 +1133,9 @@ Boundaries:
   exact `ToUnicode` map, but may lack overlay geometry. Unsupported runs are
   never extracted heuristically or edited bytewise. (The page renderer draws
   glyphs for these same bundled predefined CMaps; see [Pages](#pages).) The
-  redaction overlay still
-  assumes a balanced content stream (identity CTM at its end). A replacement
+  redaction bars are drawn in the page's initial graphics state: content that
+  leaves a transformation or a clip behind is saved and restored around first,
+  as for any appended content (see [Pages](#pages)). A replacement
   containing right-to-left or complex-script characters is shaped (HarfBuzz plus
   Unicode bidi) and the phrase is matched in its stored visual order: it reuses
   the run's own embedded font when that font already carries every shaped glyph

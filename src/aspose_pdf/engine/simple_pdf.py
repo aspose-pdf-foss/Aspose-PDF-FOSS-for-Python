@@ -48,6 +48,7 @@ from .content_authoring import (
     safe_resource_name,
     wrap_marked_content,
 )
+from .content_isolation import Isolation, isolation_for
 from .content_stream_parser import (
     ContentStreamParser,
     parse_image_placements_from_content,
@@ -1406,6 +1407,12 @@ class SimplePdf:
     )
     _disposed: bool = field(default=False, init=False, repr=False)
     _hidden_images: set[str] = field(default_factory=set, init=False, repr=False)
+    # Page index -> the content bytes last found to leave no graphics state
+    # behind; compared by identity, so any rewrite of a page's content is
+    # simply read again.
+    _isolated_page_contents: dict[int, bytes] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _extracted_text: str | None = field(default=None, init=False, repr=False)
     _image_names: list[str] | None = field(default=None, init=False, repr=False)
     _image_cursor: int = field(default=0, init=False, repr=False)
@@ -4629,37 +4636,80 @@ class SimplePdf:
             self._ensure_cos()
 
         current = self.page_contents[page_index]
+        # What the page's own content leaves behind -- a ``cm`` never undone, a
+        # clip, a dash, ``3 Tr`` -- would otherwise apply to everything
+        # appended after it, so it is saved before that content and restored
+        # after it (see :mod:`.content_isolation`).
+        if self._isolated_page_contents.get(page_index) is current:
+            isolation = Isolation()
+        else:
+            isolation = isolation_for(current, budget=self._load_budget)
+            if not isolation.complete:
+                logger.warning(
+                    "Page %d: its content changes the graphics state and then "
+                    "restores more than it saved; that state cannot be undone "
+                    "without changing how the page draws, so content appended "
+                    "to it may be affected by it.",
+                    page_index + 1,
+                )
+        current = isolation.opening + current
         separator = (
             b"" if not current or current.endswith((b"\n", b"\r", b" ")) else b"\n"
         )
-        self.page_contents[page_index] = current + separator + content
+        appended = isolation.closing + content
+        updated = current + separator + appended
+        self.page_contents[page_index] = updated
         self._extracted_text = None
+        # Remember the page once what was appended leaves nothing behind either,
+        # so authoring many fragments onto one page does not re-read its whole
+        # content each time. (A page that could not be isolated is remembered
+        # too: reading it again would only find the same.)
+        if not isolation_for(content, budget=self._load_budget).needed:
+            self._isolated_page_contents[page_index] = updated
 
-        self._append_content_to_cos_page(page_index, content)
+        self._append_content_to_cos_page(
+            page_index, appended, opening=isolation.opening
+        )
 
-    def _append_content_to_cos_page(self, page_index: int, content: bytes) -> None:
+    def _append_content_to_cos_page(
+        self, page_index: int, content: bytes, *, opening: bytes = b""
+    ) -> None:
+        """Append *content* to the page's ``/Contents``, *opening* before them.
+
+        The page's existing streams are referenced, never rewritten, so an
+        incremental save only adds objects. The page gets an array of its own
+        rather than an edit of the one it had: an array object can be shared by
+        several pages, and appending to it would draw on all of them.
+        """
         if self._cos_doc is None:
             return
         page = self._get_page_dict(page_index)
         if not isinstance(page, PdfDictionary):
             return
 
-        new_stream = PdfStream(content=content, mapping={})
-        new_ref = self._cos_doc.register_object(new_stream)
         contents_key = PdfName("Contents")
         existing_entry = page.mapping.get(contents_key)
+        new_ref = self._cos_doc.register_object(PdfStream(content=content, mapping={}))
         if existing_entry is None:
             page.mapping[contents_key] = new_ref
         else:
             existing_obj = self._resolve(existing_entry)
             if isinstance(existing_obj, PdfArray):
-                existing_obj.items.append(new_ref)
+                existing = list(existing_obj.items)
             else:
                 if isinstance(existing_obj, PdfStream) and not isinstance(
                     existing_entry, PdfIndirectReference
                 ):
                     existing_entry = self._cos_doc.register_object(existing_obj)
-                page.mapping[contents_key] = PdfArray([existing_entry, new_ref])
+                existing = [existing_entry]
+            if opening:
+                existing.insert(
+                    0,
+                    self._cos_doc.register_object(
+                        PdfStream(content=opening, mapping={})
+                    ),
+                )
+            page.mapping[contents_key] = PdfArray([*existing, new_ref])
 
         while len(self._content_obj_ids) < len(self.pages):
             self._content_obj_ids.append(0)
@@ -6111,6 +6161,14 @@ class SimplePdf:
             )
             if count:
                 if overlay and quads:
+                    # The quads are in default user space, so the bars have to
+                    # be drawn in the initial state, not in whatever the page's
+                    # content left behind.
+                    isolation = isolation_for(updated, budget=self._load_budget)
+                    if isolation.needed:
+                        updated = (
+                            isolation.opening + updated + b"\n" + isolation.closing
+                        )
                     updated = self._append_redaction_overlay(
                         updated, quads, overlay_color
                     )

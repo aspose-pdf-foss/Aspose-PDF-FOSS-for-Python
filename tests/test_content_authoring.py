@@ -65,10 +65,16 @@ def test_authoring_appends_to_loaded_pdf_contents_array() -> None:
     assert b"Loaded edit" in content
     assert "Loaded edit" in loaded.extract_text()
 
+    # The page's own content leaves its fill colour set, so it is saved before
+    # that content and restored after it: [q, the original stream, Q + edit].
     page_dict = loaded._get_page_dict(0)
     contents = loaded._resolve(page_dict.mapping[PdfName("Contents")])
     assert isinstance(contents, PdfArray)
-    assert len(contents.items) == 2
+    streams = [loaded._resolve(item).content for item in contents.items]
+    assert len(streams) == 3
+    assert streams[0].strip() == b"q"
+    assert streams[1] == b"0 1 0 rg 0 0 10 10 re f"
+    assert streams[2].startswith(b"Q\n")
 
 
 def test_page_add_image_accepts_png_bytes() -> None:

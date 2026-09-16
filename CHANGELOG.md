@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Content added to an existing page could land off the page, be clipped away
+  or be invisible.** `Page.add_text`, `add_image`, `draw_rectangle`,
+  `draw_line`, `Page.layer(...)` and redaction bars appended their content
+  after the page's own, which left its graphics state as it found it -- so a
+  page ending with a `cm` it never undid drew text placed at (300, 400) at
+  (603, 800), off a Letter-sized page; a clipping path left in force hid the
+  addition entirely, `3 Tr` made added text invisible and a dash pattern turned
+  an added solid line into a dashed one. pdfium and MuPDF showed all of these.
+  The page's content is now saved before and restored after when, and only
+  when, it leaves state behind; its streams are referenced rather than
+  rewritten, so incremental saves still only append, and pages this library
+  authors are unchanged. Adding to one of several pages that shared a
+  `/Contents` array also no longer added to all of them.
+
 - **Signing a document that had been updated before could destroy it.** The
   incremental-update builder behind signing, the `/DSS` and document
   timestamps took its next object number from the newest cross-reference
