@@ -75,6 +75,14 @@ def test_stream_source_round_trip():
     assert write_buf.getvalue() == b"output-bytes"
 
 
+def test_stream_source_replaces_existing_seekable_content():
+    write_buf = io.BytesIO(b"stale-output")
+
+    StreamDataSource(write_buf).write_bytes(b"new")
+
+    assert write_buf.getvalue() == b"new"
+
+
 def test_base_data_source_rejects_io():
     base = DataSource()
     with pytest.raises(NotImplementedError):

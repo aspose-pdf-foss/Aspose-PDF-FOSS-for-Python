@@ -145,6 +145,9 @@ class StreamDataSource(DataSource):
             raise AsposePdfException("Stream read() did not return bytes") from exc
 
     def write_bytes(self, data: bytes) -> None:
+        if self.stream.seekable():
+            self.stream.seek(0)
+            self.stream.truncate(0)
         self.stream.write(data)
 
 

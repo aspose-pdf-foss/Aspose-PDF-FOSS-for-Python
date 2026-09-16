@@ -2162,7 +2162,8 @@ Supported:
   `Merger`, `Splitter`, `Optimizer`, and `TextExtractor`.
 - Describe inputs and outputs with data sources that abstract over files
   (`FileDataSource`), in-memory bytes (`ByteArrayDataSource`), and binary
-  streams (`StreamDataSource`).
+  streams (`StreamDataSource`). Writing a seekable stream replaces its existing
+  contents instead of leaving stale trailing bytes.
 - Collect results through a `ResultContainer` of `OperationResult` objects,
   each of which can be saved to a data source, path, or stream, or read as
   bytes/text. Every plugin also writes results to configured output data
