@@ -1492,7 +1492,9 @@ Boundaries:
   that matches what is baked and `/MK /TP` 1 (icon only) or 2 (caption below).
   **Submit and reset** are available through the typed action API
   (`SubmitFormAction`, `ResetFormAction`), including the `/Fields` list, its
-  include/exclude flag, and the FDF/HTML/XFDF/PDF submit format.
+  include/exclude flag, and the FDF/HTML/XFDF/PDF submit format. Field lists
+  must be sequences of strings; a bare string is rejected rather than split
+  into one-character field names.
   Type0 field **rich text** (`/RC` values fall back to the plain `/DA`
   appearance) and XFA authoring are not implemented. Signature fields can be authored *and* signed (see above and
   [Security](#security-encryption-and-signatures)); XFA authoring is not.

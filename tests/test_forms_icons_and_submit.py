@@ -201,6 +201,20 @@ def test_invalid_action_arguments_are_rejected():
         _button(action=ResetFormAction(exclude=True))
 
 
+@pytest.mark.parametrize(
+    "action",
+    [
+        SubmitFormAction("https://x/y", fields="Name"),
+        SubmitFormAction("https://x/y", fields=["Name", 3]),
+        ResetFormAction(fields="Name"),
+        ResetFormAction(fields=["Name", 3]),
+    ],
+)
+def test_form_actions_reject_malformed_field_lists(action):
+    with pytest.raises(TypeError, match="sequence of strings"):
+        _button(action=action)
+
+
 def test_actions_survive_save_and_reload():
     document = _button(action=SubmitFormAction("https://x/y", fields=["A"]))
     output = BytesIO()

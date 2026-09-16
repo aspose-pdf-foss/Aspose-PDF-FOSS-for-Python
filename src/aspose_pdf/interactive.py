@@ -193,6 +193,17 @@ class LaunchAction(Action):
         return {"S": "Launch", "F": self.file}
 
 
+def _field_names(fields: Sequence[str] | None) -> list[str] | None:
+    if fields is None:
+        return None
+    if isinstance(fields, (str, bytes)) or not isinstance(fields, Sequence):
+        raise TypeError("fields must be a sequence of strings or None")
+    names = list(fields)
+    if not all(isinstance(name, str) for name in names):
+        raise TypeError("fields must be a sequence of strings or None")
+    return names
+
+
 @dataclass(frozen=True)
 class SubmitFormAction(Action):
     """Send the form's field values to *url*.
@@ -216,6 +227,7 @@ class SubmitFormAction(Action):
     }
 
     def _spec(self) -> dict:
+        fields = _field_names(self.fields)
         try:
             flags = self._FORMAT_FLAGS[self.submit_format.lower()]
         except (AttributeError, KeyError):
@@ -224,12 +236,12 @@ class SubmitFormAction(Action):
                 f"got {self.submit_format!r}"
             ) from None
         if self.exclude:
-            if self.fields is None:
+            if fields is None:
                 raise ValueError("exclude=True needs the fields to exclude")
             flags |= 1 << 0  # Include/Exclude
         spec: dict = {"S": "SubmitForm", "F": self.url, "Flags": flags}
-        if self.fields is not None:
-            spec["Fields"] = list(self.fields)
+        if fields is not None:
+            spec["Fields"] = fields
         return spec
 
 
@@ -245,11 +257,12 @@ class ResetFormAction(Action):
     exclude: bool = False
 
     def _spec(self) -> dict:
-        if self.exclude and self.fields is None:
+        fields = _field_names(self.fields)
+        if self.exclude and fields is None:
             raise ValueError("exclude=True needs the fields to exclude")
         spec: dict = {"S": "ResetForm"}
-        if self.fields is not None:
-            spec["Fields"] = list(self.fields)
+        if fields is not None:
+            spec["Fields"] = fields
         # ISO 32000-1 table 239: bit 1 flips /Fields from include to exclude.
         if self.exclude:
             spec["Flags"] = 1
