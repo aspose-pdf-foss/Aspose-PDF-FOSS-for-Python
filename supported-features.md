@@ -2165,7 +2165,8 @@ Supported:
   streams (`StreamDataSource`).
 - Collect results through a `ResultContainer` of `OperationResult` objects,
   each of which can be saved to a data source, path, or stream, or read as
-  bytes/text.
+  bytes/text. Every plugin also writes results to configured output data
+  sources, paired by position.
 - `Merger` concatenates all inputs; `Splitter` emits one document per page;
   `Optimizer` compresses and garbage-collects each input; `TextExtractor`
   returns extracted text per input.

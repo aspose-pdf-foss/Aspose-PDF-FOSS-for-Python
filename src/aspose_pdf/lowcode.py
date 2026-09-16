@@ -437,4 +437,5 @@ class TextExtractor(PdfPlugin):
                 results.append(OperationResult(extractor.get_text()))
             finally:
                 extractor.dispose()
+        self._emit(results, options.outputs)
         return ResultContainer(results)

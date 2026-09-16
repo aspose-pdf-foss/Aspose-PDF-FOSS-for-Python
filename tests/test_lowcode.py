@@ -283,6 +283,17 @@ def test_text_extractor_multiple_inputs():
     assert len(result) == 2
 
 
+def test_text_extractor_writes_outputs_paired_by_position():
+    options = TextExtractorOptions()
+    options.add_input(ByteArrayDataSource(_pdf_bytes(1)))
+    sink = ByteArrayDataSource(b"not-yet-written")
+    options.add_output(sink)
+
+    result = TextExtractor().process(options)
+
+    assert sink.read_bytes() == result[0].to_array()
+
+
 # ---------------------------------------------------------------------------
 # Base plugin / misc
 # ---------------------------------------------------------------------------
