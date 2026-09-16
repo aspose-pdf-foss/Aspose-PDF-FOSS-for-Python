@@ -136,6 +136,17 @@ def test_operation_result_string():
     assert result.to_array() == b"text"  # UTF-8 encoded
 
 
+def test_operation_result_copies_mutable_bytes_and_rejects_other_values():
+    source = bytearray(b"before")
+    result = OperationResult(source)
+
+    source[:] = b"after!"
+
+    assert result.to_array() == b"before"
+    with pytest.raises(TypeError, match="bytes, bytearray, or str"):
+        OperationResult(3)  # type: ignore[arg-type]
+
+
 def test_operation_result_save_to_path_stream_and_source(tmp_path):
     result = OperationResult(b"data")
 

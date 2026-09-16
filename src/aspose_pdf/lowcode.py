@@ -216,8 +216,13 @@ class OperationResult:
     :meth:`to_array` / :meth:`to_string` / :meth:`save` to consume.
     """
 
-    def __init__(self, value: bytes | str) -> None:
-        self._value = value
+    def __init__(self, value: bytes | bytearray | str) -> None:
+        if isinstance(value, str):
+            self._value: bytes | str = value
+        elif isinstance(value, (bytes, bytearray)):
+            self._value = bytes(value)
+        else:
+            raise TypeError("value must be bytes, bytearray, or str")
 
     def is_string(self) -> bool:
         return isinstance(self._value, str)
