@@ -8073,6 +8073,8 @@ class SimplePdf:
         if not isinstance(page_dict, PdfDictionary):
             return
 
+        self._clear_link_targets_to_page(obj_num)
+
         parent_ref = page_dict.mapping.get(PdfName("Parent"))
         if not parent_ref:
             return
@@ -8092,6 +8094,48 @@ class SimplePdf:
 
         # 2. Recursively update /Count in all ancestors (Structural Integrity fix)
         self._update_page_count_recursive(parent_ref, -1)
+
+    def _clear_link_targets_to_page(self, object_number: int) -> None:
+        """Remove local annotation targets that name a page being deleted."""
+        if self._cos_doc is None:
+            return
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        named = named_destinations(catalog, self._resolve, self._load_budget)
+
+        def targets_deleted_page(target: Any) -> bool:
+            destination = explicit_destination(target, self._resolve, named)
+            if destination is None or not destination.items:
+                return False
+            page = destination.items[0]
+            return (
+                isinstance(page, PdfIndirectReference)
+                and page.object_number == object_number
+            )
+
+        for page_number in self._page_refs:
+            if page_number == object_number:
+                continue
+            page = self._cos_doc.objects.get(page_number)
+            if not isinstance(page, PdfDictionary):
+                continue
+            annotations = self._resolve(page.mapping.get(PdfName("Annots")))
+            if not isinstance(annotations, PdfArray):
+                continue
+            for annotation_ref in annotations.items:
+                annotation = self._resolve(annotation_ref)
+                if not isinstance(annotation, PdfDictionary):
+                    continue
+                destination = annotation.mapping.get(PdfName("Dest"))
+                if targets_deleted_page(destination):
+                    annotation.mapping.pop(PdfName("Dest"), None)
+                action = self._resolve(annotation.mapping.get(PdfName("A")))
+                if not isinstance(action, PdfDictionary):
+                    continue
+                action_type = self._resolve(action.mapping.get(PdfName("S")))
+                if action_type != PdfName("GoTo"):
+                    continue
+                if targets_deleted_page(action.mapping.get(PdfName("D"))):
+                    annotation.mapping.pop(PdfName("A"), None)
 
     def add(self, page: Any) -> None:
         """Add a page to the end with COS synchronization."""

@@ -725,16 +725,12 @@ Boundaries:
   `/ParentTree`, and keeping one would have the page's marked content answer to
   whatever this document holds under that number — another page's headings, or
   a tree that is not there at all.
-- **Deleting a page does not rewrite what pointed at it.** A *link* whose
-  destination was that page keeps naming the page object, which stays in the
-  file; the destination simply resolves to nothing. Reading such an annotation
-  reports no destination rather than a broken one (see
-  [Annotations](#annotations)), but the entry is left in the file as it was --
-  repointing or removing another object's reference is a decision about the
-  caller's document, not a consequence of deleting a page. A *bookmark* is the
-  exception, because its target is rebuilt on every save and cannot simply be
-  left: one whose page is gone gives up the reference and falls back to the
-  index it last had, clamped to the document, keeping its view or action.
+- Deleting a page clears direct and named link destinations, and local `GoTo`
+  actions, that resolve to that page. Remote `GoToR` targets are unchanged
+  because their page numbers belong to another file. A bookmark target is
+  rebuilt on every save: one whose page is gone gives up the reference and
+  falls back to the index it last had, clamped to the document, keeping its view
+  or action.
 - **Colour-key masking is not applied to a lossily coded image.** A `/Mask`
   array names *raw* sample values, and a `DCTDecode` or `JPXDecode` image's
   samples are still a codestream where the mask is resolved; 8.9.6.4 advises

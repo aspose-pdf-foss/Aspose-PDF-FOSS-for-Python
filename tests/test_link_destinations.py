@@ -194,16 +194,47 @@ def test_a_destination_read_back_writes_the_same_page():
 # ---------------------------------------------------------------------------
 
 
-def test_a_destination_whose_page_is_gone_is_not_surfaced():
-    """Deleting a page leaves the page object behind and the link on it.
-
-    Half-converting the array to ``[None, 'Fit']`` would only hand the caller
-    something that writes back as ``[null /Fit]``.
-    """
+def test_deleting_a_page_clears_a_link_destination_to_it():
     document = _linked(FitDestination(3))
     document.pages.delete(3)
 
+    assert PdfName("Dest") not in _first_annotation(document).mapping
     assert "Dest" not in _properties(_reloaded(document))
+
+
+def test_deleting_a_page_clears_a_local_goto_action_to_it():
+    document = _linked(GoToAction(FitDestination(3)))
+    document.pages.delete(3)
+
+    assert PdfName("A") not in _first_annotation(document).mapping
+    assert "A" not in _properties(_reloaded(document))
+
+
+def test_deleting_a_page_clears_a_named_link_destination_to_it():
+    document = _linked(FitDestination(3))
+    engine = document._engine_pdf
+    catalog = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+    catalog.mapping[PdfName("Dests")] = PdfDictionary(
+        {
+            PdfName("Chapter"): PdfArray(
+                [_page_ref(document, 3), PdfName("Fit")]
+            )
+        }
+    )
+    _first_annotation(document).mapping[PdfName("Dest")] = PdfName("Chapter")
+
+    document.pages.delete(3)
+
+    assert PdfName("Dest") not in _first_annotation(document).mapping
+
+
+def test_deleting_a_page_keeps_a_remote_goto_action():
+    document = _linked(GoToRAction("other.pdf", FitDestination(3)))
+    document.pages.delete(3)
+
+    action = _properties(_reloaded(document))["A"]
+    assert action["S"] == "GoToR"
+    assert action["D"] == [3, "Fit"]
 
 
 def test_an_undefined_destination_kind_is_not_surfaced():
