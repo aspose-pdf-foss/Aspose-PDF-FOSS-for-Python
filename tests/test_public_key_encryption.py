@@ -29,6 +29,7 @@ from aspose_pdf.engine.pubsec import (
     compute_file_key,
     normalize_permissions,
     open_envelopes,
+    open_kek_envelopes,
     open_password_envelopes,
 )
 from aspose_pdf.engine.simple_pdf import SimplePdf
@@ -557,6 +558,84 @@ def _password_sealed(password: str, *, permissions: int = -3844) -> bytes:
     return pdf.to_bytes()
 
 
+def _kek_envelope(
+    key_encryption_key: bytes,
+    payload: bytes,
+    *,
+    key_identifier: bytes = b"document-kek",
+) -> bytes:
+    """Build an AES-wrap CMS KEK recipient."""
+    import os
+
+    from asn1crypto import cms, core
+    from cryptography.hazmat.primitives import keywrap
+    from cryptography.hazmat.primitives import padding as sym_padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    content_key = os.urandom(32)
+    iv = os.urandom(16)
+    padder = sym_padding.PKCS7(128).padder()
+    encryptor = Cipher(algorithms.AES(content_key), modes.CBC(iv)).encryptor()
+    encrypted_content = encryptor.update(
+        padder.update(payload) + padder.finalize()
+    ) + encryptor.finalize()
+    recipient_info = cms.RecipientInfo(
+        name="kekri",
+        value={
+            "version": "v4",
+            "kekid": {"key_identifier": key_identifier},
+            "key_encryption_algorithm": {"algorithm": "aes256_wrap"},
+            "encrypted_key": keywrap.aes_key_wrap(
+                key_encryption_key, content_key
+            ),
+        },
+    )
+    enveloped = cms.EnvelopedData(
+        {
+            "version": "v2",
+            "recipient_infos": [recipient_info],
+            "encrypted_content_info": {
+                "content_type": "data",
+                "content_encryption_algorithm": {
+                    "algorithm": "aes256_cbc",
+                    "parameters": core.OctetString(iv),
+                },
+                "encrypted_content": encrypted_content,
+            },
+        }
+    )
+    return cms.ContentInfo(
+        {"content_type": "enveloped_data", "content": enveloped}
+    ).dump()
+
+
+def _kek_sealed(
+    key_encryption_key: bytes, *, permissions: int = -3844
+) -> bytes:
+    import os
+
+    seed = os.urandom(20)
+    normalized = normalize_permissions(permissions)
+    payload = seed + (normalized & 0xFFFFFFFF).to_bytes(4, "big")
+    envelope = _kek_envelope(key_encryption_key, payload)
+
+    document = Document()
+    document.pages.add().add_text(_TEXT, 72, 700, font_size=14)
+    pdf = document._engine_pdf
+    pdf._recipient_envelopes = [envelope]
+    pdf.encryption_key = compute_file_key(
+        seed, [envelope], key_length=32, sha256=True
+    )
+    pdf.encrypted = True
+    pdf.password = ""
+    pdf.encryption_algorithm = "AES-256"
+    pdf._encryption_algorithm = "AES-256"
+    pdf._encryption_key_length = 32
+    pdf._encryption_revision = 6
+    pdf.P = normalized
+    return pdf.to_bytes()
+
+
 @pytest.mark.parametrize("cipher", ["aes128", "tripledes"])
 def test_envelopes_from_other_producers_are_opened(alice, cipher):
     """OAEP key transport and a 3DES content cipher, as older tools write them."""
@@ -599,6 +678,45 @@ def test_password_recipient_document_requires_a_credential(tmp_path):
 
     with pytest.raises(PdfSecurityException, match="CMS password recipient"):
         Document(path)
+
+
+def test_kek_recipient_envelope_is_opened():
+    key_encryption_key = bytes(range(32))
+    payload = bytes(range(20)) + (0xFFFFF0C1).to_bytes(4, "big")
+    blob = _kek_envelope(key_encryption_key, payload)
+
+    opened = open_kek_envelopes([blob], key_encryption_key)
+
+    assert opened.seed == payload[:20]
+    assert opened.permissions == int.from_bytes(payload[20:], "big", signed=True)
+
+
+def test_kek_recipient_document_round_trips(tmp_path):
+    key_encryption_key = bytes(range(32))
+    path = tmp_path / "kek-recipient.pdf"
+    data = _kek_sealed(key_encryption_key)
+    path.write_bytes(data)
+
+    assert _TEXT.encode() not in data
+    with Document(path, key_encryption_key=key_encryption_key) as document:
+        assert _TEXT.encode() in document.pages[0].content
+        assert document.permissions == normalize_permissions(-3844)
+
+    with pytest.raises(PdfSecurityException, match="key-encryption key"):
+        Document(path, key_encryption_key=key_encryption_key[::-1])
+
+
+def test_kek_credential_rejects_invalid_combinations(alice):
+    with pytest.raises(PdfValidationException, match="cannot be combined"):
+        Document(
+            b"%PDF-1.4\n",
+            certificate=alice[0],
+            private_key=alice[1],
+            key_encryption_key=bytes(32),
+        )
+
+    with pytest.raises(PdfValidationException, match="16, 24, or 32"):
+        Document(b"%PDF-1.4\n", key_encryption_key=b"short")
 
 
 def test_an_unsupported_content_cipher_is_named_in_the_error(alice):

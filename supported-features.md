@@ -1698,7 +1698,8 @@ Supported:
   this library writes.
 - **Encrypt for certificate recipients** with the public-key handler
   (`/Adobe.PubSec`) through `Document.encrypt_for_recipients([...])`, and open
-  such a document with `Document(source, certificate=..., private_key=...)`.
+  certificate envelopes with
+  `Document(source, certificate=..., private_key=...)`.
   There is no password: a random seed is wrapped in a CMS `EnvelopedData` for
   every recipient's RSA or EC public key, and the file key is a SHA-256
   (AES-256) or SHA-1 (older ciphers) hash over that seed and **every** recipient
@@ -1709,7 +1710,8 @@ Supported:
   v1.5 or OAEP and standard ECDH key-agreement envelopes over
   AES-128/192/256-CBC or 3DES-CBC content encryption are opened. CMS password
   recipients using PBKDF2 and AES key wrap are also opened through the regular
-  `password=` load argument.
+  `password=` load argument. AES-wrap KEK recipients are opened with a
+  pre-shared `key_encryption_key=`.
 - Give **each recipient its own permissions** — one reader may print and
   another only read the same file — which a password cannot express. The
   permission word is not quite the standard handler's `/P`: bit 1 is required,
@@ -1832,10 +1834,10 @@ Boundaries:
   normalised to 8 bits per component, so a 12- or 16-bit codestream is scaled
   down rather than returned at its own depth.
 - Public-key encryption covers **RSA key-transport** and **EC key-agreement**
-  recipients and opens PBKDF2/AES-wrap password recipients (`pwri`). DSA
-  certificates and `kekri` are not supported, and neither is an envelope whose
-  content cipher is RC2 (Acrobat 5), which no supported crypto backend
-  implements. All of these fail explicitly.
+  recipients and opens PBKDF2/AES-wrap password recipients (`pwri`) and
+  AES-wrap pre-shared-key recipients (`kekri`). DSA certificates and envelopes
+  whose content cipher is RC2 (Acrobat 5) are not supported; the latter has no
+  supported crypto backend. Both fail explicitly.
 - No PDF 2.0 message authentication code (`/AuthCode`) is produced or checked
   for either handler. The public-key permission word therefore always sets the
   "tolerate a missing MAC" bit; a reader that requires a MAC would otherwise

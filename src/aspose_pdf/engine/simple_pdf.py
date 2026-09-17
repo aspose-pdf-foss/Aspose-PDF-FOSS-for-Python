@@ -1363,7 +1363,7 @@ class SimplePdf:
     _cos_decrypt_algorithm: str = "AES-256"
     # (certificate, private_key) the document was opened with, for a
     # public-key (/Adobe.PubSec) file. Kept so decrypt() can re-derive the key.
-    _credential: tuple[Any, Any] | None = None
+    _credential: tuple[Any, Any] | bytes | None = None
     # The owner password given to ``encrypt`` in this session. ``password``
     # holds the user password; the owner password also unlocks the protection
     # it sets, and ``decrypt``/``change_passwords`` have to know it to say so.
@@ -1978,7 +1978,7 @@ class SimplePdf:
         path: str | Path,
         password: str | None = None,
         *,
-        credential: tuple[Any, Any] | None = None,
+        credential: tuple[Any, Any] | bytes | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> SimplePdf:
         """Load PDF from file path, using memory-mapping for large files."""
@@ -2027,7 +2027,7 @@ class SimplePdf:
         data: bytes | bytearray,
         password: str | None = None,
         *,
-        credential: tuple[Any, Any] | None = None,
+        credential: tuple[Any, Any] | bytes | None = None,
         limits: PdfLoadLimits | None = None,
         _budget: _LoadBudget | None = None,
     ) -> SimplePdf:
@@ -2146,7 +2146,7 @@ class SimplePdf:
         path: str | Path,
         password: str | None = None,
         *,
-        credential: tuple[Any, Any] | None = None,
+        credential: tuple[Any, Any] | bytes | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> SimplePdf:
         """Open a PDF in streaming/lazy mode for memory-efficient page processing.
@@ -14868,7 +14868,7 @@ class CosExtractor:
         stream_decrypt_algorithm: str = "AES-256",
         limits: PdfLoadLimits | None = None,
         budget: _LoadBudget | None = None,
-        credential: tuple[Any, Any] | None = None,
+        credential: tuple[Any, Any] | bytes | None = None,
     ) -> None:
         self._doc = doc
         self._raw = raw_data
@@ -14928,7 +14928,8 @@ class CosExtractor:
                 raise PdfSecurityException(
                     "This document uses /Adobe.PubSec for certificate "
                     "recipients or CMS password recipients; supply a recipient "
-                    "certificate and private key, or a password"
+                    "certificate and private key, a password, or a pre-shared "
+                    "key-encryption key"
                 )
             self.attach_stream_decryption(password or "")
             if self._stream_decrypt_key is None:
@@ -16006,13 +16007,15 @@ class CosExtractor:
         """Derive the file key from the recipient envelope we can open.
 
         Certificate credentials open key-transport and key-agreement entries;
-        otherwise *password* opens a CMS password-recipient entry. A present
-        but wrong credential raises rather than producing a garbage file key.
+        raw key bytes open KEK entries, and otherwise *password* opens a CMS
+        password-recipient entry. A present but wrong credential raises rather
+        than producing a garbage file key.
         """
         from .cos import PdfBoolean, PdfName, PdfNumber
         from .pubsec import (
             compute_file_key,
             open_envelopes,
+            open_kek_envelopes,
             open_password_envelopes,
         )
 
@@ -16055,9 +16058,11 @@ class CosExtractor:
                 encrypt_metadata = bool(flag.value)
                 break
 
-        if self._credential is not None:
+        if isinstance(self._credential, tuple):
             certificate, private_key = self._credential
             payload = open_envelopes(blobs, certificate, private_key)
+        elif isinstance(self._credential, bytes):
+            payload = open_kek_envelopes(blobs, self._credential)
         else:
             payload = open_password_envelopes(blobs, password)
         self._pubsec_permissions = payload.permissions

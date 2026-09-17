@@ -91,8 +91,28 @@ def _text_export_format(value: Any) -> str | None:
     return None
 
 
-def _coerce_credential(certificate: Any, private_key: Any) -> tuple[Any, Any] | None:
-    """Validate a recipient credential pair for a public-key document."""
+def _coerce_credential(
+    certificate: Any,
+    private_key: Any,
+    key_encryption_key: bytes | bytearray | None = None,
+) -> tuple[Any, Any] | bytes | None:
+    """Validate recipient credentials for an ``/Adobe.PubSec`` document."""
+    if key_encryption_key is not None:
+        if certificate is not None or private_key is not None:
+            raise PdfValidationException(
+                "key_encryption_key cannot be combined with certificate or "
+                "private_key"
+            )
+        if not isinstance(key_encryption_key, (bytes, bytearray)):
+            raise PdfValidationException(
+                "key_encryption_key must be bytes containing an AES key"
+            )
+        value = bytes(key_encryption_key)
+        if len(value) not in (16, 24, 32):
+            raise PdfValidationException(
+                "key_encryption_key must contain a 16, 24, or 32-byte AES key"
+            )
+        return value
     if certificate is None and private_key is None:
         return None
     if certificate is None or private_key is None:
@@ -130,6 +150,7 @@ class Document:
         password: str | None = None,
         certificate: Any = None,
         private_key: Any = None,
+        key_encryption_key: bytes | bytearray | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> None:
         """Create an empty document, or load *source* when one is supplied.
@@ -151,6 +172,10 @@ class Document:
             Recipient credentials for a *source* encrypted with the public-key
             handler (``/Adobe.PubSec``). Both are ``cryptography`` objects and
             both are required together. See :class:`~aspose_pdf.Recipient`.
+        key_encryption_key : bytes, optional
+            Pre-shared AES key for a CMS KEK recipient in an
+            ``/Adobe.PubSec`` source. It cannot be combined with certificate
+            credentials.
         limits : PdfLoadLimits, optional
             Resource policy for this document. Defaults to the standard policy.
 
@@ -189,12 +214,18 @@ class Document:
                     "existing PDF with Document(path, certificate=..., "
                     "private_key=...)"
                 )
+            if key_encryption_key is not None:
+                raise TypeError(
+                    "key_encryption_key requires a load source; open an "
+                    "existing PDF with Document(path, key_encryption_key=...)"
+                )
             return
         self.load_from(
             source,
             password=password,
             certificate=certificate,
             private_key=private_key,
+            key_encryption_key=key_encryption_key,
         )
 
     @property
@@ -1202,6 +1233,7 @@ class Document:
         password: str | None = None,
         certificate: Any = None,
         private_key: Any = None,
+        key_encryption_key: bytes | bytearray | None = None,
         limits: PdfLoadLimits | None = None,
     ) -> Document:
         """Load a PDF from a file path, raw bytes, or a binary stream.
@@ -1215,6 +1247,10 @@ class Document:
             the stream is **not** closed afterwards.
         password : str, optional
             Password for encrypted PDFs.
+        certificate, private_key : optional
+            Certificate recipient credentials for an ``/Adobe.PubSec`` PDF.
+        key_encryption_key : bytes, optional
+            Pre-shared AES key for a CMS KEK recipient.
         limits : PdfLoadLimits, optional
             Resource policy for this load. When omitted, the policy configured
             on the document is reused.
@@ -1239,7 +1275,9 @@ class Document:
         resolved_limits = self._load_limits
         eff_pwd = _effective_encryption_password(password)
         self._password = eff_pwd if eff_pwd is not None else password
-        credential = _coerce_credential(certificate, private_key)
+        credential = _coerce_credential(
+            certificate, private_key, key_encryption_key
+        )
 
         if isinstance(source, (str, Path)):
             path = Path(source)

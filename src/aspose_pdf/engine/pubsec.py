@@ -48,6 +48,7 @@ __all__ = [
     "compute_file_key",
     "normalize_permissions",
     "open_envelopes",
+    "open_kek_envelopes",
     "open_password_envelopes",
     "subfilter_for",
 ]
@@ -490,6 +491,35 @@ def open_password_envelopes(
     )
 
 
+def open_kek_envelopes(
+    blobs: list[bytes] | tuple[bytes, ...], key_encryption_key: bytes
+) -> RecipientPayload:
+    """Open the first CMS KEK recipient accepted by a pre-shared key."""
+    matched = False
+    failure: Exception | None = None
+    for blob in blobs:
+        enveloped = _enveloped_data(blob)
+        if enveloped is None:
+            continue
+        for recipient_info in enveloped["recipient_infos"]:
+            if recipient_info.name != "kekri":
+                continue
+            matched = True
+            try:
+                content_key = _unwrap_kek_key(
+                    recipient_info.chosen, key_encryption_key
+                )
+                return _recipient_payload(blob, content_key)
+            except _WrongKey as exc:
+                failure = exc
+    if matched:
+        raise PdfSecurityException(
+            "The document has a KEK recipient, but its envelope could not be "
+            "opened with the supplied key-encryption key"
+        ) from failure
+    raise PdfSecurityException("The document does not contain a CMS KEK recipient")
+
+
 def _enveloped_data(blob: bytes) -> cms.EnvelopedData | None:
     try:
         info = cms.ContentInfo.load(bytes(blob))
@@ -731,6 +761,28 @@ def _unwrap_password_key(pwri: Any, password: str) -> bytes:
     except (TypeError, ValueError, keywrap.InvalidUnwrap) as exc:
         raise _WrongKey(
             "The password does not open this recipient envelope"
+        ) from exc
+
+
+def _unwrap_kek_key(kekri: Any, key_encryption_key: bytes) -> bytes:
+    wrap_name = kekri["key_encryption_algorithm"]["algorithm"].native
+    expected_size = _AES_WRAP_KEY_SIZES.get(wrap_name)
+    if expected_size is None:
+        raise PdfSecurityException(
+            f"Unsupported key-wrap algorithm {wrap_name!r} in a KEK recipient"
+        )
+    if len(key_encryption_key) != expected_size:
+        raise _WrongKey(
+            f"The supplied key-encryption key is {len(key_encryption_key)} "
+            f"bytes; {wrap_name} needs {expected_size}"
+        )
+    try:
+        return keywrap.aes_key_unwrap(
+            key_encryption_key, kekri["encrypted_key"].native
+        )
+    except (TypeError, ValueError, keywrap.InvalidUnwrap) as exc:
+        raise _WrongKey(
+            "The key-encryption key does not open this recipient envelope"
         ) from exc
 
 
