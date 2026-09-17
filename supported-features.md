@@ -1700,14 +1700,14 @@ Supported:
   (`/Adobe.PubSec`) through `Document.encrypt_for_recipients([...])`, and open
   such a document with `Document(source, certificate=..., private_key=...)`.
   There is no password: a random seed is wrapped in a CMS `EnvelopedData` for
-  every recipient's RSA public key, and the file key is a SHA-256 (AES-256) or
-  SHA-1 (older ciphers) hash over that seed and **every** recipient blob in
-  `/Recipients` order. `adbe.pkcs7.s5` (`/V 5 /R 6`, `AESV3`) is written for
-  AES-256 and `adbe.pkcs7.s4` (`/V 4 /R 4`) for AES-128 and RC4-128; on read,
-  `/Recipients` is taken from the crypt filter for `/V` 4-5 and from the
-  dictionary itself for older files, and envelopes using RSA PKCS#1 v1.5 or
-  OAEP key transport over AES-128/192/256-CBC or 3DES-CBC content encryption
-  are all opened.
+  every recipient's RSA or EC public key, and the file key is a SHA-256
+  (AES-256) or SHA-1 (older ciphers) hash over that seed and **every** recipient
+  blob in `/Recipients` order. RSA recipients use PKCS#1 v1.5 key transport;
+  EC recipients use ephemeral-static ECDH with the X9.63 SHA-256 KDF and AES
+  key wrap. `adbe.pkcs7.s5` (`/V 5 /R 6`, `AESV3`) is written for AES-256 and
+  `adbe.pkcs7.s4` (`/V 4 /R 4`) for AES-128 and RC4-128. On read, RSA PKCS#1
+  v1.5 or OAEP and standard ECDH key-agreement envelopes over
+  AES-128/192/256-CBC or 3DES-CBC content encryption are opened.
 - Give **each recipient its own permissions** — one reader may print and
   another only read the same file — which a password cannot express. The
   permission word is not quite the standard handler's `/P`: bit 1 is required,
@@ -1715,9 +1715,10 @@ Supported:
   bit 13 ("a missing PDF 2.0 MAC is acceptable") is set because no `/AuthCode`
   is written. `Recipient(certificate, permissions=…)` carries the pair and the
   fixed bits are normalised for you.
-- Refuse to encrypt to a certificate whose `keyUsage` extension permits neither
-  `keyEncipherment` nor `dataEncipherment` (`ignore_key_usage=True` overrides),
-  since a reader that enforces the extension would reject the result.
+- Refuse to encrypt to an RSA certificate whose `keyUsage` extension permits
+  neither `keyEncipherment` nor `dataEncipherment`, or an EC certificate that
+  does not permit `keyAgreement` (`ignore_key_usage=True` overrides), since a
+  reader that enforces the extension would reject the result.
 - Change passwords and read permission flags.
 - Reject missing, whitespace-only, and wrong passwords for encrypted PDFs.
 - Exercise RC4 and AES-CBC primitives, AES-256 setup, and PDF 2.0 V5/R6 key
@@ -1828,11 +1829,11 @@ Boundaries:
   changes (`POC`) and regions of interest (`RGN`) each raise. Output is
   normalised to 8 bits per component, so a 12- or 16-bit codestream is scaled
   down rather than returned at its own depth.
-- Public-key encryption covers **RSA** recipients. A certificate carrying an
-  EC or DSA key cannot transport a wrapped key and is rejected; key-agreement
-  recipients (`kari`), password recipients (`pwri`) and `kekri` are not opened,
-  and neither is an envelope whose content cipher is RC2 (Acrobat 5), which no
-  supported crypto backend implements. All of these fail explicitly.
+- Public-key encryption covers **RSA key-transport** and **EC key-agreement**
+  recipients. DSA certificates, password recipients (`pwri`) and `kekri` are
+  not supported, and neither is an envelope whose content cipher is RC2
+  (Acrobat 5), which no supported crypto backend implements. All of these fail
+  explicitly.
 - No PDF 2.0 message authentication code (`/AuthCode`) is produced or checked
   for either handler. The public-key permission word therefore always sets the
   "tolerate a missing MAC" bit; a reader that requires a MAC would otherwise

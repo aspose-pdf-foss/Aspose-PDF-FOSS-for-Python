@@ -1840,7 +1840,7 @@ class Document:
         recipients:
             :class:`~aspose_pdf.Recipient` objects, or bare ``cryptography``
             certificates, which then all receive *permissions*. At least one is
-            required, and each needs an RSA public key.
+            required, and each needs an RSA or EC public key.
         algorithm:
             ``"AES-256"`` (the default, ``/V 5 /R 6``, ``/SubFilter
             adbe.pkcs7.s5``), ``"AES-128"`` or ``"RC4"`` (128-bit), the latter
@@ -1850,15 +1850,15 @@ class Document:
             granting everything; see :class:`~aspose_pdf.Recipient` for the bit
             layout, which is *not* quite the standard handler's ``/P``.
         ignore_key_usage:
-            Encrypt to a certificate whose ``keyUsage`` extension forbids key
-            transport. Off by default, because a reader that enforces the
-            extension would reject the result.
+            Encrypt to a certificate whose ``keyUsage`` extension forbids RSA
+            key transport or EC key agreement. Off by default, because a
+            reader that enforces the extension would reject the result.
 
         Raises
         ------
         PdfSecurityException
-            If *recipients* is empty, a certificate cannot transport a key, or
-            *algorithm* is not a supported name.
+            If *recipients* is empty, a certificate cannot transport or agree
+            a key, or *algorithm* is not a supported name.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:

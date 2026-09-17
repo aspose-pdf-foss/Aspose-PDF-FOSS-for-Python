@@ -13,7 +13,7 @@ RC4/AES -- is shared with the standard handler, so this module covers only the
 part that differs:
 
 * :func:`build_envelopes` / :func:`open_envelopes` -- the CMS layer, built on
-  ``asn1crypto`` for the ASN.1 and ``cryptography`` for RSA and AES.
+  ``asn1crypto`` for the ASN.1 and ``cryptography`` for RSA, EC, and AES.
 * :func:`compute_file_key` -- the hash over seed and recipient blobs.
 * :func:`normalize_permissions` -- the permission-bit fixups this handler
   requires, which differ from the standard handler's.
@@ -28,12 +28,13 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from asn1crypto import cms, core
 from asn1crypto import x509 as asn1_x509
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import hashes, keywrap, serialization
 from cryptography.hazmat.primitives import padding as sym_padding
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -65,6 +66,34 @@ _CBC_KEY_SIZES = {
     "des_ede3_cbc": 24,
 }
 
+_AES_WRAP_KEY_SIZES = {
+    "aes128_wrap": 16,
+    "aes192_wrap": 24,
+    "aes256_wrap": 32,
+}
+
+_ECDH_HASHES = {
+    "1.3.133.16.840.63.0.2": hashes.SHA1,
+    "1.3.132.1.11.0": hashes.SHA224,
+    "1.3.132.1.11.1": hashes.SHA256,
+    "1.3.132.1.11.2": hashes.SHA384,
+    "1.3.132.1.11.3": hashes.SHA512,
+}
+
+
+class _EccCmsSharedInfo(core.Sequence):
+    """The RFC 5753 input to the X9.63 key derivation function."""
+
+    _fields: ClassVar[list[Any]] = [
+        ("key_info", cms.KeyEncryptionAlgorithm),
+        (
+            "entity_u_info",
+            core.OctetString,
+            {"explicit": 0, "optional": True},
+        ),
+        ("supp_pub_info", core.OctetString, {"explicit": 2}),
+    ]
+
 
 class _WrongKey(PdfSecurityException):
     """A failure whose most likely cause is a private key that does not match.
@@ -84,6 +113,15 @@ class RecipientPayload:
 
     permissions: int
     """This recipient's ``/P`` flags, as a signed 32-bit integer."""
+
+
+@dataclass(frozen=True)
+class _RecipientMatch:
+    """A matching CMS recipient and its selected wrapped content key."""
+
+    kind: str
+    info: Any
+    encrypted_key: bytes | None = None
 
 
 def subfilter_for(algorithm: str) -> str:
@@ -159,7 +197,7 @@ def compute_file_key(
 # CMS EnvelopedData
 # ---------------------------------------------------------------------------
 def _check_key_usage(certificate: Any) -> None:
-    """Reject a certificate whose ``keyUsage`` forbids key transport.
+    """Reject a certificate whose ``keyUsage`` forbids its CMS key method.
 
     A certificate marked for signing only cannot legitimately receive a
     wrapped key, and a reader that enforces the extension (pyHanko does)
@@ -175,12 +213,19 @@ def _check_key_usage(certificate: Any) -> None:
         ).value
     except (crypto_x509.ExtensionNotFound, AttributeError, ValueError):
         return
-    if usage.key_encipherment or usage.data_encipherment:
+    public_key = certificate.public_key()
+    if isinstance(public_key, ec.EllipticCurvePublicKey):
+        permitted = usage.key_agreement
+        required = "keyAgreement"
+    else:
+        permitted = usage.key_encipherment or usage.data_encipherment
+        required = "keyEncipherment or dataEncipherment"
+    if permitted:
         return
     subject = getattr(certificate, "subject", "?")
     raise PdfSecurityException(
-        f"Certificate {subject} has a keyUsage extension that permits neither "
-        "keyEncipherment nor dataEncipherment, so it cannot receive an "
+        f"Certificate {subject} has a keyUsage extension that does not permit "
+        f"{required}, so it cannot receive an "
         "encrypted document key; pass ignore_key_usage=True to encrypt anyway"
     )
 
@@ -197,8 +242,9 @@ def build_envelopes(
     *recipients* pairs an ``x509.Certificate`` with the ``/P`` flags that
     recipient gets -- the handler's one real advantage over a password, since
     each envelope carries its own permissions. Each envelope is a complete CMS
-    ``ContentInfo`` (``EnvelopedData``) with an RSA key-transport recipient and
-    an AES-CBC encrypted content, which is what ``/Recipients`` stores.
+    ``ContentInfo`` (``EnvelopedData``) with an RSA key-transport or EC
+    key-agreement recipient and AES-CBC encrypted content, which is what
+    ``/Recipients`` stores.
     """
     if not recipients:
         raise PdfSecurityException(
@@ -220,11 +266,6 @@ def build_envelopes(
 
 def _build_envelope(certificate: Any, payload: bytes, key_size: int) -> bytes:
     public_key = certificate.public_key()
-    if not hasattr(public_key, "encrypt"):
-        raise PdfSecurityException(
-            "Public-key encryption needs an RSA recipient certificate; "
-            f"{type(public_key).__name__} cannot transport a key"
-        )
     content_key = os.urandom(key_size)
     iv = os.urandom(16)
     padder = sym_padding.PKCS7(128).padder()
@@ -232,30 +273,27 @@ def _build_envelope(certificate: Any, payload: bytes, key_size: int) -> bytes:
     encryptor = Cipher(algorithms.AES(content_key), modes.CBC(iv)).encryptor()
     encrypted_content = encryptor.update(padded) + encryptor.finalize()
 
-    encrypted_key = public_key.encrypt(content_key, asym_padding.PKCS1v15())
-    asn1_cert = asn1_x509.Certificate.load(certificate.public_bytes(serialization.Encoding.DER))
-    recipient_info = cms.RecipientInfo(
-        name="ktri",
-        value=cms.KeyTransRecipientInfo(
-            {
-                "version": "v0",
-                "rid": cms.RecipientIdentifier(
-                    name="issuer_and_serial_number",
-                    value=cms.IssuerAndSerialNumber(
-                        {
-                            "issuer": asn1_cert.issuer,
-                            "serial_number": asn1_cert.serial_number,
-                        }
-                    ),
-                ),
-                "key_encryption_algorithm": {"algorithm": "rsaes_pkcs1v15"},
-                "encrypted_key": encrypted_key,
-            }
-        ),
+    asn1_cert = asn1_x509.Certificate.load(
+        certificate.public_bytes(serialization.Encoding.DER)
     )
+    if isinstance(public_key, rsa.RSAPublicKey):
+        recipient_info = _rsa_recipient_info(
+            public_key, asn1_cert, content_key
+        )
+        version = "v0"
+    elif isinstance(public_key, ec.EllipticCurvePublicKey):
+        recipient_info = _ec_recipient_info(
+            public_key, asn1_cert, content_key
+        )
+        version = "v2"
+    else:
+        raise PdfSecurityException(
+            "Public-key encryption needs an RSA or EC recipient certificate; "
+            f"{type(public_key).__name__} cannot transport or agree a key"
+        )
     enveloped = cms.EnvelopedData(
         {
-            "version": "v0",
+            "version": version,
             "recipient_infos": cms.RecipientInfos([recipient_info]),
             "encrypted_content_info": {
                 "content_type": "data",
@@ -270,6 +308,94 @@ def _build_envelope(certificate: Any, payload: bytes, key_size: int) -> bytes:
     return cms.ContentInfo(
         {"content_type": "enveloped_data", "content": enveloped}
     ).dump()
+
+
+def _rsa_recipient_info(
+    public_key: rsa.RSAPublicKey,
+    asn1_cert: Any,
+    content_key: bytes,
+) -> cms.RecipientInfo:
+    encrypted_key = public_key.encrypt(content_key, asym_padding.PKCS1v15())
+    return cms.RecipientInfo(
+        name="ktri",
+        value=cms.KeyTransRecipientInfo(
+            {
+                "version": "v0",
+                "rid": _issuer_and_serial(asn1_cert, key_agreement=False),
+                "key_encryption_algorithm": {"algorithm": "rsaes_pkcs1v15"},
+                "encrypted_key": encrypted_key,
+            }
+        ),
+    )
+
+
+def _ec_recipient_info(
+    public_key: ec.EllipticCurvePublicKey,
+    asn1_cert: Any,
+    content_key: bytes,
+) -> cms.RecipientInfo:
+    ephemeral_key = ec.generate_private_key(public_key.curve)
+    shared_secret = ephemeral_key.exchange(ec.ECDH(), public_key)
+    ukm = os.urandom(16)
+    wrap_name = f"aes{len(content_key) * 8}_wrap"
+    wrap_algorithm = cms.KeyEncryptionAlgorithm({"algorithm": wrap_name})
+    shared_info = _shared_info(wrap_algorithm, ukm, len(content_key))
+    kek = _x963_kdf(
+        shared_secret,
+        shared_info,
+        len(content_key),
+        hashes.SHA256,
+    )
+    encrypted_key = keywrap.aes_key_wrap(kek, content_key)
+    point = ephemeral_key.public_key().public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+    return cms.RecipientInfo(
+        name="kari",
+        value=cms.KeyAgreeRecipientInfo(
+            {
+                "version": "v3",
+                "originator": cms.OriginatorIdentifierOrKey(
+                    name="originator_key",
+                    value={
+                        "algorithm": {"algorithm": "ec"},
+                        "public_key": point,
+                    },
+                ),
+                "ukm": ukm,
+                "key_encryption_algorithm": {
+                    "algorithm": "1.3.132.1.11.1",
+                    "parameters": wrap_algorithm,
+                },
+                "recipient_encrypted_keys": [
+                    {
+                        "rid": _issuer_and_serial(
+                            asn1_cert, key_agreement=True
+                        ),
+                        "encrypted_key": encrypted_key,
+                    }
+                ],
+            }
+        ),
+    )
+
+
+def _issuer_and_serial(
+    asn1_cert: Any, *, key_agreement: bool
+) -> cms.RecipientIdentifier | cms.KeyAgreementRecipientIdentifier:
+    value = cms.IssuerAndSerialNumber(
+        {
+            "issuer": asn1_cert.issuer,
+            "serial_number": asn1_cert.serial_number,
+        }
+    )
+    identifier_type = (
+        cms.KeyAgreementRecipientIdentifier
+        if key_agreement
+        else cms.RecipientIdentifier
+    )
+    return identifier_type(name="issuer_and_serial_number", value=value)
 
 
 def open_envelopes(
@@ -326,7 +452,7 @@ def _enveloped_data(blob: bytes) -> cms.EnvelopedData | None:
         return None
 
 
-def _find_recipient(blob: bytes, asn1_cert: Any) -> Any:
+def _find_recipient(blob: bytes, asn1_cert: Any) -> _RecipientMatch | None:
     """The RecipientInfo naming *asn1_cert*, or ``None``."""
     enveloped = _enveloped_data(blob)
     if enveloped is None:
@@ -336,30 +462,50 @@ def _find_recipient(blob: bytes, asn1_cert: Any) -> Any:
     except (ValueError, KeyError):
         key_identifier = None
     for recipient_info in enveloped["recipient_infos"]:
-        if recipient_info.name != "ktri":
-            continue
-        ktri = recipient_info.chosen
-        rid = ktri["rid"]
-        if rid.name == "issuer_and_serial_number":
-            issuer_serial = rid.chosen
-            if (
-                issuer_serial["issuer"] == asn1_cert.issuer
-                and issuer_serial["serial_number"].native == asn1_cert.serial_number
-            ):
-                return ktri
-        elif rid.name == "subject_key_identifier" and key_identifier is not None:
-            if rid.chosen.native == key_identifier:
-                return ktri
+        if recipient_info.name == "ktri":
+            ktri = recipient_info.chosen
+            if _recipient_id_matches(ktri["rid"], asn1_cert, key_identifier):
+                return _RecipientMatch("ktri", ktri)
+        elif recipient_info.name == "kari":
+            kari = recipient_info.chosen
+            for recipient_key in kari["recipient_encrypted_keys"]:
+                if _recipient_id_matches(
+                    recipient_key["rid"], asn1_cert, key_identifier
+                ):
+                    return _RecipientMatch(
+                        "kari", kari, recipient_key["encrypted_key"].native
+                    )
     return None
 
 
+def _recipient_id_matches(
+    rid: Any, asn1_cert: Any, key_identifier: bytes | None
+) -> bool:
+    if rid.name == "issuer_and_serial_number":
+        issuer_serial = rid.chosen
+        return (
+            issuer_serial["issuer"] == asn1_cert.issuer
+            and issuer_serial["serial_number"].native == asn1_cert.serial_number
+        )
+    if rid.name == "subject_key_identifier" and key_identifier is not None:
+        return rid.chosen.native == key_identifier
+    if rid.name == "r_key_id" and key_identifier is not None:
+        return rid.chosen["subjectKeyIdentifier"].native == key_identifier
+    return False
+
+
 def _open_envelope(
-    blob: bytes, ktri: Any, private_key: Any
+    blob: bytes, recipient: _RecipientMatch, private_key: Any
 ) -> RecipientPayload | None:
     enveloped = _enveloped_data(blob)
     if enveloped is None:
         return None
-    content_key = _unwrap_key(ktri, private_key)
+    if recipient.kind == "ktri":
+        content_key = _unwrap_transport_key(recipient.info, private_key)
+    else:
+        content_key = _unwrap_agreement_key(
+            recipient.info, recipient.encrypted_key, private_key
+        )
     encrypted_info = enveloped["encrypted_content_info"]
     encrypted = encrypted_info["encrypted_content"]
     if encrypted is None:
@@ -382,7 +528,7 @@ def _open_envelope(
     return RecipientPayload(seed=seed, permissions=permissions)
 
 
-def _unwrap_key(ktri: Any, private_key: Any) -> bytes:
+def _unwrap_transport_key(ktri: Any, private_key: Any) -> bytes:
     algorithm = ktri["key_encryption_algorithm"]["algorithm"].native
     encrypted_key = ktri["encrypted_key"].native
     if not hasattr(private_key, "decrypt"):
@@ -404,6 +550,98 @@ def _unwrap_key(ktri: Any, private_key: Any) -> bytes:
         raise _WrongKey(
             "The private key does not open this recipient envelope"
         ) from exc
+
+
+def _unwrap_agreement_key(
+    kari: Any, encrypted_key: bytes | None, private_key: Any
+) -> bytes:
+    if not isinstance(private_key, ec.EllipticCurvePrivateKey):
+        raise PdfSecurityException(
+            "Opening a key-agreement recipient envelope needs an EC private "
+            f"key; {type(private_key).__name__} cannot derive one"
+        )
+    algorithm = kari["key_encryption_algorithm"]
+    digest_factory = _ECDH_HASHES.get(algorithm["algorithm"].dotted)
+    if digest_factory is None:
+        raise PdfSecurityException(
+            "Unsupported recipient key-agreement algorithm "
+            f"{algorithm['algorithm'].native!r}"
+        )
+    parameters = algorithm["parameters"]
+    if parameters is None or isinstance(parameters, core.Void):
+        raise PdfSecurityException(
+            "The recipient key-agreement algorithm names no key-wrap algorithm"
+        )
+    try:
+        wrap_algorithm = cms.KeyEncryptionAlgorithm.load(parameters.dump())
+    except (TypeError, ValueError) as exc:
+        raise PdfSecurityException(
+            "The recipient key-agreement envelope has malformed parameters"
+        ) from exc
+    wrap_name = wrap_algorithm["algorithm"].native
+    kek_size = _AES_WRAP_KEY_SIZES.get(wrap_name)
+    if kek_size is None:
+        raise PdfSecurityException(
+            f"Unsupported key-wrap algorithm {wrap_name!r} in a recipient envelope"
+        )
+    originator = kari["originator"]
+    if originator.name != "originator_key":
+        raise PdfSecurityException(
+            "The recipient key-agreement envelope carries no originator key"
+        )
+    ukm_value = kari["ukm"].native
+    ukm = ukm_value if isinstance(ukm_value, bytes) else None
+    try:
+        originator_key = ec.EllipticCurvePublicKey.from_encoded_point(
+            private_key.curve, originator.chosen["public_key"].native
+        )
+        shared_secret = private_key.exchange(ec.ECDH(), originator_key)
+        shared_info = _shared_info(wrap_algorithm, ukm, kek_size)
+        kek = _x963_kdf(
+            shared_secret,
+            shared_info,
+            kek_size,
+            digest_factory,
+        )
+        if encrypted_key is None:
+            raise ValueError("missing encrypted key")
+        return keywrap.aes_key_unwrap(kek, encrypted_key)
+    except (TypeError, ValueError, keywrap.InvalidUnwrap) as exc:
+        raise _WrongKey(
+            "The private key does not open this key-agreement envelope"
+        ) from exc
+
+
+def _shared_info(
+    wrap_algorithm: cms.KeyEncryptionAlgorithm,
+    ukm: bytes | None,
+    kek_size: int,
+) -> bytes:
+    values: dict[str, Any] = {
+        "key_info": wrap_algorithm,
+        "supp_pub_info": (kek_size * 8).to_bytes(4, "big"),
+    }
+    if ukm is not None:
+        values["entity_u_info"] = ukm
+    return _EccCmsSharedInfo(values).dump()
+
+
+def _x963_kdf(
+    shared_secret: bytes,
+    shared_info: bytes,
+    length: int,
+    digest_factory: Any,
+) -> bytes:
+    output = bytearray()
+    counter = 1
+    while len(output) < length:
+        digest = hashes.Hash(digest_factory())
+        digest.update(shared_secret)
+        digest.update(counter.to_bytes(4, "big"))
+        digest.update(shared_info)
+        output.extend(digest.finalize())
+        counter += 1
+    return bytes(output[:length])
 
 
 _OAEP_HASHES = {

@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 
 from aspose_pdf import Document, Recipient
@@ -74,6 +74,44 @@ def _make_cert(
     return certificate, key
 
 
+def _make_ec_cert(
+    common_name: str, *, key_agreement: bool = True
+) -> tuple[x509.Certificate, ec.EllipticCurvePrivateKey]:
+    """A self-signed EC certificate with an explicit ``keyUsage``."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    now = datetime.now(UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=key_agreement,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(key.public_key()), False
+        )
+        .sign(key, hashes.SHA256())
+    )
+    return certificate, key
+
+
 # RSA key generation is the slow part of this suite; two identities are enough
 # for every case, so they are made once.
 @pytest.fixture(scope="module")
@@ -89,6 +127,11 @@ def bob():
 @pytest.fixture(scope="module")
 def signing_only():
     return _make_cert("Signer", key_encipherment=False)
+
+
+@pytest.fixture(scope="module")
+def carol():
+    return _make_ec_cert("Carol")
 
 
 def _sealed(recipients, *, algorithm: str = "AES-256", text: str = _TEXT) -> bytes:
@@ -160,6 +203,31 @@ def test_every_cipher_round_trips(alice, algorithm, tmp_path):
     with Document(path, certificate=alice[0], private_key=alice[1]) as document:
         assert _TEXT.encode() in document.pages[0].content
         assert document._engine_pdf.encryption_algorithm == algorithm
+
+
+def test_ec_recipient_opens_the_document(carol, tmp_path):
+    from asn1crypto import cms
+
+    _seed, envelopes = build_envelopes([(carol[0], -1)])
+    envelope = cms.ContentInfo.load(envelopes[0])
+    assert envelope["content"]["recipient_infos"][0].name == "kari"
+
+    data = _sealed([Recipient(carol[0])])
+    path = tmp_path / "ec-sealed.pdf"
+    path.write_bytes(data)
+
+    with Document(path, certificate=carol[0], private_key=carol[1]) as document:
+        assert _TEXT.encode() in document.pages[0].content
+        assert document.permissions == normalize_permissions(-1)
+
+
+def test_a_mismatched_ec_private_key_is_rejected(carol, tmp_path):
+    path = tmp_path / "ec-sealed.pdf"
+    path.write_bytes(_sealed([Recipient(carol[0])]))
+    wrong_key = ec.generate_private_key(ec.SECP256R1())
+
+    with pytest.raises(PdfSecurityException, match="could not be opened"):
+        Document(path, certificate=carol[0], private_key=wrong_key)
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +370,15 @@ def test_every_recipient_gets_the_same_seed(alice, bob):
     assert open_envelopes(envelopes, bob[0], bob[1]).seed == seed
 
 
+def test_rsa_and_ec_recipients_get_the_same_seed(alice, carol):
+    seed, envelopes = build_envelopes([(alice[0], -1), (carol[0], -3844)])
+
+    assert open_envelopes(envelopes, alice[0], alice[1]).seed == seed
+    opened = open_envelopes(envelopes, carol[0], carol[1])
+    assert opened.seed == seed
+    assert opened.permissions == normalize_permissions(-3844)
+
+
 def _foreign_envelope(certificate, payload: bytes, *, cipher: str) -> bytes:
     """Build a CMS envelope the way another producer would, not our builder.
 
@@ -433,6 +510,15 @@ def test_a_signing_only_certificate_is_refused_by_default(signing_only):
     # ...but a caller who knows better can insist.
     document.encrypt_for_recipients([signing_only[0]], ignore_key_usage=True)
     assert document._engine_pdf._recipient_envelopes
+
+
+def test_ec_recipient_needs_key_agreement_usage():
+    certificate, _key = _make_ec_cert("No agreement", key_agreement=False)
+    document = Document()
+    document.pages.add()
+
+    with pytest.raises(PdfSecurityException, match="keyAgreement"):
+        document.encrypt_for_recipients([certificate])
 
 
 def test_certificate_and_key_must_arrive_together(alice, tmp_path):

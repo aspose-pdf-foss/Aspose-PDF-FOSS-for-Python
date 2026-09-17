@@ -53,9 +53,9 @@ class Recipient:
     ----------
     certificate:
         The recipient's ``cryptography`` :class:`~cryptography.x509.Certificate`.
-        It must carry an RSA public key, and -- when it declares a ``keyUsage``
-        extension at all -- that extension must permit ``keyEncipherment`` or
-        ``dataEncipherment``.
+        It must carry an RSA or EC public key. When it declares a ``keyUsage``
+        extension, RSA certificates must permit ``keyEncipherment`` or
+        ``dataEncipherment`` and EC certificates must permit ``keyAgreement``.
     permissions:
         This recipient's access flags as a signed 32-bit integer, defaulting to
         every permission. The layout is close to the standard handler's ``/P``
