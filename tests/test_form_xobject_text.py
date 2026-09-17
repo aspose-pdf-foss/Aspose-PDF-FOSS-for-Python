@@ -28,20 +28,7 @@ _FONT = (
 )
 
 
-def _document(page_content: bytes, forms: dict[int, bytes]) -> Document:
-    objects = {
-        1: b"<< /Type /Catalog /Pages 2 0 R >>",
-        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        3: (
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 200] /Resources << "
-            b"/Font << /F1 5 0 R >> /XObject << /Fm1 6 0 R >> >> /Contents 4 0 R >>"
-        ),
-        4: b"<< /Length %d >>\nstream\n" % len(page_content)
-        + page_content
-        + b"\nendstream",
-        5: _FONT,
-        **forms,
-    }
+def _load_objects(objects: dict[int, bytes]) -> Document:
     raw = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
     offsets = {}
     for number in sorted(objects):
@@ -56,6 +43,47 @@ def _document(page_content: bytes, forms: dict[int, bytes]) -> Document:
         start,
     )
     return Document(io.BytesIO(bytes(raw)))
+
+
+def _document(page_content: bytes, forms: dict[int, bytes]) -> Document:
+    return _load_objects(
+        {
+            1: b"<< /Type /Catalog /Pages 2 0 R >>",
+            2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: (
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 200] "
+                b"/Resources << /Font << /F1 5 0 R >> /XObject << /Fm1 6 0 R >> "
+                b">> /Contents 4 0 R >>"
+            ),
+            4: b"<< /Length %d >>\nstream\n" % len(page_content)
+            + page_content
+            + b"\nendstream",
+            5: _FONT,
+            **forms,
+        }
+    )
+
+
+def _shared_form_document() -> Document:
+    resources = b"<< /Font << /F1 5 0 R >> /XObject << /Fm1 6 0 R >> >>"
+    return _load_objects(
+        {
+            1: b"<< /Type /Catalog /Pages 2 0 R >>",
+            2: b"<< /Type /Pages /Kids [3 0 R 7 0 R] /Count 2 >>",
+            3: (
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 200] "
+                b"/Resources " + resources + b" /Contents 4 0 R >>"
+            ),
+            4: b"<< /Length 8 >>\nstream\n/Fm1 Do\nendstream",
+            5: _FONT,
+            6: _form(_shows(b"shared text"), _OWN_FONT),
+            7: (
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 200] "
+                b"/Resources " + resources + b" /Contents 8 0 R >>"
+            ),
+            8: b"<< /Length 8 >>\nstream\n/Fm1 Do\nendstream",
+        }
+    )
 
 
 def _form(body: bytes, resources: bytes | None = b"") -> bytes:
@@ -187,14 +215,38 @@ def test_the_layout_exports_read_inside_a_form():
     assert "inner text" in page.to_markdown(embed_images=False)
 
 
-def test_replace_text_does_not_reach_inside_a_form_yet():
-    # `replace_text` splices a replacement into the stream at a byte offset,
-    # and a form is a different stream -- often one shared by every page that
-    # shows the same header, so editing it "on this page" would edit all of
-    # them. That is a decision to make, not plumbing to add. Stated rather
-    # than silent: see supported-features.md.
+def test_replace_text_reaches_inside_a_form():
     document = _document(b"/Fm1 Do\n", {6: _form(_shows(b"inner text"), _OWN_FONT)})
-    assert document.pages[0].replace_text("inner", "outer") == 0
+
+    assert document.pages[0].replace_text("inner", "outer") == 1
+    assert _text(document) == "outer text"
+
+
+def test_editing_a_shared_form_isolated_to_the_selected_page():
+    document = _shared_form_document()
+
+    assert document.pages[0].replace_text("shared", "first") == 1
+    assert document.pages[0].extract_text() == "first text"
+    assert document.pages[1].extract_text() == "shared text"
+
+    saved = io.BytesIO()
+    document.save(saved)
+    reloaded = Document(io.BytesIO(saved.getvalue()))
+    assert reloaded.pages[0].extract_text() == "first text"
+    assert reloaded.pages[1].extract_text() == "shared text"
+
+
+def test_redact_text_reaches_nested_forms():
+    document = _document(
+        b"/Fm1 Do\n",
+        {
+            6: _form(b"/Fm2 Do", b"/XObject << /Fm2 7 0 R >> "),
+            7: _form(_shows(b"nested secret"), _OWN_FONT),
+        },
+    )
+
+    assert document.pages[0].redact_text("secret", overlay=True) == 1
+    assert "secret" not in document.pages[0].extract_text()
 
 
 def test_a_form_s_font_governs_inside_it():

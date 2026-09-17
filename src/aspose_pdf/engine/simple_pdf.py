@@ -6050,6 +6050,47 @@ class SimplePdf:
                 if reshaper is not None:
                     self._author_reshaped_runs(index, reshaper, font, author_layout)
 
+            remaining = 0 if max_count == 0 else max_count - total
+            if max_count and remaining <= 0:
+                continue
+
+            def edit_form(form_content: bytes, resources: Any, limit: int):
+                metric = self._build_simple_font_metrics(
+                    index,
+                    shared_cache=metric_cache,
+                    resources=resources,
+                )
+                codec = self._build_text_codecs(
+                    index,
+                    metric_for_name=metric,
+                    shared_cache=codec_cache,
+                    resources=resources,
+                )
+                form_reshaper = (
+                    Reshaper(can_author=False, budget=self._load_budget)
+                    if wants_reshape
+                    else None
+                )
+                return replace_text_in_content(
+                    form_content,
+                    search,
+                    replacement,
+                    case_sensitive=case_sensitive,
+                    max_count=limit,
+                    codec_for_name=codec,
+                    metric_for_name=metric,
+                    reshaper=form_reshaper,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
+                )
+
+            total += self._edit_page_form_xobjects(
+                index,
+                updated,
+                edit_form,
+                remaining,
+            )
+
         if total:
             self._extracted_text = None
         return total
@@ -6175,9 +6216,223 @@ class SimplePdf:
                 self._set_page_content(index, updated)
                 total += count
 
+            remaining = 0 if max_count == 0 else max_count - total
+            if max_count and remaining <= 0:
+                continue
+
+            def edit_form(form_content: bytes, resources: Any, limit: int):
+                metric = self._build_simple_font_metrics(
+                    index,
+                    shared_cache=metric_cache,
+                    resources=resources,
+                )
+                codec = self._build_text_codecs(
+                    index,
+                    metric_for_name=metric,
+                    shared_cache=codec_cache,
+                    resources=resources,
+                )
+                form_quads = []
+                if overlay:
+                    from .text_locate import locate_matches
+
+                    form_quads = locate_matches(
+                        form_content,
+                        search,
+                        metric,
+                        case_sensitive=case_sensitive,
+                        max_count=limit,
+                        limits=self._load_limits,
+                        budget=self._load_budget,
+                    )
+                form_updated, form_count = redact_text_in_content(
+                    form_content,
+                    search,
+                    case_sensitive=case_sensitive,
+                    max_count=limit,
+                    codec_for_name=codec,
+                    metric_for_name=metric,
+                    limits=self._load_limits,
+                    budget=self._load_budget,
+                )
+                if form_count and overlay and form_quads:
+                    form_isolation = isolation_for(
+                        form_updated,
+                        budget=self._load_budget,
+                    )
+                    if form_isolation.needed:
+                        form_updated = (
+                            form_isolation.opening
+                            + form_updated
+                            + b"\n"
+                            + form_isolation.closing
+                        )
+                    form_updated = self._append_redaction_overlay(
+                        form_updated,
+                        form_quads,
+                        overlay_color,
+                    )
+                return form_updated, form_count
+
+            total += self._edit_page_form_xobjects(
+                index,
+                updated,
+                edit_form,
+                remaining,
+            )
+
         if total:
             self._extracted_text = None
         return total
+
+    def _edit_page_form_xobjects(
+        self,
+        page_index: int,
+        page_content: bytes,
+        editor: Callable[[bytes, Any, int], tuple[bytes, int]],
+        max_count: int,
+    ) -> int:
+        """Edit reachable form streams without mutating forms shared by other pages."""
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary) or self._cos_doc is None:
+            return 0
+        resources = self._resolve_resources_cos(page)
+        if not isinstance(resources, PdfDictionary):
+            return 0
+        memo: dict[tuple[int, int], tuple[Any, bool]] = {}
+        cloned, count = self._edit_form_resources(
+            resources,
+            page_content,
+            editor,
+            max_count,
+            memo,
+            set(),
+            0,
+        )
+        if cloned is not None:
+            page.mapping[PdfName("Resources")] = cloned
+        return count
+
+    def _edit_form_resources(
+        self,
+        resources: Any,
+        content: bytes,
+        editor: Callable[[bytes, Any, int], tuple[bytes, int]],
+        max_count: int,
+        memo: dict[tuple[int, int], tuple[Any, bool]],
+        active: set[tuple[int, int]],
+        depth: int,
+    ) -> tuple[PdfDictionary | None, int]:
+        """Copy and update the form references reached by ``Do`` operators."""
+        from .content_stream_parser import _MAX_FORM_DEPTH
+
+        if depth >= _MAX_FORM_DEPTH or not isinstance(resources, PdfDictionary):
+            return None, 0
+        xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
+        if not isinstance(xobjects, PdfDictionary):
+            return None, 0
+
+        try:
+            placements = parse_image_placements_from_content(
+                content,
+                limits=self._load_limits,
+                budget=self._load_budget,
+            )
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return None, 0
+
+        replacements: dict[PdfName, Any] = {}
+        total = 0
+        for name, _matrix in placements:
+            remaining = 0 if max_count == 0 else max_count - total
+            if max_count and remaining <= 0:
+                break
+            key_name = PdfName(name)
+            source_ref = xobjects.mapping.get(key_name)
+            form = self._resolve(source_ref)
+            if not isinstance(form, PdfStream):
+                continue
+            if self._get_name(form.mapping.get(PdfName("Subtype"))) != "Form":
+                continue
+
+            own_resources = self._resolve(form.mapping.get(PdfName("Resources")))
+            effective_resources = (
+                own_resources
+                if isinstance(own_resources, PdfDictionary) and own_resources.mapping
+                else resources
+            )
+            object_key = (
+                source_ref.object_number
+                if isinstance(source_ref, PdfIndirectReference)
+                else id(form)
+            )
+            memo_key = (object_key, id(effective_resources))
+            cached = memo.get(memo_key)
+            if cached is not None:
+                cached_ref, changed = cached
+                if changed:
+                    replacements[key_name] = cached_ref
+                continue
+            if memo_key in active:
+                continue
+            active.add(memo_key)
+            try:
+                try:
+                    form_content = self._decode_cos_stream(form, source_ref)
+                except PdfResourceLimitException:
+                    raise
+                except PDF_OPERATION_ERRORS:
+                    memo[memo_key] = (source_ref, False)
+                    continue
+                updated, direct_count = editor(
+                    form_content,
+                    effective_resources,
+                    remaining,
+                )
+                nested_remaining = (
+                    0 if max_count == 0 else max_count - total - direct_count
+                )
+                if max_count and nested_remaining <= 0:
+                    nested_resources, nested_count = None, 0
+                else:
+                    nested_resources, nested_count = self._edit_form_resources(
+                        effective_resources,
+                        updated,
+                        editor,
+                        nested_remaining,
+                        memo,
+                        active,
+                        depth + 1,
+                    )
+            finally:
+                active.discard(memo_key)
+
+            count = direct_count + nested_count
+            if not count:
+                memo[memo_key] = (source_ref, False)
+                continue
+
+            mapping = dict(form.mapping)
+            for filter_key in ("Filter", "DecodeParms", "Length"):
+                mapping.pop(PdfName(filter_key), None)
+            if nested_resources is not None:
+                mapping[PdfName("Resources")] = nested_resources
+            clone_ref = self._cos_doc.register_object(
+                PdfStream(content=updated, mapping=mapping)
+            )
+            memo[memo_key] = (clone_ref, True)
+            replacements[key_name] = clone_ref
+            total += count
+
+        if not replacements:
+            return None, total
+        cloned_xobjects = PdfDictionary(dict(xobjects.mapping))
+        cloned_xobjects.mapping.update(replacements)
+        cloned_resources = PdfDictionary(dict(resources.mapping))
+        cloned_resources.mapping[PdfName("XObject")] = cloned_xobjects
+        return cloned_resources, total
 
     @staticmethod
     def _append_redaction_overlay(
@@ -6213,16 +6468,18 @@ class SimplePdf:
         page_index: int,
         *,
         shared_cache: dict[int, Any] | None = None,
+        resources: Any = None,
     ):
-        """Return a ``name -> SimpleFontMetric|CompositeFontMetric|None`` resolver."""
+        """Return a font-metric resolver for a page or explicit resources."""
         from .cos import PdfDictionary, PdfName
 
-        page_dict = self._get_page_dict(page_index)
         fonts_cos = None
-        if isinstance(page_dict, PdfDictionary):
-            resources = self._resolve_resources_cos(page_dict)
-            if isinstance(resources, PdfDictionary):
-                fonts_cos = self._resolve(resources.mapping.get(PdfName("Font")))
+        if not isinstance(resources, PdfDictionary):
+            page_dict = self._get_page_dict(page_index)
+            if isinstance(page_dict, PdfDictionary):
+                resources = self._resolve_resources_cos(page_dict)
+        if isinstance(resources, PdfDictionary):
+            fonts_cos = self._resolve(resources.mapping.get(PdfName("Font")))
         cache: dict[str, Any] = {}
 
         def resolver(name: str):
@@ -6700,8 +6957,9 @@ class SimplePdf:
         *,
         metric_for_name=None,
         shared_cache: dict[int, Any] | None = None,
+        resources: Any = None,
     ):
-        """Return a ``name -> CidTextCodec|None`` resolver for a page.
+        """Return a ``name -> CidTextCodec|None`` resolver for resources.
 
         A codec is produced for any Type0 font whose code -> text map can be
         built from ToUnicode, a bundled predefined CMap, or an embedded
@@ -6719,12 +6977,13 @@ class SimplePdf:
             predefined_cmap_codec,
         )
 
-        page_dict = self._get_page_dict(page_index)
         fonts_cos = None
-        if isinstance(page_dict, PdfDictionary):
-            resources = self._resolve_resources_cos(page_dict)
-            if isinstance(resources, PdfDictionary):
-                fonts_cos = self._resolve(resources.mapping.get(PdfName("Font")))
+        if not isinstance(resources, PdfDictionary):
+            page_dict = self._get_page_dict(page_index)
+            if isinstance(page_dict, PdfDictionary):
+                resources = self._resolve_resources_cos(page_dict)
+        if isinstance(resources, PdfDictionary):
+            fonts_cos = self._resolve(resources.mapping.get(PdfName("Font")))
         cache: dict[str | None, Any] = {}
 
         def resolver(name: str | None):

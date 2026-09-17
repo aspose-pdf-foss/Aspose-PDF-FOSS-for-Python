@@ -1117,14 +1117,12 @@ Boundaries:
   rewritten; the positional joining is a geometric heuristic (baseline and
   gap thresholds in em units) that requires advance widths, so fonts without
   usable metrics keep positioning operators as run boundaries, and phrases
-  split across columns, rise changes, or CTM changes are not matched. It edits
-  a **page's own** content stream: text drawn through a form XObject is read
-  (see text extraction) but not rewritten. A replacement is spliced at a byte
-  offset into one stream and a form is another -- and a form is often shared
-  by every page that shows the same header, so editing it "on this page" would
-  edit all of them; that is a decision, not missing plumbing. (The HTML and
-  Markdown exports, which only *read*, do reach inside forms -- see below.) Type0
-  editing covers any font with a `ToUnicode` CMap, embedded CIDFontType2 fonts
+  split across columns, rise changes, or CTM changes are not matched. Text
+  drawn through reachable form XObjects is rewritten too, including nested
+  forms. Page-specific editing uses copy-on-write form streams and resources,
+  so changing a shared header on one page leaves every other page unchanged.
+  Recursive or malformed form graphs are bounded at the same depth as text
+  extraction. Type0 editing covers any font with a `ToUnicode` CMap, embedded CIDFontType2 fonts
   under an Identity encoding reconstructed from the font program, and the exact
   bundled predefined names listed above for CIDFontType0 or CIDFontType2.
   Without `ToUnicode`, other predefined CMap names remain opaque. A bundled
