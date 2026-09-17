@@ -1829,11 +1829,11 @@ Boundaries:
   `images` extra (Pillow/OpenJPEG) for anything larger than a thumbnail; the
   built-in decoder is what makes the default install *work*, not what makes it
   fast. It also declines rather than guesses on the parts of ISO 15444-1 it
-  does not implement: packed packet headers (`PPM`/`PPT`), progression order
-  changes (`POC`) and non-zero `RGN` styles each raise. Maxshift (`Srgn=0`)
-  region-of-interest/component shifts are decoded. Output is normalised to 8
-  bits per component, so a 12- or 16-bit codestream is scaled down rather than
-  returned at its own depth.
+  does not implement: packed packet headers (`PPM`/`PPT`) and non-zero `RGN`
+  styles each raise. Main-header and tile-header progression order changes
+  (`POC`) and Maxshift (`Srgn=0`) region-of-interest/component shifts are
+  decoded. Output is normalised to 8 bits per component, so a 12- or 16-bit
+  codestream is scaled down rather than returned at its own depth.
 - Public-key encryption covers **RSA key-transport** and **EC key-agreement**
   recipients and opens PBKDF2/AES-wrap password recipients (`pwri`) and
   AES-wrap pre-shared-key recipients (`kekri`). DSA certificates and envelopes

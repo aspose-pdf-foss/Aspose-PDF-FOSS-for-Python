@@ -157,6 +157,15 @@ _GRAY_8x8_RGN = bytes.fromhex(
     "eaf57abd4979e2d555555555a8ffd9"
 )
 
+_GRAY_8x8_POC = bytes.fromhex(
+    "ff4fff51002900000000000800000008000000000000000000000008000000080000"
+    "0000000000000001070101ff52000c00000002000104040001ff5c00074040484850"
+    "ff640025000143726561746564206279204f70656e4a5045472076657273696f6e20"
+    "322e352e34ff90000a00000000003f0001ff5f000900000002020101ff93df587012"
+    "0a4383bd0d266e4ae6837a0525f83031b77fc07070230022187f037e8af40f8c08bf"
+    "ffd9"
+)
+
 _RGB_16x16_RCT = bytes.fromhex(
     "0000000c6a5020200d0a870a00000014667479706a703220000000006a7032200000"
     "002d6a703268000000166968647200000010000000100003070700000000000f636f"
@@ -411,6 +420,35 @@ def test_unknown_roi_style_is_rejected():
     codestream[marker + 5] = 1
 
     with pytest.raises(Jpeg2000Error, match="unsupported RGN style 1"):
+        decode(bytes(codestream))
+
+
+def test_tile_progression_order_change_round_trips():
+    """A tile-level POC replaces LRCP with RLCP for two layers."""
+    from aspose_pdf.engine.jpeg2000 import parse_codestream
+
+    codestream = parse_codestream(_GRAY_8x8_POC)
+    (change,) = codestream.tile_pocs[0]
+    assert (
+        change.res_start,
+        change.comp_start,
+        change.layer_end,
+        change.res_end,
+        change.comp_end,
+        change.progression,
+    ) == (0, 0, 2, 2, 1, 1)
+
+    image = decode(_GRAY_8x8_POC)
+    assert image.samples == _pattern("L", 8, 8)
+
+
+def test_unknown_poc_progression_is_rejected():
+    codestream = bytearray(_GRAY_8x8_POC)
+    marker = codestream.find(b"\xff\x5f")
+    assert marker > 0
+    codestream[marker + 10] = 5
+
+    with pytest.raises(Jpeg2000Error, match="unsupported POC progression order 5"):
         decode(bytes(codestream))
 
 

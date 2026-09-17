@@ -61,7 +61,6 @@ _EOC = 0xFFD9
 _UNSUPPORTED = {
     _PPM: "packed packet headers in the main header (PPM)",
     _PPT: "packed packet headers in a tile header (PPT)",
-    _POC: "progression order changes (POC)",
 }
 
 _MAX_DECOMPOSITION_LEVELS = 32
@@ -355,6 +354,16 @@ class _Qcd:
     guard_bits: int = 2
     exponents: list[int] = field(default_factory=list)
     mantissas: list[int] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _Poc:
+    res_start: int
+    comp_start: int
+    layer_end: int
+    res_end: int
+    comp_end: int
+    progression: int
 
 
 @dataclass
@@ -1076,10 +1085,12 @@ class Codestream:
     qcd: _Qcd
     qcc: dict[int, _Qcd]
     rgn: dict[int, int]
+    pocs: list[_Poc]
     tile_parts: dict[int, list[bytes]]
     tile_cod: dict[tuple[int, int], _Cod]
     tile_qcd: dict[tuple[int, int], _Qcd]
     tile_rgn: dict[tuple[int, int], int]
+    tile_pocs: dict[int, list[_Poc]]
 
     def coding_style(self, tile: int, component: int) -> _Cod:
         return (
@@ -1099,6 +1110,9 @@ class Codestream:
 
     def roi_shift(self, tile: int, component: int) -> int:
         return self.tile_rgn.get((tile, component), self.rgn.get(component, 0))
+
+    def progression_changes(self, tile: int) -> list[_Poc]:
+        return self.tile_pocs.get(tile, self.pocs)
 
 
 def _parse_cod(segment: bytes, *, with_layers: bool = True) -> _Cod:
@@ -1182,6 +1196,54 @@ def _parse_rgn(segment: bytes, components: int) -> tuple[int, int]:
     return component, segment[component_bytes + 1]
 
 
+def _parse_poc(segment: bytes, components: int) -> list[_Poc]:
+    component_bytes = 1 if components < 257 else 2
+    entry_size = 5 + 2 * component_bytes
+    if not segment or len(segment) % entry_size:
+        raise Jpeg2000Error("POC marker has an invalid length")
+    changes: list[_Poc] = []
+    for offset in range(0, len(segment), entry_size):
+        res_start = segment[offset]
+        cursor = offset + 1
+        if component_bytes == 1:
+            comp_start = segment[cursor]
+        else:
+            comp_start = _u16(segment, cursor)
+        cursor += component_bytes
+        layer_end = _u16(segment, cursor)
+        cursor += 2
+        res_end = segment[cursor]
+        cursor += 1
+        if component_bytes == 1:
+            comp_end = segment[cursor]
+        else:
+            comp_end = _u16(segment, cursor)
+        cursor += component_bytes
+        progression = segment[cursor]
+        if progression > 4:
+            raise Jpeg2000Error(
+                f"unsupported POC progression order {progression}"
+            )
+        if (
+            res_start >= res_end
+            or comp_start >= comp_end
+            or comp_start >= components
+            or not layer_end
+        ):
+            raise Jpeg2000Error("POC marker declares an empty progression")
+        changes.append(
+            _Poc(
+                res_start,
+                comp_start,
+                layer_end,
+                res_end,
+                min(comp_end, components),
+                progression,
+            )
+        )
+    return changes
+
+
 def parse_codestream(data: bytes) -> Codestream:
     """Parse the main header and every tile-part of *data*."""
     if _u16(data, 0) != _SOC:
@@ -1193,10 +1255,12 @@ def parse_codestream(data: bytes) -> Codestream:
     qcd: _Qcd | None = None
     qcc: dict[int, _Qcd] = {}
     rgn: dict[int, int] = {}
+    pocs: list[_Poc] = []
     tile_parts: dict[int, list[bytes]] = {}
     tile_cod: dict[tuple[int, int], _Cod] = {}
     tile_qcd: dict[tuple[int, int], _Qcd] = {}
     tile_rgn: dict[tuple[int, int], int] = {}
+    tile_pocs: dict[int, list[_Poc]] = {}
 
     while offset + 2 <= len(data):
         marker = _u16(data, offset)
@@ -1235,6 +1299,10 @@ def parse_codestream(data: bytes) -> Codestream:
                 raise Jpeg2000Error("RGN before SIZ")
             component, shift = _parse_rgn(segment, siz.components)
             rgn[component] = shift
+        elif marker == _POC:
+            if siz is None:
+                raise Jpeg2000Error("POC before SIZ")
+            pocs.extend(_parse_poc(segment, siz.components))
         elif marker == _SOT:
             if siz is None or cod is None or qcd is None:
                 raise Jpeg2000Error("a tile-part precedes the main header")
@@ -1248,6 +1316,7 @@ def parse_codestream(data: bytes) -> Codestream:
                 tile_cod,
                 tile_qcd,
                 tile_rgn,
+                tile_pocs,
             )
             continue
         offset += length
@@ -1261,10 +1330,12 @@ def parse_codestream(data: bytes) -> Codestream:
         qcd,
         qcc,
         rgn,
+        pocs,
         tile_parts,
         tile_cod,
         tile_qcd,
         tile_rgn,
+        tile_pocs,
     )
 
 
@@ -1309,6 +1380,7 @@ def _read_tile_part(
     tile_cod: dict[tuple[int, int], _Cod],
     tile_qcd: dict[tuple[int, int], _Qcd],
     tile_rgn: dict[tuple[int, int], int],
+    tile_pocs: dict[int, list[_Poc]],
 ) -> int:
     """Consume one SOT..SOD tile-part; return the offset just past its data."""
     tile_index = _u16(segment, 0)
@@ -1340,6 +1412,10 @@ def _read_tile_part(
         elif marker == _RGN:
             component, shift = _parse_rgn(body, siz.components)
             tile_rgn[(tile_index, component)] = shift
+        elif marker == _POC:
+            tile_pocs.setdefault(tile_index, []).extend(
+                _parse_poc(body, siz.components)
+            )
         cursor += 2 + length
     end = start + psot if psot else len(data)
     end = min(end, len(data))
@@ -1472,7 +1548,9 @@ def _build_resolution(
 # ---------------------------------------------------------------------------
 # Tier-2: packet sequencing and headers (Annex B.9-B.12)
 # ---------------------------------------------------------------------------
-def _packet_sequence(tile: _Tile, cod: _Cod) -> list[tuple[int, int, int, int]]:
+def _packet_sequence(
+    tile: _Tile, cod: _Cod, pocs: list[_Poc] | None = None
+) -> list[tuple[int, int, int, int]]:
     """Every ``(layer, resolution, component, precinct)`` in progression order."""
     layers = cod.layers
     entries: list[tuple[int, int, int, int]] = []
@@ -1482,7 +1560,30 @@ def _packet_sequence(tile: _Tile, cod: _Cod) -> list[tuple[int, int, int, int]]:
                 for layer in range(layers):
                     entries.append((layer, r, component.index, precinct))
 
-    order = cod.progression
+    if not pocs:
+        return _sort_packets(entries, tile, cod.progression)
+
+    sequence: list[tuple[int, int, int, int]] = []
+    included: set[tuple[int, int, int, int]] = set()
+    for change in pocs:
+        selected = [
+            entry
+            for entry in entries
+            if entry[0] < min(change.layer_end, layers)
+            and change.res_start <= entry[1] < change.res_end
+            and change.comp_start <= entry[2] < change.comp_end
+            and entry not in included
+        ]
+        selected = _sort_packets(selected, tile, change.progression)
+        sequence.extend(selected)
+        included.update(selected)
+    return sequence
+
+
+def _sort_packets(
+    entries: list[tuple[int, int, int, int]], tile: _Tile, order: int
+) -> list[tuple[int, int, int, int]]:
+    """Sort a bounded packet set according to one progression order."""
     if order == 0:  # LRCP
         key = lambda e: (e[0], e[1], e[2], e[3])  # noqa: E731
     elif order == 1:  # RLCP
@@ -1576,10 +1677,14 @@ def _segment_lengths(
     return lengths
 
 
-def _decode_packets(tile: _Tile, cod: _Cod, data: bytes) -> None:
+def _decode_packets(
+    tile: _Tile, cod: _Cod, data: bytes, pocs: list[_Poc] | None = None
+) -> None:
     """Walk every packet of *data*, filling each code-block's codeword segments."""
     pos = 0
-    for layer, r, component_index, precinct_index in _packet_sequence(tile, cod):
+    for layer, r, component_index, precinct_index in _packet_sequence(
+        tile, cod, pocs
+    ):
         component = tile.components[component_index]
         if r >= len(component.resolutions):
             continue
@@ -1832,7 +1937,12 @@ def decode(data: bytes, *, limits: PdfLoadLimits | None = None) -> DecodedImage:
             continue
         tile = _build_tile(cs, tile_index)
         cod = cs.coding_style(tile_index, 0)
-        _decode_packets(tile, cod, b"".join(parts))
+        _decode_packets(
+            tile,
+            cod,
+            b"".join(parts),
+            cs.progression_changes(tile_index),
+        )
         samples = [
             _reconstruct_component(component, siz.depths[component.index])
             for component in tile.components
