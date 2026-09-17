@@ -148,6 +148,15 @@ _RAW_CODESTREAM_8x8 = bytes.fromhex(
     "d40404005fc1f38283e7060d030b3800c07c21c0f9020022187f037e8abfffd9"
 )
 
+_GRAY_8x8_RGN = bytes.fromhex(
+    "ff4fff51002900000000000800000008000000000000000000000008000000080000"
+    "0000000000000001070101ff52000c00000001000004040001ff5c00044040ff5e00"
+    "05000003ff640025000143726561746564206279204f70656e4a5045472076657273"
+    "696f6e20322e352e34ff90000a0000000000480001ff93df81b8122b670d0d1e039a"
+    "d711de2b465786dd09f3b4d9e8ef2d9cf986b479393d5973979429bfe60b2a6f58d5"
+    "eaf57abd4979e2d555555555a8ffd9"
+)
+
 _RGB_16x16_RCT = bytes.fromhex(
     "0000000c6a5020200d0a870a00000014667479706a703220000000006a7032200000"
     "002d6a703268000000166968647200000010000000100003070700000000000f636f"
@@ -382,6 +391,27 @@ def test_bare_codestream_without_a_jp2_wrapper():
     image = decode(_RAW_CODESTREAM_8x8)
 
     assert image.samples == _pattern("L", 8, 8)
+
+
+def test_maxshift_roi_component_round_trips():
+    """RGN adds coding planes and scales significant coefficients back down."""
+    from aspose_pdf.engine.jpeg2000 import parse_codestream
+
+    codestream = parse_codestream(_GRAY_8x8_RGN)
+    assert codestream.rgn == {0: 3}
+
+    image = decode(_GRAY_8x8_RGN)
+    assert image.samples == _pattern("L", 8, 8)
+
+
+def test_unknown_roi_style_is_rejected():
+    codestream = bytearray(_GRAY_8x8_RGN)
+    marker = codestream.find(b"\xff\x5e")
+    assert marker > 0
+    codestream[marker + 5] = 1
+
+    with pytest.raises(Jpeg2000Error, match="unsupported RGN style 1"):
+        decode(bytes(codestream))
 
 
 def test_jp2_container_is_unwrapped_to_its_codestream():

@@ -1830,9 +1830,10 @@ Boundaries:
   built-in decoder is what makes the default install *work*, not what makes it
   fast. It also declines rather than guesses on the parts of ISO 15444-1 it
   does not implement: packed packet headers (`PPM`/`PPT`), progression order
-  changes (`POC`) and regions of interest (`RGN`) each raise. Output is
-  normalised to 8 bits per component, so a 12- or 16-bit codestream is scaled
-  down rather than returned at its own depth.
+  changes (`POC`) and non-zero `RGN` styles each raise. Maxshift (`Srgn=0`)
+  region-of-interest/component shifts are decoded. Output is normalised to 8
+  bits per component, so a 12- or 16-bit codestream is scaled down rather than
+  returned at its own depth.
 - Public-key encryption covers **RSA key-transport** and **EC key-agreement**
   recipients and opens PBKDF2/AES-wrap password recipients (`pwri`) and
   AES-wrap pre-shared-key recipients (`kekri`). DSA certificates and envelopes

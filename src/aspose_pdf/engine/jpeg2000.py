@@ -426,6 +426,7 @@ class _TileComponent:
     y1: int
     cod: _Cod
     qcd: _Qcd
+    roi_shift: int
     resolutions: list[_Resolution]
 
 
@@ -1074,9 +1075,11 @@ class Codestream:
     coc: dict[int, _Cod]
     qcd: _Qcd
     qcc: dict[int, _Qcd]
+    rgn: dict[int, int]
     tile_parts: dict[int, list[bytes]]
     tile_cod: dict[tuple[int, int], _Cod]
     tile_qcd: dict[tuple[int, int], _Qcd]
+    tile_rgn: dict[tuple[int, int], int]
 
     def coding_style(self, tile: int, component: int) -> _Cod:
         return (
@@ -1093,6 +1096,9 @@ class Codestream:
             or self.qcc.get(component)
             or self.qcd
         )
+
+    def roi_shift(self, tile: int, component: int) -> int:
+        return self.tile_rgn.get((tile, component), self.rgn.get(component, 0))
 
 
 def _parse_cod(segment: bytes, *, with_layers: bool = True) -> _Cod:
@@ -1161,6 +1167,21 @@ def _parse_qcc(segment: bytes, components: int) -> tuple[int, _Qcd]:
     return _u16(segment, 0), _parse_qcd(segment[2:])
 
 
+def _parse_rgn(segment: bytes, components: int) -> tuple[int, int]:
+    component_bytes = 1 if components < 257 else 2
+    if len(segment) != component_bytes + 2:
+        raise Jpeg2000Error("RGN marker has an invalid length")
+    component = segment[0] if component_bytes == 1 else _u16(segment, 0)
+    if component >= components:
+        raise Jpeg2000Error(
+            f"RGN marker names missing component {component}"
+        )
+    style = segment[component_bytes]
+    if style != 0:
+        raise Jpeg2000Error(f"unsupported RGN style {style}")
+    return component, segment[component_bytes + 1]
+
+
 def parse_codestream(data: bytes) -> Codestream:
     """Parse the main header and every tile-part of *data*."""
     if _u16(data, 0) != _SOC:
@@ -1171,9 +1192,11 @@ def parse_codestream(data: bytes) -> Codestream:
     coc: dict[int, _Cod] = {}
     qcd: _Qcd | None = None
     qcc: dict[int, _Qcd] = {}
+    rgn: dict[int, int] = {}
     tile_parts: dict[int, list[bytes]] = {}
     tile_cod: dict[tuple[int, int], _Cod] = {}
     tile_qcd: dict[tuple[int, int], _Qcd] = {}
+    tile_rgn: dict[tuple[int, int], int] = {}
 
     while offset + 2 <= len(data):
         marker = _u16(data, offset)
@@ -1208,22 +1231,41 @@ def parse_codestream(data: bytes) -> Codestream:
             component, quant = _parse_qcc(segment, siz.components)
             qcc[component] = quant
         elif marker == _RGN:
-            raise Jpeg2000Error(
-                "JPEG 2000 codestream uses a region of interest (RGN), "
-                "which this decoder does not implement"
-            )
+            if siz is None:
+                raise Jpeg2000Error("RGN before SIZ")
+            component, shift = _parse_rgn(segment, siz.components)
+            rgn[component] = shift
         elif marker == _SOT:
             if siz is None or cod is None or qcd is None:
                 raise Jpeg2000Error("a tile-part precedes the main header")
             offset = _read_tile_part(
-                data, offset, segment, siz, cod, tile_parts, tile_cod, tile_qcd
+                data,
+                offset,
+                segment,
+                siz,
+                cod,
+                tile_parts,
+                tile_cod,
+                tile_qcd,
+                tile_rgn,
             )
             continue
         offset += length
 
     if siz is None or cod is None or qcd is None:
         raise Jpeg2000Error("codestream is missing SIZ, COD or QCD")
-    return Codestream(siz, cod, coc, qcd, qcc, tile_parts, tile_cod, tile_qcd)
+    return Codestream(
+        siz,
+        cod,
+        coc,
+        qcd,
+        qcc,
+        rgn,
+        tile_parts,
+        tile_cod,
+        tile_qcd,
+        tile_rgn,
+    )
 
 
 def _parse_siz(segment: bytes) -> _Siz:
@@ -1266,6 +1308,7 @@ def _read_tile_part(
     tile_parts: dict[int, list[bytes]],
     tile_cod: dict[tuple[int, int], _Cod],
     tile_qcd: dict[tuple[int, int], _Qcd],
+    tile_rgn: dict[tuple[int, int], int],
 ) -> int:
     """Consume one SOT..SOD tile-part; return the offset just past its data."""
     tile_index = _u16(segment, 0)
@@ -1294,6 +1337,9 @@ def _read_tile_part(
         elif marker == _QCC:
             component, quant = _parse_qcc(body, siz.components)
             tile_qcd[(tile_index, component)] = quant
+        elif marker == _RGN:
+            component, shift = _parse_rgn(body, siz.components)
+            tile_rgn[(tile_index, component)] = shift
         cursor += 2 + length
     end = start + psot if psot else len(data)
     end = min(end, len(data))
@@ -1347,7 +1393,17 @@ def _build_tile(cs: Codestream, tile_index: int) -> _Tile:
             for r in range(cod.levels + 1)
         ]
         components.append(
-            _TileComponent(index, tcx0, tcy0, tcx1, tcy1, cod, qcd, resolutions)
+            _TileComponent(
+                index,
+                tcx0,
+                tcy0,
+                tcx1,
+                tcy1,
+                cod,
+                qcd,
+                cs.roi_shift(tile_index, index),
+                resolutions,
+            )
         )
     return _Tile(tile_index, tx0, ty0, tx1, ty1, components)
 
@@ -1636,12 +1692,19 @@ def _band_coefficients(
     bitplanes: int,
     step: float,
     reversible: bool,
+    roi_shift: int,
 ) -> list:
     """Run tier-1 over every code-block and place the coefficients in the band."""
     width = band.width
     height = band.height
     if width <= 0 or height <= 0:
         return []
+    coded_bitplanes = bitplanes + roi_shift
+    if coded_bitplanes >= 31:
+        raise Jpeg2000Error(
+            f"RGN shift produces unsupported bit-plane count {coded_bitplanes}"
+        )
+    roi_threshold = 1 << roi_shift if roi_shift else 0
     coefficients: list = [0] * (width * height) if reversible else [0.0] * (
         width * height
     )
@@ -1649,7 +1712,9 @@ def _band_coefficients(
         for block in precinct.blocks:
             if not block.data:
                 continue
-            magnitudes, signs = _decode_codeblock(block, band.kind, style, bitplanes)
+            magnitudes, signs = _decode_codeblock(
+                block, band.kind, style, coded_bitplanes
+            )
             block_width = block.x1 - block.x0
             for y in range(block.y1 - block.y0):
                 row = (block.y0 - band.y0 + y) * width + (block.x0 - band.x0)
@@ -1658,6 +1723,8 @@ def _band_coefficients(
                     magnitude = magnitudes[base + x]
                     if not magnitude:
                         continue
+                    if roi_threshold and magnitude >= roi_threshold:
+                        magnitude >>= roi_shift
                     value = -magnitude if signs[base + x] else magnitude
                     coefficients[row + x] = value if reversible else value * step
     return coefficients
@@ -1673,7 +1740,14 @@ def _reconstruct_component(component: _TileComponent, depth: int) -> list:
     bitplanes, step = _band_quantisation(
         component.qcd, cod.levels, 0, ll_band.level, depth, reversible
     )
-    current = _band_coefficients(ll_band, cod.style, bitplanes, step, reversible)
+    current = _band_coefficients(
+        ll_band,
+        cod.style,
+        bitplanes,
+        step,
+        reversible,
+        component.roi_shift,
+    )
     box = (ll_band.x0, ll_band.y0, ll_band.x1, ll_band.y1)
 
     for r in range(1, len(resolutions)):
@@ -1685,7 +1759,12 @@ def _reconstruct_component(component: _TileComponent, depth: int) -> list:
             )
             bands[band.kind] = (
                 _band_coefficients(
-                    band, cod.style, band_planes, band_step, reversible
+                    band,
+                    cod.style,
+                    band_planes,
+                    band_step,
+                    reversible,
+                    component.roi_shift,
                 ),
                 (band.x0, band.y0, band.x1, band.y1),
             )
