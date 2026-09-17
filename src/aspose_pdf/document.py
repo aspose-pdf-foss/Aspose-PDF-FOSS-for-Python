@@ -145,12 +145,12 @@ class Document:
             containers such as ``SvgLoadOptions`` raise
             :exc:`~aspose_pdf.exceptions.UnsupportedFeatureException`.
         password : str, optional
-            Password for an encrypted *source*.
+            Password for a standard encrypted *source*, or for a CMS password
+            recipient in an ``/Adobe.PubSec`` source.
         certificate, private_key : optional
             Recipient credentials for a *source* encrypted with the public-key
-            handler (``/Adobe.PubSec``), which has no password. Both are
-            ``cryptography`` objects and both are required together. See
-            :class:`~aspose_pdf.Recipient`.
+            handler (``/Adobe.PubSec``). Both are ``cryptography`` objects and
+            both are required together. See :class:`~aspose_pdf.Recipient`.
         limits : PdfLoadLimits, optional
             Resource policy for this document. Defaults to the standard policy.
 

@@ -29,6 +29,7 @@ from aspose_pdf.engine.pubsec import (
     compute_file_key,
     normalize_permissions,
     open_envelopes,
+    open_password_envelopes,
 )
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.exceptions import PdfSecurityException, PdfValidationException
@@ -466,6 +467,96 @@ def _foreign_envelope(certificate, payload: bytes, *, cipher: str) -> bytes:
     ).dump()
 
 
+def _password_envelope(password: str, payload: bytes) -> bytes:
+    """Build a PBKDF2/AES-wrap CMS password recipient."""
+    import os
+
+    from asn1crypto import algos, cms, core
+    from cryptography.hazmat.primitives import keywrap
+    from cryptography.hazmat.primitives import padding as sym_padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+    content_key = os.urandom(32)
+    iv = os.urandom(16)
+    padder = sym_padding.PKCS7(128).padder()
+    encryptor = Cipher(algorithms.AES(content_key), modes.CBC(iv)).encryptor()
+    encrypted_content = encryptor.update(
+        padder.update(payload) + padder.finalize()
+    ) + encryptor.finalize()
+
+    salt = os.urandom(16)
+    iterations = 10_000
+    kek = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=iterations,
+    ).derive(password.encode("utf-8"))
+    kdf = algos.KdfAlgorithm(
+        {
+            "algorithm": "pbkdf2",
+            "parameters": {
+                "salt": {"specified": salt},
+                "iteration_count": iterations,
+                "key_length": 32,
+                "prf": {"algorithm": "sha256"},
+            },
+        }
+    )
+    recipient_info = cms.RecipientInfo(
+        name="pwri",
+        value={
+            "version": "v0",
+            "key_derivation_algorithm": kdf,
+            "key_encryption_algorithm": {"algorithm": "aes256_wrap"},
+            "encrypted_key": keywrap.aes_key_wrap(kek, content_key),
+        },
+    )
+    enveloped = cms.EnvelopedData(
+        {
+            "version": "v3",
+            "recipient_infos": [recipient_info],
+            "encrypted_content_info": {
+                "content_type": "data",
+                "content_encryption_algorithm": {
+                    "algorithm": "aes256_cbc",
+                    "parameters": core.OctetString(iv),
+                },
+                "encrypted_content": encrypted_content,
+            },
+        }
+    )
+    return cms.ContentInfo(
+        {"content_type": "enveloped_data", "content": enveloped}
+    ).dump()
+
+
+def _password_sealed(password: str, *, permissions: int = -3844) -> bytes:
+    import os
+
+    seed = os.urandom(20)
+    normalized = normalize_permissions(permissions)
+    payload = seed + (normalized & 0xFFFFFFFF).to_bytes(4, "big")
+    envelope = _password_envelope(password, payload)
+
+    document = Document()
+    document.pages.add().add_text(_TEXT, 72, 700, font_size=14)
+    pdf = document._engine_pdf
+    pdf._recipient_envelopes = [envelope]
+    pdf.encryption_key = compute_file_key(
+        seed, [envelope], key_length=32, sha256=True
+    )
+    pdf.encrypted = True
+    pdf.password = ""
+    pdf.encryption_algorithm = "AES-256"
+    pdf._encryption_algorithm = "AES-256"
+    pdf._encryption_key_length = 32
+    pdf._encryption_revision = 6
+    pdf.P = normalized
+    return pdf.to_bytes()
+
+
 @pytest.mark.parametrize("cipher", ["aes128", "tripledes"])
 def test_envelopes_from_other_producers_are_opened(alice, cipher):
     """OAEP key transport and a 3DES content cipher, as older tools write them."""
@@ -476,6 +567,38 @@ def test_envelopes_from_other_producers_are_opened(alice, cipher):
 
     assert opened.seed == payload[:20]
     assert opened.permissions == int.from_bytes(payload[20:], "big", signed=True)
+
+
+def test_password_recipient_envelope_is_opened():
+    payload = bytes(range(20)) + (0xFFFFF0C1).to_bytes(4, "big")
+    blob = _password_envelope("correct horse", payload)
+
+    opened = open_password_envelopes([blob], "correct horse")
+
+    assert opened.seed == payload[:20]
+    assert opened.permissions == int.from_bytes(payload[20:], "big", signed=True)
+
+
+def test_password_recipient_document_round_trips(tmp_path):
+    path = tmp_path / "password-recipient.pdf"
+    data = _password_sealed("correct horse")
+    path.write_bytes(data)
+
+    assert _TEXT.encode() not in data
+    with Document(path, password="correct horse") as document:
+        assert _TEXT.encode() in document.pages[0].content
+        assert document.permissions == normalize_permissions(-3844)
+
+    with pytest.raises(PdfSecurityException, match="supplied password"):
+        Document(path, password="wrong horse")
+
+
+def test_password_recipient_document_requires_a_credential(tmp_path):
+    path = tmp_path / "password-recipient.pdf"
+    path.write_bytes(_password_sealed("correct horse"))
+
+    with pytest.raises(PdfSecurityException, match="CMS password recipient"):
+        Document(path)
 
 
 def test_an_unsupported_content_cipher_is_named_in_the_error(alice):

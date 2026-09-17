@@ -1707,7 +1707,9 @@ Supported:
   key wrap. `adbe.pkcs7.s5` (`/V 5 /R 6`, `AESV3`) is written for AES-256 and
   `adbe.pkcs7.s4` (`/V 4 /R 4`) for AES-128 and RC4-128. On read, RSA PKCS#1
   v1.5 or OAEP and standard ECDH key-agreement envelopes over
-  AES-128/192/256-CBC or 3DES-CBC content encryption are opened.
+  AES-128/192/256-CBC or 3DES-CBC content encryption are opened. CMS password
+  recipients using PBKDF2 and AES key wrap are also opened through the regular
+  `password=` load argument.
 - Give **each recipient its own permissions** — one reader may print and
   another only read the same file — which a password cannot express. The
   permission word is not quite the standard handler's `/P`: bit 1 is required,
@@ -1830,10 +1832,10 @@ Boundaries:
   normalised to 8 bits per component, so a 12- or 16-bit codestream is scaled
   down rather than returned at its own depth.
 - Public-key encryption covers **RSA key-transport** and **EC key-agreement**
-  recipients. DSA certificates, password recipients (`pwri`) and `kekri` are
-  not supported, and neither is an envelope whose content cipher is RC2
-  (Acrobat 5), which no supported crypto backend implements. All of these fail
-  explicitly.
+  recipients and opens PBKDF2/AES-wrap password recipients (`pwri`). DSA
+  certificates and `kekri` are not supported, and neither is an envelope whose
+  content cipher is RC2 (Acrobat 5), which no supported crypto backend
+  implements. All of these fail explicitly.
 - No PDF 2.0 message authentication code (`/AuthCode`) is produced or checked
   for either handler. The public-key permission word therefore always sets the
   "tolerate a missing MAC" bit; a reader that requires a MAC would otherwise

@@ -4577,8 +4577,9 @@ class SimplePdf:
         Protection set in this session is checked against the passwords it was
         given, user or owner. Protection the document was loaded with is
         checked against its own ``/Encrypt`` dictionary, which knows both. A
-        certificate-protected document is unlocked by its credential, not by a
-        password, and a document with no protection has nothing to unlock.
+        certificate recipient is unlocked by its credential, while a CMS
+        password recipient uses its password. A document with no protection
+        has nothing to unlock.
 
         ``decrypt`` used to skip this for a loaded document -- its ``encrypted``
         flag describes what the *next save* will do, and is off after a load --
@@ -14875,8 +14876,8 @@ class CosExtractor:
         self._budget = budget or _LoadBudget(self._limits)
         self._stream_decrypt_key = stream_decrypt_key
         self._stream_decrypt_algorithm = stream_decrypt_algorithm
-        # (certificate, private_key) for an /Adobe.PubSec document; the
-        # standard handler ignores it.
+        # (certificate, private_key) for an /Adobe.PubSec document; password
+        # recipients use the regular password argument instead.
         self._credential = credential
         self._pubsec_permissions: int | None = None
         from .cos import PdfName
@@ -14916,26 +14917,26 @@ class CosExtractor:
         Both handlers converge here so the two load paths (eager and lazy) share
         one policy. The standard handler accepts the password -- with an absent
         one meaning "try the empty user password", which is how an
-        owner-password-only document opens. The public-key handler ignores the
-        password entirely and needs the recipient's certificate and private key
-        instead; a missing credential and a wrong one are reported apart, since
-        only one of them is the caller's mistake to fix by supplying something.
+        owner-password-only document opens. The public-key handler accepts
+        either a certificate/private-key pair or a CMS password recipient; a
+        missing credential and a wrong one are reported apart.
         """
         if not self.detect_encryption():
             return password or ""
         if self.uses_public_key_security():
-            if self._credential is None:
+            if self._credential is None and password is None:
                 raise PdfSecurityException(
-                    "This document is encrypted for certificate recipients "
-                    "(/Adobe.PubSec); supply the recipient certificate and "
-                    "private key rather than a password"
+                    "This document uses /Adobe.PubSec for certificate "
+                    "recipients or CMS password recipients; supply a recipient "
+                    "certificate and private key, or a password"
                 )
-            self.attach_stream_decryption("")
+            self.attach_stream_decryption(password or "")
             if self._stream_decrypt_key is None:
                 raise PdfSecurityException(
-                    "The supplied certificate did not yield a usable file key"
+                    "The supplied recipient credential did not yield a usable "
+                    "file key"
                 )
-            return ""
+            return password or ""
         effective = _effective_encryption_password(password)
         if effective is None:
             if not self.empty_user_password_opens():
@@ -15999,16 +16000,21 @@ class CosExtractor:
                 )
         return blobs
 
-    def _public_key_decryption_key(self, enc: Any) -> bytes | None:
+    def _public_key_decryption_key(
+        self, enc: Any, password: str
+    ) -> bytes | None:
         """Derive the file key from the recipient envelope we can open.
 
-        Returns ``None`` when no credential was supplied -- the caller turns
-        that into "this document needs a certificate". A credential that is
-        present but wrong raises, so a mistyped key is never mistaken for a
-        missing one.
+        Certificate credentials open key-transport and key-agreement entries;
+        otherwise *password* opens a CMS password-recipient entry. A present
+        but wrong credential raises rather than producing a garbage file key.
         """
         from .cos import PdfBoolean, PdfName, PdfNumber
-        from .pubsec import compute_file_key, open_envelopes
+        from .pubsec import (
+            compute_file_key,
+            open_envelopes,
+            open_password_envelopes,
+        )
 
         crypt_filter = self._public_key_crypt_filter(enc)
         container = crypt_filter if crypt_filter is not None else enc
@@ -16017,9 +16023,6 @@ class CosExtractor:
             raise PdfSecurityException(
                 "The public-key /Encrypt dictionary carries no /Recipients"
             )
-        if self._credential is None:
-            return None
-
         cfm = None
         if crypt_filter is not None:
             cfm = self._get_name(crypt_filter.mapping.get(PdfName("CFM")))
@@ -16052,8 +16055,11 @@ class CosExtractor:
                 encrypt_metadata = bool(flag.value)
                 break
 
-        certificate, private_key = self._credential
-        payload = open_envelopes(blobs, certificate, private_key)
+        if self._credential is not None:
+            certificate, private_key = self._credential
+            payload = open_envelopes(blobs, certificate, private_key)
+        else:
+            payload = open_password_envelopes(blobs, password)
         self._pubsec_permissions = payload.permissions
         return compute_file_key(
             payload.seed,
@@ -16073,15 +16079,15 @@ class CosExtractor:
         return self._get_name(enc.mapping.get(PdfName("Filter")))
 
     def uses_public_key_security(self) -> bool:
-        """True when the document is encrypted for certificate recipients."""
+        """True when the document uses the ``/Adobe.PubSec`` handler."""
         return self.encryption_filter() == PUBSEC_FILTER
 
     def extract_decryption_key(self, password: str) -> bytes | None:
         """Derive the file encryption key from *password* or a certificate.
 
-        The standard handler derives it from the password; ``/Adobe.PubSec``
-        ignores the password entirely and derives it from the recipient
-        envelope this extractor's credential can open.
+        The standard handler derives it from its document password;
+        ``/Adobe.PubSec`` derives it from a certificate envelope when a
+        credential is present, or from a CMS password-recipient envelope.
         """
         if not self.detect_encryption():
             return None
@@ -16093,7 +16099,7 @@ class CosExtractor:
             return None
 
         if self._get_name(enc.mapping.get(PdfName("Filter"))) == PUBSEC_FILTER:
-            return self._public_key_decryption_key(enc)
+            return self._public_key_decryption_key(enc, password)
 
         def as_bytes(obj: Any) -> bytes | None:
             o = self._resolve(obj)

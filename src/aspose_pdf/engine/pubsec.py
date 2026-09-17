@@ -30,13 +30,14 @@ import os
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from asn1crypto import cms, core
+from asn1crypto import algos, cms, core
 from asn1crypto import x509 as asn1_x509
 from cryptography.hazmat.primitives import hashes, keywrap, serialization
 from cryptography.hazmat.primitives import padding as sym_padding
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from aspose_pdf.exceptions import PdfSecurityException
 
@@ -47,6 +48,7 @@ __all__ = [
     "compute_file_key",
     "normalize_permissions",
     "open_envelopes",
+    "open_password_envelopes",
     "subfilter_for",
 ]
 
@@ -79,6 +81,16 @@ _ECDH_HASHES = {
     "1.3.132.1.11.2": hashes.SHA384,
     "1.3.132.1.11.3": hashes.SHA512,
 }
+
+_PBKDF2_HASHES = {
+    "sha1": hashes.SHA1,
+    "sha224": hashes.SHA224,
+    "sha256": hashes.SHA256,
+    "sha384": hashes.SHA384,
+    "sha512": hashes.SHA512,
+}
+
+_MAX_PBKDF2_ITERATIONS = 10_000_000
 
 
 class _EccCmsSharedInfo(core.Sequence):
@@ -442,6 +454,42 @@ def open_envelopes(
     )
 
 
+def open_password_envelopes(
+    blobs: list[bytes] | tuple[bytes, ...], password: str
+) -> RecipientPayload:
+    """Open the first CMS password recipient that accepts *password*.
+
+    Password recipients carry no identifier, so every ``pwri`` entry is tried
+    until PBKDF2 and AES key unwrap produce a usable content key. An absent
+    password-recipient entry and a wrong password remain distinct failures.
+    """
+    matched = False
+    failure: Exception | None = None
+    for blob in blobs:
+        enveloped = _enveloped_data(blob)
+        if enveloped is None:
+            continue
+        for recipient_info in enveloped["recipient_infos"]:
+            if recipient_info.name != "pwri":
+                continue
+            matched = True
+            try:
+                content_key = _unwrap_password_key(
+                    recipient_info.chosen, password
+                )
+                return _recipient_payload(blob, content_key)
+            except _WrongKey as exc:
+                failure = exc
+    if matched:
+        raise PdfSecurityException(
+            "The document has a password recipient, but its envelope could not "
+            "be opened with the supplied password"
+        ) from failure
+    raise PdfSecurityException(
+        "The document does not contain a CMS password recipient"
+    )
+
+
 def _enveloped_data(blob: bytes) -> cms.EnvelopedData | None:
     try:
         info = cms.ContentInfo.load(bytes(blob))
@@ -506,6 +554,13 @@ def _open_envelope(
         content_key = _unwrap_agreement_key(
             recipient.info, recipient.encrypted_key, private_key
         )
+    return _recipient_payload(blob, content_key)
+
+
+def _recipient_payload(blob: bytes, content_key: bytes) -> RecipientPayload:
+    enveloped = _enveloped_data(blob)
+    if enveloped is None:
+        raise PdfSecurityException("The recipient envelope is not CMS data")
     encrypted_info = enveloped["encrypted_content_info"]
     encrypted = encrypted_info["encrypted_content"]
     if encrypted is None:
@@ -609,6 +664,73 @@ def _unwrap_agreement_key(
     except (TypeError, ValueError, keywrap.InvalidUnwrap) as exc:
         raise _WrongKey(
             "The private key does not open this key-agreement envelope"
+        ) from exc
+
+
+def _unwrap_password_key(pwri: Any, password: str) -> bytes:
+    kdf_algorithm = pwri["key_derivation_algorithm"]
+    if kdf_algorithm is None or isinstance(kdf_algorithm, core.Void):
+        raise PdfSecurityException(
+            "The password recipient expects an externally supplied key"
+        )
+    if kdf_algorithm["algorithm"].native != "pbkdf2":
+        raise PdfSecurityException(
+            "Unsupported password-recipient key derivation algorithm "
+            f"{kdf_algorithm['algorithm'].native!r}"
+        )
+    parameters = kdf_algorithm["parameters"]
+    try:
+        pbkdf2 = (
+            parameters
+            if isinstance(parameters, algos.Pbkdf2Params)
+            else algos.Pbkdf2Params.load(parameters.dump())
+        )
+        salt_choice = pbkdf2["salt"]
+        if salt_choice.name != "specified":
+            raise PdfSecurityException(
+                "Unsupported PBKDF2 salt source in a password recipient"
+            )
+        salt = salt_choice.chosen.native
+        iterations = int(pbkdf2["iteration_count"].native)
+        prf_name = pbkdf2["prf"]["algorithm"].native
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PdfSecurityException(
+            "The password recipient has malformed PBKDF2 parameters"
+        ) from exc
+    if iterations <= 0 or iterations > _MAX_PBKDF2_ITERATIONS:
+        raise PdfSecurityException(
+            f"Password-recipient PBKDF2 iteration count {iterations} is outside "
+            f"the supported range 1..{_MAX_PBKDF2_ITERATIONS}"
+        )
+    digest_factory = _PBKDF2_HASHES.get(prf_name)
+    if digest_factory is None:
+        raise PdfSecurityException(
+            f"Unsupported PBKDF2 PRF {prf_name!r} in a password recipient"
+        )
+    wrap_name = pwri["key_encryption_algorithm"]["algorithm"].native
+    kek_size = _AES_WRAP_KEY_SIZES.get(wrap_name)
+    if kek_size is None:
+        raise PdfSecurityException(
+            f"Unsupported key-wrap algorithm {wrap_name!r} in a password recipient"
+        )
+    declared_length = pbkdf2["key_length"].native
+    if declared_length is not None and int(declared_length) != kek_size:
+        raise PdfSecurityException(
+            f"Password-recipient PBKDF2 derives {declared_length} bytes but "
+            f"{wrap_name} needs {kek_size}"
+        )
+    kdf = PBKDF2HMAC(
+        algorithm=digest_factory(),
+        length=kek_size,
+        salt=salt,
+        iterations=iterations,
+    )
+    kek = kdf.derive(password.encode("utf-8"))
+    try:
+        return keywrap.aes_key_unwrap(kek, pwri["encrypted_key"].native)
+    except (TypeError, ValueError, keywrap.InvalidUnwrap) as exc:
+        raise _WrongKey(
+            "The password does not open this recipient envelope"
         ) from exc
 
 
