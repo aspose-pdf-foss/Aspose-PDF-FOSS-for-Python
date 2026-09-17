@@ -2170,8 +2170,8 @@ Supported:
   sources must return bytes-like data, which is checked against the same input
   size limit before parsing.
 - Collect results through a `ResultContainer` of `OperationResult` objects,
-  each of which can be saved to a data source, path, or stream, or read as
-  bytes/text. Every plugin also writes results to configured output data
+  each of which can be saved to a data source, string or `os.PathLike` path, or
+  stream, or read as bytes/text. Every plugin also writes results to configured output data
   sources, paired by position. A result accepts text or binary data only and
   snapshots a mutable `bytearray` at construction; a container accepts only
   `OperationResult` instances. Providing more output sources than produced

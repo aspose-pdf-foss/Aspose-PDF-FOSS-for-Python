@@ -163,6 +163,21 @@ def test_operation_result_save_to_path_stream_and_source(tmp_path):
     assert sink.read_bytes() == b"data"
 
 
+def test_operation_result_save_accepts_pathlike_objects(tmp_path):
+    class CustomPath:
+        def __init__(self, path):
+            self.path = path
+
+        def __fspath__(self):
+            return str(self.path)
+
+    path = tmp_path / "pathlike.bin"
+
+    OperationResult(b"data").save(CustomPath(path))
+
+    assert path.read_bytes() == b"data"
+
+
 def test_operation_result_retries_short_stream_writes():
     stream = _ShortWriter()
 

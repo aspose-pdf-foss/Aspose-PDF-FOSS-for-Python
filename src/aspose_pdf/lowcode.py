@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import os
 from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
@@ -121,7 +122,7 @@ def _write_all(stream: BinaryIO, data: bytes) -> None:
 class FileDataSource(DataSource):
     """A data source backed by a file on disk."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
 
     def read_bytes(self, *, limits: PdfLoadLimits | None = None) -> bytes:
@@ -242,12 +243,15 @@ class OperationResult:
             return self._value
         return bytes(self._value).decode("utf-8", errors="replace")
 
-    def save(self, destination: DataSource | str | Path | BinaryIO) -> None:
+    def save(
+        self,
+        destination: DataSource | str | os.PathLike[str] | BinaryIO,
+    ) -> None:
         """Write the result to a data source, file path, or binary stream."""
         data = self.to_array()
         if isinstance(destination, DataSource):
             destination.write_bytes(data)
-        elif isinstance(destination, (str, Path)):
+        elif isinstance(destination, (str, os.PathLike)):
             FileDataSource(destination).write_bytes(data)
         elif hasattr(destination, "write"):
             _write_all(destination, data)
