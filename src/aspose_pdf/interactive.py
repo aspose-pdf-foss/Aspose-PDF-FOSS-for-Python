@@ -9,6 +9,7 @@ in-document page); ``GoToRAction`` targets a page *number* in a remote file.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar
@@ -146,6 +147,15 @@ class URIAction(Action):
         return {"S": "URI", "URI": self.uri}
 
 
+def _remote_page_number(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
+        return None
+    return int(number)
+
+
 @dataclass(frozen=True)
 class GoToRAction(Action):
     """Jump to a destination in another (remote) PDF file.
@@ -159,6 +169,10 @@ class GoToRAction(Action):
     def _spec(self) -> dict:
         spec: dict = {"S": "GoToR", "F": self.file}
         if self.destination is not None:
+            if _remote_page_number(self.destination.page) is None:
+                raise ValueError(
+                    "remote destination page must be a non-negative integer"
+                )
             spec["D"] = self.destination
         return spec
 
@@ -335,9 +349,10 @@ def action_from_spec(spec: dict) -> Action | None:
             # A remote destination names its page by number, so it arrives as a
             # plain list; the number is the page and the rest is the view.
             page, name, *params = destination
-            if not isinstance(page, (int, float)) or not isinstance(name, str):
+            page_number = _remote_page_number(page)
+            if page_number is None or not isinstance(name, str):
                 return None
-            destination = destination_from_spec(name, int(page), params)
+            destination = destination_from_spec(name, page_number, params)
             if destination is None:
                 return None
         elif destination is not None and not isinstance(destination, Destination):

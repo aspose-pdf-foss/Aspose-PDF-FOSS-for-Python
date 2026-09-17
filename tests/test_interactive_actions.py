@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 
+import pytest
+
 from aspose_pdf import (
     Document,
     GoToAction,
@@ -133,3 +135,14 @@ def test_goto_remote_uses_page_number_not_ref():
     # Remote destinations reference a page *number*, not an indirect page ref.
     assert not isinstance(dest.items[0], type(None))
     assert dest.items[0].value == 2  # PdfNumber, not a reference
+
+
+@pytest.mark.parametrize("page", [-1, True, 2.5, float("inf")])
+def test_goto_remote_rejects_invalid_page_numbers(page):
+    doc = _two_page_doc()
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        doc.pages[0].add_link(
+            (10, 500, 100, 520),
+            GoToRAction("other.pdf", XYZDestination(page=page, top=100)),
+        )

@@ -295,6 +295,16 @@ def test_unrepresentable_form_action_flags_stay_untyped(spec):
     assert action_from_spec(spec) is None
 
 
+@pytest.mark.parametrize("page", [-1, True, 2.5, float("nan")])
+def test_invalid_remote_page_numbers_stay_untyped(page):
+    assert (
+        action_from_spec(
+            {"S": "GoToR", "F": "other.pdf", "D": [page, "Fit"]}
+        )
+        is None
+    )
+
+
 # ---------------------------------------------------------------------------
 # The page, not the number
 # ---------------------------------------------------------------------------
