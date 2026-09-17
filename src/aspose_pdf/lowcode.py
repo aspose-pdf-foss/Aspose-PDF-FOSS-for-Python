@@ -159,12 +159,23 @@ class StreamDataSource(DataSource):
             return _read_limited(self.stream, budget)
         except TypeError as exc:
             raise AsposePdfException("Stream read() did not return bytes") from exc
+        except (OSError, ValueError) as exc:
+            label = f" {self.name!r}" if self.name else ""
+            raise AsposePdfException(
+                f"Could not read input stream{label}: {exc}"
+            ) from exc
 
     def write_bytes(self, data: bytes) -> None:
-        if self.stream.seekable():
-            self.stream.seek(0)
-            self.stream.truncate(0)
-        _write_all(self.stream, data)
+        try:
+            if self.stream.seekable():
+                self.stream.seek(0)
+                self.stream.truncate(0)
+            _write_all(self.stream, data)
+        except (OSError, ValueError) as exc:
+            label = f" {self.name!r}" if self.name else ""
+            raise AsposePdfException(
+                f"Could not write output stream{label}: {exc}"
+            ) from exc
 
 
 class ByteArrayDataSource(DataSource):

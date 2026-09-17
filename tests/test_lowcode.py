@@ -52,6 +52,14 @@ class _TextDataSource(DataSource):
         return "not binary"
 
 
+class _BrokenStream(io.BytesIO):
+    def read(self, size=-1):
+        raise OSError("read failed")
+
+    def write(self, data):
+        raise OSError("write failed")
+
+
 # ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
@@ -99,6 +107,15 @@ def test_stream_source_retries_short_writes():
     StreamDataSource(write_buf).write_bytes(b"complete")
 
     assert write_buf.getvalue() == b"complete"
+
+
+def test_stream_source_wraps_named_io_errors():
+    source = StreamDataSource(_BrokenStream(), name="payload")
+
+    with pytest.raises(AsposePdfException, match="input stream 'payload': read failed"):
+        source.read_bytes()
+    with pytest.raises(AsposePdfException, match="output stream 'payload': write failed"):
+        source.write_bytes(b"data")
 
 
 def test_base_data_source_rejects_io():

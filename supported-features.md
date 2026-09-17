@@ -2168,7 +2168,8 @@ Supported:
   contents instead of leaving stale trailing bytes, and short stream writes are
   retried until the complete result has been delivered. Custom input data
   sources must return bytes-like data, which is checked against the same input
-  size limit before parsing.
+  size limit before parsing. Stream I/O failures raise `AsposePdfException`
+  with the source's optional name instead of leaking backend exceptions.
 - Collect results through a `ResultContainer` of `OperationResult` objects,
   each of which can be saved to a data source, string or `os.PathLike` path, or
   stream, or read as bytes/text. Every plugin also writes results to configured output data
