@@ -2173,7 +2173,8 @@ Supported:
   each of which can be saved to a data source, path, or stream, or read as
   bytes/text. Every plugin also writes results to configured output data
   sources, paired by position. A result accepts text or binary data only and
-  snapshots a mutable `bytearray` at construction.
+  snapshots a mutable `bytearray` at construction. Providing more output
+  sources than produced results is rejected before any output is written.
 - `Merger` concatenates all inputs; `Splitter` emits one document per page from
   every input, preserving input and page order; `Optimizer` compresses and
   garbage-collects each input; `TextExtractor` returns extracted text per input.

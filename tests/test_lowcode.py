@@ -272,6 +272,19 @@ def test_optimizer_handles_multiple_inputs():
     assert [_page_count(r.to_array()) for r in result] == [1, 2]
 
 
+def test_optimizer_rejects_excess_outputs_before_writing_any():
+    options = OptimizeOptions()
+    options.add_input(ByteArrayDataSource(_pdf_bytes(1)))
+    sinks = [ByteArrayDataSource(b"unchanged") for _ in range(2)]
+    for sink in sinks:
+        options.add_output(sink)
+
+    with pytest.raises(AsposePdfException, match="More output data sources"):
+        Optimizer().process(options)
+
+    assert [sink.read_bytes() for sink in sinks] == [b"unchanged", b"unchanged"]
+
+
 def test_optimizer_compress_only(tmp_path):
     options = OptimizeOptions(remove_unused_objects=False, compress_streams=True)
     options.add_input(ByteArrayDataSource(_pdf_bytes(1)))

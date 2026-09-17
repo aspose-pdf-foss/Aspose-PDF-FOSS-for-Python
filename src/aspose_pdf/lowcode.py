@@ -355,6 +355,10 @@ class PdfPlugin:
     @staticmethod
     def _emit(results: list[OperationResult], outputs: list[DataSource]) -> None:
         """Write produced results to outputs, pairing them by position."""
+        if len(outputs) > len(results):
+            raise AsposePdfException(
+                "More output data sources were provided than results were produced"
+            )
         for result, output in zip(results, outputs):
             output.write_bytes(result.to_array())
 
