@@ -1333,6 +1333,8 @@ Supported:
 - Read reconstruction metadata from an `ImagePlacement`: `width`, `height`,
   `bits_per_component`, and `color_space`.
 - Replace or hide an `ImagePlacement` payload in memory.
+- Release an `ImagePlacement` with `dispose()` / `close()` or use it as a
+  context manager; disposal clears the image bytes and reconstruction metadata.
 - Save, replace, hide, and enumerate images through the lower-level `SimplePdf`
   image helpers.
 - Collect image placements with `ImagePlacementAbsorber.visit(...)`, which

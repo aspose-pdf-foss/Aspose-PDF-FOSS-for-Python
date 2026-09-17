@@ -105,6 +105,25 @@ class ImagePlacement:
         if self._disposed:
             raise AsposePdfException("Object has been disposed")
 
+    def dispose(self) -> None:
+        """Release the stored image payload and reconstruction metadata."""
+        if self._disposed:
+            return
+        self._image_data = b""
+        self._meta = None
+        self._disposed = True
+
+    def close(self) -> None:
+        """Alias for :meth:`dispose`."""
+        self.dispose()
+
+    def __enter__(self) -> ImagePlacement:
+        self._ensure_not_disposed()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.dispose()
+
     def replace(self, new_image_data: bytes | bytearray) -> None:
         """Replace the current image data with new_image_data.
 
@@ -190,6 +209,7 @@ class ImagePlacement:
     @property
     def rectangle(self) -> Rectangle:
         """Bounding rectangle of the image on the page (x, y, width, height in PDF points)."""
+        self._ensure_not_disposed()
         if self._rect is not None:
             return self._rect
         return Rectangle(0, 0, 0, 0)
@@ -197,6 +217,7 @@ class ImagePlacement:
     @property
     def resolution(self) -> tuple[float, float]:
         """Image resolution as (horizontal_dpi, vertical_dpi). Default 72 DPI."""
+        self._ensure_not_disposed()
         if self._resolution is not None:
             return self._resolution
         return (DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI)
@@ -204,11 +225,13 @@ class ImagePlacement:
     @property
     def rotation(self) -> int:
         """Rotation angle in degrees (0, 90, 180, 270)."""
+        self._ensure_not_disposed()
         return self._rotation if self._rotation is not None else 0
 
     @property
     def matrix(self) -> tuple[float, float, float, float, float, float]:
         """PDF transformation matrix (a, b, c, d, e, f). Identity when not set."""
+        self._ensure_not_disposed()
         if self._matrix is not None:
             return self._matrix
         return (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
@@ -216,24 +239,30 @@ class ImagePlacement:
     @property
     def width(self) -> int | None:
         """Pixel width from the image XObject, when known."""
+        self._ensure_not_disposed()
         return self._meta.get("width") if self._meta else None
 
     @property
     def height(self) -> int | None:
         """Pixel height from the image XObject, when known."""
+        self._ensure_not_disposed()
         return self._meta.get("height") if self._meta else None
 
     @property
     def bits_per_component(self) -> int | None:
         """Bits per colour component, when known."""
+        self._ensure_not_disposed()
         return self._meta.get("bpc") if self._meta else None
 
     @property
     def color_space(self) -> str | None:
         """Resolved colour-space kind (``gray``/``rgb``/``cmyk``/``indexed``)."""
+        self._ensure_not_disposed()
         return self._meta.get("cs_kind") if self._meta else None
 
     def __repr__(self) -> str:
+        if self._disposed:
+            return f"ImagePlacement(name={self.name!r}, disposed=True)"
         return f"ImagePlacement(name={self.name!r}, size={len(self._image_data)} bytes)"
 
 

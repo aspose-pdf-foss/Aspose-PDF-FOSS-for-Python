@@ -90,9 +90,36 @@ def test_save_invalid_path_raises_type_error():
 def test_save_on_disposed_instance_raises_runtime_error():
     """If the instance is marked as disposed, save should raise."""
     placement = ImagePlacement(name="test", image_data=b"data")
-    placement._disposed = True
+    placement.dispose()
     with pytest.raises(Exception):
         placement.save("unused_path.png")
+
+
+def test_image_placement_lifecycle_releases_payload_and_is_idempotent():
+    placement = ImagePlacement(
+        name="test",
+        image_data=b"payload",
+        meta={"width": 2},
+    )
+
+    placement.close()
+    placement.dispose()
+
+    assert placement._image_data == b""
+    assert placement._meta is None
+    assert "disposed=True" in repr(placement)
+    with pytest.raises(Exception, match="disposed"):
+        _ = placement.image_data
+    with pytest.raises(Exception, match="disposed"):
+        _ = placement.width
+
+
+def test_image_placement_context_manager_disposes_on_exit():
+    with ImagePlacement(name="test", image_data=b"payload") as placement:
+        assert placement.image_data == b"payload"
+
+    with pytest.raises(Exception, match="disposed"):
+        placement.replace(b"new")
 
 
 def test_replace_image_updates_content():
