@@ -262,6 +262,19 @@ def test_file_specification_save_writes_contents(tmp_path):
     assert out_path.read_bytes() == b"save me"
 
 
+def test_file_specification_snapshots_mutable_contents_and_validates_types():
+    payload = bytearray(b"original")
+    spec = FileSpecification("data.bin", payload)
+
+    payload[:] = b"changed!"
+
+    assert spec.contents == b"original"
+    with pytest.raises(TypeError, match="name must be a string"):
+        FileSpecification(3, b"data")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="contents must be bytes or bytearray"):
+        FileSpecification("data.bin", "data")  # type: ignore[arg-type]
+
+
 def test_embedded_files_is_read_only_view():
     # The typed view is a snapshot; mutating it does not change the document.
     doc = Document()

@@ -1643,8 +1643,9 @@ Supported:
 Boundaries:
 
 - The typed `FileSpecification` is a snapshot, not a live handle: it is read
-  back from the document and changing one does not change the file. Attachments
-  are mutated through `Document.add_attachment` (which *replaces* an entry),
+  back from the document, copies mutable `bytearray` contents at construction,
+  and changing one does not change the file. Attachments are mutated through
+  `Document.add_attachment` (which *replaces* an entry),
   `Document.update_attachment` (which changes only what it is given, renaming
   included) and `Document.remove_attachment`, then re-read from
   `embedded_files`.

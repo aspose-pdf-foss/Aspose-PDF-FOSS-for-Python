@@ -43,6 +43,13 @@ class FileSpecification:
     """The associated-file relationship (``/AFRelationship``), e.g. ``"Data"`` or
     ``"Source"``. ``None`` when the attachment uses the default ``Unspecified``."""
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            raise TypeError("name must be a string")
+        if not isinstance(self.contents, (bytes, bytearray)):
+            raise TypeError("contents must be bytes or bytearray")
+        object.__setattr__(self, "contents", bytes(self.contents))
+
     @property
     def size(self) -> int:
         """The size of :attr:`contents` in bytes."""
