@@ -184,6 +184,14 @@ def test_result_container_sequence_protocol():
     assert list(container) == [a, b]
 
 
+def test_result_container_rejects_non_result_items():
+    with pytest.raises(TypeError, match="only OperationResult"):
+        ResultContainer([OperationResult(b"ok"), b"not-a-result"])
+
+    with pytest.raises(TypeError):
+        ResultContainer(0)  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------

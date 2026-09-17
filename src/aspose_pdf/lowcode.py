@@ -261,7 +261,10 @@ class ResultContainer:
     """Holds the ordered results of a plugin operation."""
 
     def __init__(self, results: Iterable[OperationResult] | None = None) -> None:
-        self.result_collection: list[OperationResult] = list(results or [])
+        values = [] if results is None else list(results)
+        if not all(isinstance(result, OperationResult) for result in values):
+            raise TypeError("results must contain only OperationResult instances")
+        self.result_collection: list[OperationResult] = values
 
     def __len__(self) -> int:
         return len(self.result_collection)
