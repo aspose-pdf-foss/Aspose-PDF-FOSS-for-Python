@@ -361,13 +361,25 @@ def action_from_spec(spec: dict) -> Action | None:
                 return None
             fields = list(fields)
         flags = spec.get("Flags")
-        flags = int(flags) if isinstance(flags, (int, float)) else 0
+        if flags is None:
+            flags = 0
+        elif (
+            isinstance(flags, bool)
+            or not isinstance(flags, (int, float))
+            or not float(flags).is_integer()
+            or flags < 0
+        ):
+            return None
+        else:
+            flags = int(flags)
         # ISO 32000-1 tables 237 and 239: bit 1 flips /Fields from the fields to
         # act on to the fields to leave alone, and needs a list to invert.
         exclude = bool(flags & 1)
         if exclude and fields is None:
             return None
         if kind == "ResetForm":
+            if flags & ~1:
+                return None
             return ResetFormAction(fields, exclude)
         url = spec.get("F")
         if not isinstance(url, str):
@@ -375,11 +387,11 @@ def action_from_spec(spec: dict) -> Action | None:
         formats = {
             bit: name for name, bit in SubmitFormAction._FORMAT_FLAGS.items() if bit
         }
-        submit_format = "fdf"
-        for bit, name in formats.items():
-            if flags & bit:
-                submit_format = name
-                break
+        supported_mask = 1 | sum(formats)
+        selected_formats = [name for bit, name in formats.items() if flags & bit]
+        if flags & ~supported_mask or len(selected_formats) > 1:
+            return None
+        submit_format = selected_formats[0] if selected_formats else "fdf"
         return SubmitFormAction(url, fields, exclude, submit_format)
     return None
 

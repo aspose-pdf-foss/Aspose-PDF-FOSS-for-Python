@@ -43,6 +43,7 @@ from aspose_pdf.interactive import (
     SubmitFormAction,
     URIAction,
     XYZDestination,
+    action_from_spec,
 )
 from aspose_pdf.outlines import OutlineItem
 
@@ -279,6 +280,19 @@ def test_a_form_action_bookmark_keeps_its_fields_and_flags(target):
     document = _bookmarked(OutlineItem("act", destination=target))
 
     assert _titles(document)["act"].destination == target
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"S": "SubmitForm", "F": "https://example.test", "Flags": 4 | 32},
+        {"S": "SubmitForm", "F": "https://example.test", "Flags": 2},
+        {"S": "SubmitForm", "F": "https://example.test", "Flags": 4.5},
+        {"S": "ResetForm", "Flags": 2},
+    ],
+)
+def test_unrepresentable_form_action_flags_stay_untyped(spec):
+    assert action_from_spec(spec) is None
 
 
 # ---------------------------------------------------------------------------
