@@ -9,6 +9,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A PNG with a transparent background was placed as an opaque rectangle.**
+  `Page.add_image` (and push-button icons) stripped the alpha channel of
+  grey+alpha and RGBA PNGs and ignored `tRNS`. Transparency is now written as a
+  soft mask: the alpha channel, a palette's per-entry opacity, or the colour a
+  grey or RGB `tRNS` names, compared at the image's own bit depth (a 16-bit
+  pixel that shares only the key's high byte stays opaque). Placed over a red
+  background, every kind renders in pdfium and MuPDF as Pillow composites it.
+
 - **A signed document looked unsigned through the public `Document`.**
   `Document` had no `signatures`, so `SignaturesCompromiseDetector(Document(...))`
   reported "unsigned document" -- also for a file whose page was replaced after

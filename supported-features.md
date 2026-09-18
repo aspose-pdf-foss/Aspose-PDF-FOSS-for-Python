@@ -1282,7 +1282,12 @@ Supported:
 - Extract image XObjects from parsed PDFs.
 - Place raw 8-bit DeviceGray/DeviceRGB/DeviceCMYK images, JPEG images, and
   PNG images on pages as image XObjects, at any allowed bit depth and with or
-  without Adam7 interlacing.
+  without Adam7 interlacing. A PNG's **transparency** becomes a soft mask
+  (`/SMask`): its alpha channel (grey+alpha, RGBA), a palette's `tRNS`
+  opacities, or the one grey or RGB colour its `tRNS` names -- compared at the
+  image's own bit depth, so a 16-bit pixel sharing only the key's high byte
+  stays opaque. A fully opaque PNG gets no mask. Push-button icons are placed
+  the same way.
 - Mark newly authored images as tagged `/Figure` content by passing `alt=...`
   (or an explicit `tag=...`), producing MCID-backed structure elements.
 - Track images by resource name and page association where the page/resource map

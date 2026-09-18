@@ -7410,6 +7410,22 @@ class SimplePdf:
     ) -> str:
         xobjects = self._ensure_resource_subdict(page_index, "XObject")
         resource_name = self._unique_resource_name(xobjects, "Im", requested_name)
+        xobjects.mapping[PdfName(resource_name)] = self._register_image_xobject(image)
+
+        self.images[resource_name] = image.decoded_data
+        self._image_sizes[resource_name] = (image.width, image.height)
+        self._image_meta[resource_name] = image.meta
+        self._page_image_map.setdefault(page_index, []).append(resource_name)
+        return resource_name
+
+    def _register_image_xobject(self, image: AuthoredImage) -> PdfIndirectReference:
+        """Register *image* as an image XObject, with its ``/SMask`` if it has one.
+
+        A PNG's transparency -- an alpha channel or a ``tRNS`` chunk -- becomes
+        a soft mask (ISO 32000-1 11.6.5.3), a DeviceGray image of the same size
+        holding each pixel's opacity. Dropped, a logo with a transparent
+        background was placed as an opaque rectangle.
+        """
         mapping = {
             PdfName("Type"): PdfName("XObject"),
             PdfName("Subtype"): PdfName("Image"),
@@ -7420,15 +7436,23 @@ class SimplePdf:
         }
         if image.filter_name:
             mapping[PdfName("Filter")] = PdfName(image.filter_name)
-        stream = PdfStream(content=image.stream_data, mapping=mapping)
-        ref = self._cos_doc.register_object(stream)
-        xobjects.mapping[PdfName(resource_name)] = ref
-
-        self.images[resource_name] = image.decoded_data
-        self._image_sizes[resource_name] = (image.width, image.height)
-        self._image_meta[resource_name] = image.meta
-        self._page_image_map.setdefault(page_index, []).append(resource_name)
-        return resource_name
+        if image.alpha is not None:
+            mask = PdfStream(
+                content=zlib.compress(image.alpha, 9),
+                mapping={
+                    PdfName("Type"): PdfName("XObject"),
+                    PdfName("Subtype"): PdfName("Image"),
+                    PdfName("Width"): PdfNumber(image.width),
+                    PdfName("Height"): PdfNumber(image.height),
+                    PdfName("ColorSpace"): PdfName("DeviceGray"),
+                    PdfName("BitsPerComponent"): PdfNumber(8),
+                    PdfName("Filter"): PdfName("FlateDecode"),
+                },
+            )
+            mapping[PdfName("SMask")] = self._cos_doc.register_object(mask)
+        return self._cos_doc.register_object(
+            PdfStream(content=image.stream_data, mapping=mapping)
+        )
 
     def add_text_to_page(
         self,
@@ -8921,20 +8945,7 @@ class SimplePdf:
         image = prepare_image(
             bytes(data), limits=self._load_limits, budget=self._load_budget
         )
-        image_map = {
-            PdfName("Type"): PdfName("XObject"),
-            PdfName("Subtype"): PdfName("Image"),
-            PdfName("Width"): PdfNumber(image.width),
-            PdfName("Height"): PdfNumber(image.height),
-            PdfName("ColorSpace"): PdfName(image.color_space),
-            PdfName("BitsPerComponent"): PdfNumber(image.bits_per_component),
-            PdfName("Length"): PdfNumber(len(image.stream_data)),
-        }
-        if image.filter_name:
-            image_map[PdfName("Filter")] = PdfName(image.filter_name)
-        image_ref = self._cos_doc.register_object(
-            PdfStream(content=image.stream_data, mapping=image_map)
-        )
+        image_ref = self._register_image_xobject(image)
 
         content = (
             f"q {image.width} 0 0 {image.height} 0 0 cm /Icon Do Q\n"

@@ -32,6 +32,9 @@ class AuthoredImage:
     color_space: str
     components: int
     filter_name: str | None = None
+    #: One 8-bit opacity sample per pixel, for a ``/SMask``; ``None`` when the
+    #: image is opaque throughout.
+    alpha: bytes | None = None
 
     @property
     def meta(self) -> dict:
@@ -425,7 +428,7 @@ def _prepare_png(data: bytes, budget: _LoadBudget) -> AuthoredImage:
     indices are left as indices) and reassembles Adam7 passes, so the colour
     type is all that is left to map.
     """
-    width, height, _bit_depth, color_type, pixels = _decode_png(data, budget)
+    width, height, _bit_depth, color_type, pixels, alpha = _decode_png(data, budget)
     if color_type == 0:
         decoded = pixels
         cs = "DeviceGray"
@@ -459,6 +462,7 @@ def _prepare_png(data: bytes, budget: _LoadBudget) -> AuthoredImage:
         color_space=cs,
         components=components,
         filter_name="FlateDecode",
+        alpha=alpha if alpha is not None and alpha.count(255) != len(alpha) else None,
     )
 
 
@@ -594,11 +598,27 @@ def _unpack_png_row(
     return out
 
 
+def _raw_png_values(row: bytes, pixels: int, channels: int, bit_depth: int) -> list[int]:
+    """One row's samples at the image's own depth, 16-bit ones kept whole."""
+    if bit_depth == 16:
+        return [row[i * 2] << 8 | row[i * 2 + 1] for i in range(pixels * channels)]
+    return _unpack_png_row(row, pixels, channels, bit_depth, scale=False)
+
+
 def _decode_png(data: bytes, budget: _LoadBudget):
+    """Decode a PNG to 8-bit samples and, where it has transparency, opacity.
+
+    Returns ``(width, height, bit_depth, color_type, pixels, alpha)``. *alpha*
+    holds one opacity byte per pixel, read from the alpha channel (colour types
+    4 and 6) or from a ``tRNS`` chunk -- a per-entry opacity for a palette, or a
+    single colour that is fully transparent for grey and RGB, compared at the
+    image's own bit depth -- and is ``None`` for an image with neither.
+    """
     pos = len(_PNG_MAGIC)
     width = height = bit_depth = color_type = None
     interlace = 0
     palette = None
+    transparency = None
     idat = bytearray()
     while pos + 8 <= len(data):
         length = struct.unpack(">I", data[pos : pos + 4])[0]
@@ -627,6 +647,8 @@ def _decode_png(data: bytes, budget: _LoadBudget):
                 raise PdfValidationException("Unsupported PNG interlace method.")
         elif tag == b"PLTE":
             palette = payload
+        elif tag == b"tRNS":
+            transparency = payload
         elif tag == b"IDAT":
             idat.extend(payload)
         elif tag == b"IEND":
@@ -681,6 +703,16 @@ def _decode_png(data: bytes, budget: _LoadBudget):
     bpp = max(1, channels * bit_depth // 8)
     scale = color_type != 3  # palette indices must not be rescaled.
     samples = bytearray(width * height * channels)
+    # A grey or RGB tRNS names one colour, at the image's own depth, that is
+    # fully transparent; each pixel is compared before scaling to 8 bits.
+    key = None
+    if transparency is not None and color_type in (0, 2):
+        count = 1 if color_type == 0 else 3
+        if len(transparency) >= 2 * count:
+            key = tuple(
+                struct.unpack(">H", transparency[2 * i : 2 * i + 2])[0] for i in range(count)
+            )
+    keyed = bytearray(b"\xff" * (width * height)) if key is not None else None
     offset = 0
     for x0, y0, dx, dy, pass_w, pass_h in geometry:
         row_len = _png_row_bytes(pass_w, channels, bit_depth)
@@ -699,13 +731,27 @@ def _decode_png(data: bytes, budget: _LoadBudget):
                 samples[target : target + channels] = bytes(
                     values[source : source + channels]
                 )
+            if keyed is not None:
+                raw_values = _raw_png_values(row, pass_w, channels, bit_depth)
+                for column in range(pass_w):
+                    if tuple(raw_values[column * channels : (column + 1) * channels]) == key:
+                        keyed[y * width + x0 + column * dx] = 0
 
     pixels = bytes(samples)
+    alpha: bytes | None = None
+    if color_type in (4, 6):
+        alpha = pixels[channels - 1 :: channels]
+    elif keyed is not None:
+        alpha = bytes(keyed)
     if color_type == 3:
         if palette is None:
             raise PdfValidationException("Indexed PNG image is missing a palette.")
-        return width, height, bit_depth, color_type, (palette, pixels)
-    return width, height, bit_depth, color_type, pixels
+        if transparency:
+            # One opacity per palette entry; entries past the list are opaque.
+            opacity = bytes(transparency) + b"\xff" * (256 - min(256, len(transparency)))
+            alpha = pixels.translate(opacity[:256])
+        return width, height, bit_depth, color_type, (palette, pixels), alpha
+    return width, height, bit_depth, color_type, pixels, alpha
 
 
 def _png_unfilter(
