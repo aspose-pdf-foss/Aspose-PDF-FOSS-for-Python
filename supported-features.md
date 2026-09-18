@@ -1465,6 +1465,29 @@ Supported:
   (pdf.js, MuPDF) rather than `/Opt` texts (pdfium).
 - A value set on a **parent field** is the value of a kid that has none of
   its own (`/V` is inheritable, table 220); it used to read as `None`.
+- A **parent without a name** (`/T` is optional) is transparent: its kids
+  are named from the node above it, as pdf.js, qpdf and MuPDF name them, and
+  can be read and set. The form used to stop at such a node and lose them.
+- **Export and import form data as FDF and XFDF**: `Form.export_fdf()` /
+  `export_xfdf()` return the bytes and write them to a path (in one step) or a
+  stream; `Form.import_fdf(source)` / `import_xfdf(source)` fill the form from
+  a path, bytes or stream and return the names of the fields they set. The
+  field tree travels by partial names -- `/T` with `/Kids`, nested
+  `<field name>` -- with each value where the document stores it (a parent's
+  included), multi-select values as an array or several `<value>`s, and the
+  document's `/ID` (`<ids>`). An imported value is set as `Field.value` sets
+  it, redrawing the field, so a check box or radio button shows its new state;
+  a parent's value reaches the kids that have none of their own. FDF's
+  `/Ff`/`/SetFf`/`/ClrFf` change a field's flags and `/F`/`/SetF`/`/ClrF` its
+  widgets'. Fields the document does not have are skipped. Checked against
+  Apache PDFBox 3.0.8 both ways: our export parses to exactly the entries
+  PDFBox exports, PDFBox fills a form from our FDF to exactly the state the
+  data came from, we fill one from PDFBox's FDF and XFDF, and the flags come
+  out bit for bit as PDFBox sets them. Two places PDFBox is not followed: a
+  signature's value is neither exported nor imported (PDFBox copies the
+  signature dictionary into FDF and stops writing XFDF at a signed field),
+  and several `<value>`s stay a list (PDFBox keeps only the last, even from
+  its own XFDF).
 - Set a field value by name through the `Field.value` setter.
 - Create and remove AcroForm fields entirely through the public API:
   `Form.add_text_field()`, `add_checkbox()`, `add_radio_group()`,
@@ -1545,6 +1568,12 @@ Supported:
 
 Boundaries:
 
+- FDF and XFDF carry **field values and flags**, not annotations: an FDF
+  `/Annots` or XFDF `<annots>` section is ignored, as are rich-text values
+  (`/RV`, `<value-richtext>`), an FDF's embedded `/F` file reference and
+  `/ID` (import fills this document whatever file the data came from), and
+  JavaScript or other actions. An XFDF with a DOCTYPE or entity declarations
+  is refused rather than parsed.
 - Dynamic XFA processing is not implemented.
 - Rich-text fields (`/RV`, Ff bit 26) are rendered from their XHTML markup with
   per-span size/colour/bold/italic and paragraph alignment in the Helvetica

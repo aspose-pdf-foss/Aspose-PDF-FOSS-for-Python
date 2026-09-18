@@ -816,6 +816,8 @@ and delete workflows. 235 public types are organized by module below.
   - `add_list_box(...) -> Field` / `add_combo_box(...) -> Field` /
     `add_push_button(name, page, rect, caption, read_only, required) -> Field`
   - `remove_field(name) -> Field` / `generate_appearances() -> int` / `flatten() -> None`
+- `Form` — `export_fdf(destination) -> bytes` / `export_xfdf(destination) -> bytes` /
+  `import_fdf(source) -> list[str]` / `import_xfdf(source) -> list[str]` (form data interchange)
 - `Field` — `remove() -> Field`; properties `name`, `value`, `field_type`, `partial_name`,
   `alternate_name`, `mapping_name`, `flags`, `read_only`, `required`, `no_export`, `default_value`,
   `max_length`, `multiline`, `password`, `comb`, `options`, `multi_select`, `editable`,

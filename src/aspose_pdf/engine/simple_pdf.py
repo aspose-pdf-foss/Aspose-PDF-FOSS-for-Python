@@ -12732,6 +12732,12 @@ class SimplePdf:
             t = field_obj.mapping.get(PdfName("T"))
             t = self._resolve(t)
             if not isinstance(t, PdfString):
+                # A nameless node's kids are named from the node above it.
+                kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
+                if isinstance(kids, PdfArray) and self._update_field_value_rec(
+                    kids, target_name, value, prefix
+                ):
+                    return True
                 continue
 
             local_name = decode_pdf_text_string(t)
@@ -12753,8 +12759,12 @@ class SimplePdf:
 
     def _value_to_pdf(self, field_obj: Any, value: Any) -> Any | None:
         """Convert Python value to appropriate PDF object for form field /V."""
-        ft = self._resolve(field_obj.mapping.get(PdfName("FT")))
-        ff = self._resolve(field_obj.mapping.get(PdfName("Ff")))
+        from .form_fields import field_attribute
+
+        # Both are inheritable (table 220): a kid of a parent that states the
+        # type is a field of that type.
+        ft = field_attribute(self, field_obj, "FT")
+        ff = field_attribute(self, field_obj, "Ff")
         ff_val = int(ff.value) if isinstance(ff, PdfNumber) else 0
         is_radio = bool(ff_val & (1 << 15))
         is_pushbutton = bool(ff_val & (1 << 16))
@@ -16737,6 +16747,31 @@ class CosExtractor:
 
         t = self._resolve(field_obj.mapping.get(PdfName("T")))
         if not isinstance(t, PdfString):
+            # A node without a name (/T is optional) is transparent: its kids
+            # take the name above it and inherit what it carries, as pdf.js,
+            # qpdf and MuPDF read it. Without kids it is a widget, not a field.
+            kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
+            if not isinstance(kids, PdfArray):
+                return
+            from .cos import PdfNumber
+
+            ft_obj = self._resolve(field_obj.mapping.get(PdfName("FT")))
+            ff = self._resolve(field_obj.mapping.get(PdfName("Ff")))
+            self._budget.check(len(kids.items), "max_container_items", "form field child entries")
+            for kid_ref in kids.items:
+                self._collect_fields_rec(
+                    kid_ref,
+                    fields,
+                    prefix,
+                    ft_obj if isinstance(ft_obj, PdfName) else inherited_ft,
+                    int(ff.value) if isinstance(ff, PdfNumber) else inherited_ff,
+                    self._resolve(field_obj.mapping[PdfName("V")])
+                    if PdfName("V") in field_obj.mapping
+                    else inherited_v,
+                    _depth=_depth + 1,
+                    _visited=visited,
+                    _node_count=node_count,
+                )
             return
 
         name = decode_pdf_text_string(t)

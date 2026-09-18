@@ -708,6 +708,89 @@ class Form:
             field_lock=lock,
         )
 
+    # --- form data in and out: FDF and XFDF -------------------------------------------
+
+    def export_fdf(self, destination: Any = None) -> bytes:
+        """The form's data as FDF (ISO 32000-1 12.7.8), written to *destination* if given.
+
+        Every field is listed by its partial name under its parents, with the
+        value the document stores for it -- on a parent, where a parent holds
+        it. A signature's value is not form data and is left out. *destination*
+        is a path (replaced in one step) or a writable binary stream.
+        """
+        from aspose_pdf.engine.form_data import to_fdf
+
+        return self._export(to_fdf, destination)
+
+    def export_xfdf(self, destination: Any = None) -> bytes:
+        """The form's data as XFDF (ISO 19444-1), written to *destination* if given.
+
+        See :meth:`export_fdf`.
+        """
+        from aspose_pdf.engine.form_data import to_xfdf
+
+        return self._export(to_xfdf, destination)
+
+    def import_fdf(self, source: Any) -> list[str]:
+        """Fill the form from FDF data and return the names of the fields it named.
+
+        Each value is set as :attr:`Field.value` sets it, redrawing the field;
+        a value on a parent field is the value of its kids that have none of
+        their own. ``/Ff``, ``/SetFf`` and ``/ClrFf`` change the field's flags
+        and ``/F``, ``/SetF`` and ``/ClrF`` its widgets'. Fields the document
+        does not have are skipped, and a signature field's value is never
+        imported. *source* is a path, bytes or a readable binary stream.
+        """
+        from aspose_pdf.engine.form_data import read_fdf
+
+        return self._import(read_fdf, source)
+
+    def import_xfdf(self, source: Any) -> list[str]:
+        """Fill the form from XFDF data; see :meth:`import_fdf`.
+
+        A file with a DOCTYPE or entity declarations is refused: XFDF needs
+        neither, and they are how XML is made to expand without bound.
+        """
+        from aspose_pdf.engine.form_data import read_xfdf
+
+        return self._import(read_xfdf, source)
+
+    def _export(self, writer: Any, destination: Any) -> bytes:
+        from aspose_pdf.engine.file_output import write_file_atomically
+
+        self._document._ensure_not_disposed()
+        data = writer(self._document._engine_pdf)
+        if destination is None:
+            return data
+        if hasattr(destination, "write"):
+            destination.write(data)
+        else:
+            write_file_atomically(destination, data)
+        return data
+
+    def _import(self, reader: Any, source: Any) -> list[str]:
+        import os
+
+        from aspose_pdf.engine.form_data import apply
+        from aspose_pdf.load_limits import _LoadBudget, _read_limited
+
+        self._document._ensure_not_disposed()
+        engine = self._document._engine_pdf
+        budget = _LoadBudget(self._document.load_limits)
+        if isinstance(source, (bytes, bytearray)):
+            data = bytes(source)
+            budget.check_input(len(data))
+        elif isinstance(source, (str, os.PathLike)):
+            with open(source, "rb") as stream:
+                data = _read_limited(stream, budget)
+        elif hasattr(source, "read"):
+            data = _read_limited(source, budget)
+        else:
+            raise TypeError("source must be a path, bytes or a readable binary stream")
+        imported = apply(engine, reader(data, budget))
+        self._load_fields()
+        return imported
+
     def remove_field(self, name: str) -> Field:
         """Remove a field by fully qualified name and return the removed field."""
         try:

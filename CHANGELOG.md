@@ -9,6 +9,11 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **FDF and XFDF.** `Form.export_fdf`/`export_xfdf` write a form's data and
+  `Form.import_fdf`/`import_xfdf` fill a form from it, redrawing the fields
+  and applying FDF's field and widget flags. Checked against Apache PDFBox in
+  both directions; a signature's value is never carried.
+
 - **Form fields say more than their value.** `Field` gains `partial_name`,
   `alternate_name`, `mapping_name`, `flags`, `read_only` and `required`
   (settable), `no_export`, `default_value`, `max_length`, `multiline`,
@@ -63,6 +68,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   file covered, benign modification levels) and opened in pdfium and MuPDF.
 
 ### Fixed
+
+- **A field under a parent without a name disappeared.** `/T` is optional,
+  and a nameless node's kids take the name above it -- pdf.js, qpdf and MuPDF
+  all read the kid of such a parent as `inner`, not `box.inner` -- but the
+  form stopped at the nameless node, so the field was neither listed nor
+  settable.
+
+- **Setting a value on a field whose type is stated by its parent treated it
+  as a text field.** `/FT` and `/Ff` were read from the field alone, so a list
+  box kid of a parent carrying the type could not take several values, and a
+  check box kid would get text instead of a state.
 
 - **A field whose value is set on its parent read as `None`.** `/V` is
   inheritable (ISO 32000-1 table 220) and pdfium, pdf.js, qpdf and MuPDF all
