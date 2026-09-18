@@ -9,6 +9,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Page labels.** `/PageLabels` was neither read nor written. `Page.label`
+  returns the label a viewer shows (`"iii"`, `"A-1"`, or `None` without
+  labels), and `Document.page_labels` maps the page each range starts at to a
+  `PageLabel(style, prefix, start)` that can be set and deleted. A malformed
+  tree reads as most of pdfium, qpdf, pdf.js and MuPDF read it, and letters
+  repeat as the specification says. Inserting and deleting pages moves the
+  ranges as MuPDF does; merged and extracted pages keep their labels as with
+  qpdf's `--pages`.
+
 - **Export settings that were silently ignored now work.** `HtmlSaveOptions`
   and `MarkdownSaveOptions` reached `Document.save` with everything but
   `split_into_pages` / `extract_images` dropped. Figures now go to files when a

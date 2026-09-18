@@ -473,6 +473,27 @@ Supported:
   and the next save lands where the caller asked rather than one page short of
   it.
 - Check whether a page belongs to a collection and get its index.
+- **Page labels** (ISO 32000-1 12.4.2): `Page.label` is the label a viewer
+  shows -- `"iii"`, `"12"`, `"A-1"` -- or `None` when the document has none, and
+  `Document.page_labels` maps the page each range starts at to its
+  `PageLabel(style, prefix, start)` (`NumberingStyle.NUMERALS_ARABIC`,
+  `NUMERALS_ROMAN_UPPERCASE` / `_LOWERCASE`, `LETTERS_UPPERCASE` / `_LOWERCASE`,
+  `NONE`). Setting a range adds one at page 0 when none is there, as the tree
+  requires; deleting the last one, or `clear()`, removes the labels. A
+  malformed tree is read the way the majority of pdfium, qpdf, pdf.js and MuPDF
+  read it -- a page before the first range counts from 1, keys are sorted and
+  a repeated one's later value wins, a key or `/St` of `3.0` is 3 and a
+  fractional one is ignored, a negative key covers the pages after it, an
+  unknown style leaves the prefix -- and letters repeat (`Z`, `AA`, `BB`) as
+  the specification, pdfium and pdf.js do, where qpdf and MuPDF count (`Z`,
+  `AA`, `AB`). Inserting or deleting a page moves the ranges after it as MuPDF
+  does -- a page inserted inside a range, or at the start of the next,
+  continues the range before it -- except that an unlabelled document stays
+  unlabelled (MuPDF labels it `1, 1, 2, ...` on an insert at page 0) and a
+  range whose only page is deleted goes (MuPDF leaves a duplicate key). Pages
+  merged or extracted from other documents keep the labels they had there, and
+  pages from a document without labels get empty ones, exactly as qpdf's
+  `--pages` does. Every case was compared page by page with the references.
 - Read page media box/rectangle through `Page.rect` and `Page.media_box`.
 - Read and set page rotation through `Page.rotation` (0/90/180/270, clockwise;
   inherited from parent page-tree nodes, normalised, and persisted on save).

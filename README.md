@@ -764,7 +764,7 @@ and delete workflows. 235 public types are organized by module below.
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document` /
     `update_attachment(name, new_name, content, mime, ...) -> FileSpecification` — changes only what
     it is given, so editing one field keeps the rest
-  - properties: `pages`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
+  - properties: `pages`, `page_labels`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
     `is_pdfua_compliant`, `font_substitution`
 
@@ -782,7 +782,10 @@ and delete workflows. 235 public types are organized by module below.
   - `to_html(embed_images) -> str` / `to_markdown(embed_images) -> str`
   - `layer(layer)` — context manager putting authored content on an optional content group
   - `replace_text(...) -> int` / `redact_text(...) -> int`
-  - properties: `index`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
+  - properties: `index`, `label`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
+- `PageLabelCollection` (`Document.page_labels`) — a mutable mapping from the page a label range
+  starts at to its `PageLabel(style, prefix, start)`; `NumberingStyle` names the five styles and
+  `NONE`; `label(page_index) -> str | None`, `clear()`
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`,
   `delete(index) -> None`, `clear() -> None`, `contains(page) -> bool`, `index_of(page) -> int`
 

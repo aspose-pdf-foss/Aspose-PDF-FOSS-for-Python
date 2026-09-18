@@ -35,7 +35,7 @@ from ..exceptions import (
 )
 from ..load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget, _read_limited
 from ..signature import PdfSignature
-from . import conformance
+from . import conformance, page_labels
 from .content_authoring import (
     AuthoredImage,
     build_cid_text_stream,
@@ -8067,6 +8067,12 @@ class SimplePdf:
 
         if self._cos_doc:
             self._delete_cos_page(index)
+            ranges = self.page_label_ranges()
+            if ranges is not None:
+                # Deleting every page leaves no range, and nothing to label.
+                self.set_page_label_ranges(
+                    page_labels.ranges_after_delete(ranges, index, len(self.pages)) or None
+                )
 
         self._page_cache_valid = False
         self._authored_font_cache.clear()
@@ -8246,11 +8252,40 @@ class SimplePdf:
         self._authored_font_cache.clear()
         if self._cos_doc:
             self._create_cos_page(index, media_box, content, _source)
+            ranges = self.page_label_ranges()
+            if ranges is not None:
+                self.set_page_label_ranges(page_labels.ranges_after_insert(ranges, index))
 
     def add_page_break(self) -> None:
         """Add a blank page."""
         self._ensure_not_disposed()
         self.add(((0, 0, 612, 792), b""))
+
+    # ---------------------------------------------------------------------------
+    # Page labels
+    # ---------------------------------------------------------------------------
+    def page_label_ranges(self) -> list[tuple[int, page_labels.LabelRange]] | None:
+        """The ``/PageLabels`` ranges by first page, or ``None`` when there are none."""
+        self._ensure_not_disposed()
+        return page_labels.read_ranges(self)
+
+    def set_page_label_ranges(
+        self, ranges: list[tuple[int, page_labels.LabelRange]] | None
+    ) -> None:
+        """Replace the ``/PageLabels`` ranges; ``None`` removes the labels."""
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        page_labels.write_ranges(self, ranges)
+
+    def _page_label_values(self) -> list[page_labels.LabelValue] | None:
+        """Every page's label rule and number, or ``None`` without labels."""
+        ranges = self.page_label_ranges()
+        return None if ranges is None else page_labels.label_values(ranges, len(self.pages))
+
+    def page_label(self, index: int) -> str | None:
+        """The label a viewer shows for page *index*, or ``None`` without labels."""
+        ranges = self.page_label_ranges()
+        return None if ranges is None else page_labels.label_at(ranges, index)
 
     # ---------------------------------------------------------------------------
     # Annotations
@@ -9238,6 +9273,10 @@ class SimplePdf:
 
         whole = pages is None
         selection = range(len(other.pages)) if whole else list(pages)
+        # Pages brought in keep the labels they had, and so do the pages
+        # already here; read both before any page moves.
+        own_labels = self._page_label_values()
+        their_labels = other._page_label_values()
 
         # Every source page is created first, so that a reference to any of
         # them -- an annotation's /P, a bookmark's destination, a widget shared
@@ -9257,6 +9296,16 @@ class SimplePdf:
             imported[other._page_refs[index]] = new_ref
             positions[index] = where
             copied.append((other._get_page_dict(index), new_ref))
+
+        if own_labels is not None or their_labels is not None:
+            # A document without labels contributes empty ones, as qpdf's
+            # assembled files do; neither having any leaves the result bare.
+            none = [(page_labels.NO_LABEL, 1)]
+            own = own_labels if own_labels is not None else none * (len(self.pages) - len(copied))
+            brought = [their_labels[i] if their_labels is not None else none[0] for i in selection]
+            self.set_page_label_ranges(
+                page_labels.ranges_from_values(own[:target] + brought + own[target:])
+            )
 
         for source, new_ref in copied:
             self._import_page_entries(other, source, new_ref, imported)

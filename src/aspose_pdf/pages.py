@@ -52,6 +52,17 @@ class Page:
         self._index = value
 
     @property
+    def label(self) -> str | None:
+        """The page's label -- ``"iii"``, ``"12"``, ``"A-1"`` -- as a viewer shows it.
+
+        ``None`` when the document has no page labels, where viewers show the
+        page's position instead. Set labels through
+        :attr:`Document.page_labels <aspose_pdf.Document.page_labels>`.
+        """
+        engine = self._document._engine_pdf
+        return None if engine is None else engine.page_label(self._index)
+
+    @property
     def rect(self) -> tuple[float, float, float, float]:
         """Get the page rectangle (MediaBox)."""
         if self._document._engine_pdf and self._index < len(

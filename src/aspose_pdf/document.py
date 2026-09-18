@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.forms import Form
     from aspose_pdf.optimization import OptimizationOptions
+    from aspose_pdf.page_labels import PageLabelCollection
     from aspose_pdf.pages import Page, PageCollection
     from aspose_pdf.signature import PdfSignature
     from aspose_pdf.tagged import TaggedContent
@@ -264,6 +265,18 @@ class Document:
 
             self._pages = PageCollection(self)
         return self._pages
+
+    @property
+    def page_labels(self) -> PageLabelCollection:
+        """The page label ranges, keyed by the index of the page each starts at.
+
+        See :class:`~aspose_pdf.page_labels.PageLabelCollection`; a page's
+        own label is :attr:`Page.label <aspose_pdf.pages.Page.label>`.
+        """
+        self._ensure_not_disposed()
+        from aspose_pdf.page_labels import PageLabelCollection
+
+        return PageLabelCollection(self)
 
     @property
     def form(self) -> Form:

@@ -76,6 +76,7 @@ from .lowcode import (
     TextExtractorOptions,
 )
 from .optimization import OptimizationOptions
+from .page_labels import NumberingStyle, PageLabel, PageLabelCollection
 from .pages import Page, PageCollection
 from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from .pdfua import PdfUaValidateOptions, PdfUaValidationResult, PdfUaValidator
@@ -152,12 +153,15 @@ __all__ = [
     "Merger",
     "NamedAction",
     "NamespaceProvider",
+    "NumberingStyle",
     "OperationResult",
     "OptimizationOptions",
     "OptimizeOptions",
     "Optimizer",
     "Page",
     "PageCollection",
+    "PageLabel",
+    "PageLabelCollection",
     "PdfAValidateOptions",
     "PdfAValidationResult",
     "PdfAValidator",
