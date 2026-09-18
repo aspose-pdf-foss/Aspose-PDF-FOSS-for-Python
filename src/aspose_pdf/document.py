@@ -30,7 +30,11 @@ from aspose_pdf.engine.simple_pdf import (
     _effective_encryption_password,
     _parse_pdf_date,
 )
-from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.exceptions import (
+    AsposePdfException,
+    PdfSecurityException,
+    PdfValidationException,
+)
 from aspose_pdf.font_substitution import FontSubstitutionOptions
 from aspose_pdf.layers import LayerCollection
 from aspose_pdf.load_limits import (
@@ -47,6 +51,7 @@ from aspose_pdf.recipients import ALL_PERMISSIONS, Recipient
 if TYPE_CHECKING:
     import datetime as _datetime
 
+    from aspose_pdf._pending_signatures import PendingOperation
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.forms import Form
@@ -55,6 +60,7 @@ if TYPE_CHECKING:
     from aspose_pdf.signature import PdfSignature
     from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.text_layout import TextLayoutOptions
+    from aspose_pdf.validation import CertificationLevel
     from aspose_pdf.xmp import XmpPacket
 
 logger = logging.getLogger(__name__)
@@ -199,6 +205,8 @@ class Document:
         self._tagged_content: Any | None = None
         self._password: str | None = None
         self._encrypted: bool = False
+        # Signatures, LTV material and document timestamps for the next save.
+        self._pending_signing: list[PendingOperation] = []
         self.file_name: str | None = None
 
         if options is not None:
@@ -617,6 +625,319 @@ class Document:
         if self._engine_pdf is None:
             return []
         return list(getattr(self._engine_pdf, "signatures", None) or [])
+
+    def sign(
+        self,
+        field: str | None = None,
+        *,
+        certificate: Any,
+        private_key: Any,
+        extra_certificates: Sequence[Any] = (),
+        reason: str | None = None,
+        location: str | None = None,
+        contact: str | None = None,
+        signer_name: str | None = None,
+        pades: bool = False,
+        timestamp_url: str | None = None,
+        timestamp_authority: tuple[Any, Any] | None = None,
+        timestamp_timeout: float = 10.0,
+        certify: CertificationLevel | int | None = None,
+    ) -> Document:
+        """Sign the document when it is next saved.
+
+        A signature covers the bytes of a file, so it is made by :meth:`save`:
+        the document is written as it would be anyway -- as an incremental
+        update when it already carries signatures, which keeps them valid --
+        and the signature goes into an appended revision of its own. Signing,
+        :meth:`add_ltv` and :meth:`add_document_timestamp` happen in the order
+        they were called. After the save the document is the file it wrote:
+        :attr:`signatures` lists the new signature and a later save appends to
+        it. A :attr:`form` taken before that save lists the fields as they
+        were; take it again.
+
+        Parameters
+        ----------
+        field : str, optional
+            Fully qualified name of an unsigned signature field to fill, such as
+            one made by :meth:`Form.add_signature_field`. When omitted, an
+            invisible signature field (``Signature1``, or the next free number)
+            is added to the first page.
+        certificate, private_key :
+            The signer: a ``cryptography`` ``x509.Certificate`` and its RSA, EC
+            or Ed25519 private key; Ed25519 needs ``pades=True`` and digests
+            with SHA-512 (RFC 8419). A PKCS#12 file loads with
+            ``cryptography.hazmat.primitives.serialization.pkcs12.load_key_and_certificates``.
+        extra_certificates : sequence of x509.Certificate
+            Intermediate certificates to embed, so a validator can build the
+            chain to a trusted root.
+        reason, location, contact, signer_name : str, optional
+            ``/Reason``, ``/Location``, ``/ContactInfo`` and ``/Name`` of the
+            signature dictionary.
+        pades : bool
+            Write a CAdES signature (``ETSI.CAdES.detached``, PAdES baseline B)
+            instead of ``adbe.pkcs7.detached``. A timestamp makes it PAdES-T.
+        timestamp_url : str, optional
+            RFC 3161 timestamp authority to embed a signature timestamp from.
+        timestamp_authority : (x509.Certificate, RSA private key), optional
+            A local timestamp authority, for closed environments and tests.
+        timestamp_timeout : float
+            Seconds to wait for *timestamp_url*.
+        certify : CertificationLevel or int, optional
+            Make this a certifying (DocMDP) signature permitting no changes (1),
+            form filling (2), or form filling and annotations (3). It has to be
+            the document's first signature.
+
+        Returns
+        -------
+        Document
+            Self for method chaining.
+
+        Raises
+        ------
+        TypeError
+            If the certificate, key or another argument has the wrong type.
+        PdfValidationException
+            If *field* does not name a signature field, the key does not belong
+            to the certificate, or an argument is out of range.
+        PdfSecurityException
+            If *field* is signed already, a certification is asked for on a
+            signed document, or the document is being encrypted for certificate
+            recipients -- it could not be reopened after the save.
+        """
+        self._ensure_not_disposed()
+        from cryptography import x509
+
+        from aspose_pdf import _pending_signatures as pending
+
+        pending.check_signer(certificate, private_key, pades=bool(pades))
+        extra = tuple(extra_certificates)
+        if not all(isinstance(item, x509.Certificate) for item in extra):
+            raise TypeError("extra_certificates must hold cryptography x509.Certificate objects")
+        for label, value in (
+            ("reason", reason),
+            ("location", location),
+            ("contact", contact),
+            ("signer_name", signer_name),
+        ):
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{label} must be a string")
+        authority = pending.check_timestamp_source(timestamp_url, timestamp_authority)
+        level = pending.certification_level(certify)
+        if level is not None and (self.signatures or self._pending_signing):
+            raise PdfSecurityException(
+                "A certifying (DocMDP) signature must be the document's first "
+                "signature, and this document is signed, or is to be, already"
+            )
+        self._check_reopenable()
+        name = self._signature_field_to_fill(field)
+        self._pending_signing.append(
+            pending.PendingSignature(
+                field=name,
+                certificate=certificate,
+                private_key=private_key,
+                extra_certificates=extra,
+                reason=reason,
+                location=location,
+                contact=contact,
+                signer_name=signer_name,
+                pades=bool(pades),
+                timestamp_url=timestamp_url,
+                timestamp_authority=authority,
+                timestamp_timeout=float(timestamp_timeout),
+                certify=level,
+            )
+        )
+        return self
+
+    def add_ltv(
+        self,
+        *,
+        certificates: Sequence[Any] = (),
+        crls: Sequence[Any] = (),
+        ocsp_responses: Sequence[Any] = (),
+    ) -> Document:
+        """Add long-term validation material (a ``/DSS``) when the document is next saved.
+
+        The certificates, CRLs and OCSP responses embedded in the document's
+        signatures -- the ones already there and the ones :meth:`sign` makes
+        before this call -- go into the document security store (ISO 32000-2
+        12.8.4.3), with whatever is given here: revocation data fetched
+        separately is the usual case. It turns a PAdES-T signature into
+        PAdES-LT. A store the document already has is extended. The store is
+        written as an incremental revision, so every signature stays valid.
+
+        Parameters
+        ----------
+        certificates, crls, ocsp_responses : sequence
+            DER bytes, or ``cryptography`` ``x509.Certificate``,
+            ``x509.CertificateRevocationList`` and ``ocsp.OCSPResponse`` objects.
+
+        Returns
+        -------
+        Document
+            Self for method chaining.
+
+        Raises
+        ------
+        PdfSecurityException
+            If the document is encrypted: the store would have to be enciphered
+            with the document's own key, which is not supported yet.
+        """
+        self._ensure_not_disposed()
+        from aspose_pdf import _pending_signatures as pending
+        from aspose_pdf.engine.dss import DssMaterial
+
+        material = DssMaterial(
+            certs=pending.der_items(certificates, "certificates"),
+            crls=pending.der_items(crls, "crls"),
+            ocsps=pending.der_items(ocsp_responses, "ocsp_responses"),
+        )
+        self._refuse_encrypted("A /DSS")
+        self._pending_signing.append(pending.PendingLtv(material))
+        return self
+
+    def add_document_timestamp(
+        self,
+        *,
+        timestamp_url: str | None = None,
+        timestamp_authority: tuple[Any, Any] | None = None,
+        timeout: float = 10.0,
+    ) -> Document:
+        """Add a document timestamp when the document is next saved.
+
+        A document timestamp (``ETSI.RFC3161``, ISO 32000-2 12.8.5) is an RFC
+        3161 token over the whole file as it stands, signatures and ``/DSS``
+        included: with :meth:`add_ltv` before it, it makes PAdES-LTA, and a
+        later one renews it. It is written as an incremental revision, in a
+        field of its own (``Timestamp``, or the next free number).
+
+        Parameters
+        ----------
+        timestamp_url : str, optional
+            RFC 3161 timestamp authority to request the token from.
+        timestamp_authority : (x509.Certificate, RSA private key), optional
+            A local timestamp authority, for closed environments and tests.
+            One of the two is required.
+        timeout : float
+            Seconds to wait for *timestamp_url*.
+
+        Returns
+        -------
+        Document
+            Self for method chaining.
+
+        Raises
+        ------
+        PdfSecurityException
+            If the document is encrypted, which is not supported yet.
+        """
+        self._ensure_not_disposed()
+        from aspose_pdf import _pending_signatures as pending
+
+        authority = pending.check_timestamp_source(timestamp_url, timestamp_authority)
+        if timestamp_url is None and authority is None:
+            raise PdfValidationException(
+                "A document timestamp needs a timestamp_url or a timestamp_authority"
+            )
+        self._refuse_encrypted("A document timestamp")
+        self._pending_signing.append(
+            pending.PendingDocumentTimestamp(timestamp_url, authority, float(timeout))
+        )
+        return self
+
+    def _signature_field_to_fill(self, field: str | None) -> str:
+        """Name the field :meth:`sign` fills, adding an invisible one when asked."""
+        from aspose_pdf._pending_signatures import PendingSignature
+        from aspose_pdf.engine.cos import PdfName
+        from aspose_pdf.engine.sign_field import _find_field
+
+        engine = self._engine_pdf
+        engine._ensure_cos()
+        if field is None:
+            # A field queued for signing is in the form already: an invisible
+            # one is added when it is asked for, not when it is signed.
+            taken = {name for name, _entry in engine._iter_form_fields()}
+            number = 1
+            while f"Signature{number}" in taken:
+                number += 1
+            return engine._ensure_signature_field(f"Signature{number}")
+        if not isinstance(field, str):
+            raise TypeError("field must be the name of a signature field")
+        queued = {op.field for op in self._pending_signing if isinstance(op, PendingSignature)}
+        if field in queued:
+            raise PdfValidationException(f"Field '{field}' is to be signed on save already")
+        # The same lookup, and the same two rules, as the save will apply: a
+        # mistake is reported here, before anything is written.
+        _ref, entry = _find_field(engine._cos_doc, _LoadBudget(self._load_limits), field)
+        if engine._resolve(entry.mapping.get(PdfName("FT"))) != PdfName("Sig"):
+            raise PdfValidationException(f"Field '{field}' is not a signature field")
+        if entry.mapping.get(PdfName("V")) is not None:
+            raise PdfSecurityException(f"Field '{field}' is already signed")
+        return field
+
+    def _written_encrypted(self) -> bool:
+        """Whether the next save writes an encrypted file."""
+        engine = self._engine_pdf
+        return bool(engine.encrypted or engine._loaded_protection_active())
+
+    def _refuse_encrypted(self, what: str) -> None:
+        if self._written_encrypted():
+            raise PdfSecurityException(
+                f"{what} cannot be added to an encrypted document yet: it would "
+                "have to be enciphered with the document's own key"
+            )
+
+    def _check_reopenable(self) -> None:
+        """Refuse to sign what could not be opened again once it is saved.
+
+        After a signing save the document is reloaded from the bytes it wrote.
+        A file encrypted for certificate recipients in this session opens only
+        with a recipient's private key, which the document does not have.
+        """
+        engine = self._engine_pdf
+        if engine.encrypted and engine._recipients:
+            raise PdfSecurityException(
+                "A document being encrypted for certificate recipients cannot be "
+                "signed here: after the save it could only be reopened with a "
+                "recipient's private key. Save it, open it with a recipient "
+                "credential, then sign it."
+            )
+
+    def _apply_pending_signing(self, data: bytes) -> bytes:
+        """Make the queued signatures, LTV material and timestamps on *data*."""
+        # The bytes may be encrypted; a signature revision has to be enciphered
+        # the same way, with the same key and the same exemptions.
+        encryption = self._engine_pdf._writer_encryption()
+        for operation in self._pending_signing:
+            data = operation.apply(data, encryption=encryption, limits=self._load_limits)
+        return data
+
+    def _reopen(self, data: bytes) -> None:
+        """Make this document the file *data* is, as if it had been loaded from it."""
+        engine = self._engine_pdf
+        if engine.encrypted:
+            # Protection set in this session: its owner password opens it fully.
+            password, credential = engine._owner_password or engine.password, None
+        else:
+            password, credential = self._password, engine._credential
+        certificate = private_key = key_encryption_key = None
+        if isinstance(credential, tuple):
+            certificate, private_key = credential
+        elif isinstance(credential, bytes):
+            key_encryption_key = credential
+        file_name = self.file_name
+        self.load_from(
+            data,
+            password=password,
+            certificate=certificate,
+            private_key=private_key,
+            key_encryption_key=key_encryption_key,
+        )
+        self.file_name = file_name
+        # Pages, outlines and the tagged view read the engine as they go or
+        # hold plain data that is still true; the form lists the fields it read
+        # from the old one, without a field sign() added.
+        self._form = None
 
     @property
     def is_encrypted(self) -> bool:
@@ -1352,6 +1673,8 @@ class Document:
             self._engine_pdf.decrypt("")
 
         self._encrypted = self._engine_pdf.encrypted if self._engine_pdf else False
+        # Queued signing named fields of whatever was loaded before.
+        self._pending_signing = []
         return self
 
     def optimize(
@@ -1678,6 +2001,11 @@ class Document:
             falls back to a full write); encrypted or to-be-signed documents are
             rejected with :exc:`~aspose_pdf.exceptions.PdfSecurityException`.
 
+        What :meth:`sign`, :meth:`add_ltv` and :meth:`add_document_timestamp`
+        asked for is done here, each in a revision appended to the bytes the
+        choice above produces; the document is then reloaded from the file it
+        wrote.
+
         Returns
         -------
         Document
@@ -1718,25 +2046,27 @@ class Document:
 
         self._flush_outlines()
 
+        signing = bool(self._pending_signing)
+        if signing:
+            # Protection may have changed since sign() was called.
+            self._check_reopenable()
         incremental = self._choose_incremental(incremental)
+        path = None if hasattr(destination, "write") else Path(destination)
+        # Refused before anything is serialized, signed or timestamped.
+        if path is not None and path.exists() and not overwrite:
+            raise FileExistsError(f"File already exists: {path}")
         if incremental:
             data = self._engine_pdf.to_bytes_incremental()
-            if hasattr(destination, "write"):
-                destination.write(data)
-            else:
-                path = Path(destination)
-                if path.exists() and not overwrite:
-                    raise FileExistsError(f"File already exists: {path}")
-                write_file_atomically(path, data)
-            return self
-
-        if hasattr(destination, "write"):
-            destination.write(self._engine_pdf.to_bytes())
         else:
-            path = Path(destination)
-            if path.exists() and not overwrite:
-                raise FileExistsError(f"File already exists: {path}")
-            self._engine_pdf.save(path)
+            data = self._engine_pdf.to_bytes()
+        if signing:
+            data = self._apply_pending_signing(data)
+        if path is None:
+            destination.write(data)
+        else:
+            write_file_atomically(path, data)
+        if signing:
+            self._reopen(data)
         return self
 
     def dispose(self) -> None:
@@ -1756,6 +2086,7 @@ class Document:
         self._form = None
         self._outlines = None
         self._tagged_content = None
+        self._pending_signing = []
         self.file_name = None
 
     def close(self) -> None:

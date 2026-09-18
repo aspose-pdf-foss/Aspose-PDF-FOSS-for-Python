@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric import ed448, ed25519
+
 from aspose_pdf.engine.cos import (
     PdfArray,
     PdfDictionary,
@@ -218,6 +220,7 @@ def _check_seed_value(
     reason: str | None,
     certify_permissions: int | None,
     has_timestamp: bool,
+    digests: dict[str, str] = _DIGEST_BY_NAME,
 ) -> _SeedValue:
     """Enforce the field's ``/SV`` dictionary and report what it chose.
 
@@ -262,15 +265,15 @@ def _check_seed_value(
             f"Seed value requires /SubFilter in {names}; got /{sub_filter}"
         )
 
-    digests = _sv_names(doc, sv.mapping.get(PdfName("DigestMethod")))
-    if digests:
-        usable = [_DIGEST_BY_NAME[name] for name in digests if name in _DIGEST_BY_NAME]
+    asked = _sv_names(doc, sv.mapping.get(PdfName("DigestMethod")))
+    if asked:
+        usable = [digests[name] for name in asked if name in digests]
         if usable:
             decision.digest_algorithm = usable[0]
         elif required("DigestMethod"):
             raise PdfSecurityException(
-                f"Seed value requires /DigestMethod in {digests}; this signer "
-                f"produces {sorted(_DIGEST_BY_NAME)}"
+                f"Seed value requires /DigestMethod in {asked}; this signer "
+                f"produces {sorted(digests)}"
             )
 
     reasons = _resolve(doc, sv.mapping.get(PdfName("Reasons")))
@@ -428,6 +431,32 @@ def _signature_references(
     return PdfArray(list(refs)) if refs else None
 
 
+def _already_signed(doc: Any, budget: _LoadBudget) -> bool:
+    """Whether a field of the document holds a signature (or a timestamp) already."""
+    root = _resolve(doc, doc.trailer.mapping.get(PdfName("Root")))
+    if not isinstance(root, PdfDictionary):
+        return False
+    acro = _resolve(doc, root.mapping.get(PdfName("AcroForm")))
+    fields = _resolve(doc, acro.mapping.get(PdfName("Fields"))) if isinstance(acro, PdfDictionary) else None
+    stack = [(item, 1) for item in fields.items] if isinstance(fields, PdfArray) else []
+    seen: set[int] = set()
+    while stack:
+        ref, depth = stack.pop()
+        budget.check(depth, "max_nesting_depth", "AcroForm field depth")
+        field = _resolve(doc, ref)
+        if not isinstance(field, PdfDictionary) or id(field) in seen:
+            continue
+        seen.add(id(field))
+        value = _resolve(doc, field.mapping.get(PdfName("V")))
+        if isinstance(value, PdfDictionary) and PdfName("ByteRange") in value.mapping:
+            return True
+        kids = _resolve(doc, field.mapping.get(PdfName("Kids")))
+        if isinstance(kids, PdfArray):
+            budget.check(len(kids.items), "max_container_items", "AcroForm field kids")
+            stack.extend((kid, depth + 1) for kid in kids.items)
+    return False
+
+
 def _acroform_objects(
     doc: Any, writer: PdfCosWriter, sig_ref: PdfIndirectReference,
     certify_permissions: int | None,
@@ -530,6 +559,15 @@ def sign_field(
         raise PdfSecurityException(f"Field '{field_name}' is already signed")
 
     sub_filter = "ETSI.CAdES.detached" if pades else "adbe.pkcs7.detached"
+    # RFC 8419 3.1: with signed attributes, an EdDSA signature fixes its
+    # digest -- SHA-512 for Ed25519, SHAKE256 for Ed448, which this signer
+    # does not produce. Signed with another, validators reject it.
+    if isinstance(key, ed448.Ed448PrivateKey):
+        raise PdfSecurityException(
+            "An Ed448 signature digests with SHAKE256 (RFC 8419), which this "
+            "signer does not produce"
+        )
+    eddsa = isinstance(key, ed25519.Ed25519PrivateKey)
     seed = _check_seed_value(
         doc,
         field,
@@ -537,6 +575,7 @@ def sign_field(
         reason=reason,
         certify_permissions=certify_permissions,
         has_timestamp=bool(tsa or timestamp_url),
+        digests={"SHA512": "sha512"} if eddsa else _DIGEST_BY_NAME,
     )
     # A seed value may supply what the caller did not: the authority to stamp
     # with, the digest to use, and -- for /LockDocument -- a certification the
@@ -545,7 +584,15 @@ def sign_field(
         timestamp_url = seed.timestamp_url
     if seed.lock_document and certify_permissions is None:
         certify_permissions = 1  # no changes permitted
-    digest_algorithm = seed.digest_algorithm or "sha256"
+    if certify_permissions is not None and _already_signed(doc, budget):
+        # ISO 32000-1 12.8.2.2.1: the DocMDP signature "shall be the first
+        # signed field in the document". A later one adds /Perms after the
+        # earlier signatures, which is exactly a change they did not allow.
+        raise PdfSecurityException(
+            "A certifying (DocMDP) signature must be the document's first "
+            "signature, and this document is already signed"
+        )
+    digest_algorithm = seed.digest_algorithm or ("sha512" if eddsa else "sha256")
 
     inc = IncrementalUpdate(pdf_bytes, budget=budget)
     sig_num = inc.get_next_object_number()

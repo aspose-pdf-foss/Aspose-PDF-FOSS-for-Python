@@ -7,7 +7,62 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Signing through `Document`.** `Document.sign(field, certificate=...,
+  private_key=...)` fills a signature field -- or, with no field named, an
+  invisible one it adds -- with an `adbe.pkcs7.detached` or, with
+  `pades=True`, a CAdES (PAdES-B) signature, optionally timestamped from a
+  network or local authority (PAdES-T), with an embedded chain, reason,
+  location and contact, or as a certifying signature (`certify=`).
+  `Document.add_ltv(certificates=..., crls=..., ocsp_responses=...)` adds the
+  signatures' validation material and any given to a `/DSS` (PAdES-LT), and
+  `Document.add_document_timestamp(...)` appends an RFC 3161 document
+  timestamp (PAdES-LTA). All three are made by `save()`, in call order, each
+  as a revision appended to the bytes the save writes -- incrementally when
+  the document is signed already -- so every earlier signature stays valid;
+  the document is then reloaded from the file it wrote, so `signatures` lists
+  the new ones and a later save appends to them. Arguments are checked when
+  the call is made: a field that does not exist, is not a signature field or
+  is signed already, a key that is not the certificate's, a key type the
+  chosen encoding cannot sign with, a certification on a signed document.
+  Encrypted documents are signed with their own key; `/DSS` and document
+  timestamps are refused for them for now, as is signing a document being
+  encrypted for certificate recipients, which could not be reopened after the
+  save. Every combination checked in pyHanko (intact, valid, trusted, whole
+  file covered, benign modification levels) and opened in pdfium and MuPDF.
+
 ### Fixed
+
+- **A document timestamp's coverage was unclear, and a second one looked like
+  tampering.** `engine.dss.add_document_timestamp` left the `<` and `>` of its
+  `/Contents` inside the signed ranges, so pyHanko could not match the gap to
+  the token and reported the timestamp's coverage as unclear; and every
+  timestamp was a field named `Timestamp`, so renewing an archive timestamp
+  made two fields of one name, which pyHanko rejects as a suspicious
+  modification of every signature before it. The gap now runs over the
+  delimiters, as it does for a signature, and a later timestamp is
+  `Timestamp2`, `Timestamp3`, ... It also refuses an encrypted document, whose
+  field name it would have written in clear.
+
+- **A second `/DSS` replaced the first.** `enable_ltv` and `build_dss` wrote a
+  new store from the signatures' own material, dropping revocation data an
+  earlier call had added and every `/VRI` entry but one. An existing store is
+  now extended in place: its streams are referred to again, only new material
+  is added, its `/VRI` entries are carried over unchanged (pyHanko treats a
+  changed one as tampering), and nothing new means no revision at all.
+
+- **A certifying signature could follow another signature.** `sign_field`
+  with `certify_permissions` on an already signed document added `/Perms`
+  after the earlier signatures, which pyHanko reports as a change they did not
+  allow. A DocMDP signature "shall be the first signed field in the document"
+  (ISO 32000-1 12.8.2.2.1), and is now refused otherwise.
+
+- **An Ed25519 signature was digested with SHA-256.** RFC 8419 pairs Ed25519
+  with SHA-512 when signed attributes are present, and pyHanko rejects any
+  other pairing. Ed25519 now signs with SHA-512 (a seed value demanding
+  another digest is refused), and Ed448, which needs SHAKE256, is refused
+  rather than signed with a digest validators reject.
 
 - **`aspose_pdf.generated.*` was an older, broken copy of the library.**
   `generated.document.Document` merged documents as blank pages, broke a signed

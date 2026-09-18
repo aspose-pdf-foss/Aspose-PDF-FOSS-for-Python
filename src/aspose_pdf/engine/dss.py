@@ -28,6 +28,7 @@ from aspose_pdf.engine.cos import (
     PdfName,
     PdfNumber,
     PdfStream,
+    PdfString,
 )
 from aspose_pdf.engine.incremental_update import IncrementalUpdate
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
@@ -102,8 +103,12 @@ def _stream_object_bytes(obj_num: int, data: bytes) -> bytes:
     return header + data + b"\nendstream\nendobj\n"
 
 
-def _refs_array(nums: Sequence[int]) -> str:
-    return "[ " + " ".join(f"{n} 0 R" for n in nums) + " ]"
+def _refs_array(refs: Sequence[str]) -> str:
+    return "[ " + " ".join(refs) + " ]"
+
+
+#: The store's arrays: ``/DSS`` key, ``/VRI`` entry key, ``DssMaterial`` field.
+_STORE_ARRAYS = (("Certs", "Cert", "certs"), ("CRLs", "CRL", "crls"), ("OCSPs", "OCSP", "ocsps"))
 
 
 def build_dss(
@@ -112,10 +117,16 @@ def build_dss(
     *,
     vri_contents: bytes | None = None,
 ) -> bytes:
-    """Return *original_pdf* with a ``/DSS`` added via an incremental update.
+    """Return *original_pdf* with its ``/DSS`` added, or extended, via an incremental update.
 
     The original bytes are preserved verbatim, so any existing signature keeps
     covering exactly the same range and stays valid.
+
+    A store the document already has is extended rather than replaced: the
+    streams it holds are referred to again where they are, only material it
+    does not hold yet is added, and its ``/VRI`` entries are carried over
+    unchanged -- a validator comparing the revisions (pyHanko does) takes a
+    changed or dropped entry for tampering with the signatures before it.
 
     Parameters
     ----------
@@ -124,7 +135,8 @@ def build_dss(
     vri_contents:
         When given (the ``/Contents`` bytes of a signature), a ``/VRI`` entry is
         added keyed by the uppercase SHA-1 of those bytes, associating the
-        material with that specific signature per ISO 32000-2.
+        material with that specific signature per ISO 32000-2. A signature
+        that has one already keeps it.
     """
     material = material.deduped()
     if material.is_empty():
@@ -135,65 +147,110 @@ def build_dss(
     # encipher them with. Writing plaintext into an encrypted file would put
     # certificates there that every reader decrypts into noise -- material that
     # looks present and is unusable is worse than material that is absent.
-    if PdfName("Encrypt") in PdfCosParser(original_pdf).parse().trailer.mapping:
+    doc = PdfCosParser(original_pdf).parse()
+    if PdfName("Encrypt") in doc.trailer.mapping:
         raise PdfSecurityException(
             "Building a /DSS into an encrypted document is not supported: the "
             "appended validation material would have to be enciphered with the "
             "document's own key."
         )
-
-    inc = IncrementalUpdate(original_pdf)
-
-    def add_stream(data: bytes) -> int:
-        num = inc.get_next_object_number()
-        inc.add_object(num, _stream_object_bytes(num, data))
-        return num
-
-    cert_nums = [add_stream(d) for d in material.certs]
-    crl_nums = [add_stream(d) for d in material.crls]
-    ocsp_nums = [add_stream(d) for d in material.ocsps]
-
-    def section(key: str, nums: Sequence[int]) -> str:
-        return f"/{key} {_refs_array(nums)}" if nums else ""
-
-    dss_num = inc.get_next_object_number()
-    parts = [
-        section("Certs", cert_nums),
-        section("CRLs", crl_nums),
-        section("OCSPs", ocsp_nums),
-    ]
-    if vri_contents is not None:
-        key = hashlib.sha1(vri_contents).hexdigest().upper()
-        inner = " ".join(
-            p
-            for p in (
-                section("Cert", cert_nums),
-                section("CRL", crl_nums),
-                section("OCSP", ocsp_nums),
-            )
-            if p
-        )
-        parts.append(f"/VRI << /{key} << {inner} >> >>")
-    dss_body = "<< " + " ".join(p for p in parts if p) + " >>"
-    inc.add_object(
-        dss_num, f"{dss_num} 0 obj\n{dss_body}\nendobj\n".encode("latin-1")
-    )
-
-    # Re-emit the catalog with /DSS added, preserving its existing entries.
-    doc = PdfCosParser(original_pdf).parse()
     root_ref = doc.trailer.get(PdfName("Root"))
     catalog = doc.get_object(root_ref)
     if not isinstance(catalog, PdfDictionary) or root_ref is None:
         raise ValueError("cannot locate document catalog to attach /DSS")
-    catalog.mapping[PdfName("DSS")] = PdfIndirectReference(dss_num, 0)
-    catalog_str = PdfCosWriter(doc).serialize_object(catalog)
-    catalog_num = root_ref.object_number
-    inc.add_object(
-        catalog_num,
-        f"{catalog_num} 0 obj\n{catalog_str}\nendobj\n".encode("latin-1"),
-    )
+    writer = PdfCosWriter(doc)
+    held = _held_material(doc, catalog)
+    entries = _existing_vri_entries(doc, catalog, writer)
 
+    inc = IncrementalUpdate(original_pdf)
+    changed = False
+
+    def refs_for(array: str, blobs: Sequence[bytes]) -> list[str]:
+        nonlocal changed
+        known = held[array]
+        for data in blobs:
+            if data not in known:
+                num = inc.get_next_object_number()
+                inc.add_object(num, _stream_object_bytes(num, data))
+                known[data] = f"{num} 0 R"
+                changed = True
+        return [known[data] for data in blobs]
+
+    given = {array: refs_for(array, getattr(material, field)) for array, _, field in _STORE_ARRAYS}
+    if vri_contents is not None:
+        key = "/" + hashlib.sha1(vri_contents).hexdigest().upper()
+        if key not in entries:
+            inner = " ".join(
+                f"/{entry} {_refs_array(given[array])}"
+                for array, entry, _ in _STORE_ARRAYS
+                if given[array]
+            )
+            entries[key] = f"<< {inner} >>"
+            changed = True
+    if not changed:
+        return original_pdf
+
+    parts = [
+        f"/{array} {_refs_array(list(held[array].values()))}"
+        for array, _, _ in _STORE_ARRAYS
+        if held[array]
+    ]
+    if entries:
+        parts.append("/VRI << " + " ".join(f"{k} {v}" for k, v in entries.items()) + " >>")
+    dss_body = "<< " + " ".join(parts) + " >>"
+
+    # An indirect store is rewritten in place; otherwise the catalog is
+    # re-emitted, its other entries as they were, pointing at a new one.
+    existing = catalog.get(PdfName("DSS"))
+    if isinstance(existing, PdfIndirectReference):
+        dss_num = existing.object_number
+    else:
+        dss_num = inc.get_next_object_number()
+        catalog.mapping[PdfName("DSS")] = PdfIndirectReference(dss_num, 0)
+        catalog_str = writer.serialize_object(catalog)
+        catalog_num = root_ref.object_number
+        inc.add_object(
+            catalog_num,
+            f"{catalog_num} 0 obj\n{catalog_str}\nendobj\n".encode("latin-1"),
+        )
+    inc.add_object(
+        dss_num, f"{dss_num} 0 obj\n{dss_body}\nendobj\n".encode("latin-1")
+    )
     return original_pdf + inc.generate()
+
+
+def _held_material(doc, catalog: PdfDictionary) -> dict[str, dict[bytes, str]]:
+    """What the catalog's current ``/DSS`` holds: per array, bytes to reference."""
+    held: dict[str, dict[bytes, str]] = {array: {} for array, _, _ in _STORE_ARRAYS}
+    store = _resolve(doc, catalog.get(PdfName("DSS")))
+    if not isinstance(store, PdfDictionary):
+        return held
+    limits = _coerce_limits(None)
+    budget = _LoadBudget(limits)
+    for array, _, _ in _STORE_ARRAYS:
+        items = _resolve(doc, store.get(PdfName(array)))
+        for item in items.items if isinstance(items, PdfArray) else ():
+            stream = _resolve(doc, item)
+            if not isinstance(item, PdfIndirectReference) or not isinstance(stream, PdfStream):
+                continue  # a stream is always indirect; anything else is not material
+            data = _decoded_stream_bytes(doc, stream, limits=limits, budget=budget)
+            if data:
+                held[array][data] = f"{item.object_number} {item.gen_number} R"
+    return held
+
+
+def _existing_vri_entries(doc, catalog: PdfDictionary, writer: PdfCosWriter) -> dict[str, str]:
+    """The ``/VRI`` entries of the catalog's current ``/DSS``, serialized."""
+    store = _resolve(doc, catalog.get(PdfName("DSS")))
+    if not isinstance(store, PdfDictionary):
+        return {}
+    vri = _resolve(doc, store.get(PdfName("VRI")))
+    if not isinstance(vri, PdfDictionary):
+        return {}
+    return {
+        writer.serialize_object(key): writer.serialize_object(value)
+        for key, value in vri.mapping.items()
+    }
 
 
 def enable_ltv(
@@ -204,7 +261,8 @@ def enable_ltv(
     Validation material embedded in each signature's CMS (certificates, and any
     CRLs/OCSP responses) is harvested automatically; *extra* lets the caller add
     revocation data that was not embedded at signing time (the usual case).  The
-    first signature receives a ``/VRI`` entry.
+    first signature receives a ``/VRI`` entry. A ``/DSS`` the document already
+    has is extended (see :func:`build_dss`).
 
     The original bytes are preserved, so the signatures stay valid.
     """
@@ -269,6 +327,26 @@ def _acroform_update_objects(doc, field_num: int) -> list[tuple]:
     return [(num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1"))]
 
 
+def _unused_field_name(doc, base: str) -> str:
+    """*base*, or *base* numbered, whichever no top-level field is called."""
+    from aspose_pdf.engine.simple_pdf import decode_pdf_text_string
+
+    taken: set[str] = set()
+    root = _resolve(doc, doc.trailer.get(PdfName("Root")))
+    acro = _resolve(doc, root.get(PdfName("AcroForm"))) if isinstance(root, PdfDictionary) else None
+    fields = _resolve(doc, acro.get(PdfName("Fields"))) if isinstance(acro, PdfDictionary) else None
+    for item in fields.items if isinstance(fields, PdfArray) else ():
+        field = _resolve(doc, item)
+        title = _resolve(doc, field.get(PdfName("T"))) if isinstance(field, PdfDictionary) else None
+        if isinstance(title, PdfString):
+            taken.add(decode_pdf_text_string(title))
+    name, number = base, 1
+    while name in taken:
+        number += 1
+        name = f"{base}{number}"
+    return name
+
+
 def add_document_timestamp(
     pdf_bytes: bytes,
     *,
@@ -287,6 +365,17 @@ def add_document_timestamp(
     if tsa is None and not timestamp_url:
         raise ValueError("a local 'tsa' or a 'timestamp_url' is required")
 
+    doc = PdfCosParser(pdf_bytes).parse()
+    if PdfName("Encrypt") in doc.trailer.mapping:
+        # The field's name is a string, and a string in an encrypted file has
+        # to be enciphered with that object's key; written in clear, every
+        # reader would decrypt it into noise.
+        raise PdfSecurityException(
+            "Adding a document timestamp to an encrypted document is not "
+            "supported: the appended field would have to be enciphered with the "
+            "document's own key."
+        )
+
     inc = IncrementalUpdate(pdf_bytes)
     ts_sig_num = inc.get_next_object_number()
     ts_field_num = inc.get_next_object_number()
@@ -300,13 +389,16 @@ def add_document_timestamp(
     inc.add_object(
         ts_sig_num, f"{ts_sig_num} 0 obj\n{sig_body}\nendobj\n".encode("latin-1")
     )
-    field_body = f"<< /FT /Sig /T (Timestamp) /V {ts_sig_num} 0 R >>"
+    # A second timestamp -- an archive timestamp is renewed as its algorithms
+    # age -- must not share the first one's name: two fields of one name are
+    # one field (ISO 32000-1 12.7.3.2), and validators reject the file.
+    name = _unused_field_name(doc, "Timestamp")
+    field_body = f"<< /FT /Sig /T ({name}) /V {ts_sig_num} 0 R >>"
     inc.add_object(
         ts_field_num,
         f"{ts_field_num} 0 obj\n{field_body}\nendobj\n".encode("latin-1"),
     )
 
-    doc = PdfCosParser(pdf_bytes).parse()
     for num, body in _acroform_update_objects(doc, ts_field_num):
         inc.add_object(num, body)
 
@@ -319,12 +411,17 @@ def add_document_timestamp(
     contents_start = contents_marker + len(b"/Contents <")
     contents_end = combined.index(b">", contents_start)
 
+    # The gap runs from the ``<`` through the ``>``, as for a signature: with
+    # the delimiters inside the signed ranges the token still verifies, but a
+    # validator cannot match the gap to the /Contents string and reports the
+    # timestamp's coverage as unclear rather than the whole revision.
     total = len(combined)
-    byte_range = (0, contents_start, contents_end, total - contents_end)
+    gap_start, gap_end = contents_start - 1, contents_end + 1
+    byte_range = (0, gap_start, gap_end, total - gap_end)
     br_text = "{:010d} {:010d} {:010d} {:010d}".format(*byte_range).encode("latin-1")
     combined[arr_start : arr_start + 43] = br_text
 
-    signed = bytes(combined[0:contents_start] + combined[contents_end:])
+    signed = bytes(combined[0:gap_start] + combined[gap_end:])
     imprint = hashlib.new(hash_algo, signed).digest()
 
     from aspose_pdf.engine import timestamp as ts_mod

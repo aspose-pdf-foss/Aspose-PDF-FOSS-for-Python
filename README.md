@@ -124,8 +124,10 @@ flowchart TD
   every standard-handler flavour, including 40-bit RC4 and owner-password-only documents, can be
   opened. Encryption is applied as the document is serialised, per object, so an encrypted save
   keeps the form fields, attachments, layers and tags of the document it was given, signatures
-  included; `PdfSignature.validate()` cryptographically verifies a signer's identity, trust chain,
-  revocation status, and PAdES conformance level.
+  included; `Document.sign()`, `add_ltv()` and `add_document_timestamp()` sign a document up to
+  PAdES-LTA without breaking the signatures it already has, and `PdfSignature.validate()`
+  cryptographically verifies a signer's identity, trust chain, revocation status, and PAdES
+  conformance level.
 - `Document.validate_pdfa()`, `Document.convert_to_pdfa()`, `Document.validate_pdfua()`, and
   `Document.auto_tag()` run heuristic PDF/A and PDF/UA compliance checks and generate a structure
   tree for existing content.
@@ -265,6 +267,34 @@ with Document("report.pdf") as document:
 # Opening needs the certificate and its private key, not a password.
 with Document("report-sealed.pdf", certificate=auditor, private_key=key) as doc:
     print(doc.page_count, doc.permissions)
+```
+
+### Sign a Document
+
+```python
+from pathlib import Path
+
+from cryptography.hazmat.primitives.serialization import pkcs12
+from aspose_pdf import Document
+
+key, certificate, chain = pkcs12.load_key_and_certificates(
+    Path("signer.p12").read_bytes(), b"p12-password"
+)
+
+with Document("contract.pdf") as document:
+    document.sign(
+        "Approval",                      # an unsigned signature field; omit for an invisible one
+        certificate=certificate,
+        private_key=key,
+        extra_certificates=chain,
+        reason="Approved",
+        pades=True,
+        timestamp_url="http://timestamp.example/rfc3161",  # PAdES-T
+    )
+    document.add_ltv()                   # the chain and revocation data into /DSS: PAdES-LT
+    document.add_document_timestamp(timestamp_url="http://timestamp.example/rfc3161")  # PAdES-LTA
+    document.save("contract-signed.pdf")  # each step is an appended revision
+    print([signature.valid for signature in document.signatures])
 ```
 
 ### Put a Watermark on a Layer, Then Resolve It
@@ -796,6 +826,11 @@ and delete workflows. 235 public types are organized by module below.
   public-key (`/Adobe.PubSec`) encryption for certificate holders;
   `Recipient(certificate, permissions)` pairs a recipient with its own access flags, and
   `Document(source, certificate=..., private_key=...)` opens the result
+- `Document.sign(field=None, *, certificate, private_key, extra_certificates, reason, location,
+  contact, signer_name, pades, timestamp_url, timestamp_authority, timestamp_timeout, certify)`,
+  `Document.add_ltv(certificates, crls, ocsp_responses)`,
+  `Document.add_document_timestamp(timestamp_url | timestamp_authority)` — carried out by `save()`
+  as appended revisions (PAdES-B/T/LT/LTA), after which `Document.signatures` lists them
 - `PdfSignature.validate(options) -> ValidationResult`; properties `valid`, `name`, `date`, `docmdp_level`
 - `ValidationResult` — properties `is_valid`, `status`, `trust_status`, `revocation_status`,
   `certification_level`, `pades_level`

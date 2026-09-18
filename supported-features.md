@@ -1777,6 +1777,32 @@ Supported:
 - Verify embedded RFC 3161 signature timestamps (TSA signature and message
   imprint) and surface the timestamp time; embed a timestamp when signing from a
   local TSA or (opt-in) a network TSA.
+- **Sign, add LTV material and timestamp through `Document`.**
+  `Document.sign(field=None, *, certificate, private_key, extra_certificates,
+  reason, location, contact, signer_name, pades, timestamp_url,
+  timestamp_authority, timestamp_timeout, certify)` fills the named signature
+  field, or an invisible `SignatureN` field it adds to the first page;
+  `Document.add_ltv(certificates=..., crls=..., ocsp_responses=...)` builds or
+  extends the `/DSS`; `Document.add_document_timestamp(timestamp_url=... |
+  timestamp_authority=...)` appends a document timestamp. They are carried out
+  by `save()` in call order, each as a revision appended to the bytes that save
+  writes (incremental when the document is signed already, so earlier
+  signatures stay valid), and the document is then reloaded from the file, so
+  `Document.signatures` includes the new signatures and later saves append to
+  them. The certificate and key are `cryptography` objects (RSA, EC, or Ed25519
+  with `pades=True`; a PKCS#12 file loads with
+  `serialization.pkcs12.load_key_and_certificates`); DER bytes or
+  `cryptography` objects are accepted as LTV material; `certify` takes a
+  `CertificationLevel` or 1-3. Mistakes are refused at the call, before any
+  timestamp authority is asked: an unknown, non-signature or already signed
+  field, a key that is not the certificate's, a certification on a document
+  that is signed or has a signature queued. A document encrypted with a
+  password or opened with a recipient credential is signed with its own key and
+  reopened with the same password or credential. Checked in pyHanko for every
+  path -- existing and invisible fields, PAdES-T, certification, encrypted
+  documents, a second signature on a signed file, LTV with two document
+  timestamps, Ed25519 -- as intact, valid, trusted, whole file covered and at
+  benign modification levels, and opened in pdfium and MuPDF.
 - **Sign an authored signature field in place**
   (`engine.sign_field.sign_field(pdf_bytes, name, cert, key, …)`): the field
   created by `Form.add_signature_field()` is filled as an *incremental update*,
@@ -1811,8 +1837,8 @@ Supported:
 - Create and validate DocMDP certification (certifying) signatures, including
   reporting the certification level and flagging changes that violate a
   "no changes permitted" certification.
-- Produce **PAdES baseline signatures** (`SimplePdf.pades = True` →
-  `ETSI.CAdES.detached`): CAdES-BES signed attributes with the ESS
+- Produce **PAdES baseline signatures** (`Document.sign(..., pades=True)`, or
+  `SimplePdf.pades = True`, → `ETSI.CAdES.detached`): CAdES-BES signed attributes with the ESS
   `signing-certificate-v2` binding (**PAdES-B**), upgraded to **PAdES-T** by
   embedding a signature timestamp. Validation verifies the signing-certificate
   binding and reports the achieved level via `ValidationResult.pades_level`
@@ -1821,12 +1847,23 @@ Supported:
   and per-signature `/VRI`) as an incremental update that leaves existing
   signatures byte-for-byte intact (`engine.dss.build_dss` / `enable_ltv`),
   turning PAdES-T into **PAdES-LT**; validation harvests the `/DSS` so chain
-  building and revocation work offline (LTV).
+  building and revocation work offline (LTV). A store the document already has
+  is extended in place -- its streams referred to again, only new material
+  added, its `/VRI` entries unchanged, as pyHanko requires of an LTV update --
+  and a call that adds nothing writes no revision.
 - Add an **archive (document) timestamp** (`ETSI.RFC3161` `/DocTimeStamp`,
   `engine.dss.add_document_timestamp`) over the DSS-augmented document for
   **PAdES-LTA**; document timestamps are validated as RFC 3161 tokens over their
-  own ByteRange. The compromise detector treats DSS/archive-timestamp
+  own ByteRange, which excludes the `/Contents` delimiters so validators see
+  the whole revision covered. A renewed timestamp gets a field of its own
+  (`Timestamp2`, ...). The compromise detector treats DSS/archive-timestamp
   incremental updates as legitimate rather than as tampering.
+- **A certifying signature is the first one or none**: DocMDP certification of
+  a document that already holds a signature or timestamp is refused
+  (ISO 32000-1 12.8.2.2.1), since the `/Perms` it adds is a change the earlier
+  signatures did not permit.
+- **Ed25519 signs with SHA-512** (RFC 8419; pyHanko rejects other digests).
+  Ed448, whose CMS digest is SHAKE256, is not supported and is refused.
 - A revision appended by signing, the `/DSS` or a document timestamp numbers
   its new objects above the trailer's `/Size` and every object header in the
   file, never with a number an earlier revision still owns -- whatever the file
@@ -1866,11 +1903,17 @@ Boundaries:
   own filter -- is not decrypted. `/StmF /Identity` (streams left in the clear)
   is honoured as written, and a document that leaves streams in the clear while
   encrypting only its strings through `/StrF` keeps those strings as stored.
-- Building a `/DSS` into an **encrypted** document is refused. The validation
-  material goes in as streams that `engine.dss` writes by hand rather than
+- Building a `/DSS` into an **encrypted** document is refused, and so is a
+  document timestamp (`Document.add_ltv` and `add_document_timestamp` refuse
+  at the call). The validation material goes in as streams, and the timestamp
+  field's name as a string, that `engine.dss` writes by hand rather than
   through the encrypting writer, so it has no key to encipher them with, and a
   `/DSS` full of certificates every reader turns to noise is worse than one
   that is absent.
+- `Document.sign` refuses a document being encrypted for certificate
+  recipients in the same session: the document is reloaded from what it
+  saved, and that file opens only with a recipient's private key. Save it,
+  open it with a recipient credential, then sign.
 - PAdES baseline levels (B/T/LT/LTA) are produced and validated against trust
   anchors, but this is not a formally certified eIDAS-grade implementation:
   conformance to ETSI EN 319 142 / final certification is deferred to external
