@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from aspose_pdf.forms import Form
     from aspose_pdf.optimization import OptimizationOptions
     from aspose_pdf.pages import Page, PageCollection
+    from aspose_pdf.signature import PdfSignature
     from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.xmp import XmpPacket
@@ -599,6 +600,23 @@ class Document:
                 f"got {direction!r}"
             )
         return self
+
+    @property
+    def signatures(self) -> list[PdfSignature]:
+        """The digital signatures in the document, in the order the file holds them.
+
+        Each is a :class:`~aspose_pdf.signature.PdfSignature` read from its
+        signature field: ``valid`` checks it, ``validate()`` reports trust,
+        certification and PAdES level. A document built here, or one that
+        carries none, has an empty list. What the signatures do not cover is
+        :class:`~aspose_pdf.forms.UnsignedContentAbsorber`'s to report, and
+        whether anything after them looks like tampering is
+        :class:`~aspose_pdf.security.SignaturesCompromiseDetector`'s.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            return []
+        return list(getattr(self._engine_pdf, "signatures", None) or [])
 
     @property
     def is_encrypted(self) -> bool:

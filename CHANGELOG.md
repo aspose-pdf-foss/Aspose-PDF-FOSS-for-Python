@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A signed document looked unsigned through the public `Document`.**
+  `Document` had no `signatures`, so `SignaturesCompromiseDetector(Document(...))`
+  reported "unsigned document" -- also for a file whose page was replaced after
+  signing -- and `UnsignedContentAbsorber` read `is_signed` flags that pages,
+  fields and annotations do not have, reporting everything in a fully signed
+  document as unsigned, the signature field included. `Document.signatures` now
+  lists the signatures, and the absorber reports what is new or different since
+  the newest signature that verifies, compared object by object with the signed
+  revision (decrypted first where the file is encrypted): replaced page content,
+  an annotation added or edited later, a field filled in after signing with its
+  widget. On files signed by pyHanko with RSA, RSA-PSS and ECDSA keys, and on
+  every layout this library signs, it reports nothing unsigned.
+
 - **Content added to an existing page could land off the page, be clipped away
   or be invisible.** `Page.add_text`, `add_image`, `draw_rectangle`,
   `draw_line`, `Page.layer(...)` and redaction bars appended their content

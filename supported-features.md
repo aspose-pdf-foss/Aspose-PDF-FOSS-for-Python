@@ -1461,7 +1461,16 @@ Supported:
   this library still shows: setting it rebuilds that field's appearance at
   once. `generate_field_appearances(keep_existing=True)` exposes the same
   choice.
-- Extract unsigned form fields and annotations with `UnsignedContentAbsorber`.
+- Report what no signature covers with `UnsignedContentAbsorber`: on a
+  `Document`, the pages, form fields and annotations that are new or different
+  since the newest signature that verifies -- added by a later incremental
+  update or edited in memory. A page counts when it, its content streams or
+  the resources it draws with changed (a new annotation on it does not); an
+  annotation when it or its appearance did; a field when it or its widgets
+  did. Encrypted documents are compared in the clear. A document without a
+  valid signature is unsigned throughout. `Document.signatures` lists the
+  signatures themselves, and `SignaturesCompromiseDetector` accepts a
+  `Document`.
 
 Boundaries:
 

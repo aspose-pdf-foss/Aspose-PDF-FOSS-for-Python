@@ -598,20 +598,18 @@ class UnsignedContent:
 
 
 class UnsignedContentAbsorber:
-    """Extract unsigned form fields and annotations from a PDF document.
+    """Extract the pages, form fields and annotations no signature covers.
 
-    Parameters
-    ----------
-    document: Any
-        The PDF document instance.  The object is expected to expose the
-        following iterable attributes:
+    For a :class:`~aspose_pdf.document.Document`, content is *unsigned* when it
+    is new or different since the newest signature that verifies: added or
+    changed by a later incremental update, or edited in memory. A page counts
+    when it, its content streams or the resources it draws with changed; an
+    annotation when it or its appearance did; a field when it or its widgets
+    did. A document that carries no valid signature is unsigned throughout.
 
-        * ``form_fields`` - a collection of form field objects.
-        * ``annotations`` - a collection of annotation objects.
-
-        Individual items may expose either ``is_signed`` or ``signed`` boolean
-        attributes.  If neither attribute is present the item is treated as
-        *unsigned*.
+    Any other object is read by duck typing: it exposes ``form_fields`` and
+    ``annotations`` (or ``form`` and ``pages``), whose items carry an
+    ``is_signed`` or ``signed`` flag; an item with neither is unsigned.
     """
 
     def __init__(self, document: Document):
@@ -629,6 +627,40 @@ class UnsignedContentAbsorber:
     def has_extracted(self) -> bool:
         """True if extraction has been performed."""
         return self._extracted is not None
+
+    @staticmethod
+    def _extract_from_document(doc: Any, engine: Any) -> UnsignedContent:
+        """What a real document's signatures leave uncovered.
+
+        Reading ``is_signed`` flags that pages, fields and annotations do not
+        have reported everything in a signed document as unsigned -- the
+        signature field included.
+        """
+        from .engine.signed_changes import changes_since_signing
+
+        changes = changes_since_signing(engine)
+        pages = list(doc.pages)
+        fields = list(doc.form.fields)
+        annotations = [
+            (page_index, annot_index, annotation)
+            for page_index, page in enumerate(pages)
+            for annot_index, annotation in enumerate(page.annotations)
+        ]
+        if changes is None:
+            return UnsignedContent(
+                pages=pages,
+                form_fields=fields,
+                annotations=[annotation for _, _, annotation in annotations],
+            )
+        return UnsignedContent(
+            pages=[page for index, page in enumerate(pages) if changes.page_changed(index)],
+            form_fields=[field for field in fields if changes.field_changed(field.name)],
+            annotations=[
+                annotation
+                for page_index, annot_index, annotation in annotations
+                if changes.annotation_changed(page_index, annot_index)
+            ],
+        )
 
     @staticmethod
     def _is_unsigned(item: Any) -> bool:
@@ -658,6 +690,11 @@ class UnsignedContentAbsorber:
             An object containing lists of unsigned form fields and annotations.
         """
         doc = self._document
+        engine = getattr(doc, "_engine_pdf", None)
+        if getattr(engine, "_cos_doc", None) is not None:
+            content = self._extract_from_document(doc, engine)
+            self._extracted = content
+            return content
 
         # 1. Collect unsigned form fields
         form_fields: Iterable[Any] = []
