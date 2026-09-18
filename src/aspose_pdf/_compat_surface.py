@@ -1,8 +1,8 @@
 """Explicit rejection of compatibility names that have no implementation.
 
 The package ships option, enumeration, and value objects for the parts of the
-Aspose.PDF API this project does not implement (HTML/SVG/CGM/OFD/CDR/Markdown/
-LaTeX conversion, PPTX export, printing). They exist so that porting code keeps
+Aspose.PDF API this project does not implement (HTML/SVG/CGM/OFD/CDR import,
+LaTeX authoring, PPTX export, printing). They exist so that porting code keeps
 importing, not so that it silently produces nothing: every real operation routes
 its format/option arguments through the helpers below and raises
 :class:`~aspose_pdf.exceptions.UnsupportedFeatureException` instead.

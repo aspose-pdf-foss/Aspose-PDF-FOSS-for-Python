@@ -13,9 +13,10 @@ __all__ = ["DocFormat", "HtmlSaveOptions", "MarkdownSaveOptions"]
 class DocFormat(str, Enum):  # noqa: UP042
     """Target format for a save operation.
 
-    Only :attr:`PDF` is implemented; the other members are API-compatibility
-    placeholders that make :meth:`aspose_pdf.Document.save` raise
-    :class:`~aspose_pdf.exceptions.UnsupportedFeatureException`.
+    :attr:`PDF` writes PDF; :attr:`HTML`, :attr:`MARKDOWN` and :attr:`SVG`
+    export through :meth:`aspose_pdf.Document.save_as_html`,
+    :meth:`~aspose_pdf.Document.save_as_markdown` and
+    :meth:`~aspose_pdf.Document.save_as_svg` with their default settings.
     """
 
     PDF = "PDF"

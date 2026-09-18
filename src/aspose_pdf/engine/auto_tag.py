@@ -1234,7 +1234,9 @@ def detect_tables(
     return segments
 
 
-def _same_paragraph(prev: LayoutElement, cur: LayoutElement) -> bool:
+def _same_paragraph(
+    prev: LayoutElement, cur: LayoutElement, gap_ratio: float = _PARA_GAP_RATIO
+) -> bool:
     """Whether *cur* continues the paragraph ended by *prev* (both body text)."""
     if prev.kind != "text" or cur.kind != "text":
         return False
@@ -1252,21 +1254,26 @@ def _same_paragraph(prev: LayoutElement, cur: LayoutElement) -> bool:
     line_tol = _LINE_TOL_RATIO * fs
     if abs(dy) <= line_tol:
         return True  # same visual line (wrapped chunks)
-    return line_tol < dy <= _PARA_GAP_RATIO * fs
+    return line_tol < dy <= gap_ratio * fs
 
 
-def group_into_paragraphs(ordered: list[LayoutElement]) -> list[list[LayoutElement]]:
+def group_into_paragraphs(
+    ordered: list[LayoutElement], gap_ratio: float = _PARA_GAP_RATIO
+) -> list[list[LayoutElement]]:
     """Group reading-ordered *ordered* elements into structure groups.
 
     Consecutive body-text (``/P``) elements that are close in size and vertical
     spacing collapse into one paragraph; headings and figures each form their
     own single-element group.  Each returned group becomes one structure element
     (a paragraph spans several marked-content sequences, one per line).
+
+    *gap_ratio* is the largest baseline-to-baseline step, in multiples of the
+    font size, at which the next line still continues the paragraph.
     """
     groups: list[list[LayoutElement]] = []
     current: list[LayoutElement] = []
     for e in ordered:
-        if current and _same_paragraph(current[-1], e):
+        if current and _same_paragraph(current[-1], e, gap_ratio):
             current.append(e)
         else:
             if current:

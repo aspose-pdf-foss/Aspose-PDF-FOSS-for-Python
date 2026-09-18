@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import html as html_module
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,7 +49,7 @@ from .auto_tag import (
 )
 from .content_stream_parser import _MAX_FORM_DEPTH
 
-__all__ = ["Block", "page_blocks", "to_html", "to_markdown"]
+__all__ = ["Block", "markdown_format", "page_blocks", "to_html", "to_markdown"]
 
 _MAX_CELL_CHARS = 4096
 _WHITESPACE = re.compile(r"[ \t\u00a0]+")
@@ -177,8 +178,17 @@ def page_blocks(
     page_index: int,
     *,
     include_images: bool = True,
+    paragraph_gap: float | None = None,
+    clip_to_page: bool = True,
 ) -> list[Block]:
-    """Infer *page_index*'s structure and return it as :class:`Block` objects."""
+    """Infer *page_index*'s structure and return it as :class:`Block` objects.
+
+    *paragraph_gap* is the largest baseline-to-baseline step, in multiples of
+    the font size, at which a line still continues the paragraph above it
+    (``None``: the layout analysis's own 1.6). With *clip_to_page*, text and
+    images anchored outside the page's visible area -- its crop box, within
+    its media box -- are left out, as a viewer never shows them.
+    """
     try:
         content = pdf.get_page_content(page_index)
     except PdfResourceLimitException:
@@ -195,6 +205,9 @@ def page_blocks(
     elements, sources = _expand_forms(
         elements, resources, limits=limits, budget=budget
     )
+    if clip_to_page:
+        x0, y0, x1, y1 = _visible_area(pdf, page_index)
+        elements = [e for e in elements if x0 <= e.x <= x1 and y0 <= e.y <= y1]
     text_elements = [e for e in elements if e.kind == "text"]
     tags = choose_tags(
         [
@@ -243,9 +256,34 @@ def page_blocks(
             else:
                 flow = [element for row in rows for element in row]
                 blocks.extend(
-                    _flow_blocks(pdf, page_index, flow, texts, include_images)
+                    _flow_blocks(
+                        pdf, page_index, flow, texts, include_images, paragraph_gap
+                    )
                 )
     return [block for block in blocks if _has_content(block)]
+
+
+def _visible_area(pdf: Any, page_index: int) -> tuple[float, float, float, float]:
+    """The page's crop box clipped to its media box (ISO 32000-1 14.11.2)."""
+    media = _normalised(pdf.pages[page_index][:4])
+    crop = pdf.get_page_crop_box(page_index)
+    if crop is None:
+        return media
+    crop = _normalised(crop)
+    area = (
+        max(media[0], crop[0]),
+        max(media[1], crop[1]),
+        min(media[2], crop[2]),
+        min(media[3], crop[3]),
+    )
+    # A crop box entirely off the media box shows nothing; fall back to the
+    # media box rather than export an empty page from a malformed one.
+    return area if area[0] < area[2] and area[1] < area[3] else media
+
+
+def _normalised(box: Any) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = (float(v) for v in box)
+    return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
 
 
 def _expand_forms(
@@ -392,6 +430,7 @@ def _flow_blocks(
     flow: list[LayoutElement],
     texts: dict[int, str],
     include_images: bool,
+    paragraph_gap: float | None = None,
 ) -> list[Block]:
     blocks: list[Block] = []
     pending_list: list[str] = []
@@ -404,7 +443,12 @@ def _flow_blocks(
             )
             pending_list.clear()
 
-    for group in group_into_paragraphs(flow):
+    groups = (
+        group_into_paragraphs(flow)
+        if paragraph_gap is None
+        else group_into_paragraphs(flow, paragraph_gap)
+    )
+    for group in groups:
         if group[0].kind == "xobject":
             flush_list()
             if include_images:
@@ -463,6 +507,10 @@ def _figure_block(pdf: Any, page_index: int, element: LayoutElement) -> Block:
 # ---------------------------------------------------------------------------
 # Renderers
 # ---------------------------------------------------------------------------
+#: Where a figure's PNG is found: a ``data:`` URI, or a file's relative URL.
+ImageSource = Callable[[bytes], str]
+
+
 def _data_uri(png: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
@@ -491,12 +539,14 @@ def to_html(
     title: str = "",
     language: str = "en",
     embed_images: bool = True,
+    image_src: ImageSource | None = None,
 ) -> str:
     """Render exported blocks as one HTML document.
 
     Pages are separated by a horizontal rule rather than kept apart: HTML has
     no page model, and a document that reads as one flow is the point of
-    converting to it.
+    converting to it. *image_src* gives the URL a figure's PNG is found at;
+    by default the PNG is embedded as a ``data:`` URI.
     """
     parts = [
         _HTML_PREAMBLE.format(
@@ -508,12 +558,12 @@ def to_html(
         if index:
             parts.append("<hr>")
         for block in blocks:
-            parts.append(_html_block(block, embed_images))
+            parts.append(_html_block(block, embed_images, image_src or _data_uri))
     parts.append("</body>\n</html>\n")
     return "\n".join(part for part in parts if part)
 
 
-def _html_block(block: Block, embed_images: bool) -> str:
+def _html_block(block: Block, embed_images: bool, image_src: ImageSource = _data_uri) -> str:
     escape = html_module.escape
     if block.kind == "heading":
         level = min(max(block.level, 1), 6)
@@ -545,12 +595,24 @@ def _html_block(block: Block, embed_images: bool) -> str:
     if block.kind == "figure":
         alt = escape(block.alt, quote=True)
         if block.image and embed_images:
-            return (
-                f'<figure><img src="{_data_uri(block.image)}" alt="{alt}">'
-                "</figure>"
-            )
+            src = escape(image_src(block.image), quote=True)
+            return f'<figure><img src="{src}" alt="{alt}"></figure>'
         return f"<figure><figcaption>{escape(block.alt)}</figcaption></figure>"
     return ""
+
+
+#: The Markdown dialects :func:`to_markdown` writes, by lower-cased name.
+MARKDOWN_FORMATS = {"gfm": "GFM", "commonmark": "CommonMark"}
+
+
+def markdown_format(name: Any) -> str:
+    """The canonical name of Markdown dialect *name*; ``ValueError`` if unknown."""
+    canonical = MARKDOWN_FORMATS.get(str(name).lower()) if isinstance(name, str) else None
+    if canonical is None:
+        raise ValueError(
+            f"Unknown Markdown format {name!r}; use one of {sorted(MARKDOWN_FORMATS.values())}"
+        )
+    return canonical
 
 
 def to_markdown(
@@ -558,8 +620,16 @@ def to_markdown(
     *,
     title: str = "",
     embed_images: bool = True,
+    image_src: ImageSource | None = None,
+    dialect: str = "GFM",
 ) -> str:
-    """Render exported blocks as one Markdown (GFM) document."""
+    """Render exported blocks as one Markdown document.
+
+    *dialect* is ``"GFM"`` (GitHub Flavored Markdown, the default) or
+    ``"CommonMark"``, which has no tables: a table is written as the HTML
+    block CommonMark passes through. *image_src* is as for :func:`to_html`.
+    """
+    commonmark = markdown_format(dialect) == "CommonMark"
     parts: list[str] = []
     if title and not _starts_with_heading(pages):
         # A document whose first block is already a heading states its own
@@ -569,7 +639,10 @@ def to_markdown(
         if index:
             parts.append("---")
         for block in blocks:
-            rendered = _markdown_block(block, embed_images)
+            if commonmark and block.kind == "table":
+                rendered = _html_block(block, embed_images)
+            else:
+                rendered = _markdown_block(block, embed_images, image_src or _data_uri)
             if rendered:
                 parts.append(rendered)
     return "\n\n".join(parts) + "\n"
@@ -594,7 +667,7 @@ def _md_escape(text: str) -> str:
     return _MD_LINE_START.sub(lambda m: m.group(1) + "\\" + m.group(2), escaped)
 
 
-def _markdown_block(block: Block, embed_images: bool) -> str:
+def _markdown_block(block: Block, embed_images: bool, image_src: ImageSource = _data_uri) -> str:
     if block.kind == "heading":
         level = min(max(block.level, 1), 6)
         return "#" * level + " " + _md_escape(block.text)
@@ -621,7 +694,7 @@ def _markdown_block(block: Block, embed_images: bool) -> str:
     if block.kind == "figure":
         alt = _md_escape(block.alt)
         if block.image and embed_images:
-            return f"![{alt}]({_data_uri(block.image)})"
+            return f"![{alt}]({image_src(block.image)})"
         return f"*{alt}*" if alt else ""
     return ""
 

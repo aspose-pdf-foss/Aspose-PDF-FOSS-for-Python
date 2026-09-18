@@ -41,6 +41,7 @@ from .cos import (
     PdfStream,
     PdfString,
 )
+from .file_output import write_file_atomically
 from .font_resolver import ResolvedFace, resolver_for
 from .glyph_outlines import TrueTypeOutlines
 from .image_export import (
@@ -257,7 +258,7 @@ class RasterizedPage:
                 ".jpg, or .jpeg"
             )
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(data)
+        write_file_atomically(out, data)
         return out
 
 

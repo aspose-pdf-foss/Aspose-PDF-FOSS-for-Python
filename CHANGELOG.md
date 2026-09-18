@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Export settings that were silently ignored now work.** `HtmlSaveOptions`
+  and `MarkdownSaveOptions` reached `Document.save` with everything but
+  `split_into_pages` / `extract_images` dropped. Figures now go to files when a
+  folder is named (`resources_directory`; `image_directory` or
+  `resources_directory_name`), each image once and linked by a relative URL;
+  `markdown_format` selects GFM or CommonMark (tables as HTML blocks);
+  `max_distance_between_text_lines` sets where lines stop joining a paragraph
+  (default now 1.6 font sizes, the value the export always used); and
+  `use_area_clipping` leaves out content anchored outside the crop box, as
+  MuPDF does. The XPS/APS intermediate-file settings raise, since no such file
+  is produced. The same controls are keyword arguments of `to_html`,
+  `to_markdown`, `save_as_html` and `save_as_markdown`.
+
 - **Signing through `Document`.** `Document.sign(field, certificate=...,
   private_key=...)` fills a signature field -- or, with no field named, an
   invisible one it adds -- with an `adbe.pkcs7.detached` or, with
@@ -33,6 +46,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   file covered, benign modification levels) and opened in pdfium and MuPDF.
 
 ### Fixed
+
+- **Saving HTML, Markdown or SVG ignored `overwrite`, and a failed export
+  destroyed the file it was replacing.** `save(path, DocFormat.HTML)` replaced
+  an existing file even with `overwrite=False`; it now refuses, checking every
+  file an export would write before writing any. The HTML, Markdown, SVG,
+  TIFF, raster, extracted-image and attachment writers truncated their target
+  before writing it, so a full disk or a killed process left it empty; they
+  now write atomically, as a PDF save does. Content anchored outside the crop
+  box, which no viewer shows, is no longer exported by default
+  (`clip_to_page=False` restores it).
 
 - **A document timestamp's coverage was unclear, and a second one looked like
   tampering.** `engine.dss.add_document_timestamp` left the `<` and `>` of its

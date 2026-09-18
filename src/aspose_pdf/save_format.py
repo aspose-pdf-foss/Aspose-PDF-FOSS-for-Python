@@ -10,11 +10,12 @@ __all__ = ["SaveFormat"]
 class SaveFormat(Enum):
     """Format for saving PDF documents.
 
-    Only :attr:`PDF` is implemented. The remaining members are
-    API-compatibility placeholders: passing one to
-    :meth:`aspose_pdf.Document.save` raises
+    :attr:`PDF` is implemented; :attr:`PPTX` is an API-compatibility
+    placeholder: passing it to :meth:`aspose_pdf.Document.save` raises
     :class:`~aspose_pdf.exceptions.UnsupportedFeatureException` rather than
-    writing a PDF under another extension.
+    writing a PDF under another extension. HTML, Markdown and SVG exports are
+    selected with :class:`~aspose_pdf.save_options.DocFormat` or a save-options
+    object.
     """
 
     PDF = "PDF"

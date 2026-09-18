@@ -321,8 +321,9 @@ from aspose_pdf import Document
 
 with Document("report.pdf") as document:
     document.save_as_markdown("report.md")
-    document.save_as_html("report.html")
-    print(document.to_markdown(pages=[0]))
+    # Images as files in report_files/ rather than data: URIs; one HTML file per page.
+    document.save_as_html("report.html", resources_directory="report_files", split_into_pages=True)
+    print(document.to_markdown(pages=[0], markdown_format="CommonMark"))
 ```
 
 ### Export a Page as SVG
@@ -751,10 +752,11 @@ and delete workflows. 235 public types are organized by module below.
   - `render_page(page_index, dpi, scale, background, antialias, shape_substitute_text, draw_annotations, font_substitution) -> RasterizedPage` /
     `save_page_as_image(page_index, destination, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path` /
     `save_as_tiff(destination, pages, dpi, scale, background, antialias, mode, compression, threshold) -> Path` /
-    `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision) -> list[Path]`
-  - `to_html(pages, title, embed_images) -> str` / `to_markdown(pages, title, embed_images) -> str` /
-    `save_as_html(destination, pages, title, embed_images, split_into_pages) -> list[Path]` /
-    `save_as_markdown(destination, pages, title, embed_images) -> Path`
+    `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, overwrite) -> list[Path]`
+  - `to_html(pages, title, embed_images, paragraph_gap, clip_to_page) -> str` /
+    `to_markdown(pages, title, embed_images, markdown_format, paragraph_gap, clip_to_page) -> str` /
+    `save_as_html(destination, pages, title, embed_images, split_into_pages, resources_directory, paragraph_gap, clip_to_page, overwrite) -> list[Path]` /
+    `save_as_markdown(destination, pages, title, embed_images, image_directory, markdown_format, paragraph_gap, clip_to_page, overwrite) -> Path`
   - `flatten() -> Document` / `flatten_layers() -> int` /
     `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`

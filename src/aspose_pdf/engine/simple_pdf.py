@@ -539,7 +539,7 @@ class ImagePlacement:
 
     def save(self, path: str | Path) -> None:
         """Save image to file."""
-        Path(path).write_bytes(self.data)
+        write_file_atomically(path, self.data)
 
     def replace(self, new_data: bytes) -> None:
         """Replace image data."""
@@ -7848,7 +7848,7 @@ class SimplePdf:
         )
         out_path = resolve_output_path(path, produced_ext)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(out_bytes)
+        write_file_atomically(out_path, out_bytes)
         return out_path
 
     def _converted_image_for_export(

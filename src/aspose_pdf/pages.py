@@ -421,17 +421,17 @@ class Page:
         precision: int = 3,
     ) -> Path:
         """Write this page to *path* as SVG and return the path."""
+        from aspose_pdf.engine.file_output import write_file_atomically
+
         target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            self.to_svg(
-                background=background,
-                draw_annotations=draw_annotations,
-                font_substitution=font_substitution,
-                precision=precision,
-            ),
-            encoding="utf-8",
+        svg = self.to_svg(
+            background=background,
+            draw_annotations=draw_annotations,
+            font_substitution=font_substitution,
+            precision=precision,
         )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_file_atomically(target, svg.encode("utf-8"))
         return target
 
     def layer(self, layer: Any) -> Any:

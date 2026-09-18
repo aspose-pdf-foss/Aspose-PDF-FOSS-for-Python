@@ -1259,6 +1259,8 @@ class Document:
         pages: Sequence[int] | None = None,
         title: str | None = None,
         embed_images: bool = True,
+        paragraph_gap: float | None = None,
+        clip_to_page: bool = True,
     ) -> str:
         """Return the document's inferred structure as one HTML document.
 
@@ -1268,6 +1270,12 @@ class Document:
         are separated by a rule and read as one flow. *title* defaults to the
         document's own ``/Title``.
 
+        *paragraph_gap* is the largest baseline-to-baseline step, in multiples
+        of the font size, at which a line still continues the paragraph above
+        it (``None``: 1.6, the layout analysis's own). With *clip_to_page*
+        (the default), text and images anchored outside the page's visible
+        area -- its crop box -- are left out, as no viewer shows them.
+
         This is a conversion to a *flowing document*, not a facsimile: exact
         positioning, colour and fonts are dropped. For a facsimile, use
         :meth:`save_as_svg`.
@@ -1275,7 +1283,7 @@ class Document:
         from aspose_pdf.engine.text_export import to_html
 
         return to_html(
-            self._export_blocks(pages, embed_images),
+            self._export_blocks(pages, embed_images, paragraph_gap, clip_to_page),
             title=title if title is not None else self._document_title(),
             embed_images=embed_images,
         )
@@ -1286,18 +1294,35 @@ class Document:
         pages: Sequence[int] | None = None,
         title: str | None = None,
         embed_images: bool = True,
+        markdown_format: str = "GFM",
+        paragraph_gap: float | None = None,
+        clip_to_page: bool = True,
     ) -> str:
-        """Return the document's inferred structure as Markdown (GFM).
+        """Return the document's inferred structure as Markdown.
 
-        See :meth:`to_html` for what the conversion carries over.
+        *markdown_format* is ``"GFM"`` (GitHub Flavored Markdown, the default)
+        or ``"CommonMark"``, which has no tables: a table is written as the
+        HTML block CommonMark passes through. See :meth:`to_html` for what the
+        conversion carries over and for the other arguments.
         """
         from aspose_pdf.engine.text_export import to_markdown
 
+        dialect = self._markdown_format(markdown_format)
         return to_markdown(
-            self._export_blocks(pages, embed_images),
+            self._export_blocks(pages, embed_images, paragraph_gap, clip_to_page),
             title=title if title is not None else self._document_title(),
             embed_images=embed_images,
+            dialect=dialect,
         )
+
+    @staticmethod
+    def _markdown_format(value: Any) -> str:
+        from aspose_pdf.engine.text_export import markdown_format
+
+        try:
+            return markdown_format(value)
+        except ValueError as exc:
+            raise PdfValidationException(str(exc)) from exc
 
     def _document_title(self) -> str:
         try:
@@ -1306,18 +1331,34 @@ class Document:
             return ""
 
     def _export_blocks(
-        self, pages: Sequence[int] | None, embed_images: bool
+        self,
+        pages: Sequence[int] | None,
+        embed_images: bool,
+        paragraph_gap: float | None = None,
+        clip_to_page: bool = True,
     ) -> list[list[Any]]:
         from aspose_pdf.engine.text_export import page_blocks
 
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
+        if paragraph_gap is not None and (
+            isinstance(paragraph_gap, bool) or not float(paragraph_gap) > 0
+        ):
+            raise PdfValidationException(
+                "paragraph_gap must be a positive number of font sizes"
+            )
         indexes = (
             list(range(self.page_count)) if pages is None else [int(i) for i in pages]
         )
         return [
-            page_blocks(self._engine_pdf, index, include_images=embed_images)
+            page_blocks(
+                self._engine_pdf,
+                index,
+                include_images=embed_images,
+                paragraph_gap=None if paragraph_gap is None else float(paragraph_gap),
+                clip_to_page=clip_to_page,
+            )
             for index in indexes
         ]
 
@@ -1329,35 +1370,62 @@ class Document:
         title: str | None = None,
         embed_images: bool = True,
         split_into_pages: bool = False,
+        resources_directory: str | Path | None = None,
+        paragraph_gap: float | None = None,
+        clip_to_page: bool = True,
+        overwrite: bool = True,
     ) -> list[Path]:
-        """Write the document as HTML and return the files written.
+        """Write the document as HTML and return the HTML files written.
 
         One file by default. ``split_into_pages`` writes ``name-1.html``,
         ``name-2.html`` … instead, one per page.
+
+        Figures are embedded as ``data:`` URIs unless *resources_directory* is
+        given: then each distinct image is written there once, as
+        ``name-image-1.png`` and so on, and the HTML links to it by a relative
+        URL. A relative *resources_directory* is taken from the folder the
+        HTML goes to. *embed_images* ``False`` leaves figures out altogether
+        (their alternate text stays). *paragraph_gap* and *clip_to_page* are as
+        for :meth:`to_html`.
+
+        With *overwrite* ``False`` an export any of whose files exists is
+        refused before anything is written. Each file is written atomically.
         """
-        blocks = self._export_blocks(pages, embed_images)
+        from aspose_pdf import _export_files as files
         from aspose_pdf.engine.text_export import to_html
 
+        blocks = self._export_blocks(pages, embed_images, paragraph_gap, clip_to_page)
         target = Path(destination)
-        target.parent.mkdir(parents=True, exist_ok=True)
         document_title = title if title is not None else self._document_title()
-        if not split_into_pages:
-            target.write_text(
-                to_html(blocks, title=document_title, embed_images=embed_images),
-                encoding="utf-8",
+        images = (
+            files.ExportImages(
+                files.directory_beside(target, resources_directory),
+                target.stem,
+                target.parent,
             )
-            return [target]
-        written: list[Path] = []
-        for offset, page in enumerate(blocks, 1):
-            path = target.with_name(
-                f"{target.stem}-{offset}{target.suffix or '.html'}"
-            )
-            path.write_text(
-                to_html([page], title=document_title, embed_images=embed_images),
-                encoding="utf-8",
-            )
-            written.append(path)
-        return written
+            if resources_directory is not None
+            else None
+        )
+
+        def html(selection: list[list[Any]]) -> bytes:
+            return to_html(
+                selection,
+                title=document_title,
+                embed_images=embed_images,
+                image_src=images,
+            ).encode("utf-8")
+
+        if split_into_pages:
+            documents = [
+                (target.with_name(f"{target.stem}-{offset}{target.suffix or '.html'}"), html([page]))
+                for offset, page in enumerate(blocks, 1)
+            ]
+        else:
+            documents = [(target, html(blocks))]
+        files.write_files(
+            documents + (images.outputs() if images is not None else []), overwrite
+        )
+        return [path for path, _ in documents]
 
     def save_as_markdown(
         self,
@@ -1366,14 +1434,48 @@ class Document:
         pages: Sequence[int] | None = None,
         title: str | None = None,
         embed_images: bool = True,
+        image_directory: str | Path | None = None,
+        markdown_format: str = "GFM",
+        paragraph_gap: float | None = None,
+        clip_to_page: bool = True,
+        overwrite: bool = True,
     ) -> Path:
-        """Write the document as one Markdown (GFM) file and return its path."""
-        text = self.to_markdown(
-            pages=pages, title=title, embed_images=embed_images
-        )
+        """Write the document as one Markdown file and return its path.
+
+        Figures are embedded as ``data:`` URIs unless *image_directory* is
+        given: then each distinct image is written there once and linked by a
+        relative URL, as :meth:`save_as_html` does with its
+        *resources_directory*. *markdown_format*, *paragraph_gap* and
+        *clip_to_page* are as for :meth:`to_markdown`; *overwrite* is as for
+        :meth:`save_as_html`.
+        """
+        from aspose_pdf import _export_files as files
+        from aspose_pdf.engine.text_export import to_markdown
+
+        dialect = self._markdown_format(markdown_format)
+        blocks = self._export_blocks(pages, embed_images, paragraph_gap, clip_to_page)
         target = Path(destination)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+        images = (
+            files.ExportImages(
+                files.directory_beside(target, image_directory),
+                target.stem,
+                target.parent,
+            )
+            if image_directory is not None
+            else None
+        )
+        text = to_markdown(
+            blocks,
+            title=title if title is not None else self._document_title(),
+            embed_images=embed_images,
+            image_src=images,
+            dialect=dialect,
+        )
+        files.write_files(
+            [(target, text.encode("utf-8"))]
+            + (images.outputs() if images is not None else []),
+            overwrite,
+        )
         return target
 
     def save_as_svg(
@@ -1385,6 +1487,7 @@ class Document:
         draw_annotations: bool = True,
         font_substitution: FontSubstitutionOptions | None = None,
         precision: int = 3,
+        overwrite: bool = True,
     ) -> list[Path]:
         """Write pages as SVG and return the files written.
 
@@ -1395,13 +1498,16 @@ class Document:
         still say which page they came from.
 
         See :meth:`~aspose_pdf.pages.Page.to_svg` for what the conversion does
-        and does not turn into vectors.
+        and does not turn into vectors. *overwrite* is as for
+        :meth:`save_as_html`.
 
         Returns
         -------
         list[Path]
             The files written, in the order the pages were selected.
         """
+        from aspose_pdf import _export_files as files
+
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
@@ -1411,8 +1517,7 @@ class Document:
         if not indexes:
             raise PdfValidationException("Saving SVG needs at least one page")
         target = Path(destination)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        written: list[Path] = []
+        outputs: list[tuple[Path, bytes]] = []
         for index in indexes:
             if len(indexes) == 1:
                 path = target
@@ -1420,16 +1525,15 @@ class Document:
                 path = target.with_name(
                     f"{target.stem}-{index + 1}{target.suffix or '.svg'}"
                 )
-            written.append(
-                self.pages[index].save_as_svg(
-                    path,
-                    background=background,
-                    draw_annotations=draw_annotations,
-                    font_substitution=font_substitution,
-                    precision=precision,
-                )
+            svg = self.pages[index].to_svg(
+                background=background,
+                draw_annotations=draw_annotations,
+                font_substitution=font_substitution,
+                precision=precision,
             )
-        return written
+            outputs.append((path, svg.encode("utf-8")))
+        files.write_files(outputs, overwrite)
+        return [path for path, _ in outputs]
 
     def save_as_tiff(
         self,
@@ -1492,7 +1596,7 @@ class Document:
             raise PdfValidationException(str(exc)) from exc
         out = Path(destination)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(data)
+        write_file_atomically(out, data)
         return out
 
     def replace_text(
@@ -1973,14 +2077,20 @@ class Document:
         destination : str, Path, or BinaryIO
             File system path *or* any writable binary stream (e.g. ``BytesIO``,
             an open file handle in binary mode, an HTTP response body, …).
-        save_format : SaveFormat, DocFormat, or None
-            Only PDF output is implemented, so this accepts ``None`` (the
-            default), ``SaveFormat.PDF``, or ``DocFormat.PDF``. Export
-            placeholders such as ``SaveFormat.PPTX`` or ``HtmlSaveOptions``
-            raise instead of writing a mislabelled PDF.
+        save_format : SaveFormat, DocFormat, HtmlSaveOptions, MarkdownSaveOptions, or None
+            ``None`` (the default), ``SaveFormat.PDF`` or ``DocFormat.PDF``
+            write PDF. ``DocFormat.HTML``, ``DocFormat.MARKDOWN`` and
+            ``DocFormat.SVG`` export through :meth:`save_as_html`,
+            :meth:`save_as_markdown` and :meth:`save_as_svg` with their
+            defaults; an ``HtmlSaveOptions`` or ``MarkdownSaveOptions`` passes
+            its settings on, and one it cannot honour raises rather than being
+            ignored. These need a path: an export may be several files.
+            Placeholders such as ``SaveFormat.PPTX`` raise instead of writing a
+            mislabelled PDF.
         overwrite : bool
             Only relevant when *destination* is a path.  When ``False`` (the
-            default) an existing file raises :exc:`FileExistsError`. When
+            default) an existing file raises :exc:`FileExistsError` -- for an
+            export, any of the files it would write, before it writes one. When
             ``True`` the file is replaced in one step -- the new bytes are
             staged beside it and renamed over it -- so a save that fails, for
             want of disk space or anything else, leaves it exactly as it was,
@@ -2025,22 +2135,22 @@ class Document:
                     "SVG, HTML and Markdown output need a file path, not a "
                     "stream: a document may become several files"
                 )
+            from aspose_pdf import _export_files as files
+
+            # A DocFormat member carries no options: every setting at its
+            # default. An options object is honoured in full, or refused.
             if exporter == "html":
                 options = save_format if hasattr(save_format, "split_into_pages") else None
                 self.save_as_html(
-                    destination,
-                    split_into_pages=bool(
-                        getattr(options, "split_into_pages", False)
-                    ),
+                    destination, overwrite=overwrite, **files.html_arguments(options)
                 )
             elif exporter == "markdown":
                 options = save_format if hasattr(save_format, "extract_images") else None
                 self.save_as_markdown(
-                    destination,
-                    embed_images=bool(getattr(options, "extract_images", True)),
+                    destination, overwrite=overwrite, **files.markdown_arguments(options)
                 )
             else:
-                self.save_as_svg(destination)
+                self.save_as_svg(destination, overwrite=overwrite)
             return self
         _require_pdf_save_format(save_format)
 

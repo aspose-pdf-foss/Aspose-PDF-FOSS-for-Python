@@ -182,9 +182,11 @@ class ImagePlacement:
             color_space,
             limits=self._load_limits,
         )
+        from aspose_pdf.engine.file_output import write_file_atomically
+
         file_path = resolve_output_path(path, produced_ext)
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_bytes(out_bytes)
+        write_file_atomically(file_path, out_bytes)
         return file_path
 
     def hide(self) -> None:

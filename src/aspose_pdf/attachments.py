@@ -56,5 +56,7 @@ class FileSpecification:
         return len(self.contents)
 
     def save(self, path: str | Path) -> None:
-        """Write the decoded attachment bytes to *path*."""
-        Path(path).write_bytes(self.contents)
+        """Write the decoded attachment bytes to *path*, replacing it in one step."""
+        from aspose_pdf.engine.file_output import write_file_atomically
+
+        write_file_atomically(path, self.contents)

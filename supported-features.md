@@ -822,6 +822,31 @@ Boundaries:
   Images are embedded as data URIs through the same reconstruction
   `save_image()` performs. Markdown output is GFM, escaped only where a
   character would otherwise change the meaning.
+- **Every export setting is honoured, or refused.** Figures can go to files
+  instead of data URIs -- `save_as_html(resources_directory=...)` /
+  `HtmlSaveOptions.resources_directory`, `save_as_markdown(image_directory=...)`
+  / `MarkdownSaveOptions.image_directory` or `resources_directory_name` -- each
+  distinct image written once as `name-image-N.png` and linked by a relative,
+  percent-encoded URL (a relative folder is taken from the output's own
+  folder, and split HTML pages share it). `markdown_format` is `"GFM"` or
+  `"CommonMark"`, which has no tables and gets them as HTML blocks (checked
+  with markdown-it-py: the GFM table renders only under GFM, the CommonMark
+  one under both). `paragraph_gap` / `max_distance_between_text_lines` (1.6
+  font sizes, baseline to baseline) decides where lines stop joining one
+  paragraph. `clip_to_page` / `use_area_clipping` (on by default) leaves out
+  text and images anchored outside the crop box, within the media box and
+  with its corners in either order -- what MuPDF's text extraction does by
+  default and pdfium's when bounded by the crop box; off, both references and
+  this export include everything. The XPS/APS intermediate-file options name
+  files this export never produces, and saving with one set raises.
+- **Exports respect `overwrite` and never half-replace a file.**
+  `Document.save(path, DocFormat.HTML/MARKDOWN/SVG or an options object)`
+  refuses when any file it would write exists -- the pages, the images --
+  before writing one, as a PDF save does; the `save_as_*` methods keep
+  replacing by default and take `overwrite=False`. HTML, Markdown, SVG, TIFF,
+  raster (`RasterizedPage.save`), extracted-image and attachment
+  (`FileSpecification.save`) writes all stage the bytes beside the target and
+  rename them over it, so a failed write leaves the old file intact.
 - **Export a page as SVG** with `Page.to_svg()` / `Page.save_as_svg()`,
   `Document.save_as_svg()` or `Document.save(path, DocFormat.SVG)`. The
   exporter *is* the renderer: it subclasses the rasterizer and replaces only
