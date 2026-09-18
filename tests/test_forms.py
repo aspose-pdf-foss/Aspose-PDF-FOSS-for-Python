@@ -51,40 +51,39 @@ def test_extract_unsigned_content():
     assert result2.annotations == []
 
 
-def test_unsigned_content_absorber_initial_state():
-    """A new absorber should have no extracted content."""
-    absorber = GenUnsignedContentAbsorber()
+def test_the_compatibility_import_path_gives_the_real_classes():
+    # generated.forms used to hold look-alikes whose extract() echoed its
+    # keyword arguments back instead of reading a document.
+    assert GenUnsignedContentAbsorber is UnsignedContentAbsorber
+    assert GenUnsignedContent is UnsignedContent
+
+
+def test_unsigned_content_absorber_initial_state_and_reset():
+    """A new absorber has extracted nothing; reset returns it to that state."""
+    from aspose_pdf import Document
+
+    absorber = GenUnsignedContentAbsorber(Document())
     assert absorber.get_extracted() is None
+    assert absorber.has_extracted() is False
+    absorber.reset()
+    absorber.reset()
     assert absorber.has_extracted() is False
 
 
-def test_unsigned_content_absorber_reset_is_idempotent():
-    """Calling reset multiple times must not raise."""
-    absorber = GenUnsignedContentAbsorber()
+def test_unsigned_content_absorber_extracts_from_a_document():
+    """An unsigned document is unsigned throughout, and extract() records it."""
+    from aspose_pdf import Document
+
+    document = Document()
+    document.pages.add()
+    document.pages.add()
+    absorber = GenUnsignedContentAbsorber(document)
+    result = absorber.extract()
+    assert isinstance(result, GenUnsignedContent)
+    assert len(result.pages) == 2
+    assert absorber.get_extracted() is result
     absorber.reset()
     assert absorber.get_extracted() is None
-    absorber.reset()
-    assert absorber.has_extracted() is False
-
-
-def test_unsigned_content_absorber_extract_successful():
-    """Test that extract returns an UnsignedContent instance."""
-    absorber = GenUnsignedContentAbsorber()
-    res = absorber.extract(pages=[1, 2], form_fields=["field1"], annotations=["ann1"])
-    assert isinstance(res, GenUnsignedContent)
-    assert len(res.pages) == 2
-
-
-def test_unsigned_content_absorber_successful_extraction_simulated():
-    """Manually set _extracted to simulate successful extraction."""
-    absorber = GenUnsignedContentAbsorber()
-    content = UnsignedContent(pages=["p1"], form_fields=["f1"], annotations=["a1"])
-    absorber._extracted = content
-    assert absorber.get_extracted() is content
-    assert absorber.has_extracted() is True
-    absorber.reset()
-    assert absorber.get_extracted() is None
-    assert absorber.has_extracted() is False
 
 
 @pytest.mark.parametrize(

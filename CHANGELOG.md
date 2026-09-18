@@ -9,6 +9,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`aspose_pdf.generated.*` was an older, broken copy of the library.**
+  `generated.document.Document` merged documents as blank pages, broke a signed
+  file's signature on save, accepted a wrong password in `decrypt`, and always
+  reported `info`, `version`, `form`, `outlines` and `permissions` as `None`;
+  `generated.forms.UnsignedContentAbsorber.extract()` returned its own keyword
+  arguments; `generated.pdfa` held inert look-alikes of the PDF/A classes. Each
+  module now re-exports the canonical class, as `generated.security` already
+  did, so both import paths behave identically. Code that relied on the old
+  copies' own signatures -- an absorber built without a document,
+  `PdfAValidateOptions.set_option`, `optimize(compress_images=...)` -- now gets
+  the canonical ones.
+
 - **A PNG with a transparent background was placed as an opaque rectangle.**
   `Page.add_image` (and push-button icons) stripped the alpha channel of
   grey+alpha and RGBA PNGs and ignored `tRNS`. Transparency is now written as a

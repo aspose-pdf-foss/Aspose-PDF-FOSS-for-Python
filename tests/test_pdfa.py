@@ -1,109 +1,55 @@
-"""Tests for the PDF/A validation helper classes."""
+"""The PDF/A options and result, through both import paths.
+
+``aspose_pdf.generated.pdfa`` held inert look-alikes of these classes -- options
+that stored keyword arguments and validated nothing, and a result that reported
+itself invalid with no errors at all. It now re-exports the real ones.
+"""
+
+import io
 
 import pytest
 
+from aspose_pdf import pdfa
 from aspose_pdf.generated.pdfa import PdfAValidateOptions, PdfAValidationResult
 
 
-def test_add_input_accepts_file(tmp_path):
-    # create a temporary PDF/A file
+def test_the_compatibility_import_path_gives_the_real_classes():
+    assert PdfAValidateOptions is pdfa.PdfAValidateOptions
+    assert PdfAValidationResult is pdfa.PdfAValidationResult
+
+
+def test_add_input_accepts_a_file_bytes_and_a_stream(tmp_path):
     file_path = tmp_path / "sample.pdf"
     file_path.write_bytes(b"%PDF-1.4 test content")
-    opts = PdfAValidateOptions().add_input(file_path)
-    # inputs should contain the path we added
-    assert len(opts.inputs) == 1
-    assert isinstance(opts.inputs[0], type(file_path))
-    assert opts.inputs[0] == file_path
+    opts = PdfAValidateOptions()
+    assert opts.add_input(file_path) is opts
+    opts.add_input(b"%PDF-1.4 bytes").add_input(bytearray(b"%PDF-1.4 array"))
+    opts.add_input(io.BytesIO(b"%PDF-1.4 stream"))
+    assert opts.inputs == [file_path, b"%PDF-1.4 bytes", b"%PDF-1.4 array", b"%PDF-1.4 stream"]
 
 
-def test_add_input_invalid_input():
+def test_add_input_rejects_what_is_not_an_input():
     opts = PdfAValidateOptions()
     with pytest.raises(Exception):
-        opts.add_input(123)  # unsupported type
+        opts.add_input(123)
     with pytest.raises(Exception):
-        opts.add_input("nonexistent.pdf")  # non‑existent path
+        opts.add_input("nonexistent.pdf")
 
 
-def test_validate_options_initial_state():
-    """Validate that a newly created ``PdfAValidateOptions`` has empty state."""
-    opts = PdfAValidateOptions()
-    # Internal option store should be empty
-    assert opts.get_options() == {}
-    # No inputs should be recorded initially
-    assert opts.inputs == []
-
-
-def test_validate_options_set_and_get():
-    opts = PdfAValidateOptions()
-    opts.set_option("pdfa_version", "1.7")
-    opts.set_option("optimize_file_size", True)
-    current = opts.get_options()
-    assert current["pdfa_version"] == "1.7"
-    assert current["optimize_file_size"] is True
-
-
-def test_validate_options_add_input_and_reset():
-    opts = PdfAValidateOptions()
-    inp = opts.add_input(path="sample.pdf", flag=True)
-    # ``add_input`` returns self
-    assert isinstance(inp, PdfAValidateOptions)
-    assert len(opts.inputs) == 1
-    assert opts.inputs[0]["path"] == "sample.pdf"
-    assert opts.inputs[0]["flag"] is True
-    # Reset should clear both options and inputs
-    opts.set_option("key", "value")
-    opts.reset()
-    assert opts.get_options() == {}
-    assert opts.inputs == []
-
-
-def test_validate_options_repr_contains_state():
-    opts = PdfAValidateOptions()
-    opts.set_option("a", 1)
-    opts.add_input(name="doc")
-    representation = repr(opts)
-    assert "options={'a': 1}" in representation
-    assert "inputs=[{" in representation
-
-
-def test_validation_result_default_is_invalid():
+def test_a_result_is_valid_until_an_error_is_added():
     result = PdfAValidationResult()
-    # ``is_valid`` defaults to False when not provided
-    assert result.is_valid is False
-    # ``errors`` attribute is not created by the stub; initialise for testing
-    result.errors = []
-    # Adding an error should mark the result as invalid
-    result.add_error("sample error")
-    assert result.is_valid is False
-    assert result.errors == ["sample error"]
-    # ``to_dict`` must contain the errors list and validity flag
-    d = result.to_dict()
-    assert d["is_valid"] is False
-    assert d["errors"] == ["sample error"]
-
-
-def test_validation_result_add_error_type_check():
-    result = PdfAValidationResult()
-    result.errors = []
-    with pytest.raises(TypeError):
-        result.add_error(123)  # non‑string should raise
-
-
-def test_validation_result_reset_clears_state():
-    result = PdfAValidationResult(is_valid=False)
-    result.errors = ["e1", "e2"]
-    result.reset()
-    # After reset, errors list should be empty and ``is_valid`` True
-    assert result.errors == []
     assert result.is_valid is True
-    # Internal data dict should also be cleared
-    assert result._data == {}
+    result.add_error("sample error")
+    result.add_warning("sample warning")
+    assert result.is_valid is False
+    assert result.to_dict()["errors"] == ["sample error"]
+    assert result.to_dict()["warnings"] == ["sample warning"]
+    assert "is_valid=False" in repr(result)
 
 
-def test_validation_result_repr():
-    result = PdfAValidationResult(is_valid=True)
-    result.errors = []
-    rep = repr(result)
-    assert "PdfAValidationResult" in rep
-    assert "is_valid=True" in rep
-    assert "errors=[]" in rep
+def test_a_result_rejects_errors_that_are_not_text():
+    result = PdfAValidationResult()
+    with pytest.raises(TypeError):
+        result.add_error(123)
+    with pytest.raises(TypeError):
+        result.add_warning(123)

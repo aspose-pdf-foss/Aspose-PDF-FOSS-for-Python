@@ -684,11 +684,11 @@ and delete workflows. 235 public types are organized by module below.
 
 | Class | Description |
 |---|---|
-| `Document-generated_document` | Pythonic wrapper for PDF document lifecycle and core operations. |
-| `PdfAValidateOptions-generated_pdfa` | Options for a PDF/A validation run. |
-| `PdfAValidationResult-generated_pdfa` | Result of a PDF/A validation run. |
-| `UnsignedContent-generated_forms` | Container for unsigned content (pages, form fields, annotations). |
-| `UnsignedContentAbsorber-generated_forms` | Extracts unsigned content elements; includes form field/annotation info. |
+| `Document-generated_document` | Re-export of `aspose_pdf.Document`. |
+| `PdfAValidateOptions-generated_pdfa` | Re-export of `aspose_pdf.pdfa.PdfAValidateOptions`. |
+| `PdfAValidationResult-generated_pdfa` | Re-export of `aspose_pdf.pdfa.PdfAValidationResult`. |
+| `UnsignedContent-generated_forms` | Re-export of `aspose_pdf.forms.UnsignedContent`. |
+| `UnsignedContentAbsorber-generated_forms` | Re-export of `aspose_pdf.forms.UnsignedContentAbsorber`. |
 
 ---
 
