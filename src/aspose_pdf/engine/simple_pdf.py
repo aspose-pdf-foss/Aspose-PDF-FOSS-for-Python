@@ -87,6 +87,7 @@ from .encryption import (
 )
 from .file_output import write_file_atomically
 from .filters import StreamDecoder
+from .form_fields import form_value
 from .incremental_update import IncrementalUpdate
 from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
 from .pdf_parser_cos import PdfCosParser, pdf_header_offset, pdf_header_version
@@ -16702,6 +16703,7 @@ class CosExtractor:
         prefix: str = "",
         inherited_ft: PdfName | None = None,
         inherited_ff: int = 0,
+        inherited_v: Any = None,
         *,
         _depth: int = 1,
         _visited: set[tuple[str, int]] | None = None,
@@ -16783,44 +16785,20 @@ class CosExtractor:
         else:
             field_type = "text"
 
-        v = self._resolve(field_obj.mapping.get(PdfName("V")))
+        # /V is inheritable (ISO 32000-1 table 220): a field without one takes
+        # its parent's, as pdfium, pdf.js, qpdf and MuPDF all read it.
+        if PdfName("V") in field_obj.mapping:
+            v = self._resolve(field_obj.mapping.get(PdfName("V")))
+        else:
+            v = inherited_v
         # A signature field's /V is a signature dictionary, not a reportable form
         # value; surface it as unsigned (None) here — verification is separate.
-        if is_terminal and v is not None and not is_signature:
-            if isinstance(v, PdfString):
-                val_str = decode_pdf_text_string(v)
-                if is_checkbox:
-                    val = val_str not in ("", "Off", "0", "false", "No")
-                elif is_radio and val_str == "Off":
-                    val = None
-                else:
-                    val = val_str
-            elif isinstance(v, PdfName):
-                name_val = v.name.lstrip("/")
-                if is_checkbox:
-                    val = name_val not in ("", "Off", "0", "false", "No")
-                elif is_radio and name_val == "Off":
-                    val = None
-                else:
-                    val = name_val
-            elif isinstance(v, PdfArray):
-                self._budget.check(
-                    len(v.items),
-                    "max_container_items",
-                    "form field value entries",
-                )
-                items = []
-                for item in v.items:
-                    item = self._resolve(item)
-                    if isinstance(item, PdfString):
-                        items.append(decode_pdf_text_string(item))
-                    elif isinstance(item, PdfName):
-                        items.append(item.name.lstrip("/"))
-                val = items if len(items) > 1 else (items[0] if items else None)
-            else:
-                val = str(v)
-        else:
-            val = False if is_checkbox else None
+        val = form_value(
+            self._resolve,
+            self._budget,
+            v if is_terminal and not is_signature else None,
+            field_type,
+        )
 
         if is_terminal:
             fields[full_name] = {"value": val, "type": field_type}
@@ -16843,6 +16821,7 @@ class CosExtractor:
                     full_name,
                     ft,
                     ff_val,
+                    v,
                     _depth=_depth + 1,
                     _visited=visited,
                     _node_count=node_count,

@@ -30,6 +30,7 @@ from .font_substitution import FontSubstitutionOptions
 from .forms import (
     Field,
     FieldType,
+    FieldWidget,
     Form,
     FormType,
     UnsignedContent,
@@ -124,6 +125,7 @@ __all__ = [
     "Document",
     "Field",
     "FieldType",
+    "FieldWidget",
     "FileDataSource",
     "FileFontSource",
     "FileSpecification",

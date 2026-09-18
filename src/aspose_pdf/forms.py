@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -56,14 +57,30 @@ class InvalidFormTypeOperationException(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class FieldWidget:
+    """Where one of a field's widgets sits: the page and the rectangle on it."""
+
+    page_index: int | None
+    """Zero-based index of the page, or ``None`` if no page lists the widget."""
+
+    rect: tuple[float, float, float, float]
+    """``(x0, y0, x1, y1)`` in default user space, lower-left corner first."""
+
+
+# Field flags (ISO 32000-1 tables 221, 226, 228, 230), as bit masks.
+_READ_ONLY, _REQUIRED, _NO_EXPORT = 1 << 0, 1 << 1, 1 << 2
+_MULTILINE, _PASSWORD, _COMB = 1 << 12, 1 << 13, 1 << 24
+_EDIT, _MULTI_SELECT = 1 << 18, 1 << 21
+
+
 class Field:
     """A field of an interactive form.
 
     Supports text, checkbox, radio, listbox, combobox, and push-button fields.
-
-    Attributes:
-        _field_type: The type of the field (text, checkbox, radio, etc.)
-        _value: The current value of the field
+    Besides its value, a field reports what its dictionary says, reading an
+    inheritable attribute from the nearest ancestor that has it (ISO 32000-1
+    table 220), as pdfium, pdf.js, qpdf and MuPDF do.
     """
 
     def __init__(
@@ -106,6 +123,193 @@ class Field:
     def field_type(self) -> str:
         """The field type, such as ``text``, ``checkbox``, or ``combobox``."""
         return self._field_type
+
+    # --- what the field's dictionary says --------------------------------------------
+
+    def _engine(self):
+        document = self._form._document
+        document._ensure_not_disposed()
+        return document._engine_pdf
+
+    def _dictionary(self):
+        from aspose_pdf.engine.form_fields import field_dictionary
+
+        field = field_dictionary(self._engine(), self._name)
+        if field is None:
+            raise KeyError(f"Field '{self._name}' is no longer in the form")
+        return field
+
+    def _attribute(self, key: str) -> Any:
+        from aspose_pdf.engine.form_fields import field_attribute
+
+        return field_attribute(self._engine(), self._dictionary(), key)
+
+    def _own_text(self, key: str) -> str | None:
+        from aspose_pdf.engine.cos import PdfName
+        from aspose_pdf.engine.form_fields import text_of
+
+        return text_of(self._engine(), self._dictionary().mapping.get(PdfName(key)))
+
+    @property
+    def partial_name(self) -> str:
+        """The last part of :attr:`name`: the field's own ``/T``."""
+        return self._own_text("T") or ""
+
+    @property
+    def alternate_name(self) -> str | None:
+        """The name shown to a user, often as a tooltip (``/TU``); ``None`` if unset."""
+        return self._own_text("TU")
+
+    @property
+    def mapping_name(self) -> str | None:
+        """The name used when the form is exported (``/TM``); ``None`` if unset."""
+        return self._own_text("TM")
+
+    @property
+    def flags(self) -> int:
+        """The field flags (``/Ff``), inherited when the field has none."""
+        from aspose_pdf.engine.cos import PdfNumber
+
+        value = self._attribute("Ff")
+        return int(value.value) if isinstance(value, PdfNumber) else 0
+
+    def _set_flag(self, mask: int, on: bool) -> None:
+        from aspose_pdf.engine.cos import PdfName, PdfNumber
+
+        if not isinstance(on, bool):
+            raise TypeError("a field flag is set with a boolean")
+        flags = (self.flags | mask) if on else (self.flags & ~mask)
+        # Written on the field itself, from the value it had inherited, so
+        # its siblings under the same parent are not changed with it.
+        self._dictionary().mapping[PdfName("Ff")] = PdfNumber(flags)
+
+    @property
+    def read_only(self) -> bool:
+        """Whether the user may not change the field (flag bit 1)."""
+        return bool(self.flags & _READ_ONLY)
+
+    @read_only.setter
+    def read_only(self, value: bool) -> None:
+        self._set_flag(_READ_ONLY, value)
+
+    @property
+    def required(self) -> bool:
+        """Whether the field must have a value when the form is submitted (bit 2)."""
+        return bool(self.flags & _REQUIRED)
+
+    @required.setter
+    def required(self, value: bool) -> None:
+        self._set_flag(_REQUIRED, value)
+
+    @property
+    def no_export(self) -> bool:
+        """Whether the field is left out when the form is submitted (bit 3)."""
+        return bool(self.flags & _NO_EXPORT)
+
+    @property
+    def default_value(self) -> Any:
+        """The value a reset restores (``/DV``), in the same form as :attr:`value`."""
+        from aspose_pdf.engine.form_fields import form_value
+
+        engine = self._engine()
+        return form_value(engine._resolve, engine._load_budget, self._attribute("DV"), self._field_type)
+
+    @property
+    def max_length(self) -> int | None:
+        """The most characters a text field takes (``/MaxLen``); ``None`` if unlimited."""
+        from aspose_pdf.engine.cos import PdfNumber
+
+        if self._field_type != "text":
+            return None
+        value = self._attribute("MaxLen")
+        if isinstance(value, PdfNumber) and float(value.value).is_integer():
+            return int(value.value)
+        return None
+
+    def _text_flag(self, mask: int) -> bool:
+        return self._field_type == "text" and bool(self.flags & mask)
+
+    @property
+    def multiline(self) -> bool:
+        """Whether a text field takes several lines (bit 13)."""
+        return self._text_flag(_MULTILINE)
+
+    @property
+    def password(self) -> bool:
+        """Whether a text field hides what is typed (bit 14)."""
+        return self._text_flag(_PASSWORD)
+
+    @property
+    def comb(self) -> bool:
+        """Whether a text field spaces its characters into ``max_length`` cells (bit 25)."""
+        return self._text_flag(_COMB)
+
+    @property
+    def options(self) -> list[tuple[str, str]]:
+        """A choice field's options as ``(export value, display text)`` pairs.
+
+        An option given as one string is both. Other fields have none.
+        """
+        from aspose_pdf.engine.cos import PdfArray
+        from aspose_pdf.engine.form_fields import text_of
+
+        if self._field_type not in ("listbox", "combobox"):
+            return []
+        engine = self._engine()
+        items = self._attribute("Opt")
+        pairs: list[tuple[str, str]] = []
+        for item in items.items if isinstance(items, PdfArray) else ():
+            item = engine._resolve(item)
+            if isinstance(item, PdfArray) and len(item.items) >= 2:
+                export, display = text_of(engine, item.items[0]), text_of(engine, item.items[1])
+                if export is not None and display is not None:
+                    pairs.append((export, display))
+                continue
+            text = text_of(engine, item)
+            if text is not None:
+                pairs.append((text, text))
+        return pairs
+
+    @property
+    def multi_select(self) -> bool:
+        """Whether a list box lets several options be selected (bit 22)."""
+        return self._field_type == "listbox" and bool(self.flags & _MULTI_SELECT)
+
+    @property
+    def editable(self) -> bool:
+        """Whether a combo box takes text that is not one of its options (bit 19)."""
+        return self._field_type == "combobox" and bool(self.flags & _EDIT)
+
+    @property
+    def export_values(self) -> list[str]:
+        """The on state of each widget of a check box or radio button, in widget order."""
+        from aspose_pdf.engine.form_fields import on_states
+
+        if self._field_type not in ("checkbox", "radio"):
+            return []
+        return on_states(self._engine(), self._dictionary())
+
+    @property
+    def widgets(self) -> list[FieldWidget]:
+        """Each place the field appears: page and rectangle, one per widget."""
+        from aspose_pdf.engine.form_fields import field_widgets
+
+        return [
+            FieldWidget(page, rect)
+            for page, rect in field_widgets(self._engine(), self._dictionary())
+        ]
+
+    @property
+    def page_index(self) -> int | None:
+        """The page of the field's first widget, or ``None`` without one."""
+        widgets = self.widgets
+        return widgets[0].page_index if widgets else None
+
+    @property
+    def rect(self) -> tuple[float, float, float, float] | None:
+        """The rectangle of the field's first widget, or ``None`` without one."""
+        widgets = self.widgets
+        return widgets[0].rect if widgets else None
 
     def remove(self) -> Field:
         """Remove this field and all of its widgets from the form."""

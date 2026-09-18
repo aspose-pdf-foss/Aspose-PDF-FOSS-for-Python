@@ -9,6 +9,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Form fields say more than their value.** `Field` gains `partial_name`,
+  `alternate_name`, `mapping_name`, `flags`, `read_only` and `required`
+  (settable), `no_export`, `default_value`, `max_length`, `multiline`,
+  `password`, `comb`, `options`, `multi_select`, `editable`,
+  `export_values`, and `widgets` with each widget's page and rectangle.
+  Inheritable attributes come from the nearest ancestor; every property was
+  compared with pdf.js, pdfium, qpdf and MuPDF.
+
 - **Page labels.** `/PageLabels` was neither read nor written. `Page.label`
   returns the label a viewer shows (`"iii"`, `"A-1"`, or `None` without
   labels), and `Document.page_labels` maps the page each range starts at to a
@@ -55,6 +63,11 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   file covered, benign modification levels) and opened in pdfium and MuPDF.
 
 ### Fixed
+
+- **A field whose value is set on its parent read as `None`.** `/V` is
+  inheritable (ISO 32000-1 table 220) and pdfium, pdf.js, qpdf and MuPDF all
+  give the kid its parent's value; it was only looked for on the field
+  itself.
 
 - **Saving HTML, Markdown or SVG ignored `overwrite`, and a failed export
   destroyed the file it was replacing.** `save(path, DocFormat.HTML)` replaced

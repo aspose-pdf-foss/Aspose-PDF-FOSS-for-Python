@@ -1445,6 +1445,26 @@ Supported:
 - Read AcroForm fields through `Document.form`.
 - Iterate form fields and access fields by name.
 - Extract text, checkbox, radio, listbox, combobox, and push-button fields.
+- **A field reports what its dictionary says**: `partial_name`,
+  `alternate_name` (`/TU`, the name shown to a user) and `mapping_name`
+  (`/TM`); `flags` with `read_only`, `required` and `no_export` (the first two
+  settable, written to the field itself from the flags it inherited, so its
+  siblings keep theirs); `default_value` (`/DV`); for text, `max_length`,
+  `multiline`, `password` and `comb`; for choices, `options` as
+  `(export value, display text)` pairs, `multi_select` and `editable`; for
+  check boxes and radio buttons, `export_values` -- each widget's on state;
+  and `widgets` (`FieldWidget(page_index, rect)`), with `page_index` and
+  `rect` for the first. Inheritable attributes (`/FT`, `/Ff`, `/V`, `/DV`,
+  `/MaxLen`, `/Opt`) are taken from the nearest ancestor that has them; a
+  widget is on the page whose `/Annots` lists it, whatever its `/P` says (none
+  if no page does), and a rectangle's corners are put in order. Compared with pdf.js, pdfium, qpdf and
+  MuPDF over fields this library, MuPDF and hand-built structures wrote: 210
+  comparisons, all equal. Where they split, `/TU` is read from the field (as
+  pdfium and MuPDF do, and the specification places it) rather than from a
+  separate widget (pdf.js, qpdf), and radio export values are on-state names
+  (pdf.js, MuPDF) rather than `/Opt` texts (pdfium).
+- A value set on a **parent field** is the value of a kid that has none of
+  its own (`/V` is inheritable, table 220); it used to read as `None`.
 - Set a field value by name through the `Field.value` setter.
 - Create and remove AcroForm fields entirely through the public API:
   `Form.add_text_field()`, `add_checkbox()`, `add_radio_group()`,

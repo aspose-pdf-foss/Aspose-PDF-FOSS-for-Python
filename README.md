@@ -816,7 +816,10 @@ and delete workflows. 235 public types are organized by module below.
   - `add_list_box(...) -> Field` / `add_combo_box(...) -> Field` /
     `add_push_button(name, page, rect, caption, read_only, required) -> Field`
   - `remove_field(name) -> Field` / `generate_appearances() -> int` / `flatten() -> None`
-- `Field` — `remove() -> Field`; properties `name`, `value`, `field_type`
+- `Field` — `remove() -> Field`; properties `name`, `value`, `field_type`, `partial_name`,
+  `alternate_name`, `mapping_name`, `flags`, `read_only`, `required`, `no_export`, `default_value`,
+  `max_length`, `multiline`, `password`, `comb`, `options`, `multi_select`, `editable`,
+  `export_values`, `widgets` (`FieldWidget(page_index, rect)`), `page_index`, `rect`
 - `Annotation` — `generate_appearance(force) -> bool`, `get_property(name, default) -> Any`,
   `set_property(name, value) -> None`; properties `subtype`, `rect`, `contents`, `appearance_normal`
 - `AnnotationCollection` — `add(subtype, rect, contents, title, appearance_normal, properties) -> Annotation`,
