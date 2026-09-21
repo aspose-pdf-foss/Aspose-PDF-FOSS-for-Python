@@ -12696,6 +12696,68 @@ class SimplePdf:
                 widget_numbers.add(kid_ref.object_number)
             widget_objects.add(id(kid))
 
+    @staticmethod
+    def _painted_color(painted: list[Any], rect: tuple[float, float, float, float]):
+        """The colour of the smallest painted text box the match sits inside."""
+        x = (rect[0] + rect[2]) / 2.0
+        y = (rect[1] + rect[3]) / 2.0
+        best = None
+        for element in painted:
+            if not (element.llx <= x <= element.urx and element.lly <= y <= element.ury):
+                continue
+            area = (element.urx - element.llx) * (element.ury - element.lly)
+            if best is None or area < best[0]:
+                best = (area, element)
+        if best is None:
+            return None
+        element = best[1]
+        return element.fill_color if element.fill_color is not None else element.stroke_color
+
+    def locate_text(
+        self,
+        page_index: int,
+        search: str,
+        *,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+    ) -> list[Any]:
+        """Where *search* appears on a page: box, quads, font, size and colour.
+
+        The matches are the ones :meth:`redact_text` would remove -- the same
+        walker, decoding and span alignment -- so a run whose pen cannot be
+        tracked yields nothing rather than a guess. The colour is the painted
+        colour of the text element the match sits in, resolved through its
+        colour space by the graphics absorber.
+        """
+        from dataclasses import replace
+
+        from .graphics_absorb import absorb_page_graphics
+        from .text_locate import locate_text
+
+        self._ensure_not_disposed()
+        self._validate_page_index(page_index)
+        if not search:
+            return []  # every position matches an empty string; none is a place
+        found = locate_text(
+            self.get_page_content(page_index),
+            search,
+            self._build_simple_font_metrics(page_index),
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            limits=self._load_limits,
+            budget=self._load_budget,
+        )
+        if not found:
+            return []
+        painted = [
+            element
+            for element in absorb_page_graphics(self, page_index)
+            if element.kind == "text"
+        ]
+        return [
+            replace(item, color=self._painted_color(painted, item.rect)) for item in found
+        ]
+
     def set_field_value(self, name: str, value: Any) -> None:
         """Set the value of a form field by name."""
         self._ensure_not_disposed()

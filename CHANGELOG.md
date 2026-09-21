@@ -9,6 +9,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A found text fragment knows where it is.** `TextFragment` gains `rect`
+  and `quads` in default user space, `font_name`, `font_size` and `color`,
+  filled in when a page (or a document's pages) is visited. The boxes are the
+  redactor's own locator's, checked against MuPDF and pdfium; text that cannot
+  be tracked to a single run is left unplaced rather than boxed wrongly.
+
 - **FDF and XFDF.** `Form.export_fdf`/`export_xfdf` write a form's data and
   `Form.import_fdf`/`import_xfdf` fill a form from it, redrawing the fields
   and applying FDF's field and widget flags. Checked against Apache PDFBox in

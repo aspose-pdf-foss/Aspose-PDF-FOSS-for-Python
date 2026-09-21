@@ -783,7 +783,8 @@ and delete workflows. 265 public types are organized by module below.
   - `extract_image() -> None` / `has_next_image() -> bool` / `get_next_image() -> Any`
   - `extract_attachment() -> None` / `get_attachment(name) -> Any` / `get_attach_names() -> list[str]`
 - `TextFragmentAbsorber` / `TextAbsorber` — search exact phrases and regex patterns, collecting
-  `TextFragment` results with page index and match offsets.
+  `TextFragment` results with page index, match offsets and, for a page of a document, where the
+  text sits: `rect`, `quads`, `font_name`, `font_size`, `color`.
 - `PdfFileEditor`
   - `concatenate(inputs, output) -> bool`
   - `extract(source, destination, page_from, page_to) -> bool` /

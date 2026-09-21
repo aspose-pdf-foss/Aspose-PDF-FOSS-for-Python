@@ -419,6 +419,7 @@ class _RunSegment:
     pen: tuple[float, float] | None  # text-space offset from the run origin
     gap_text: str = ""  # synthesized logical text ("" or " ")
     gap_width: float = 0.0  # text-space width of the synthesized gap
+    font_name: str | None = None  # the /Tf resource name in force
 
 
 @dataclass
@@ -533,6 +534,7 @@ def _walk_show_runs(
     tm_valid = True
     metric: Any = None
     codec: CidTextCodec | None = None
+    font_name: str | None = None
     size = 0.0
     char_spacing = 0.0
     word_spacing = 0.0
@@ -580,7 +582,7 @@ def _walk_show_runs(
             cur,
             _RunSegment(
                 tok, codec, metric, size, char_spacing, word_spacing,
-                h_scale, rise, pen,
+                h_scale, rise, pen, font_name=font_name,
             ),
             active_budget,
             "text edit run segments",
@@ -649,7 +651,8 @@ def _walk_show_runs(
             broke = True
 
     def resolve_font(name: str | None) -> None:
-        nonlocal metric, codec
+        nonlocal metric, codec, font_name
+        font_name = name
         metric = metric_for_name(name) if metric_for_name and name else None
         codec = codec_for_name(name) if codec_for_name else None
         if codec is None and metric is not None:

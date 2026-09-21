@@ -1073,6 +1073,20 @@ Supported:
   offsets/page indices. A *document* is taken page by page, which is the only
   way a fragment can say which page it came from; an object whose pages are not
   themselves extractable answers for its own text as a whole.
+- **A fragment says where it is and what it is set in.** Visiting a page (or a
+  document's pages) gives each `TextFragment` a `rect` and `quads` in default
+  user space -- one quadrilateral per baseline it covers -- plus `font_name`
+  (the `/Tf` resource name), `font_size` and `color` (RGB, resolved through the
+  colour space in force, the stroke colour for outlined text). The boxes come
+  from the locator the redactor draws its bars with, so they mark exactly what
+  a redaction would cover. Horizontally they agree with MuPDF's `search_for`
+  and pdfium's `FPDFText_GetRect` to hundredths of a point; vertically a box
+  spans the font's ascent and descent, which is inside MuPDF's line box and
+  around pdfium's glyph ink. A fragment is placed only when the page's content
+  holds exactly as many trackable matches of its text as the page's text did,
+  so text assembled from several runs, text inside a form XObject, or text in
+  a font the page does not declare stays unplaced (`rect` is `None`) rather
+  than being given a box that is not its own.
 - Replace or redact existing text in simple page content streams with
   `Document.replace_text`, `Document.redact_text`, `Page.replace_text`, and
   `Page.redact_text`. The editor rewrites literal and hexadecimal string

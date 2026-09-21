@@ -83,12 +83,33 @@ class TextFragment:
         Character offset inside the page text where the match starts.
     end : int
         Character offset where the match ends (exclusive).
+    rect : tuple or None
+        Where the fragment sits on the page, ``(x0, y0, x1, y1)`` in default
+        user space, lower-left corner first. ``None`` when the fragment could
+        not be placed -- see :class:`TextFragmentAbsorber` for when that is.
+    quads : list of tuple or None
+        One quadrilateral per baseline the fragment covers, each four
+        ``(x, y)`` corners anticlockwise from the lower left; a fragment that
+        wraps has more than one. ``None`` when it could not be placed.
+    font_name : str or None
+        The name the page's resources give the font the fragment is set in
+        (its ``/Tf`` operand, such as ``"F1"``).
+    font_size : float or None
+        The ``/Tf`` size, before the text and transformation matrices scale it.
+    color : tuple or None
+        The colour the glyphs are painted in as ``(r, g, b)``, each 0..1,
+        resolved through the colour space in force.
     """
 
     page_index: int
     text: str
     start: int = 0
     end: int = field(default=-1)
+    rect: tuple[float, float, float, float] | None = None
+    quads: list[tuple[tuple[float, float], ...]] | None = None
+    font_name: str | None = None
+    font_size: float | None = None
+    color: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         if self.end == -1:
@@ -105,9 +126,10 @@ class TextFragment:
         )
 
     def __repr__(self) -> str:
+        where = "" if self.rect is None else f", rect={tuple(round(v, 2) for v in self.rect)}"
         return (
             f"TextFragment(page={self.page_index}, text={self.text!r}, "
-            f"start={self.start}, end={self.end})"
+            f"start={self.start}, end={self.end}{where})"
         )
 
 
@@ -302,7 +324,7 @@ class TextFragmentAbsorber:
                 for page_idx, item in enumerate(text):
                     self._process_page_text(str(item), page_idx)
             elif isinstance(text, str):
-                self._process_page_text(text, 0)
+                self._process_page_text(text, 0, page=page_or_doc)
 
     def _visit_pages(self, page_or_doc: Any) -> bool:
         """Collect page by page; False when *page_or_doc* has no such pages."""
@@ -318,7 +340,7 @@ class TextFragmentAbsorber:
         for page_idx, page in enumerate(page_list):
             raw = page.extract_text()
             if isinstance(raw, str):
-                self._process_page_text(raw, page_idx)
+                self._process_page_text(raw, page_idx, page=page)
         return True
 
     def reset(self) -> None:
@@ -354,8 +376,9 @@ class TextFragmentAbsorber:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _process_page_text(self, text: str, page_index: int) -> None:
+    def _process_page_text(self, text: str, page_index: int, page: Any = None) -> None:
         """Apply phrase/regex/no-filter search to *text* from *page_index*."""
+        first = len(self._text_fragments)
         if self._compiled_regex is not None:
             # Regex search mode
             for match in self._compiled_regex.finditer(text):
@@ -412,6 +435,48 @@ class TextFragmentAbsorber:
                         )
                     )
                 offset += len(line) + 1  # +1 for '\n'
+
+        self._place(page, self._text_fragments[first:])
+
+    def _place(self, page: Any, fragments: list[TextFragment]) -> None:
+        """Give each fragment its place on the page, where that can be told.
+
+        The page's content stream is searched for each fragment's text with
+        the locator the redactor uses, so a run whose pen cannot be tracked
+        (an unresolved font, a text object the walker cannot follow) places
+        nothing rather than guessing. The matches are taken in the order the
+        content paints them, and only when the content holds exactly as many
+        as the page's text did: a fragment the extractor assembled from
+        several runs -- a line broken across them, text inside a form XObject
+        -- is left unplaced rather than given a box that is not its own.
+        """
+        from aspose_pdf.exceptions import (
+            PDF_OPERATION_ERRORS,
+            PdfResourceLimitException,
+        )
+
+        engine = getattr(getattr(page, "_document", None), "_engine_pdf", None)
+        index = getattr(page, "index", None)
+        if engine is None or not isinstance(index, int) or not fragments:
+            return
+        by_text: dict[str, list[TextFragment]] = {}
+        for fragment in fragments:
+            by_text.setdefault(fragment.text, []).append(fragment)
+        for text, group in by_text.items():
+            try:
+                located = engine.locate_text(index, text)
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                continue
+            if len(located) != len(group):
+                continue
+            for fragment, item in zip(group, located):
+                fragment.rect = item.rect
+                fragment.quads = [tuple(quad) for quad in item.quads]
+                fragment.font_name = item.font_name
+                fragment.font_size = item.font_size
+                fragment.color = item.color
 
     def __repr__(self) -> str:
         return (

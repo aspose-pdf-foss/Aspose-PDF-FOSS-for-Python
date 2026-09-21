@@ -252,6 +252,97 @@ def _span_quads(
     return quads
 
 
+@dataclass(frozen=True)
+class LocatedText:
+    """Where a match sits on the page, and what it is set in."""
+
+    quads: tuple[Quad, ...]
+    """One quadrilateral per baseline the match covers, in default user space."""
+
+    rect: tuple[float, float, float, float]
+    """The box around every quad: ``(x0, y0, x1, y1)``."""
+
+    font_name: str | None
+    """The ``/Tf`` resource name in force where the match starts."""
+
+    font_size: float
+    """The ``/Tf`` size, before the text and transformation matrices scale it."""
+
+    color: tuple[float, float, float] | None = None
+    """The colour the glyphs are painted in, as RGB, when it could be resolved."""
+
+
+def _bounds(quads: list[Quad]) -> tuple[float, float, float, float]:
+    xs = [point[0] for quad in quads for point in quad]
+    ys = [point[1] for quad in quads for point in quad]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def locate_text(
+    content: bytes,
+    search: str,
+    font_for_name: Callable[[str], FontMetric | None],
+    *,
+    case_sensitive: bool = True,
+    max_count: int = 0,
+    base_ctm: Matrix = _IDENTITY,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> list[LocatedText]:
+    """Each match of *search*, with its quads, box, font name and size.
+
+    The matches are :func:`locate_matches`'s, one :class:`LocatedText` per
+    match rather than one quad per baseline, and each carries the font the
+    match starts in.
+    """
+    active_budget = _resolve_load_budget(limits, budget)
+    tokens = _lex(content, budget=active_budget)
+    runs = _walk_show_runs(
+        tokens,
+        metric_for_name=font_for_name,
+        base_ctm=base_ctm,
+        budget=active_budget,
+    )
+    found: list[LocatedText] = []
+    for run in runs:
+        if max_count and len(found) >= max_count:
+            break
+        if not run.geometry_ok or run.origin_trm is None:
+            continue
+        infos, full, entries, seg_starts = _run_char_data(run, budget=active_budget)
+        if not full:
+            continue
+        geometry = _char_geometry(run, infos, budget=active_budget)
+        if geometry is None:
+            continue
+        remaining = 0 if max_count == 0 else max_count - len(found)
+        spans = _aligned_spans(
+            full, entries, search, case_sensitive, remaining, budget=active_budget
+        )
+        for start, end in spans:
+            quads = _span_quads(
+                run.origin_trm, geometry, start, end, budget=active_budget
+            )
+            if not quads:
+                continue
+            segment = run.segments[_segment_of(seg_starts, start)]
+            active_budget.check(len(found) + 1, "max_container_items", "located text")
+            found.append(
+                LocatedText(tuple(quads), _bounds(quads), segment.font_name, segment.size)
+            )
+    return found
+
+
+def _segment_of(seg_starts: list[int], char_index: int) -> int:
+    """The segment a character belongs to."""
+    position = 0
+    for index, start in enumerate(seg_starts):
+        if start > char_index:
+            break
+        position = index
+    return position
+
+
 def locate_matches(
     content: bytes,
     search: str,
