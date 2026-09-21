@@ -9,6 +9,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Layers that exclude one another.** `/RBGroups` -- the radio buttons of a
+  viewer's layers panel -- was read into a configuration but never enforced,
+  so switching one layer on left the others of its group on and the saved file
+  said so. `LayerCollection.make_exclusive` declares such a group,
+  `exclusive_groups` lists them, and `Layer.visible = True` now switches off
+  every other member of each group naming that layer, the way pdf.js and MuPDF
+  do; switching one off leaves the rest alone. Removing a layer drops it from
+  the arrays instead of leaving them naming a group that is gone.
+
 - **Long-term validation for encrypted documents.** `Document.add_ltv` and
   `add_document_timestamp` refused an encrypted document; the store and the
   timestamp field are now written through the encrypting writer with the

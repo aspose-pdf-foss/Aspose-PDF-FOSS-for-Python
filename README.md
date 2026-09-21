@@ -468,6 +468,8 @@ and delete workflows. 265 public types are organized by module below.
 | `InvalidFormTypeOperationException` | Exception thrown when an invalid form type operation is attempted. |
 | `InvalidOperationException` | Raised when a graphics element is attached to the wrong parent. |
 | `InvalidPasswordException` | Raised when an incorrect password is provided for an encrypted document. |
+| `Layer` | One optional content group: its name, intent, whether it is shown, and `add`/`remove`/`contains` for tagging existing content with it. |
+| `LayerCollection` | The document's layers: indexable by position or by name, with `add(name, visible)`, `remove(layer)` and `make_exclusive(layers)`. |
 | `InvalidPdfFileFormatException` | Raised when the PDF file format is invalid or corrupted. |
 | `InvalidValueFormatException` | Raised when an invalid value is encountered during parsing or conversion. |
 | `JavaScriptAction` | Run a JavaScript script (serialized verbatim, not validated). |

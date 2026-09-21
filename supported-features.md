@@ -943,6 +943,15 @@ Supported:
 - **Remove a layer** with `Document.layers.remove(layer)`. The group goes; its
   content stays and becomes unconditionally visible, which is what a viewer
   does with an `/OC` it cannot resolve.
+- **Make layers exclude one another** with
+  `Document.layers.make_exclusive([...])`, which writes a `/RBGroups` array
+  (ISO 32000-1 table 101) and leaves at most one of its members visible.
+  Switching a layer on then switches off the others of every group that names
+  it, in memory and in the saved file, as pdf.js and MuPDF do; switching one
+  off leaves the rest alone, since such a group may have nothing selected.
+  `Document.layers.exclusive_groups` lists the groups a document declares --
+  including ones another producer wrote -- and removing a layer drops it from
+  each array.
 - **Flatten to visible content** with `Document.flatten_layers()`. Hidden
   marked-content sections, hidden XObject invocations and hidden annotations
   are deleted from the page's *existing* content streams (not merely
@@ -961,8 +970,6 @@ Boundaries:
 - The `/User` usage category is not evaluated: it names a person, a position or
   an organisation to match against whoever is viewing, and this library has no
   viewer identity to match. `/CreatorInfo` carries no state by definition.
-  Radio-button groups (`/RBGroups`) travel with a configuration but are not
-  enforced when layers are switched individually.
 - A layer marks content a page's *own* stream shows; an ``/OC`` on a form
   XObject's contents is honoured too. Content already in the document goes onto
   a layer through `Layer.add(content)` — an `Annotation` or an `ImagePlacement`

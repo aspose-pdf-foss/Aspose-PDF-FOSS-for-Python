@@ -292,6 +292,46 @@ class LayerCollection(Sequence[Layer]):
         self._reload()
         return removed
 
+    def make_exclusive(self, layers: Sequence[Layer | str]) -> tuple[Layer, ...]:
+        """Make *layers* mutually exclusive, and return them.
+
+        A viewer shows such a collection as radio buttons: turning one on
+        turns the others off (``/RBGroups``, ISO 32000-1 table 101), which
+        :attr:`Layer.visible` does here too. At most one of them is left
+        visible -- the first that was -- because a radio group showing two of
+        its members is the state the entry exists to prevent.
+        """
+        from aspose_pdf.engine.optional_content import set_radio_group
+
+        chosen = [self[layer] if isinstance(layer, str) else layer for layer in layers]
+        numbers = list(dict.fromkeys(layer.object_number for layer in chosen))
+        if len(numbers) < 2:
+            raise PdfValidationException(
+                "A radio group needs at least two different layers"
+            )
+        known = {layer.object_number for layer in self._layers}
+        foreign = any(layer._state is not self._state for layer in chosen)
+        if foreign or not known.issuperset(numbers):
+            raise PdfValidationException("Every layer must belong to this document")
+        set_radio_group(self._state._pdf, numbers)
+        shown = [number for number in numbers if self._state.visible_by_number[number]]
+        self._state.radio_groups = (*self._state.radio_groups, frozenset(numbers))
+        if shown:
+            self._state.set_visible(shown[0], True)
+        self._reload()
+        return tuple(
+            layer for layer in self._layers if layer.object_number in numbers
+        )
+
+    @property
+    def exclusive_groups(self) -> tuple[tuple[Layer, ...], ...]:
+        """The document's radio-button groups (``/RBGroups``), in file order."""
+        by_number = {layer.object_number: layer for layer in self._layers}
+        return tuple(
+            tuple(by_number[number] for number in sorted(members) if number in by_number)
+            for members in self._state.radio_groups
+        )
+
     @property
     def configurations(self) -> tuple[LayerConfiguration, ...]:
         """The document's optional content configurations, default first.

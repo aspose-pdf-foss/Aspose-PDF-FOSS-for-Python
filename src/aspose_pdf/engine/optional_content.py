@@ -150,6 +150,8 @@ class OptionalContent:
         self.groups: list[OptionalContentGroup] = []
         self.visible_by_number: dict[int, bool] = {}
         self.configurations: list[OptionalContentConfiguration] = []
+        #: ``/RBGroups``: sets of groups whose states are mutually exclusive.
+        self.radio_groups: tuple[frozenset[int], ...] = ()
         self.event = event
         self.zoom = zoom
         self.language = language
@@ -186,6 +188,7 @@ class OptionalContent:
         self.visible_by_number = self._configured_states(config, all_groups)
         if isinstance(config, PdfDictionary):
             self._apply_usage(config, self.visible_by_number)
+            self.radio_groups = self._radio_groups(config)
 
         for number in all_groups:
             group = self._resolve(self._object(number))
@@ -200,6 +203,18 @@ class OptionalContent:
                 )
             )
         self._load_configurations(properties, config, all_groups)
+
+    def _radio_groups(self, config: PdfDictionary) -> tuple[frozenset[int], ...]:
+        """``/RBGroups`` as sets of object numbers, one per array it holds."""
+        arrays = self._resolve(config.mapping.get(PdfName("RBGroups")))
+        if not isinstance(arrays, PdfArray):
+            return ()
+        groups = []
+        for item in arrays.items:
+            members = frozenset(self._reference_numbers(item))
+            if len(members) > 1:
+                groups.append(members)
+        return tuple(groups)
 
     def _configured_states(self, config: Any, all_groups: list[int]) -> dict[int, bool]:
         """Resolve ``/BaseState`` plus the ``/ON`` and ``/OFF`` overrides."""
@@ -508,14 +523,32 @@ class OptionalContent:
         return None
 
     def set_visible(self, object_number: int, visible: bool) -> None:
-        """Set a group's visibility in memory and in the default configuration."""
+        """Set a group's visibility in memory and in the default configuration.
+
+        Showing a group that belongs to a radio-button group hides the others
+        in it: ``/RBGroups`` names collections "whose states are intended to be
+        mutually exclusive ... If one of the optional content groups in such an
+        array is turned ON, all the others shall be turned OFF" (ISO 32000-1
+        table 101), in every array that names it. Hiding one leaves the rest
+        alone -- a radio group may have nothing selected. pdf.js and MuPDF
+        switch them the same way.
+        """
         if object_number not in self.visible_by_number:
             raise KeyError(f"No optional content group with object {object_number}")
+        self._set_one(object_number, visible)
+        if visible:
+            for members in self.radio_groups:
+                if object_number in members:
+                    for other in members:
+                        if other != object_number and other in self.visible_by_number:
+                            self._set_one(other, False)
+        self._write_default_config()
+
+    def _set_one(self, object_number: int, visible: bool) -> None:
         self.visible_by_number[object_number] = visible
         for group in self.groups:
             if group.object_number == object_number:
                 group.visible = visible
-        self._write_default_config()
 
     def _write_default_config(self) -> None:
         """Rewrite ``/D /ON`` and ``/D /OFF`` from the current state."""
@@ -635,6 +668,40 @@ def create_group(
     state = OptionalContent(pdf)
     state.set_visible(reference.object_number, visible)
     return reference.object_number
+
+
+def set_radio_group(pdf: Any, object_numbers: Sequence[int]) -> None:
+    """Make the named groups mutually exclusive in the default configuration.
+
+    Writes one ``/RBGroups`` array (ISO 32000-1 table 101), replacing an array
+    that already names the same collection so the entry is not duplicated.
+    The current state is left as it is: bringing it in line with the new group
+    -- leaving at most one member visible -- belongs to the caller, because the
+    array says which member *wins*, not that one has to.
+    """
+    properties = _properties_of(pdf, create=True)
+    assert properties is not None
+    config = _config_of(pdf, properties)
+    arrays = pdf._resolve(config.mapping.get(PdfName("RBGroups")))
+    if not isinstance(arrays, PdfArray):
+        arrays = PdfArray([])
+        config.mapping[PdfName("RBGroups")] = arrays
+    wanted = list(dict.fromkeys(object_numbers))
+    for item in list(arrays.items):
+        members = pdf._resolve(item)
+        if isinstance(members, PdfArray) and set(
+            _reference_numbers_of(pdf, members)
+        ) == set(wanted):
+            arrays.items.remove(item)
+    arrays.append(PdfArray([PdfIndirectReference(number, 0) for number in wanted]))
+
+
+def _reference_numbers_of(pdf: Any, array: PdfArray) -> list[int]:
+    return [
+        item.object_number
+        for item in array.items
+        if isinstance(item, PdfIndirectReference)
+    ]
 
 
 def content_target(
@@ -762,7 +829,7 @@ def _purge_group(pdf: Any, config: PdfDictionary, object_number: int) -> None:
     so the group hides one level down in each entry's ``/OCGs``, and an entry
     left governing nothing is dropped rather than kept as an empty rule.
     """
-    for key in ("ON", "OFF", "Order", "Locked", "RBGroups"):
+    for key in ("ON", "OFF", "Order", "Locked"):
         array = pdf._resolve(config.mapping.get(PdfName(key)))
         if isinstance(array, PdfArray):
             array.items[:] = [
@@ -770,6 +837,26 @@ def _purge_group(pdf: Any, config: PdfDictionary, object_number: int) -> None:
                 for item in array.items
                 if not _is_reference_to(item, object_number)
             ]
+    # /RBGroups holds arrays of groups, so the reference to drop is one level
+    # down; an array naming a deleted group would make a viewer switch off
+    # something that is no longer there.
+    radio = pdf._resolve(config.mapping.get(PdfName("RBGroups")))
+    if isinstance(radio, PdfArray):
+        kept_arrays = []
+        for item in radio.items:
+            members = pdf._resolve(item)
+            if not isinstance(members, PdfArray):
+                continue
+            members.items[:] = [
+                member
+                for member in members.items
+                if not _is_reference_to(member, object_number)
+            ]
+            if members.items:
+                kept_arrays.append(item)
+        radio.items[:] = kept_arrays
+        if not radio.items:
+            config.mapping.pop(PdfName("RBGroups"), None)
     entries = pdf._resolve(config.mapping.get(PdfName("AS")))
     if not isinstance(entries, PdfArray):
         return
