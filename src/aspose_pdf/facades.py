@@ -9,8 +9,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from aspose_pdf.exceptions import PDF_OPERATION_ERRORS, AsposePdfException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
+from aspose_pdf.exceptions import (
+    PDF_OPERATION_ERRORS,
+    AsposePdfException,
+    PdfResourceLimitException,
+)
+from aspose_pdf.load_limits import PdfLoadLimits
 
 logger = logging.getLogger(__name__)
 
@@ -91,57 +95,24 @@ class PdfExtractor:
         else:
             self._bound_pdf = SimplePdf.from_bytes(source, pwd, **load_kwargs)
 
-    def _content_parser_options(self) -> dict[str, object]:
-        """Return the bound document's parser limits and shared budget."""
-        if self._bound_pdf is None:
-            return {}
-        budget = getattr(self._bound_pdf, "_load_budget", None)
-        if isinstance(budget, _LoadBudget):
-            return {"limits": budget.limits, "budget": budget}
-        limits = getattr(self._bound_pdf, "load_limits", None)
-        if isinstance(limits, PdfLoadLimits):
-            return {"limits": limits}
-        return {}
-
     def extract_text(self) -> None:
-        """Extract text from bound PDF pages."""
+        """Extract text from the bound document's pages.
+
+        Each page is read through the engine's own extractor, which is where
+        page content is decoded on demand and a page that cannot be parsed
+        is recovered from. Repeating the parse here instead meant a document
+        whose content is loaded lazily extracted nothing at all, and a page
+        with a damaged content stream lost text the engine reads.
+        """
         self._ensure_not_disposed()
         self._page_texts.clear()
         self._current_index = 0
         if self._bound_pdf is None:
             return
-
-        from aspose_pdf.engine.content_stream_parser import ContentStreamParser
-
-        # SimplePdf holds page contents and potentially a reference to the COS doc for resources
-        # We need to get resources for each page
-        for i, stream in enumerate(getattr(self._bound_pdf, "page_contents", [])):
-            # Try to get resources from COS doc if available
-            resources = {}
-            if hasattr(self._bound_pdf, "_get_page_resources"):
-                resources = self._bound_pdf._get_page_resources(i)
-
-            hidden = frozenset()
-            hidden_names = getattr(self._bound_pdf, "hidden_oc_property_names", None)
-            if callable(hidden_names):
-                hidden = hidden_names(i)
-            parser = ContentStreamParser(
-                stream,
-                resources,
-                hidden_oc_names=hidden,
-                **self._content_parser_options(),
-            )
-            text = parser.extract_text()
-            self._page_texts.append(text)
-
-    def _parse_text_from_content(self, data: bytes) -> str:
-        """Deprecated: use ContentStreamParser instead."""
-        from aspose_pdf.engine.content_stream_parser import ContentStreamParser
-
-        parser = ContentStreamParser(
-            data, {}, **self._content_parser_options()
+        self._page_texts.extend(
+            self._bound_pdf.extract_page_text(index)
+            for index in range(len(self._bound_pdf.pages))
         )
-        return parser.extract_text()
 
     def get_text(self) -> str:
         """Return all extracted text concatenated."""
@@ -163,29 +134,71 @@ class PdfExtractor:
         return self._current_index < len(self._page_texts)
 
     def extract_image(self) -> None:
-        """Extract images from bound PDF."""
+        """Collect the bound document's images, each as a real image file.
+
+        What :meth:`get_next_image` hands back used to be the decoded samples
+        -- the pixels, without the header that says how wide they are or what
+        they mean -- so writing them to a ``.png`` produced a file nothing
+        opens. Each image is now reconstructed the way ``save_image`` writes
+        it (PNG for raster codecs, the original JPEG/JPX payload where the
+        file holds one).
+        """
         self._ensure_not_disposed()
         self._images.clear()
         self._image_index = 0
         if self._bound_pdf is None:
             return
         images = getattr(self._bound_pdf, "images", {})
+        to_file = getattr(self._bound_pdf, "image_file", None)
         for name, data in images.items():
-            self._images.append((name, data))
+            if to_file is None:
+                self._images.append((name, data, ""))
+                continue
+            try:
+                file_bytes, produced = to_file(name)
+            except PdfResourceLimitException:
+                raise
+            except PDF_OPERATION_ERRORS:
+                file_bytes, produced = data, ""
+            self._images.append((name, file_bytes, produced))
 
     def has_next_image(self) -> bool:
         """Return True if there is another image available."""
         self._ensure_not_disposed()
         return self._image_index < len(self._images)
 
-    def get_next_image(self) -> Any:
-        """Return the next image, advancing cursor."""
+    def get_next_image(self, destination: Any = None) -> Any:
+        """The next image as an image file, advancing the cursor.
+
+        Returns its bytes, or ``None`` once they are all read. With
+        *destination* -- a path or a writable binary stream -- the file is
+        written there too; a path's suffix is corrected to the format actually
+        produced, and the path written is returned.
+        """
         self._ensure_not_disposed()
         if self._image_index >= len(self._images):
             return None
-        img = self._images[self._image_index]
+        _name, file_bytes, produced = self._images[self._image_index]
         self._image_index += 1
-        return img[1]
+        if destination is None:
+            return file_bytes
+        if hasattr(destination, "write"):
+            destination.write(file_bytes)
+            return file_bytes
+        from aspose_pdf.engine.file_output import write_file_atomically
+        from aspose_pdf.engine.image_export import resolve_output_path
+
+        out_path = resolve_output_path(destination, produced)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        write_file_atomically(out_path, file_bytes)
+        return out_path
+
+    def get_next_image_name(self) -> str | None:
+        """The name of the image :meth:`get_next_image` will hand back next."""
+        self._ensure_not_disposed()
+        if self._image_index >= len(self._images):
+            return None
+        return self._images[self._image_index][0]
 
     def extract_attachment(self) -> None:
         """Extract attachments from bound PDF."""

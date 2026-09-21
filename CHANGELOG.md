@@ -81,6 +81,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`PdfExtractor` read documents beside the engine instead of through it.**
+  It parsed page content itself, so a document whose content is loaded lazily
+  extracted nothing at all and a page with a damaged content stream lost the
+  text the engine recovers; each page now comes from
+  `SimplePdf.extract_page_text`. Its images were the decoded samples rather
+  than an image file -- writing one to a `.png` produced a file nothing opens
+  -- and are now reconstructed as `save_image` writes them, through a new
+  `SimplePdf.image_file()` that both paths share. `get_next_image()` takes an
+  optional path or stream to write to, and `get_next_image_name()` names the
+  image the cursor is on.
+
 - **An extended sequential JPEG (`SOF1`) decoded to nothing without Pillow.**
   Such a frame is coded exactly like a baseline one for 8-bit Huffman scans
   (ITU-T T.81 F.1.2) and libjpeg, pdfium and MuPDF all read it that way; the

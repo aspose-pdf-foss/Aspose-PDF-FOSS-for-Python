@@ -985,8 +985,21 @@ Boundaries:
 
 Supported:
 
-- Extract text from page content streams with `PdfExtractor`.
+- Extract text from page content streams with `PdfExtractor`, which reads each
+  page **through the engine's own extractor**: content is decoded on demand,
+  so a document whose pages are loaded lazily is read rather than coming back
+  empty, and a page whose content stream is damaged keeps the text the engine
+  recovers from it. It used to parse the pages a second time, beside the
+  engine, and lose both.
 - Read all extracted text at once with `PdfExtractor.get_text()`.
+- **Extracted images come back as real image files**: `extract_image()` /
+  `get_next_image()` hand back what `save_image` would write -- PNG for raster
+  codecs, the original JPEG or JPX payload where the file holds one -- rather
+  than the decoded samples, which no image viewer opens. `get_next_image(path
+  or stream)` writes the file as well (a path's suffix is corrected to the
+  format actually produced) and `get_next_image_name()` names the image the
+  cursor is on. Both the facade and `save_image` go through one engine method,
+  `SimplePdf.image_file()`.
 - Iterate extracted page text with `has_next_page_text()` and
   `get_next_page_text()`.
 - Parse common PDF text-showing operators through the content stream parser:

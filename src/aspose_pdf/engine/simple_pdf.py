@@ -7830,27 +7830,43 @@ class SimplePdf:
         Returns the path actually written; the suffix is adjusted to the produced
         format when the requested one would mislabel the file.
         """
-        self._ensure_not_disposed()
-        if name not in self.images:
-            raise KeyError(name)
-        from .image_export import reconstruct_image_file, resolve_output_path
+        from .image_export import resolve_output_path
 
         path = Path(path)
-        meta, decoded = self._image_meta.get(name), self.images[name]
-        converted = self._converted_image_for_export(meta)
-        if converted is not None:
-            meta, decoded = converted
-        out_bytes, produced_ext = reconstruct_image_file(
-            meta,
-            decoded,
-            path.suffix,
-            color_space,
-            limits=self._load_limits,
+        out_bytes, produced_ext = self.image_file(
+            name, target_ext=path.suffix, color_space=color_space
         )
         out_path = resolve_output_path(path, produced_ext)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         write_file_atomically(out_path, out_bytes)
         return out_path
+
+    def image_file(
+        self,
+        name: str,
+        *,
+        target_ext: str | None = None,
+        color_space: str | None = None,
+    ) -> tuple[bytes, str]:
+        """An extracted image as a real image file: ``(bytes, format)``.
+
+        What :meth:`save_image` writes, for a caller that wants the bytes --
+        the decoded samples reconstructed into PNG, or the original JPEG/JPX
+        payload where the file already holds one. The format is the one
+        actually produced, which may not be the *target_ext* asked for.
+        """
+        self._ensure_not_disposed()
+        if name not in self.images:
+            raise KeyError(name)
+        from .image_export import reconstruct_image_file
+
+        meta, decoded = self._image_meta.get(name), self.images[name]
+        converted = self._converted_image_for_export(meta)
+        if converted is not None:
+            meta, decoded = converted
+        return reconstruct_image_file(
+            meta, decoded, target_ext, color_space, limits=self._load_limits
+        )
 
     def _converted_image_for_export(
         self, meta: dict | None

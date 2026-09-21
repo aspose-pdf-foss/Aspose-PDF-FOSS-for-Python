@@ -217,13 +217,7 @@ def test_image_extraction_iterator():
     """Test image extraction iterator."""
     extractor = PdfExtractor()
 
-    class DummyPdf:
-        def __init__(self, images):
-            self.images = images
-            self.page_count = 1
-            self.page_contents = []
-
-    extractor._bound_pdf = DummyPdf({"img1": b"data1", "img2": b"data2"})
+    extractor._bound_pdf = _engine_with([], {"img1": b"data1", "img2": b"data2"})
     extractor.extract_image()
 
     found = []
@@ -248,24 +242,27 @@ def test_extractor_disposed_behavior():
         extractor.get_next_image()
 
 
-class _DummyPdf:
-    """Minimal stub for PdfExtractor text tests."""
+def _engine_with(page_contents, images=None):
+    """An engine holding *page_contents*, which the extractor reads through."""
+    from aspose_pdf.engine.simple_pdf import SimplePdf
 
-    def __init__(self, page_contents, images=None):
-        self.page_contents = list(page_contents)
-        self.page_count = len(self.page_contents)
-        self.images = images or {}
+    pdf = SimplePdf()
+    pdf.pages = [(0, 0, 612, 792)] * len(page_contents)
+    pdf.page_contents = list(page_contents)
+    if images:
+        pdf.images = dict(images)
+    return pdf
 
 
-def _bind_dummy_pdf(extractor: PdfExtractor, dummy: _DummyPdf) -> None:
-    """Inject a dummy PDF into the extractor."""
+def _bind_dummy_pdf(extractor: PdfExtractor, dummy) -> None:
+    """Inject a bound document into the extractor."""
     extractor._bound_pdf = dummy
 
 
 def test_extract_text_returns_content():
     """Extract text from a simple PDF page."""
     extractor = PdfExtractor()
-    dummy = _DummyPdf([b"BT (Hello World) Tj ET"])
+    dummy = _engine_with([b"BT (Hello World) Tj ET"])
     _bind_dummy_pdf(extractor, dummy)
 
     extractor.extract_text()
@@ -276,7 +273,7 @@ def test_extract_text_returns_content():
 def test_extract_text_empty_document():
     """Empty PDF should produce empty string."""
     extractor = PdfExtractor()
-    dummy = _DummyPdf([])
+    dummy = _engine_with([])
     _bind_dummy_pdf(extractor, dummy)
 
     extractor.extract_text()
@@ -287,7 +284,7 @@ def test_extract_text_empty_document():
 def test_extract_text_image_only_document():
     """PDF with only images returns empty string."""
     extractor = PdfExtractor()
-    dummy = _DummyPdf([b"q 0 0 200 200 re W n /Im0 Do Q"])
+    dummy = _engine_with([b"q 0 0 200 200 re W n /Im0 Do Q"])
     _bind_dummy_pdf(extractor, dummy)
 
     extractor.extract_text()

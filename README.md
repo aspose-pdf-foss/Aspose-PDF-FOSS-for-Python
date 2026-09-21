@@ -75,10 +75,11 @@ flowchart TD
   OpenType shaping, Unicode bidi runs, ordered font fallback, and width-constrained line
   wrapping; a character the font can't represent raises `FontEmbeddingException` instead of
   silently falling back to `.notdef`.
-- `PdfExtractor` pulls all page text with `get_text()` or walks it page by page, extracts embedded
-  images (`extract_image()`/`get_next_image()`) and file attachments (`extract_attachment()`/
-  `get_attach_names()`), while `TextFragmentAbsorber` runs exact-phrase or regex searches and
-  reports match offsets and page indices.
+- `PdfExtractor` pulls all page text with `get_text()` or walks it page by page (reading each page
+  through the engine, so lazily loaded and damaged pages are read too), extracts embedded images as
+  real image files (`extract_image()`/`get_next_image(destination=None)`) and file attachments
+  (`extract_attachment()`/`get_attach_names()`), while `TextFragmentAbsorber` runs exact-phrase or
+  regex searches and reports match offsets, page indices and where the text sits.
 - `Document.replace_text()` and `Document.redact_text()` rewrite or remove matched text directly
   inside existing content streams; `redact_text(..., overlay=True)` also draws a filled bar over
   each removed run's location.
