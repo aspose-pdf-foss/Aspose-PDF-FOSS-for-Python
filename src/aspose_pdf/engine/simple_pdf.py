@@ -16552,6 +16552,16 @@ class CosExtractor:
                 res[field_name] = decode_pdf_text_string(val)
         return res if res else None
 
+    def _dss_decryption(self) -> Any:
+        """The handler that reads this document's streams, or ``None`` in clear."""
+        if self._stream_decrypt_key is None:
+            return None
+        from .pdf_writer_cos import WriterEncryption
+
+        return WriterEncryption(
+            self._stream_decrypt_key, self._stream_decrypt_algorithm
+        )
+
     def extract_signatures(self, data: bytes) -> list[PdfSignature]:
         from .cos import PdfArray, PdfDictionary, PdfName
 
@@ -16655,6 +16665,9 @@ class CosExtractor:
                             reference_data=data,
                             load_limits=self._limits,
                             _load_budget=self._budget,
+                            # A /DSS in an encrypted document is enciphered
+                            # like any other stream; validation reads it.
+                            _decryption=self._dss_decryption(),
                         )
 
                         for key, attr in [

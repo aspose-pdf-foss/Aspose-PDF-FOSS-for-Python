@@ -1959,6 +1959,18 @@ Supported:
   embedding a signature timestamp. Validation verifies the signing-certificate
   binding and reports the achieved level via `ValidationResult.pades_level`
   (`PadesLevel.B/T/LT/LTA`).
+- **An encrypted document takes a `/DSS` and a document timestamp like any
+  other.** The appended objects are serialized through the writer with the
+  document's own handler, so the certificates and the timestamp field's name
+  go in enciphered with the file key, exactly as an incremental save writes
+  them; the signature `/Contents` they are built from is exempt from
+  encryption (ISO 32000-1 7.6.2) and readable as it stands, and validation
+  reads the store back through the same handler, so LTV works offline on an
+  encrypted file. Checked on AES-256, AES-128, RC4 and certificate-recipient
+  documents: pyHanko opens each, reads the store and reports every signature
+  intact, valid and trusted, and `PdfSignature.validate` reports PAdES-LTA.
+  Without a handler the builder still refuses rather than writing plaintext
+  certificates every reader would turn to noise.
 - Build a **document security store** (`/DSS` with `/Certs`, `/CRLs`, `/OCSPs`
   and per-signature `/VRI`) as an incremental update that leaves existing
   signatures byte-for-byte intact (`engine.dss.build_dss` / `enable_ltv`),
@@ -2019,13 +2031,6 @@ Boundaries:
   own filter -- is not decrypted. `/StmF /Identity` (streams left in the clear)
   is honoured as written, and a document that leaves streams in the clear while
   encrypting only its strings through `/StrF` keeps those strings as stored.
-- Building a `/DSS` into an **encrypted** document is refused, and so is a
-  document timestamp (`Document.add_ltv` and `add_document_timestamp` refuse
-  at the call). The validation material goes in as streams, and the timestamp
-  field's name as a string, that `engine.dss` writes by hand rather than
-  through the encrypting writer, so it has no key to encipher them with, and a
-  `/DSS` full of certificates every reader turns to noise is worse than one
-  that is absent.
 - `Document.sign` refuses a document being encrypted for certificate
   recipients in the same session: the document is reloaded from what it
   saved, and that file opens only with a recipient's private key. Save it,

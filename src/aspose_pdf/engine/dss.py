@@ -13,6 +13,13 @@ without any network access.  This module:
   (:func:`collect_validation_material`).
 
 The on-wire structure follows ISO 32000-2 §12.8.4.3 / ETSI EN 319 142.
+
+An **encrypted** document is handled like any other: the appended objects are
+serialized through the writer with the document's own handler, so the
+certificates go in enciphered with the file key, exactly as an incremental save
+writes them. The signature ``/Contents`` a store is built from is exempt from
+encryption (ISO 32000-1 7.6.2), so the material can be harvested from the file
+as it stands.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from aspose_pdf.engine.cos import (
     PdfArray,
@@ -97,10 +105,38 @@ def collect_validation_material(contents_der: bytes) -> DssMaterial:
 # ---------------------------------------------------------------------------
 # Build (incremental update)
 # ---------------------------------------------------------------------------
-def _stream_object_bytes(obj_num: int, data: bytes) -> bytes:
-    """Serialize *data* as an uncompressed indirect stream object."""
-    header = f"{obj_num} 0 obj\n<< /Length {len(data)} >>\nstream\n".encode("latin-1")
-    return header + data + b"\nendstream\nendobj\n"
+def _stream_object_bytes(writer: PdfCosWriter, obj_num: int, data: bytes) -> bytes:
+    """Serialize *data* as an indirect stream object, enciphered where the file is."""
+    body = writer.serialize_indirect(obj_num, PdfStream(data))
+    return f"{obj_num} 0 obj\n{body}\nendobj\n".encode("latin-1")
+
+
+def _parsed(pdf_bytes: bytes, encryption: Any) -> Any:
+    """The document's object graph, readable: strings and streams in the clear.
+
+    An encrypted document's graph comes out of the parser exactly as the file
+    stores it, so anything read from it -- a field's name, an existing store's
+    streams -- is ciphertext until the handler is attached, and anything
+    written back has to be enciphered again by the writer.
+    """
+    doc = PdfCosParser(pdf_bytes).parse()
+    if PdfName("Encrypt") not in doc.trailer.mapping:
+        return doc
+    if encryption is None:
+        raise PdfSecurityException(
+            "This document is encrypted: its security handler is needed to "
+            "write validation material into it with the file's own key."
+        )
+    from .encryption import attach_document_decryption
+
+    attach_document_decryption(
+        doc,
+        encryption.key,
+        encryption.algorithm,
+        skip=encryption.exempt,
+        encrypt_metadata=encryption.encrypt_metadata,
+    )
+    return doc
 
 
 def _refs_array(refs: Sequence[str]) -> str:
@@ -116,6 +152,7 @@ def build_dss(
     material: DssMaterial,
     *,
     vri_contents: bytes | None = None,
+    encryption: Any = None,
 ) -> bytes:
     """Return *original_pdf* with its ``/DSS`` added, or extended, via an incremental update.
 
@@ -132,6 +169,10 @@ def build_dss(
     ----------
     material:
         Certificates / CRLs / OCSP responses to embed.
+    encryption:
+        The handler *original_pdf* was written with, required when it is
+        encrypted: the validation material is enciphered with the file's own
+        key, and the objects re-emitted around it keep their strings.
     vri_contents:
         When given (the ``/Contents`` bytes of a signature), a ``/VRI`` entry is
         added keyed by the uppercase SHA-1 of those bytes, associating the
@@ -142,23 +183,12 @@ def build_dss(
     if material.is_empty():
         return original_pdf
 
-    # The validation material goes in as *streams*, and this builder emits them
-    # by hand rather than through the encrypting writer, so it has no key to
-    # encipher them with. Writing plaintext into an encrypted file would put
-    # certificates there that every reader decrypts into noise -- material that
-    # looks present and is unusable is worse than material that is absent.
-    doc = PdfCosParser(original_pdf).parse()
-    if PdfName("Encrypt") in doc.trailer.mapping:
-        raise PdfSecurityException(
-            "Building a /DSS into an encrypted document is not supported: the "
-            "appended validation material would have to be enciphered with the "
-            "document's own key."
-        )
+    doc = _parsed(original_pdf, encryption)
     root_ref = doc.trailer.get(PdfName("Root"))
     catalog = doc.get_object(root_ref)
     if not isinstance(catalog, PdfDictionary) or root_ref is None:
         raise ValueError("cannot locate document catalog to attach /DSS")
-    writer = PdfCosWriter(doc)
+    writer = PdfCosWriter(doc, encryption=encryption)
     held = _held_material(doc, catalog)
     entries = _existing_vri_entries(doc, catalog, writer)
 
@@ -171,7 +201,7 @@ def build_dss(
         for data in blobs:
             if data not in known:
                 num = inc.get_next_object_number()
-                inc.add_object(num, _stream_object_bytes(num, data))
+                inc.add_object(num, _stream_object_bytes(writer, num, data))
                 known[data] = f"{num} 0 R"
                 changed = True
         return [known[data] for data in blobs]
@@ -207,8 +237,8 @@ def build_dss(
     else:
         dss_num = inc.get_next_object_number()
         catalog.mapping[PdfName("DSS")] = PdfIndirectReference(dss_num, 0)
-        catalog_str = writer.serialize_object(catalog)
         catalog_num = root_ref.object_number
+        catalog_str = writer.serialize_indirect(catalog_num, catalog)
         inc.add_object(
             catalog_num,
             f"{catalog_num} 0 obj\n{catalog_str}\nendobj\n".encode("latin-1"),
@@ -253,8 +283,41 @@ def _existing_vri_entries(doc, catalog: PdfDictionary, writer: PdfCosWriter) -> 
     }
 
 
+def signature_contents(doc: Any) -> list[bytes]:
+    """Each signature's CMS blob, in the order the AcroForm lists the fields.
+
+    Read from the parsed graph rather than by opening the document: an
+    encrypted one cannot be opened without its password, while a signature's
+    ``/Contents`` is exempt from encryption and readable as it stands.
+    """
+    from aspose_pdf.engine.simple_pdf import _trim_der_padding
+
+    out: list[bytes] = []
+    seen: set[int] = set()
+
+    def walk(items: Any, depth: int) -> None:
+        if depth > 32:
+            return
+        for item in items.items if isinstance(items, PdfArray) else ():
+            entry = _resolve(doc, item)
+            if not isinstance(entry, PdfDictionary) or id(entry) in seen:
+                continue
+            seen.add(id(entry))
+            value = _resolve(doc, entry.get(PdfName("V")))
+            if isinstance(value, PdfDictionary) and PdfName("ByteRange") in value.mapping:
+                contents = _resolve(doc, value.get(PdfName("Contents")))
+                if isinstance(contents, PdfString):
+                    out.append(_trim_der_padding(contents.value))
+            walk(_resolve(doc, entry.get(PdfName("Kids"))), depth + 1)
+
+    root = _resolve(doc, doc.trailer.get(PdfName("Root")))
+    acro = _resolve(doc, root.get(PdfName("AcroForm"))) if isinstance(root, PdfDictionary) else None
+    walk(_resolve(doc, acro.get(PdfName("Fields"))) if isinstance(acro, PdfDictionary) else None, 1)
+    return out
+
+
 def enable_ltv(
-    signed_pdf: bytes, *, extra: DssMaterial | None = None
+    signed_pdf: bytes, *, extra: DssMaterial | None = None, encryption: Any = None
 ) -> bytes:
     """Add a ``/DSS`` to an already-signed PDF, turning PAdES-T into PAdES-LT.
 
@@ -264,21 +327,23 @@ def enable_ltv(
     first signature receives a ``/VRI`` entry. A ``/DSS`` the document already
     has is extended (see :func:`build_dss`).
 
-    The original bytes are preserved, so the signatures stay valid.
+    The original bytes are preserved, so the signatures stay valid. An
+    encrypted document needs its handler in *encryption*, as :func:`build_dss`
+    does.
     """
-    from aspose_pdf.engine.simple_pdf import SimplePdf
-
     material = DssMaterial()
     vri_contents: bytes | None = None
-    for sig in SimplePdf.from_bytes(signed_pdf).signatures:
-        material.merge(collect_validation_material(sig.contents))
+    for contents in signature_contents(_parsed(signed_pdf, encryption)):
+        material.merge(collect_validation_material(contents))
         if vri_contents is None:
-            vri_contents = sig.contents
+            vri_contents = contents
     if extra is not None:
         material.merge(extra)
     if material.deduped().is_empty():
         return signed_pdf
-    return build_dss(signed_pdf, material, vri_contents=vri_contents)
+    return build_dss(
+        signed_pdf, material, vri_contents=vri_contents, encryption=encryption
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +353,7 @@ def enable_ltv(
 _DOCTS_CONTENTS_HEX = 16384
 
 
-def _acroform_update_objects(doc, field_num: int) -> list[tuple]:
+def _acroform_update_objects(doc, field_num: int, writer: PdfCosWriter) -> list[tuple]:
     """Return ``(obj_num, bytes)`` re-emissions that add *field_num* to AcroForm.
 
     Handles an inline AcroForm (re-emit the catalog) and an indirect one
@@ -298,7 +363,6 @@ def _acroform_update_objects(doc, field_num: int) -> list[tuple]:
     catalog = doc.get_object(root_ref)
     if not isinstance(catalog, PdfDictionary) or root_ref is None:
         raise ValueError("cannot locate document catalog for the timestamp field")
-    writer = PdfCosWriter(doc)
     field_ref = PdfIndirectReference(field_num, 0)
 
     acro_value = catalog.get(PdfName("AcroForm"))
@@ -312,7 +376,7 @@ def _acroform_update_objects(doc, field_num: int) -> list[tuple]:
         acro.mapping[PdfName("SigFlags")] = PdfNumber(3)
         if isinstance(acro_value, PdfIndirectReference):
             num = acro_value.object_number
-            body = writer.serialize_object(acro)
+            body = writer.serialize_indirect(num, acro)
             return [(num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1"))]
     else:
         catalog.mapping[PdfName("AcroForm")] = PdfDictionary(
@@ -323,7 +387,7 @@ def _acroform_update_objects(doc, field_num: int) -> list[tuple]:
         )
 
     num = root_ref.object_number
-    body = writer.serialize_object(catalog)
+    body = writer.serialize_indirect(num, catalog)
     return [(num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1"))]
 
 
@@ -354,27 +418,23 @@ def add_document_timestamp(
     timestamp_url: str | None = None,
     hash_algo: str = "sha256",
     timeout: float = 10.0,
+    encryption: Any = None,
 ) -> bytes:
     """Append a document timestamp (``ETSI.RFC3161``) — the PAdES-LTA step.
 
     The timestamp is a signature dictionary whose ``/Contents`` is an RFC 3161
     token over its own ``ByteRange``; it therefore protects everything signed so
     far, including the ``/DSS``.  Supply either a local *tsa* ``(cert, key)`` or
-    a network *timestamp_url*.
+    a network *timestamp_url*. An encrypted document needs its handler in
+    *encryption*: the field's name is a string, and a string in an encrypted
+    file is enciphered with that object's key, while the timestamp's
+    ``/Contents`` stays in the clear as a signature's does.
     """
     if tsa is None and not timestamp_url:
         raise ValueError("a local 'tsa' or a 'timestamp_url' is required")
 
-    doc = PdfCosParser(pdf_bytes).parse()
-    if PdfName("Encrypt") in doc.trailer.mapping:
-        # The field's name is a string, and a string in an encrypted file has
-        # to be enciphered with that object's key; written in clear, every
-        # reader would decrypt it into noise.
-        raise PdfSecurityException(
-            "Adding a document timestamp to an encrypted document is not "
-            "supported: the appended field would have to be enciphered with the "
-            "document's own key."
-        )
+    doc = _parsed(pdf_bytes, encryption)
+    writer = PdfCosWriter(doc, encryption=encryption)
 
     inc = IncrementalUpdate(pdf_bytes)
     ts_sig_num = inc.get_next_object_number()
@@ -393,13 +453,22 @@ def add_document_timestamp(
     # age -- must not share the first one's name: two fields of one name are
     # one field (ISO 32000-1 12.7.3.2), and validators reject the file.
     name = _unused_field_name(doc, "Timestamp")
-    field_body = f"<< /FT /Sig /T ({name}) /V {ts_sig_num} 0 R >>"
+    field_body = writer.serialize_indirect(
+        ts_field_num,
+        PdfDictionary(
+            {
+                PdfName("FT"): PdfName("Sig"),
+                PdfName("T"): PdfString(name),
+                PdfName("V"): PdfIndirectReference(ts_sig_num, 0),
+            }
+        ),
+    )
     inc.add_object(
         ts_field_num,
         f"{ts_field_num} 0 obj\n{field_body}\nendobj\n".encode("latin-1"),
     )
 
-    for num, body in _acroform_update_objects(doc, ts_field_num):
+    for num, body in _acroform_update_objects(doc, ts_field_num, writer):
         inc.add_object(num, body)
 
     combined = bytearray(pdf_bytes + inc.generate())
@@ -523,8 +592,14 @@ def read_dss(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
+    encryption: Any = None,
 ) -> DssMaterial:
-    """Harvest validation material from a document's ``/DSS`` (best effort)."""
+    """Harvest validation material from a document's ``/DSS`` (best effort).
+
+    An encrypted document's stores are enciphered with the file key like any
+    other stream, so *encryption* is needed to read them; without it the bytes
+    come back as the ciphertext they are.
+    """
     if budget is None:
         resolved_limits = _coerce_limits(limits)
         active_budget = _LoadBudget(resolved_limits)
@@ -542,6 +617,16 @@ def read_dss(
             limits=resolved_limits,
             budget=active_budget,
         ).parse()
+        if encryption is not None:
+            from .encryption import attach_document_decryption
+
+            attach_document_decryption(
+                doc,
+                encryption.key,
+                encryption.algorithm,
+                skip=encryption.exempt,
+                encrypt_metadata=encryption.encrypt_metadata,
+            )
         root = _resolve(doc, doc.trailer.get(PdfName("Root")))
         if not isinstance(root, PdfDictionary):
             return DssMaterial()

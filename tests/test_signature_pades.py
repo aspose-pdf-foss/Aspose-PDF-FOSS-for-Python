@@ -342,13 +342,13 @@ def test_detector_flags_unsigned_payload_after_archive_timestamp():
     assert "annotations/widgets (layering risk)" in " ".join(result.reasons)
 
 
-def test_building_a_dss_into_an_encrypted_document_is_refused():
-    """The validation material would go in as plaintext streams.
+def test_building_a_dss_into_an_encrypted_document_needs_its_handler():
+    """The validation material is enciphered with the file's own key.
 
-    This builder writes its stream objects by hand rather than through the
-    encrypting writer, so it has no key to encipher them with. A ``/DSS`` full
-    of certificates that every reader decrypts into noise looks present and is
-    unusable, which is worse than not being there -- so it refuses instead.
+    A store written in plaintext into an encrypted file would be certificates
+    every reader decrypts into noise, so the builder needs the document's
+    handler; without one it refuses rather than writing that. pyHanko reads
+    the store this writes and validates the signatures under it.
     """
     from aspose_pdf import Document
     from aspose_pdf.exceptions import PdfSecurityException
@@ -362,6 +362,18 @@ def test_building_a_dss_into_an_encrypted_document_is_refused():
     sealed.encrypt("u", "owner")
     out = io.BytesIO()
     sealed.save(out)
+    material = dss.DssMaterial(certs=[b"\x30\x03\x02\x01\x00"])
 
-    with pytest.raises(PdfSecurityException, match="encrypted document"):
-        dss.build_dss(out.getvalue(), dss.DssMaterial(certs=[b"\x30\x03\x02\x01\x00"]))
+    with pytest.raises(PdfSecurityException, match="encrypted"):
+        dss.build_dss(out.getvalue(), material)
+    with pytest.raises(PdfSecurityException, match="encrypted"):
+        dss.add_document_timestamp(
+            out.getvalue(), tsa=SigningUtils.create_self_signed_ca("T")
+        )
+
+    opened = Document(io.BytesIO(out.getvalue()), password="u")
+    handler = opened._engine_pdf._writer_encryption()
+    with_store = dss.build_dss(out.getvalue(), material, encryption=handler)
+    assert dss.read_dss(with_store, encryption=handler).certs == material.certs
+    # Without the key the same bytes are the ciphertext they are stored as.
+    assert dss.read_dss(with_store).certs != material.certs

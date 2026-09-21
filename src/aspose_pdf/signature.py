@@ -25,7 +25,7 @@ For that, and for a structured result, use :meth:`PdfSignature.validate` with a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.serialization import pkcs7
@@ -84,6 +84,10 @@ class PdfSignature:
     docmdp_level: int | None = None  # DocMDP /P (1/2/3) for certification sigs
     load_limits: PdfLoadLimits | None = field(default=None, repr=False, compare=False)
     _load_budget: _LoadBudget | None = field(default=None, repr=False, compare=False)
+    #: The document's security handler, when it is encrypted: a ``/DSS`` in an
+    #: encrypted file is enciphered like any other stream, and validation has
+    #: to read it to work offline.
+    _decryption: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self._load_budget is None:
@@ -224,6 +228,7 @@ class PdfSignature:
                 self.reference_data,
                 limits=self.load_limits,
                 budget=self._load_budget,
+                encryption=self._decryption,
             )
 
             return validate_cms(

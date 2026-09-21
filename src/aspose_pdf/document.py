@@ -790,11 +790,6 @@ class Document:
         Document
             Self for method chaining.
 
-        Raises
-        ------
-        PdfSecurityException
-            If the document is encrypted: the store would have to be enciphered
-            with the document's own key, which is not supported yet.
         """
         self._ensure_not_disposed()
         from aspose_pdf import _pending_signatures as pending
@@ -805,7 +800,6 @@ class Document:
             crls=pending.der_items(crls, "crls"),
             ocsps=pending.der_items(ocsp_responses, "ocsp_responses"),
         )
-        self._refuse_encrypted("A /DSS")
         self._pending_signing.append(pending.PendingLtv(material))
         return self
 
@@ -838,11 +832,6 @@ class Document:
         -------
         Document
             Self for method chaining.
-
-        Raises
-        ------
-        PdfSecurityException
-            If the document is encrypted, which is not supported yet.
         """
         self._ensure_not_disposed()
         from aspose_pdf import _pending_signatures as pending
@@ -852,7 +841,6 @@ class Document:
             raise PdfValidationException(
                 "A document timestamp needs a timestamp_url or a timestamp_authority"
             )
-        self._refuse_encrypted("A document timestamp")
         self._pending_signing.append(
             pending.PendingDocumentTimestamp(timestamp_url, authority, float(timeout))
         )
@@ -887,18 +875,6 @@ class Document:
         if entry.mapping.get(PdfName("V")) is not None:
             raise PdfSecurityException(f"Field '{field}' is already signed")
         return field
-
-    def _written_encrypted(self) -> bool:
-        """Whether the next save writes an encrypted file."""
-        engine = self._engine_pdf
-        return bool(engine.encrypted or engine._loaded_protection_active())
-
-    def _refuse_encrypted(self, what: str) -> None:
-        if self._written_encrypted():
-            raise PdfSecurityException(
-                f"{what} cannot be added to an encrypted document yet: it would "
-                "have to be enciphered with the document's own key"
-            )
 
     def _check_reopenable(self) -> None:
         """Refuse to sign what could not be opened again once it is saved.

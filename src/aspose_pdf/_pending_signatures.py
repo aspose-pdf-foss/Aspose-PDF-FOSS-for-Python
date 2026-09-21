@@ -172,7 +172,7 @@ class PendingLtv:
     material: DssMaterial
 
     def apply(self, data: bytes, *, encryption: Any, limits: Any) -> bytes:
-        return enable_ltv(data, extra=self.material)
+        return enable_ltv(data, extra=self.material, encryption=encryption)
 
 
 @dataclass(frozen=True)
@@ -189,6 +189,7 @@ class PendingDocumentTimestamp:
             tsa=self.timestamp_authority,
             timestamp_url=self.timestamp_url,
             timeout=self.timeout,
+            encryption=encryption,
         )
 
 

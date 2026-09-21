@@ -35,7 +35,12 @@ from aspose_pdf.engine.sign_field import sign_field
 from aspose_pdf.engine.signing import SigningUtils
 from aspose_pdf.exceptions import PdfSecurityException, PdfValidationException
 from aspose_pdf.outlines import OutlineItem
-from aspose_pdf.validation import PadesLevel, ValidationOptions, ValidationStatus
+from aspose_pdf.validation import (
+    PadesLevel,
+    RevocationStatus,
+    ValidationOptions,
+    ValidationStatus,
+)
 
 
 @pytest.fixture(scope="module")
@@ -386,42 +391,130 @@ def test_an_encrypted_document_is_signed_and_reopened(chain):
     assert [s.valid for s in Document(io.BytesIO(resigned), password="user").signatures] == [True, True]
 
 
-def test_ltv_and_document_timestamps_refuse_an_encrypted_document(chain, tsa):
+@pytest.mark.parametrize("algorithm", ["AES-256", "AES-128", "RC4"])
+def test_an_encrypted_document_gets_its_store_and_timestamp(chain, tsa, algorithm):
+    # The store and the timestamp field are enciphered with the file's own
+    # key, as an incremental save writes anything else. pyHanko opens each of
+    # these files, reads three certificates out of the store and reports both
+    # signatures intact, valid and trusted.
+    root, _, leaf, key = chain
+    document = _with_field()
+    document.encrypt("user", "owner", algorithm=algorithm)
+    document.sign("Approval", certificate=leaf, private_key=key, extra_certificates=[root], pades=True, timestamp_authority=tsa)
+    document.add_ltv(certificates=[tsa[0]])
+    document.add_document_timestamp(timestamp_authority=tsa)
+    data = _saved(document)
+
+    reopened = Document(io.BytesIO(data), password="user")
+    assert [(s.name, s.valid) for s in reopened.signatures] == [("Approval", True), ("Timestamp", True)]
+    result = reopened.signatures[0].validate(
+        ValidationOptions(trusted_certificates=[root, tsa[0]], check_timestamp=True)
+    )
+    assert (result.status, result.pades_level) == (ValidationStatus.VALID, PadesLevel.LTA)
+
+    handler = reopened._engine_pdf._writer_encryption()
+    with_key = dss.read_dss(data, encryption=handler)
+    assert _der(root) in with_key.certs and _der(tsa[0]) in with_key.certs
+    # Nothing in the store, nor the timestamp field's name, is in the clear.
+    assert dss.read_dss(data).certs != with_key.certs
+    assert b"Timestamp" not in data[len(_saved(_with_field())) :]
+
+
+def test_an_encrypted_store_is_read_back_when_a_signature_is_checked(chain):
+    # Revocation data only the store holds: validation has to decrypt it to
+    # find the CRL, or the signer's status stays unknown.
+    root, root_key, leaf, key = chain
     document = _with_field()
     document.encrypt("user", "owner")
-    with pytest.raises(PdfSecurityException, match="encrypted"):
-        document.add_ltv()
-    with pytest.raises(PdfSecurityException, match="encrypted"):
-        document.add_document_timestamp(timestamp_authority=tsa)
-    # The engine refuses it too: the timestamp field's name would go in clear.
-    encrypted = _saved(document)
-    with pytest.raises(PdfSecurityException, match="encrypted"):
-        dss.add_document_timestamp(encrypted, tsa=tsa)
-
-    # Opened with its password, it is still written encrypted...
-    with pytest.raises(PdfSecurityException, match="encrypted"):
-        Document(io.BytesIO(encrypted), password="owner").add_ltv()
-    # ...unless the protection is taken off.
-    _, _, leaf, key = chain
-    opened = Document(io.BytesIO(encrypted), password="owner").decrypt("owner")
-    opened.sign("Approval", certificate=leaf, private_key=key).add_ltv()
-    plain = _saved(opened)
-    assert dss.read_dss(plain).certs == [_der(leaf)]
+    document.sign("Approval", certificate=leaf, private_key=key, extra_certificates=[root], pades=True)
+    document.add_ltv(crls=[_crl(root, root_key)])
+    reopened = Document(io.BytesIO(_saved(document)), password="user")
+    result = reopened.signatures[0].validate(
+        ValidationOptions(trusted_certificates=[root], check_revocation=True)
+    )
+    assert (result.status, result.revocation_status) == (ValidationStatus.VALID, RevocationStatus.GOOD)
 
 
-def test_a_document_opened_with_a_recipient_credential_is_signed_and_reopened(chain):
-    _, _, leaf, key = chain
+def test_an_encrypted_documents_own_strings_survive_the_update(chain, tsa):
+    # The graph is decrypted to be read and enciphered again on the way out;
+    # left as it came, every string re-emitted around the store would be
+    # encrypted twice.
+    from aspose_pdf.engine.cos import PdfName, PdfString
+
+    root, _, leaf, key = chain
+    document = _with_field()
+    engine = document._engine_pdf
+    engine._ensure_cos()
+    catalog = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+    catalog.mapping[PdfName("Lang")] = PdfString("en-GB")
+    catalog.mapping[PdfName("XNote")] = PdfString("kept through the update")
+    document.encrypt("user", "owner")
+    document.sign("Approval", certificate=leaf, private_key=key, extra_certificates=[root])
+    document.add_ltv()
+    document.add_document_timestamp(timestamp_authority=tsa)
+    document.add_document_timestamp(timestamp_authority=tsa)
+    data = _saved(document)
+
+    # Nothing re-emitted around the store is written in the clear; this
+    # reader recovers a string that is, but a strict one shows noise.
+    assert b"kept through the update" not in data
+    reopened = Document(io.BytesIO(data), password="user")
+    engine = reopened._engine_pdf
+    catalog = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
+    assert engine._resolve(catalog.mapping[PdfName("Lang")]).value == b"en-GB"
+    assert engine._resolve(catalog.mapping[PdfName("XNote")]).value == b"kept through the update"
+    acroform = engine._resolve(catalog.mapping[PdfName("AcroForm")])
+    assert b"Helv" in engine._resolve(acroform.mapping[PdfName("DA")]).value
+    # The second timestamp reads the first one's name to avoid repeating it.
+    assert [s.name for s in reopened.signatures] == ["Approval", "Timestamp", "Timestamp2"]
+    assert all(s.valid for s in reopened.signatures)
+
+
+def test_a_signature_nested_under_a_parent_field_is_harvested(chain):
+    root, _, leaf, key = chain
+    document = Document()
+    page = document.pages.add()
+    document.form.add_signature_field("group.inner", page, (300, 600, 500, 680))
+    document.sign("group.inner", certificate=leaf, private_key=key, extra_certificates=[root])
+    document.add_ltv()
+    data = _saved(document)
+    assert _der(root) in dss.read_dss(data).certs
+
+
+def test_a_store_added_to_a_document_that_is_being_encrypted(chain, tsa):
+    # The protection is applied by this very save, so the handler the store is
+    # written with is the one the save produces.
+    root, _, leaf, key = chain
+    document = _with_field()
+    document.sign("Approval", certificate=leaf, private_key=key, extra_certificates=[root])
+    document.add_ltv()
+    document.encrypt("user", "owner")
+    data = _saved(document)
+    reopened = Document(io.BytesIO(data), password="user")
+    assert [s.valid for s in reopened.signatures] == [True]
+    handler = reopened._engine_pdf._writer_encryption()
+    assert _der(leaf) in dss.read_dss(data, encryption=handler).certs
+
+
+def test_a_document_opened_with_a_recipient_credential_is_signed_and_reopened(chain, tsa):
+    root, _, leaf, key = chain
     recipient, recipient_key = SigningUtils.create_self_signed_cert()
     document = _with_field()
     document.encrypt_for_recipients([Recipient(recipient)], ignore_key_usage=True)
     encrypted = _saved(document)
 
     opened = Document(io.BytesIO(encrypted), certificate=recipient, private_key=recipient_key)
-    opened.sign("Approval", certificate=leaf, private_key=key)
+    opened.sign("Approval", certificate=leaf, private_key=key, extra_certificates=[root], pades=True, timestamp_authority=tsa)
+    opened.add_ltv(certificates=[tsa[0]])
+    opened.add_document_timestamp(timestamp_authority=tsa)
     signed = _saved(opened)
-    assert [s.valid for s in opened.signatures] == [True]
+    assert [s.valid for s in opened.signatures] == [True, True]
     reopened = Document(io.BytesIO(signed), certificate=recipient, private_key=recipient_key)
-    assert [s.valid for s in reopened.signatures] == [True]
+    assert [s.valid for s in reopened.signatures] == [True, True]
+    result = reopened.signatures[0].validate(
+        ValidationOptions(trusted_certificates=[root, tsa[0]], check_timestamp=True)
+    )
+    assert result.pades_level == PadesLevel.LTA
 
 
 def test_a_document_encrypted_for_recipients_is_not_signed_here(chain):

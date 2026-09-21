@@ -9,6 +9,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Long-term validation for encrypted documents.** `Document.add_ltv` and
+  `add_document_timestamp` refused an encrypted document; the store and the
+  timestamp field are now written through the encrypting writer with the
+  file's own key, and validation reads the store back with it, so a
+  password- or certificate-protected file reaches PAdES-LTA. Checked with
+  pyHanko on AES-256, AES-128, RC4 and certificate-recipient documents.
+
 - **A found text fragment knows where it is.** `TextFragment` gains `rect`
   and `quads` in default user space, `font_name`, `font_size` and `color`,
   filled in when a page (or a document's pages) is visited. The boxes are the
@@ -67,10 +74,9 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the call is made: a field that does not exist, is not a signature field or
   is signed already, a key that is not the certificate's, a key type the
   chosen encoding cannot sign with, a certification on a signed document.
-  Encrypted documents are signed with their own key; `/DSS` and document
-  timestamps are refused for them for now, as is signing a document being
-  encrypted for certificate recipients, which could not be reopened after the
-  save. Every combination checked in pyHanko (intact, valid, trusted, whole
+  Encrypted documents are signed, stored and timestamped with their own key;
+  signing a document being encrypted for certificate recipients is refused,
+  since it could not be reopened after the save. Every combination checked in pyHanko (intact, valid, trusted, whole
   file covered, benign modification levels) and opened in pdfium and MuPDF.
 
 ### Fixed
