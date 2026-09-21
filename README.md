@@ -83,12 +83,40 @@ flowchart TD
 - `Document.replace_text()` and `Document.redact_text()` rewrite or remove matched text directly
   inside existing content streams; `redact_text(..., overlay=True)` also draws a filled bar over
   each removed run's location.
-- `Page.render()` and `Page.save_as_image()` rasterize a page to PNG or TIFF through a bundled
-  renderer — no third-party rasterization library required for the core path — that fills real
-  glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh shadings.
-- `Document.save_as_html()`, `Document.save_as_markdown()`, and `Document.save_as_svg()` (also
-  reachable through `Document.save()` with `DocFormat.HTML`/`MARKDOWN`/`SVG`) export structure and
-  vector content directly — no PPTX conversion path exists.
+- `Document.to_html()` and `to_markdown()` convert a document to a *flowing* one — headings,
+  paragraphs, lists, tables and figures inferred by the same layout analysis `auto_tag()` uses,
+  with the text decoded the way `extract_text()` decodes it. For a facsimile, export SVG instead.
+- `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
+  fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. The
+  exporter is the renderer with its paint sinks replaced, so the SVG and the rasterized page agree
+  on geometry by construction.
+- JPEG 2000 (`/JPXDecode`) images — what scanners emit — decode with a bundled pure-Python
+  decoder, so a default install reads them. Pillow is used when present because it is far faster;
+  an image neither can decode is left undrawn rather than painted as noise.
+- `Page.render()` and `Page.save_as_image()` rasterize a page to PNG, TIFF, or JPEG through a
+  bundled renderer — no third-party rasterization library required for the core path — that fills
+  real glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh
+  shadings. Output can be RGB, greyscale, or 1-bit bilevel; TIFF is Deflate-compressed by default,
+  and `Document.save_as_tiff()` writes every page into one multi-page TIFF.
+- `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
+  shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
+  opens one. Each recipient gets its own permissions — one may print, another only read the same
+  file — which a password cannot express.
+- `Document.font_substitution` lets the renderer draw fonts the PDF references but does not
+  embed — the East Asian case, where the producer assumes the reader has the face — using font
+  directories you name, programs you supply, or the machine's own fonts. A composite font's CIDs
+  are mapped to Unicode and on to a real face, so a PDF naming `SimSun` renders even where only
+  `PingFang SC` is installed, instead of a row of glyph boxes. Advances still come from the PDF's
+  own `/Widths` / `/W`, so the substitute changes which glyphs are drawn, not where they sit. Off
+  by default, so rendering stays identical across machines unless you ask for it.
+- `Document.layers` lists, creates, switches and removes optional content groups; rendering, text
+  extraction, and graphics absorption all skip a hidden layer, the way a viewer does.
+  `make_exclusive([...])` makes layers mutually exclusive (`/RBGroups`), so switching one on
+  switches the others off — a viewer's radio buttons.
+  `Page.layer(layer)` is a context manager that puts everything authored inside it on that layer,
+  `Layer.add(content)` puts an annotation or image that is *already* in the document on one, and
+  `Document.flatten_layers()` resolves the layers for good — deleting what is hidden from the
+  file rather than leaving it there for the next reader to switch back on.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content.
@@ -469,6 +497,7 @@ and delete workflows. 265 public types are organized by module below.
 | `InvalidOperationException` | Raised when a graphics element is attached to the wrong parent. |
 | `InvalidPasswordException` | Raised when an incorrect password is provided for an encrypted document. |
 | `Layer` | One optional content group: its name, intent, whether it is shown, and `add`/`remove`/`contains` for tagging existing content with it. |
+| `ViewerPreferences` | The document's `/ViewerPreferences`: the window, the reading direction and the print dialogue, read and written in place. |
 | `LayerCollection` | The document's layers: indexable by position or by name, with `add(name, visible)`, `remove(layer)` and `make_exclusive(layers)`. |
 | `InvalidPdfFileFormatException` | Raised when the PDF file format is invalid or corrupted. |
 | `InvalidValueFormatException` | Raised when an invalid value is encountered during parsing or conversion. |
@@ -759,7 +788,8 @@ and delete workflows. 265 public types are organized by module below.
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
   - properties: `pages`, `page_labels`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
-    `is_pdfua_compliant`, `font_substitution`
+    `is_pdfua_compliant`, `font_substitution`, `page_mode`, `page_layout`, `open_action`,
+    `viewer_preferences`
 
 ### Pages And Content
 

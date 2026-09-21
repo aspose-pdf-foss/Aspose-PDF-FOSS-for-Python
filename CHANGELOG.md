@@ -9,6 +9,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **How a document asks to be opened and shown.** `/PageMode`, `/PageLayout`,
+  `/OpenAction` and `/ViewerPreferences` survived a load and save but could
+  not be read or written. `Document.page_mode`, `Document.page_layout`,
+  `Document.open_action` (a `Destination` or an `Action`) and
+  `Document.viewer_preferences` now cover them, with `PageMode`, `PageLayout`,
+  `ReadingDirection`, `PrintScaling`, `DuplexMode` and `PageBoundary` for the
+  values ISO 32000-1 tables 28 and 150 allow. An entry that is missing, of the
+  wrong type, or outside those lists reads as its default, as pdf.js and
+  PDFBox resolve it; `/PrintPageRange` follows pdf.js and is spoken in 0-based
+  page indices. Both directions were checked against pdf.js, PDFBox and MuPDF.
+
 - **Layers that exclude one another.** `/RBGroups` -- the radio buttons of a
   viewer's layers panel -- was read into a configuration but never enforced,
   so switching one layer on left the others of its group on and the saved file

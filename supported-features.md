@@ -494,6 +494,28 @@ Supported:
   merged or extracted from other documents keep the labels they had there, and
   pages from a document without labels get empty ones, exactly as qpdf's
   `--pages` does. Every case was compared page by page with the references.
+- **How the document asks to be opened and shown** (ISO 32000-1 tables 28 and
+  150). `Document.page_mode` (`PageMode`: the bookmarks, thumbnails, layers or
+  attachments panel, full screen, or nothing), `Document.page_layout`
+  (`PageLayout`: one page, one column, or two of either with the odd-numbered
+  pages on either side), `Document.open_action` (a `Destination` or an
+  `Action`, or `None`) and `Document.viewer_preferences` -- the window
+  (`hide_toolbar`, `hide_menubar`, `hide_window_ui`, `fit_window`,
+  `center_window`, `display_doc_title`), reading (`non_full_screen_page_mode`,
+  `direction`, `view_area`, `view_clip`) and the print dialogue (`print_area`,
+  `print_clip`, `print_scaling`, `duplex`, `pick_tray_by_pdf_size`,
+  `num_copies`, `print_page_range`), with `clear()` to remove the lot. An
+  entry that is missing, of the wrong type, or not one of the names the
+  specification lists reads as its default -- which is what pdf.js resolves
+  such an entry to and what PDFBox's typed `PageMode` and `PageLayout` getters
+  do, all three agreeing on a missing one with MuPDF. `/PrintPageRange` is
+  ignored altogether unless it is an even-length array of ascending whole page
+  numbers the document has, exactly as pdf.js treats it, and it is handed out
+  and taken as the 0-based page indices used everywhere else rather than the
+  1-based numbers the file holds. Writing was checked by reading the result
+  back with all three references; setting a value outside a table's list, a
+  copy count below one, or a print range naming pages the document does not
+  have raises rather than writing nonsense.
 - Read page media box/rectangle through `Page.rect` and `Page.media_box`.
 - Read and set page rotation through `Page.rotation` (0/90/180/270, clockwise;
   inherited from parent page-tree nodes, normalised, and persisted on save).

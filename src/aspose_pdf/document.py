@@ -24,6 +24,7 @@ from aspose_pdf._compat_surface import (
     require_pdf_save_format as _require_pdf_save_format,
 )
 from aspose_pdf.attachments import AF_RELATIONSHIPS, FileSpecification
+from aspose_pdf.engine import viewer_preferences as engine_viewer_prefs
 from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.forms import Form
+    from aspose_pdf.interactive import Action, Destination
     from aspose_pdf.optimization import OptimizationOptions
     from aspose_pdf.page_labels import PageLabelCollection
     from aspose_pdf.pages import Page, PageCollection
@@ -62,6 +64,11 @@ if TYPE_CHECKING:
     from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.validation import CertificationLevel
+    from aspose_pdf.viewer_preferences import (
+        PageLayout,
+        PageMode,
+        ViewerPreferences,
+    )
     from aspose_pdf.xmp import XmpPacket
 
 logger = logging.getLogger(__name__)
@@ -277,6 +284,95 @@ class Document:
         from aspose_pdf.page_labels import PageLabelCollection
 
         return PageLabelCollection(self)
+
+    @property
+    def page_mode(self) -> PageMode:
+        """What a viewer shows beside the page when the document opens.
+
+        ``/PageMode`` (ISO 32000-1 table 28): the bookmarks, the thumbnails,
+        the layers or the attachments panel, full screen, or nothing.
+        A document that says nothing, or something the specification does not
+        allow, opens with :attr:`PageMode.USE_NONE`.
+        """
+        self._ensure_not_disposed()
+        from aspose_pdf.viewer_preferences import PageMode
+
+        return PageMode(
+            engine_viewer_prefs.catalog_name(
+                self._engine_pdf, "PageMode", engine_viewer_prefs.PAGE_MODES, "UseNone"
+            )
+        )
+
+    @page_mode.setter
+    def page_mode(self, value: PageMode | str) -> None:
+        self._ensure_not_disposed()
+        from aspose_pdf.viewer_preferences import PageMode, _member
+
+        self._engine_pdf._ensure_cos()
+        engine_viewer_prefs.set_catalog_name(
+            self._engine_pdf, "PageMode", _member(PageMode, value, "page_mode")
+        )
+
+    @property
+    def page_layout(self) -> PageLayout:
+        """How the pages are arranged (``/PageLayout``, table 28).
+
+        One page at a time, one continuous column, or two of either, with the
+        odd-numbered pages on whichever side. Defaults to
+        :attr:`PageLayout.SINGLE_PAGE`.
+        """
+        self._ensure_not_disposed()
+        from aspose_pdf.viewer_preferences import PageLayout
+
+        return PageLayout(
+            engine_viewer_prefs.catalog_name(
+                self._engine_pdf,
+                "PageLayout",
+                engine_viewer_prefs.PAGE_LAYOUTS,
+                "SinglePage",
+            )
+        )
+
+    @page_layout.setter
+    def page_layout(self, value: PageLayout | str) -> None:
+        self._ensure_not_disposed()
+        from aspose_pdf.viewer_preferences import PageLayout, _member
+
+        self._engine_pdf._ensure_cos()
+        engine_viewer_prefs.set_catalog_name(
+            self._engine_pdf, "PageLayout", _member(PageLayout, value, "page_layout")
+        )
+
+    @property
+    def open_action(self) -> Action | Destination | None:
+        """Where the document opens, or what it does when opened.
+
+        ``/OpenAction`` (table 28) is either a destination -- a page and how to
+        fit it -- or an action, so this gives back a :class:`Destination` or an
+        :class:`Action`, and takes either. ``None`` removes it, and reading
+        gives ``None`` for a destination whose page the document no longer
+        has: a viewer ignores such an entry rather than opening somewhere else.
+        """
+        self._ensure_not_disposed()
+        return engine_viewer_prefs.open_action(self._engine_pdf)
+
+    @open_action.setter
+    def open_action(self, value: Action | Destination | None) -> None:
+        self._ensure_not_disposed()
+        self._engine_pdf._ensure_cos()
+        engine_viewer_prefs.set_open_action(self._engine_pdf, value)
+
+    @property
+    def viewer_preferences(self) -> ViewerPreferences:
+        """The window, the reading direction and the print dialogue.
+
+        See :class:`~aspose_pdf.viewer_preferences.ViewerPreferences`: the
+        ``/ViewerPreferences`` entries (table 150), read and written in place.
+        """
+        self._ensure_not_disposed()
+        from aspose_pdf.viewer_preferences import ViewerPreferences
+
+        return ViewerPreferences(self)
 
     @property
     def form(self) -> Form:
