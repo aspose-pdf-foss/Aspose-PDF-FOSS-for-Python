@@ -75,6 +75,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An extended sequential JPEG (`SOF1`) decoded to nothing without Pillow.**
+  Such a frame is coded exactly like a baseline one for 8-bit Huffman scans
+  (ITU-T T.81 F.1.2) and libjpeg, pdfium and MuPDF all read it that way; the
+  pure-Python decoder refused it, so the image was missing wherever Pillow was
+  not installed. It is now decoded as baseline, while a 12-bit frame still
+  falls back.
+
 - **A field under a parent without a name disappeared.** `/T` is optional,
   and a nameless node's kids take the name above it -- pdf.js, qpdf and MuPDF
   all read the kid of such a parent as `inner`, not `box.inner` -- but the

@@ -194,6 +194,121 @@ def test_cmyk_to_rgb_matches_pillow_rgb():
 
 
 # ---------------------------------------------------------------------------
+# Extended sequential (SOF1)
+# ---------------------------------------------------------------------------
+
+
+def _as_extended(data: bytes) -> bytes:
+    """The same frame announced as extended sequential rather than baseline.
+
+    An extended sequential frame differs from a baseline one in what it allows
+    -- four Huffman tables of each class, 12-bit samples -- not in how an
+    8-bit Huffman scan is coded (ITU-T T.81 F.1.2), so the bytes after the
+    marker are read the same way. libjpeg (through Pillow), pdfium and MuPDF
+    all decode this file exactly as they decode the baseline one.
+    """
+    at = data.index(b"\xff\xc0")
+    return data[:at] + b"\xff\xc1" + data[at + 2 :]
+
+
+@pytest.mark.parametrize(
+    ("image", "kwargs", "mode", "mean_max", "abs_max"),
+    [
+        (_smooth_rgb(), {"quality": 92, "subsampling": 0}, "RGB", 1.5, 6),
+        (_smooth_rgb(), {"quality": 90, "subsampling": 2}, "RGB", 2.5, 12),
+        (_smooth_rgb().convert("L"), {"quality": 92}, "L", 1.0, 4),
+    ],
+    ids=["rgb-444", "rgb-420", "grayscale"],
+)
+def test_extended_sequential_decodes_as_baseline(image, kwargs, mode, mean_max, abs_max):
+    baseline = _jpeg(image, **kwargs)
+    extended = _as_extended(baseline)
+    assert b"\xff\xc1" in extended and b"\xff\xc0" not in extended
+    # It used to return None, so a page with such an image drew nothing where
+    # Pillow was not installed.
+    assert decode(extended).samples == decode(baseline).samples
+    _assert_matches_pillow(extended, mode, mean_max=mean_max, abs_max=abs_max)
+
+
+def test_extended_sequential_with_restarts_and_odd_size():
+    data = _as_extended(
+        _jpeg(_smooth_rgb(70, 53), quality=92, subsampling=0, restart_marker_blocks=4)
+    )
+    assert b"\xff\xdd" in data
+    _assert_matches_pillow(data, "RGB", mean_max=1.5, abs_max=6)
+
+
+def _with_high_table_ids(data: bytes) -> bytes:
+    """The same frame using Huffman table ids 2 and 3, which baseline forbids.
+
+    Four tables of each class are exactly what an extended sequential frame
+    adds over a baseline one; Pillow reads this file as the original.
+    """
+    out = bytearray(data)
+    i = 2
+    while i < len(out) - 1:
+        if out[i] != 0xFF:
+            i += 1
+            continue
+        marker = out[i + 1]
+        if marker == 0xD8 or marker == 0x01 or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        length = int.from_bytes(out[i + 2 : i + 4], "big")
+        if marker == 0xC4:  # DHT
+            j = i + 4
+            while j < i + 2 + length:
+                kind = out[j] >> 4
+                out[j] = (kind << 4) | (2 if kind == 0 else 3)
+                j += 17 + sum(out[j + 1 : j + 17])
+        elif marker == 0xDA:  # SOS: each component names its two tables
+            for component in range(out[i + 4]):
+                out[i + 6 + component * 2] = (2 << 4) | 3
+            break
+        i += 2 + length
+    return bytes(out)
+
+
+def test_four_huffman_tables_are_read():
+    data = _with_high_table_ids(_as_extended(_jpeg(_smooth_rgb().convert("L"), quality=90)))
+    assert b"\xff\xc1" in data
+    _assert_matches_pillow(data, "L", mean_max=1.0, abs_max=4)
+
+
+def test_twelve_bit_samples_are_still_refused():
+    # /Tf 12-bit precision is what an extended frame may carry and this
+    # decoder cannot: it falls back rather than misreading the scan.
+    data = bytearray(_as_extended(_jpeg(_smooth_rgb(), quality=90)))
+    at = data.index(b"\xff\xc1")
+    data[at + 4] = 12  # the frame's sample precision
+    assert decode(bytes(data)) is None
+
+
+@pytest.mark.parametrize("marker", [0xC3, 0xC5, 0xC9, 0xCB, 0xCF])
+def test_other_frame_kinds_are_refused(marker):
+    # Lossless, differential and arithmetic-coded frames are not Huffman
+    # sequential and are left to Pillow.
+    data = bytearray(_jpeg(_smooth_rgb(), quality=90))
+    data[data.index(b"\xff\xc0") + 1] = marker
+    assert decode(bytes(data)) is None
+
+
+def test_the_image_pipeline_draws_an_extended_frame_without_pillow(monkeypatch):
+    from aspose_pdf.engine import image_export
+
+    jpeg = _as_extended(_jpeg(_smooth_rgb(), quality=90, subsampling=0))
+    meta = {"filter": "DCTDecode", "width": 96, "height": 72}
+    monkeypatch.setattr(image_export, "HAS_PILLOW", False)
+    out, ext = image_export.reconstruct_image_file(meta, jpeg, target_ext="png")
+    assert ext == "png" and out[:8] == b"\x89PNG\r\n\x1a\n"
+    mean, _peak = _diff(
+        Image.open(io.BytesIO(out)).convert("RGB").tobytes(),
+        Image.open(io.BytesIO(jpeg)).convert("RGB").tobytes(),
+    )
+    assert mean <= 1.5
+
+
+# ---------------------------------------------------------------------------
 # Unsupported / malformed -> None (caller falls back)
 # ---------------------------------------------------------------------------
 

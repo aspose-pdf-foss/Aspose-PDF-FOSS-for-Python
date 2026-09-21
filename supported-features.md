@@ -1381,14 +1381,20 @@ Supported:
   **DeviceN → RGB** (and palettes over them, with `/Decode` applied) -- the
   pixels the renderer shows, in eager and streaming mode alike -- and **Gray ↔ RGB**. `save`/
   `save_image` also accept `color_space="RGB"`/`"Gray"` to force a conversion.
-- Decode **baseline and progressive** DCT/JPEG to pixels with a
+- Decode **sequential (baseline `SOF0` and extended `SOF1`) and progressive**
+  DCT/JPEG to pixels with a
   **dependency-free** decoder (`aspose_pdf.engine.dct`): grayscale, YCbCr/RGB and
   CMYK/YCCK (4-component, with Adobe de-inversion), any chroma subsampling, and
   restart intervals. Image export uses it to produce a real PNG from such JPEGs
   even when Pillow is absent. **JPEG 2000 is decoded without Pillow too**
   (`aspose_pdf.engine.jpeg2000`); the optional `images` extra
   (`pip install aspose-pdf-foss-for-python[images]`) is now a speed choice
-  rather than a capability one. Arithmetic-coded JPEG remains Pillow-only.
+  rather than a capability one. An extended sequential frame is read as a
+  baseline one -- the two differ in what they allow (four Huffman tables of
+  each class, 12-bit samples), not in how an 8-bit Huffman scan is coded
+  (ITU-T T.81 F.1.2) -- which is what libjpeg, pdfium and MuPDF do with it;
+  a 12-bit frame is still refused. Arithmetic-coded, lossless and differential
+  JPEG remain Pillow-only.
 - Read reconstruction metadata from an `ImagePlacement`: `width`, `height`,
   `bits_per_component`, and `color_space`.
 - Replace or hide an `ImagePlacement` payload in memory.
@@ -1450,7 +1456,8 @@ Boundaries:
   path is floating point and agrees with OpenJPEG to within a step or two per
   channel. Pillow is still used when installed, being several hundred times
   faster on a full-page scan.
-- Arithmetic-coded JPEG remains unsupported by the pure-Python raster path.
+- Arithmetic-coded, lossless and differential JPEG, and 12-bit samples, remain
+  unsupported by the pure-Python raster path.
 
 ## Forms
 

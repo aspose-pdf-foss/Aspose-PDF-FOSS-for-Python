@@ -1,8 +1,8 @@
 """Dependency-free JPEG (``DCTDecode``) decoder.
 
-Decodes **baseline sequential** (marker ``SOF0``) and **progressive**
-(``SOF2``) DCT JPEG with Huffman entropy coding into raw 8-bit, row-major,
-component-interleaved samples:
+Decodes **sequential** (markers ``SOF0`` baseline and ``SOF1`` extended) and
+**progressive** (``SOF2``) DCT JPEG with Huffman entropy coding into raw 8-bit,
+row-major, component-interleaved samples:
 
 * 1 component  -> grayscale,
 * 3 components -> YCbCr converted to RGB (or kept RGB for an Adobe
@@ -41,11 +41,11 @@ _ZIGZAG = (
     58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 )  # fmt: skip
 
-# Start-of-frame markers we cannot decode (extended sequential, lossless,
-# differential, and arithmetic-coded variants). ``SOF0``/``SOF2`` (baseline and
-# progressive Huffman) are handled.
+# Start-of-frame markers we cannot decode (lossless, differential, and
+# arithmetic-coded variants). ``SOF0``/``SOF1``/``SOF2`` -- baseline and
+# extended sequential, and progressive, all Huffman -- are handled.
 _UNSUPPORTED_SOF = frozenset(
-    {0xC1, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+    {0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
 )
 
 # Pre-computed inverse-DCT basis: _IDCT_BASIS[u][x] = C(u)·cos((2x+1)uπ/16).
@@ -134,7 +134,16 @@ def _decode(data: bytes, limits: PdfLoadLimits) -> DecodedJpeg | None:
         seg = data[pos + 2 : pos + seg_len]
         pos += seg_len
 
-        if marker == 0xC0:  # SOF0 -- baseline
+        if marker in (0xC0, 0xC1):  # SOF0/SOF1 -- sequential, baseline or extended
+            # An extended sequential frame differs from a baseline one in what
+            # it *allows* -- four Huffman tables of each class, 12-bit samples
+            # -- not in how an 8-bit Huffman scan is coded (ITU-T T.81 F.1.2),
+            # and the tables here were never limited to two. A frame this
+            # decoder cannot take, 12-bit samples among them, is refused by
+            # _parse_sof and falls back to Pillow. libjpeg (through Pillow),
+            # pdfium and MuPDF all decode such a frame as they decode
+            # baseline; this used to return None and draw nothing without
+            # Pillow installed.
             width, height, components = _parse_sof(seg)
             if not _validate_jpeg_layout(
                 width, height, components, limits, progressive=False
