@@ -872,7 +872,9 @@ class StreamEncoder:
         ``filters``/``decode_parms`` use the same shapes as
         :meth:`StreamDecoder.decode`. For a multi-filter list the encoders run in
         reverse order (the decode order is left-to-right), keeping the round-trip
-        exact. Unknown filters, image codecs and ``/Crypt`` raise
+        exact. Missing parameter-list entries default to ``None``; entries beyond
+        the filter count are ignored, as in the decoder.
+        Unknown filters, image codecs and ``/Crypt`` raise
         :class:`~aspose_pdf.exceptions.PdfValidationException`.
         """
         if not filters:
@@ -884,7 +886,9 @@ class StreamEncoder:
             filter_list = list(filters)
 
         if isinstance(decode_parms, list):
-            parms_list = decode_parms
+            # Align parameters with their filters before reversing the order.
+            parms_list = decode_parms[: len(filter_list)]
+            parms_list.extend([None] * (len(filter_list) - len(parms_list)))
         else:
             parms_list = [decode_parms] * len(filter_list)
 

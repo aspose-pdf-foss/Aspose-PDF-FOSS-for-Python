@@ -69,6 +69,51 @@ def test_triple_chain_roundtrip(data):
     assert _roundtrip(data, filters) == data
 
 
+@pytest.mark.parametrize("filters", [["FlateDecode"], ["ASCIIHexDecode", "FlateDecode"]])
+@pytest.mark.parametrize("parms", [[], [None]])
+def test_short_decode_parms_do_not_skip_filters(filters, parms):
+    data = b"All filters must run even when their parameters are omitted."
+    original_parms = list(parms)
+
+    encoded = StreamEncoder.encode(data, filters, parms)
+
+    assert StreamDecoder.decode(encoded, filters, None) == data
+    assert parms == original_parms
+
+
+@pytest.mark.parametrize(
+    "parms",
+    [
+        [{"EarlyChange": 0}],
+        [{"EarlyChange": 0}, None],
+        [{"EarlyChange": 0}, None, {"Predictor": 12}],
+    ],
+)
+def test_decode_parms_stay_with_their_filters(parms):
+    filters = ["LZWDecode", "FlateDecode"]
+    # Incompressible data crosses LZW code-width boundaries, exposing EarlyChange.
+    data = random.Random(1234).randbytes(4096)
+    original_parms = list(parms)
+
+    encoded = StreamEncoder.encode(data, filters, parms)
+
+    assert StreamDecoder.decode(encoded, filters, [{"EarlyChange": 0}, None]) == data
+    assert parms == original_parms
+
+
+@pytest.mark.parametrize("filt", ["DCTDecode", "Crypt", "MadeUpFilter"])
+def test_empty_decode_parms_do_not_skip_unsupported_filters(filt):
+    with pytest.raises(PdfValidationException):
+        StreamEncoder.encode(b"data", [filt, "ASCIIHexDecode"], [])
+
+
+def test_short_decode_parms_preserve_predictor_rejection():
+    with pytest.raises(PdfValidationException, match="predictor"):
+        StreamEncoder.encode(
+            b"data", ["FlateDecode", "ASCIIHexDecode"], [{"Predictor": 12}]
+        )
+
+
 def test_ascii85_canonical_form():
     enc = StreamEncoder.encode(b"Hello World!", "ASCII85Decode")
     assert enc.startswith(b"<~") and enc.endswith(b"~>")
