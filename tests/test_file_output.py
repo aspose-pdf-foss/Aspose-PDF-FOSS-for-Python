@@ -176,19 +176,52 @@ def test_a_read_only_file_is_refused_and_left_alone(tmp_path):
 
 @posix_only
 @not_root
-def test_a_directory_that_takes_no_new_file_falls_back_to_writing_in_place(tmp_path):
-    # Nowhere to stage a copy beside the target; the write still happens, the
-    # way it always did.
+def test_a_directory_that_takes_no_new_file_leaves_the_target_alone(tmp_path):
     directory = tmp_path / "locked"
     directory.mkdir()
     path = directory / "doc.bin"
     path.write_bytes(b"old")
     os.chmod(directory, 0o555)
     try:
-        write_file_atomically(path, b"new")
-        assert path.read_bytes() == b"new"
+        with pytest.raises(PermissionError):
+            write_file_atomically(path, b"new")
+        assert path.read_bytes() == b"old"
     finally:
         os.chmod(directory, 0o755)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_staging_failure_never_writes_the_target(tmp_path, monkeypatch, existing):
+    path = tmp_path / "target.bin"
+    if existing:
+        path.write_bytes(b"old")
+
+    def denied(*args, **kwargs):
+        raise PermissionError(errno.EACCES, "Cannot create staging file")
+
+    monkeypatch.setattr(file_output.os, "open", denied)
+    with pytest.raises(PermissionError) as excinfo:
+        write_file_atomically(path, b"new")
+
+    assert excinfo.value.errno == errno.EACCES
+    if existing:
+        assert path.read_bytes() == b"old"
+    else:
+        assert not path.exists()
+
+
+def test_staging_name_collisions_leave_the_target_alone(tmp_path, monkeypatch):
+    path = tmp_path / "target.bin"
+    path.write_bytes(b"old")
+    collision = tmp_path / ".target.bin.abcdef.tmp"
+    collision.write_bytes(b"keep")
+    monkeypatch.setattr(file_output.secrets, "token_hex", lambda _size: "abcdef")
+
+    with pytest.raises(FileExistsError, match="unique staging file"):
+        write_file_atomically(path, b"new")
+
+    assert path.read_bytes() == b"old"
+    assert collision.read_bytes() == b"keep"
 
 
 def test_the_engine_s_cos_save_is_written_the_same_way(tmp_path, monkeypatch):

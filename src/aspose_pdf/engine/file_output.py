@@ -45,19 +45,14 @@ def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> None:
       than silently renamed over.
 
     What cannot be kept: a replaced file is a new inode, so other **hard
-    links** to the old one keep the old content. And where the directory does
-    not allow a new file beside the target, there is nowhere to stage one, so
-    the write falls back to happening in place, as it always used to.
+    links** to the old one keep the old content. If the directory cannot hold
+    a staging file, the write fails without touching the target.
     """
     target = Path(os.path.realpath(path))
     if target.exists() and not os.access(target, os.W_OK):
         raise PermissionError(f"Permission denied: '{target}'")
 
-    staged = _open_staging_file(target)
-    if staged is None:
-        target.write_bytes(data)
-        return
-    descriptor, staging_path = staged
+    descriptor, staging_path = _open_staging_file(target)
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
@@ -73,8 +68,8 @@ def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> None:
     _sync_directory(target.parent)
 
 
-def _open_staging_file(target: Path) -> tuple[int, str] | None:
-    """Create an empty sibling of *target* to stage into, or ``None``.
+def _open_staging_file(target: Path) -> tuple[int, str]:
+    """Create an empty sibling of *target* to stage into, or raise.
 
     Created with ``os.open`` and mode ``0o666`` so the process umask applies
     exactly as it would to ``open(target, "wb")`` -- ``tempfile.mkstemp``
@@ -88,9 +83,7 @@ def _open_staging_file(target: Path) -> tuple[int, str] | None:
             return os.open(candidate, flags, 0o666), str(candidate)
         except FileExistsError:
             continue
-        except OSError:
-            return None  # the directory will not take a new file
-    return None
+    raise FileExistsError(f"Could not create a unique staging file beside {target}")
 
 
 def _sync_directory(directory: Path) -> None:
