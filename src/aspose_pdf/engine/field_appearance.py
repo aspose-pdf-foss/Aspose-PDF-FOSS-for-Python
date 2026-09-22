@@ -6,8 +6,8 @@ must be regenerated for viewers that do not honour the AcroForm
 stream for text and choice fields from the field value and its default
 appearance string (``/DA``).
 
-It is pure (no COS / engine imports): the caller resolves the font object and
-wraps the returned bytes in a form XObject. Content is emitted in the widget's
+It does not access document objects: the caller resolves the font and wraps
+the returned bytes in a form XObject. Content is emitted in the widget's
 local coordinate space (origin lower-left, spanning ``(0, 0)`` to ``(w, h)``).
 
 Text is measured with an optional ``width_fn`` (``code -> advance`` in
@@ -20,7 +20,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-# code (single-byte, cp1252 domain) -> advance width in 1000-unit glyph space.
+from .agl import encode_with_base_encoding
+
+# code (single-byte, WinAnsi domain) -> advance width in 1000-unit glyph space.
 WidthFn = Callable[[int], float]
 
 # Fallback estimate when no glyph metrics are available: Standard-14 Helvetica
@@ -89,9 +91,13 @@ def _split_lines(text: str) -> list[str]:
 
 
 def _char_code(ch: str) -> int:
-    """The single-byte code *ch* is emitted as (mirrors ``_pdf_literal``)."""
+    """The appearance code for *ch*, mapping extended Unicode through WinAnsi."""
     code = ord(ch)
-    return code if code < 256 else 0x3F  # non-Latin-1 becomes "?"
+    # Preserve existing one-byte characters, including control and spacing codes.
+    if code < 256:
+        return code
+    encoded = encode_with_base_encoding(ch, "WinAnsiEncoding")
+    return encoded[0] if encoded is not None else 0x3F
 
 
 def _text_width(
@@ -151,19 +157,19 @@ def _wrap_text(
     return lines or [""]
 
 
-def _pdf_literal(text: str) -> str:
-    """Escape *text* as a PDF literal string ``(...)`` (Latin-1 byte domain)."""
+def _pdf_literal(text: str | bytes) -> str:
+    """Escape WinAnsi text or already-encoded bytes as a PDF literal string."""
     out = ["("]
-    for ch in text:
-        if ch in ("(", ")", "\\"):
-            out.append("\\" + ch)
-        elif ch == "\t":
+    codes = text if isinstance(text, bytes) else (_char_code(ch) for ch in text)
+    for code in codes:
+        if code in (0x28, 0x29, 0x5C):
+            out.append("\\" + chr(code))
+        elif code == 0x09:
             out.append("\\t")
-        elif ord(ch) < 32 or ord(ch) > 126:
-            code = ord(ch)
-            out.append(f"\\{code & 0xFF:03o}" if code < 256 else "?")
+        elif code < 32 or code > 126:
+            out.append(f"\\{code:03o}")
         else:
-            out.append(ch)
+            out.append(chr(code))
     out.append(")")
     return "".join(out)
 

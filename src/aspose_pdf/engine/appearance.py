@@ -971,6 +971,8 @@ def build_button_appearance(
             lines.append("f")
         else:
             glyph = (caption or _DEFAULT_CHECK)[:1] or _DEFAULT_CHECK
+            # Check box captions are glyph codes in ZapfDingbats, not WinAnsi text.
+            glyph_code = glyph.encode("latin-1", "replace")
             fs = min(w, h) * 0.8
             tx = (w - fs * 0.78) / 2.0
             ty = (h - fs * 0.70) / 2.0
@@ -979,7 +981,7 @@ def build_button_appearance(
                 "BT",
                 f"/{_ZAPF_FONT_NAME} {_fmt(fs)} Tf",
                 f"1 0 0 1 {_fmt(tx)} {_fmt(ty)} Tm",
-                f"{_pdf_literal(glyph)} Tj",
+                f"{_pdf_literal(glyph_code)} Tj",
                 "ET",
             ]
             fonts = {_ZAPF_FONT_NAME: dict(_ZAPF_FONT_SPEC)}

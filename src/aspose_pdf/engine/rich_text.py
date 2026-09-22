@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from typing import Any
 
-from .field_appearance import _fmt, _pdf_literal
+from .field_appearance import _fmt, _pdf_literal, _text_width
 
 # (family, bold, italic) -> (resource name, Standard-14 BaseFont). The short
 # resource names are the ones Acrobat uses for these faces in an AcroForm /DR,
@@ -62,7 +62,6 @@ _NAMED_COLORS = {
 }
 
 _LINE_LEADING = 1.16   # baseline-to-baseline as a multiple of the line font size
-_CHAR_WIDTH_EM = 0.6   # flat fallback advance when metrics are unavailable
 
 # "no width function was supplied", which is different from "there is none":
 # a document font may legitimately have no /Widths to measure with.
@@ -288,13 +287,7 @@ def _face_for(
 def _measure(text: str, style: RichStyle, fn: Any = _UNSET) -> float:
     if fn is _UNSET:
         fn = _style_width_fn(style)
-    if fn is None:
-        return len(text) * _CHAR_WIDTH_EM * style.size
-    total = 0.0
-    for ch in text:
-        code = ord(ch)
-        total += fn(code if code < 256 else 0x3F)
-    return total / 1000.0 * style.size
+    return _text_width(text, style.size, fn)
 
 
 @dataclass
