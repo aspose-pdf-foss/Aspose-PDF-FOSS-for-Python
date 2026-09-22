@@ -2356,6 +2356,8 @@ class Document:
                 # The bookmarks the merge appended are the engine's now; a
                 # collection taken before it would still be the old tree.
                 self._outlines = None
+                if self._form is not None:
+                    self._form._load_fields()
         return self
 
     def encrypt(
@@ -2539,7 +2541,7 @@ class Document:
             raise AsposePdfException("No document loaded")
         self._engine_pdf.flatten()
         if self._form is not None:
-            self._form._fields.clear()
+            self._form._load_fields()
         return self
 
     def generate_appearances(self, *, force: bool = False) -> int:

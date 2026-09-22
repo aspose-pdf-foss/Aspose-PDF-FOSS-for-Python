@@ -81,6 +81,10 @@ class Field:
     Besides its value, a field reports what its dictionary says, reading an
     inheritable attribute from the nearest ancestor that has it (ISO 32000-1
     table 220), as pdfium, pdf.js, qpdf and MuPDF do.
+
+    A form refresh updates existing instances in place. Removed fields keep
+    their last name, value and type for inspection, but can no longer be edited
+    or removed again, even if a new field reuses the same name.
     """
 
     def __init__(
@@ -94,6 +98,7 @@ class Field:
         self._name = name
         self._value = value
         self._field_type = field_type or "text"
+        self._removed = False
 
     @property
     def name(self) -> str:
@@ -108,15 +113,15 @@ class Field:
     @value.setter
     def value(self, val: Any):
         """Set the value of the field and update the engine."""
-        if self._form._document and self._form._document._engine_pdf:
-            try:
-                self._form._document._engine_pdf.set_field_value(self._name, val)
-            except Exception as exc:
-                from aspose_pdf.exceptions import AsposePdfException
+        engine = self._engine()
+        try:
+            engine.set_field_value(self._name, val)
+        except Exception as exc:
+            from aspose_pdf.exceptions import AsposePdfException
 
-                raise AsposePdfException(
-                    f"Failed to set value for field '{self._name}'"
-                ) from exc
+            raise AsposePdfException(
+                f"Failed to set value for field '{self._name}'"
+            ) from exc
         self._value = val
 
     @property
@@ -129,6 +134,8 @@ class Field:
     def _engine(self):
         document = self._form._document
         document._ensure_not_disposed()
+        if self._removed:
+            raise KeyError(f"Field '{self._name}' is no longer in the form")
         return document._engine_pdf
 
     def _dictionary(self):
@@ -313,6 +320,7 @@ class Field:
 
     def remove(self) -> Field:
         """Remove this field and all of its widgets from the form."""
+        self._engine()
         return self._form.remove_field(self._name)
 
     def __repr__(self) -> str:
@@ -328,12 +336,12 @@ class Form:
         self._load_fields()
 
     def _load_fields(self):
-        """Load fields from engine."""
+        """Refresh existing field objects and detach fields removed from the engine."""
         if not self._document or not self._document._engine_pdf:
             return
 
         raw_fields = self._document._engine_pdf.get_form_fields()
-        self._fields.clear()
+        fields: dict[str, Field] = {}
         for name, data in raw_fields.items():
             if isinstance(data, dict) and "value" in data:
                 val = data["value"]
@@ -341,7 +349,17 @@ class Form:
             else:
                 val = data
                 ftype = "text"
-            self._fields[name] = Field(self, name, val, field_type=ftype)
+            field = self._fields.get(name)
+            if field is None or field._removed:
+                field = Field(self, name, val, field_type=ftype)
+            else:
+                field._value = val
+                field._field_type = ftype or "text"
+            fields[name] = field
+        for name, field in self._fields.items():
+            if name not in fields:
+                field._removed = True
+        self._fields = fields
 
     def __getitem__(self, name: str) -> Field:
         if name not in self._fields:
@@ -820,8 +838,6 @@ class Form:
         """Flatten all fields in the form, making them part of the page content."""
         if self._document and self._document._engine_pdf:
             self._document._engine_pdf.flatten()
-            self._fields.clear()
-            # Reload to ensure consistency if engine removed objects
             self._load_fields()
 
 
