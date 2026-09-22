@@ -2,18 +2,20 @@
 
 import pytest
 
+from aspose_pdf.engine import jpx
 from aspose_pdf.engine.filters import StreamDecoder
-from aspose_pdf.engine.jpx import HAS_PILLOW
 from aspose_pdf.exceptions import PdfValidationException
 
 
-def test_jpx_decoder_invalid_payload_raises():
-    data = b"jpx data"
-    if not HAS_PILLOW:
-        with pytest.raises(PdfValidationException, match="JPXDecode requires Pillow"):
-            StreamDecoder.decode(data, "JPXDecode", None)
-    else:
-        with pytest.raises(
-            PdfValidationException, match="JPXDecode failed while decoding"
-        ):
-            StreamDecoder.decode(data, "JPXDecode", None)
+@pytest.mark.parametrize("use_pillow", [False, True])
+def test_jpx_decoder_invalid_payload_raises(monkeypatch, use_pillow):
+    if use_pillow and not jpx.HAS_PILLOW:
+        pytest.skip("Pillow not installed")
+    monkeypatch.setattr(jpx, "HAS_PILLOW", use_pillow)
+    message = (
+        "JPXDecode failed while decoding"
+        if use_pillow
+        else "not a JPEG 2000 codestream or JP2 file"
+    )
+    with pytest.raises(PdfValidationException, match=message):
+        StreamDecoder.decode(b"jpx data", "JPXDecode", None)

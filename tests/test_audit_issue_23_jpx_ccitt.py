@@ -8,6 +8,7 @@ still returns raw stream bytes after catching decode errors (same contract as JB
 
 import pytest
 
+from aspose_pdf.engine import jpx
 from aspose_pdf.engine.cos import (
     PdfDictionary,
     PdfDocument,
@@ -16,7 +17,6 @@ from aspose_pdf.engine.cos import (
     PdfStream,
 )
 from aspose_pdf.engine.filters import StreamDecoder
-from aspose_pdf.engine.jpx import HAS_PILLOW
 from aspose_pdf.engine.simple_pdf import CosExtractor
 from aspose_pdf.exceptions import PdfValidationException
 
@@ -51,16 +51,17 @@ def test_cos_extractor_ccitt_undecodable_returns_raw_stream():
 
 
 def test_jpx_invalid_raises_when_pillow_present():
-    if not HAS_PILLOW:
+    if not jpx.HAS_PILLOW:
         pytest.skip("Pillow not installed")
     with pytest.raises(PdfValidationException, match="JPXDecode failed"):
         StreamDecoder.decode(b"\x00not-jp2\x00", "JPXDecode", None)
 
 
-def test_jpx_missing_pillow_raises_on_direct_decode():
-    if HAS_PILLOW:
-        pytest.skip("Pillow is available")
-    with pytest.raises(PdfValidationException, match="JPXDecode requires Pillow"):
+def test_jpx_invalid_raises_without_pillow(monkeypatch):
+    monkeypatch.setattr(jpx, "HAS_PILLOW", False)
+    with pytest.raises(
+        PdfValidationException, match="not a JPEG 2000 codestream or JP2 file"
+    ):
         StreamDecoder.decode(b"\x00", "JPXDecode", None)
 
 

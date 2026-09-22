@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from aspose_pdf.engine.agl import (
     base_encoding_table,
     cff_predefined_charset,
@@ -90,6 +92,8 @@ def test_cff_standard_strings() -> None:
 
 def test_bundle_is_deterministic() -> None:
     """The checked-in bundle matches a fresh build (SHA-verified generator)."""
+    pytest.importorskip("fontTools", reason="Rebuilding the AGL bundle requires fontTools")
+    pytest.importorskip("reportlab", reason="Rebuilding the AGL bundle requires ReportLab")
     script = Path(__file__).resolve().parents[1] / "scripts" / "build_agl_data.py"
     result = subprocess.run(
         [sys.executable, str(script), "--check"],

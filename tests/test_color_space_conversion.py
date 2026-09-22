@@ -26,6 +26,8 @@ from __future__ import annotations
 import io
 import zlib
 
+import pytest
+
 from aspose_pdf import Document
 from aspose_pdf.engine.shading import _lab_to_rgb
 
@@ -272,7 +274,7 @@ def test_a_devicen_image_goes_through_its_tint_transform():
 
 
 def test_exporting_a_converted_image_writes_the_colours_the_page_shows(tmp_path):
-    from PIL import Image
+    Image = pytest.importorskip("PIL.Image")
 
     palette = b"[/Indexed " + _LAB_D65 + b" 3 <" + _LAB_PIXELS.hex().encode() + b">]"
     devicen_palette = b"[/Indexed " + _DEVICE_N + b" 3 <FF00 00FF 8080 FFFF>]"

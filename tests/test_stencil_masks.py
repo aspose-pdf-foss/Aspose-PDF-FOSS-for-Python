@@ -379,11 +379,9 @@ def test_a_default_decode_array_changes_nothing():
 
 
 def test_extracting_an_image_honours_decode(tmp_path):
-    from PIL import Image
-
     from aspose_pdf.images import ImagePlacementAbsorber
 
-    pytest.importorskip("PIL")
+    Image = pytest.importorskip("PIL.Image")
     doc = _document(
         _draw(),
         _image(
@@ -401,10 +399,9 @@ def test_extracting_an_image_honours_decode(tmp_path):
 
 
 def test_extracting_an_indexed_image_honours_its_index_space_decode(tmp_path):
-    from PIL import Image
-
     from aspose_pdf.images import ImagePlacementAbsorber
 
+    Image = pytest.importorskip("PIL.Image")
     doc = _document(
         _draw(),
         _image(
