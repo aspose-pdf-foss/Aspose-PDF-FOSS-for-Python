@@ -59,12 +59,14 @@ class Page:
         page's position instead. Set labels through
         :attr:`Document.page_labels <aspose_pdf.Document.page_labels>`.
         """
+        self._document._ensure_not_disposed()
         engine = self._document._engine_pdf
         return None if engine is None else engine.page_label(self._index)
 
     @property
     def rect(self) -> tuple[float, float, float, float]:
         """Get the page rectangle (MediaBox)."""
+        self._document._ensure_not_disposed()
         if self._document._engine_pdf and self._index < len(
             self._document._engine_pdf.pages
         ):
@@ -74,6 +76,7 @@ class Page:
     @property
     def annotations(self) -> AnnotationCollection:
         """Get the collection of annotations on the page."""
+        self._document._ensure_not_disposed()
         if not hasattr(self, "_annotations"):
             self._annotations = AnnotationCollection(self)
         return self._annotations
@@ -89,6 +92,7 @@ class Page:
 
         Inherited from parent page-tree nodes when not set on the page itself.
         """
+        self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is None or not hasattr(eng, "get_page_rotation"):
             return 0
@@ -96,6 +100,7 @@ class Page:
 
     @rotation.setter
     def rotation(self, value: int) -> None:
+        self._document._ensure_not_disposed()
         try:
             degrees = int(value)
         except (TypeError, ValueError):
@@ -110,6 +115,7 @@ class Page:
     @property
     def crop_box(self) -> tuple[float, float, float, float]:
         """The page CropBox ``(x0, y0, x1, y1)``; falls back to the MediaBox when unset."""
+        self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is not None and hasattr(eng, "get_page_crop_box"):
             box = eng.get_page_crop_box(self._index)
@@ -119,6 +125,7 @@ class Page:
 
     @crop_box.setter
     def crop_box(self, value: tuple[float, float, float, float]) -> None:
+        self._document._ensure_not_disposed()
         try:
             rect = tuple(float(v) for v in value)
         except (TypeError, ValueError):
@@ -138,6 +145,7 @@ class Page:
         the content is decoded from the underlying COS document on demand.
         In normal mode the pre-loaded ``page_contents`` list is used.
         """
+        self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is None:
             return b""

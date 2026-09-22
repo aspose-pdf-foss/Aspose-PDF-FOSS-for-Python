@@ -4,7 +4,7 @@ import pytest
 
 from aspose_pdf.document import Document
 from aspose_pdf.engine.cos import PdfArray
-from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 from aspose_pdf.pages import Page
 
 
@@ -169,6 +169,30 @@ def test_add_to_disposed_document_raises(document):
     document.dispose()
     with pytest.raises(Exception):
         document.pages.add()
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["label", "rect", "media_box", "rotation", "crop_box", "content", "annotations"],
+)
+def test_page_properties_reject_disposed_document(document, name):
+    page = document.pages.add()
+    document.dispose()
+
+    with pytest.raises(AsposePdfException, match="disposed"):
+        getattr(page, name)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("rotation", 90), ("crop_box", (0, 0, 100, 100))],
+)
+def test_page_property_setters_reject_disposed_document(document, name, value):
+    page = document.pages.add()
+    document.dispose()
+
+    with pytest.raises(AsposePdfException, match="disposed"):
+        setattr(page, name, value)
 
 
 def test_insert_index_out_of_range_raises(document):
