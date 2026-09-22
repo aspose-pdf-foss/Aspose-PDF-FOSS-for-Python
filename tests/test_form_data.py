@@ -396,3 +396,45 @@ def test_the_size_limit_applies():
         document.form.import_xfdf(b"<xfdf>" + b" " * 300_000 + b"</xfdf>")
     with pytest.raises(TypeError):
         document.form.import_fdf(12)
+
+
+def test_xfdf_element_limit_stops_before_the_rest_is_parsed():
+    data = (
+        b'<xfdf><fields><field name="x"><value>ok</value></field></fields>'
+        b'<ignored/><ignored/><broken'
+    )
+    budget = _LoadBudget(PdfLoadLimits(max_container_items=5))
+
+    with pytest.raises(PdfResourceLimitException, match="max_container_items"):
+        read_xfdf(data, budget)
+
+
+def test_xfdf_depth_limit_covers_ignored_elements():
+    data = b"<xfdf><ignored><ignored><ignored><ignored></ignored></ignored></ignored></ignored></xfdf>"
+    budget = _LoadBudget(PdfLoadLimits(max_nesting_depth=4))
+
+    with pytest.raises(PdfResourceLimitException, match="max_nesting_depth"):
+        read_xfdf(data, budget)
+
+
+def test_xfdf_rejects_utf16_doctype_before_entity_expansion():
+    data = (
+        '<!DOCTYPE xfdf [<!ENTITY text "expanded">]>'
+        '<xfdf><fields><field name="x"><value>&text;</value></field></fields></xfdf>'
+    ).encode("utf-16")
+
+    with pytest.raises(PdfValidationException, match="DOCTYPE"):
+        read_xfdf(data, _LoadBudget(PdfLoadLimits()))
+
+
+def test_xfdf_streaming_reader_keeps_field_order_and_direct_value_text():
+    data = (
+        b'<xfdf><metadata><field name="ignored"><value>no</value></field></metadata>'
+        b'<fields><field name="parent"><field name="child"><value>A&amp;B</value>'
+        b'</field><value>first<extra>ignored</extra>tail</value></field></fields></xfdf>'
+    )
+
+    assert _entries(data, read_xfdf) == [
+        ("parent", "first", {}),
+        ("parent.child", "A&B", {}),
+    ]

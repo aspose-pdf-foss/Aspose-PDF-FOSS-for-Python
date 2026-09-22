@@ -15,7 +15,6 @@ and stops writing XFDF at the field.)
 
 from __future__ import annotations
 
-import re
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass, field
 from typing import Any
@@ -238,44 +237,91 @@ def _python_value(resolve: Any, value: Any) -> Any:
     return None
 
 
-_DOCTYPE = re.compile(rb"<!DOCTYPE|<!ENTITY", re.IGNORECASE)
+@dataclass(slots=True)
+class _XfdfElement:
+    kind: str
+    prefix: str = ""
+    entry: FieldData | None = None
+    values: list[str] | None = None
+    text: list[str] | None = None
+    has_child: bool = False
+
+
+class _XfdfReader:
+    """Collect field values while bounding the XML parse itself."""
+
+    def __init__(self, budget: Any) -> None:
+        self.budget = budget
+        self.elements: list[_XfdfElement] = []
+        self.entries: list[FieldData] = []
+        self.count = 0
+
+    def start(self, tag: str, attributes: dict[str, str]) -> None:
+        self.count += 1
+        self.budget.check(self.count, "max_container_items", "XFDF elements")
+        self.budget.check(len(self.elements) + 1, "max_nesting_depth", "XFDF XML depth")
+        local = _local(tag)
+        if not self.elements:
+            if local != "xfdf":
+                raise PdfValidationException("Not an XFDF file: its root element is not <xfdf>")
+            self.elements.append(_XfdfElement("root"))
+            return
+
+        parent = self.elements[-1]
+        if parent.kind == "value":
+            parent.has_child = True
+        if local == "fields" and parent.kind == "root":
+            element = _XfdfElement("fields")
+        elif local == "field" and parent.kind in ("fields", "field"):
+            name = attributes.get("name") or ""
+            full = f"{parent.prefix}.{name}" if parent.prefix and name else (parent.prefix or name)
+            entry = FieldData(full) if full else None
+            if entry is not None:
+                self.entries.append(entry)
+            element = _XfdfElement("field", full, entry, values=[])
+        elif local == "value" and parent.kind == "field":
+            element = _XfdfElement("value", text=[])
+        else:
+            element = _XfdfElement("other")
+        self.elements.append(element)
+
+    def data(self, text: str) -> None:
+        if self.elements:
+            element = self.elements[-1]
+            if element.kind == "value" and not element.has_child and element.text is not None:
+                element.text.append(text)
+
+    def end(self, tag: str) -> None:
+        element = self.elements.pop()
+        if element.kind == "value":
+            parent = self.elements[-1]
+            if parent.values is not None:
+                parent.values.append("".join(element.text or []))
+        elif element.kind == "field" and element.entry is not None and element.values:
+            element.entry.value = (
+                element.values if len(element.values) > 1 else element.values[0]
+            )
+
+    def doctype(self, name: str, pubid: str | None, system: str | None) -> None:
+        raise PdfValidationException(
+            "XFDF with a DOCTYPE or entity declarations is not accepted"
+        )
+
+    def close(self) -> list[FieldData]:
+        return [entry for entry in self.entries if entry.has_value]
 
 
 def read_xfdf(data: bytes, budget: Any) -> list[FieldData]:
     """The field entries of an XFDF file, parents before their kids."""
+    budget.check_input(len(data))
     data = bytes(data)
-    # XFDF has no use for a DTD, and entity declarations are how an XML file
-    # expands itself into a denial of service; neither is accepted.
-    if _DOCTYPE.search(data):
-        raise PdfValidationException("XFDF with a DOCTYPE or entity declarations is not accepted")
+    parser = ElementTree.XMLParser(target=_XfdfReader(budget))
     try:
-        root = ElementTree.fromstring(data)
+        for offset in range(0, len(data), 64 * 1024):
+            parser.feed(data[offset : offset + 64 * 1024])
+        return parser.close()
     except ElementTree.ParseError as exc:
         raise PdfValidationException(f"Not a well-formed XFDF file: {exc}") from None
-    if _local(root.tag) != "xfdf":
-        raise PdfValidationException("Not an XFDF file: its root element is not <xfdf>")
-    out: list[FieldData] = []
-    count = 0
-
-    def walk(parent: ElementTree.Element, prefix: str, depth: int) -> None:
-        nonlocal count
-        budget.check(depth, "max_nesting_depth", "XFDF field depth")
-        for element in parent:
-            if _local(element.tag) != "field":
-                continue
-            count += 1
-            budget.check(count, "max_container_items", "XFDF fields")
-            name = element.get("name") or ""
-            full = f"{prefix}.{name}" if prefix and name else (prefix or name)
-            values = [child.text or "" for child in element if _local(child.tag) == "value"]
-            if full and values:
-                out.append(FieldData(full, values if len(values) > 1 else values[0]))
-            walk(element, full, depth + 1)
-
-    for section in root:
-        if _local(section.tag) == "fields":
-            walk(section, "", 1)
-    return out
 
 
 def _local(tag: str) -> str:
