@@ -298,9 +298,11 @@ class ViewerPreferences:
 
     @num_copies.setter
     def num_copies(self, value: int | None) -> None:
-        if value is not None and (int(value) != value or value < 1):
-            raise PdfValidationException("num_copies must be a whole number above zero")
-        self._set("NumCopies", None if value is None else int(value))
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+        ):
+            raise PdfValidationException("num_copies must be a positive integer")
+        self._set("NumCopies", value)
 
     @property
     def print_page_range(self) -> tuple[tuple[int, int], ...]:
@@ -321,13 +323,18 @@ class ViewerPreferences:
         pairs = []
         for pair in value:
             first, last = pair
-            if int(first) != first or int(last) != last:
+            if (
+                isinstance(first, bool)
+                or not isinstance(first, int)
+                or isinstance(last, bool)
+                or not isinstance(last, int)
+            ):
                 raise PdfValidationException("a print range needs whole page indices")
             if not 0 <= first <= last < count:
                 raise PdfValidationException(
                     f"a print range must name pages this document has (0 to {count - 1})"
                 )
-            pairs.append((int(first), int(last)))
+            pairs.append((first, last))
         self._set("PrintPageRange", pairs)
 
     # -- the whole entry ----------------------------------------------------

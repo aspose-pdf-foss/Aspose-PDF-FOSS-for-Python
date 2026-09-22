@@ -319,12 +319,35 @@ def test_a_range_outside_the_document_is_refused_rather_than_written():
         document.viewer_preferences.print_page_range = [(0.5, 1)]
 
 
-def test_a_copy_count_must_be_a_count():
+@pytest.mark.parametrize(
+    "pair",
+    [(True, 1), (0, False), (1.0, 1), (0, 1.0), ("0", 1), (0, None)],
+)
+def test_print_ranges_require_integer_indices(pair):
+    document = _pages(3)
+    preferences = document.viewer_preferences
+    preferences.print_page_range = [(0, 1)]
+
+    with pytest.raises(PdfValidationException, match="whole page indices"):
+        preferences.print_page_range = [pair]
+
+    assert preferences.print_page_range == ((0, 1),)
+
+
+@pytest.mark.parametrize("value", [True, 2.0, "2", 0, -1])
+def test_a_copy_count_must_be_a_positive_integer(value):
     document = _pages(1)
+    document.viewer_preferences.num_copies = 3
+
     with pytest.raises(PdfValidationException, match="num_copies"):
-        document.viewer_preferences.num_copies = 0
-    with pytest.raises(PdfValidationException, match="num_copies"):
-        document.viewer_preferences.num_copies = -1
+        document.viewer_preferences.num_copies = value
+
+    assert document.viewer_preferences.num_copies == 3
+
+
+def test_a_whole_real_copy_count_in_a_pdf_is_read_as_an_integer():
+    document = _set_preferences(_pages(1), NumCopies=PdfNumber(2.0))
+    assert document.viewer_preferences.num_copies == 2
 
 
 # --- taking entries away ---------------------------------------------------
