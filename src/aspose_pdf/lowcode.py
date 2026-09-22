@@ -34,6 +34,7 @@ from typing import BinaryIO
 
 from aspose_pdf.document import Document
 from aspose_pdf.engine.file_output import write_file_atomically
+from aspose_pdf.engine.stream_output import write_all as _write_all
 from aspose_pdf.exceptions import AsposePdfException
 from aspose_pdf.facades import PdfExtractor
 from aspose_pdf.load_limits import (
@@ -102,21 +103,6 @@ class DataSource:
             "This data source does not support writing; use it as an input "
             "or choose a writable source such as FileDataSource."
         )
-
-
-def _write_all(stream: BinaryIO, data: bytes) -> None:
-    """Write all of *data*, rejecting streams that stop making progress."""
-    remaining = memoryview(data)
-    while remaining:
-        written = stream.write(remaining)
-        if (
-            isinstance(written, bool)
-            or not isinstance(written, int)
-            or written <= 0
-            or written > len(remaining)
-        ):
-            raise AsposePdfException("Stream write did not consume the supplied bytes")
-        remaining = remaining[written:]
 
 
 class FileDataSource(DataSource):

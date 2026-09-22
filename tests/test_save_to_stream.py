@@ -7,6 +7,7 @@ import io
 import pytest
 
 from aspose_pdf.document import Document
+from aspose_pdf.exceptions import AsposePdfException
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,6 +41,16 @@ def _make_doc(source: bytes | None = None) -> Document:
     doc = Document()
     doc.load_from(source if source is not None else _minimal_pdf_bytes())
     return doc
+
+
+class _ShortWriter(io.BytesIO):
+    def write(self, data):
+        return super().write(data[:3])
+
+
+class _StalledWriter(io.BytesIO):
+    def write(self, data):
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +104,21 @@ def test_save_to_stream_can_be_reloaded():
     reloaded = Document()
     reloaded.load_from(buf.read())
     assert reloaded.page_count == original_pages
+
+
+def test_save_to_stream_retries_short_writes():
+    document = _make_doc()
+    expected = io.BytesIO()
+    document.save(expected)
+    stream = _ShortWriter()
+
+    assert document.save(stream) is document
+    assert stream.getvalue() == expected.getvalue()
+
+
+def test_save_to_stream_rejects_a_stalled_writer():
+    with pytest.raises(AsposePdfException, match="did not consume"):
+        _make_doc().save(_StalledWriter())
 
 
 def test_save_to_stream_leaves_stream_position_after_written_data():

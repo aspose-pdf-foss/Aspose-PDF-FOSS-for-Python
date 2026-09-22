@@ -21,7 +21,11 @@ from aspose_pdf import Document, PdfLoadLimits
 from aspose_pdf.engine.cos import PdfName
 from aspose_pdf.engine.form_data import read_fdf, read_xfdf
 from aspose_pdf.engine.form_fields import field_dictionary, widget_dictionaries
-from aspose_pdf.exceptions import PdfResourceLimitException, PdfValidationException
+from aspose_pdf.exceptions import (
+    AsposePdfException,
+    PdfResourceLimitException,
+    PdfValidationException,
+)
 from aspose_pdf.load_limits import _LoadBudget
 
 PDFBOX_FDF = (
@@ -212,6 +216,30 @@ def test_export_writes_a_path_or_a_stream(tmp_path):
     assert stream.getvalue() == data
     document.form.export_fdf(tmp_path / "form.fdf")
     assert (tmp_path / "form.fdf").read_bytes() == document.form.export_fdf()
+
+
+@pytest.mark.parametrize("method", ["export_fdf", "export_xfdf"])
+def test_export_retries_short_stream_writes(method):
+    class ShortWriter(io.BytesIO):
+        def write(self, data):
+            return super().write(data[:3])
+
+    document = _form()
+    stream = ShortWriter()
+    expected = getattr(document.form, method)()
+
+    assert getattr(document.form, method)(stream) == expected
+    assert stream.getvalue() == expected
+
+
+@pytest.mark.parametrize("method", ["export_fdf", "export_xfdf"])
+def test_export_rejects_a_stalled_stream(method):
+    class StalledWriter(io.BytesIO):
+        def write(self, data):
+            return 0
+
+    with pytest.raises(AsposePdfException, match="did not consume"):
+        getattr(_form().form, method)(StalledWriter())
 
 
 # --- import -------------------------------------------------------------------------------------

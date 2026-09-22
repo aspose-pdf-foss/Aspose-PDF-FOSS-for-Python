@@ -757,13 +757,14 @@ class Form:
 
     def _export(self, writer: Any, destination: Any) -> bytes:
         from aspose_pdf.engine.file_output import write_file_atomically
+        from aspose_pdf.engine.stream_output import write_all
 
         self._document._ensure_not_disposed()
         data = writer(self._document._engine_pdf)
         if destination is None:
             return data
         if hasattr(destination, "write"):
-            destination.write(data)
+            write_all(destination, data)
         else:
             write_file_atomically(destination, data)
         return data

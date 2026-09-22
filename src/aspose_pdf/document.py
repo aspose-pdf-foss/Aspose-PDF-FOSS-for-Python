@@ -31,6 +31,7 @@ from aspose_pdf.engine.simple_pdf import (
     _effective_encryption_password,
     _parse_pdf_date,
 )
+from aspose_pdf.engine.stream_output import write_all
 from aspose_pdf.exceptions import (
     AsposePdfException,
     PdfSecurityException,
@@ -2257,7 +2258,7 @@ class Document:
         if signing:
             data = self._apply_pending_signing(data)
         if path is None:
-            destination.write(data)
+            write_all(destination, data)
         else:
             write_file_atomically(path, data)
         if signing:
