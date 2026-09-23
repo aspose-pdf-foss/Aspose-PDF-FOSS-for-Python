@@ -160,6 +160,18 @@ class Field:
 
         return text_of(self._engine(), self._dictionary().mapping.get(PdfName(key)))
 
+    def _set_own_text(self, key: str, value: str | None, label: str) -> None:
+        from aspose_pdf.engine.cos import PdfName, PdfString
+
+        field = self._dictionary()
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"{label} must be a string or None")
+        name = PdfName(key)
+        if value is None:
+            field.mapping.pop(name, None)
+        else:
+            field.mapping[name] = PdfString(value)
+
     @property
     def partial_name(self) -> str:
         """The last part of :attr:`name`: the field's own ``/T``."""
@@ -170,10 +182,20 @@ class Field:
         """The name shown to a user, often as a tooltip (``/TU``); ``None`` if unset."""
         return self._own_text("TU")
 
+    @alternate_name.setter
+    def alternate_name(self, value: str | None) -> None:
+        """Set or remove this field's tooltip (``/TU``)."""
+        self._set_own_text("TU", value, "alternate_name")
+
     @property
     def mapping_name(self) -> str | None:
         """The name used when the form is exported (``/TM``); ``None`` if unset."""
         return self._own_text("TM")
+
+    @mapping_name.setter
+    def mapping_name(self, value: str | None) -> None:
+        """Set or remove this field's export mapping name (``/TM``)."""
+        self._set_own_text("TM", value, "mapping_name")
 
     @property
     def flags(self) -> int:
@@ -215,6 +237,10 @@ class Field:
     def no_export(self) -> bool:
         """Whether the field is left out when the form is submitted (bit 3)."""
         return bool(self.flags & _NO_EXPORT)
+
+    @no_export.setter
+    def no_export(self, value: bool) -> None:
+        self._set_flag(_NO_EXPORT, value)
 
     @property
     def default_value(self) -> Any:

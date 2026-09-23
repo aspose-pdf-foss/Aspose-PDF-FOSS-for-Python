@@ -313,9 +313,68 @@ def test_a_setter_changes_one_field_not_its_siblings():
     assert (_field(reopened, "group.a").read_only, _field(reopened, "group.b").read_only) == (True, False)
 
 
+def test_alternate_and_mapping_names_round_trip_and_can_be_cleared():
+    document = Document()
+    page = document.pages.add()
+    field = document.form.add_text_field("name", page, (72, 700, 272, 724))
+    field.alternate_name = "Подсказка €"
+    field.mapping_name = "экспорт"
+    assert (field.alternate_name, field.mapping_name) == ("Подсказка €", "экспорт")
+
+    reopened = _reloaded(document)
+    field = _field(reopened, "name")
+    assert (field.alternate_name, field.mapping_name) == ("Подсказка €", "экспорт")
+    field.alternate_name = ""
+    field.mapping_name = None
+    assert (field.alternate_name, field.mapping_name) == ("", None)
+    field.alternate_name = None
+    cleared = _field(_reloaded(reopened), "name")
+    assert (cleared.alternate_name, cleared.mapping_name) == (None, None)
+
+
+def test_no_export_setter_preserves_inherited_flags_and_other_fields(crafted):
+    document = _reloaded(crafted)
+    child = _field(document, "group.child")
+    twice = _field(document, "twice")
+    child.no_export = True
+    twice.no_export = True
+    assert child.no_export and child.read_only and child.multiline
+    assert twice.no_export
+    child.no_export = False
+    reopened = _reloaded(document)
+    child = _field(reopened, "group.child")
+    assert not child.no_export and child.read_only and child.multiline
+    assert _field(reopened, "twice").no_export
+
+
+@pytest.mark.parametrize(
+    ("property_name", "invalid"),
+    [
+        ("alternate_name", 123),
+        ("mapping_name", b"bytes"),
+        ("no_export", 1),
+    ],
+)
+def test_new_field_setters_reject_invalid_types(property_name, invalid):
+    document = Document()
+    field = document.form.add_text_field(
+        "name", document.pages.add(), (72, 700, 272, 724)
+    )
+    previous = getattr(field, property_name)
+    with pytest.raises(TypeError):
+        setattr(field, property_name, invalid)
+    assert getattr(field, property_name) == previous
+
+
 def test_a_removed_field_has_nothing_to_report(authored):
     document = _reloaded(authored)
     field = _field(document, "go")
     field.remove()
     with pytest.raises(KeyError):
         field.widgets
+    with pytest.raises(KeyError):
+        field.alternate_name = "stale"
+    with pytest.raises(KeyError):
+        field.mapping_name = "stale"
+    with pytest.raises(KeyError):
+        field.no_export = True
