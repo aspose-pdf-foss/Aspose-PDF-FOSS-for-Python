@@ -4,7 +4,7 @@ import zlib
 
 import pytest
 
-from aspose_pdf.engine.filters import StreamDecoder
+from aspose_pdf.engine.filters import StreamDecoder, StreamEncoder
 from aspose_pdf.exceptions import PdfValidationException
 
 
@@ -37,6 +37,64 @@ def test_flate_decode_tiff_predictor():
     parms = {"Predictor": 2, "Columns": 3, "Colors": 1, "BitsPerComponent": 8}
     decoded = StreamDecoder.decode(compressed, "FlateDecode", parms)
     assert decoded == raw_data
+
+
+@pytest.mark.parametrize(
+    ("bits", "colors", "columns", "encoded", "expected"),
+    [
+        (1, 1, 4, b"\xb0", b"\xd0"),
+        (1, 3, 2, b"\xbc", b"\xa8"),
+        (2, 1, 4, b"\x55", b"\x6c"),
+        (2, 3, 2, b"\x6d\x50", b"\x6e\xc0"),
+        (4, 1, 4, b"\x11\x11", b"\x12\x34"),
+        (4, 2, 3, b"\x12\x22\x22", b"\x12\x34\x56"),
+        (4, 3, 2, b"\x12\x31\x11", b"\x12\x32\x34"),
+        (16, 1, 2, b"\x00\xff\x00\x01", b"\x00\xff\x01\x00"),
+        (
+            16,
+            2,
+            2,
+            b"\x00\xff\x12\x34\x00\x01\xff\xcc",
+            b"\x00\xff\x12\x34\x01\x00\x12\x00",
+        ),
+    ],
+)
+def test_flate_decode_tiff_predictor_uses_component_width(
+    bits, colors, columns, encoded, expected
+):
+    parms = {
+        "Predictor": 2,
+        "Columns": columns,
+        "Colors": colors,
+        "BitsPerComponent": bits,
+    }
+    assert StreamDecoder.decode(zlib.compress(encoded), "FlateDecode", parms) == expected
+
+
+def test_tiff_predictor_restarts_each_row_and_keeps_padding_bits():
+    parms = {"Predictor": 2, "Columns": 3, "Colors": 1, "BitsPerComponent": 4}
+    encoded = b"\x11\x1f\x71\x1a"
+    assert StreamDecoder._apply_predictor(encoded, parms) == b"\x12\x3f\x78\x9a"
+
+
+def test_lzw_decode_tiff_predictor_uses_component_width():
+    parms = {"Predictor": 2, "Columns": 2, "BitsPerComponent": 16}
+    encoded = StreamEncoder.encode(b"\x00\xff\x00\x01", "LZWDecode")
+    assert StreamDecoder.decode(encoded, "LZWDecode", parms) == b"\x00\xff\x01\x00"
+
+
+@pytest.mark.parametrize(
+    ("bits", "columns", "data"),
+    [
+        (4, 3, b"\x11"),
+        (8, 3, b"\x01\x02"),
+        (16, 2, b"\x00\xff\x01"),
+    ],
+)
+def test_tiff_predictor_rejects_partial_rows(bits, columns, data):
+    parms = {"Predictor": 2, "Columns": columns, "BitsPerComponent": bits}
+    with pytest.raises(PdfValidationException, match="partial row"):
+        StreamDecoder.decode(zlib.compress(data), "FlateDecode", parms)
 
 
 def test_flate_decode_png_sub_predictor():

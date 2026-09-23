@@ -137,12 +137,40 @@ class StreamDecoder:
             )
 
         if predictor == 2:
-            out = bytearray()
+            if len(data) % row_len:
+                raise PdfValidationException(
+                    "TIFF predictor stream ends in a partial row"
+                )
+            out = bytearray(data)
+            samples_per_row = columns * colors
+            sample_mask = (1 << bits_per_component) - 1
             for row_start in range(0, len(data), row_len):
-                row = bytearray(data[row_start : row_start + row_len])
-                for i in range(bytes_per_pixel, len(row)):
-                    row[i] = (row[i] + row[i - bytes_per_pixel]) & 0xFF
-                out.extend(row)
+                if bits_per_component == 8:
+                    for i in range(row_start + colors, row_start + row_len):
+                        out[i] = (out[i] + out[i - colors]) & 0xFF
+                elif bits_per_component == 16:
+                    for sample in range(colors, samples_per_row):
+                        current = row_start + sample * 2
+                        left = current - colors * 2
+                        encoded = (out[current] << 8) | out[current + 1]
+                        previous = (out[left] << 8) | out[left + 1]
+                        decoded = (encoded + previous) & sample_mask
+                        out[current] = decoded >> 8
+                        out[current + 1] = decoded & 0xFF
+                else:
+                    for sample in range(colors, samples_per_row):
+                        bit_offset = sample * bits_per_component
+                        current = row_start + bit_offset // 8
+                        shift = 8 - bits_per_component - bit_offset % 8
+                        left_offset = (sample - colors) * bits_per_component
+                        left = row_start + left_offset // 8
+                        left_shift = 8 - bits_per_component - left_offset % 8
+                        encoded = (out[current] >> shift) & sample_mask
+                        previous = (out[left] >> left_shift) & sample_mask
+                        decoded = (encoded + previous) & sample_mask
+                        out[current] = (
+                            out[current] & ~(sample_mask << shift)
+                        ) | (decoded << shift)
             return bytes(out)
 
         if 10 <= predictor <= 15:
