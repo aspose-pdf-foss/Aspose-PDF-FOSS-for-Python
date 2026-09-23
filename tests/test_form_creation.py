@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import UserList
 from io import BytesIO
 
 import pytest
@@ -285,3 +286,68 @@ def test_public_form_creation_validates_names_pages_values_and_duplicates():
         form.add_text_field("foreign", other_page, (0, 0, 10, 10))
 
     assert FieldType.PUSHBUTTON.value == "PushButton"
+
+
+def test_choice_updates_validate_exports_types_and_keep_old_value_on_failure():
+    document = Document()
+    page = document.pages.add()
+    form = document.form
+    single = form.add_list_box(
+        "single", page, (40, 600, 180, 680), [("a", "Alpha"), ("b", "Beta")], value="a"
+    )
+    multi = form.add_list_box(
+        "multi", page, (200, 600, 340, 680), ["a", "b"], value=["a"], multiselect=True
+    )
+    combo = form.add_combo_box(
+        "combo", page, (40, 550, 180, 575), [("a", "Alpha"), ("b", "Beta")], value="a"
+    )
+    editable = form.add_combo_box(
+        "editable", page, (200, 550, 340, 575), ["a", "b"], value="a", editable=True
+    )
+
+    for field, bad, error in (
+        (single, "Alpha", PdfValidationException),
+        (single, ["b"], TypeError),
+        (multi, ["a", "unknown"], PdfValidationException),
+        (multi, ["a", "a"], PdfValidationException),
+        (multi, "a", TypeError),
+        (multi, b"", TypeError),
+        (combo, "Alpha", PdfValidationException),
+        (combo, "unknown", PdfValidationException),
+        (combo, ["a"], TypeError),
+        (editable, ["unknown"], TypeError),
+    ):
+        previous = field.value
+        _, fields = _terminal_fields(document)
+        dictionary = fields[field.name][1]
+        original_value = dictionary.mapping.get(PdfName("V"))
+        original_indices = dictionary.mapping.get(PdfName("I"))
+        with pytest.raises(error):
+            field.value = bad
+        assert field.value == previous
+        assert dictionary.mapping.get(PdfName("V")) == original_value
+        assert dictionary.mapping.get(PdfName("I")) == original_indices
+
+    single.value = "b"
+    multi.value = UserList(["b", "a"])
+    combo.value = "b"
+    editable.value = "custom"
+    _, fields = _terminal_fields(document)
+    indices = fields["multi"][1].mapping[PdfName("I")]
+    assert [int(item.value) for item in indices.items] == [0, 1]
+    reopened = _round_trip(document)
+    assert {
+        name: reopened.form[name].value
+        for name in ("single", "multi", "combo", "editable")
+    } == {
+        "single": "b",
+        "multi": ["b", "a"],
+        "combo": "b",
+        "editable": "custom",
+    }
+
+    single.value = None
+    multi.value = None
+    combo.value = None
+    cleared = _round_trip(document)
+    assert all(cleared.form[name].value is None for name in ("single", "multi", "combo"))

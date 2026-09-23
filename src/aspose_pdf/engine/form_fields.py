@@ -10,7 +10,10 @@ one whose ``/Annots`` lists it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
+
+from aspose_pdf.exceptions import PdfValidationException
 
 from .cos import (
     PdfArray,
@@ -28,10 +31,47 @@ __all__ = [
     "form_value",
     "on_states",
     "text_of",
+    "validate_choice_value",
     "widget_dictionaries",
 ]
 
 _MAX_ANCESTORS = 64
+
+
+def validate_choice_value(
+    value: Any,
+    exports: Sequence[str],
+    *,
+    combo: bool = False,
+    editable: bool = False,
+    multiselect: bool = False,
+) -> str | list[str] | None:
+    """Validate a choice value against export values and field flags."""
+    if combo:
+        if value is not None and not isinstance(value, str):
+            raise TypeError("Combo box value must be a string or None")
+        if value is not None and not editable and value not in exports:
+            raise PdfValidationException("Combo box value is not one of the options")
+        return value
+    if multiselect:
+        if value is None:
+            selected: list[str] = []
+        elif isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+            raise TypeError("A multiselect value must be a sequence of strings")
+        else:
+            selected = list(value)
+            if not all(isinstance(item, str) for item in selected):
+                raise TypeError("A multiselect value must contain only strings")
+            if len(set(selected)) != len(selected):
+                raise PdfValidationException("A multiselect value must not contain duplicates")
+        if any(item not in exports for item in selected):
+            raise PdfValidationException("List box value is not one of the options")
+        return selected
+    if value is not None and not isinstance(value, str):
+        raise TypeError("A list box value must be a string or None")
+    if value is not None and value not in exports:
+        raise PdfValidationException("List box value is not one of the options")
+    return value
 
 
 def field_dictionary(pdf: Any, name: str) -> PdfDictionary | None:

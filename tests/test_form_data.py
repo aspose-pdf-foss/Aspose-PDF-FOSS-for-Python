@@ -337,10 +337,12 @@ def test_an_inherited_field_type_takes_a_list():
     document = _reloaded(document)
     field = field_dictionary(document._engine_pdf, "pick")
     parent_ft, parent_ff = field.mapping.pop(PdfName("FT")), field.mapping.pop(PdfName("Ff"))
+    parent_opt = field.mapping.pop(PdfName("Opt"))
     from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfString
 
     parent = document._engine_pdf._cos_doc.register_object(PdfDictionary({
         PdfName("T"): PdfString("outer"), PdfName("FT"): parent_ft, PdfName("Ff"): parent_ff,
+        PdfName("Opt"): parent_opt,
         PdfName("Kids"): PdfArray([]),
     }))
     acro = document._engine_pdf._resolve(document._engine_pdf._resolve(document._engine_pdf._cos_doc.trailer.mapping[PdfName("Root")]).mapping[PdfName("AcroForm")])
@@ -355,6 +357,8 @@ def test_an_inherited_field_type_takes_a_list():
         b"<value>a</value><value>c</value></field></field></fields></xfdf>"
     )
     assert _values(_reloaded(document)) == {"outer.pick": ["a", "c"]}
+    indices = field_dictionary(document._engine_pdf, "outer.pick").mapping[PdfName("I")]
+    assert [int(item.value) for item in indices.items] == [0, 2]
 
 
 def test_an_encrypted_document_is_exported_in_the_clear_and_filled():
@@ -370,6 +374,29 @@ def test_an_encrypted_document_is_exported_in_the_clear_and_filled():
 
 
 # --- what is refused ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "data"),
+    [
+        (
+            "fdf",
+            b"%FDF-1.2\n1 0 obj\n<< /FDF << /Fields [ << /T (colours) /V [(g) (unknown)] >> ] >> >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n",
+        ),
+        (
+            "xfdf",
+            b'<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields><field name="colours"><value>g</value><value>unknown</value></field></fields></xfdf>',
+        ),
+    ],
+)
+def test_import_rejects_unknown_choice_export_without_changing_value(kind, data):
+    document = _form()
+    original = _values(document)
+    importer = document.form.import_fdf if kind == "fdf" else document.form.import_xfdf
+    with pytest.raises(PdfValidationException, match="List box value"):
+        importer(data)
+    assert _values(document) == original
+    assert _values(_reloaded(document)) == original
 
 
 @pytest.mark.parametrize(

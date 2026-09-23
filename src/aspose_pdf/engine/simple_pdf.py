@@ -87,7 +87,7 @@ from .encryption import (
 )
 from .file_output import write_file_atomically
 from .filters import StreamDecoder
-from .form_fields import form_value
+from .form_fields import field_attribute, form_value, validate_choice_value
 from .incremental_update import IncrementalUpdate
 from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
 from .pdf_parser_cos import PdfCosParser, pdf_header_offset, pdf_header_version
@@ -12825,7 +12825,10 @@ class SimplePdf:
                 pdf_val = self._value_to_pdf(field_obj, value)
                 if pdf_val is not None:
                     field_obj.mapping[PdfName("V")] = pdf_val
-                    self._update_choice_indices(field_obj, value)
+                    self._update_choice_indices(field_obj, pdf_val)
+                elif field_attribute(self, field_obj, "FT") == PdfName("Ch"):
+                    field_obj.mapping.pop(PdfName("V"), None)
+                    field_obj.mapping.pop(PdfName("I"), None)
                 return True
 
             kids = field_obj.mapping.get(PdfName("Kids"))
@@ -12837,8 +12840,6 @@ class SimplePdf:
 
     def _value_to_pdf(self, field_obj: Any, value: Any) -> Any | None:
         """Convert Python value to appropriate PDF object for form field /V."""
-        from .form_fields import field_attribute
-
         # Both are inheritable (table 220): a kid of a parent that states the
         # type is a field of that type.
         ft = field_attribute(self, field_obj, "FT")
@@ -12865,33 +12866,40 @@ class SimplePdf:
                 return PdfName("Off")
             return PdfName(self._form_state_name(value, label="Radio value"))
         if is_choice:
+            exports = [
+                export for export, _display in self._choice_options_for_appearance(
+                    field_attribute(self, field_obj, "Opt")
+                )
+            ]
+            value = validate_choice_value(
+                value,
+                exports,
+                combo=bool(ff_val & (1 << 17)),
+                editable=bool(ff_val & (1 << 18)),
+                multiselect=bool(ff_val & (1 << 21)),
+            )
+            if value is None:
+                return None
             if isinstance(value, (list, tuple)):
                 return PdfArray([_pdf_text_string(v) for v in value])
             return _pdf_text_string(value)
         return _pdf_text_string(value)
 
-    def _update_choice_indices(self, field_obj: PdfDictionary, value: Any) -> None:
+    def _update_choice_indices(self, field_obj: PdfDictionary, pdf_value: Any) -> None:
         """Keep a multiselect choice field's /I array aligned with /V."""
-        ft = self._resolve(field_obj.mapping.get(PdfName("FT")))
+        ft = field_attribute(self, field_obj, "FT")
         if not (isinstance(ft, PdfName) and ft.name == "/Ch"):
             return
-        if not isinstance(value, (list, tuple)):
+        if not isinstance(pdf_value, PdfArray):
             field_obj.mapping.pop(PdfName("I"), None)
             return
-        options = self._resolve(field_obj.mapping.get(PdfName("Opt")))
-        if not isinstance(options, PdfArray):
-            return
-        exports: list[str] = []
-        for option in options.items:
-            option = self._resolve(option)
-            if isinstance(option, PdfString):
-                exports.append(decode_pdf_text_string(option))
-            elif isinstance(option, PdfArray) and option.items:
-                export = self._resolve(option.items[0])
-                if isinstance(export, PdfString):
-                    exports.append(decode_pdf_text_string(export))
+        exports = [
+            export for export, _display in self._choice_options_for_appearance(
+                field_attribute(self, field_obj, "Opt")
+            )
+        ]
         indices = sorted(
-            exports.index(str(item)) for item in value if str(item) in exports
+            exports.index(decode_pdf_text_string(item)) for item in pdf_value.items
         )
         field_obj.mapping[PdfName("I")] = PdfArray(
             [PdfNumber(index) for index in indices]

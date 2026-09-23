@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from aspose_pdf.engine.form_fields import validate_choice_value
 from aspose_pdf.exceptions import PdfValidationException
 
 if TYPE_CHECKING:
@@ -116,6 +117,8 @@ class Field:
         engine = self._engine()
         try:
             engine.set_field_value(self._name, val)
+        except (TypeError, PdfValidationException):
+            raise
         except Exception as exc:
             from aspose_pdf.exceptions import AsposePdfException
 
@@ -576,26 +579,7 @@ class Form:
         exports = self._choice_exports(normalized_options)
         if not isinstance(multiselect, bool):
             raise TypeError("multiselect must be a boolean")
-        if multiselect:
-            if value is None:
-                selected: Any = []
-            elif isinstance(value, str) or not isinstance(value, Sequence):
-                raise TypeError("A multiselect value must be a sequence of strings")
-            else:
-                selected = list(value)
-                if not all(isinstance(item, str) for item in selected):
-                    raise TypeError("A multiselect value must contain only strings")
-                if len(set(selected)) != len(selected):
-                    raise PdfValidationException(
-                        "A multiselect value must not contain duplicates"
-                    )
-        else:
-            if value is not None and not isinstance(value, str):
-                raise TypeError("A list box value must be a string or None")
-            selected = value
-        selected_values = selected if isinstance(selected, list) else [selected]
-        if any(item is not None and item not in exports for item in selected_values):
-            raise PdfValidationException("List box value is not one of the options")
+        selected = validate_choice_value(value, exports, multiselect=multiselect)
         flags = self._common_flags(read_only=read_only, required=required)
         if multiselect:
             flags |= 1 << 21
@@ -629,12 +613,9 @@ class Form:
             raise TypeError("options must be a sequence of choices")
         normalized_options = list(options)
         exports = self._choice_exports(normalized_options)
-        if value is not None and not isinstance(value, str):
-            raise TypeError("Combo box value must be a string or None")
         if not isinstance(editable, bool):
             raise TypeError("editable must be a boolean")
-        if value is not None and not editable and value not in exports:
-            raise PdfValidationException("Combo box value is not one of the options")
+        value = validate_choice_value(value, exports, combo=True, editable=editable)
         flags = self._common_flags(read_only=read_only, required=required) | (1 << 17)
         if editable:
             flags |= 1 << 18
