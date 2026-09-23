@@ -25,6 +25,7 @@ from aspose_pdf.engine.field_appearance import (
     build_text_appearance,
     parse_default_appearance,
 )
+from aspose_pdf.engine.form_fields import field_dictionary, widget_dictionaries
 from aspose_pdf.engine.simple_pdf import SimplePdf
 
 # ---------------------------------------------------------------------------
@@ -1015,6 +1016,41 @@ def test_generate_field_appearances_can_keep_what_is_there():
     engine = SimplePdf.from_bytes(_form_with_producer_appearance())
     assert engine.generate_field_appearances(keep_existing=True) == 0
     assert engine.generate_field_appearances() == 1
+
+
+@pytest.mark.parametrize("entry_point", ["document", "form"])
+def test_public_keep_existing_preserves_producer_appearance_and_fills_missing(
+    entry_point,
+):
+    document = Document(_form_with_producer_appearance())
+    engine = document._engine_pdf
+    original = engine.get_annotations(0)[0]["AP_N"]
+    document.form.add_text_field(
+        "missing", document.pages[0], (100, 10, 300, 30), value="new value"
+    )
+    missing = field_dictionary(engine, "missing")
+    widget = widget_dictionaries(engine, missing)[0]
+    widget.mapping.pop(PdfName("AP"))
+    generate = (
+        document.generate_field_appearances
+        if entry_point == "document"
+        else document.form.generate_appearances
+    )
+
+    assert generate(keep_existing=True) == 1
+    assert engine.get_annotations(0)[0]["AP_N"] == original
+    assert b"(new value) Tj" in engine.get_annotations(0)[1]["AP_N"]
+    assert generate(keep_existing=True) == 0
+
+    output = io.BytesIO()
+    document.save(output)
+    reopened = Document(output.getvalue())
+    assert reopened._engine_pdf.get_annotations(0)[0]["AP_N"] == original
+    assert b"(new value) Tj" in reopened._engine_pdf.get_annotations(0)[1]["AP_N"]
+    assert generate() == 2
+    assert engine.get_annotations(0)[0]["AP_N"] != original
+    reopened.dispose()
+    document.dispose()
 
 
 def test_a_kid_widget_keeps_its_appearance_too():

@@ -802,17 +802,21 @@ class Form:
         self._load_fields()
         return field
 
-    def generate_appearances(self) -> int:
+    def generate_appearances(self, *, keep_existing: bool = False) -> int:
         """Regenerate field appearance streams from the current field values.
 
         Builds the visible appearance (``/AP``) of text and choice fields from
         their values and default appearance, and updates check box / radio
         ``/AS`` states. Missing caption-only push-button appearances are also
         generated, so the form renders without relying on ``/NeedAppearances``.
-        Returns the number of widgets updated.
+        With *keep_existing*, existing normal appearances of text, choice and
+        signature widgets are preserved while missing ones are built. Returns
+        the number of widgets updated.
         """
         if self._document and self._document._engine_pdf:
-            return self._document._engine_pdf.generate_field_appearances()
+            return self._document._engine_pdf.generate_field_appearances(
+                keep_existing=keep_existing
+            )
         return 0
 
     def flatten(self) -> None:
