@@ -6,7 +6,7 @@ This module provides the main Document class that wraps the native PDF engine.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Generator, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -2339,6 +2339,20 @@ class Document:
         """
         if self._outlines is not None and self._engine_pdf is not None:
             self._engine_pdf._outlines_data = self._outlines._to_list()
+
+    def extract_pages(self, selection: Iterable[int] | slice) -> Document:
+        """Return an independent document containing selected pages in order.
+
+        *selection* is a zero-based iterable of page indexes or a slice. Page
+        resources, annotations, fields, layers, and bookmarks that belong to
+        those pages travel with them. An empty selection is invalid.
+        """
+        self._ensure_not_disposed()
+        self._flush_outlines()
+        extracted = self._engine_pdf.extract_pages(selection)
+        result = Document(limits=self._load_limits)
+        result._engine_pdf = extracted
+        return result
 
     def merge(self, *documents: Document) -> Document:
         """Merge the supplied documents into this one."""

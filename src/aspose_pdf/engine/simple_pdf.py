@@ -8040,10 +8040,11 @@ class SimplePdf:
 
         new_pdf = SimplePdf()
         new_pdf._load_limits = self._load_limits
-        new_pdf._load_budget = self._load_budget
+        new_pdf._load_budget = _LoadBudget(self._load_limits)
         new_pdf.append(self, indices)
         new_pdf.metadata = dict(self.metadata)
         new_pdf.watermark_text = self.watermark_text
+        new_pdf.pdf_version = self.pdf_version
         return new_pdf
 
     def delete_pages(self, start_index: int, count: int) -> None:

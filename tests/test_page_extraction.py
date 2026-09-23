@@ -21,9 +21,10 @@ import io
 
 import pytest
 
-from aspose_pdf import Document
+from aspose_pdf import Document, PdfLoadLimits
 from aspose_pdf.engine.cos import PdfName
 from aspose_pdf.engine.simple_pdf import SimplePdf
+from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 from aspose_pdf.facades import PdfFileEditor
 from aspose_pdf.outlines import OutlineItem
 
@@ -71,6 +72,93 @@ def _xobjects(document: Document, index: int) -> list[str]:
 # ---------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------
+
+
+def test_document_extract_pages_returns_an_independent_editable_document():
+    source = _source()
+    source.form.add_text_field("on 2", 2, (50, 400, 200, 425), value="selected")
+    source.info["Title"] = "original"
+    source.version = "2.0"
+
+    taken = source.extract_pages([2, 0])
+
+    assert isinstance(taken, Document)
+    assert _text(taken) == ["P2", "P0"]
+    assert "note on 2" in [
+        annotation.contents for annotation in taken.pages[0].annotations
+    ]
+    assert [field.name for field in taken.form] == ["on 2"]
+    assert [(item.title, item.page_index) for item in taken.outlines] == [
+        ("to 0", 1),
+        ("to 2", 0),
+    ]
+    assert taken.attachments == {}
+    assert taken.info["Title"] == "original"
+    assert taken.version == "2.0"
+    assert taken.file_name is None
+    assert taken.load_limits is source.load_limits
+    assert taken._engine_pdf._load_budget is not source._engine_pdf._load_budget
+
+    taken.info["Title"] = "subset"
+    taken.form["on 2"].value = "changed"
+    taken.pages[0].add_text("subset only", 72, 350)
+    assert source.info["Title"] == "original"
+    assert source.form["on 2"].value == "selected"
+    assert "subset only" not in source.pages[2].extract_text()
+    source.dispose()
+
+    reopened = Document(_saved(taken))
+    assert "P2" in reopened.pages[0].extract_text()
+    assert "subset only" in reopened.pages[0].extract_text()
+    assert "P0" in reopened.pages[1].extract_text()
+    assert reopened.form["on 2"].value == "changed"
+    assert reopened.version == "2.0"
+    taken.dispose()
+    assert "subset only" in reopened.pages[0].extract_text()
+    reopened.dispose()
+
+
+def test_document_extract_pages_accepts_a_slice_and_keeps_load_limits():
+    limits = PdfLoadLimits(max_pages=3)
+    source = Document(limits=limits)
+    for index in range(3):
+        source.pages.add().add_text(f"P{index}", 72, 700)
+
+    taken = source.extract_pages(slice(None, None, -1))
+
+    assert _text(taken) == ["P2", "P1", "P0"]
+    assert taken.load_limits is limits
+    assert taken._engine_pdf._load_budget is not source._engine_pdf._load_budget
+    taken.dispose()
+    assert _text(source) == ["P0", "P1", "P2"]
+    source.dispose()
+
+
+def test_document_extract_pages_survives_streaming_source_disposal(tmp_path):
+    path = tmp_path / "source.pdf"
+    _source().save(path)
+    with Document.open_streaming(path) as source:
+        taken = source.extract_pages(index for index in (3, 1))
+
+    assert _text(taken) == ["P3", "P1"]
+    with Document(_saved(taken)) as reopened:
+        assert _text(reopened) == ["P3", "P1"]
+    taken.dispose()
+
+
+def test_document_extract_pages_rejects_empty_and_invalid_selections():
+    source = _source()
+    with pytest.raises(PdfValidationException, match="empty"):
+        source.extract_pages([])
+    with pytest.raises(PdfValidationException, match="empty"):
+        source.extract_pages(slice(0, 0))
+    with pytest.raises(IndexError, match="Page index out of range"):
+        source.extract_pages([4])
+    with pytest.raises(IndexError, match="Page index out of range"):
+        source.extract_pages([-1])
+    source.dispose()
+    with pytest.raises(AsposePdfException, match="disposed"):
+        source.extract_pages([0])
 
 
 def test_an_extracted_page_keeps_what_it_draws_with():
