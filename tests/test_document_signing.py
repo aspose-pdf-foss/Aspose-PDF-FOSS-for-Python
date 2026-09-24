@@ -41,6 +41,7 @@ from aspose_pdf.validation import (
     ValidationOptions,
     ValidationStatus,
 )
+from tests.helpers_signatures import timestamp_authority
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +53,7 @@ def chain():
 
 @pytest.fixture(scope="module")
 def tsa():
-    return SigningUtils.create_self_signed_ca("Local TSA")
+    return timestamp_authority()
 
 
 def _saved(document: Document, **kwargs) -> bytes:

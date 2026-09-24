@@ -19,10 +19,13 @@ from datetime import UTC, datetime
 from asn1crypto import cms as asn1_cms
 from asn1crypto import tsp
 from asn1crypto import x509 as asn1_x509
+from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
 
 from aspose_pdf.engine import cms as cms_mod
+from aspose_pdf.validation import RevocationStatus, TrustStatus, ValidationStatus
 
 # id-ct-TSTInfo
 TST_INFO_OID = "1.2.840.113549.1.9.16.1.4"
@@ -40,6 +43,9 @@ class TimestampInfo:
     imprint_ok: bool = False
     signature_ok: bool = False
     reason: str = ""
+    trust_status: TrustStatus | None = None
+    revocation_status: RevocationStatus = RevocationStatus.NOT_CHECKED
+    validation_status: ValidationStatus | None = None
 
 
 def _tst_info_and_der(token_der: bytes):
@@ -56,7 +62,9 @@ def verify_timestamp_token(token_der: bytes, signed_value: bytes) -> TimestampIn
     """Verify an RFC 3161 token and that it timestamps *signed_value*.
 
     *signed_value* is the data the timestamp protects — for a PDF signature
-    timestamp it is the signer's signature bytes.
+    timestamp it is the signer's signature bytes. This low-level operation
+    checks integrity only. Use :func:`validate_timestamp_token` to establish
+    trusted time, including certificate constraints and TSA trust.
     """
     try:
         tst_info, tst_der = _tst_info_and_der(token_der)
@@ -89,7 +97,11 @@ def verify_timestamp_token(token_der: bytes, signed_value: bytes) -> TimestampIn
         imprint_ok = imprint["hashed_message"].native == digest.finalize()
     except Exception as exc:  # noqa: BLE001 - report any imprint failure
         return TimestampInfo(
-            False, gen_time, tsa_name, False, signer.signature_ok,
+            False,
+            gen_time,
+            tsa_name,
+            False,
+            signer.signature_ok,
             reason=f"imprint check failed: {exc}",
         )
 
@@ -102,6 +114,91 @@ def verify_timestamp_token(token_der: bytes, signed_value: bytes) -> TimestampIn
     return TimestampInfo(
         verified, gen_time, tsa_name, imprint_ok, signer.signature_ok, reason
     )
+
+
+def validate_timestamp_token(
+    token_der: bytes,
+    signed_value: bytes,
+    *,
+    trust_roots=(),
+    extra_certs=(),
+    use_system_trust=False,
+    check_revocation=False,
+    embedded_crls=(),
+    embedded_ocsps=(),
+    validation_mode=None,
+    timeout=10.0,
+) -> TimestampInfo:
+    """Validate integrity, purpose and explicit trust of an RFC 3161 TSA.
+
+    An unanchored TSA never establishes trusted time, including self-signed
+    TSAs. The TSA certificate must have an exclusively timeStamping, critical
+    EKU and a valid chain at genTime (RFC 3161 section 2.3).
+    """
+    from .cert_chain import build_and_validate
+    from .revocation import check_chain_revocation
+
+    result = verify_timestamp_token(token_der, signed_value)
+    result.validation_status = ValidationStatus.INVALID
+    if not result.verified:
+        return result
+    result.verified = False
+    info = cms_mod.parse_signed_data(token_der)
+    now = datetime.now(UTC)
+    if result.gen_time is None or result.gen_time > now:
+        result.reason = "timestamp generation time is missing or in the future"
+        return result
+    if cms_mod.verify_signing_certificate(info) is not True:
+        result.reason = "timestamp is missing a valid signing-certificate binding"
+        return result
+    cert = info.signer_cert
+    if cert is None:
+        result.reason = "timestamp signer certificate is missing"
+        return result
+    try:
+        eku = cert.extensions.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE)
+        if not eku.critical or list(eku.value) != [ExtendedKeyUsageOID.TIME_STAMPING]:
+            raise ValueError("invalid timestamp EKU")
+    except (x509.ExtensionNotFound, ValueError):
+        result.reason = (
+            "TSA certificate requires an exclusive, critical timeStamping EKU"
+        )
+        return result
+    chain = build_and_validate(
+        cert,
+        extra_certs=[*info.certificates, *extra_certs],
+        trust_roots=list(trust_roots),
+        at_time=result.gen_time,
+        use_system_trust=use_system_trust,
+        purpose=ExtendedKeyUsageOID.TIME_STAMPING,
+    )
+    result.trust_status = chain.trust_status
+    if chain.errors or chain.trust_status != TrustStatus.TRUSTED:
+        result.reason = (
+            "; ".join(chain.errors) or "TSA certificate chain is not trusted"
+        )
+        return result
+    if check_revocation:
+        kwargs = {"mode": validation_mode} if validation_mode is not None else {}
+        rev = check_chain_revocation(
+            chain.chain,
+            at_time=result.gen_time,
+            embedded_crls=[*info.crls_der, *embedded_crls],
+            embedded_ocsps=[*info.ocsps_der, *embedded_ocsps],
+            timeout=timeout,
+            **kwargs,
+        )
+        result.revocation_status = rev.status
+        if rev.status == RevocationStatus.REVOKED:
+            result.reason = "TSA certificate chain has been revoked"
+            return result
+        if rev.status == RevocationStatus.UNKNOWN:
+            result.validation_status = ValidationStatus.UNKNOWN
+            result.reason = "TSA revocation status could not be determined"
+            return result
+    result.verified = True
+    result.validation_status = ValidationStatus.VALID
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -144,12 +241,11 @@ def make_timestamp_token(
 
     signed_attrs = asn1_cms.CMSAttributes(
         [
-            asn1_cms.CMSAttribute(
-                {"type": "content_type", "values": ["tst_info"]}
-            ),
+            asn1_cms.CMSAttribute({"type": "content_type", "values": ["tst_info"]}),
             asn1_cms.CMSAttribute(
                 {"type": "message_digest", "values": [content_digest]}
             ),
+            cms_mod.ess_signing_cert_v2_attr(tsa_cert),
         ]
     )
     to_sign = b"\x31" + signed_attrs.dump(force=True)[1:]
@@ -225,9 +321,7 @@ def request_timestamp(
             "cert_req": True,
         }
     )
-    body = _http_post(
-        tsa_url, request.dump(), "application/timestamp-query", timeout
-    )
+    body = _http_post(tsa_url, request.dump(), "application/timestamp-query", timeout)
     response = tsp.TimeStampResp.load(body)
     token = response["time_stamp_token"]
     return token.dump()

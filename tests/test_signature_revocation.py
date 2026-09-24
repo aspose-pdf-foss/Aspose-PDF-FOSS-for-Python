@@ -99,9 +99,9 @@ def test_revocation_unknown_without_info():
     result = _pdf_sig(blob).validate(
         ValidationOptions(trusted_certificates=[root], check_revocation=True)
     )
-    # No embedded material, offline -> UNKNOWN, which is not fatal.
+    # Missing evidence cannot satisfy a requested revocation check.
     assert result.revocation_status == RevocationStatus.UNKNOWN
-    assert result.status == ValidationStatus.VALID
+    assert result.status == ValidationStatus.UNKNOWN
 
 
 def test_online_ocsp_revoked_via_monkeypatch(monkeypatch):

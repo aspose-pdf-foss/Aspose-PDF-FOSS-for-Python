@@ -201,7 +201,16 @@ class PdfSignature:
         # before the PKCS#7 structural check below, which does not expect a
         # token's encapsulated TSTInfo content.
         if (self.sub_filter or "").lower() == "etsi.rfc3161":
-            return self._validate_document_timestamp(signed_bytes)
+            try:
+                return self._validate_document_timestamp(signed_bytes, options)
+            except PdfResourceLimitException:
+                raise
+            except Exception as exc:
+                return _ValidationResult(
+                    status=ValidationStatus.INVALID,
+                    message=f"Timestamp validation error: {exc}",
+                    errors=[str(exc)],
+                )
 
         # --- Stage 2: PKCS#7 structural check ---
         try:
@@ -257,18 +266,44 @@ class PdfSignature:
             )
 
     def _validate_document_timestamp(
-        self, signed_bytes: bytes
+        self, signed_bytes: bytes, options: ValidationOptions
     ) -> ValidationResult:
         """Validate a DocTimeStamp signature (PAdES-LTA archive timestamp)."""
+        from aspose_pdf.engine import dss as _dss
         from aspose_pdf.engine import timestamp as _timestamp
+        from aspose_pdf.engine.signature_validator import (
+            _load_der_certs,
+            _normalise_trust_roots,
+        )
+        from aspose_pdf.validation import (
+            ValidationMethod,
+            ValidationStatus,
+        )
         from aspose_pdf.validation import (
             ValidationResult as _ValidationResult,
         )
-        from aspose_pdf.validation import (
-            ValidationStatus,
-        )
 
-        ts_info = _timestamp.verify_timestamp_token(self.contents, signed_bytes)
+        material = _dss.read_dss(
+            self.reference_data,
+            limits=self.load_limits,
+            budget=self._load_budget,
+            encryption=self._decryption,
+        )
+        ts_info = _timestamp.validate_timestamp_token(
+            self.contents,
+            signed_bytes,
+            trust_roots=_normalise_trust_roots(options),
+            extra_certs=_load_der_certs(material.certs),
+            use_system_trust=options.use_system_trust,
+            check_revocation=(
+                options.check_revocation
+                or options.validation_method == ValidationMethod.LTIP
+            ),
+            embedded_crls=material.crls,
+            embedded_ocsps=material.ocsps,
+            validation_mode=options.validation_mode,
+            timeout=options.network_timeout,
+        )
         if ts_info.verified:
             return _ValidationResult(
                 status=ValidationStatus.VALID,
@@ -278,13 +313,19 @@ class PdfSignature:
                 signed_at=ts_info.gen_time.isoformat()
                 if ts_info.gen_time is not None
                 else None,
+                trusted_at=ts_info.gen_time.isoformat(),
+                validated_at=ts_info.gen_time.isoformat(),
+                trust_status=ts_info.trust_status,
+                revocation_status=ts_info.revocation_status,
             )
         return _ValidationResult(
-            status=ValidationStatus.INVALID,
+            status=ts_info.validation_status or ValidationStatus.INVALID,
             message=ts_info.reason or "document timestamp not verified",
             errors=[ts_info.reason or "document timestamp not verified"],
             signer=ts_info.tsa,
             timestamp=ts_info,
+            trust_status=ts_info.trust_status,
+            revocation_status=ts_info.revocation_status,
         )
 
     # ---------------------------------------------------------------------

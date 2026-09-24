@@ -8,6 +8,7 @@ from aspose_pdf.engine import timestamp as ts
 from aspose_pdf.engine.signing import SigningUtils
 from aspose_pdf.signature import PdfSignature
 from aspose_pdf.validation import ValidationOptions, ValidationStatus
+from tests.helpers_signatures import timestamp_authority
 
 DATA = b"%PDF timestamp body\nwith newlines\n" * 8
 
@@ -25,7 +26,7 @@ def _pdf_sig(contents) -> PdfSignature:
 def test_embedded_timestamp_is_verified():
     root, rk = SigningUtils.create_self_signed_ca("TS Chain Root")
     leaf, lk = SigningUtils.issue_certificate("TS Leaf", root, rk)
-    tsa_cert, tsa_key = SigningUtils.create_self_signed_ca("Local TSA")
+    tsa_cert, tsa_key = timestamp_authority("Local TSA", root, rk)
 
     blob = SigningUtils.sign_data_pkcs7(
         DATA, leaf, lk, extra_certs=[root], tsa=(tsa_cert, tsa_key)
@@ -41,7 +42,7 @@ def test_embedded_timestamp_is_verified():
 
 
 def test_timestamp_token_unit_verify_and_tamper():
-    tsa_cert, tsa_key = SigningUtils.create_self_signed_ca("Unit TSA")
+    tsa_cert, tsa_key = timestamp_authority("Unit TSA")
     value = b"the-signer-signature-value"
     digest = hashes.Hash(hashes.SHA256())
     digest.update(value)

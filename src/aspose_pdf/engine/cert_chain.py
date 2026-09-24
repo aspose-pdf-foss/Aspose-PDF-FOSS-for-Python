@@ -7,7 +7,8 @@ and validates the path manually using the low-level primitives:
 
 * issuer-signature verification (``Certificate.verify_directly_issued_by``),
 * validity-window checks at a caller-supplied time,
-* BasicConstraints / KeyUsage sanity checks,
+* BasicConstraints, path length, key purposes, name constraints and critical
+  extension checks (unsupported policy constraints are rejected),
 * anchoring against caller-supplied trust roots (and, optionally, the OS bundle).
 
 Trust is intentionally *reported* rather than always *enforced*: the orchestrator
@@ -19,14 +20,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
-from cryptography.x509.oid import ExtensionOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID, NameOID
 
 from aspose_pdf.validation import TrustStatus
 
 _MAX_DEPTH = 16
+_MAX_PATHS = 256
+DOCUMENT_SIGNING = x509.ObjectIdentifier("1.3.6.1.5.5.7.3.36")
+
+# These extensions are either processed below or carry descriptive data.
+_HANDLED_CRITICAL = {
+    ExtensionOID.BASIC_CONSTRAINTS,
+    ExtensionOID.KEY_USAGE,
+    ExtensionOID.EXTENDED_KEY_USAGE,
+    ExtensionOID.NAME_CONSTRAINTS,
+    ExtensionOID.SUBJECT_ALTERNATIVE_NAME,
+    ExtensionOID.SUBJECT_KEY_IDENTIFIER,
+    ExtensionOID.AUTHORITY_KEY_IDENTIFIER,
+    ExtensionOID.OCSP_NO_CHECK,
+}
+_UNSUPPORTED_CONSTRAINTS = {
+    ExtensionOID.POLICY_CONSTRAINTS,
+    ExtensionOID.POLICY_MAPPINGS,
+    ExtensionOID.INHIBIT_ANY_POLICY,
+}
 
 
 @dataclass
@@ -66,14 +87,6 @@ def _check_validity(cert: x509.Certificate, at_time: datetime, label: str, error
         errors.append(f"{label} certificate has expired")
 
 
-def _basic_constraints_ca(cert: x509.Certificate) -> bool | None:
-    try:
-        bc = cert.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
-        return bool(bc.value.ca)
-    except x509.ExtensionNotFound:
-        return None
-
-
 def _has_key_cert_sign(cert: x509.Certificate) -> bool | None:
     try:
         ku = cert.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
@@ -88,6 +101,116 @@ def _leaf_can_sign(cert: x509.Certificate) -> bool | None:
         return bool(ku.value.digital_signature or ku.value.content_commitment)
     except x509.ExtensionNotFound:
         return None
+
+
+def _extension(cert, oid):
+    try:
+        return cert.extensions.get_extension_for_oid(oid).value
+    except x509.ExtensionNotFound:
+        return None
+
+
+def _domain_matches(name: str, constraint: str, *, subdomains: bool) -> bool:
+    name, constraint = name.lower().rstrip("."), constraint.lower().rstrip(".")
+    if constraint.startswith("."):
+        return name.endswith(constraint) and name != constraint[1:]
+    return name == constraint or (subdomains and name.endswith("." + constraint))
+
+
+def _name_matches(name, constraint) -> bool:
+    if isinstance(name, x509.DNSName):
+        return _domain_matches(name.value, constraint.value, subdomains=True)
+    if isinstance(name, x509.RFC822Name):
+        local, domain = name.value.rsplit("@", 1)
+        if "@" in constraint.value:
+            other_local, other_domain = constraint.value.rsplit("@", 1)
+            return local == other_local and domain.lower() == other_domain.lower()
+        return _domain_matches(domain, constraint.value, subdomains=False)
+    if isinstance(name, x509.UniformResourceIdentifier):
+        host = urlsplit(name.value).hostname
+        return host is not None and _domain_matches(
+            host, constraint.value, subdomains=False
+        )
+    if isinstance(name, x509.IPAddress):
+        return name.value in constraint.value
+    if isinstance(name, x509.DirectoryName):
+        prefix = constraint.value.rdns
+        return name.value.rdns[: len(prefix)] == prefix
+    raise ValueError("unsupported name constraint type")
+
+
+def _check_names(issuer, subordinate, errors):
+    constraints = _extension(issuer, ExtensionOID.NAME_CONSTRAINTS)
+    if constraints is None:
+        return
+    permitted = list(constraints.permitted_subtrees or ())
+    excluded = list(constraints.excluded_subtrees or ())
+    supported = (
+        x509.DNSName,
+        x509.RFC822Name,
+        x509.UniformResourceIdentifier,
+        x509.IPAddress,
+        x509.DirectoryName,
+    )
+    if any(not isinstance(n, supported) for n in permitted + excluded):
+        errors.append("unsupported name constraints in certificate chain")
+        return
+    names = [x509.DirectoryName(subordinate.subject)]
+    names.extend(_extension(subordinate, ExtensionOID.SUBJECT_ALTERNATIVE_NAME) or ())
+    names.extend(
+        x509.RFC822Name(attr.value)
+        for attr in subordinate.subject.get_attributes_for_oid(NameOID.EMAIL_ADDRESS)
+    )
+    for name in names:
+        allowed = [n for n in permitted if type(n) is type(name)]
+        denied = [n for n in excluded if type(n) is type(name)]
+        try:
+            if any(_name_matches(name, n) for n in denied) or (
+                allowed and not any(_name_matches(name, n) for n in allowed)
+            ):
+                errors.append("certificate violates issuer name constraints")
+        except (ValueError, TypeError, AttributeError):
+            errors.append("certificate name constraints could not be evaluated")
+
+
+def _path_errors(chain, at_time, purpose):
+    errors = []
+    if _leaf_can_sign(chain[0]) is False:
+        errors.append("signer certificate key usage does not allow signing")
+    for index, cert in enumerate(chain):
+        label = "signer" if index == 0 else "issuer"
+        _check_validity(cert, at_time, label, errors)
+        for extension in cert.extensions:
+            if extension.oid in _UNSUPPORTED_CONSTRAINTS or (
+                extension.critical and extension.oid not in _HANDLED_CRITICAL
+            ):
+                errors.append(
+                    f"unsupported certificate extension {extension.oid.dotted_string}"
+                )
+        eku = _extension(cert, ExtensionOID.EXTENDED_KEY_USAGE)
+        if (
+            eku is not None
+            and purpose not in eku
+            and ExtendedKeyUsageOID.ANY_EXTENDED_KEY_USAGE not in eku
+        ):
+            errors.append(
+                "certificate extended key usage does not allow the requested purpose"
+            )
+        if index == 0:
+            continue
+        bc = _extension(cert, ExtensionOID.BASIC_CONSTRAINTS)
+        if bc is None or not bc.ca:
+            errors.append("an issuer certificate is not a CA (BasicConstraints)")
+        elif bc.path_length is not None:
+            intermediates = sum(c.subject != c.issuer for c in chain[1:index])
+            if intermediates > bc.path_length:
+                errors.append("certificate chain exceeds a CA path length constraint")
+        if _has_key_cert_sign(cert) is False:
+            errors.append("an issuer certificate lacks the keyCertSign key usage")
+        for child_index, subordinate in enumerate(chain[:index]):
+            if child_index == 0 or subordinate.subject != subordinate.issuer:
+                _check_names(cert, subordinate, errors)
+    return list(dict.fromkeys(errors))
 
 
 def load_system_trust_roots() -> list[x509.Certificate]:
@@ -115,6 +238,7 @@ def build_and_validate(
     *,
     at_time: datetime | None = None,
     use_system_trust: bool = False,
+    purpose: x509.ObjectIdentifier = DOCUMENT_SIGNING,
 ) -> ChainResult:
     """Build the path from *leaf* toward a trust anchor and validate each link."""
     extra_certs = list(extra_certs or [])
@@ -126,63 +250,57 @@ def build_and_validate(
     at_time = _aware(at_time)
 
     anchor_prints = {_fingerprint(c) for c in trust_roots}
-    # Pool of certs we may use as issuers while building the path.
-    pool = extra_certs + trust_roots
-
-    errors: list[str] = []
-    warnings: list[str] = []
-    chain: list[x509.Certificate] = [leaf]
-
-    # Leaf-level checks.
-    _check_validity(leaf, at_time, "signer", errors)
-    if _leaf_can_sign(leaf) is False:
-        warnings.append("signer certificate key usage does not allow signing")
-
-    current = leaf
-    reached_self_signed = False
-    for _ in range(_MAX_DEPTH):
-        if _fingerprint(current) in anchor_prints and current is not leaf:
-            break
-        if _is_self_signed(current):
-            reached_self_signed = True
-            break
-        # Find an issuer in the pool that actually signed `current`.
-        issuer = None
-        cur_print = _fingerprint(current)
-        for cand in pool:
-            if _fingerprint(cand) == cur_print:
+    pool = list({_fingerprint(c): c for c in extra_certs + trust_roots}.values())
+    pending = [[leaf]]
+    results = []
+    attempts = 0
+    while pending and attempts < _MAX_PATHS:
+        chain = pending.pop()
+        attempts += 1
+        current = chain[-1]
+        seen = {_fingerprint(c) for c in chain}
+        if _fingerprint(current) in anchor_prints:
+            trust = TrustStatus.TRUSTED
+        elif _is_self_signed(current):
+            trust = (
+                TrustStatus.SELF_SIGNED if len(chain) == 1 else TrustStatus.UNTRUSTED
+            )
+        else:
+            issuers = []
+            for candidate in pool:
+                if (
+                    candidate.subject != current.issuer
+                    or _fingerprint(candidate) in seen
+                ):
+                    continue
+                try:
+                    current.verify_directly_issued_by(candidate)
+                except Exception:
+                    continue
+                issuers.append(candidate)
+            if issuers and len(chain) < _MAX_DEPTH:
+                pending.extend([*chain, candidate] for candidate in reversed(issuers))
                 continue
-            if cand.subject != current.issuer:
-                continue
-            try:
-                current.verify_directly_issued_by(cand)
-            except Exception:
-                continue
-            issuer = cand
-            break
-        if issuer is None:
-            break
-        # Validate the issuer as a CA.
-        _check_validity(issuer, at_time, "issuer", errors)
-        if _basic_constraints_ca(issuer) is False:
-            errors.append("an issuer certificate is not a CA (BasicConstraints)")
-        if _has_key_cert_sign(issuer) is False:
-            errors.append("an issuer certificate lacks the keyCertSign key usage")
-        chain.append(issuer)
-        current = issuer
-
-    # Determine the trust status.
-    chain_prints = {_fingerprint(c) for c in chain}
-    if anchor_prints & chain_prints:
-        trust = TrustStatus.TRUSTED
-    elif reached_self_signed and len(chain) == 1:
-        trust = TrustStatus.SELF_SIGNED
-    elif reached_self_signed:
-        trust = TrustStatus.UNTRUSTED
-    else:
-        # Could not anchor the path to any self-signed root.
-        trust = TrustStatus.BROKEN
-
-    return ChainResult(
-        trust_status=trust, chain=chain, errors=errors, warnings=warnings
+            trust = TrustStatus.BROKEN
+        errors = _path_errors(chain, at_time, purpose)
+        if trust == TrustStatus.BROKEN:
+            errors.append(
+                "incomplete or cyclic certificate chain, or path depth exceeded"
+            )
+        result = ChainResult(trust, chain, errors)
+        if trust == TrustStatus.TRUSTED and not errors:
+            return result
+        results.append(result)
+    if not results:
+        return ChainResult(
+            TrustStatus.BROKEN, [leaf], ["certificate path search limit exceeded"]
+        )
+    # Prefer a valid complete path, then an anchored path with useful errors.
+    return min(
+        results,
+        key=lambda r: (
+            bool(r.errors),
+            r.trust_status != TrustStatus.TRUSTED,
+            r.trust_status == TrustStatus.BROKEN,
+        ),
     )

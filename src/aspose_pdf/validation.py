@@ -24,19 +24,17 @@ class ValidationMode(Enum):
     """Controls whether certificate revocation is checked via network."""
 
     OFFLINE = "offline"
-    """Perform only cryptographic verification (ByteRange + PKCS#7 digest).
-    No network requests are made.  This is the default and always available.
+    """Check integrity, certificates and requested embedded evidence offline.
+    No network requests are made. This is the default.
     """
 
     ONLINE = "online"
-    """Attempt OCSP/CRL revocation check in addition to the cryptographic
-    verification.  Falls back to offline result if the network is unavailable.
-    Not fully implemented - the class records the intent but the current
-    engine only performs offline checks regardless.
+    """Use HTTP OCSP/CRL lookups when a requested revocation check cannot
+    be resolved using embedded evidence.
     """
 
     AUTO = "auto"
-    """Try online revocation check first; fall back to offline on any error."""
+    """Use embedded revocation evidence first, then try HTTP when inconclusive."""
 
 
 class ValidationMethod(Enum):
@@ -168,13 +166,21 @@ class ValidationOptions:
     allow_self_signed:
         When ``True`` (default) a cryptographically intact self-signed
         signature is still reported ``VALID`` (flagged ``SELF_SIGNED``).
+        This does not override explicit/system trust anchors or establish
+        trust in a timestamp authority.
     check_revocation:
         When ``True`` perform OCSP/CRL revocation checking.  Offline this uses
         only revocation material embedded in the document; combined with
         :attr:`ValidationMode.ONLINE`/``AUTO`` it may fetch over the network.
+        Every non-root certificate in the signer and TSA paths is checked;
+        inconclusive evidence yields ``UNKNOWN``, not ``VALID``.
     check_timestamp:
         When ``True`` (default) verify an embedded RFC 3161 signature
         timestamp if present.
+        The TSA must chain to an explicit/system anchor, have a critical
+        timeStamping-only EKU and be valid at the token's time. An untrusted
+        timestamp yields ``INVALID``. Disabling this option never uses a
+        claimed CMS signing time to validate an expired certificate.
     use_system_trust:
         When ``True`` also consult the operating-system CA bundle as trust
         anchors (best effort, via the standard library).
@@ -237,6 +243,12 @@ class ValidationResult:
         signature is a certifying signature.
     signed_at:
         Claimed signing time (from the CMS ``signing-time`` attribute), if any.
+        It is descriptive and is never used as proof of historical validity.
+    trusted_at:
+        Time established by a fully validated RFC 3161 timestamp, if any.
+    validated_at:
+        Time used to check certificate validity: trusted timestamp time when
+        available, otherwise the current UTC time.
     pades_level:
         PAdES baseline level (:class:`PadesLevel`) the signature satisfies, or
         :attr:`PadesLevel.NONE` for a bare PKCS#7 signature.
@@ -252,6 +264,8 @@ class ValidationResult:
     certification_level: CertificationLevel | None = None
     signed_at: str | None = None
     pades_level: PadesLevel | None = None
+    trusted_at: str | None = None
+    validated_at: str | None = None
 
     @property
     def is_valid(self) -> bool:

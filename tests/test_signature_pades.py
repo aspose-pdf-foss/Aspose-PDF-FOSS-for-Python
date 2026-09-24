@@ -26,6 +26,7 @@ from aspose_pdf.validation import (
     ValidationOptions,
     ValidationStatus,
 )
+from tests.helpers_signatures import timestamp_authority
 
 DATA = b"%PDF pades body\nwith newlines\n" * 9
 
@@ -175,7 +176,7 @@ def test_ess_binding_mismatch_is_rejected():
 # ---------------------------------------------------------------------------
 def test_pades_t_with_embedded_timestamp():
     root, _rk, leaf, lk = _chain()
-    tsa_cert, tsa_key = SigningUtils.create_self_signed_ca("PAdES TSA")
+    tsa_cert, tsa_key = timestamp_authority("PAdES TSA", root, _rk)
     blob = SigningUtils.sign_data_cades(
         DATA, leaf, lk, extra_certs=[root], tsa=(tsa_cert, tsa_key)
     )
@@ -236,7 +237,7 @@ def test_dss_build_and_harvest_round_trip():
 def test_pades_lt_end_to_end():
     root, rk = SigningUtils.create_self_signed_ca("LT Root")
     leaf, lk = SigningUtils.issue_certificate("LT Signer", root, rk)
-    tsa_cert, tsa_key = SigningUtils.create_self_signed_ca("LT TSA")
+    tsa_cert, tsa_key = timestamp_authority("LT TSA", root, rk)
 
     pdf = SimplePdf()
     pdf.pages = [(0, 0, 200, 200)]
@@ -267,7 +268,7 @@ def test_pades_lt_end_to_end():
 def _build_lta():
     root, rk = SigningUtils.create_self_signed_ca("LTA Root")
     leaf, lk = SigningUtils.issue_certificate("LTA Signer", root, rk)
-    tsa_cert, tsa_key = SigningUtils.create_self_signed_ca("LTA TSA")
+    tsa_cert, tsa_key = timestamp_authority("LTA TSA", root, rk)
 
     pdf = SimplePdf()
     pdf.pages = [(0, 0, 200, 200)]

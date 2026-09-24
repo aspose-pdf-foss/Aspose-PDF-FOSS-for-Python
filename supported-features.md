@@ -1944,14 +1944,32 @@ Supported:
   signature value), not merely the container shape.
 - Build and validate the signer's X.509 certificate chain against supplied
   trust anchors (and, opt-in, the operating-system trust store), checking
-  validity periods, BasicConstraints, and key usage; self-signed signatures are
-  reported as such and accepted by default.
+  validity periods, CA BasicConstraints/path length, key usage, EKU and name
+  constraints (DNS, email, URI, IP and directory names). Alternative issuer
+  paths are tried; cycles, incomplete paths and unsupported critical
+  extensions are rejected. Self-signed approval signatures are accepted by
+  default only when explicit/system anchors do not require a trusted path.
 - Check certificate revocation via OCSP and CRL — offline against material
   embedded in the document/CMS, and (opt-in, `ValidationMode.ONLINE`/`AUTO`)
   over the network from the certificate's AIA / CRL-distribution-point URLs.
-- Verify embedded RFC 3161 signature timestamps (TSA signature and message
-  imprint) and surface the timestamp time; embed a timestamp when signing from a
-  local TSA or (opt-in) a network TSA.
+  Evidence must cover the validation time: stale/future responses are
+  inconclusive; an OCSP response without `nextUpdate` is accepted for at most
+  24 hours from `thisUpdate`. OCSP binds the full CertID, responder ID and
+  signature; delegated responders require an issuer-signed OCSP-signing
+  certificate and either `OCSPNoCheck` or applicable embedded CRL evidence.
+  CRL issuer identity, signing usage, signature and scope are checked.
+  Requested checks cover the signer/TSA intermediates as well as the leaf.
+  Missing or inconclusive evidence produces `UNKNOWN`, never `VALID`;
+  an unknown online OCSP result allows fallback to CRL.
+- Verify embedded RFC 3161 signature timestamps and document timestamps:
+  imprint, TSA signature, ESS certificate binding, an exclusive critical
+  timeStamping EKU, certificate validity and an explicit/system trust anchor.
+  Self-signed TSAs need explicit trust. Local timestamp generation includes
+  the ESS binding; callers must supply a suitable TSA certificate. The
+  claimed CMS time remains in `signed_at`; `trusted_at` is populated only by
+  a validated timestamp. `validated_at` records the trusted timestamp time
+  or current UTC time actually used for certificate checks. A claimed time
+  cannot rescue an expired certificate. `.valid` remains an integrity check.
 - **Sign, add LTV material and timestamp through `Document`.**
   `Document.sign(field=None, *, certificate, private_key, extra_certificates,
   reason, location, contact, signer_name, pades, timestamp_url,
@@ -2062,6 +2080,12 @@ Supported:
 
 Boundaries:
 
+- Certificate policy mappings/constraints, inhibit-any-policy and unsupported
+  critical extensions are rejected rather than silently ignored. Certificates
+  with EKU must allow the requested purpose (RFC 9336 documentSigning or
+  anyExtendedKeyUsage for document signatures). Path search is bounded to
+  16 certificates and 256 candidate paths. Delta, indirect and scoped CRLs
+  are inconclusive; no recursive OCSP lookup is made for delegated responders.
 - The bundled JPEG 2000 decoder is pure Python and therefore slow: roughly a
   second per 100k pixels, so a 300 dpi A4 scan takes minutes. Install the
   `images` extra (Pillow/OpenJPEG) for anything larger than a thumbnail; the

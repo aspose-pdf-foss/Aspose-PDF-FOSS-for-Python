@@ -47,8 +47,9 @@ def _normalise_trust_roots(options: ValidationOptions) -> list[x509.Certificate]
     roots: list[x509.Certificate] = []
     for item in options.trusted_certificates or []:
         cert = _to_cert(item)
-        if cert is not None:
-            roots.append(cert)
+        if cert is None:
+            raise ValueError("trusted_certificates contains an invalid certificate")
+        roots.append(cert)
     return roots
 
 
@@ -117,6 +118,7 @@ def validate_cms(
 
     errors: list[str] = []
     notes: list[str] = []
+    inconclusive: list[str] = []
 
     # --- Parse + signer signature -----------------------------------------
     try:
@@ -149,26 +151,43 @@ def validate_cms(
             "signing-certificate attribute does not match the signer certificate"
         )
 
-    # --- Timestamp (also fixes the time used for chain validation) --------
+    # --- Timestamp (only trusted time can replace the current time) --------
     ts_info = None
-    at_time = info.signing_time
+    at_time = datetime.now(UTC)
+    dss_cert_objs = _load_der_certs(dss_certs)
+    chain_extra = list(info.certificates) + dss_cert_objs
+    trust_roots = _normalise_trust_roots(options)
+    check_rev = (
+        options.check_revocation or options.validation_method == ValidationMethod.LTIP
+    )
+    embedded_crls = list(info.crls_der) + list(dss_crls)
+    embedded_ocsps = list(info.ocsps_der) + list(dss_ocsps)
     if options.check_timestamp and info.timestamp_token_der:
-        ts_info = timestamp.verify_timestamp_token(
-            info.timestamp_token_der, info.signature
+        ts_info = timestamp.validate_timestamp_token(
+            info.timestamp_token_der,
+            info.signature,
+            trust_roots=trust_roots,
+            extra_certs=chain_extra,
+            use_system_trust=options.use_system_trust,
+            check_revocation=check_rev,
+            embedded_crls=embedded_crls,
+            embedded_ocsps=embedded_ocsps,
+            validation_mode=options.validation_mode,
+            timeout=options.network_timeout,
         )
         if ts_info.verified and ts_info.gen_time is not None:
             at_time = ts_info.gen_time
         else:
-            notes.append(f"timestamp not verified ({ts_info.reason})")
-    if at_time is None:
-        at_time = datetime.now(UTC)
+            target = (
+                inconclusive
+                if ts_info.validation_status == ValidationStatus.UNKNOWN
+                else errors
+            )
+            target.append(f"timestamp not verified ({ts_info.reason})")
 
     # --- Certificate chain / trust ----------------------------------------
     # Intermediates may live in the CMS or only in the document security store;
     # offer both pools to the path builder.
-    dss_cert_objs = _load_der_certs(dss_certs)
-    chain_extra = list(info.certificates) + dss_cert_objs
-    trust_roots = _normalise_trust_roots(options)
     enforce_trust = bool(trust_roots) or options.use_system_trust
     chain = cert_chain.build_and_validate(
         info.signer_cert,
@@ -181,33 +200,29 @@ def validate_cms(
     notes.extend(chain.warnings)
 
     trust = chain.trust_status
-    if trust == TrustStatus.SELF_SIGNED and not options.allow_self_signed:
-        errors.append("signer certificate is self-signed and not trusted")
-    elif trust == TrustStatus.UNTRUSTED and enforce_trust:
+    if enforce_trust and trust != TrustStatus.TRUSTED:
         errors.append("certificate chain does not terminate at a trusted anchor")
-    elif trust == TrustStatus.BROKEN and enforce_trust:
-        errors.append("could not build a certificate chain to a trusted anchor")
+    elif trust == TrustStatus.UNTRUSTED:
+        errors.append("certificate chain has no configured trust anchor")
+    elif trust == TrustStatus.SELF_SIGNED and not options.allow_self_signed:
+        errors.append("signer certificate is self-signed and not trusted")
 
     # --- Revocation -------------------------------------------------------
     revocation_status = RevocationStatus.NOT_CHECKED
-    check_rev = options.check_revocation or (
-        options.validation_method == ValidationMethod.LTIP
-    )
     if check_rev and info.signer_cert is not None:
-        issuer = chain.chain[1] if len(chain.chain) > 1 else info.signer_cert
-        rev = revocation.check_revocation(
-            info.signer_cert,
-            issuer,
+        rev = revocation.check_chain_revocation(
+            chain.chain,
+            at_time=at_time,
             mode=options.validation_mode,
-            embedded_crls=list(info.crls_der) + list(dss_crls),
-            embedded_ocsps=list(info.ocsps_der) + list(dss_ocsps),
+            embedded_crls=embedded_crls,
+            embedded_ocsps=embedded_ocsps,
             timeout=options.network_timeout,
         )
         revocation_status = rev.status
         if rev.status == RevocationStatus.REVOKED:
-            errors.append("signer certificate has been revoked")
+            errors.append("signer certificate chain has been revoked")
         elif rev.status == RevocationStatus.UNKNOWN:
-            notes.append("revocation status could not be determined")
+            inconclusive.append("revocation status could not be determined")
 
     # --- DocMDP certification ---------------------------------------------
     certification_level = CertificationLevel.NOT_CERTIFIED
@@ -241,6 +256,9 @@ def validate_cms(
     if errors:
         status = ValidationStatus.INVALID
         message = "; ".join(errors)
+    elif inconclusive:
+        status = ValidationStatus.UNKNOWN
+        message = "; ".join(inconclusive)
     else:
         status = ValidationStatus.VALID
         message = "Signature verified successfully"
@@ -252,7 +270,7 @@ def validate_cms(
     return ValidationResult(
         status=status,
         message=message,
-        errors=errors,
+        errors=errors + inconclusive,
         signer=signer_name,
         trust_status=trust,
         revocation_status=revocation_status,
@@ -260,4 +278,6 @@ def validate_cms(
         certification_level=certification_level,
         signed_at=_iso(info.signing_time),
         pades_level=pades_level,
+        trusted_at=_iso(ts_info.gen_time) if ts_info and ts_info.verified else None,
+        validated_at=_iso(at_time),
     )
