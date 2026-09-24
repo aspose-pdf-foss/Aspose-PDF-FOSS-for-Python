@@ -378,3 +378,174 @@ def test_building_a_dss_into_an_encrypted_document_needs_its_handler():
     assert dss.read_dss(with_store, encryption=handler).certs == material.certs
     # Without the key the same bytes are the ciphertext they are stored as.
     assert dss.read_dss(with_store).certs != material.certs
+
+
+@pytest.mark.parametrize("subfilter", ["ETSI.CAdES.detached", "adbe.pkcs7.detached"])
+def test_pades_requires_both_ess_binding_and_cades_subfilter(subfilter):
+    root, _rk, leaf, key = _chain()
+    # Each case supplies only one of the two baseline requirements.
+    signer = SigningUtils.sign_data_pkcs7 if subfilter.startswith("ETSI") else SigningUtils.sign_data_cades
+    blob = signer(DATA, leaf, key, extra_certs=[root])
+    result = _pdf_sig(blob, sub_filter=subfilter).validate(ValidationOptions(trusted_certificates=[root]))
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.NONE
+
+
+def test_timestamp_marker_in_unsigned_comment_cannot_promote_pades():
+    signed, root, _leaf = _sign_pades_pdf()
+    blob = signed + b"\n% /SubFilter /ETSI.RFC3161\n"
+    sig = SimplePdf.from_bytes(blob).signatures[0]
+    result = sig.validate(ValidationOptions(trusted_certificates=[root]))
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.B
+
+
+@pytest.mark.parametrize("kind", ["certs", "garbage", "unrelated_crl"])
+def test_incomplete_or_unrelated_dss_cannot_promote_to_lt(kind):
+    lt, _lta, root = _build_lta()
+    original = SimplePdf.from_bytes(lt).signatures[0]
+    signed = lt[:sum(original.byte_range[2:])]
+    material = dss.read_dss(lt)
+    if kind == "certs":
+        material.crls = []
+    elif kind == "garbage":
+        material.crls = [b"not a CRL"]
+    else:
+        unrelated, key = SigningUtils.create_self_signed_ca("Unrelated")
+        material.crls = [_good_crl(unrelated, key)]
+    blob = dss.build_dss(signed, material)
+    result = SimplePdf.from_bytes(blob).signatures[0].validate(ValidationOptions(trusted_certificates=[root]))
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.T
+
+
+def test_untrusted_archive_timestamp_cannot_promote_lt():
+    lt, _lta, root = _build_lta()
+    other_tsa = timestamp_authority("Untrusted archive TSA")
+    blob = dss.add_document_timestamp(lt, tsa=other_tsa)
+    result = SimplePdf.from_bytes(blob).signatures[0].validate(ValidationOptions(trusted_certificates=[root]))
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.LT
+
+
+def test_tampered_archive_timestamp_cannot_promote_lt():
+    _lt, lta, root = _build_lta()
+    marker = lta.rfind(b"/Contents <") + len(b"/Contents <")
+    damaged = lta[:marker] + b"00" + lta[marker + 2:]
+    result = SimplePdf.from_bytes(damaged).signatures[0].validate(ValidationOptions(trusted_certificates=[root]))
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.LT
+
+
+def test_archive_must_cover_validation_material():
+    lt, _lta, root = _build_lta()
+    original = SimplePdf.from_bytes(lt).signatures[0]
+    signed = lt[:sum(original.byte_range[2:])]
+    tsa_root, root_key = SigningUtils.create_self_signed_ca("Archive root")
+    tsa = timestamp_authority("Archive TSA", tsa_root, root_key)
+    stamped = dss.add_document_timestamp(signed, tsa=tsa)
+    material = dss.read_dss(lt)
+    material.certs.extend([_der(tsa[0]), _der(tsa_root)])
+    material.crls.append(_good_crl(tsa_root, root_key))
+    # The timestamp came first; it cannot protect this later DSS.
+    updated = dss.build_dss(stamped, material)
+    options = ValidationOptions(trusted_certificates=[root, tsa_root])
+    result = SimplePdf.from_bytes(updated).signatures[0].validate(options)
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.LT
+    renewed = dss.add_document_timestamp(updated, tsa=tsa)
+    result = SimplePdf.from_bytes(renewed).signatures[0].validate(options)
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.LTA
+
+
+def test_document_timestamp_supplies_t_without_signature_timestamp():
+    signed, root, _leaf = _sign_pades_pdf()
+    tsa = timestamp_authority("Trusted document TSA")
+    stamped = dss.add_document_timestamp(signed, tsa=tsa)
+    result = SimplePdf.from_bytes(stamped).signatures[0].validate(
+        ValidationOptions(trusted_certificates=[root, tsa[0]])
+    )
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.T
+    assert result.trusted_at is not None
+
+
+def test_disabling_timestamp_checks_prevents_profile_promotion():
+    _lt, lta, root = _build_lta()
+    result = SimplePdf.from_bytes(lta).signatures[0].validate(
+        ValidationOptions(trusted_certificates=[root], check_timestamp=False)
+    )
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.B
+
+
+def test_document_timestamp_with_partial_coverage_is_not_evidence():
+    import hashlib
+
+    from aspose_pdf.engine import timestamp
+
+    signed, root, _leaf = _sign_pades_pdf()
+    tsa = timestamp_authority("Partial TSA")
+    stamped = bytearray(dss.add_document_timestamp(signed, tsa=tsa))
+    start = stamped.rfind(b"/ByteRange [") + len(b"/ByteRange [")
+    # A genuine trusted token, but it signs only the earlier PDF. Its own
+    # dictionary and the rest of the timestamp revision are wholly unsigned.
+    stamped[start:start + 43] = f"{0:010d} {0:010d} {0:010d} {len(signed):010d}".encode()
+    token = timestamp.make_timestamp_token(hashlib.sha256(signed).digest(), "sha256", *tsa)
+    start = stamped.rfind(b"/Contents <") + len(b"/Contents <")
+    end = stamped.index(b">", start)
+    stamped[start:end] = token.hex().encode().ljust(end - start, b"0")
+    signatures = SimplePdf.from_bytes(bytes(stamped)).signatures
+    options = ValidationOptions(trusted_certificates=[root, tsa[0]])
+    assert signatures[0].validate(options).pades_level == PadesLevel.B
+    assert signatures[1].valid
+    result = signatures[1].validate(options)
+    assert result.status == ValidationStatus.INVALID
+    assert "ByteRange" in result.message
+
+
+def test_archive_time_cannot_precede_the_signature_timestamp(monkeypatch):
+    from aspose_pdf.engine import timestamp
+
+    lt, _lta, root = _build_lta()
+    tsa_root, key = SigningUtils.create_self_signed_ca("Archive root")
+    tsa = timestamp_authority("Archive TSA", tsa_root, key)
+    material = dss.read_dss(lt)
+    material.certs.extend([_der(tsa[0]), _der(tsa_root)])
+    material.crls.append(_good_crl(tsa_root, key))
+    lt = dss.build_dss(lt, material)
+    make_token = timestamp.make_timestamp_token
+
+    def backdated(*args, **kwargs):
+        return make_token(*args, **kwargs, gen_time=datetime.now(UTC) - timedelta(minutes=1))
+
+    monkeypatch.setattr(timestamp, "make_timestamp_token", backdated)
+    stamped = dss.add_document_timestamp(lt, tsa=tsa)
+    result = SimplePdf.from_bytes(stamped).signatures[0].validate(
+        ValidationOptions(trusted_certificates=[root, tsa_root])
+    )
+    assert result.status == ValidationStatus.VALID
+    assert result.pades_level == PadesLevel.LT
+
+
+@pytest.mark.parametrize("algorithm", ["AES-256", "AES-128", "RC4"])
+def test_encrypted_lta_requires_and_accepts_verified_embedded_evidence(algorithm):
+    from aspose_pdf import Document
+
+    root, root_key, signer, key = _chain()
+    tsa = timestamp_authority("Encrypted TSA", root, root_key)
+    document = Document()
+    page = document.pages.add()
+    document.form.add_signature_field("Approval", page, (0, 0, 0, 0))
+    document.encrypt("user", "owner", algorithm=algorithm)
+    document.sign("Approval", certificate=signer, private_key=key,
+                  extra_certificates=[root], pades=True, timestamp_authority=tsa)
+    document.add_ltv(certificates=[tsa[0]], crls=[_good_crl(root, root_key)])
+    document.add_document_timestamp(timestamp_authority=tsa)
+    output = io.BytesIO()
+    document.save(output)
+    reopened = Document(io.BytesIO(output.getvalue()), password="user")
+    result = reopened.signatures[0].validate(ValidationOptions(trusted_certificates=[root]))
+    assert result.status == ValidationStatus.VALID, result.errors
+    assert result.pades_level == PadesLevel.LTA

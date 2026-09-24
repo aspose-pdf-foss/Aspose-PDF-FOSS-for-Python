@@ -13,7 +13,8 @@ from aspose_pdf.engine.signing import SigningUtils
 from aspose_pdf.signature import PdfSignature
 from aspose_pdf.validation import TrustStatus, ValidationOptions, ValidationStatus
 
-DATA = b"%PDF-1.7 chain validation body\nwith\nseveral\nlines\n" * 4
+# These tests sign detached CMS data, not a PDF with a revision and Contents gap.
+DATA = b"chain validation body\nwith\nseveral\nlines\n" * 4
 
 
 def _signed(data, cert, key, extra_certs=None) -> PdfSignature:

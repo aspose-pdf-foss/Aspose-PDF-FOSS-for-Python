@@ -52,17 +52,6 @@ if TYPE_CHECKING:
     from aspose_pdf.validation import ValidationOptions, ValidationResult
 
 
-def _has_document_timestamp(reference_data: bytes, signed_end: int) -> bool:
-    """Return ``True`` if a document timestamp follows the signed revision.
-
-    A PAdES document timestamp is a signature dictionary with ``/SubFilter
-    /ETSI.RFC3161`` added in a later incremental update; its presence after the
-    signed revision is what raises a signature from PAdES-LT to PAdES-LTA.
-    """
-    tail = reference_data[max(0, signed_end) :]
-    return b"ETSI.RFC3161" in tail
-
-
 @dataclass
 class PdfSignature:
     """Represent a PDF digital signature.
@@ -162,7 +151,7 @@ class PdfSignature:
         errors: list[str] = []
 
         # --- Stage 1: ByteRange structural validation ---
-        if len(self.byte_range) != 4:
+        if len(self.byte_range) != 4 or any(type(v) is not int for v in self.byte_range):
             return _ValidationResult(
                 status=ValidationStatus.INVALID,
                 message="ByteRange must contain exactly four integers",
@@ -239,21 +228,24 @@ class PdfSignature:
                 budget=self._load_budget,
                 encryption=self._decryption,
             )
+            from aspose_pdf.engine.signature_profiles import inspect_signature
+
+            level, policy_errors, subfilter, document_ts, archive_verified = inspect_signature(
+                self, options, dss_material
+            )
 
             return validate_cms(
                 self.contents,
                 signed_bytes,
                 options,
-                docmdp_level=self.docmdp_level,
-                reference_data=self.reference_data,
-                signed_end=signed_len,
-                sub_filter=self.sub_filter,
+                docmdp_level=level,
+                certification_errors=policy_errors,
+                sub_filter=subfilter,
                 dss_certs=dss_material.certs,
                 dss_crls=dss_material.crls,
                 dss_ocsps=dss_material.ocsps,
-                has_document_timestamp=_has_document_timestamp(
-                    self.reference_data, signed_len
-                ),
+                document_timestamp=document_ts,
+                archive_verified=archive_verified,
             )
         except PdfResourceLimitException:
             raise
@@ -271,6 +263,7 @@ class PdfSignature:
         """Validate a DocTimeStamp signature (PAdES-LTA archive timestamp)."""
         from aspose_pdf.engine import dss as _dss
         from aspose_pdf.engine import timestamp as _timestamp
+        from aspose_pdf.engine.signature_profiles import check_timestamp_coverage
         from aspose_pdf.engine.signature_validator import (
             _load_der_certs,
             _normalise_trust_roots,
@@ -283,6 +276,7 @@ class PdfSignature:
             ValidationResult as _ValidationResult,
         )
 
+        check_timestamp_coverage(self)
         material = _dss.read_dss(
             self.reference_data,
             limits=self.load_limits,

@@ -103,11 +103,16 @@ class PadesLevel(Enum):
     * :attr:`B`   - CAdES-BES baseline: the signed attributes carry an ESS
       ``signing-certificate-v2`` binding and the ``ETSI.CAdES.detached``
       ``/SubFilter``.
-    * :attr:`T`   - B plus a verified RFC 3161 signature timestamp.
-    * :attr:`LT`  - T plus long-term validation material (certificates, CRLs
-      and OCSP responses) available in the document security store (``/DSS``).
-    * :attr:`LTA` - LT plus a document timestamp (``ETSI.RFC3161``) that allows
-      the validation material to be renewed before the algorithms weaken.
+    * :attr:`T`   - B plus a trusted RFC 3161 signature timestamp or a verified
+      document timestamp covering the signature's complete revision.
+    * :attr:`LT`  - T plus embedded material sufficient to validate the signer
+      and TSA paths and their revocation status offline.
+    * :attr:`LTA` - LT plus a trusted document timestamp (``ETSI.RFC3161``)
+      covering that validation material. Mere dictionary presence is not proof.
+
+    This reports the profile established by the implemented checks, not formal
+    ETSI conformance certification. Always inspect ``ValidationResult.status``
+    as well: a valid baseline binding can accompany a failed timestamp check.
     """
 
     NONE = "none"

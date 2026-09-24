@@ -22,12 +22,13 @@ from aspose_pdf.validation import (
     RevocationStatus,
     TrustStatus,
     ValidationMethod,
+    ValidationMode,
     ValidationOptions,
     ValidationResult,
     ValidationStatus,
 )
 
-_CADES_SUBFILTERS = {"etsi.cades.detached", "etsi.cades"}
+_CADES_SUBFILTERS = {"etsi.cades.detached"}
 
 
 def _to_cert(obj) -> x509.Certificate | None:
@@ -70,23 +71,17 @@ def _pades_level(
     *,
     is_cades: bool,
     timestamp_verified: bool,
-    has_dss: bool,
-    has_document_timestamp: bool,
+    long_term_verified: bool,
+    archive_verified: bool,
 ) -> PadesLevel:
-    """Map the present validation artefacts onto a PAdES baseline level.
-
-    The levels are cumulative (ETSI EN 319 142): a document timestamp also
-    satisfies the timestamp requirement of the -T level because it timestamps
-    the whole signed document.
-    """
+    """Report only levels established by verified, applicable evidence."""
     if not is_cades:
         return PadesLevel.NONE
-    has_ts = timestamp_verified or has_document_timestamp
-    if not has_ts:
+    if not timestamp_verified:
         return PadesLevel.B
-    if not has_dss:
+    if not long_term_verified:
         return PadesLevel.T
-    if not has_document_timestamp:
+    if not archive_verified:
         return PadesLevel.LT
     return PadesLevel.LTA
 
@@ -97,13 +92,13 @@ def validate_cms(
     options: ValidationOptions,
     *,
     docmdp_level: int | None = None,
-    reference_data: bytes | None = None,
-    signed_end: int | None = None,
+    certification_errors=(),
     sub_filter: str | None = None,
     dss_certs=(),
     dss_crls=(),
     dss_ocsps=(),
-    has_document_timestamp: bool = False,
+    document_timestamp=None,
+    archive_verified: bool = False,
 ) -> ValidationResult:
     """Perform full CMS validation of a detached PDF signature.
 
@@ -111,12 +106,12 @@ def validate_cms(
 
     The ``dss_*`` arguments carry long-term validation material harvested from
     the document security store (``/DSS``); it is merged with any material
-    embedded in the CMS for chain building and revocation.  ``sub_filter`` and
-    ``has_document_timestamp`` feed PAdES baseline-level detection.
+    embedded in the CMS for chain building and revocation. Document timestamp
+    evidence must already have been checked against its signed PDF revision.
     """
     from aspose_pdf.engine import cert_chain, cms, revocation, timestamp
 
-    errors: list[str] = []
+    errors: list[str] = list(certification_errors)
     notes: list[str] = []
     inconclusive: list[str] = []
 
@@ -184,6 +179,10 @@ def validate_cms(
                 else errors
             )
             target.append(f"timestamp not verified ({ts_info.reason})")
+    elif options.check_timestamp and document_timestamp is not None:
+        ts_info = document_timestamp
+        if ts_info.verified and ts_info.gen_time is not None:
+            at_time = ts_info.gen_time
 
     # --- Certificate chain / trust ----------------------------------------
     # Intermediates may live in the CMS or only in the document security store;
@@ -228,28 +227,24 @@ def validate_cms(
     certification_level = CertificationLevel.NOT_CERTIFIED
     if docmdp_level in (1, 2, 3):
         certification_level = CertificationLevel(docmdp_level)
-        if (
-            certification_level == CertificationLevel.NO_CHANGES
-            and reference_data is not None
-            and signed_end is not None
-        ):
-            from aspose_pdf.security import _has_meaningful_unsigned_tail
-
-            if _has_meaningful_unsigned_tail(bytes(reference_data), int(signed_end)):
-                errors.append(
-                    "certification level 1 (no changes) violated by changes "
-                    "after the certified revision"
-                )
 
     # --- PAdES baseline level --------------------------------------------
-    is_cades = bool(info.ess_cert_ids) or (
+    is_cades = ess_ok is True and (
         (sub_filter or "").lower() in _CADES_SUBFILTERS
     )
+    long_term_verified = False
+    if is_cades and ts_info and ts_info.verified and not errors and not inconclusive:
+        # Online success cannot establish that the PDF is self-contained.
+        # Independently check embedded evidence even if revocation was optional.
+        long_term_verified = embedded_long_term_valid(
+            contents, options, dss_certs, dss_crls, dss_ocsps,
+            document_timestamp=document_timestamp,
+        )
     pades_level = _pades_level(
         is_cades=is_cades,
         timestamp_verified=bool(ts_info and ts_info.verified),
-        has_dss=bool(dss_certs or dss_crls or dss_ocsps),
-        has_document_timestamp=has_document_timestamp,
+        long_term_verified=long_term_verified,
+        archive_verified=archive_verified,
     )
 
     # --- Assemble ---------------------------------------------------------
@@ -281,3 +276,38 @@ def validate_cms(
         trusted_at=_iso(ts_info.gen_time) if ts_info and ts_info.verified else None,
         validated_at=_iso(at_time),
     )
+
+
+def embedded_long_term_valid(contents, options, certs, crls, ocsps, *, document_timestamp=None):
+    """Check signer and timestamp paths using only embedded revocation data."""
+    from aspose_pdf.engine import cert_chain, cms, revocation, timestamp
+
+    if not options.check_timestamp or not (crls or ocsps):
+        return False
+    info = cms.parse_signed_data(contents)
+    roots = _normalise_trust_roots(options)
+    extra = list(info.certificates) + _load_der_certs(certs)
+    ts = document_timestamp
+    if info.timestamp_token_der:
+        ts = timestamp.validate_timestamp_token(
+            info.timestamp_token_der, info.signature,
+            trust_roots=roots, extra_certs=extra,
+            use_system_trust=options.use_system_trust, check_revocation=True,
+            embedded_crls=list(crls) + list(info.crls_der),
+            embedded_ocsps=list(ocsps) + list(info.ocsps_der),
+            validation_mode=ValidationMode.OFFLINE,
+        )
+    if not ts or not ts.verified or ts.revocation_status != RevocationStatus.GOOD:
+        return False
+    chain = cert_chain.build_and_validate(
+        info.signer_cert, extra_certs=extra, trust_roots=roots,
+        at_time=ts.gen_time, use_system_trust=options.use_system_trust,
+    )
+    if chain.trust_status != TrustStatus.TRUSTED or chain.errors:
+        return False
+    rev = revocation.check_chain_revocation(
+        chain.chain, at_time=ts.gen_time, mode=ValidationMode.OFFLINE,
+        embedded_crls=list(crls) + list(info.crls_der),
+        embedded_ocsps=list(ocsps) + list(info.ocsps_der),
+    )
+    return rev.status == RevocationStatus.GOOD

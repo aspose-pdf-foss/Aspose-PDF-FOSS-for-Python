@@ -60,12 +60,12 @@ def test_certification_level_1_change_is_violation():
     assert result.certification_level == CertificationLevel.NO_CHANGES
 
 
-def test_certification_level_2_allows_incremental_change():
+def test_certification_level_2_rejects_unterminated_incremental_change():
     root, blob = _make_certified_pdf(2)
     sig = SimplePdf.from_bytes(blob).signatures[0]
 
     sig.reference_data = sig.reference_data + _INCREMENTAL_CHANGE
     result = sig.validate(ValidationOptions(trusted_certificates=[root]))
-    # Form-filling certification permits later incremental changes.
-    assert result.status == ValidationStatus.VALID
+    # Form-filling permission does not authorize arbitrary unsigned payloads.
+    assert result.status == ValidationStatus.INVALID
     assert result.certification_level == CertificationLevel.FORM_FILLING

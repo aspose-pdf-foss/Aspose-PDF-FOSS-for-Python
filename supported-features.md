@@ -2028,13 +2028,22 @@ Supported:
   and therefore always binds: it fixes whether the signature certifies and at
   which level.
 - Create and validate DocMDP certification (certifying) signatures, including
-  reporting the certification level and flagging changes that violate a
-  "no changes permitted" certification.
+  deriving permissions from the signed revision and checking every linked
+  subsequent revision. All levels reject changes to page content, resources,
+  geometry, catalog metadata and existing certification policy. Level 2 allows
+  filling existing fields and signing; level 3 also allows ordinary annotation
+  creation, editing and removal. DSS updates and invisible document timestamps
+  are permitted maintenance at all three levels. Broken revision chains,
+  unfinished tails, unclassified object changes and changes later reverted
+  are rejected. Shared page/form resources remain protected. The comparison is
+  conservative: new visible signature widgets, page-template instantiation,
+  field restructuring and equivalent rewrites of protected streams are not
+  classified as permitted changes. This does not implement FieldMDP locks.
 - Produce **PAdES baseline signatures** (`Document.sign(..., pades=True)`, or
   `SimplePdf.pades = True`, → `ETSI.CAdES.detached`): CAdES-BES signed attributes with the ESS
   `signing-certificate-v2` binding (**PAdES-B**), upgraded to **PAdES-T** by
   embedding a signature timestamp. Validation verifies the signing-certificate
-  binding and reports the achieved level via `ValidationResult.pades_level`
+  binding and the signed subfilter, and reports the achieved level via `ValidationResult.pades_level`
   (`PadesLevel.B/T/LT/LTA`).
 - **An encrypted document takes a `/DSS` and a document timestamp like any
   other.** The appended objects are serialized through the writer with the
@@ -2045,14 +2054,17 @@ Supported:
   reads the store back through the same handler, so LTV works offline on an
   encrypted file. Checked on AES-256, AES-128, RC4 and certificate-recipient
   documents: pyHanko opens each, reads the store and reports every signature
-  intact, valid and trusted, and `PdfSignature.validate` reports PAdES-LTA.
+  intact, valid and trusted. Certificates alone establish neither LT nor LTA;
+  `PdfSignature.validate` also requires applicable embedded revocation evidence.
   Without a handler the builder still refuses rather than writing plaintext
   certificates every reader would turn to noise.
 - Build a **document security store** (`/DSS` with `/Certs`, `/CRLs`, `/OCSPs`
   and per-signature `/VRI`) as an incremental update that leaves existing
   signatures byte-for-byte intact (`engine.dss.build_dss` / `enable_ltv`),
-  turning PAdES-T into **PAdES-LT**; validation harvests the `/DSS` so chain
-  building and revocation work offline (LTV). A store the document already has
+  enabling **PAdES-LT** when the stored material proves the signer and TSA
+  chains' revocation status offline. Incomplete, unrelated or malformed stores
+  do not raise the reported profile. Online lookup success alone does not
+  establish LT. A store the document already has
   is extended in place -- its streams referred to again, only new material
   added, its `/VRI` entries unchanged, as pyHanko requires of an LTV update --
   and a call that adds nothing writes no revision.
@@ -2060,7 +2072,12 @@ Supported:
   `engine.dss.add_document_timestamp`) over the DSS-augmented document for
   **PAdES-LTA**; document timestamps are validated as RFC 3161 tokens over their
   own ByteRange, which excludes the `/Contents` delimiters so validators see
-  the whole revision covered. A renewed timestamp gets a field of its own
+  the whole revision covered. Promotion requires a trusted token bound to an
+  actual AcroForm timestamp dictionary, covering the approval signature and
+  sufficient validation material in its own revision. A marker in arbitrary
+  bytes, a token with partial coverage, or DSS added after a timestamp cannot
+  establish LTA. Disabling timestamp checks prevents promotion beyond B.
+  A renewed timestamp gets a field of its own
   (`Timestamp2`, ...). The compromise detector treats DSS/archive-timestamp
   incremental updates as legitimate rather than as tampering.
 - **A certifying signature is the first one or none**: DocMDP certification of

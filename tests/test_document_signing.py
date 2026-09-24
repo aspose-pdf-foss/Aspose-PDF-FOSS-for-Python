@@ -411,7 +411,8 @@ def test_an_encrypted_document_gets_its_store_and_timestamp(chain, tsa, algorith
     result = reopened.signatures[0].validate(
         ValidationOptions(trusted_certificates=[root, tsa[0]], check_timestamp=True)
     )
-    assert (result.status, result.pades_level) == (ValidationStatus.VALID, PadesLevel.LTA)
+    # Certificates alone do not establish embedded revocation evidence.
+    assert (result.status, result.pades_level) == (ValidationStatus.VALID, PadesLevel.T)
 
     handler = reopened._engine_pdf._writer_encryption()
     with_key = dss.read_dss(data, encryption=handler)
@@ -515,7 +516,8 @@ def test_a_document_opened_with_a_recipient_credential_is_signed_and_reopened(ch
     result = reopened.signatures[0].validate(
         ValidationOptions(trusted_certificates=[root, tsa[0]], check_timestamp=True)
     )
-    assert result.pades_level == PadesLevel.LTA
+    # This store contains certificates, but no CRL or OCSP evidence.
+    assert result.pades_level == PadesLevel.T
 
 
 def test_a_document_encrypted_for_recipients_is_not_signed_here(chain):
