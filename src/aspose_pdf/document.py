@@ -1740,8 +1740,23 @@ class Document:
         With ``overlay=True`` a filled rectangle (``overlay_color``, a DeviceRGB
         triple of 0..1, default black) is drawn over each removed run -- the
         classic redaction bar. The bar is cosmetic (the text is already removed
-        from the content); a run whose position cannot be tracked (a Type0 or
-        unresolved font) is left unmarked rather than leaking text.
+        from the content); a run whose position cannot be tracked is left unmarked.
+
+        A successful redaction requires a full save: obsolete streams and
+        object storage are discarded, and ``save(incremental=True)`` raises.
+        Existing signatures are invalidated by that rewrite. Seekable output
+        streams are replaced from offset zero and truncated; append-mode and
+        nonseekable streams are refused. Alternate text attached to changed
+        runs and their structure ancestors is removed in full. Tagged Form
+        XObjects and named alternate-text properties inside forms are refused.
+        Unresolved structure mappings, ambiguous property aliases and removal
+        of named properties inherited by forms also raise
+        :exc:`~aspose_pdf.exceptions.PdfValidationException`. If an error occurs
+        after earlier pages were edited, those edits remain in the document.
+
+        This edits matched page/form text only, not independent copies in
+        metadata, attachments, annotations, images, or unselected occurrences.
+        The original input file is unchanged unless explicitly overwritten.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -2196,6 +2211,12 @@ class Document:
             that was loaded from an existing PDF (a document built from scratch
             falls back to a full write); encrypted or to-be-signed documents are
             rejected with :exc:`~aspose_pdf.exceptions.PdfSecurityException`.
+            After text redaction, ``None`` and ``False`` always perform a full
+            rewrite and ``True`` raises the same exception, since preserving
+            any prior revision would also preserve the removed text. A redacted
+            PDF written to a stream replaces its contents from offset zero
+            and truncates the stream; nonseekable and append-mode outputs are
+            refused.
 
         What :meth:`sign`, :meth:`add_ltv` and :meth:`add_document_timestamp`
         asked for is done here, each in a revision appended to the bytes the
@@ -2248,6 +2269,18 @@ class Document:
             self._check_reopenable()
         incremental = self._choose_incremental(incremental)
         path = None if hasattr(destination, "write") else Path(destination)
+        redacted = self._engine_pdf._redacted
+        if redacted and path is None:
+            if (
+                not callable(getattr(destination, "seek", None))
+                or not callable(getattr(destination, "truncate", None))
+                or (hasattr(destination, "seekable") and not destination.seekable())
+                or "a" in str(getattr(destination, "mode", ""))
+            ):
+                raise PdfSecurityException(
+                    "Saving a redacted PDF requires a file path or a seekable, "
+                    "truncatable stream opened without append mode."
+                )
         # Refused before anything is serialized, signed or timestamped.
         if path is not None and path.exists() and not overwrite:
             raise FileExistsError(f"File already exists: {path}")
@@ -2258,7 +2291,11 @@ class Document:
         if signing:
             data = self._apply_pending_signing(data)
         if path is None:
+            if redacted:
+                destination.seek(0)
             write_all(destination, data)
+            if redacted:
+                destination.truncate()
         else:
             write_file_atomically(path, data)
         if signing:
@@ -2310,6 +2347,18 @@ class Document:
         """
         engine = self._engine_pdf
         binds = engine.existing_signatures_bind()
+        if engine._redacted:
+            if requested:
+                raise PdfSecurityException(
+                    "Incremental save is forbidden after text redaction: "
+                    "it would preserve the removed text."
+                )
+            if binds:
+                logger.warning(
+                    "Text redaction requires a full rewrite; existing signatures "
+                    "will no longer verify."
+                )
+            return False
         if requested is None:
             if not binds:
                 return False

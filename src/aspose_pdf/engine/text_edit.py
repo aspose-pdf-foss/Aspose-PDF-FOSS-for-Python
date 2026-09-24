@@ -871,6 +871,7 @@ def replace_text_in_content(
     reshaper: Reshaper | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
+    _redaction: Any = None,
 ) -> tuple[bytes, int]:
     """Replace text inside PDF text-showing operands.
 
@@ -934,6 +935,10 @@ def replace_text_in_content(
 
     if not replacements:
         return content, 0
+    if _redaction is not None:
+        replacements.extend(
+            _redaction.metadata_edits(content, tokens, replacements, active_budget)
+        )
     return _apply_replacements(content, replacements, budget=active_budget), total
 
 
@@ -986,8 +991,11 @@ def redact_text_in_content(
     metric_for_name: Callable[[str], Any] | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
+    context: Any = None,
 ) -> tuple[bytes, int]:
     """Remove text from simple text-showing operands."""
+    from .redaction import RedactionContext
+
     return replace_text_in_content(
         content,
         search,
@@ -998,6 +1006,7 @@ def redact_text_in_content(
         metric_for_name=metric_for_name,
         limits=limits,
         budget=budget,
+        _redaction=context if context is not None else RedactionContext(),
     )
 
 

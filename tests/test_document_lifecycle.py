@@ -7,6 +7,8 @@ from aspose_pdf.document import Document
 
 
 class DummyEngine:
+    _redacted = False
+
     def save(self, path):
         # write minimal PDF bytes
         with open(path, "wb") as f:

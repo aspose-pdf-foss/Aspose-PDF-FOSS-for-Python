@@ -160,11 +160,16 @@ class PdfCosWriter:
         # Size is highest object number + 1 (object 0 is the free object)
         size = max(self.doc.objects.keys(), default=0) + 1
         buffer.extend(f"xref\n0 {size}\n".encode())
-        # Entry for object 0 (free entry)
-        buffer.extend(b"0000000000 65535 f \n")
+        # Redaction and garbage collection leave gaps. Link them as free
+        # entries instead of advertising live objects at byte offset zero.
+        free = [i for i in range(1, size) if i not in offsets]
+        next_free = dict(zip([0, *free], [*free, 0]))
+        buffer.extend(f"{next_free[0]:010d} 65535 f \n".encode())
         for i in range(1, size):
-            off = offsets.get(i, 0)
-            buffer.extend(f"{off:010d} 00000 n \n".encode())
+            if i in offsets:
+                buffer.extend(f"{offsets[i]:010d} 00000 n \n".encode())
+            else:
+                buffer.extend(f"{next_free[i]:010d} 00000 f \n".encode())
 
         # Trailer
         buffer.extend(b"trailer\n")

@@ -595,6 +595,12 @@ class Page:
         triple of 0..1, default black) is drawn over each removed run -- the
         classic redaction bar. The bar is cosmetic (the text is already removed);
         runs whose position cannot be tracked are left unmarked.
+
+        Saving after a match requires a full rewrite and removes obsolete
+        content storage. Incremental saves are refused and existing signatures
+        are invalidated. Shared content still used by other pages is retained.
+        See :meth:`aspose_pdf.document.Document.redact_text` for alternate-text
+        handling, unsupported cases and output-stream requirements.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf

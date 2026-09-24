@@ -1177,6 +1177,23 @@ Supported:
   falling back to bytewise Latin-1 edits. Case-insensitive matching and
   `max_count` are supported (a spanning match counts once); lazy page contents
   are materialized before editing and the rewritten content persists on save.
+- After a successful text redaction, PDF saves always rewrite the live object
+  graph, discarding superseded content streams, old object-stream storage and
+  previous incremental revisions. `save(incremental=True)` is refused;
+  existing digital signatures are invalidated by the full rewrite. Output
+  streams must support seeking and truncation and must not use append mode:
+  their contents are replaced from offset zero, including any old trailing
+  bytes. Unmatched searches leave the normal save policy unchanged.
+  `/ActualText`, `/Alt` and `/E` associated with changed marked-content scopes
+  and their structure ancestors are removed entirely, since their character
+  positions need not correspond to the edited glyphs. Unrelated scopes retain
+  their descriptions. Tagged Form XObjects, named alternate-text properties
+  inside forms, removal of named properties inherited by forms, ambiguous
+  property aliases and unresolved structure mappings are refused. An error
+  on a later page does not undo edits to earlier pages.
+  Redaction is scoped to matched page/form text; independent copies in
+  metadata, attachments, annotations, images and unselected occurrences are
+  outside its scope. The input file is unchanged unless explicitly overwritten.
 - Draw a redaction overlay bar with `redact_text(..., overlay=True,
   overlay_color=(r, g, b))`. After removing the matched text, a filled
   rectangle (a DeviceRGB triple of 0..1, default black) is drawn over each

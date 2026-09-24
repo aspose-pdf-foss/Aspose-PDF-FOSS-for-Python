@@ -15,6 +15,7 @@ import zlib
 from collections import namedtuple
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from itertools import pairwise
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -93,6 +94,7 @@ from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
 from .pdf_parser_cos import PdfCosParser, pdf_header_offset, pdf_header_version
 from .pdf_writer_cos import PdfCosWriter
 from .pubsec import PUBSEC_FILTER, subfilter_for
+from .redaction import RedactionContext, clear_alternate_text
 from .signing import SigningUtils
 from .text_edit import redact_text_in_content, replace_text_in_content
 
@@ -1403,6 +1405,9 @@ class SimplePdf:
     # When True, a full COS rewrite (``to_bytes``) packs objects into an
     # object stream and emits a cross-reference stream. Set by ``optimize``.
     _use_object_streams: bool = field(default=False, init=False, repr=False)
+    # The original revision remains available for lazy reads, but must never
+    # be copied to an output after any successful text redaction.
+    _redacted: bool = field(default=False, init=False, repr=False)
     _raw_bytes: bytes | mmap.mmap | None = field(
         default=None, init=False, repr=False
     )
@@ -2490,6 +2495,9 @@ class SimplePdf:
         self._ensure_not_disposed()
         if self._cos_doc is None:
             raise AsposePdfException("No COS document loaded (use load_cos)")
+        if self._redacted:
+            self.save(path)
+            return
         writer = PdfCosWriter(self._cos_doc)
         data = writer.write()
         write_file_atomically(path, data)
@@ -3162,6 +3170,10 @@ class SimplePdf:
             self._sync_attachments_to_cos()
             encryption = self._writer_encryption()
             self._sync_file_id_to_cos(replace=encryption is not None)
+            if self._redacted:
+                # Include only the live graph, not replaced content, old
+                # property dictionaries or source object/xref streams.
+                self.garbage_collect()
             writer = PdfCosWriter(
                 self._cos_doc,
                 pdf_version=self.pdf_version,
@@ -3402,12 +3414,13 @@ class SimplePdf:
     def can_append(self) -> bool:
         """Whether :meth:`to_bytes_incremental` can write this document.
 
-        The same three refusals it makes, asked without attempting the write:
+        The same refusals it makes, asked without attempting the write:
         a document waiting to be signed, and a change of protection -- adding
         it, re-keying it, or taking it off -- which the preserved prefix cannot
-        follow. A document with nothing to append to is not appendable either.
+        follow. Redacted documents require a full rewrite. A document with
+        nothing to append to is not appendable either.
         """
-        if self._raw_bytes is None or self._cos_doc is None or self.signing_creds:
+        if self._redacted or self._raw_bytes is None or self._cos_doc is None or self.signing_creds:
             return False
         if self.encrypted:
             return False
@@ -3444,6 +3457,11 @@ class SimplePdf:
         append to (a document built from scratch).
         """
         self._ensure_not_disposed()
+        if self._redacted:
+            raise PdfSecurityException(
+                "Incremental save is forbidden after text redaction: it would "
+                "retain the removed text in the original revision. Use a full save."
+            )
         raw = self._raw_bytes
         if raw is None:
             # No base revision exists; a full serialization is the only
@@ -6073,7 +6091,7 @@ class SimplePdf:
                     if wants_reshape
                     else None
                 )
-                return replace_text_in_content(
+                form_updated, form_count = replace_text_in_content(
                     form_content,
                     search,
                     replacement,
@@ -6085,6 +6103,7 @@ class SimplePdf:
                     limits=self._load_limits,
                     budget=self._load_budget,
                 )
+                return form_updated, form_count, resources
 
             total += self._edit_page_form_xobjects(
                 index,
@@ -6143,6 +6162,11 @@ class SimplePdf:
         match text from ToUnicode, Adobe collection data, or a reconstructed
         CIDFontType2 cmap. Vertical fonts use /W2 and /DW2. The bar is cosmetic:
         text is already removed, so an unresolved run is left unmarked.
+
+        A match disables incremental writes. Full saves discard unreachable
+        objects, including replaced streams and old object-stream storage.
+        Alternate text attached to edited runs is removed; unsafe structure
+        mappings and unsupported form metadata raise instead of retaining it.
         """
         self._ensure_not_disposed()
         if not isinstance(search, str):
@@ -6179,6 +6203,9 @@ class SimplePdf:
                 metric_for_name=metric_for_name,
                 shared_cache=codec_cache,
             )
+            page = self._get_page_dict(index)
+            resources = self._resolve_resources_cos(page) if page is not None else None
+            context = self._redaction_context(resources)
             quads = []
             if overlay:
                 from .text_locate import locate_matches
@@ -6201,8 +6228,13 @@ class SimplePdf:
                 metric_for_name=metric_for_name,
                 limits=self._load_limits,
                 budget=self._load_budget,
+                context=context,
             )
             if count:
+                self._mark_text_redacted()
+                cleaned_resources = self._finish_redaction(page, resources, context)
+                if isinstance(page, PdfDictionary) and cleaned_resources is not resources:
+                    page.mapping[PdfName("Resources")] = cleaned_resources
                 if overlay and quads:
                     # The quads are in default user space, so the bars have to
                     # be drawn in the initial state, not in whatever the page's
@@ -6235,6 +6267,7 @@ class SimplePdf:
                     resources=resources,
                 )
                 form_quads = []
+                form_context = self._redaction_context(resources)
                 if overlay:
                     from .text_locate import locate_matches
 
@@ -6256,7 +6289,16 @@ class SimplePdf:
                     metric_for_name=metric,
                     limits=self._load_limits,
                     budget=self._load_budget,
+                    context=form_context,
                 )
+                if form_count:
+                    if form_context.sanitized_properties:
+                        raise PdfValidationException(
+                            "Safe redaction of named alternate-text properties in "
+                            "Form XObjects is not supported."
+                        )
+                    self._mark_text_redacted()
+                    resources = self._finish_redaction(None, resources, form_context)
                 if form_count and overlay and form_quads:
                     form_isolation = isolation_for(
                         form_updated,
@@ -6274,25 +6316,175 @@ class SimplePdf:
                         form_quads,
                         overlay_color,
                     )
-                return form_updated, form_count
+                return form_updated, form_count, resources
 
             total += self._edit_page_form_xobjects(
                 index,
                 updated,
                 edit_form,
                 remaining,
+                redaction=True,
             )
 
         if total:
             self._extracted_text = None
         return total
 
+    def _mark_text_redacted(self) -> None:
+        """Prevent historical writes and detach inherited resource storage.
+
+        A page-local cleaned resource dictionary otherwise leaves the old
+        property lists and forms reachable through its parent Pages dictionary.
+        Resolve every leaf before clearing the inherited entries, preserving
+        resources used by pages outside the requested redaction scope.
+        """
+        if self._redacted:
+            return
+        self._redacted = True
+        ancestors: dict[int, PdfDictionary] = {}
+        for index in range(len(self.pages)):
+            page = self._get_page_dict(index)
+            if not isinstance(page, PdfDictionary):
+                continue
+            resources = self._resolve_resources_cos(page)
+            if isinstance(resources, PdfDictionary):
+                page.mapping[PdfName("Resources")] = resources
+            parent = self._resolve(page.mapping.get(PdfName("Parent")))
+            while isinstance(parent, PdfDictionary) and id(parent) not in ancestors:
+                ancestors[id(parent)] = parent
+                self._load_budget.check(
+                    len(ancestors), "max_container_items", "redaction page ancestors"
+                )
+                parent = self._resolve(parent.mapping.get(PdfName("Parent")))
+        for ancestor in ancestors.values():
+            ancestor.mapping.pop(PdfName("Resources"), None)
+
+    def _redaction_context(self, resources: Any) -> RedactionContext:
+        properties = (
+            self._resolve(resources.mapping.get(PdfName("Properties")))
+            if isinstance(resources, PdfDictionary) else None
+        )
+
+        def resolve_property(name: str):
+            if isinstance(properties, PdfDictionary):
+                return self._resolve(properties.mapping.get(PdfName(name)))
+            return None
+
+        return RedactionContext(property_for_name=resolve_property)
+
+    def _finish_redaction(
+        self, owner: PdfDictionary | None, resources: Any, context: RedactionContext
+    ) -> Any:
+        """Remove alternate descriptions of changed runs without changing siblings."""
+        if owner is not None and context.mcids:
+            parents = self._tagged_existing_parent_array(owner)
+            visited: set[int] = set()
+            for mcid in context.mcids:
+                element = (
+                    self._resolve(parents.items[mcid])
+                    if parents is not None and mcid < len(parents.items) else None
+                )
+                if (
+                    (PdfName("StructParents") in owner.mapping
+                     or self._tagged_struct_tree_root() is not None)
+                    and not isinstance(element, PdfDictionary)
+                ):
+                    raise PdfValidationException(
+                        "Cannot resolve structure parents for safe text redaction"
+                    )
+                while isinstance(element, PdfDictionary) and id(element) not in visited:
+                    visited.add(id(element))
+                    self._load_budget.check(
+                        len(visited), "max_container_items", "redacted structure ancestors"
+                    )
+                    clear_alternate_text(element)
+                    element = self._resolve(element.mapping.get(PdfName("P")))
+        if not context.retired_properties or not isinstance(resources, PdfDictionary):
+            return resources
+        properties = self._resolve(resources.mapping.get(PdfName("Properties")))
+        if not isinstance(properties, PdfDictionary):
+            return resources
+        xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
+        if isinstance(xobjects, PdfDictionary):
+            for name in context.invoked_xobjects:
+                form = self._resolve(xobjects.mapping.get(PdfName(name)))
+                if (
+                    not isinstance(form, PdfStream)
+                    or self._get_name(form.mapping.get(PdfName("Subtype"))) != "Form"
+                ):
+                    continue
+                own = self._resolve(form.mapping.get(PdfName("Resources")))
+                if not isinstance(own, PdfDictionary) or not own.mapping:
+                    raise PdfValidationException(
+                        "Cannot safely remove marked-content properties inherited "
+                        "by Form XObjects"
+                    )
+        retired = {
+            id(self._resolve(properties.mapping.get(PdfName(name))))
+            for name in context.retired_properties
+        }
+        for name, value in properties.mapping.items():
+            if (
+                name.name.lstrip("/") not in context.retired_properties
+                and id(self._resolve(value)) in retired
+            ):
+                raise PdfValidationException(
+                    "Cannot safely redact aliased marked-content properties"
+                )
+        cleaned = PdfDictionary(dict(properties.mapping))
+        for name in context.retired_properties:
+            cleaned.mapping.pop(PdfName(name), None)
+        result = PdfDictionary(dict(resources.mapping))
+        result.mapping[PdfName("Properties")] = cleaned
+        return result
+
+    def _redact_form_metadata(
+        self,
+        content: bytes,
+        before: PdfDictionary,
+        after: PdfDictionary,
+        owner: PdfDictionary | None = None,
+    ) -> tuple[bytes, PdfDictionary]:
+        """Clear marked-content descriptions surrounding changed form invocations."""
+        from .text_edit import _apply_replacements, _lex
+
+        old = self._resolve(before.mapping.get(PdfName("XObject")))
+        new = self._resolve(after.mapping.get(PdfName("XObject")))
+        if not isinstance(old, PdfDictionary) or not isinstance(new, PdfDictionary):
+            return content, after
+        changed = {
+            name for name, ref in new.mapping.items()
+            if ref is not old.mapping.get(name)
+        }
+        tokens = _lex(content, budget=self._load_budget)
+        invocations = []
+        for previous, token in pairwise(tokens):
+            if token.kind == "word" and token.value == "Do" and previous.kind == "name":
+                name = RedactionContext._read(
+                    content, (previous.start, previous.end), self._load_budget
+                )
+                if name in changed:
+                    invocations.append((token.start, token.end, b""))
+        if not invocations:
+            return content, after
+        context = self._redaction_context(after)
+        edits = context.metadata_edits(content, tokens, invocations, self._load_budget)
+        if owner is None and context.sanitized_properties:
+            raise PdfValidationException(
+                "Safe redaction of named alternate-text properties in Form XObjects "
+                "is not supported."
+            )
+        resources = self._finish_redaction(owner, after, context)
+        return _apply_replacements(content, edits, budget=self._load_budget), resources
+
     def _edit_page_form_xobjects(
         self,
         page_index: int,
         page_content: bytes,
-        editor: Callable[[bytes, Any, int], tuple[bytes, int]],
+        editor: Callable[[bytes, Any, int], tuple[bytes, int, Any]],
         max_count: int,
+        *,
+        redaction: bool = False,
     ) -> int:
         """Edit reachable form streams without mutating forms shared by other pages."""
         page = self._get_page_dict(page_index)
@@ -6310,8 +6502,15 @@ class SimplePdf:
             memo,
             set(),
             0,
+            redaction=redaction,
         )
         if cloned is not None:
+            if redaction:
+                updated, cloned = self._redact_form_metadata(
+                    page_content, resources, cloned, page
+                )
+                if updated != page_content:
+                    self._set_page_content(page_index, updated)
             page.mapping[PdfName("Resources")] = cloned
         return count
 
@@ -6319,16 +6518,20 @@ class SimplePdf:
         self,
         resources: Any,
         content: bytes,
-        editor: Callable[[bytes, Any, int], tuple[bytes, int]],
+        editor: Callable[[bytes, Any, int], tuple[bytes, int, Any]],
         max_count: int,
         memo: dict[tuple[int, int], tuple[Any, bool]],
         active: set[tuple[int, int]],
         depth: int,
+        *,
+        redaction: bool = False,
     ) -> tuple[PdfDictionary | None, int]:
         """Copy and update the form references reached by ``Do`` operators."""
         from .content_stream_parser import _MAX_FORM_DEPTH
 
         if depth >= _MAX_FORM_DEPTH or not isinstance(resources, PdfDictionary):
+            if redaction and depth >= _MAX_FORM_DEPTH:
+                raise PdfValidationException("Form nesting is too deep for safe redaction")
             return None, 0
         xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
         if not isinstance(xobjects, PdfDictionary):
@@ -6343,6 +6546,8 @@ class SimplePdf:
         except PdfResourceLimitException:
             raise
         except PDF_OPERATION_ERRORS:
+            if redaction:
+                raise
             return None, 0
 
         replacements: dict[PdfName, Any] = {}
@@ -6378,6 +6583,8 @@ class SimplePdf:
                     replacements[key_name] = cached_ref
                 continue
             if memo_key in active:
+                if redaction:
+                    raise PdfValidationException("Cyclic Form XObjects prevent safe redaction")
                 continue
             active.add(memo_key)
             try:
@@ -6386,9 +6593,11 @@ class SimplePdf:
                 except PdfResourceLimitException:
                     raise
                 except PDF_OPERATION_ERRORS:
+                    if redaction:
+                        raise
                     memo[memo_key] = (source_ref, False)
                     continue
-                updated, direct_count = editor(
+                updated, direct_count, edited_resources = editor(
                     form_content,
                     effective_resources,
                     remaining,
@@ -6400,13 +6609,14 @@ class SimplePdf:
                     nested_resources, nested_count = None, 0
                 else:
                     nested_resources, nested_count = self._edit_form_resources(
-                        effective_resources,
+                        edited_resources,
                         updated,
                         editor,
                         nested_remaining,
                         memo,
                         active,
                         depth + 1,
+                        redaction=redaction,
                     )
             finally:
                 active.discard(memo_key)
@@ -6416,11 +6626,27 @@ class SimplePdf:
                 memo[memo_key] = (source_ref, False)
                 continue
 
+            if redaction and PdfName("StructParents") in form.mapping:
+                raise PdfValidationException(
+                    "Safe text redaction of tagged Form XObjects is not supported; "
+                    "their structure references cannot be preserved safely."
+                )
+
+            if redaction and nested_resources is not None:
+                updated, nested_resources = self._redact_form_metadata(
+                    updated, edited_resources, nested_resources
+                )
+
             mapping = dict(form.mapping)
+            if redaction:
+                for key in ("ActualText", "Alt", "E"):
+                    mapping.pop(PdfName(key), None)
             for filter_key in ("Filter", "DecodeParms", "Length"):
                 mapping.pop(PdfName(filter_key), None)
             if nested_resources is not None:
                 mapping[PdfName("Resources")] = nested_resources
+            elif edited_resources is not effective_resources:
+                mapping[PdfName("Resources")] = edited_resources
             clone_ref = self._cos_doc.register_object(
                 PdfStream(content=updated, mapping=mapping)
             )
@@ -6432,6 +6658,14 @@ class SimplePdf:
             return None, total
         cloned_xobjects = PdfDictionary(dict(xobjects.mapping))
         cloned_xobjects.mapping.update(replacements)
+        if redaction:
+            used = {PdfName(name) for name, _matrix in placements}
+            replaced_objects = {
+                id(self._resolve(xobjects.mapping[name])) for name in replacements
+            }
+            for name, ref in xobjects.mapping.items():
+                if name not in used and id(self._resolve(ref)) in replaced_objects:
+                    cloned_xobjects.mapping.pop(name, None)
         cloned_resources = PdfDictionary(dict(resources.mapping))
         cloned_resources.mapping[PdfName("XObject")] = cloned_xobjects
         return cloned_resources, total
