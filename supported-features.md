@@ -863,9 +863,17 @@ Boundaries:
   outlines, which renders exactly and needs no embedded font, but is not
   selectable or searchable. A shading SVG has no gradient for -- function-based
   and mesh -- is sampled into an embedded image rather than dropped, as are
-  soft-masked images (through an SVG `<mask>`). Blend modes, transparency
-  groups and knockout are not expressed; the affected content is drawn without
-  them. SVG has no multi-page model, so a document becomes one file per page.
+  soft-masked images (through an SVG `<mask>`). Standard blend modes and
+  isolated transparency groups use CSS Compositing Level 1; viewers must
+  support `mix-blend-mode` and `isolation`. ExtGState alpha/luminosity masks
+  are rendered separately at 72 dpi and applied in page coordinates, including
+  their transfer function. Group opacity and masks apply once to the group.
+  Non-isolated groups remain vector when no group-level alpha, blend or mask
+  is needed. Otherwise, and for knockout groups, tiling patterns, patterned
+  strokes/text and overprint preview, the **whole page becomes an embedded
+  RGBA image at 72 dpi**, retaining transparency and the raster renderer's
+  limitations. SVG has no multi-page model, so a document becomes one file
+  per page.
 - `GraphicsAbsorber` collects every mark a page makes: painted paths, placed
   images (XObject and inline `BI`/`ID`/`EI` alike), shown **text runs** and
   `sh` shading fills. A text element carries the box its glyphs occupy,
@@ -917,12 +925,13 @@ Boundaries:
   rename them over it, so a failed write leaves the old file intact.
 - **Export a page as SVG** with `Page.to_svg()` / `Page.save_as_svg()`,
   `Document.save_as_svg()` or `Document.save(path, DocFormat.SVG)`. The
-  exporter *is* the renderer: it subclasses the rasterizer and replaces only
-  the places that put marks on a canvas, so the two agree on geometry by
-  construction. Paths keep their fill rule (including even-odd),
-  strokes carry width, dash pattern, cap and join, clips
+  exporter shares the rasterizer's content interpreter. Paths keep their fill
+  rule (including even-odd), strokes carry width, dash pattern, cap and join, clips
   become `<clipPath>`, text becomes glyph outlines, images become embedded
   PNGs placed by their matrix, and axial/radial shadings become SVG gradients.
+  Page content blends on an isolated transparent backdrop before being placed
+  on the requested paper colour. Form BBoxes, nested clipping and graphics
+  state are scoped to the form; image transforms do not transform page clips.
 - Layout reflow remains out of scope.
 
 ## Optional Content (Layers)

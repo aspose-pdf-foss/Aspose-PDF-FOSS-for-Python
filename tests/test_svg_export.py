@@ -9,9 +9,8 @@ above the paint sinks.
 
 Output was cross-checked outside the suite by rendering it with cairo and
 comparing against this library's own raster: shapes, text, clipping, alpha and
-gradients agree to within antialiasing. Two cases deliberately do *not* agree,
-and both are the SVG being more correct than the rasterizer -- it honours the
-even-odd fill rule and dash patterns in the emitted SVG.
+gradients agree to within antialiasing. Fill rules and stroke styles are
+preserved in both backends.
 """
 
 from __future__ import annotations
@@ -119,7 +118,7 @@ def test_alpha_becomes_fill_opacity():
 
 
 def test_the_even_odd_fill_rule_survives():
-    """A rule the rasterizer drops: it fills each subpath on its own."""
+    """The compound path retains the hole made by its inner contour."""
     svg = _svg(b"0 0 0 rg 20 20 160 160 re 60 60 80 80 re f*")
 
     (path,) = _elements(svg, "path")

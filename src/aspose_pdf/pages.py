@@ -405,11 +405,14 @@ class Page:
     ) -> str:
         """Return this page as an SVG document.
 
-        The page is interpreted by the same code that renders it, so what the
-        SVG says and what :meth:`render` draws agree. Paths, clips, text (as
-        glyph outlines), images and axial/radial shadings become vector
-        elements; a construct SVG cannot express -- a mesh or function shading
-        -- is sampled into an embedded image rather than dropped.
+        Paths, clips, text (as glyph outlines), images and axial/radial
+        shadings are exported by the shared rendering interpreter. Blend modes
+        and isolated groups use CSS compositing; soft masks embed alpha maps.
+        Function and mesh shadings are sampled into images. Knockout groups,
+        non-isolated groups with group-level alpha/blend/mask, tiling patterns,
+        patterned strokes/text and overprint preview fall back to a complete
+        embedded RGBA page at 72 dpi, preserving the renderer's limitations.
+        Vector blending requires a viewer supporting CSS Compositing Level 1.
 
         ``background`` paints an opaque page behind the content; pass ``None``
         for a transparent SVG. ``precision`` is the number of decimal places

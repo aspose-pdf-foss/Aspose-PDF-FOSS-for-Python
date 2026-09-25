@@ -16,22 +16,24 @@ device pixels *are* SVG user units: one unit per point, y already flipped and
 the page rotation and crop box already applied. What arrives at a sink is a
 polygon in that space, ready to be written out as path data.
 
-What the vector backend cannot express it draws instead of dropping: a shading
-that is neither axial nor radial is sampled into an embedded image, and a
-soft-masked image becomes an SVG ``<mask>``. Curves are flattened before they
-reach a sink -- the rasterizer flattens them while building the path -- so
-output is polylines, not Béziers.
+Blend modes and isolated groups use CSS compositing; soft masks use embedded
+alpha maps. Knockout and non-isolated groups with group-level effects require
+the complete page backdrop and fall back to an embedded RGBA page at 72 dpi.
+Patterns and overprint preview use that fallback too. Function/mesh shadings
+are sampled individually. Curves arrive as flattened polylines, not Béziers.
 """
 
 from __future__ import annotations
 
 import base64
+import copy
 import math
 from typing import Any
 
 from aspose_pdf.exceptions import PDF_OPERATION_ERRORS, PdfResourceLimitException
 from aspose_pdf.load_limits import PdfLoadLimits
 
+from .cos import PdfDictionary, PdfName
 from .image_export import write_png
 from .rasterizer import (
     Color,
@@ -52,6 +54,28 @@ _SHADING_SAMPLE_LIMIT = 512
 # table is usually 256 entries, and this many reproduces it invisibly.
 _GRADIENT_STOPS = 64
 
+_SVG_BLEND_MODES = {
+    "Multiply": "multiply",
+    "Screen": "screen",
+    "Overlay": "overlay",
+    "Darken": "darken",
+    "Lighten": "lighten",
+    "ColorDodge": "color-dodge",
+    "ColorBurn": "color-burn",
+    "HardLight": "hard-light",
+    "SoftLight": "soft-light",
+    "Difference": "difference",
+    "Exclusion": "exclusion",
+    "Hue": "hue",
+    "Saturation": "saturation",
+    "Color": "color",
+    "Luminosity": "luminosity",
+}
+
+
+class _RasterFallback(Exception):
+    """Restart with pixels when SVG cannot preserve the page's backdrop."""
+
 
 def _fmt(value: float, precision: int = 3) -> str:
     """Format a coordinate compactly: no trailing zeros, no exponent."""
@@ -68,9 +92,7 @@ def _rgb(color: Color) -> str:
 
 
 def _escape(text: str) -> str:
-    return (
-        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    )
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 class _SvgWriter(_PageRasterizer):
@@ -85,6 +107,7 @@ class _SvgWriter(_PageRasterizer):
         draw_annotations: bool = True,
         font_substitution: Any = None,
         precision: int = 3,
+        limits: PdfLoadLimits | None = None,
     ) -> None:
         super().__init__(
             pdf,
@@ -95,6 +118,7 @@ class _SvgWriter(_PageRasterizer):
             antialias=False,
             draw_annotations=draw_annotations,
             font_substitution=font_substitution,
+            limits=limits,
         )
         self._svg_background = background
         self._precision = max(0, min(9, int(precision)))
@@ -105,24 +129,22 @@ class _SvgWriter(_PageRasterizer):
         # own q/Q stack.
         self._clip_id: str | None = None
         self._clip_id_stack: list[str | None] = []
-        # Stroke properties the rasterizer does not model (it draws round
-        # segments), tracked here because SVG can express them exactly.
-        self._dash: tuple[list[float], float] | None = None
-        self._line_cap = 0
-        self._line_join = 0
-        self._miter_limit = 10.0
-        self._stroke_stack: list[tuple[Any, int, int, float]] = []
+        self._soft_masks: dict[bytes, str] = {}
+        self._soft_mask_bytes = 0
 
     # -- output ------------------------------------------------------------
 
     def to_svg(self) -> str:
-        content = self._page_content()
-        if content:
-            self._interpret(
-                content, self.resources_cos, self.resources_plain, depth=0
-            )
-        if self.draw_annotations:
-            self._paint_annotations()
+        try:
+            content = self._page_content()
+            if content:
+                self._interpret(
+                    content, self.resources_cos, self.resources_plain, depth=0
+                )
+            if self.draw_annotations:
+                self._paint_annotations()
+        except _RasterFallback:
+            self._raster_page()
         width = _fmt(self.target_width, self._precision)
         height = _fmt(self.target_height, self._precision)
         parts = [
@@ -143,7 +165,11 @@ class _SvgWriter(_PageRasterizer):
                 f'<rect width="{width}" height="{height}" '
                 f'fill="{_rgb(self.background)}"/>'
             )
+        # The PDF page starts on a transparent backdrop, even when the caller
+        # requests coloured paper. Blends only see other marks on the page.
+        parts.append('<g style="isolation:isolate">')
         parts.extend(self._body)
+        parts.append("</g>")
         parts.append("</svg>")
         return "\n".join(parts) + "\n"
 
@@ -152,7 +178,173 @@ class _SvgWriter(_PageRasterizer):
         return f"{prefix}{self._next_id}"
 
     def _emit(self, element: str) -> None:
+        if self.state.fill_overprint or self.state.stroke_overprint:
+            raise _RasterFallback
+        attributes = []
+        blend = _SVG_BLEND_MODES.get(self.state.blend_mode)
+        if blend:
+            attributes.append(f'style="mix-blend-mode:{blend}"')
+        mask = self.state.soft_mask
+        if mask is not None:
+            identifier = self._soft_masks.get(mask)
+            if identifier is None:
+                self._load_budget.check(
+                    self._soft_mask_bytes + len(mask),
+                    "max_codec_work_bytes",
+                    "SVG soft mask storage",
+                )
+                identifier = self._svg_mask(
+                    (self.width, self.height, mask), page_space=True
+                )
+                self._soft_masks[mask] = identifier
+                self._soft_mask_bytes += len(mask)
+            attributes.append(f'mask="url(#{identifier})"')
+        if attributes:
+            element = f"<g {' '.join(attributes)}>{element}</g>"
         self._body.append(element)
+
+    def _new_rasterizer(self) -> _PageRasterizer:
+        renderer = _PageRasterizer(
+            self.pdf,
+            self.page_index,
+            dpi=72,
+            scale=1,
+            background=self.background,
+            antialias=False,
+            draw_annotations=self.draw_annotations,
+            limits=self._load_limits,
+        )
+        renderer._font_resolver = self._font_resolver
+        renderer._load_budget = self._load_budget
+        return renderer
+
+    def _raster_page(self) -> None:
+        """Keep the complete backdrop for groups SVG would forcibly isolate."""
+        self._load_budget.check(
+            self.width * self.height * 13,
+            "max_codec_work_bytes",
+            "SVG raster fallback working set",
+        )
+        renderer = self._new_rasterizer()
+        content = renderer._page_content()
+        if content:
+            renderer._interpret(
+                content, renderer.resources_cos, renderer.resources_plain, depth=0
+            )
+        if renderer.draw_annotations:
+            renderer._paint_annotations()
+        pixels = renderer.canvas.pixels
+        rgba = bytearray(self.width * self.height * 4)
+        rgba[0::4], rgba[1::4], rgba[2::4] = pixels[0::3], pixels[1::3], pixels[2::3]
+        rgba[3::4] = renderer.canvas.alpha
+        href = _png_data_uri(self.width, self.height, "RGBA", bytes(rgba))
+        self._defs.clear()
+        self._soft_masks.clear()
+        self._body = [
+            f'<image width="{self.width}" height="{self.height}" '
+            f'preserveAspectRatio="none" xlink:href="{href}"/>'
+        ]
+
+    def _build_soft_mask(self, smask, resources_cos, resources_plain):
+        # A separate interpreter is essential: dispatching the offscreen paint
+        # through this writer would emit the mask's marks into the visible SVG.
+        if not isinstance(smask, PdfDictionary):
+            return None
+        self._load_budget.check(
+            self.width * self.height * 5 + self._soft_mask_bytes,
+            "max_codec_work_bytes",
+            "SVG soft mask working set",
+        )
+        renderer = self._new_rasterizer()
+        renderer.state = copy.deepcopy(self.state)
+        renderer.resources_cos, renderer.resources_plain = (
+            resources_cos,
+            resources_plain,
+        )
+        renderer._offscreen_work_bytes = (
+            self.width * self.height * 5 + self._soft_mask_bytes
+        )
+        return renderer._build_soft_mask(smask, resources_cos, resources_plain)
+
+    def _paint_form(
+        self,
+        stream,
+        ref,
+        parent_resources_cos,
+        parent_resources_plain,
+        depth,
+        *,
+        as_group_content=False,
+        apply_matrix=True,
+    ) -> None:
+        if depth > 8:
+            return
+        group = self._resolve(stream.mapping.get(PdfName("Group")))
+        grouped = not as_group_content and self._is_transparency_group(stream)
+        isolated = grouped and self._cos_bool(group.mapping.get(PdfName("I")), False)
+        if grouped:
+            knockout = self._cos_bool(group.mapping.get(PdfName("K")), False)
+            if knockout or (
+                not isolated
+                and (
+                    self.state.fill_alpha != 1
+                    or self.state.blend_mode != "Normal"
+                    or self.state.soft_mask is not None
+                )
+            ):
+                raise _RasterFallback
+        saved_clip, saved_stack = self._clip_id, self._clip_id_stack
+        saved_state, saved_body = self.state, self._body
+        self._clip_id_stack = []
+        if grouped:
+            # Alpha, blend and mask apply to the group once, not its children.
+            self.state = copy.deepcopy(saved_state)
+            self.state.fill_alpha = self.state.stroke_alpha = 1
+            self.state.blend_mode, self.state.soft_mask = "Normal", None
+            self._body = []
+        try:
+            super()._paint_form(
+                stream,
+                ref,
+                parent_resources_cos,
+                parent_resources_plain,
+                depth,
+                as_group_content=True,
+                apply_matrix=apply_matrix,
+            )
+            contents = "\n".join(self._body) if grouped else ""
+        finally:
+            self._clip_id, self._clip_id_stack = saved_clip, saved_stack
+            self.state, self._body = saved_state, saved_body
+        if grouped:
+            attributes = ' style="isolation:isolate"' if isolated else ""
+            if saved_state.fill_alpha < 1:
+                attributes += f' opacity="{_fmt(saved_state.fill_alpha, 3)}"'
+            self._emit(f"<g{attributes}>{contents}</g>")
+
+    def _paint_one_annotation(self, annot):
+        saved_clip, saved_stack = self._clip_id, self._clip_id_stack
+        self._clip_id, self._clip_id_stack = None, []
+        try:
+            super()._paint_one_annotation(annot)
+        finally:
+            self._clip_id, self._clip_id_stack = saved_clip, saved_stack
+
+    def _run_type3_glyph(self, proc, ref, font_matrix, resources_cos, resources_plain):
+        saved_clip, saved_stack = self._clip_id, self._clip_id_stack
+        self._clip_id_stack = []
+        try:
+            super()._run_type3_glyph(
+                proc, ref, font_matrix, resources_cos, resources_plain
+            )
+        finally:
+            self._clip_id, self._clip_id_stack = saved_clip, saved_stack
+
+    def _fill_tiling(self, subpaths, tiling, depth, *, even_odd=False):
+        raise _RasterFallback
+
+    def _fill_contours_shading(self, *args, **kwargs):
+        raise _RasterFallback
 
     def _clip_attribute(self) -> str:
         return f' clip-path="url(#{self._clip_id})"' if self._clip_id else ""
@@ -181,57 +373,18 @@ class _SvgWriter(_PageRasterizer):
         resources_plain: dict,
         depth: int,
     ) -> None:
-        # The clip id and the stroke properties follow q/Q like everything
-        # else in the graphics state.
+        # The clip id follows q/Q alongside the interpreter's graphics state.
         if op == "q":
             self._clip_id_stack.append(self._clip_id)
-            self._stroke_stack.append(
-                (self._dash, self._line_cap, self._line_join, self._miter_limit)
-            )
         elif op == "Q":
             if self._clip_id_stack:
                 self._clip_id = self._clip_id_stack.pop()
-            if self._stroke_stack:
-                (
-                    self._dash,
-                    self._line_cap,
-                    self._line_join,
-                    self._miter_limit,
-                ) = self._stroke_stack.pop()
-        elif op == "d" and len(operands) >= 2:
-            self._set_dash(operands[-2], operands[-1])
-            return
-        elif op == "J" and operands:
-            self._line_cap = _int_operand(operands[-1], self._line_cap)
-            return
-        elif op == "j" and operands:
-            self._line_join = _int_operand(operands[-1], self._line_join)
-            return
-        elif op == "M" and operands:
-            value = _float_operand(operands[-1])
-            if value is not None:
-                self._miter_limit = value
-            return
         super()._handle_operator(op, operands, resources_cos, resources_plain, depth)
-
-    def _set_dash(self, array: Any, phase: Any) -> None:
-        items = getattr(array, "items", array)
-        if not isinstance(items, (list, tuple)):
-            self._dash = None
-            return
-        pattern = [
-            value
-            for value in (_float_operand(item) for item in items)
-            if value is not None and value >= 0
-        ]
-        if not pattern or not any(pattern):
-            self._dash = None
-            return
-        self._dash = (pattern, _float_operand(phase) or 0.0)
 
     def _stroke_attributes(self, color: Color, alpha: float) -> str:
         width = max(
-            self.state.line_width * self.point_scale, 0.1 if self.state.line_width else 0.0
+            self.state.line_width * self.point_scale,
+            0.1 if self.state.line_width else 0.0,
         )
         caps = {0: "butt", 1: "round", 2: "square"}
         joins = {0: "miter", 1: "round", 2: "bevel"}
@@ -239,14 +392,14 @@ class _SvgWriter(_PageRasterizer):
             f'fill="none" stroke="{_rgb(color)}"',
             f'stroke-width="{_fmt(width, self._precision)}"',
         ]
-        if self._line_cap:
-            parts.append(f'stroke-linecap="{caps.get(self._line_cap, "butt")}"')
-        if self._line_join:
-            parts.append(f'stroke-linejoin="{joins.get(self._line_join, "miter")}"')
-        elif self._miter_limit != 10.0:
-            parts.append(f'stroke-miterlimit="{_fmt(self._miter_limit, 2)}"')
-        if self._dash is not None:
-            pattern, phase = self._dash
+        if self.state.line_cap:
+            parts.append(f'stroke-linecap="{caps[self.state.line_cap]}"')
+        if self.state.line_join:
+            parts.append(f'stroke-linejoin="{joins[self.state.line_join]}"')
+        else:
+            parts.append(f'stroke-miterlimit="{_fmt(self.state.miter_limit, 2)}"')
+        if self.state.dash_pattern:
+            pattern, phase = self.state.dash_pattern, self.state.dash_phase
             scaled = " ".join(
                 _fmt(value * self.point_scale, self._precision) for value in pattern
             )
@@ -308,9 +461,12 @@ class _SvgWriter(_PageRasterizer):
             attributes.append(f'fill-opacity="{_fmt(alpha, 3)}"')
         self._emit(f"<path {' '.join(attributes)}{self._clip_attribute()}/>")
 
-    def _stroke_subpaths(
-        self, subpaths: Any, color: Color, alpha: float
-    ) -> None:
+    def _stroke_subpaths(self, subpaths: Any, color: Color, alpha: float) -> None:
+        if (
+            self.state.stroke_tiling is not None
+            or self.state.stroke_shading is not None
+        ):
+            raise _RasterFallback
         polygons = [
             [self._user_to_pixel(x, y) for x, y in subpath]
             for subpath in subpaths
@@ -330,12 +486,8 @@ class _SvgWriter(_PageRasterizer):
         """Register the clip as a ``<clipPath>``; no raster mask is needed."""
         polygons = [polygon for polygon in contours if len(polygon) >= 3]
         data = self._path_data(polygons, close=True)
-        if not data:
-            return
         identifier = self._identifier("clip")
-        inherited = (
-            f' clip-path="url(#{self._clip_id})"' if self._clip_id else ""
-        )
+        inherited = f' clip-path="url(#{self._clip_id})"' if self._clip_id else ""
         rule = ' clip-rule="evenodd"' if even_odd else ""
         self._defs.append(
             f'<clipPath id="{identifier}"{inherited}>'
@@ -389,10 +541,12 @@ class _SvgWriter(_PageRasterizer):
         ]
         if self.state.fill_alpha < 1.0:
             attributes.append(f'opacity="{_fmt(self.state.fill_alpha, 3)}"')
-        self._emit(
-            f"<image {' '.join(attributes)}{mask_attribute}"
-            f"{self._clip_attribute()}/>"
-        )
+        element = f"<image {' '.join(attributes)}{mask_attribute}/>"
+        # Page-space clips and soft masks must not inherit the image's unit
+        # square transform. The image's own alpha map does inherit it.
+        if self._clip_id:
+            element = f"<g{self._clip_attribute()}>{element}</g>"
+        self._emit(element)
 
     def _image_transform(self, matrix: Matrix) -> str:
         """Map the SVG unit square onto the image's place on the page.
@@ -422,16 +576,21 @@ class _SvgWriter(_PageRasterizer):
             origin[1],
         )
 
-    def _svg_mask(self, alpha_map: tuple[int, int, bytes]) -> str:
+    def _svg_mask(
+        self, alpha_map: tuple[int, int, bytes], *, page_space: bool = False
+    ) -> str:
         """An SVG ``<mask>`` for a per-pixel alpha map, wherever it came from."""
         width, height, alpha = alpha_map
         href = _png_data_uri(width, height, "L", alpha)
         identifier = self._identifier("mask")
+        units = "userSpaceOnUse" if page_space else "objectBoundingBox"
+        w, h = (width, height) if page_space else (1, 1)
         self._defs.append(
-            f'<mask id="{identifier}" maskUnits="objectBoundingBox" '
-            'maskContentUnits="objectBoundingBox">'
-            f'<image preserveAspectRatio="none" x="0" y="0" width="1" '
-            f'height="1" xlink:href="{href}"/></mask>'
+            f'<mask id="{identifier}" maskUnits="{units}" '
+            f'maskContentUnits="{units}" x="0" y="0" width="{w}" height="{h}" '
+            'style="mask-type:luminance" color-interpolation="sRGB">'
+            f'<image preserveAspectRatio="none" x="0" y="0" width="{w}" '
+            f'height="{h}" xlink:href="{href}"/></mask>'
         )
         return identifier
 
@@ -475,7 +634,9 @@ class _SvgWriter(_PageRasterizer):
         ]
         paint = self._shading_paint(shading, self.state.ctm)
         if paint is not None:
-            self._emit_fill(box, (0, 0, 0), self.state.fill_alpha, rule=None, paint=paint)
+            self._emit_fill(
+                box, (0, 0, 0), self.state.fill_alpha, rule=None, paint=paint
+            )
             return
         self._emit_sampled_shading(box, shading, self.state.ctm, self.state.fill_alpha)
 
@@ -597,20 +758,6 @@ class _SvgWriter(_PageRasterizer):
         )
 
 
-def _int_operand(value: Any, default: int) -> int:
-    number = _float_operand(value)
-    return int(number) if number is not None else default
-
-
-def _float_operand(value: Any) -> float | None:
-    raw = getattr(value, "value", value)
-    try:
-        number = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
 def _matrix_attribute(matrix: Matrix, precision: int = 3) -> str:
     values = " ".join(_fmt(value, precision) for value in matrix)
     return f"matrix({values})"
@@ -623,9 +770,7 @@ def _gradient_stops(shading: Shading) -> str:
     for index in range(count):
         position = index / (count - 1) if count > 1 else 0.0
         color = lut[int(position * (len(lut) - 1))]
-        stops.append(
-            f'<stop offset="{_fmt(position, 4)}" stop-color="{_rgb(color)}"/>'
-        )
+        stops.append(f'<stop offset="{_fmt(position, 4)}" stop-color="{_rgb(color)}"/>')
     return "".join(stops)
 
 
@@ -652,5 +797,6 @@ def page_to_svg(
         draw_annotations=draw_annotations,
         font_substitution=font_substitution,
         precision=precision,
+        limits=limits,
     )
     return writer.to_svg()

@@ -738,6 +738,7 @@ class _PageRasterizer:
         draw_annotations: bool = True,
         font_substitution: Any = None,
         performance: Any = None,
+        limits: PdfLoadLimits | None = None,
     ):
         self.shape_substitute_text = bool(shape_substitute_text)
         self.draw_annotations = bool(draw_annotations)
@@ -760,7 +761,10 @@ class _PageRasterizer:
         self.pdf = pdf
         self.page_index = page_index
         budget = getattr(pdf, "_load_budget", None)
-        if isinstance(budget, _LoadBudget):
+        if limits is not None:
+            self._load_limits = _coerce_limits(limits)
+            self._load_budget = _LoadBudget(self._load_limits)
+        elif isinstance(budget, _LoadBudget):
             self._load_budget = budget
             self._load_limits = budget.limits
         else:
@@ -949,8 +953,11 @@ class _PageRasterizer:
             return
 
         saved_state, saved_stack = self.state, self.state_stack
+        saved_clip, saved_clips = self.canvas.clip, self._clip_stack
         self.state = _GraphicsState(ctm=_multiply(placement, matrix))
         self.state_stack = []
+        self.canvas.clip = bytearray(b"\x01" * (self.width * self.height))
+        self._clip_stack = []
         try:
             self._paint_form(
                 stream,
@@ -962,6 +969,7 @@ class _PageRasterizer:
             )
         finally:
             self.state, self.state_stack = saved_state, saved_stack
+            self.canvas.clip, self._clip_stack = saved_clip, saved_clips
 
     def _annotation_normal_appearance(self, annot: PdfDictionary) -> Any:
         """Return the ``/AP /N`` stream, resolving an appearance-state subdictionary."""
@@ -2688,13 +2696,17 @@ class _PageRasterizer:
         saved_lock = self._type3_colour_locked
         saved_path = self.path
         saved_stack = self.state_stack
+        saved_clip, saved_clips = self.canvas.clip, self._clip_stack
+        saved_pending, saved_text_clip = self.pending_clip, self._text_clip
         self._type3_colour_locked = saved_lock or bool(_D1_GLYPH.match(bytes(content)))
         self._type3_depth += 1
         try:
             self.state = copy.deepcopy(outer_state)
             self.state.ctm = placement
             self.state_stack = []
+            self._clip_stack = []
             self.path = _Path()
+            self.pending_clip, self._text_clip = None, None
             self._interpret(bytes(content), resources_cos, resources_plain, depth=self._type3_depth)
         finally:
             self._type3_depth -= 1
@@ -2702,6 +2714,8 @@ class _PageRasterizer:
             self.state = outer_state
             self.state_stack = saved_stack
             self.path = saved_path
+            self.canvas.clip, self._clip_stack = saved_clip, saved_clips
+            self.pending_clip, self._text_clip = saved_pending, saved_text_clip
 
     def _show_text_boxes(self, raw: bytes) -> None:
         """Fallback for non-TrueType fonts: draw a box per visible glyph."""
@@ -4102,6 +4116,8 @@ class _PageRasterizer:
                 backdrop,
                 track_coverage=not luminosity,
                 isolated=not luminosity,
+                resources_cos=resources_cos,
+                resources_plain=resources_plain,
             )
         finally:
             self._in_soft_mask = False
@@ -4175,6 +4191,9 @@ class _PageRasterizer:
         *,
         isolated: bool = False,
         knockout: bool = False,
+        apply_matrix: bool = True,
+        resources_cos: PdfDictionary | None = None,
+        resources_plain: dict | None = None,
     ) -> _Canvas:
         """Render a form XObject into a fresh canvas at the current CTM.
 
@@ -4212,23 +4231,26 @@ class _PageRasterizer:
             if knockout:
                 off.knockout = True
                 off.initial_pixels = bytes(off.pixels)
-                off.initial_alpha = (
-                    bytes(off.alpha) if off.alpha is not None else None
-                )
+                off.initial_alpha = bytes(off.alpha) if off.alpha is not None else None
             saved_canvas = self.canvas
             saved_state = self.state
             saved_stack = self.state_stack
             self.canvas = off
-            self.state = _GraphicsState(ctm=saved_state.ctm)
+            self.state = copy.deepcopy(saved_state)
+            self.state.fill_alpha = self.state.stroke_alpha = 1.0
+            self.state.blend_mode, self.state.soft_mask = "Normal", None
             self.state_stack = []
             try:
                 self._paint_form(
                     group,
                     ref,
-                    self.resources_cos,
-                    self.resources_plain,
+                    resources_cos if resources_cos is not None else self.resources_cos,
+                    resources_plain
+                    if resources_plain is not None
+                    else self.resources_plain,
                     depth=0,
                     as_group_content=True,
+                    apply_matrix=apply_matrix,
                 )
             finally:
                 self.canvas = saved_canvas
@@ -4266,7 +4288,14 @@ class _PageRasterizer:
         ):
             region = self._form_device_bbox(stream, matrix)
             if region is not None:
-                self._paint_group_composited(stream, ref, region)
+                self._paint_group_composited(
+                    stream,
+                    ref,
+                    region,
+                    apply_matrix=apply_matrix,
+                    resources_cos=parent_resources_cos,
+                    resources_plain=parent_resources_plain,
+                )
                 return
         form_resources = self._resolve(stream.mapping.get(PdfName("Resources")))
         if not isinstance(form_resources, PdfDictionary):
@@ -4277,19 +4306,47 @@ class _PageRasterizer:
         ):
             form_resources_plain = self.pdf._convert_cos_to_dict(form_resources)
         try:
-            content = self.pdf._decode_cos_stream(stream, ref) if hasattr(
-                self.pdf, "_decode_cos_stream"
-            ) else stream.content
+            content = (
+                self.pdf._decode_cos_stream(stream, ref)
+                if hasattr(self.pdf, "_decode_cos_stream")
+                else stream.content
+            )
         except PdfResourceLimitException:
             raise
         except Exception:
             content = stream.content
-        saved = copy.deepcopy(self.state)
-        self.state.ctm = _concat(matrix, self.state.ctm)
-        self._interpret(
-            content, form_resources, form_resources_plain, depth=depth + 1
-        )
-        self.state = saved
+        saved_state, saved_stack = self.state, self.state_stack
+        saved_path, saved_pending = self.path, self.pending_clip
+        saved_clip, saved_clips = self.canvas.clip, self._clip_stack
+        saved_text_clip = self._text_clip
+        saved_hidden = self._oc_hidden_depth
+        self.state = copy.deepcopy(saved_state)
+        self.state.ctm = _concat(matrix, saved_state.ctm)
+        self.state_stack, self._clip_stack = [], []
+        self.path, self.pending_clip, self._text_clip = _Path(), None, None
+        try:
+            # A form has an implicit save/restore and is clipped to its BBox,
+            # including when it supplies a soft mask or annotation appearance.
+            bbox = self._cos_rect(stream.mapping.get(PdfName("BBox")))
+            if bbox is not None:
+                x0, y0, x1, y1 = bbox
+                self._apply_clip(
+                    [
+                        [
+                            _transform_point(self.state.ctm, x, y)
+                            for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+                        ]
+                    ]
+                )
+            self._interpret(
+                content, form_resources, form_resources_plain, depth=depth + 1
+            )
+        finally:
+            self.state, self.state_stack = saved_state, saved_stack
+            self.path, self.pending_clip = saved_path, saved_pending
+            self.canvas.clip, self._clip_stack = saved_clip, saved_clips
+            self._text_clip = saved_text_clip
+            self._oc_hidden_depth = saved_hidden
 
     def _is_transparency_group(self, stream: PdfStream) -> bool:
         group = self._resolve(stream.mapping.get(PdfName("Group")))
@@ -4319,7 +4376,14 @@ class _PageRasterizer:
         return (min_x, min_y, max_x, max_y)
 
     def _paint_group_composited(
-        self, stream: PdfStream, ref: Any, region: tuple[int, int, int, int]
+        self,
+        stream: PdfStream,
+        ref: Any,
+        region: tuple[int, int, int, int],
+        *,
+        apply_matrix: bool = True,
+        resources_cos: PdfDictionary | None = None,
+        resources_plain: dict | None = None,
     ) -> None:
         """Render a transparency group offscreen and composite it as a unit.
 
@@ -4345,6 +4409,9 @@ class _PageRasterizer:
             seed_pixels=None if isolated else backdrop,
             isolated=isolated,
             knockout=knockout,
+            apply_matrix=apply_matrix,
+            resources_cos=resources_cos,
+            resources_plain=resources_plain,
         )
         cov = off.coverage or b""
         px = off.pixels
