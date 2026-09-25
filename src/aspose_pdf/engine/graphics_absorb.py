@@ -229,7 +229,7 @@ class _GraphicsWalker:
         if hasattr(self.pdf, "_resolve"):
             return self.pdf._resolve(obj)
         if isinstance(obj, PdfIndirectReference) and getattr(self.pdf, "_cos_doc", None):
-            return self.pdf._cos_doc.objects.get(obj.object_number)
+            return self.pdf._cos_doc.get_object(obj)
         return obj
 
     def _name(self, obj: Any) -> str | None:

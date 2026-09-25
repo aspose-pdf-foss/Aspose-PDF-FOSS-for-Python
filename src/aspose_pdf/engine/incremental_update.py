@@ -133,21 +133,16 @@ class IncrementalUpdate:
         data = self.original_data
         xref_start = startxref
         if xref_start + 4 > len(data) or data[xref_start : xref_start + 4] != b"xref":
-            # A cross-reference *stream* stands here, not a table. Its entries
-            # are compressed inside an object, so the object numbers are read
-            # off the file instead -- and the update will have to be a stream
-            # too (:meth:`build_incremental_xref_stream`).
+            # Stream entries include generations and compressed members that
+            # cannot be recovered by scanning generation-zero object headers.
             self.previous_is_stream = True
-            # Fallback: extract object numbers via a simple regex.
-            obj_numbers: set[int] = set()
-            for match in re.finditer(rb"(\d+)\s+0\s+obj", data):
-                object_number = int(match.group(1))
-                self.budget.check_object_id(object_number)
-                if object_number not in obj_numbers:
-                    self.budget.check_objects(len(obj_numbers) + 1)
-                    obj_numbers.add(object_number)
-            for num in sorted(obj_numbers):
-                self.xref_entries.append((num, 0, 0))
+            from .pdf_parser_cos import PdfCosParser
+
+            doc = PdfCosParser(data, limits=self.limits, budget=self.budget).parse()
+            self.xref_entries.extend(
+                (num, doc.xref_table.get(num, 0), doc.generation_number(num))
+                for num in sorted(doc.generations)
+            )
             return
 
         trailer_pos = data.find(b"trailer", xref_start)
@@ -241,6 +236,16 @@ class IncrementalUpdate:
         self.add_object(obj_num, obj_bytes)
         return obj_num
 
+    def _object_generation(self, obj_num: int) -> int:
+        """Use the emitted header as the identity recorded in the new xref."""
+        body = self.modified_objects.get(obj_num)
+        if body is None:
+            return 0  # the newly allocated cross-reference stream
+        match = re.match(rb"\s*(\d+)\s+(\d+)\s+obj\b", body)
+        if match is None or int(match[1]) != obj_num or not 0 <= int(match[2]) <= 65535:
+            raise PdfParseException(f"Invalid indirect object header for incremental object {obj_num}")
+        return int(match[2])
+
     def build_incremental_xref(self, base_offset: int) -> bytes:
         """Create an xref section for the appended objects.
 
@@ -276,7 +281,7 @@ class IncrementalUpdate:
             run = sorted_nums[run_start_idx : i + 1]
             out += f"{run[0]} {len(run)}\n".encode("ascii")
             for obj_num in run:
-                out += f"{offsets[obj_num]:010d} 00000 n \n".encode("latin-1")
+                out += f"{offsets[obj_num]:010d} {self._object_generation(obj_num):05d} n \n".encode("latin-1")
             i += 1
         return bytes(out)
 
@@ -325,7 +330,7 @@ class IncrementalUpdate:
             for number in run:
                 entries += b"\x01"
                 entries += table[number].to_bytes(4, "big")
-                entries += (0).to_bytes(2, "big")
+                entries += self._object_generation(number).to_bytes(2, "big")
             i += 1
         index_text = " ".join(f"{start} {count}" for start, count in index)
         header = (
@@ -406,6 +411,23 @@ class IncrementalUpdate:
         trailer_dict.mapping[PdfName("Size")] = PdfNumber(new_size)
         trailer_dict.mapping[PdfName("Prev")] = PdfNumber(prev_startxref)
         writer = PdfCosWriter(prev_doc)
+        if self.previous_is_stream:
+            xref_num = max(new_size, self.next_obj_num)
+            offsets = {}
+            position = append_origin
+            for num in sorted(self.modified_objects):
+                offsets[num] = position
+                position += len(self.modified_objects[num])
+            extra = "".join(
+                f" /{key} {writer.serialize_object(value)}"
+                for key in ("Root", "Info", "ID", "Encrypt")
+                if (value := prev_doc.trailer.get(PdfName(key))) is not None
+            )
+            return objects_bytes + self.build_incremental_xref_stream(
+                offsets, xref_num, xref_offset, xref_num + 1, prev_startxref, extra
+            )
+        for key in ("Type", "Index", "W", "Length", "Filter", "DecodeParms", "XRefStm"):
+            trailer_dict.pop(PdfName(key))
         serialized = writer.serialize_object(trailer_dict)
         trailer_bytes = (
             b"trailer\n"

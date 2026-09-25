@@ -590,6 +590,7 @@ class PdfCosParser:
             self._data = data
         self._budget.check_input(len(self._data))
         self._objects: dict[int, Any] = {}
+        self._generations: dict[int, int] = {}
         self._compressed_objects: dict[
             int, tuple[int, int]
         ] = {}  # obj_num -> (objstm_num, index)
@@ -604,6 +605,7 @@ class PdfCosParser:
         doc = PdfDocument()
         try:
             self._compressed_objects.clear()
+            self._generations.clear()
             startxref_offset = self._find_startxref()
             xref_offset = self._read_int_at(startxref_offset)
             shift = self._offset_shift(xref_offset)
@@ -637,12 +639,15 @@ class PdfCosParser:
                 # living in object streams by writing into the parser, so the
                 # sink is swapped for the call.
                 outer, self._compressed_objects = self._compressed_objects, {}
+                generations, self._generations = self._generations, {}
                 try:
                     xref_table, trailer = self._parse_xref_section(current_offset)
                     self._merge_hybrid_xref_stream(xref_table, trailer, shift)
                     section_compressed = self._compressed_objects
+                    section_generations = self._generations
                 finally:
                     self._compressed_objects = outer
+                    self._generations = generations
                 # The chain is walked newest first, and the newest revision to
                 # mention an object is the one that owns it -- *whichever form
                 # it takes*. An object moved out of an object stream by a later
@@ -652,11 +657,13 @@ class PdfCosParser:
                 for obj_num, off in xref_table.items():
                     if obj_num not in claimed:
                         claimed.add(obj_num)
-                        all_xref[obj_num] = off + shift
+                        all_xref[obj_num] = off + shift if off > 0 else 0
+                        self._generations[obj_num] = section_generations.get(obj_num, 0)
                 for obj_num, location in section_compressed.items():
                     if obj_num not in claimed:
                         claimed.add(obj_num)
                         self._compressed_objects[obj_num] = location
+                        self._generations[obj_num] = 0
                 self._budget.check_objects(
                     len(all_xref) + len(self._compressed_objects)
                 )
@@ -678,6 +685,7 @@ class PdfCosParser:
             # xref-typical reasons. Broader ``Exception`` hid non-xref bugs
             # and produced partial/wrong graphs.
             self._compressed_objects.clear()
+            self._generations.clear()
             all_xref, trailer_dict = self._reconstruct_xref()
             doc.xref_table = all_xref
             doc.trailer = trailer_dict
@@ -687,6 +695,7 @@ class PdfCosParser:
         self._budget.check_objects(len(xref_used) + len(self._compressed_objects))
         lazy_map = LazyPdfObjectStore(self, xref_used, dict(self._compressed_objects))
         doc.objects = lazy_map
+        doc.generations = self._generations
         self._objects = lazy_map
 
         # If Root is still missing, scan object numbers (load one at a time)
@@ -699,19 +708,21 @@ class PdfCosParser:
                     continue
                 if isinstance(obj, PdfDictionary) and PdfName("Type") in obj.mapping:
                     if obj.mapping[PdfName("Type")] == PdfName("Catalog"):
-                        doc.trailer[PdfName("Root")] = PdfIndirectReference(obj_num)
+                        doc.trailer[PdfName("Root")] = doc.reference(obj_num)
                         break
 
         return doc
 
     def get_object(self, ref: PdfIndirectReference) -> Any:
         """Retrieve a parsed object by its indirect reference."""
+        if ref.gen_number != self._generations.get(ref.object_number, 0):
+            return None
         return self._objects.get(ref.object_number)
 
     def _resolve(self, obj: Any) -> Any:
         """Dereference an indirect reference, returning the object itself."""
         if isinstance(obj, PdfIndirectReference) and self._objects is not None:
-            return self._objects.get(obj.object_number)
+            return self.get_object(obj)
         return obj
 
     # ---------------------------------------------------------------------
@@ -733,6 +744,7 @@ class PdfCosParser:
             offset = match.start()
             # In a multi-update PDF, later objects override earlier ones
             xref_table[obj_num] = offset
+            self._generations[obj_num] = int(match.group(2))
             self._budget.check_objects(len(xref_table))
 
         # Scan for "trailer" to find Root/Info (balanced dict — nested << >> safe)
@@ -839,6 +851,7 @@ class PdfCosParser:
                 if xref_table.get(member_num, 0) > 0:
                     continue
                 self._compressed_objects[member_num] = (stm_obj_num, idx)
+                self._generations[member_num] = 0
 
     def _offset_shift(self, xref_offset: int) -> int:
         """How far every offset in the file is off, if bytes were put before it.
@@ -888,20 +901,29 @@ class PdfCosParser:
         if offset < 0 or offset >= len(self._data):
             return
         compressed, self._compressed_objects = self._compressed_objects, {}
+        generations, self._generations = self._generations, {}
         try:
             stream_table, _stream_trailer = self._parse_xref_stream(offset)
             stream_compressed = self._compressed_objects
+            stream_generations = self._generations
         except PdfResourceLimitException:
             raise
         except (PdfParseException, ValueError, IndexError, zlib.error):
             return
         finally:
             self._compressed_objects = compressed
+            self._generations = generations
         # The table answers first: its in-use entries are kept, and the merge
         # into the chain lets a plain entry claim a number before a packed one.
         for obj_num, obj_offset in stream_table.items():
-            xref_table.setdefault(obj_num, obj_offset)
-        self._compressed_objects.update(stream_compressed)
+            if xref_table.get(obj_num, 0) <= 0:
+                xref_table[obj_num] = obj_offset
+                self._generations[obj_num] = stream_generations.get(obj_num, 0)
+        for obj_num, location in stream_compressed.items():
+            if xref_table.get(obj_num, 0) <= 0:
+                xref_table.pop(obj_num, None)
+                self._compressed_objects[obj_num] = location
+                self._generations[obj_num] = 0
 
     def _parse_xref_section(self, offset: int) -> tuple[dict[int, int], PdfDictionary]:
         """Parse an xref section at the given offset.
@@ -1059,13 +1081,16 @@ class PdfCosParser:
                     # that deletes an object has spoken for it, and without the
                     # entry an older section would put the object back.
                     xref_table.setdefault(obj_num, 0)
+                    self._generations[obj_num] = field3
                 elif field1 == 1:
                     # Uncompressed object: field2 = offset, field3 = gen
                     xref_table[obj_num] = field2
+                    self._generations[obj_num] = field3
                 elif field1 == 2:
                     # Compressed object: field2 = ObjStm number, field3 = index
                     self._budget.check_object_id(field2)
                     self._compressed_objects[obj_num] = (field2, field3)
+                    self._generations[obj_num] = 0
 
         return xref_table, trailer
 
@@ -1258,9 +1283,9 @@ class PdfCosParser:
                 pos += 1
             # Read each entry line (spacing between fields may vary)
             for i in range(count):
-                offset_val, _gen, flag, pos = self._parse_traditional_xref_row(pos)
-                if flag == b"n":
-                    xref_table[start_obj + i] = offset_val
+                offset_val, generation, flag, pos = self._parse_traditional_xref_row(pos)
+                xref_table[start_obj + i] = offset_val if flag == b"n" else 0
+                self._generations[start_obj + i] = generation
         # At this point 'trailer' keyword should be present
         if self._data[pos : pos + 7] != b"trailer":
             raise PdfParseException("trailer keyword not found after xref table")
@@ -1375,7 +1400,7 @@ class PdfCosParser:
             return None
         resolving.add(offset)
         try:
-            target = self._objects.get(length_obj.object_number)
+            target = self.get_object(length_obj)
         except PdfResourceLimitException:
             raise
         except (PdfParseException, KeyError, ValueError, IndexError):
@@ -1477,6 +1502,12 @@ class LazyPdfObjectStore(MutableMapping[int, Any]):
 
     def _load_uncompressed(self, obj_num: int) -> Any:
         off = self._xref_offsets[obj_num]
+        header = _OBJECT_HEADER_RE.match(self._parser._data, off)
+        generation = self._parser._generations.get(obj_num, 0)
+        if header is None or (int(header[1]), int(header[2])) != (obj_num, generation):
+            raise PdfParseException(
+                f"Object {obj_num} generation {generation} disagrees with its header at byte offset {off}"
+            )
         try:
             obj = self._parser._parse_object_at(off)
         except PdfParseException:

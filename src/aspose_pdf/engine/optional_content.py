@@ -165,7 +165,7 @@ class OptionalContent:
             return resolver(obj)
         cos_doc = getattr(self._pdf, "_cos_doc", None)
         if isinstance(obj, PdfIndirectReference) and cos_doc is not None:
-            return cos_doc.objects.get(obj.object_number)
+            return cos_doc.get_object(obj)
         return obj
 
     def _catalog(self) -> PdfDictionary | None:
@@ -566,7 +566,7 @@ class OptionalContent:
         on_items = []
         off_items = []
         for number, visible in self.visible_by_number.items():
-            reference = PdfIndirectReference(number, 0)
+            reference = self._pdf._cos_doc.reference(number)
             if visible and base_state == "OFF":
                 on_items.append(reference)
             elif not visible and base_state == "ON":
@@ -693,7 +693,7 @@ def set_radio_group(pdf: Any, object_numbers: Sequence[int]) -> None:
             _reference_numbers_of(pdf, members)
         ) == set(wanted):
             arrays.items.remove(item)
-    arrays.append(PdfArray([PdfIndirectReference(number, 0) for number in wanted]))
+    arrays.append(PdfArray([pdf._cos_doc.reference(number) for number in wanted]))
 
 
 def _reference_numbers_of(pdf: Any, array: PdfArray) -> list[int]:
@@ -762,7 +762,7 @@ def tag_content(pdf: Any, target: PdfDictionary, object_number: int | None) -> b
     existing = target.mapping.get(key)
     if _is_reference_to(existing, object_number):
         return False
-    target.mapping[key] = PdfIndirectReference(object_number, 0)
+    target.mapping[key] = pdf._cos_doc.reference(object_number)
     return True
 
 
@@ -980,7 +980,7 @@ def set_usage(
     """
     from .simple_pdf import _pdf_text_string
 
-    group = pdf._resolve(PdfIndirectReference(object_number, 0))
+    group = pdf._resolve(pdf._cos_doc.reference(object_number))
     if not isinstance(group, PdfDictionary):
         raise PdfValidationException(
             f"No optional content group with object {object_number}"
@@ -1071,7 +1071,7 @@ def _register_usage(
         groups = PdfArray([])
         target.mapping[PdfName("OCGs")] = groups
     if not any(_is_reference_to(item, object_number) for item in groups.items):
-        groups.items.append(PdfIndirectReference(object_number, 0))
+        groups.items.append(pdf._cos_doc.reference(object_number))
 
 
 def _is_reference_to(item: Any, object_number: int) -> bool:
@@ -1321,4 +1321,3 @@ def _strip_oc_entries(pdf: Any) -> None:
                     stream = pdf._resolve(value)
                     if isinstance(stream, PdfStream):
                         stream.mapping.pop(PdfName("OC"), None)
-

@@ -301,6 +301,8 @@ class PdfDocument:
         self.objects: dict[int, Any] = {}
         self.trailer: PdfDictionary = PdfDictionary()
         self.xref_table: dict[int, int] = {}
+        #: Current generations, including free slots, from the merged xref.
+        self.generations: dict[int, int] = {}
         #: Bytes every offset in the file is short by: something was put in
         #: front of the header after the offsets were written.
         self.offset_shift: int = 0
@@ -309,16 +311,29 @@ class PdfDocument:
         """Return the object for *ref*, or ``None`` if it cannot be loaded."""
         if ref is None:
             return None
+        if ref.gen_number != self.generation_number(ref.object_number):
+            return None
         return self.objects.get(ref.object_number)
+
+    def generation_number(self, object_number: int) -> int:
+        """Return the current generation without materializing the object."""
+        generation = self.generations.get(object_number, 0)
+        if type(generation) is not int or not 0 <= generation <= 65535:
+            raise PdfValidationException("PDF object generation must be an integer from 0 to 65535")
+        return generation
+
+    def reference(self, object_number: int) -> PdfIndirectReference:
+        """Refer to the current identity of an existing or newly allocated object."""
+        return PdfIndirectReference(object_number, self.generation_number(object_number))
 
     def register_object(self, obj: PdfObject) -> PdfIndirectReference:
         """Register an object and assign it an object number if it does not have one."""
         obj_number = getattr(obj, "_obj_number", None)
         if obj_number is None:
-            obj_number = max(self.objects.keys(), default=0) + 1
+            obj_number = max(max(self.objects.keys(), default=0), max(self.generations, default=0)) + 1
             setattr(obj, "_obj_number", obj_number)
         self.objects[obj_number] = obj
-        return PdfIndirectReference(obj_number)
+        return self.reference(obj_number)
 
     def __repr__(self) -> str:
         return (

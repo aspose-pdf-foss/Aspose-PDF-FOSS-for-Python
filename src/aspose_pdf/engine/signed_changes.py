@@ -42,7 +42,7 @@ class SignedChanges:
         refs = getattr(self._pdf, "_page_obj_ids", [])
         if index >= len(refs) or not refs[index]:
             return True
-        return self._reaches_change(PdfIndirectReference(refs[index], 0), _PAGE_SKIP)
+        return self._reaches_change(self._pdf._cos_doc.reference(refs[index]), _PAGE_SKIP)
 
     def annotation_changed(self, page_index: int, annot_index: int) -> bool:
         """Whether annotation *annot_index* of page *page_index* is new or changed."""
@@ -76,7 +76,7 @@ class SignedChanges:
                     continue
                 seen.add(number)
                 budget.check(len(seen), "max_container_items", "signed-content walk")
-                value = self._pdf._cos_doc.objects.get(number)
+                value = self._pdf._cos_doc.get_object(value)
                 if number in self.changed and self._differs(number, value, skip):
                     return True
             if isinstance(value, (PdfDictionary, PdfStream)):

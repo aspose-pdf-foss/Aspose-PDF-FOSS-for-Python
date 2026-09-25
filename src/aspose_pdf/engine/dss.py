@@ -238,13 +238,13 @@ def build_dss(
         dss_num = inc.get_next_object_number()
         catalog.mapping[PdfName("DSS")] = PdfIndirectReference(dss_num, 0)
         catalog_num = root_ref.object_number
-        catalog_str = writer.serialize_indirect(catalog_num, catalog)
         inc.add_object(
             catalog_num,
-            f"{catalog_num} 0 obj\n{catalog_str}\nendobj\n".encode("latin-1"),
+            writer.indirect_object_bytes(catalog_num, catalog),
         )
+    generation = doc.generation_number(dss_num)
     inc.add_object(
-        dss_num, f"{dss_num} 0 obj\n{dss_body}\nendobj\n".encode("latin-1")
+        dss_num, f"{dss_num} {generation} obj\n{dss_body}\nendobj\n".encode("latin-1")
     )
     return original_pdf + inc.generate()
 
@@ -376,8 +376,7 @@ def _acroform_update_objects(doc, field_num: int, writer: PdfCosWriter) -> list[
         acro.mapping[PdfName("SigFlags")] = PdfNumber(3)
         if isinstance(acro_value, PdfIndirectReference):
             num = acro_value.object_number
-            body = writer.serialize_indirect(num, acro)
-            return [(num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1"))]
+            return [(num, writer.indirect_object_bytes(num, acro))]
     else:
         catalog.mapping[PdfName("AcroForm")] = PdfDictionary(
             {
@@ -387,8 +386,7 @@ def _acroform_update_objects(doc, field_num: int, writer: PdfCosWriter) -> list[
         )
 
     num = root_ref.object_number
-    body = writer.serialize_indirect(num, catalog)
-    return [(num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1"))]
+    return [(num, writer.indirect_object_bytes(num, catalog))]
 
 
 def _unused_field_name(doc, base: str) -> str:

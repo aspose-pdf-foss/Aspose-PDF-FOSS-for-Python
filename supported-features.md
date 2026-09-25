@@ -67,6 +67,15 @@ Supported:
   update stays deleted. A **full** save carries only the trailer keys that name
   something in the file it is writing — `/Root`, `/Info`, `/ID`, `/Encrypt` —
   never a `/Prev` into a revision it does not have.
+- **Object generations are preserved.** Classic tables, cross-reference
+  streams and reconstructed headers retain the current generation alongside
+  each object number. Full saves, incremental edits, signing, DSS updates and
+  document timestamps emit matching references, object headers, xref entries
+  and encryption identities. A reference to an older generation does not
+  resolve to a reused object; a freed entry in a newer classic or stream xref
+  keeps the old object deleted. Header/xref identity mismatches are rejected
+  when the object is loaded, and generation checks do not force lazy objects
+  to load. New object allocation skips known freed slots.
 - **Bytes in front of the header** are skipped: `%PDF-` may start anywhere in
   the first 1024 bytes, Acrobat's rule and pdfium's limit. When the prefix was
   added after the file was written -- a mail or HTTP header left in front of a
@@ -381,7 +390,8 @@ Supported (honored options):
   and is automatically skipped when stream compression is disabled. An
   encrypted save packs objects the same way: the object stream is enciphered as
   a whole under its own object number, and the `/Encrypt` dictionary and the
-  cross-reference stream stay outside it, in the clear.
+  cross-reference stream stay outside it, in the clear. Objects with nonzero
+  generations remain standalone, preserving their identity and encryption key.
 
 Boundaries:
 

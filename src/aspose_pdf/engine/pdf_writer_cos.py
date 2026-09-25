@@ -103,6 +103,12 @@ class PdfCosWriter:
             return None
         return (obj_number, gen_number)
 
+    def _free_generation(self, number: int) -> int:
+        generation = self.doc.generation_number(number)
+        if self.doc.xref_table.get(number, 0) > 0:
+            generation = min(generation + 1, 65535)
+        return generation
+
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
@@ -138,8 +144,9 @@ class PdfCosWriter:
         for obj_number in sorted(self.doc.objects.keys()):
             obj = self.doc.objects[obj_number]
             offsets[obj_number] = len(buffer)
-            buffer.extend(f"{obj_number} 0 obj\n".encode())
-            self._crypt_obj = self._crypt_for(obj_number)
+            generation = self.doc.generation_number(obj_number)
+            buffer.extend(f"{obj_number} {generation} obj\n".encode())
+            self._crypt_obj = self._crypt_for(obj_number, generation)
             try:
                 if isinstance(obj, PdfStream):
                     # Stream content is binary: emit the raw bytes verbatim so
@@ -158,7 +165,7 @@ class PdfCosWriter:
         # Record the start of the xref table
         xref_offset = len(buffer)
         # Size is highest object number + 1 (object 0 is the free object)
-        size = max(self.doc.objects.keys(), default=0) + 1
+        size = max(max(self.doc.objects, default=0), max(self.doc.generations, default=0)) + 1
         buffer.extend(f"xref\n0 {size}\n".encode())
         # Redaction and garbage collection leave gaps. Link them as free
         # entries instead of advertising live objects at byte offset zero.
@@ -167,9 +174,9 @@ class PdfCosWriter:
         buffer.extend(f"{next_free[0]:010d} 65535 f \n".encode())
         for i in range(1, size):
             if i in offsets:
-                buffer.extend(f"{offsets[i]:010d} 00000 n \n".encode())
+                buffer.extend(f"{offsets[i]:010d} {self.doc.generation_number(i):05d} n \n".encode())
             else:
-                buffer.extend(f"{next_free[i]:010d} 00000 f \n".encode())
+                buffer.extend(f"{next_free[i]:010d} {self._free_generation(i):05d} f \n".encode())
 
         # Trailer
         buffer.extend(b"trailer\n")
@@ -212,6 +219,7 @@ class PdfCosWriter:
         standalone = {catalog_num}
         if self.encryption is not None:
             standalone.update(self.encryption.exempt)
+        standalone.update(num for num in objects if self.doc.generation_number(num) != 0)
 
         packable = [
             (num, objects[num])
@@ -221,7 +229,7 @@ class PdfCosWriter:
         if not packable:
             return None
 
-        max_existing = max(objects.keys())
+        max_existing = max(max(objects), max(self.doc.generations, default=0))
         objstm_num = max_existing + 1
         xref_num = max_existing + 2
 
@@ -276,9 +284,10 @@ class PdfCosWriter:
         ]
         for num in unpacked_nums:
             offsets[num] = len(buffer)
-            buffer.extend(f"{num} 0 obj\n".encode())
+            generation = self.doc.generation_number(num)
+            buffer.extend(f"{num} {generation} obj\n".encode())
             obj = objects[num]
-            self._crypt_obj = self._crypt_for(num)
+            self._crypt_obj = self._crypt_for(num, generation)
             try:
                 if isinstance(obj, PdfStream):
                     self._extend_stream_bytes(buffer, obj)
@@ -312,9 +321,9 @@ class PdfCosWriter:
             elif n in packed_index:
                 entries.append((2, objstm_num, packed_index[n]))
             elif n in offsets:
-                entries.append((1, offsets[n], 0))
+                entries.append((1, offsets[n], self.doc.generation_number(n)))
             else:
-                entries.append((0, 0, 0))
+                entries.append((0, 0, self._free_generation(n)))
 
         def _width(value: int) -> int:
             return max(1, (value.bit_length() + 7) // 8)
@@ -382,7 +391,7 @@ class PdfCosWriter:
         return trailer
 
     def serialize_indirect(
-        self, obj_number: int, obj: PdfObject, gen_number: int = 0
+        self, obj_number: int, obj: PdfObject, gen_number: int | None = None
     ) -> str:
         """Serialise *obj* as the body of indirect object *obj_number*.
 
@@ -391,11 +400,19 @@ class PdfCosWriter:
         :meth:`write` -- an incremental revision, say -- has to come through
         here instead.
         """
+        if gen_number is None:
+            gen_number = self.doc.generation_number(obj_number)
         self._crypt_obj = self._crypt_for(obj_number, gen_number)
         try:
             return self.serialize_object(obj)
         finally:
             self._crypt_obj = None
+
+    def indirect_object_bytes(self, obj_number: int, obj: PdfObject) -> bytes:
+        """Serialize an indirect object with matching header and encryption identity."""
+        generation = self.doc.generation_number(obj_number)
+        body = self.serialize_indirect(obj_number, obj, generation)
+        return f"{obj_number} {generation} obj\n{body}\nendobj\n".encode("latin-1")
 
     def serialize_object(self, obj: PdfObject) -> str:
         """Dispatch serialisation based on object type."""

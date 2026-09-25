@@ -482,12 +482,10 @@ def _acroform_objects(
 
     if isinstance(acro_value, PdfIndirectReference):
         num = acro_value.object_number
-        body = writer.serialize_indirect(num, acro)
-        updates.append((num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1")))
+        updates.append((num, writer.indirect_object_bytes(num, acro)))
     if catalog_dirty:
         num = root_ref.object_number
-        body = writer.serialize_indirect(num, catalog)
-        updates.append((num, f"{num} 0 obj\n{body}\nendobj\n".encode("latin-1")))
+        updates.append((num, writer.indirect_object_bytes(num, catalog)))
     return updates
 
 
@@ -637,10 +635,9 @@ def sign_field(
 
     field.mapping[PdfName("V")] = sig_ref
     field_num = field_ref.object_number
-    field_body = writer.serialize_indirect(field_num, field)
     inc.add_object(
         field_num,
-        f"{field_num} 0 obj\n{field_body}\nendobj\n".encode("latin-1"),
+        writer.indirect_object_bytes(field_num, field),
     )
     for num, body in _acroform_objects(doc, writer, sig_ref, certify_permissions):
         inc.add_object(num, body)

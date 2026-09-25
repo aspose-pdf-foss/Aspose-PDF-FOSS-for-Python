@@ -4477,7 +4477,7 @@ class _PageRasterizer:
         if isinstance(obj, PdfIndirectReference) and getattr(
             self.pdf, "_cos_doc", None
         ):
-            return self.pdf._cos_doc.objects.get(obj.object_number)
+            return self.pdf._cos_doc.get_object(obj)
         return obj
 
     def _cos_number(self, obj: Any) -> float | None:

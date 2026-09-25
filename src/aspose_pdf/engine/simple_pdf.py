@@ -1954,7 +1954,7 @@ class SimplePdf:
     def _resolve(self, obj: Any) -> Any:
         """Dereference an indirect reference, returning the actual object."""
         if isinstance(obj, PdfIndirectReference) and self._cos_doc:
-            return self._cos_doc.objects.get(obj.object_number)
+            return self._cos_doc.get_object(obj)
         return obj
 
     def _get_name(self, obj: Any) -> str | None:
@@ -2746,7 +2746,7 @@ class SimplePdf:
 
             if child_refs:
                 for i, ref in enumerate(child_refs):
-                    obj = self._cos_doc.objects.get(ref.object_number)
+                    obj = self._cos_doc.get_object(ref)
                     if isinstance(obj, PdfDictionary):
                         obj.mapping[PdfName("Parent")] = item_ref
                         if i > 0:
@@ -2774,7 +2774,7 @@ class SimplePdf:
             outline_root.mapping[PdfName("First")] = item_refs[0]
             outline_root.mapping[PdfName("Last")] = item_refs[-1]
             for i, ref in enumerate(item_refs):
-                obj = self._cos_doc.objects.get(ref.object_number)
+                obj = self._cos_doc.get_object(ref)
                 if isinstance(obj, PdfDictionary):
                     obj.mapping[PdfName("Parent")] = outline_root_ref
                     if i > 0:
@@ -3554,13 +3554,7 @@ class SimplePdf:
                 and pristine_writer.serialize_object(pristine_obj) == current
             ):
                 continue  # unchanged; leave it in the preserved prefix
-            emitted = (
-                current
-                if encryption is None
-                else emitter.serialize_indirect(obj_num, obj)
-            )
-            body = f"{obj_num} 0 obj\n{emitted}\nendobj\n".encode("latin-1")
-            incr.add_object(obj_num, body)
+            incr.add_object(obj_num, emitter.indirect_object_bytes(obj_num, obj))
 
         if not incr.modified_objects:
             return raw  # nothing changed; the original bytes are the whole file
@@ -3575,6 +3569,7 @@ class SimplePdf:
 
         highest = max(
             max(self._cos_doc.objects, default=0),
+            max(self._cos_doc.generations, default=0),
             max((num for num, _, _ in incr.xref_entries), default=0),
         )
 
@@ -4766,7 +4761,7 @@ class SimplePdf:
         self._ensure_not_disposed()
         self._validate_page_index(page_index)
         properties = self._ensure_resource_subdict(page_index, "Properties")
-        reference = PdfIndirectReference(object_number, 0)
+        reference = self._cos_doc.reference(object_number)
         name: str | None = None
         for key, value in properties.mapping.items():
             if (
@@ -4833,11 +4828,11 @@ class SimplePdf:
     def _page_ref_for_structure(self, page_index: int) -> PdfIndirectReference:
         self._ensure_page_cache()
         if page_index < len(self._page_refs) and self._page_refs[page_index] > 0:
-            return PdfIndirectReference(self._page_refs[page_index], 0)
+            return self._cos_doc.reference(self._page_refs[page_index])
         page = self._get_page_dict(page_index)
         obj_num = getattr(page, "_obj_number", None)
         if obj_num:
-            return PdfIndirectReference(obj_num, 0)
+            return self._cos_doc.reference(obj_num)
         if isinstance(page, PdfDictionary):
             ref = self._cos_doc.register_object(page)
             return ref
@@ -5034,7 +5029,7 @@ class SimplePdf:
     ) -> PdfIndirectReference:
         object_number = getattr(element, "_obj_number", None)
         if object_number is not None:
-            return PdfIndirectReference(object_number, 0)
+            return self._cos_doc.reference(object_number)
         element_ref = self._cos_doc.register_object(element)
         location = self._tagged_find_location(element)
         if location is not None:
@@ -8455,7 +8450,7 @@ class SimplePdf:
         annots = self._resolve(source.mapping.get(PdfName("Annots")))
         if not isinstance(annots, PdfArray) or not annots.items:
             return
-        page_ref = PdfIndirectReference(self._page_obj_ids[target_index], 0)
+        page_ref = self._cos_doc.reference(self._page_obj_ids[target_index])
         page = self._resolve(page_ref)
         copied: list[Any] = []
         for item in annots.items:
@@ -9131,7 +9126,7 @@ class SimplePdf:
         if not refs:
             raise PdfValidationException("the document has no page to point at")
         idx = max(0, min(int(index), len(refs) - 1))
-        return PdfIndirectReference(refs[idx], 0)
+        return self._cos_doc.reference(refs[idx])
 
     def _page_reference_numbers(self) -> list[int]:
         """Object numbers of the pages, in the order the page tree lists them.
@@ -9544,7 +9539,7 @@ class SimplePdf:
             where = target + offset
             self.insert(where, (other.pages[index], other.get_page_content(index)))
             self._ensure_page_cache()
-            new_ref = PdfIndirectReference(self._page_refs[where], 0)
+            new_ref = self._cos_doc.reference(self._page_refs[where])
             imported[other._page_refs[index]] = new_ref
             positions[index] = where
             copied.append((other._get_page_dict(index), new_ref))
@@ -10077,7 +10072,7 @@ class SimplePdf:
                     obj, depth = stack.pop()
                     if isinstance(obj, PdfIndirectReference):
                         key = ("ref", obj.object_number)
-                        resolved = self._cos_doc.objects.get(obj.object_number)
+                        resolved = self._cos_doc.get_object(obj)
                         # A reference to an object the file does not have is
                         # *legal* -- ISO 32000-1 7.3.10 makes it null -- so it
                         # ends the walk rather than failing it.
@@ -12383,7 +12378,7 @@ class SimplePdf:
         if not isinstance(page, PdfDictionary):
             raise PdfValidationException("Page dictionary is missing")
         self._ensure_page_cache()
-        page_ref = PdfIndirectReference(self._page_refs[page_index], 0)
+        page_ref = self._cos_doc.reference(self._page_refs[page_index])
         return page, page_ref, coords
 
     @staticmethod
@@ -15414,7 +15409,7 @@ class CosExtractor:
     def _resolve(self, obj: Any) -> Any:
         """Dereference an indirect reference, returning the actual object."""
         if isinstance(obj, PdfIndirectReference):
-            return self._doc.objects.get(obj.object_number)
+            return self._doc.get_object(obj)
         return obj
 
     def _get_name(self, obj: Any) -> str | None:
