@@ -141,6 +141,16 @@ def test_a_stroke_pattern_does_not_reach_outside_the_pen():
     assert raster.get_pixel(30, 29) == _RED  # but the diagonal itself
 
 
+@pytest.mark.parametrize("pattern", [_tiling(b"1 0 0 rg 0 0 10 10 re f"), _shading()])
+def test_pattern_strokes_honor_dash_gaps_and_square_caps(pattern):
+    content = b"/Pattern CS /P0 SCN 6 w 2 J [10 10] 0 d 10 25 m 50 25 l S"
+    with _document(content, pattern) as document:
+        raster = document.pages[0].render(antialias=False)
+    assert raster.get_pixel(7, 32) == _RED
+    assert raster.get_pixel(25, 34) == _WHITE
+    assert raster.get_pixel(35, 34) == _RED
+
+
 def test_the_clip_goes_back_after_a_patterned_stroke():
     content = b"/Pattern CS /P0 SCN 4 w 0 0 m 60 60 l S 0 0 1 rg 0 50 10 10 re f"
     raster = _document(content, _tiling(_CELL)).pages[0].render(antialias=False)

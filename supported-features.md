@@ -590,6 +590,21 @@ Supported:
   decided by the rule its operator names (8.5.3.3) -- nonzero for `f`/`B`/`W`,
   even-odd for `f*`/`B*`/`W*` -- across all of its subpaths together, so a
   shape with a hole has one, and the same two rules apply to a clipping path.
+  Strokes honour dash arrays and phase (`d`), butt/round/projecting-square
+  caps (`J`), miter/round/bevel joins (`j`) and the miter limit (`M`), including
+  the corresponding ExtGState entries (`D`, `LC`, `LJ`, `ML`). State is saved
+  and restored by `q`/`Q` and Form XObject calls. Dash phase restarts at each
+  subpath, continues across its vertices and curves, and wraps odd-length
+  arrays and negative phases. Explicitly closed paths join at their seam
+  when a dash continues through it. Zero-length dashes retain cap orientation;
+  degenerate subpaths draw only with round caps. Pen width and dash lengths
+  follow the CTM at stroke time, including nonuniform scaling and shear;
+  zero-width hairlines use a single sample pixel. Solid, tiling-pattern and
+  shading-pattern strokes share coverage, and overlapping pieces of one
+  stroke are composited once. Dash expansion and coverage storage obey load
+  limits. Curves and round pen regions are approximated by polylines; pixel
+  edges and hairline antialiasing may differ from other renderers. Automatic
+  stroke adjustment (`SA`) is not implemented.
   All eight **text rendering modes** (table 106) are honoured, in both of
   their halves. The four that **stroke** -- 1, 2, 5 and 6 -- draw the glyph's
   outline with the stroke colour and the graphics state's pen, so outlined
@@ -904,8 +919,8 @@ Boundaries:
   `Document.save_as_svg()` or `Document.save(path, DocFormat.SVG)`. The
   exporter *is* the renderer: it subclasses the rasterizer and replaces only
   the places that put marks on a canvas, so the two agree on geometry by
-  construction. Paths keep their fill rule (including even-odd, which the
-  raster path drops), strokes carry width, dash pattern, cap and join, clips
+  construction. Paths keep their fill rule (including even-odd),
+  strokes carry width, dash pattern, cap and join, clips
   become `<clipPath>`, text becomes glyph outlines, images become embedded
   PNGs placed by their matrix, and axial/radial shadings become SVG gradients.
 - Layout reflow remains out of scope.

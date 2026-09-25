@@ -11,7 +11,7 @@ Output was cross-checked outside the suite by rendering it with cairo and
 comparing against this library's own raster: shapes, text, clipping, alpha and
 gradients agree to within antialiasing. Two cases deliberately do *not* agree,
 and both are the SVG being more correct than the rasterizer -- it honours the
-even-odd fill rule and dash patterns, which the renderer ignores.
+even-odd fill rule and dash patterns in the emitted SVG.
 """
 
 from __future__ import annotations

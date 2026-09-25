@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import contextlib
 import copy
-import itertools
 import math
 import re
 import struct
@@ -69,6 +68,7 @@ from .shading import (
     image_sample_ranges,
 )
 from .std_font_data import load_substitute_sfnt, resolve_substitute_key
+from .stroke import StrokeRun, Subpath, dash_runs, stroke_polygons
 from .type1_outlines import Type1Outlines
 
 Matrix = tuple[float, float, float, float, float, float]
@@ -307,6 +307,11 @@ class _GraphicsState:
     fill_overprint: bool = False
     overprint_mode: int = 0
     line_width: float = 1.0
+    line_cap: int = 0
+    line_join: int = 0
+    miter_limit: float = 10.0
+    dash_pattern: tuple[float, ...] = ()
+    dash_phase: float = 0.0
     stroke_alpha: float = 1.0
     fill_alpha: float = 1.0
     blend_mode: str = "Normal"
@@ -328,21 +333,24 @@ class _GraphicsState:
 @dataclass
 class _Path:
     subpaths: list[list[Point]] = field(default_factory=list)
-    current: list[Point] | None = None
+    current: Subpath | None = None
 
     def move_to(self, point: Point) -> None:
-        self.current = [point]
+        self.current = Subpath([point])
         self.subpaths.append(self.current)
 
     def line_to(self, point: Point) -> None:
         if self.current is None:
             self.move_to(point)
         else:
+            if self.current.closed:
+                self.move_to(self.current[0])
             self.current.append(point)
 
     def close(self) -> None:
-        if self.current and len(self.current) > 1:
+        if self.current and not self.current.closed:
             self.current.append(self.current[0])
+            self.current.closed = True
 
     def clear(self) -> None:
         self.subpaths.clear()
@@ -1274,6 +1282,12 @@ class _PageRasterizer:
             if number is not None:
                 self.state.line_width = max(0.0, number)
             return
+        if op in ("J", "j", "M") and operands:
+            self._set_stroke_parameter(op, operands[-1])
+            return
+        if op == "d" and len(operands) >= 2:
+            self._set_stroke_dash(operands[-2], operands[-1])
+            return
         if self._type3_colour_locked and op in _COLOUR_OPERATORS:
             # 9.6.5: a glyph described with d1 is a shape only, painted in the
             # colour in effect where the text is shown; its colour operators
@@ -1587,6 +1601,23 @@ class _PageRasterizer:
                 entry = self._resolve(extgs.mapping.get(PdfName(name)))
         if entry is None:
             entry = (resources_plain.get("ExtGState") or {}).get(name)
+        if isinstance(entry, (PdfDictionary, dict)):
+
+            def value(key: str) -> Any:
+                if isinstance(entry, PdfDictionary):
+                    return self._resolve(entry.mapping.get(PdfName(key)))
+                return entry.get(key)
+
+            for key, operator in (("LC", "J"), ("LJ", "j"), ("ML", "M")):
+                parameter = value(key)
+                if parameter is not None:
+                    self._set_stroke_parameter(operator, parameter)
+            dash = value("D")
+            if dash is not None:
+                items = dash.items if isinstance(dash, PdfArray) else dash
+                if not isinstance(items, (list, tuple)) or len(items) != 2:
+                    raise PdfValidationException("Invalid stroke dash specification")
+                self._set_stroke_dash(self._resolve(items[0]), self._resolve(items[1]))
         if isinstance(entry, PdfDictionary):
             lw = self._cos_number(entry.mapping.get(PdfName("LW")))
             if lw is not None:
@@ -1640,6 +1671,51 @@ class _PageRasterizer:
                 if overprint_mode in (0, 1):
                     self.state.overprint_mode = overprint_mode
 
+    def _set_stroke_parameter(self, operator: str, operand: Any) -> None:
+        value = self._cos_number(operand)
+        if value is None or not math.isfinite(value):
+            raise PdfValidationException("Stroke parameters must be finite numbers")
+        if operator == "M":
+            if value < 1:
+                raise PdfValidationException("Stroke miter limit must be at least 1")
+            self.state.miter_limit = value
+        else:
+            if value not in (0, 1, 2):
+                raise PdfValidationException("Stroke cap and join must be 0, 1 or 2")
+            if operator == "J":
+                self.state.line_cap = int(value)
+            else:
+                self.state.line_join = int(value)
+
+    def _set_stroke_dash(self, array: Any, phase: Any) -> None:
+        items = array.items if isinstance(array, PdfArray) else array
+        offset = self._cos_number(phase)
+        if (
+            not isinstance(items, (list, tuple))
+            or offset is None
+            or not math.isfinite(offset)
+        ):
+            raise PdfValidationException("Invalid stroke dash specification")
+        values = [self._cos_number(item) for item in items]
+        if any(v is None or not math.isfinite(v) or v < 0 for v in values):
+            raise PdfValidationException(
+                "Stroke dash lengths must be finite and nonnegative"
+            )
+        pattern = tuple(v for v in values if v is not None)
+        total = sum(pattern)
+        if not math.isfinite(total) or (pattern and total == 0):
+            raise PdfValidationException(
+                "Stroke dash array must have a positive finite total"
+            )
+        if len(pattern) % 2:
+            pattern *= 2
+            if not math.isfinite(total * 2):
+                raise PdfValidationException(
+                    "Stroke dash cycle must have a finite length"
+                )
+        self.state.dash_pattern = pattern
+        self.state.dash_phase = offset
+
     def _blend_mode(self, obj: Any) -> str | None:
         names = self._blend_mode_names(obj)
         if not names:
@@ -1684,13 +1760,14 @@ class _PageRasterizer:
             if not vals:
                 return
             x, y, w, h = vals
-            points = [
+            points = Subpath([
                 self._transform(x, y),
                 self._transform(x + w, y),
                 self._transform(x + w, y + h),
                 self._transform(x, y + h),
                 self._transform(x, y),
-            ]
+            ])
+            points.closed = True
             self.path.current = points
             self.path.subpaths.append(points)
             return
@@ -2054,38 +2131,115 @@ class _PageRasterizer:
     def _stroke_subpaths(
         self, subpaths: Iterable[list[Point]], color: Color, alpha: float
     ) -> None:
-        subpaths = list(subpaths)
-        paint = self.state.stroke_tiling or self.state.stroke_shading
-        if paint is not None:
-            self._stroke_with_pattern(subpaths)
+        # Paths were fixed in page space when constructed. Stroke parameters
+        # belong to the user space at the painting operator, even if cm changed
+        # after construction. Build the pen there, then transform its outline.
+        inverse = _invert_matrix(self.state.ctm)
+        if inverse is None:
             return
-        px_width = max(1.0, self.state.line_width * self.point_scale)
-        radius = max(0.5, px_width / 2.0)
+        width = self.state.line_width
+        if not math.isfinite(width):
+            raise PdfValidationException("Stroke width must be finite")
+        spans: dict[int, list[tuple[int, int]]] = {}
+        span_count = 0
+        polygon_count = 0
+        scale = self._device_scale(self.state.ctm)
+        if not math.isfinite(scale) or not math.isfinite(width * scale):
+            raise PdfValidationException(
+                "Stroke transform produces non-finite geometry"
+            )
         for subpath in subpaths:
-            if len(subpath) < 2:
-                continue
-            pts = [self._user_to_pixel(x, y) for x, y in subpath]
-            for p0, p1 in itertools.pairwise(pts):
-                self._stroke_segment_pixels(p0, p1, radius, color, alpha)
+            points = [_transform_point(inverse, *p) for p in subpath]
+            if not all(math.isfinite(v) for p in points for v in p):
+                raise PdfValidationException("Stroke coordinates must be finite")
+            closed = getattr(
+                subpath, "closed", len(points) > 1 and points[0] == points[-1]
+            )
+            for run in dash_runs(
+                points,
+                closed,
+                self.state.dash_pattern,
+                self.state.dash_phase,
+                self._load_budget,
+            ):
+                if width == 0:
+                    # Hairlines are one device pixel wide, independent of CTM.
+                    transformed = [
+                        self._user_to_pixel(*self._transform(*p)) for p in run.points
+                    ]
+                    direction = run.direction
+                    if direction is not None:
+                        p = run.points[0]
+                        q = self._user_to_pixel(
+                            *self._transform(p[0] + direction[0], p[1] + direction[1])
+                        )
+                        dx, dy = q[0] - transformed[0][0], q[1] - transformed[0][1]
+                        length = math.hypot(dx, dy)
+                        direction = (dx / length, dy / length) if length else None
+                    run = StrokeRun(transformed, run.closed, direction)
+                for polygon in stroke_polygons(
+                    run,
+                    width / 2 if width else 0.5,
+                    self.state.line_cap,
+                    self.state.line_join,
+                    self.state.miter_limit,
+                    scale if width else 1.0,
+                ):
+                    polygon_count += 1
+                    self._load_budget.check(
+                        polygon_count, "max_container_items", "stroke polygons"
+                    )
+                    if width:
+                        polygon = [
+                            self._user_to_pixel(*self._transform(*p)) for p in polygon
+                        ]
+                    if not all(math.isfinite(v) for p in polygon for v in p):
+                        raise PdfValidationException("Stroke outline must be finite")
+                    for y, left, right in _scan_spans(
+                        [polygon], even_odd=False, height=self.height
+                    ):
+                        start = max(0, math.ceil(left - 0.5))
+                        end = min(self.width - 1, math.ceil(right - 0.5) - 1)
+                        if start <= end:
+                            span_count += 1
+                            self._load_budget.check(
+                                span_count,
+                                "max_container_items",
+                                "stroke coverage spans",
+                            )
+                            self._load_budget.check(
+                                span_count * 128,
+                                "max_codec_work_bytes",
+                                "stroke coverage working set",
+                            )
+                            spans.setdefault(y, []).append((start, end))
 
-    def _stroke_with_pattern(self, subpaths: list[list[Point]]) -> None:
-        """Stroke with a pattern by painting it through the stroke's coverage.
-
-        Unlike a fill or a glyph, a stroke's region is not a path anyone hands
-        us -- it is whatever the pen covered. Collecting that coverage as a
-        mask, narrowing the clip to it and then running the pattern over the
-        area is what lets the same tiler serve all three.
-        """
-        px_width = max(1.0, self.state.line_width * self.point_scale)
-        radius = max(0.5, px_width / 2.0)
-        mask = bytearray(self.width * self.height)
-        for subpath in subpaths:
-            if len(subpath) < 2:
-                continue
-            pts = [self._user_to_pixel(x, y) for x, y in subpath]
-            for p0, p1 in itertools.pairwise(pts):
-                self._stroke_segment_pixels(p0, p1, radius, (0, 0, 0), 1.0, mask=mask)
-        self._paint_pattern_through_mask(mask)
+        pattern = self.state.stroke_tiling or self.state.stroke_shading
+        mask = None
+        if pattern is not None:
+            self._load_budget.check(
+                self.width * self.height, "max_codec_work_bytes", "stroke pattern mask"
+            )
+            mask = bytearray(self.width * self.height)
+        # Union all pieces of one stroke before compositing. Segment joins and
+        # intersecting subpaths must not multiply alpha or apply a blend twice.
+        for y, intervals in spans.items():
+            merged: list[tuple[int, int]] = []
+            for start, end in sorted(intervals):
+                if merged and start <= merged[-1][1] + 1:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+                else:
+                    merged.append((start, end))
+            for start, end in merged:
+                if mask is not None:
+                    mask[y * self.width + start : y * self.width + end + 1] = (
+                        b"\x01" * (end - start + 1)
+                    )
+                else:
+                    for x in range(start, end + 1):
+                        self._composite_pixel(x, y, color, alpha, stroke=True)
+        if mask is not None:
+            self._paint_pattern_through_mask(mask)
 
     def _paint_pattern_through_mask(self, mask: bytearray) -> None:
         """Paint the stroking pattern wherever *mask* is set."""
@@ -2134,43 +2288,6 @@ class _PageRasterizer:
             x_end = min(self.width - 1, math.ceil(x_to))
             for x in range(x_start, x_end + 1):
                 self._composite_pixel(x, y, color, alpha)
-
-    def _stroke_segment_pixels(
-        self,
-        p0: Point,
-        p1: Point,
-        radius: float,
-        color: Color,
-        alpha: float,
-        mask: bytearray | None = None,
-    ) -> None:
-        x0, y0 = p0
-        x1, y1 = p1
-        min_x = max(0, math.floor(min(x0, x1) - radius))
-        max_x = min(self.width - 1, math.ceil(max(x0, x1) + radius))
-        min_y = max(0, math.floor(min(y0, y1) - radius))
-        max_y = min(self.height - 1, math.ceil(max(y0, y1) + radius))
-        if min_x > max_x or min_y > max_y:
-            return
-        dx = x1 - x0
-        dy = y1 - y0
-        seg_len_sq = dx * dx + dy * dy
-        if seg_len_sq <= 1e-12:
-            return
-        rr = radius * radius
-        for y in range(min_y, max_y + 1):
-            py = y + 0.5
-            for x in range(min_x, max_x + 1):
-                px = x + 0.5
-                t = ((px - x0) * dx + (py - y0) * dy) / seg_len_sq
-                t = min(1.0, max(0.0, t))
-                cx = x0 + t * dx
-                cy = y0 + t * dy
-                if (px - cx) * (px - cx) + (py - cy) * (py - cy) <= rr:
-                    if mask is not None:
-                        mask[y * self.width + x] = 1
-                    else:
-                        self._composite_pixel(x, y, color, alpha, stroke=True)
 
     def _apply_clip(
         self, subpaths: list[list[Point]], *, even_odd: bool = False

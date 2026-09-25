@@ -9,9 +9,8 @@ those on the pages below before the page's content was saved and restored
 around.
 
 Each case is one small page with a single mark of the page's own (blue) and
-one appended mark (red), so the assertions read the raster by colour. A leaked
-dash pattern is checked through the rule alone: this library's rasterizer does
-not dash strokes, so a raster cannot show it (pdfium and MuPDF do).
+one appended mark (red), so the assertions read the raster by colour. Dash
+state restoration is also covered by the stroke-rendering regressions.
 """
 
 from __future__ import annotations
