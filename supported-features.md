@@ -1084,15 +1084,19 @@ Supported:
   standing in where it declares none or declares an empty set; nested forms are
   followed to a bounded depth. An image XObject is not a content stream and is
   not read as one.
-  The **HTML and Markdown exports** carry it too. Their layout analysis reads
-  the page's own stream, where a form is a single `Do`, so they used to drop
-  every word inside one while `extract_text` kept them; each text object a
-  form shows now joins the page's own, anchored where it lands on the page --
-  the form's `/Matrix`, then the CTM its `Do` ran under -- so a header sorts
-  above the body and a footer below it, as MuPDF orders them. Nested forms are
-  followed to the same bound the text reader uses; images inside a form are
-  not exported as figures, since a figure is resolved by name in the page's
-  resources and a form's names are its own.
+  The **HTML and Markdown exports** carry both text and image XObjects from
+  nested forms. Each paint resolves fonts, images and named image colour
+  spaces in its own resource scope; page resources may be inherited from the
+  page tree. Identical names such as `/F1` or `/Im0` on different pages or in
+  different forms stay independent. The form's `/Matrix`, followed by the CTM
+  at `Do`, places its contents for reading order and page-anchor clipping.
+  Forms are followed to the same depth bound as the text reader; recursive
+  calls on the active path are skipped, while separate paints of a shared
+  form are preserved. Only invoked forms and exported images are decoded;
+  selecting pages in streaming mode leaves other page streams undecoded.
+  Inline images, arbitrary clipping paths and exact appearance remain outside
+  this flow export. Resource limits also apply to nested image decoding and
+  the combined form traversal.
 - **An inline image's samples are not read as tokens.** The bytes between `ID`
   and `EI` are the image, and they can spell any operator or open a string that
   closes nowhere, so a reader that lexes them loses the rest of the page. Where

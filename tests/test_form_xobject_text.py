@@ -428,18 +428,12 @@ def test_a_malformed_form_matrix_is_read_as_identity():
 def test_the_export_follows_only_a_form_even_when_handed_content():
     # The same rule the parser keeps: an XObject that is not a form is not a
     # content stream, whatever bytes a caller attaches to it.
-    from aspose_pdf.engine.auto_tag import find_layout_elements
-    from aspose_pdf.engine.text_export import _expand_forms
-
-    resources = {
-        "XObject": {
-            "Im1": {
-                "Subtype": "Image",
-                "content": b"BT /F1 12 Tf (should not be read) Tj ET",
-            }
-        }
-    }
-    elements = find_layout_elements(b"q 10 0 0 10 0 0 cm /Im1 Do Q")
-    expanded, sources = _expand_forms(elements, resources, limits=None, budget=None)
-    assert [e.kind for e in expanded] == ["xobject"]
-    assert sources == {}
+    body = b"BT /F1 12 Tf (should not be read) Tj ET"
+    image = (
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Length %d >>\nstream\n"
+        % len(body) + body + b"\nendstream"
+    )
+    with _document(b"q 10 0 0 10 0 0 cm /Fm1 Do Q", {6: image}) as document:
+        assert "should not be read" not in document.to_html(embed_images=False)
+        assert "should not be read" not in document.to_markdown(embed_images=False)

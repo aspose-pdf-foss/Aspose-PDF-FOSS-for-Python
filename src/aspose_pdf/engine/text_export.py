@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import html as html_module
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ from .auto_tag import (
     list_marker,
 )
 from .content_stream_parser import _MAX_FORM_DEPTH
+from .cos import PdfDictionary, PdfName, PdfStream
 
 __all__ = ["Block", "markdown_format", "page_blocks", "to_html", "to_markdown"]
 
@@ -128,46 +130,76 @@ def _element_text(
     return _WHITESPACE.sub(" ", text.replace("\n", " ")).strip()
 
 
-def _figure_png(pdf: Any, page_index: int, name: str) -> bytes | None:
-    """PNG bytes for the image XObject *name* on the page, or ``None``.
+@dataclass
+class _ContentSource:
+    """A content stream and the resource scope in which it executes."""
 
-    Reuses the same reconstruction :meth:`SimplePdf.save_image` performs, so an
-    exported figure is the image that extraction would have written -- colour
-    conversion, palettes and ``/Decode`` included.
-    """
+    content: bytes
+    resources: PdfDictionary | None
+    _fonts: dict | None = None
+
+    def text_resources(self, pdf: Any) -> dict:
+        """Convert fonts on demand without decoding unrelated Form streams."""
+        if self._fonts is None:
+            fonts = (
+                self.resources.mapping.get(PdfName("Font"))
+                if self.resources is not None else None
+            )
+            self._fonts = pdf._convert_cos_to_dict(
+                PdfDictionary({PdfName("Font"): fonts} if fonts is not None else {})
+            )
+        return self._fonts
+
+    def xobject(self, pdf: Any, name: str | None) -> tuple[Any, PdfStream | None]:
+        if self.resources is None or name is None:
+            return None, None
+        xobjects = pdf._resolve(self.resources.mapping.get(PdfName("XObject")))
+        if not isinstance(xobjects, PdfDictionary):
+            return None, None
+        ref = xobjects.mapping.get(PdfName(name.lstrip("/")))
+        obj = pdf._resolve(ref)
+        return ref, obj if isinstance(obj, PdfStream) else None
+
+
+def _figure_png(pdf: Any, source: _ContentSource, name: str) -> bytes | None:
+    """Reconstruct the image in this content stream's resource scope."""
     from .image_export import reconstruct_image_file
+    from .simple_pdf import CosExtractor
 
-    key = _image_key(pdf, page_index, name)
-    if key is None:
+    ref, obj = source.xobject(pdf, name)
+    if obj is None:
         return None
     try:
+        extractor = CosExtractor(
+            pdf._cos_doc, b"", limits=pdf._load_limits, budget=pdf._load_budget
+        )
+        # A named colour space belongs to the same scope as the image paint.
+        # Resolve it on a metadata-only copy; the live PDF stays unchanged.
+        metadata_stream = obj
+        colour_space = pdf._resolve(obj.mapping.get(PdfName("ColorSpace")))
+        if isinstance(colour_space, PdfName) and source.resources is not None:
+            spaces = pdf._resolve(
+                source.resources.mapping.get(PdfName("ColorSpace"))
+            )
+            if isinstance(spaces, PdfDictionary) and colour_space in spaces.mapping:
+                metadata_stream = PdfStream(
+                    content=b"",
+                    mapping={
+                        **obj.mapping,
+                        PdfName("ColorSpace"): spaces.mapping[colour_space],
+                    },
+                )
         data, produced = reconstruct_image_file(
-            pdf._image_meta.get(key), pdf.images[key], ".png", None
+            extractor._resolve_image_meta(metadata_stream),
+            pdf._decode_cos_stream(obj, ref),
+            ".png",
+            limits=pdf._load_limits,
         )
     except PdfResourceLimitException:
         raise
-    except (KeyError, AttributeError, *PDF_OPERATION_ERRORS):
+    except PDF_OPERATION_ERRORS:
         return None
     return data if produced == "png" else None
-
-
-def _image_key(pdf: Any, page_index: int, name: str) -> str | None:
-    """Resolve a page-local XObject name to a key in ``pdf.images``.
-
-    Resource names are page-local -- two pages routinely both call their image
-    ``/Im0`` -- so a loaded document stores them under a document-wide key and
-    an authored one under the resource name itself.
-    """
-    images = getattr(pdf, "images", None)
-    if not images:
-        return None
-    if name in images:
-        return name
-    suffix = f"_{name}"
-    for key in images:
-        if key == name or key.endswith(suffix):
-            return key
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -200,10 +232,9 @@ def page_blocks(
 
     limits = getattr(pdf, "_load_limits", None)
     budget = getattr(pdf, "_load_budget", None)
-    resources = _plain_resources(pdf, page_index)
-    elements = find_layout_elements(content, limits=limits, budget=budget)
+    source = _ContentSource(content, pdf._cos_page_resources(page_index))
     elements, sources = _expand_forms(
-        elements, resources, limits=limits, budget=budget
+        pdf, source, limits=limits, budget=budget
     )
     if clip_to_page:
         x0, y0, x1, y1 = _visible_area(pdf, page_index)
@@ -218,19 +249,15 @@ def page_blocks(
     for element, tag in zip(text_elements, tags):
         element.tag = tag
 
-    image_names: set[str] = set()
     if include_images:
-        try:
-            image_names = set(pdf._image_xobject_names(page_index))
-        except PDF_OPERATION_ERRORS:
-            image_names = set()
         for element in elements:
-            if (
-                element.kind == "xobject"
-                and element.name
-                and element.name.lstrip("/") in image_names
-            ):
-                element.tag = "Figure"
+            if element.kind == "xobject":
+                _, obj = sources[id(element)].xobject(pdf, element.name)
+                if (
+                    obj is not None
+                    and pdf._get_name(obj.mapping.get(PdfName("Subtype"))) == "Image"
+                ):
+                    element.tag = "Figure"
 
     tagged = [e for e in elements if e.tag is not None]
     if not tagged:
@@ -241,11 +268,9 @@ def page_blocks(
     texts: dict[int, str] = {}
     for element in tagged:
         if element.kind == "text":
-            source, source_resources = sources.get(
-                id(element), (content, resources)
-            )
+            source = sources[id(element)]
             texts[id(element)] = _element_text(
-                source, element, source_resources, limits, budget
+                source.content, element, source.text_resources(pdf), limits, budget
             )
 
     blocks: list[Block] = []
@@ -257,7 +282,7 @@ def page_blocks(
                 flow = [element for row in rows for element in row]
                 blocks.extend(
                     _flow_blocks(
-                        pdf, page_index, flow, texts, include_images, paragraph_gap
+                        pdf, flow, texts, sources, include_images, paragraph_gap
                     )
                 )
     return [block for block in blocks if _has_content(block)]
@@ -287,105 +312,93 @@ def _normalised(box: Any) -> tuple[float, float, float, float]:
 
 
 def _expand_forms(
-    elements: list[LayoutElement],
-    resources: dict,
+    pdf: Any,
+    source: _ContentSource,
     *,
     limits: Any,
     budget: Any,
-    depth: int = 0,
-) -> tuple[list[LayoutElement], dict[int, tuple[bytes, dict]]]:
-    """Replace each form XObject a page paints with the text the form shows.
+) -> tuple[list[LayoutElement], dict[int, _ContentSource]]:
+    """Visit painted forms, retaining each element's own resource scope.
 
-    A form is part of the page it is drawn on (ISO 32000-1 8.10), and headers,
-    footers and stamps are usually forms. The layout scan reads the page's own
-    stream, where a form is a single ``Do``, so an export used to drop every
-    word inside one -- while :meth:`Document.extract_text` kept them, since the
-    text reader walks into forms. Each text object a form shows now joins the
-    page's own, anchored where it lands on the page: the form's ``/Matrix``
-    and then the CTM its ``Do`` ran under, so a header sorts above the body it
-    heads.
-
-    Returns the expanded elements and, for each one that came out of a form,
-    the stream and resources to decode it with. The form's own ``/Resources``
-    govern inside it, the parent's where it declares none or an empty set --
-    the rule the text reader follows. Images inside a form are not carried:
-    a figure is resolved by name in the *page's* resources, and a form's names
-    are its own.
+    Only streams invoked by ``Do`` are decoded. An active-path set breaks
+    cycles while allowing the same form to be painted at several positions.
+    Form resources fall back to the caller's when absent or empty, matching
+    the text reader. Positions and image dimensions are composed into page
+    space before the usual reading-order and paragraph analysis.
     """
     expanded: list[LayoutElement] = []
-    sources: dict[int, tuple[bytes, dict]] = {}
-    for element in elements:
-        form = _form_named(element, resources)
-        if form is None:
-            expanded.append(element)
-            continue
-        if depth >= _MAX_FORM_DEPTH:
-            continue
-        content = bytes(form["content"])
-        own = form.get("Resources")
-        form_resources = own if isinstance(own, dict) and own else resources
-        placement = _mul(_form_matrix(form), element.ctm or _IDENTITY_MATRIX)
-        inner, inner_sources = _expand_forms(
-            find_layout_elements(content, limits=limits, budget=budget),
-            form_resources,
-            limits=limits,
-            budget=budget,
-            depth=depth + 1,
-        )
-        sources.update(inner_sources)
-        for child in inner:
-            if child.kind != "text":
+    sources: dict[int, _ContentSource] = {}
+    active: set[int] = set()
+    visited_elements = 0
+
+    def visit(current: _ContentSource, placement: Matrix, depth: int) -> None:
+        nonlocal visited_elements
+        if budget is not None:
+            budget.check(depth, "max_nesting_depth", "export Form nesting")
+        elements = find_layout_elements(current.content, limits=limits, budget=budget)
+        for element in elements:
+            visited_elements += 1
+            if budget is not None:
+                budget.check(
+                    visited_elements, "max_container_items", "export layout traversal"
+                )
+            ref, obj = (
+                current.xobject(pdf, element.name)
+                if element.kind == "xobject" else (None, None)
+            )
+            if (
+                obj is not None
+                and pdf._get_name(obj.mapping.get(PdfName("Subtype"))) == "Form"
+            ):
+                if depth >= _MAX_FORM_DEPTH or id(obj) in active:
+                    continue
+                own = pdf._resolve(obj.mapping.get(PdfName("Resources")))
+                resources = (
+                    own if isinstance(own, PdfDictionary) and own.mapping
+                    else current.resources
+                )
+                content = pdf._decode_cos_stream(obj, ref)
+                if budget is not None:
+                    budget.check(
+                        len(content), "max_content_stream_bytes", "export Form content"
+                    )
+                matrix = _form_matrix(
+                    pdf._convert_cos_to_dict(obj.mapping.get(PdfName("Matrix")))
+                )
+                transform = _mul(
+                    _mul(matrix, element.ctm or _IDENTITY_MATRIX), placement
+                )
+                active.add(id(obj))
+                try:
+                    visit(_ContentSource(content, resources), transform, depth + 1)
+                finally:
+                    active.remove(id(obj))
                 continue
-            child.x, child.y = _apply(placement, child.x, child.y)
-            sources.setdefault(id(child), (content, form_resources))
-            expanded.append(child)
+            element.x, element.y = _apply(placement, element.x, element.y)
+            if element.ctm is not None:
+                element.ctm = _mul(element.ctm, placement)
+                element.width = math.hypot(element.ctm[0], element.ctm[1])
+                element.height = math.hypot(element.ctm[2], element.ctm[3])
+            sources[id(element)] = current
+            expanded.append(element)
+
+    visit(source, _IDENTITY_MATRIX, 0)
     return expanded, sources
 
 
 _IDENTITY_MATRIX: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 
-def _form_named(element: LayoutElement, resources: dict) -> dict | None:
-    """The form XObject an ``xobject`` element paints, or ``None``."""
-    if element.kind != "xobject" or not element.name:
-        return None
-    xobjects = resources.get("XObject")
-    form = xobjects.get(element.name.lstrip("/")) if isinstance(xobjects, dict) else None
-    if not isinstance(form, dict) or form.get("Subtype") != "Form":
-        return None
-    if not isinstance(form.get("content"), (bytes, bytearray)):
-        return None
-    return form
-
-
-def _form_matrix(form: dict) -> Matrix:
-    """A form's ``/Matrix`` (8.10.1), identity where absent or malformed."""
-    raw = form.get("Matrix")
+def _form_matrix(raw: Any) -> Matrix:
+    """A form's matrix, or identity where absent or malformed."""
     if isinstance(raw, (list, tuple)) and len(raw) == 6:
         try:
-            return tuple(float(v) for v in raw)  # type: ignore[return-value]
+            matrix = tuple(float(v) for v in raw)
+            if all(math.isfinite(v) for v in matrix):
+                return matrix  # type: ignore[return-value]
         except (TypeError, ValueError):
             pass
     return _IDENTITY_MATRIX
-
-
-def _plain_resources(pdf: Any, page_index: int) -> dict:
-    from .cos import PdfDictionary, PdfName
-
-    try:
-        page = pdf._get_page_dict(page_index)
-        resources = pdf._resolve(page.mapping.get(PdfName("Resources")))
-        if isinstance(resources, PdfDictionary) and hasattr(
-            pdf, "_convert_cos_to_dict"
-        ):
-            return pdf._convert_cos_to_dict(resources) or {}
-    except PdfResourceLimitException:
-        raise
-    except PDF_OPERATION_ERRORS:
-        return {}
-    except AttributeError:
-        return {}
-    return {}
 
 
 def _has_content(block: Block) -> bool:
@@ -426,9 +439,9 @@ def _table_block(rows: list[list[LayoutElement]], texts: dict[int, str]) -> Bloc
 
 def _flow_blocks(
     pdf: Any,
-    page_index: int,
     flow: list[LayoutElement],
     texts: dict[int, str],
+    sources: dict[int, _ContentSource],
     include_images: bool,
     paragraph_gap: float | None = None,
 ) -> list[Block]:
@@ -452,7 +465,7 @@ def _flow_blocks(
         if group[0].kind == "xobject":
             flush_list()
             if include_images:
-                blocks.append(_figure_block(pdf, page_index, group[0]))
+                blocks.append(_figure_block(pdf, sources[id(group[0])], group[0]))
             continue
         text = " ".join(
             part for part in (texts.get(id(e), "") for e in group) if part
@@ -495,12 +508,12 @@ def _strip_marker(text: str, kind: str | None) -> str:
     return text
 
 
-def _figure_block(pdf: Any, page_index: int, element: LayoutElement) -> Block:
+def _figure_block(pdf: Any, source: _ContentSource, element: LayoutElement) -> Block:
     name = (element.name or "").lstrip("/")
     return Block(
         kind="figure",
         alt=element.alt or name,
-        image=_figure_png(pdf, page_index, name) if name else None,
+        image=_figure_png(pdf, source, name) if name else None,
     )
 
 
