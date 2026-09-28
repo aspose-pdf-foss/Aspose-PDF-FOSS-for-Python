@@ -1,7 +1,22 @@
-"""Image placement utilities for the Aspose PDF library.
+"""The images a page draws, and changing them.
 
-This module provides ImagePlacement and ImagePlacementAbsorber classes
-for handling image extraction and manipulation in PDF documents.
+:class:`ImagePlacementAbsorber` collects an :class:`ImagePlacement` for every
+image a page draws, each carrying the picture's bytes and where on the page it
+is put. A placement collected that way is *bound* to the document it came from,
+so :meth:`ImagePlacement.replace` and :meth:`ImagePlacement.hide` change the
+document -- they used to change only the object in hand, and a save afterwards
+still wrote the picture that was there.
+
+Both work by redefining the image XObject rather than by editing the page's
+content, which is what MuPDF's ``Page.replace_image`` does: the drawing
+operation stays, so the new picture lands exactly where the old one was, at the
+same size and under the same rotation. Hiding redefines it as a single fully
+transparent pixel, which is MuPDF's ``Page.delete_image``. An image XObject is
+one object however many times it is drawn, so both reach every place that draws
+it.
+
+A placement built by hand, with no document behind it, still holds and replaces
+its own bytes -- there is nothing else it could do.
 """
 
 from __future__ import annotations
@@ -79,6 +94,7 @@ class ImagePlacement:
         matrix: tuple[float, float, float, float, float, float] | None = None,
         meta: dict | None = None,
         limits: PdfLoadLimits | None = None,
+        engine: object | None = None,
     ) -> None:
         if not isinstance(name, str):
             raise TypeError("name must be a string")
@@ -97,6 +113,9 @@ class ImagePlacement:
         self._rotation = rotation
         self._matrix = matrix
         self._load_limits = _coerce_limits(limits)
+        # The document this placement came out of, when it came out of one.
+        # Without it there is nothing to write a replacement into.
+        self._engine = engine
         # Reconstruction metadata (colour space / bpc / palette / filter / ...)
         # captured at extraction time; enables save() to write a real image file.
         self._meta = dict(meta) if meta else None
@@ -124,20 +143,60 @@ class ImagePlacement:
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.dispose()
 
-    def replace(self, new_image_data: bytes | bytearray) -> None:
-        """Replace the current image data with new_image_data.
+    def replace(self, new_image_data: bytes | bytearray) -> bool:
+        """Put *new_image_data* in this image's place in the document.
+
+        The image XObject is redefined and the page's drawing operations are
+        left alone, so the new picture appears where the old one was, at the
+        same size and under the same rotation -- as MuPDF's
+        ``Page.replace_image`` does it. The XObject is one object however many
+        times it is drawn, so every page drawing this image shows the new one.
+
+        Returns whether the document was changed: ``False`` for a placement with
+        no document behind it, or one whose image the document no longer draws.
+        Either way the placement itself now holds the new bytes.
 
         Parameters
         ----------
         new_image_data: bytes | bytearray
-            The new raw image bytes to store.
+            The replacement picture, in any format
+            :meth:`~aspose_pdf.pages.Page.add_image` accepts.
         """
         self._ensure_not_disposed()
         if not isinstance(new_image_data, (bytes, bytearray)):
             raise TypeError("new_image_data must be bytes or bytearray")
         if len(new_image_data) == 0:
             raise PdfValidationException("new_image_data cannot be empty")
-        self._image_data = bytes(new_image_data)
+        written = self._write_to_document(bytes(new_image_data))
+        if written:
+            # A placement's data is the image's *samples*, with :attr:`_meta`
+            # saying how to read them -- which is what it was when the document
+            # was read, and what :meth:`save` rebuilds a file from. Keeping the
+            # encoded bytes the caller passed would quietly change what
+            # ``image_data`` means for this one placement.
+            self._adopt_from_document()
+        else:
+            self._image_data = bytes(new_image_data)
+        self._hidden = False
+        return written
+
+    def _adopt_from_document(self) -> None:
+        """Take the samples and metadata the document now holds for this image."""
+        engine = self._engine
+        data = getattr(engine, "images", {}).get(self.name)
+        if isinstance(data, (bytes, bytearray)):
+            self._image_data = bytes(data)
+        meta = getattr(engine, "_image_meta", {}).get(self.name)
+        self._meta = dict(meta) if meta else None
+
+    def _write_to_document(self, data: bytes | None) -> bool:
+        """Redefine this image in the document; ``None`` makes it invisible."""
+        engine = self._engine
+        if engine is None:
+            return False
+        if data is None:
+            return bool(engine.hide_page_image(self.page_index, self.name))
+        return bool(engine.replace_page_image(self.page_index, self.name, data))
 
     def save(
         self, path: str | os.PathLike, *, color_space: str | None = None
@@ -189,14 +248,24 @@ class ImagePlacement:
         write_file_atomically(file_path, out_bytes)
         return file_path
 
-    def hide(self) -> None:
-        """Hide the image placement.
+    def hide(self) -> bool:
+        """Stop the document drawing this image.
 
-        After calling this method, attempts to access the image data will
-        raise a RuntimeError.
+        It is redefined as a single fully transparent pixel -- MuPDF's
+        ``Page.delete_image`` -- so the drawing operation stays and there is
+        nothing left for it to draw. The samples that were there are replaced
+        rather than covered, so a full save does not carry them. As with
+        :meth:`replace`, the XObject is one object, so this reaches every page
+        that draws it.
+
+        Returns whether the document was changed. Afterwards this placement's
+        own data is no longer readable: :attr:`image_data` and :meth:`save`
+        raise, because what it described is not in the document any more.
         """
         self._ensure_not_disposed()
+        written = self._write_to_document(None)
         self._hidden = True
+        return written
 
     @property
     def image_data(self) -> bytes:
@@ -278,6 +347,7 @@ class ImagePlacementAbsorber:
     def __init__(self) -> None:
         self.image_placements: list[ImagePlacement] = []
         self._load_limits = PdfLoadLimits()
+        self._engine: object | None = None
 
     def _add_image(
         self,
@@ -302,6 +372,9 @@ class ImagePlacementAbsorber:
                 matrix=matrix,
                 meta=meta,
                 limits=self._load_limits,
+                # Bound to the document it was read out of, so replacing or
+                # hiding it changes that document rather than only this object.
+                engine=self._engine,
             )
         except Exception:
             return
@@ -325,6 +398,7 @@ class ImagePlacementAbsorber:
         self._load_limits = _coerce_limits(limits)
 
         engine, page_filter = _resolve_engine(page_or_pdf)
+        self._engine = engine
         if engine is not None:
             self._absorb_engine(engine, page_filter)
             return

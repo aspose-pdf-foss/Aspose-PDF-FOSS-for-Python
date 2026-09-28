@@ -117,6 +117,8 @@ flowchart TD
   `Layer.add(content)` puts an annotation or image that is *already* in the document on one, and
   `Document.flatten_layers()` resolves the layers for good — deleting what is hidden from the
   file rather than leaving it there for the next reader to switch back on.
+- `ImagePlacementAbsorber` collects the images a page draws, and `ImagePlacement.replace` /
+  `hide` change them in the document — the new picture keeps the old one's place and size.
 - `Page.add_stamp` and `Document.add_stamp` put a text, image or page-number stamp over or
   under a page — aligned in the box a reader shows, upright whatever the page's rotation, with
   opacity and rotation, and written once however many pages it goes on.

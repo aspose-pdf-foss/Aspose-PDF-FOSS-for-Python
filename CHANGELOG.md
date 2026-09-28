@@ -7,6 +7,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Replacing or hiding an image did not change the document.**
+  `ImagePlacement.replace` set the bytes on the object in hand and `hide` set a
+  flag on it, so a save afterwards still wrote the picture that was there — the
+  placement had no reference to the document at all. A placement collected by
+  `ImagePlacementAbsorber` is now bound to the document it came from, and both
+  methods redefine the image XObject while leaving the page's drawing operations
+  alone, so the new picture appears exactly where the old one was. Hiding
+  redefines the image as a single fully transparent pixel. Both follow MuPDF's
+  `Page.replace_image` / `Page.delete_image`, are per-object like MuPDF's, and
+  both now return whether the document was changed. pdfium and MuPDF render
+  every case identically, and a replacement leaves no second copy of the image
+  behind: the file comes out the size it went in.
+
 ### Added
 
 - **Stamps.** A document could not be stamped: `SimplePdf.set_watermark` set a

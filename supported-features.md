@@ -1529,11 +1529,30 @@ Supported:
   JPEG remain Pillow-only.
 - Read reconstruction metadata from an `ImagePlacement`: `width`, `height`,
   `bits_per_component`, and `color_space`.
-- Replace or hide an `ImagePlacement` payload in memory.
+- **Replace or hide an image the document draws.** `ImagePlacement.replace(bytes)`
+  and `ImagePlacement.hide()` change the document a placement was collected
+  from, and return whether they did; they used to change only the object in
+  hand, so a save afterwards still wrote the picture that was there. Both
+  redefine the image XObject and leave the page's drawing operations alone, so
+  the new picture lands exactly where the old one was — the same size, the same
+  rotation and skew — whatever its own pixel dimensions; hiding redefines it as
+  a single fully transparent pixel. That is what MuPDF's `Page.replace_image`
+  and `Page.delete_image` do, and pdfium and MuPDF render every case
+  identically. An image XObject is one object however many times it is drawn, so
+  both reach every page that draws it; the samples that were there are replaced
+  rather than covered, so a full save does not carry them, while an incremental
+  save appends the new definition and leaves the earlier revision as it was.
+  Whatever the old image said about itself — its `/Filter`, `/DecodeParms`,
+  `/Decode`, `/Mask`, `/SMask` — goes with it, so a JPEG can be replaced by a
+  PNG. A placement built by hand, with no document behind it, still replaces its
+  own bytes and reports `False`. Afterwards the placement holds what the
+  document holds: the samples and their metadata, not the encoded bytes handed
+  in, so `image_data` and `save()` keep meaning what they meant.
 - Release an `ImagePlacement` with `dispose()` / `close()` or use it as a
   context manager; disposal clears the image bytes and reconstruction metadata.
-- Save, replace, hide, and enumerate images through the lower-level `SimplePdf`
-  image helpers.
+- The same two operations on the engine: `SimplePdf.replace_page_image(page,
+  name, data)` and `hide_page_image(page, name)`, which answer `False` for a
+  name the page does not draw as an image — a form XObject is not one.
 - Collect image placements with `ImagePlacementAbsorber.visit(...)`, which
   accepts a `Page` (that page alone), a `Document`, or an engine PDF. Each
   `ImagePlacement` carries the image bytes, the rectangle it occupies on the

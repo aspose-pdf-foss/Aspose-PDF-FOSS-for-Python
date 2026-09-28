@@ -782,6 +782,17 @@ PDF2_STRUCTURE_NS = "http://iso.org/pdf2/ssn"
 #: turn a conversion into an unbounded traversal.
 _MAX_STRUCT_ELEMENTS = 100_000
 
+#: One RGBA pixel with every sample zero: a fully transparent image. Hiding an
+#: image means redefining it as this, which is how MuPDF's ``delete_image``
+#: works -- the page keeps drawing something, and that something is nothing.
+_TRANSPARENT_PIXEL_PNG = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+    b"\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\x0bIDATx\x9cc`\x00\x02\x00\x00\x05\x00\x01z^\xab?"
+    b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
 
 def _pdfa_level_parts(level: str) -> tuple[str, str | None]:
     """Resolve a level string to ``(part, conformance)``, or raise.
@@ -7607,7 +7618,20 @@ class SimplePdf:
         return resource_name
 
     def _register_image_xobject(self, image: AuthoredImage) -> PdfIndirectReference:
-        """Register *image* as an image XObject, with its ``/SMask`` if it has one.
+        """Register *image* as an image XObject, with its ``/SMask`` if it has one."""
+        mapping, content = self._image_xobject_parts(image)
+        return self._cos_doc.register_object(
+            PdfStream(content=content, mapping=mapping)
+        )
+
+    def _image_xobject_parts(
+        self, image: AuthoredImage
+    ) -> tuple[dict[Any, Any], bytes]:
+        """The dictionary and the bytes an image XObject for *image* is made of.
+
+        Separate from registering it, because replacing an image writes these
+        onto the object that is already there: registering a second one and
+        copying it over would leave the copy behind as garbage in the file.
 
         A PNG's transparency -- an alpha channel or a ``tRNS`` chunk -- becomes
         a soft mask (ISO 32000-1 11.6.5.3), a DeviceGray image of the same size
@@ -7638,8 +7662,92 @@ class SimplePdf:
                 },
             )
             mapping[PdfName("SMask")] = self._cos_doc.register_object(mask)
-        return self._cos_doc.register_object(
-            PdfStream(content=image.stream_data, mapping=mapping)
+        return mapping, image.stream_data
+
+    def _find_image_xobject(
+        self, page_index: int, resource_name: str
+    ) -> PdfStream | None:
+        """The image XObject a page draws as *resource_name*, if it has one."""
+        if self._cos_doc is None:
+            return None
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            return None
+        resources = self._resolve_resources_cos(page)
+        if not isinstance(resources, PdfDictionary):
+            return None
+        xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
+        if not isinstance(xobjects, PdfDictionary):
+            return None
+        entry = self._resolve(xobjects.mapping.get(PdfName(str(resource_name))))
+        if not isinstance(entry, PdfStream):
+            return None
+        if self._get_name(entry.mapping.get(PdfName("Subtype"))) != "Image":
+            return None
+        return entry
+
+    def replace_page_image(
+        self, page_index: int, resource_name: str, data: bytes | bytearray
+    ) -> bool:
+        """Redefine the image a page draws as *resource_name*; ``True`` if it did.
+
+        The image XObject's *own definition* is rewritten and the page's drawing
+        operations are left alone, so the new image appears exactly where the old
+        one was -- at the same size, under the same rotation and skew. That is
+        what MuPDF's ``Page.replace_image`` does, and the reason it is done by
+        redefining the object rather than by editing content: the placement lives
+        in the content stream, and only the picture changes.
+
+        An image XObject is one object, whatever draws it, so a page that shows
+        the same image twice -- or another page that shows it -- shows the new one
+        too. The samples that were there are replaced rather than covered, so a
+        full save does not carry them; an incremental save appends the new
+        definition and leaves the previous revision as it was, which is what an
+        incremental update means.
+        """
+        self._ensure_not_disposed()
+        self._validate_page_index(page_index)
+        self._ensure_cos()
+        target = self._find_image_xobject(page_index, resource_name)
+        if target is None:
+            return False
+
+        from .content_authoring import prepare_image
+
+        image = prepare_image(
+            bytes(data), limits=self._load_limits, budget=self._load_budget
+        )
+        mapping, content = self._image_xobject_parts(image)
+        # Everything the old image said about itself goes with it: a stale
+        # /DecodeParms, /Decode, /Mask or /SMask describes samples that are no
+        # longer there, and a reader that believed one would decode noise.
+        target.mapping.clear()
+        target.mapping.update(mapping)
+        target.content = content
+        # These bytes have not been through the security handler, so a save of
+        # an encrypted document has to put them through it. Every path that
+        # resolves a stream decrypts it first, so the flag is already what this
+        # sets it to -- it is here to say what is true of content just made,
+        # not to correct a state that was observed.
+        target.content_decrypted = True
+
+        name = str(resource_name)
+        self.images[name] = image.decoded_data
+        self._image_sizes[name] = (image.width, image.height)
+        self._image_meta[name] = image.meta
+        return True
+
+    def hide_page_image(self, page_index: int, resource_name: str) -> bool:
+        """Make the image a page draws as *resource_name* invisible.
+
+        The image is redefined as a single fully transparent pixel, which is how
+        MuPDF's ``Page.delete_image`` does it: the drawing operation stays, so
+        nothing about the page's content can break, and there is nothing left to
+        draw. The samples that were there are replaced, not merely hidden, so a
+        full save does not carry them.
+        """
+        return self.replace_page_image(
+            page_index, resource_name, _TRANSPARENT_PIXEL_PNG
         )
 
     def add_text_to_page(
