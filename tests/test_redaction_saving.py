@@ -100,10 +100,6 @@ def test_incremental_save_is_rejected_without_writing(tmp_path):
         assert output.getvalue() == b"unchanged"
         with pytest.raises(PdfSecurityException, match="redact"):
             document._engine_pdf.to_bytes_incremental()
-        destination = tmp_path / "output.pdf"
-        with pytest.raises(PdfSecurityException, match="redact"):
-            document._engine_pdf.save_incremental(destination)
-        assert not destination.exists()
 
 
 def test_no_match_does_not_disable_incremental_save():

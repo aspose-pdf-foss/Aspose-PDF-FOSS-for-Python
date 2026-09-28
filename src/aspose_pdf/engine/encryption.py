@@ -127,13 +127,6 @@ class EncryptionUtils:
         if not (5 <= len(key) <= 256):
             raise PdfSecurityException("RC4 key must be between 5 and 256 bytes long")
 
-    @staticmethod
-    def _validate_key_length(key_length: int) -> None:
-        if key_length not in (5, 16, 24, 32):
-            raise PdfSecurityException(
-                f"Invalid key length: {key_length}. Must be 5, 16, 24, or 32 bytes"
-            )
-
     # -------------------------------------------------------------------------
     # Basic Encryption/Decryption
     # -------------------------------------------------------------------------

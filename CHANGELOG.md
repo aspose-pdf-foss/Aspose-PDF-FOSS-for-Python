@@ -118,6 +118,32 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since it could not be reopened after the save. Every combination checked in pyHanko (intact, valid, trusted, whole
   file covered, benign modification levels) and opened in pdfium and MuPDF.
 
+### Removed
+
+- **Engine methods that could not take effect.** `PdfWriterV0` is written to
+  only when a `SimplePdf` has no COS graph, which no path through `Document`
+  produces, so `SimplePdf.set_watermark`, `sign`, `add_signature`, `hide_image`
+  and `replace_image` did nothing at all through the public API. Worse,
+  `sign`/`add_signature` fabricated a signature: an orphan `/Sig` holding
+  `/Contents <0000>`, over no byte range, referenced by no field, in a document
+  with no `/AcroForm`. All five are gone, together with that writer's branches
+  for them -- a watermark is what `Page.add_stamp` does on any document and
+  signing is what `Document.sign` does for real. Verified in qpdf: the file the
+  legacy writer produces is object-for-object what it was, minus the forged
+  signature, and MuPDF and pdfium read it the same.
+
+- **Code no caller could reach**: `SimplePdf.save_incremental` (a wrapper over
+  `to_bytes_incremental`, which is the path `Document.save(incremental=True)`
+  uses), `supports_incremental_update`, `extract_attachment` (the working one
+  is `PdfExtractor.extract_attachment`), `_field_font_family`, `_get_array`,
+  `incremental_update.write_incremental` and `_build_signature_placeholder`,
+  `encryption._validate_key_length`, `pdf_parser_cos._match`,
+  `image_export.looks_like_encoded_image`, `font_authoring.pdf_base_name` and
+  `is_subset`, and the two compatibility wrappers `text_edit._group_show_runs`
+  and `ccitt._pack_rows` -- whose tests now exercise the live helpers they
+  wrapped, `_walk_show_runs` and `_pack_row`, so the rules they asserted are
+  still asserted where they are used.
+
 ### Fixed
 
 - **`PdfExtractor` read documents beside the engine instead of through it.**

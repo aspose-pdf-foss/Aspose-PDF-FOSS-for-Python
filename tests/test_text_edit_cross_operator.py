@@ -17,8 +17,8 @@ from aspose_pdf import Document
 from aspose_pdf.engine.simple_pdf import SimplePdf
 from aspose_pdf.engine.text_edit import (
     _decode_operand,
-    _group_show_runs,
     _lex,
+    _walk_show_runs,
     redact_text_in_content,
     replace_text_in_content,
 )
@@ -150,10 +150,17 @@ def test_cross_operator_match_counts_once() -> None:
     assert out == _content("BT (X) Tj () Tj (foo) Tj (bar) Tj ET")
 
 
-def test_group_show_runs_joins_adjacent_and_splits_on_position() -> None:
+def test_show_runs_join_adjacent_and_split_on_position() -> None:
     tokens = _lex(_content("BT (a) Tj (b) Tj 5 0 Td (c) Tj ET"))
-    groups = _group_show_runs(tokens)
-    joined = ["".join(_decode_operand(t.value)[0] for t in g) for g in groups]
+    runs = list(_walk_show_runs(tokens))
+    joined = [
+        "".join(
+            _decode_operand(segment.token.value)[0]
+            for segment in run.segments
+            if segment.token is not None
+        )
+        for run in runs
+    ]
     assert joined == ["ab", "c"]
 
 

@@ -32,24 +32,6 @@ def test_remove_page(tmp_path: Path):
     assert res.page_count == 2
 
 
-# @pytest.mark.skip(reason="Not implemented yet")
-def test_extract_images(tmp_path: Path):
-    _ = tmp_path / "img.pdf"  # src
-
-    # 1. Create PDF with Image XObject (Manually constructed content stream)
-    # This is tricky without a real writer image support.
-    # We will simulate by writing a raw PDF with an image object manually?
-    # Or upgrade SimplePdf to support add_image (better).
-
-    # For now, let's create a minimal PDF structure manually via SimplePdf
-    # but we need to inject the Image XObject into `objects` dict which is internal.
-    # SimplePdf.save writes from self.pages.
-
-    # Let's pivot: We will implement `SimplePdf.add_image(bytes)` first.
-    # So the test expects:
-    _ = SimplePdf([(0, 0, 100, 100)], page_contents=[b"q 100 0 0 100 0 0 cm /Im1 Do Q"])
-
-
 def test_encrypt_decrypt(tmp_path: Path):
     src = tmp_path / "plain.pdf"
     enc = tmp_path / "enc.pdf"

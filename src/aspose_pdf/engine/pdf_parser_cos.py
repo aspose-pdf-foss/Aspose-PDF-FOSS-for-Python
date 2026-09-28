@@ -327,12 +327,6 @@ class _Tokenizer:
             else:
                 break
 
-    def _match(self, text: str) -> bool:
-        if self.s.startswith(text, self.pos):
-            self._consume(len(text))
-            return True
-        return False
-
     # ---------------------------------------------------------------------
     # Token readers
     # ---------------------------------------------------------------------

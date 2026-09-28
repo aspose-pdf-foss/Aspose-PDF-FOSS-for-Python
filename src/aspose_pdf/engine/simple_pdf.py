@@ -1350,7 +1350,6 @@ class SimplePdf:
     page_contents: list[bytes] = field(default_factory=list)
     images: dict[str, bytes] = field(default_factory=LazyImageDict)
     metadata: dict[str, str] = field(default_factory=dict)
-    watermark_text: str | None = None
     encrypted: bool = False
     password: str | None = None
     O: bytes | None = None  # noqa: E741  # PDF encryption /O entry
@@ -1412,7 +1411,6 @@ class SimplePdf:
         default=None, init=False, repr=False
     )
     _disposed: bool = field(default=False, init=False, repr=False)
-    _hidden_images: set[str] = field(default_factory=set, init=False, repr=False)
     # Page index -> the content bytes last found to leave no graphics state
     # behind; compared by identity, so any rewrite of a page's content is
     # simply read again.
@@ -2472,17 +2470,6 @@ class SimplePdf:
             merged.append(pdf)
         return merged
 
-    def sign(self, signature: PdfSignature, output_path: str) -> None:
-        """Sign the PDF document."""
-        self._ensure_not_disposed()
-        if self._cos_doc and self._cos_doc.trailer.get(PdfName("Sig")):
-            raise PdfSecurityException("PDF already has a signature.")
-        self.signature = {
-            "Reason": signature.reason,
-            "ContactInfo": signature.contact_info,
-            "Location": signature.location,
-        }
-
     # ---------------------------------------------------------------------------
     # Save / serialize
     # ---------------------------------------------------------------------------
@@ -3261,22 +3248,6 @@ class SimplePdf:
 
         return removed_count
 
-    def save_incremental(self, path: str | Path) -> None:
-        """Save PDF using incremental update to preserve signatures.
-
-        This appends changes to the end of the file rather than rewriting,
-        which is required for signed PDFs to maintain signature validity.
-        """
-        self._ensure_not_disposed()
-        if self._raw_bytes is None:
-            # No original data, use regular save
-            self.save(path)
-            return
-
-        # Build incremental update
-        data = self.to_bytes_incremental()
-        write_file_atomically(path, data)
-
     def _to_bytes_signed(self) -> bytes:
         """Serialize the document and sign it through :func:`sign_field`.
 
@@ -3666,11 +3637,6 @@ class SimplePdf:
             f"Image hydration complete. Found {len(self.images)} images "
             f"across {len(self._page_image_map)} pages."
         )
-
-    @property
-    def supports_incremental_update(self) -> bool:
-        """Check if document supports incremental updates."""
-        return self._raw_bytes is not None
 
     def dispose(self) -> None:
         """Release resources, including memory-mapped backing storage.
@@ -8032,18 +7998,6 @@ class SimplePdf:
         self._ensure_not_disposed()
         self.images[name] = data
 
-    def hide_image(self, name: str) -> None:
-        self._ensure_not_disposed()
-        if name not in self.images:
-            raise KeyError(name)
-        self._hidden_images.add(name)
-
-    def replace_image(self, name: str, data: bytes) -> None:
-        self._ensure_not_disposed()
-        if name not in self.images:
-            raise KeyError(name)
-        self.images[name] = data
-
     def save_image(
         self, name: str, path: str | Path, *, color_space: str | None = None
     ) -> Path:
@@ -8272,7 +8226,6 @@ class SimplePdf:
         new_pdf._load_budget = _LoadBudget(self._load_limits)
         new_pdf.append(self, indices)
         new_pdf.metadata = dict(self.metadata)
-        new_pdf.watermark_text = self.watermark_text
         new_pdf.pdf_version = self.pdf_version
         return new_pdf
 
@@ -9938,10 +9891,6 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     # Attachments
     # ---------------------------------------------------------------------------
-    def extract_attachment(self) -> None:
-        """Prepare attachment iteration."""
-        pass
-
     def get_attachment(self, name: str) -> bytes:
         """Get attachment by name."""
         self._ensure_not_disposed()
@@ -9952,16 +9901,6 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     # Signature
     # ---------------------------------------------------------------------------
-    def add_signature(self, reason: str, contact: str, location: str) -> None:
-        self._ensure_not_disposed()
-        if self.signature:
-            raise PdfSecurityException("PDF already has a signature.")
-        self.signature = {
-            "Reason": reason,
-            "ContactInfo": contact,
-            "Location": location,
-        }
-
     # ---------------------------------------------------------------------------
     # Validation/Repair/Optimization
     # ---------------------------------------------------------------------------
@@ -13680,31 +13619,6 @@ class SimplePdf:
         lines.append("Q")
         return ("\n".join(lines) + "\n").encode("ascii")
 
-    def _field_font_family(
-        self, font_name: str, acro: PdfDictionary | None
-    ) -> str | None:
-        """The Standard-14 family of a ``/DR`` font, from its ``/BaseFont``.
-
-        The resource name itself says nothing -- ``TiRo`` is a key, not a font
-        -- so the resolved dictionary is what answers. ``None`` when the form
-        carries no such resource or its name gives no family signal.
-        """
-        from .std_font_data import family_from_name
-
-        if not isinstance(acro, PdfDictionary):
-            return None
-        dr = self._resolve(acro.mapping.get(PdfName("DR")))
-        if not isinstance(dr, PdfDictionary):
-            return None
-        fonts = self._resolve(dr.mapping.get(PdfName("Font")))
-        if not isinstance(fonts, PdfDictionary):
-            return None
-        font = self._resolve(fonts.mapping.get(PdfName(font_name)))
-        if not isinstance(font, PdfDictionary):
-            return None
-        base = self._get_name(font.mapping.get(PdfName("BaseFont")))
-        return family_from_name(base) if base else None
-
     def _resolve_field_font(
         self, font_name: str, acro: PdfDictionary
     ) -> tuple[Any, str]:
@@ -15231,12 +15145,6 @@ class SimplePdf:
         flush_all()
         return bytes(out) if changed else None
 
-    def set_watermark(self, text: str) -> None:
-        """Set watermark text."""
-        self._ensure_not_disposed()
-        self.watermark_text = text
-
-
 # ---------------------------------------------------------------------------
 # COS Extractor — extracts high-level data from PdfDocument COS graph
 # ---------------------------------------------------------------------------
@@ -15434,14 +15342,6 @@ class CosExtractor:
 
         obj = self._resolve(obj)
         if isinstance(obj, PdfDictionary):
-            return obj
-        return None
-
-    def _get_array(self, obj: Any) -> Any | None:
-        from .cos import PdfArray
-
-        obj = self._resolve(obj)
-        if isinstance(obj, PdfArray):
             return obj
         return None
 
@@ -17559,11 +17459,7 @@ class PdfWriterV0:
         f_c_id = f_p_id + count
         f_im_id = f_c_id + count
 
-        visible_images = {
-            name: data
-            for name, data in self.pdf.images.items()
-            if name not in self.pdf._hidden_images
-        }
+        visible_images = dict(self.pdf.images)
         img_count = len(visible_images)
 
         # Pre-compute IDs for objects written after image objects so that the
@@ -17572,7 +17468,7 @@ class PdfWriterV0:
         _base = f_im_id + img_count
         _info_slot = 1 if self.pdf.metadata else 0
         _enc_slot = 1 if self.pdf.encrypted else 0
-        _sig_present = bool(self.pdf.signing_creds or self.pdf.signature)
+        _sig_present = bool(self.pdf.signing_creds)
         sig_obj_id = (_base + _info_slot + _enc_slot) if _sig_present else 0
         # A proper AcroForm signature field is emitted only for real signing.
         sig_field_id = (sig_obj_id + 1) if self.pdf.signing_creds else 0
@@ -17628,12 +17524,6 @@ class PdfWriterV0:
             content = (
                 self.pdf.page_contents[i] if i < len(self.pdf.page_contents) else b""
             )
-            if self.pdf.watermark_text:
-                watermark = (
-                    f"BT /F1 48 Tf 0.5 G 1 0 0 1 100 100 Tm "
-                    f"({self.pdf.watermark_text}) Tj ET"
-                ).encode()
-                content += b"\n" + watermark
             if self.pdf.encrypted:
                 content = self._encrypt_data(content, f_c_id + i)
             self._start_obj(f_c_id + i)
@@ -17756,22 +17646,6 @@ class PdfWriterV0:
             )
             self._end_obj()
             curr_id = sig_field_id + 1
-        elif self.pdf.signature:
-            sig_id = curr_id
-            curr_id += 1
-            self._start_obj(sig_id)
-            reason = self.pdf.signature.get("Reason", "")
-            contact = self.pdf.signature.get("ContactInfo", "")
-            location = self.pdf.signature.get("Location", "")
-            self._write_line(
-                f"<< /Type /Sig /Filter /Adobe.PPKLite "
-                f"/SubFilter /adbe.pkcs7.detached "
-                f"/Reason {self._string_literal(reason)} "
-                f"/ContactInfo {self._string_literal(contact)} "
-                f"/Location {self._string_literal(location)} "
-                f"/Contents <0000> >>".encode()
-            )
-            self._end_obj()
 
         # Write outline objects (bookmarks)
         if has_outlines:

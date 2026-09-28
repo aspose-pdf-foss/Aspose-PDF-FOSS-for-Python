@@ -110,17 +110,6 @@ class AuthoredFont:
         return self._plain_base_name
 
     @property
-    def pdf_base_name(self) -> str:
-        """Alias for :attr:`base_name` used by COS integration code."""
-        return self.base_name
-
-    @property
-    def is_subset(self) -> bool:
-        """Whether :meth:`embedded_program` currently returns a reduced font."""
-        self._refresh_embedded_program()
-        return self._is_subset
-
-    @property
     def descriptor_metrics(
         self,
     ) -> dict[str, int | float | tuple[int, int, int, int]]:

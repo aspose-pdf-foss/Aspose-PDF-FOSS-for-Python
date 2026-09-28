@@ -950,37 +950,6 @@ def _is_number_word(value: str) -> bool:
         return False
 
 
-def _group_show_runs(
-    tokens: list[_Token],
-    *,
-    limits: PdfLoadLimits | None = None,
-    budget: _LoadBudget | None = None,
-) -> list[list[_Token]]:
-    """Group consecutive text-showing operators into logical-string runs.
-
-    Compatibility view over :func:`_walk_show_runs` (no metrics, so
-    positioning operators break runs): each returned list holds the run's
-    string-operand tokens in order.
-    """
-    active_budget = _resolve_load_budget(limits, budget)
-    grouped: list[list[_Token]] = []
-    for run in _walk_show_runs(tokens, budget=active_budget):
-        group = [seg.token for seg in run.segments if seg.token is not None]
-        active_budget.check(
-            len(group),
-            "max_container_items",
-            "text edit compatibility run segments",
-        )
-        if group:
-            _append_checked(
-                grouped,
-                group,
-                active_budget,
-                "text edit compatibility runs",
-            )
-    return grouped
-
-
 def redact_text_in_content(
     content: bytes,
     search: str,

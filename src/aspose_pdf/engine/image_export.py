@@ -71,11 +71,6 @@ def ext_from_magic(data: bytes) -> str | None:
     return None
 
 
-def looks_like_encoded_image(data: bytes) -> bool:
-    """True when *data* already carries an image-file header (avoid re-encoding)."""
-    return ext_from_magic(data) is not None
-
-
 _EXT_ALIASES = {"jpg": "jpg", "jpeg": "jpg", "tif": "tiff", "tiff": "tiff"}
 
 

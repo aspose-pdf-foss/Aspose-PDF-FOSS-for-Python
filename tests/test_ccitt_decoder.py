@@ -40,25 +40,21 @@ def test_decode_malformed_data_falls_back_to_original():
     assert result == raw
 
 
-def test_pack_rows_inverts_when_black_is_1_false():
+def test_pack_row_inverts_when_black_is_1_false():
     """When ``black_is_1`` is ``False`` the packer inverts the pixel values.
 
-    An all‑white row (internal value ``0``) should become a byte of ``0xFF``
+    An all-white row (internal value ``0``) should become a byte of ``0xFF``
     because the PDF convention treats ``1`` as white when ``BlackIs1`` is
-    ``False``.
+    ``False``. This is the packer the decoder itself calls for every row.
     """
-    rows = [[0] * 8]
-    result = Decoder._pack_rows(rows, 8, black_is_1=False)
-    assert result == bytes([0xFF])
+    assert Decoder._pack_row([0] * 8, 8, black_is_1=False) == bytes([0xFF])
 
 
-def test_pack_rows_no_invert_when_black_is_1_true():
+def test_pack_row_no_invert_when_black_is_1_true():
     """When ``black_is_1`` is ``True`` the output follows the internal pixel
     representation directly (``0`` -> white, ``1`` -> black).
     """
-    rows = [[0] * 8]
-    result = Decoder._pack_rows(rows, 8, black_is_1=True)
-    assert result == bytes([0x00])
+    assert Decoder._pack_row([0] * 8, 8, black_is_1=True) == bytes([0x00])
 
 
 def test_decode_group4_empty_returns_empty():

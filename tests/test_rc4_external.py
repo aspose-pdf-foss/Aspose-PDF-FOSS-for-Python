@@ -10,7 +10,6 @@ def _create_minimal_pdf():
         metadata={},
         encrypted=False,
         password=None,
-        watermark_text=None,
         signature=None,
     )
 

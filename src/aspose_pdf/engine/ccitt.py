@@ -327,26 +327,6 @@ class Decoder:
         return Decoder._find_b1(ref_line, b1, color_b1)
 
     @staticmethod
-    def _pack_rows(rows, cols, black_is_1):
-        res = bytearray()
-        # Ensure byte alignment handling if needed, but standard PDF G4 is byte-aligned per row?
-        # No, PDF G4 usually treats data as continuous stream, but Rows are usually byte-padded?
-        # G4 itself doesn't pad rows in the stream.
-        # But the output bitmap (device) usually expects byte-aligned rows.
-        # Aspose `StreamDecoder` returns bytes.
-        # Standard: 1-bit-per-pixel, MSB first, 0=Black? (Depends on BlackIs1).
-        # Params `black_is_1`: If True, 1=Black. If False, 0=Black.
-        # Our decoder produces 0/1. We used 0=White, 1=Black internally.
-        # If black_is_1 is False (default): White=1, Black=0.
-        # So we need to invert if black_is_1 is False.
-        # Invert: pixel = 1 - pixel.
-
-        for row in rows:
-            res.extend(Decoder._pack_row(row, cols, black_is_1))
-
-        return bytes(res)
-
-    @staticmethod
     def _pack_row(row, cols, black_is_1):
         bytes_per_row = (cols + 7) // 8
         packed = bytearray(bytes_per_row)

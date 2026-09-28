@@ -453,34 +453,6 @@ class IncrementalWriter:
     def __init__(self, pdf_document: Any) -> None:
         self.pdf_document = pdf_document
 
-    def write_incremental(self) -> bytes:
-        """Return the original PDF with the incremental update appended."""
-        original = getattr(self.pdf_document, "original_data", None)
-        if original is None:
-            raise AttributeError("pdf_document must have attribute original_data")
-        updates: dict[int, bytes] = getattr(self.pdf_document, "updates", {})
-
-        incremental = IncrementalUpdate(original)
-        for obj_num, obj_bytes in updates.items():
-            incremental.add_object(obj_num, obj_bytes)
-
-        inc_bytes = incremental.generate()
-        return original + inc_bytes
-
-    def _build_signature_placeholder(self, byte_range_start: int) -> bytes:
-        """Create a simple ``/Sig`` placeholder for digital signatures.
-
-        This placeholder follows the typical structure used by many PDF
-        libraries and can be later replaced with a real signature value.
-        """
-        placeholder = (
-            b"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached "
-            b"/ByteRange [" + str(byte_range_start).encode("ascii") + b" 0 0 0] "
-            b"/Contents <" + b"0" * 8192 + b"> >>\n"
-        )
-        return placeholder
-
-
 def append_incremental_update(original_pdf: bytes, updates: dict[int, bytes]) -> bytes:
     """Convenience function to append *updates* to *original_pdf*.
 
