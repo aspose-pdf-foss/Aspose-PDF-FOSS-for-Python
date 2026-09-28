@@ -118,6 +118,34 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since it could not be reopened after the save. Every combination checked in pyHanko (intact, valid, trusted, whole
   file covered, benign modification levels) and opened in pdfium and MuPDF.
 
+### Fixed
+
+- **An embedded Standard-14 font was not an embedded font.** PDF/A conversion
+  attaches a bundled metric-compatible substitute, which is an sfnt, as
+  `/FontFile2` -- but left the dictionary saying `/Subtype /Type1`, and a Type 1
+  font's program is `/FontFile` or `/FontFile3`, never `/FontFile2` (ISO 32000-1
+  table 122). veraPDF 1.30.2 read that as "the font program is not embedded",
+  correctly, so *every* PDF/A file this library produced failed the one rule the
+  embedding exists to satisfy -- while this library's own check looked for any
+  `FontFile*` key and reported the document compliant. Such a font is now
+  written as `/TrueType`, and the check requires the program under the key its
+  kind uses. pdfium renders the converted page identically, pixel for pixel.
+
+- **Fonts were looked for on pages only.** The embedding pass and the PDF/A
+  check both walked page `/Resources`, so a font reachable only through the
+  AcroForm's `/DR` -- the `/Helv` a form field's appearance is drawn with -- an
+  annotation's appearance stream, or a form XObject's own resources was neither
+  embedded nor reported. Both now walk every font used for rendering, and each
+  complaint says where the font was found.
+
+- **PDF/UA conversion left fonts unembedded**, though ISO 14289-1 7.21.4.1
+  requires them embedded and this library's own PDF/UA check reported it. It
+  embeds them now, as the PDF/A conversion does.
+
+  With these three, veraPDF's font rule passes on every sample
+  `scripts/write_conformance_samples.py` writes, for all seven PDF/A levels and
+  both PDF/UA parts.
+
 ### Removed
 
 - **Engine methods that could not take effect.** `PdfWriterV0` is written to

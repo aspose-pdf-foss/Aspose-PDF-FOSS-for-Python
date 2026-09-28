@@ -2456,6 +2456,20 @@ Boundaries:
   it at, and CI runs veraPDF over them and publishes its report. That step is
   deliberately advisory: the useful output is *which* rules a sample fails, not
   a pass/fail gate this library was never built to meet.
+- **What veraPDF 1.30.2 actually says** about those samples, so the gap is a
+  known list rather than a caveat. Font embedding passes on all nine. What
+  remains is, per level: PDF/A-1 — the attachment's `/EF` key, which PDF/A-1
+  forbids outright and the conversion does not remove (ISO 19005-1 6.1.11);
+  PDF/A-2 — an embedded file must itself be PDF/A (6.8); PDF/A-3 — an
+  associated file needs its relationship stated (6.8); PDF/A-4 — `/Info` is
+  forbidden without a `/PieceInfo` and may then hold only `/ModDate`
+  (ISO 19005-4 6.1.3), and an embedded file must conform (6.9); PDF/UA-1 — a
+  widget must be nested in a `Form` tag and a field needs a `/TU` or an `/Alt`
+  (ISO 14289-1 7.18.4, 7.18.1); PDF/UA-2 — the structure tree root must hold
+  exactly one `Document` element, in-document destinations must be structure
+  destinations, and an embedded file needs a `/Desc` (ISO 14289-2 8.2.5.2, 8.8,
+  8.14.1). None of these is caught by the checks here either, which is the
+  honest measure of "heuristic".
 - The PDF 2.0 parts are checked at the same depth as the earlier ones, which
   means their *identification* and the structural rules that differ, not the
   whole of PDF 2.0. An attached PDF is validated two levels deep; below that

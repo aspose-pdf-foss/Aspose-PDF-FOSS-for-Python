@@ -169,4 +169,7 @@ def test_tagged_authored_text_records_actual_text_and_mcid() -> None:
     doc.convert_to_pdfua(title="Tagged text")
     result = doc.validate_pdfua()
     assert not any("ParentTree" in issue for issue in result.errors)
-    assert any("not embedded" in issue for issue in result.errors)
+    # The conversion embeds the Standard-14 font it was drawn with, as PDF/UA
+    # requires (ISO 14289-1 7.21.4.1); it used to leave it unembedded, so this
+    # asserted the complaint that is now gone.
+    assert not any("not embedded" in issue for issue in result.errors)

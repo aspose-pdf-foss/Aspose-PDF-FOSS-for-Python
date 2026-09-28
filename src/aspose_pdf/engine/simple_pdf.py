@@ -4117,78 +4117,70 @@ class SimplePdf:
             )
 
         # 5. Required: Font embedding, ToUnicode (level A), symbolic-font mapping
+        #
+        # Every font *used for rendering* has to be embedded, which is more than
+        # the fonts a page's own /Resources names: this walked pages only, and so
+        # passed a document whose form fields are drawn with the unembedded
+        # /Helv in the AcroForm's /DR -- which veraPDF fails. See
+        # :meth:`_rendering_font_dictionaries`.
         if self._cos_doc:
-            for i in range(len(self.pages)):
-                page_dict = self._get_page_dict(i)
-                if not isinstance(page_dict, PdfDictionary):
+            for font, where in self._rendering_font_dictionaries():
+                subtype = self._get_name(font.mapping.get(PdfName("Subtype")))
+                if subtype == "Type3":
+                    continue  # Type 3 fonts are self-contained
+
+                base_font = font.mapping.get(PdfName("BaseFont"))
+                base_name = self._get_name(base_font)
+                standard_subset = _is_standard14_base_font_name(base_name)
+                descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+                if not isinstance(descriptor, PdfDictionary):
+                    problems.append(
+                        f"Font {base_font} in {where} missing FontDescriptor."
+                    )
                     continue
-                res = self._resolve(page_dict.get(PdfName("Resources")))
-                if isinstance(res, PdfDictionary):
-                    fonts = self._resolve(res.get(PdfName("Font")))
-                    if isinstance(fonts, PdfDictionary):
-                        for font_ref in fonts.mapping.values():
-                            font = self._resolve(font_ref)
-                            if isinstance(font, PdfDictionary):
-                                subtype = self._get_name(font.get(PdfName("Subtype")))
-                                if subtype == "Type3":
-                                    continue  # Type 3 fonts are self-contained
 
-                                base_name = self._get_name(
-                                    font.get(PdfName("BaseFont"))
-                                )
-                                standard_subset = _is_standard14_base_font_name(
-                                    base_name
-                                )
+                # A program counts only under the key its kind uses (table 122):
+                # /FontFile for Type 1, /FontFile2 for TrueType, /FontFile3 for
+                # a compact or OpenType program. A TrueType program hung off a
+                # Type 1 font is not an embedded font, and a reader draws
+                # nothing from it -- which is what veraPDF says about one.
+                allowed = {
+                    "Type1": ("FontFile", "FontFile3"),
+                    "MMType1": ("FontFile", "FontFile3"),
+                    "TrueType": ("FontFile2", "FontFile3"),
+                }.get(subtype or "", ("FontFile", "FontFile2", "FontFile3"))
+                embedded = any(PdfName(k) in descriptor.mapping for k in allowed)
+                if not embedded:
+                    present = [
+                        k
+                        for k in ("FontFile", "FontFile2", "FontFile3")
+                        if PdfName(k) in descriptor.mapping
+                    ]
+                    if present:
+                        problems.append(
+                            f"Font {base_font} in {where} is /{subtype} but carries"
+                            f" its program as /{present[0]}, which is not a"
+                            f" program a /{subtype} font can have."
+                        )
+                    else:
+                        problems.append(f"Font {base_font} in {where} is not embedded.")
 
-                                descriptor = self._resolve(
-                                    font.get(PdfName("FontDescriptor"))
-                                )
-                                if isinstance(descriptor, PdfDictionary):
-                                    embedded = any(
-                                        PdfName(k) in descriptor
-                                        for k in ["FontFile", "FontFile2", "FontFile3"]
-                                    )
-                                    if not embedded:
-                                        problems.append(
-                                            f"Font {font.get(PdfName('BaseFont'))}"
-                                            f" on page {i + 1} is not embedded."
-                                        )
-
-                                    flags_val = descriptor.get(PdfName("Flags"))
-                                    flags_n = 0
-                                    if isinstance(flags_val, PdfNumber):
-                                        flags_n = int(flags_val.value)
-
-                                    has_tounicode = PdfName("ToUnicode") in font
-                                    has_encoding = (
-                                        font.get(PdfName("Encoding")) is not None
-                                    )
-                                    # Symbolic font: valid PDF/A text mapping
-                                    # needs Encoding or ToUnicode
-                                    if (flags_n & 4) != 0 and not (
-                                        has_tounicode or has_encoding
-                                    ):
-                                        problems.append(
-                                            "Symbolic font "
-                                            f"{font.get(PdfName('BaseFont'))} "
-                                            f"on page {i + 1} "
-                                            "requires an Encoding or ToUnicode map."
-                                        )
-
-                                    # Level A: non-standard fonts must be
-                                    # searchable (ToUnicode)
-                                    if level_norm.endswith("a") and not standard_subset:
-                                        if not has_tounicode:
-                                            problems.append(
-                                                f"Font {font.get(PdfName('BaseFont'))}"
-                                                f" on page {i + 1} missing required"
-                                                " ToUnicode map for PDF/A level A."
-                                            )
-                                else:
-                                    problems.append(
-                                        f"Font {font.get(PdfName('BaseFont'))}"
-                                        f" on page {i + 1} missing FontDescriptor."
-                                    )
+                flags_val = descriptor.mapping.get(PdfName("Flags"))
+                flags_n = int(flags_val.value) if isinstance(flags_val, PdfNumber) else 0
+                has_tounicode = PdfName("ToUnicode") in font.mapping
+                has_encoding = font.mapping.get(PdfName("Encoding")) is not None
+                # Symbolic font: valid PDF/A text mapping needs Encoding or ToUnicode
+                if (flags_n & 4) != 0 and not (has_tounicode or has_encoding):
+                    problems.append(
+                        f"Symbolic font {base_font} in {where} "
+                        "requires an Encoding or ToUnicode map."
+                    )
+                # Level A: non-standard fonts must be searchable (ToUnicode)
+                if level_norm.endswith("a") and not standard_subset and not has_tounicode:
+                    problems.append(
+                        f"Font {base_font} in {where} missing required"
+                        " ToUnicode map for PDF/A level A."
+                    )
 
         # 6. OutputIntents + device color spaces (content-level)
         #
@@ -14257,6 +14249,12 @@ class SimplePdf:
             if namespace_ref is not None:
                 self._retag_into_namespace(root, namespace_ref)
 
+        # PDF/UA requires every font used for rendering to be embedded
+        # (ISO 14289-1 7.21.4.1, ISO 14289-2 8.4.5.5.1), which this used to
+        # leave undone: a converted document failed its own check, and veraPDF,
+        # for a Standard-14 font the converter can perfectly well supply.
+        self._embed_standard14_fonts()
+
         logger.info("PDF/UA structure added; checking remaining issues.")
         return self.check_pdfua_compliance(part)[0]
 
@@ -14475,6 +14473,91 @@ class SimplePdf:
                 weight = float(value)
         return flags, italic, weight
 
+    def _rendering_font_dictionaries(self) -> list[tuple[PdfDictionary, str]]:
+        """Every font dictionary this document renders with, and where it is.
+
+        A page's own ``/Resources`` is not all of them. A form field's
+        appearance is drawn with the fonts in the AcroForm's ``/DR``, an
+        annotation's with the ones in its appearance stream's ``/Resources``,
+        and a form XObject or a pattern brings its own. PDF/A and PDF/UA both
+        require every font *used for rendering* to be embedded (ISO 19005-1
+        6.3.4, ISO 19005-4 6.2.10.4.1, ISO 14289-1 7.21.4.1), and veraPDF reads
+        that literally -- it fails a file whose only unembedded font is the
+        ``/Helv`` in a form's default resources, which walking pages alone never
+        finds.
+
+        Each entry is the font dictionary and a phrase naming where it was
+        reached, for a message that says which font a caller has to deal with.
+        """
+        found: list[tuple[PdfDictionary, str]] = []
+        seen_fonts: set[int] = set()
+        visited: set[int] = set()
+
+        def add_fonts(resources: Any, where: str, depth: int = 0) -> None:
+            resources = self._resolve(resources)
+            if not isinstance(resources, PdfDictionary) or depth > 8:
+                return
+            if id(resources) in visited:
+                return
+            visited.add(id(resources))
+            fonts = self._resolve(resources.mapping.get(PdfName("Font")))
+            if isinstance(fonts, PdfDictionary):
+                for font_ref in fonts.mapping.values():
+                    font = self._resolve(font_ref)
+                    if isinstance(font, PdfDictionary) and id(font) not in seen_fonts:
+                        seen_fonts.add(id(font))
+                        found.append((font, where))
+            # A form XObject or a tiling pattern draws with resources of its own.
+            for key in ("XObject", "Pattern"):
+                nested = self._resolve(resources.mapping.get(PdfName(key)))
+                if not isinstance(nested, PdfDictionary):
+                    continue
+                for entry in nested.mapping.values():
+                    entry = self._resolve(entry)
+                    if isinstance(entry, PdfDictionary):
+                        add_fonts(entry.mapping.get(PdfName("Resources")), where, depth + 1)
+
+        for index in range(len(self.pages)):
+            page = self._get_page_dict(index)
+            if not isinstance(page, PdfDictionary):
+                continue
+            where = f"page {index + 1}"
+            add_fonts(page.mapping.get(PdfName("Resources")), where)
+            annotations = self._resolve(page.mapping.get(PdfName("Annots")))
+            if isinstance(annotations, PdfArray):
+                for annotation in annotations.items:
+                    annotation = self._resolve(annotation)
+                    if not isinstance(annotation, PdfDictionary):
+                        continue
+                    appearance = self._resolve(annotation.mapping.get(PdfName("AP")))
+                    if not isinstance(appearance, PdfDictionary):
+                        continue
+                    for stream in appearance.mapping.values():
+                        stream = self._resolve(stream)
+                        if isinstance(stream, PdfDictionary):
+                            # /N may be a stream, or a dictionary of states.
+                            add_fonts(
+                                stream.mapping.get(PdfName("Resources")),
+                                f"an annotation appearance on {where}",
+                            )
+                            for state in stream.mapping.values():
+                                state = self._resolve(state)
+                                if isinstance(state, PdfDictionary):
+                                    add_fonts(
+                                        state.mapping.get(PdfName("Resources")),
+                                        f"an annotation appearance on {where}",
+                                    )
+
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if isinstance(catalog, PdfDictionary):
+            acroform = self._resolve(catalog.mapping.get(PdfName("AcroForm")))
+            if isinstance(acroform, PdfDictionary):
+                add_fonts(
+                    acroform.mapping.get(PdfName("DR")),
+                    "the form's default resources",
+                )
+        return found
+
     def _embed_standard14_fonts(self) -> None:
         """Embed bundled substitutes for non-embedded Standard-14/symbol fonts.
 
@@ -14525,47 +14608,30 @@ class SimplePdf:
             }
             return cache[key]
 
-        processed: set[int] = set()
-        for i in range(len(self.pages)):
-            page = self._get_page_dict(i)
-            if not isinstance(page, PdfDictionary):
-                continue
-            res = self._resolve(page.mapping.get(PdfName("Resources")))
-            if not isinstance(res, PdfDictionary):
-                continue
-            fonts = self._resolve(res.mapping.get(PdfName("Font")))
-            if not isinstance(fonts, PdfDictionary):
-                continue
-            for font_ref in fonts.mapping.values():
-                font = self._resolve(font_ref)
-                if not isinstance(font, PdfDictionary) or id(font) in processed:
-                    continue
-                processed.add(id(font))
-                subtype = self._get_name(font.mapping.get(PdfName("Subtype")))
-                if subtype not in ("Type1", "TrueType", "MMType1"):
-                    continue  # composite fonts embed through their own path
-                descriptor = self._resolve(
-                    font.mapping.get(PdfName("FontDescriptor"))
-                )
-                if isinstance(descriptor, PdfDictionary) and any(
-                    PdfName(k) in descriptor.mapping
-                    for k in ("FontFile", "FontFile2", "FontFile3")
-                ):
-                    continue  # already embedded
-                base_font = self._get_name(font.mapping.get(PdfName("BaseFont")))
-                clean = base_font.split("+")[-1] if base_font else ""
-                if not StandardFonts.is_standard_font(clean):
-                    continue  # only Standard-14/Symbol/ZapfDingbats auto-embed;
-                    # arbitrary custom fonts still need the lookup directory
-                flags, italic, weight = self._descriptor_signals(descriptor)
-                key = resolve_substitute_key(
-                    clean, flags=flags, italic_angle=italic, font_weight=weight
-                )
-                if key is None:
-                    continue  # unrecognized custom font stays reported
-                entry = substitute_for(key)
-                if entry is not None:
-                    self._apply_embedded_substitute(font, descriptor, base_font, entry)
+        for font, _where in self._rendering_font_dictionaries():
+            subtype = self._get_name(font.mapping.get(PdfName("Subtype")))
+            if subtype not in ("Type1", "TrueType", "MMType1"):
+                continue  # composite fonts embed through their own path
+            descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+            if isinstance(descriptor, PdfDictionary) and any(
+                PdfName(k) in descriptor.mapping
+                for k in ("FontFile", "FontFile2", "FontFile3")
+            ):
+                continue  # already embedded
+            base_font = self._get_name(font.mapping.get(PdfName("BaseFont")))
+            clean = base_font.split("+")[-1] if base_font else ""
+            if not StandardFonts.is_standard_font(clean):
+                continue  # only Standard-14/Symbol/ZapfDingbats auto-embed;
+                # arbitrary custom fonts still need the lookup directory
+            flags, italic, weight = self._descriptor_signals(descriptor)
+            key = resolve_substitute_key(
+                clean, flags=flags, italic_angle=italic, font_weight=weight
+            )
+            if key is None:
+                continue  # unrecognized custom font stays reported
+            entry = substitute_for(key)
+            if entry is not None:
+                self._apply_embedded_substitute(font, descriptor, base_font, entry)
 
     def _apply_embedded_substitute(
         self, font: PdfDictionary, descriptor: Any, base_font: str | None, entry: dict
@@ -14577,6 +14643,13 @@ class SimplePdf:
                 descriptor
             )
         descriptor.mapping[PdfName("FontFile2")] = entry["ref"]
+        # The substitute is an sfnt, and a font program may only be attached
+        # through the key its kind uses: /FontFile2 is TrueType's (ISO 32000-1
+        # table 122). Leaving the dictionary saying /Type1 put a TrueType
+        # program under a Type 1 font, which is not an embedded font at all --
+        # veraPDF reports exactly that, "the font program is not embedded",
+        # while a naive look for any FontFile* key thinks it is there.
+        font.mapping[PdfName("Subtype")] = PdfName("TrueType")
         if base_font and PdfName("FontName") not in descriptor.mapping:
             descriptor.mapping[PdfName("FontName")] = PdfName(base_font)
         metrics = entry["metrics"]
