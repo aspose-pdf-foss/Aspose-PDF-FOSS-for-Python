@@ -83,6 +83,14 @@ from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from .pdfua import PdfUaValidateOptions, PdfUaValidationResult, PdfUaValidator
 from .recipients import Recipient
 from .signature import PdfSignature
+from .stamps import (
+    HorizontalAlignment,
+    ImageStamp,
+    PageNumberStamp,
+    Stamp,
+    TextStamp,
+    VerticalAlignment,
+)
 from .tagged import StructureElement, TaggedContent
 from .text_layout import TextLayoutOptions
 from .validation import (
@@ -156,6 +164,8 @@ __all__ = [
     "FormType",
     "GoToAction",
     "GoToRAction",
+    "HorizontalAlignment",
+    "ImageStamp",
     "JavaScriptAction",
     "LaunchAction",
     "LinkAnnotation",
@@ -177,6 +187,7 @@ __all__ = [
     "PageLabelCollection",
     "PageLayout",
     "PageMode",
+    "PageNumberStamp",
     "PdfAValidateOptions",
     "PdfAValidationResult",
     "PdfAValidator",
@@ -200,6 +211,7 @@ __all__ = [
     "RevocationStatus",
     "SplitOptions",
     "Splitter",
+    "Stamp",
     "StreamDataSource",
     "StructureElement",
     "SubmitFormAction",
@@ -208,6 +220,7 @@ __all__ = [
     "TextExtractor",
     "TextExtractorOptions",
     "TextLayoutOptions",
+    "TextStamp",
     "TrustStatus",
     "URIAction",
     "UnsignedContent",
@@ -218,6 +231,7 @@ __all__ = [
     "ValidationOptions",
     "ValidationResult",
     "ValidationStatus",
+    "VerticalAlignment",
     "ViewerPreferences",
     "XYZDestination",
     "XmpArray",

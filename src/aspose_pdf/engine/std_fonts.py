@@ -18,14 +18,9 @@ _STANDARD_FONTS = [
     "ZapfDingbats",
 ]
 
-# Very simple glyph width table: width for ASCII 32-126 set to 600 units.
+# The width to answer with when the real one is not known: a code the font's
+# encoding leaves undefined, or a font that is not one of the fourteen.
 _DEFAULT_WIDTH = 600
-_ASCII_RANGE = range(32, 127)
-
-# Build a mapping for each font to its widths (identical for simplicity)
-_GLYPH_WIDTHS = {
-    font: {code: _DEFAULT_WIDTH for code in _ASCII_RANGE} for font in _STANDARD_FONTS
-}
 
 
 class StandardFonts:
@@ -53,15 +48,17 @@ class StandardFonts:
 
     @classmethod
     def get_glyph_width(cls, font_name, char_code):
-        """Return the width of a glyph for *font_name* and *char_code*.
+        """The advance of *char_code* in *font_name*, in 1000ths of the size.
 
-        If the font is not standard or the character code is unknown, a
-        default width of 600 units is returned.
+        *char_code* is a code in the encoding this library writes for the face
+        (see :meth:`get_default_encoding`), not a character. A font that is not
+        one of the fourteen, or a code its encoding leaves undefined, has no
+        width to give and answers 600 -- the width this used to answer for
+        everything.
         """
-        widths = _GLYPH_WIDTHS.get(font_name)
-        if widths is None:
-            return _DEFAULT_WIDTH
-        return widths.get(char_code, _DEFAULT_WIDTH)
+        from .std_metrics import advance
+
+        return advance(font_name, char_code) or _DEFAULT_WIDTH
 
     #: The two faces whose glyphs are not letters. Their codes mean whatever
     #: the font says they mean, which is the definition of a symbolic font.

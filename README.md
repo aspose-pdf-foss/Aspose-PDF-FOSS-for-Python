@@ -117,6 +117,9 @@ flowchart TD
   `Layer.add(content)` puts an annotation or image that is *already* in the document on one, and
   `Document.flatten_layers()` resolves the layers for good — deleting what is hidden from the
   file rather than leaving it there for the next reader to switch back on.
+- `Page.add_stamp` and `Document.add_stamp` put a text, image or page-number stamp over or
+  under a page — aligned in the box a reader shows, upright whatever the page's rotation, with
+  opacity and rotation, and written once however many pages it goes on.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content.
@@ -497,6 +500,7 @@ and delete workflows. 265 public types are organized by module below.
 | `InvalidOperationException` | Raised when a graphics element is attached to the wrong parent. |
 | `InvalidPasswordException` | Raised when an incorrect password is provided for an encrypted document. |
 | `Layer` | One optional content group: its name, intent, whether it is shown, and `add`/`remove`/`contains` for tagging existing content with it. |
+| `TextStamp` / `ImageStamp` / `PageNumberStamp` | A mark put over or under a page: text, a picture, or the page's number, with opacity, rotation and alignment. |
 | `ViewerPreferences` | The document's `/ViewerPreferences`: the window, the reading direction and the print dialogue, read and written in place. |
 | `LayerCollection` | The document's layers: indexable by position or by name, with `add(name, visible)`, `remove(layer)` and `make_exclusive(layers)`. |
 | `InvalidPdfFileFormatException` | Raised when the PDF file format is invalid or corrupted. |
@@ -790,6 +794,7 @@ and delete workflows. 265 public types are organized by module below.
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
     `is_pdfua_compliant`, `font_substitution`, `page_mode`, `page_layout`, `open_action`,
     `viewer_preferences`
+  - `add_stamp(stamp, pages) -> Document` — stamp the pages named, or every page
 
 ### Pages And Content
 
@@ -800,6 +805,7 @@ and delete workflows. 265 public types are organized by module below.
     `draw_line(x1, y1, x2, y2, stroke_color, line_width, tag, alt, actual_text) -> Page`
   - `render(dpi, scale, background, antialias) -> RasterizedPage` /
     `save_as_image(path, dpi, scale, background, antialias) -> Path`
+  - `add_stamp(stamp) -> Page` — a text, image or page-number stamp over or under the page
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - properties: `index`, `label`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`,

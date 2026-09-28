@@ -542,6 +542,41 @@ Supported:
   `alt=...`, and `actual_text=...`; the writer emits `BDC`/`EMC` marked
   content and maintains `/StructTreeRoot`, page `/StructParents`, and the
   `/ParentTree`.
+- **Stamps** (`Page.add_stamp`, `Document.add_stamp(stamp, pages=...)`).
+  `TextStamp(value, font_size, font_name, color)` sets a line in one of the 14
+  standard fonts, `ImageStamp(image, width, height)` places a picture (one
+  point per pixel by default, and giving one side derives the other from the
+  image's proportions), and `PageNumberStamp("{page} of {total}",
+  starting_number=…)` numbers the pages. All three take `opacity` (written as
+  an `/ExtGState` `/ca` and `/CA`), `rotate` (counter-clockwise about the
+  stamp's own centre), `zoom`, `horizontal_alignment`/`vertical_alignment`,
+  `x_indent`/`y_indent`, and `background` to draw under the page's own content
+  rather than over it. A stamp is a form XObject invoked in its own `q`/`Q`,
+  which is what qpdf's `--overlay`/`--underlay` and MuPDF's `show_pdf_page`
+  write, and one stamp added to many pages is one object in the file. It is
+  placed inside the box a reader actually shows -- the crop box, falling back to
+  the media box -- and the page's `/Rotate` is undone so it stands upright on
+  screen; qpdf does the same, while MuPDF's `show_pdf_page` leaves the rotation
+  alone and lets a stamp turn with the page. The matrices this writes are
+  qpdf's to the last digit, and every placement, ordering and opacity was read
+  back out of pdfium's and MuPDF's rasters, which agreed with each other to a
+  pixel. The box a rotated stamp is aligned by is the one it ends up
+  occupying, so a turned stamp still sits inside the page; a text stamp's box
+  is as wide as its text and as tall as the face's own bounds, so a descender
+  is never clipped by the form's `/BBox`. Text a standard font's encoding
+  cannot write is refused rather than drawn as something else.
+- **The standard fonts' own metrics** (`engine/std_metrics.py`): advance widths
+  and face bounds for all fourteen, indexed by the code this library writes for
+  each face (`WinAnsiEncoding`, or the font's built-in encoding for `Symbol`
+  and `ZapfDingbats`). `StandardFonts.get_glyph_width` used to answer 600 for
+  every glyph of every font, which is why nothing could measure text set in
+  one. Read from MuPDF's built-in faces and checked against pdfium: a string
+  drawn as one run and the same glyphs placed one at a time at the positions
+  these widths give land within 0.0002 pt of each other, for every glyph of all
+  fourteen faces. Field appearances still measure with their own flat estimate
+  when a font declares no `/Widths`; moving them onto these metrics would
+  change appearances this library has already generated, so it is left alone
+  here.
 - **Appended content is drawn where it was put, whatever the page left
   behind.** Everything a content stream draws inherits the graphics state the
   content before it left, so a page whose own content ends with a `cm` never

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
+    from aspose_pdf.stamps import Stamp
     from aspose_pdf.text_layout import TextLayoutOptions
 
 
@@ -325,6 +326,22 @@ class Page:
             alt=alt,
             actual_text=actual_text,
         )
+        return self
+
+    def add_stamp(self, stamp: Stamp) -> Page:
+        """Put *stamp* on this page, over or under what it already draws.
+
+        See :mod:`aspose_pdf.stamps`: the stamp is placed inside the part of
+        the page a reader shows, with the page's rotation undone so it stands
+        upright.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine import stamps as engine_stamps
+
+        engine_stamps.apply(eng, stamp, [self._index])
         return self
 
     def __repr__(self) -> str:

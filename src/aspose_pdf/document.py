@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from aspose_pdf.page_labels import PageLabelCollection
     from aspose_pdf.pages import Page, PageCollection
     from aspose_pdf.signature import PdfSignature
+    from aspose_pdf.stamps import Stamp
     from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.validation import CertificationLevel
@@ -362,6 +363,32 @@ class Document:
         self._ensure_not_disposed()
         self._engine_pdf._ensure_cos()
         engine_viewer_prefs.set_open_action(self._engine_pdf, value)
+
+    def add_stamp(
+        self, stamp: Stamp, pages: Sequence[int] | slice | None = None
+    ) -> Document:
+        """Put *stamp* on *pages*, or on every page when none are named.
+
+        See :mod:`aspose_pdf.stamps`. A stamp whose drawing is the same on
+        every page is written once and invoked from each of them, so stamping a
+        long document does not repeat it; a
+        :class:`~aspose_pdf.stamps.PageNumberStamp` says something different on
+        each page and is written per page.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        count = len(self._engine_pdf.pages)
+        if pages is None:
+            indices: Sequence[int] = range(count)
+        elif isinstance(pages, slice):
+            indices = range(count)[pages]
+        else:
+            indices = [int(index) for index in pages]
+        from aspose_pdf.engine import stamps as engine_stamps
+
+        engine_stamps.apply(self._engine_pdf, stamp, indices)
+        return self
 
     @property
     def viewer_preferences(self) -> ViewerPreferences:

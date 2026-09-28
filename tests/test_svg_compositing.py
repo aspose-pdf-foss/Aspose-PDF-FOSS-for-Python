@@ -8,7 +8,6 @@ from dataclasses import replace
 from io import BytesIO
 
 import pytest
-from PIL import Image
 
 from aspose_pdf import Document, PdfLoadLimits, PdfResourceLimitException
 from aspose_pdf.engine.cos import (
@@ -70,6 +69,7 @@ def _painted(root):
 
 
 def _png(element):
+    Image = pytest.importorskip("PIL.Image")
     with Image.open(
         BytesIO(base64.b64decode(element.get(HREF).split(",", 1)[1]))
     ) as im:
@@ -461,6 +461,7 @@ def test_svg_limits_apply_before_allocating_rasters(kind):
     ],
 )
 def test_pattern_fallback_preserves_painted_pixels(paint):
+    Image = pytest.importorskip("PIL.Image")
     from tests.test_pattern_paint import _CELL, _document, _tiling
 
     with _document(paint, _tiling(_CELL)) as doc:

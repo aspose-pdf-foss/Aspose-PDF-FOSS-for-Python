@@ -14,17 +14,17 @@ def test_is_standard_font_negative():
     assert StandardFonts.is_standard_font("") is False
 
 
-def test_get_glyph_width_default():
-    """Glyph width lookup returns default width for known and unknown fonts/char codes."""
-    # Known standard font and ASCII character
-    width = StandardFonts.get_glyph_width("Helvetica", ord("A"))
-    assert width == 600
-    # Unknown font should fallback to default width
-    unknown_width = StandardFonts.get_glyph_width("FakeFont", ord("A"))
-    assert unknown_width == 600
-    # Known font but out‑of‑range char code should fallback to default width
-    out_of_range = StandardFonts.get_glyph_width("Courier", 200)
-    assert out_of_range == 600
+def test_get_glyph_width_is_the_fonts_own():
+    """A standard font's glyph widths are the published ones, not a flat guess."""
+    # The metrics every reader knows: see engine/std_metrics.py.
+    assert StandardFonts.get_glyph_width("Helvetica", ord("A")) == 667
+    assert StandardFonts.get_glyph_width("Helvetica", ord("i")) == 222
+    assert StandardFonts.get_glyph_width("Times-Roman", ord(" ")) == 250
+    # Courier is fixed-pitch, so 600 there is the real width, not a fallback.
+    assert StandardFonts.get_glyph_width("Courier", ord("i")) == 600
+    # No width to give: not one of the fourteen, or a code WinAnsi leaves out.
+    assert StandardFonts.get_glyph_width("FakeFont", ord("A")) == 600
+    assert StandardFonts.get_glyph_width("Helvetica", 127) == 600
 
 
 def test_font_names_list():

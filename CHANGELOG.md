@@ -9,6 +9,25 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Stamps.** A document could not be stamped: `SimplePdf.set_watermark` set a
+  field only the retired V0 writer read, so through `Document` it saved a file
+  with no watermark in it. `TextStamp`, `ImageStamp` and `PageNumberStamp` now
+  go on through `Page.add_stamp` and `Document.add_stamp(stamp, pages=...)`,
+  with opacity, rotation, zoom, alignment and indents, and `background` to put
+  the mark under the page's own content. A stamp is a form XObject in its own
+  `q`/`Q`, placed inside the box a reader shows and with the page's `/Rotate`
+  undone so it stands upright; one stamp on many pages is one object. The
+  behaviour and the matrices are qpdf's `--overlay`/`--underlay`, and every
+  placement and opacity was read back out of pdfium's and MuPDF's rasters.
+
+- **The standard fonts' real metrics.** `StandardFonts.get_glyph_width`
+  answered 600 for every glyph of every font, so text set in a standard font
+  could not be measured -- a centred `"Page 1 of 10"` was out by a quarter of
+  its length. New `engine/std_metrics.py` carries the advance widths and the
+  face bounds of all fourteen, indexed by the code this library writes for
+  each. Read from MuPDF's built-in faces and checked against pdfium: every
+  glyph lands within 0.0002 pt of where pdfium puts it.
+
 - **How a document asks to be opened and shown.** `/PageMode`, `/PageLayout`,
   `/OpenAction` and `/ViewerPreferences` survived a load and save but could
   not be read or written. `Document.page_mode`, `Document.page_layout`,
