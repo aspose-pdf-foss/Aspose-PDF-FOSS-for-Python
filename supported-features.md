@@ -893,8 +893,17 @@ Boundaries:
   structure is `auto_tag`'s, so it inherits its limits -- headings are inferred
   from font size alone, list nesting is flat, a table needs a regular grid, and
   a figure's alternate text cannot be invented. Use SVG export for a facsimile.
-- SVG export writes **polylines, not curves**: the renderer flattens Béziers
-  while building a path, so that is what reaches the exporter. Text is glyph
+- SVG export writes **the curves the page describes**. A Bézier is flattened to
+  be rasterised, and the subpath remembers which of its points stand in for
+  which cubic, so the exporter writes one `C` where it used to write the dozens
+  of `L` the flattening produced — a third of the file size on a page of
+  circles, and exact at whatever zoom the reader picks. Flattening itself is
+  now measured in device pixels rather than a fixed twelve segments per curve,
+  so the error stays under a fifth of a pixel at every resolution instead of
+  being whatever twelve segments happened to give; MuPDF renders an exported
+  page and its PDF with no pixel differing beyond antialiasing. A shape built
+  as points rather than curves — a glyph contour, a rectangle — is still the
+  polyline it is. Text is glyph
   outlines, which renders exactly and needs no embedded font, but is not
   selectable or searchable. A shading SVG has no gradient for -- function-based
   and mesh -- is sampled into an embedded image rather than dropped, as are

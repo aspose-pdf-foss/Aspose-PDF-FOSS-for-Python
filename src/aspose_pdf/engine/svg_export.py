@@ -20,7 +20,8 @@ Blend modes and isolated groups use CSS compositing; soft masks use embedded
 alpha maps. Knockout and non-isolated groups with group-level effects require
 the complete page backdrop and fall back to an embedded RGBA page at 72 dpi.
 Patterns and overprint preview use that fallback too. Function/mesh shadings
-are sampled individually. Curves arrive as flattened polylines, not Béziers.
+are sampled individually. A curve the interpreter flattened is written back
+out as the Bézier it came from.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from .rasterizer import (
     _transform_point,
 )
 from .shading import Shading
+from .stroke import Subpath
 
 __all__ = ["page_to_svg"]
 
@@ -349,7 +351,27 @@ class _SvgWriter(_PageRasterizer):
     def _clip_attribute(self) -> str:
         return f' clip-path="url(#{self._clip_id})"' if self._clip_id else ""
 
+    def _pixel_subpath(self, subpath: Any) -> Subpath:
+        """*subpath* in pixel space, keeping the cubics it was flattened from."""
+        mapped = Subpath(self._user_to_pixel(x, y) for x, y in subpath)
+        mapped.closed = bool(getattr(subpath, "closed", False))
+        curves = getattr(subpath, "curves", ())
+        if curves:
+            mapped.curves = tuple(
+                (first, last, self._user_to_pixel(*c1), self._user_to_pixel(*c2))
+                for first, last, c1, c2 in curves
+            )
+        return mapped
+
     def _path_data(self, polygons: list[list[Point]], *, close: bool) -> str:
+        """The ``d`` attribute for these subpaths, with curves where there are any.
+
+        A subpath that came from the interpreter remembers which of its points
+        stand in for a Bézier, so those go out as one ``C`` rather than as the
+        dozens of ``L`` the flattening produced: smaller, and exact at any zoom
+        the reader chooses. A subpath without that record -- a glyph contour, a
+        rectangle, anything built as points -- is the polyline it is.
+        """
         precision = self._precision
         parts: list[str] = []
         for polygon in polygons:
@@ -357,8 +379,27 @@ class _SvgWriter(_PageRasterizer):
                 continue
             first = polygon[0]
             parts.append(f"M{_fmt(first[0], precision)} {_fmt(first[1], precision)}")
-            for x, y in polygon[1:]:
-                parts.append(f"L{_fmt(x, precision)} {_fmt(y, precision)}")
+            curves = {
+                start: (end, c1, c2)
+                for start, end, c1, c2 in getattr(polygon, "curves", ())
+                if 0 < start <= end < len(polygon)
+            }
+            index = 1
+            while index < len(polygon):
+                curve = curves.get(index)
+                if curve is None:
+                    x, y = polygon[index]
+                    parts.append(f"L{_fmt(x, precision)} {_fmt(y, precision)}")
+                    index += 1
+                    continue
+                end, (c1x, c1y), (c2x, c2y) = curve
+                x, y = polygon[end]
+                parts.append(
+                    f"C{_fmt(c1x, precision)} {_fmt(c1y, precision)}"
+                    f" {_fmt(c2x, precision)} {_fmt(c2y, precision)}"
+                    f" {_fmt(x, precision)} {_fmt(y, precision)}"
+                )
+                index = end + 1
             if close:
                 parts.append("Z")
         return "".join(parts)
@@ -424,9 +465,7 @@ class _SvgWriter(_PageRasterizer):
     ) -> None:
         """One ``<path>`` for the whole path, so holes and the rule survive."""
         polygons = [
-            [self._user_to_pixel(x, y) for x, y in subpath]
-            for subpath in subpaths
-            if len(subpath) >= 3
+            self._pixel_subpath(subpath) for subpath in subpaths if len(subpath) >= 3
         ]
         self._emit_fill(
             polygons, color, alpha, rule="evenodd" if even_odd else "nonzero"
@@ -468,9 +507,7 @@ class _SvgWriter(_PageRasterizer):
         ):
             raise _RasterFallback
         polygons = [
-            [self._user_to_pixel(x, y) for x, y in subpath]
-            for subpath in subpaths
-            if len(subpath) >= 2
+            self._pixel_subpath(subpath) for subpath in subpaths if len(subpath) >= 2
         ]
         data = self._path_data(polygons, close=False)
         if not data:
@@ -606,9 +643,7 @@ class _SvgWriter(_PageRasterizer):
     ) -> None:
         shading, matrix = fill_shading
         polygons = [
-            [self._user_to_pixel(x, y) for x, y in subpath]
-            for subpath in subpaths
-            if len(subpath) >= 3
+            self._pixel_subpath(subpath) for subpath in subpaths if len(subpath) >= 3
         ]
         if not polygons:
             return

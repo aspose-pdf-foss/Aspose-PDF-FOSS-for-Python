@@ -18,6 +18,16 @@ class Subpath(list[Point]):
 
     closed = False
 
+    #: The cubics these points were flattened from, as
+    #: ``(first, last, control1, control2)``: the points from index *first* to
+    #: *last* stand in for one Bézier that begins at ``self[first - 1]``.
+    #: Flattening is how a curve gets rasterised, but it is not what the curve
+    #: *is*, and an exporter writing to a format that has curves needs the
+    #: curve. Empty for a subpath with no curves in it, and for one built
+    #: without recording them -- such a subpath still reads as the polyline it
+    #: is.
+    curves: tuple[tuple[int, int, Point, Point], ...] = ()
+
 
 @dataclass
 class StrokeRun:

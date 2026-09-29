@@ -1807,9 +1807,30 @@ class _PageRasterizer:
             p1 = self._transform(vals[0], vals[1])
             p2 = self._transform(vals[2], vals[3])
             p3 = p2
-        for step in range(1, 13):
-            t = step / 12.0
+        # The tolerance is a device one, and these points are in page space, so
+        # the curve is measured at the size it is about to be drawn: a page
+        # rendered larger gets a finer flattening rather than the same one.
+        steps = _bezier_steps(p0, p1, p2, p3, scale=self.point_scale)
+        for step in range(1, steps + 1):
+            t = step / steps
             self.path.line_to(_bezier(p0, p1, p2, p3, t))
+        # A curve is flattened to be rasterised, and remembered to be exported:
+        # SVG has cubics, and writing the polyline instead both enlarges the
+        # file and pins the faceting to whatever the flattening chose. The
+        # points went wherever ``line_to`` put them -- a curve that follows a
+        # closepath opens a subpath of its own -- so they are found from the end
+        # of the subpath that now holds them rather than from where it began.
+        subpath = self.path.current
+        # The loop above appended one point per step to whatever subpath is now
+        # current, so there is one and it holds them: the two conditions state
+        # that rather than handle a state that can be reached. A record naming
+        # points a subpath does not have would have the exporter draw a shape
+        # nobody asked for, so it is worth not writing one.
+        if subpath is None:
+            return
+        first = len(subpath) - steps
+        if first >= 1:
+            subpath.curves = (*subpath.curves, (first, len(subpath) - 1, p1, p2))
 
     def _paint_path(self, op: str, depth: int = 0) -> None:
         if op in ("s", "b", "b*"):
@@ -5134,6 +5155,42 @@ def _invert_matrix(m: Matrix) -> Matrix | None:
     inv_e = (c * f - d * e) / det
     inv_f = (b * e - a * f) / det
     return (inv_a, inv_b, inv_c, inv_d, inv_e, inv_f)
+
+
+#: Flattening is allowed to stray this far from the true curve, in device
+#: pixels. Half a pixel is below what a raster can show and well below what a
+#: reader would notice in an exported facsimile.
+_BEZIER_TOLERANCE = 0.2
+
+#: However long the curve, this many segments are enough: the bound keeps a
+#: pathological path (a curve stretched over a huge coordinate space) from
+#: turning one operator into an unbounded number of points.
+_BEZIER_MAX_STEPS = 120
+
+
+def _bezier_steps(
+    p0: Point, p1: Point, p2: Point, p3: Point, *, scale: float = 1.0
+) -> int:
+    """How many line segments this curve needs, at the size it is being drawn.
+
+    A fixed count leaves an error that does not shrink as the page is rendered
+    larger -- a 250 pt circle kept a flat of half a point on every segment at
+    any dpi, where pdfium and MuPDF have none. The control polygon's length
+    bounds the curve's, and for *n* uniform steps the chord error falls as
+    ``1/n**2``. The constant below is the one that makes the measured error stay
+    under the tolerance -- the length bound is generous, so the textbook
+    ``1/(8n**2)`` would leave it around half again as large. *scale* converts the
+    polygon's length into the device pixels the tolerance is expressed in.
+    """
+    length = scale * (
+        math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+        + math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+        + math.hypot(p3[0] - p2[0], p3[1] - p2[1])
+    )
+    if not length or length != length:  # zero-length, or a NaN coordinate
+        return 1
+    steps = math.ceil(math.sqrt(length / (4.0 * _BEZIER_TOLERANCE)))
+    return max(4, min(steps, _BEZIER_MAX_STEPS))
 
 
 def _bezier(p0: Point, p1: Point, p2: Point, p3: Point, t: float) -> Point:

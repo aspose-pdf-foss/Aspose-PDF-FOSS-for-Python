@@ -87,7 +87,8 @@ flowchart TD
   paragraphs, lists, tables and figures inferred by the same layout analysis `auto_tag()` uses,
   with the text decoded the way `extract_text()` decodes it. For a facsimile, export SVG instead.
 - `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
-  fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. The
+  curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. A
+  Bézier is written back out as the Bézier it was, so the export stays exact at any zoom. The
   exporter is the renderer with its paint sinks replaced, so the SVG and the rasterized page agree
   on geometry by construction.
 - JPEG 2000 (`/JPXDecode`) images — what scanners emit — decode with a bundled pure-Python

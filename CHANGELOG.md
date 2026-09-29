@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A Bézier stopped being a Bézier.** The interpreter turned every curve into
+  twelve line segments and dropped the control points, which cost twice. The
+  raster kept a fixed flat on each segment — a 250 pt circle was off by half a
+  point at *any* resolution, where pdfium and MuPDF have no error — and SVG
+  export, whose point is a resolution-independent facsimile, wrote those
+  segments out as `L` commands. Flattening now takes its step count from the
+  curve's length in device pixels, so the error stays under a fifth of a pixel
+  at every scale, and each subpath records the cubics its points stand in for so
+  the exporter writes them as `C`. On a page of 24 stroked circles the SVG went
+  from 20 760 bytes with 1 152 `L` commands to 7 138 bytes with 96 `C`, and
+  MuPDF — which reads SVG as well as PDF — renders the export and the original
+  with no pixel differing beyond antialiasing, where the old export differed on
+  0.56% of the page.
+
 - **Replacing or hiding an image did not change the document.**
   `ImagePlacement.replace` set the bytes on the object in hand and `hide` set a
   flag on it, so a save afterwards still wrote the picture that was there — the
