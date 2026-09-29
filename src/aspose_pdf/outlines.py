@@ -172,7 +172,7 @@ class OutlineCollection:
         return f"OutlineCollection({self._items!r})"
 
     # ------------------------------------------------------------------
-    # Serialisation helpers (used by SimplePdf / PdfWriterV0)
+    # Serialisation helpers (used by SimplePdf)
     # ------------------------------------------------------------------
 
     def _to_list(self) -> list[dict]:

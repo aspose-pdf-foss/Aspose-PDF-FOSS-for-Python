@@ -710,7 +710,6 @@ and delete workflows. 265 public types are organized by module below.
 | `PdfString` | Class with 1 method and 1 property. |
 | `PdfTrailerable` | Class with 1 method. |
 | `PdfValidationError` | PDF/A or general structural validation error. |
-| `PdfWriterV0` | Writes SimplePdf to PDF 1.7 format. |
 | `PredefinedCMap` | A resolved predefined CMap and its semantic Unicode mapping. |
 | `PredefinedCMapEncoding` | Compact code-to-CID view of a predefined CMap. |
 | `RasterizedPage` | A rendered PDF page in packed RGB format. |

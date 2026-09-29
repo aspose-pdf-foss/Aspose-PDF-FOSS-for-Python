@@ -201,7 +201,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Removed
 
-- **Engine methods that could not take effect.** `PdfWriterV0` is written to
+- **The second writer.** `SimplePdf` had two: the COS writer for a document with
+  an object graph, and an older one for a document assembled in memory. Nothing
+  the public API does produces the second kind — every load builds a graph,
+  malformed input included — which is how features only that writer knew about
+  came to sit in the engine doing nothing (see the entry below). A document with
+  no graph is now given one and serialised like any other, and the 511-line
+  writer is gone. Six of the seven shapes it used to serialise — pages, text,
+  metadata, an outline, an attachment, an empty page — come out of qpdf, pdfium
+  and MuPDF with identical facts. The seventh differs on purpose: writing
+  `encrypted = True` by hand no longer encrypts, because that field says how a
+  document *arrived* and `encrypt()` is what asks for encryption. `encrypt()` on
+  a document assembled in memory still produces a file qpdf and MuPDF need the
+  password to open.
+
+- **Engine methods that could not take effect.** The writer above was written to
   only when a `SimplePdf` has no COS graph, which no path through `Document`
   produces, so `SimplePdf.set_watermark`, `sign`, `add_signature`, `hide_image`
   and `replace_image` did nothing at all through the public API. Worse,

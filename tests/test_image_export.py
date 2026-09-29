@@ -297,11 +297,20 @@ class TestResolveImageMeta:
 # End-to-end through a parsed document
 # ---------------------------------------------------------------------------
 def _rgb_pdf_roundtrip(rgb, w, h):
+    """One page drawing *rgb* as an image, saved and read back.
+
+    The samples go in through the authoring path, which is what puts an image
+    XObject in the document; ``images`` is what comes back *out* of one.
+    """
     pdf = SimplePdf()
     pdf.pages = [(0, 0, 612, 792)]
     pdf.page_contents = [b""]
-    pdf.images = {"Img0": rgb}
-    pdf._image_sizes = {"Img0": (w, h)}
+    pdf._ensure_cos()
+    pdf.add_image_to_page(
+        0, rgb, 0, 0, w, h,
+        pixel_width=w, pixel_height=h,
+        color_space="DeviceRGB", bits_per_component=8, name="Img0",
+    )
     return SimplePdf.from_bytes(pdf.to_bytes())
 
 

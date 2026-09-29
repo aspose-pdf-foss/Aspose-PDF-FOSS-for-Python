@@ -169,18 +169,19 @@ def test_merged_bookmarks_land_in_their_own_copy():
     assert PdfName("A") not in titles[b"goto undefined name"].mapping
 
 
-def test_the_writer_without_an_object_graph_leaves_a_page_less_bookmark_without_a_target():
-    from aspose_pdf.engine.simple_pdf import PdfWriterV0, SimplePdf
+def test_a_document_assembled_in_memory_leaves_a_page_less_bookmark_without_a_target():
+    # No object graph to start from, so saving builds one; a bookmark that names
+    # no page still gets no destination rather than being sent to page one.
+    from aspose_pdf.engine.simple_pdf import SimplePdf
 
     pdf = SimplePdf()
     pdf.pages = [(0, 0, 200, 200), (0, 0, 200, 200)]
     pdf.page_contents = [b"", b""]
     pdf.metadata = {}
-    pdf._cos_doc = None
     pdf._outlines_data = [
         {"title": "heading only", "page_index": None, "children": []},
         {"title": "second page", "page_index": 1, "children": []},
     ]
-    written = Document(io.BytesIO(PdfWriterV0(pdf).write()))
+    written = Document(io.BytesIO(pdf.to_bytes()))
 
     assert _landings(written) == [("heading only", None), ("second page", 1)]
