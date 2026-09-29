@@ -2217,12 +2217,18 @@ Boundaries:
   second per 100k pixels, so a 300 dpi A4 scan takes minutes. Install the
   `images` extra (Pillow/OpenJPEG) for anything larger than a thumbnail; the
   built-in decoder is what makes the default install *work*, not what makes it
-  fast. It also declines rather than guesses on the parts of ISO 15444-1 it
-  does not implement: packed packet headers (`PPM`/`PPT`) and non-zero `RGN`
-  styles each raise. Main-header and tile-header progression order changes
-  (`POC`) and Maxshift (`Srgn=0`) region-of-interest/component shifts are
-  decoded. Output is normalised to 8 bits per component, so a 12- or 16-bit
-  codestream is scaled down rather than returned at its own depth.
+  fast. Packed packet headers are read: a codestream may gather its packet
+  headers into a `PPT` segment in a tile header or a `PPM` segment in the main
+  header and leave only the bodies among the packets (ISO 15444-1 A.7.4, A.7.5),
+  which used to be refused outright. Segments are reassembled by their `Zppt` /
+  `Zppm` indices rather than the order they appear, and a `PPM` stream's `Nppm`
+  runs are handed to the tile-parts in *codestream* order, which is not the same
+  as tile-number order when tile-parts are interleaved. Main-header and
+  tile-header progression order changes (`POC`) and Maxshift (`Srgn=0`)
+  region-of-interest/component shifts are decoded. What is still declined is
+  declined loudly: a region of interest whose style is not Maxshift raises.
+  Output is normalised to 8 bits per component, so a 12- or 16-bit codestream is
+  scaled down rather than returned at its own depth.
 - Public-key encryption covers **RSA key-transport** and **EC key-agreement**
   recipients and opens PBKDF2/AES-wrap password recipients (`pwri`) and
   AES-wrap pre-shared-key recipients (`kekri`). DSA certificates and envelopes

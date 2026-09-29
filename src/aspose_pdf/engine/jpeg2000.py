@@ -21,9 +21,16 @@ Layout, in decoding order:
 * :func:`_inverse_dwt` -- the 5/3 reversible and 9/7 irreversible synthesis
   filters of Annex F.
 
-What it does not do is listed in :data:`_UNSUPPORTED`: those cases raise rather
-than return a plausible-looking image, because a wrong page is worse than a
-missing one.
+Packed packet headers (``PPM`` in the main header, ``PPT`` in a tile header,
+A.7.4 and A.7.5) are read too: a codestream may gather its packet headers
+together and leave only the bodies among the packets, and this used to refuse
+such a file outright.
+
+What it still declines it declines loudly -- a region of interest whose style is
+not Maxshift raises rather than returning a plausible-looking image, because a
+wrong page is worse than a missing one. Samples come out normalised to 8 bits
+per component, so a 12- or 16-bit codestream is scaled rather than returned at
+its own depth.
 """
 
 from __future__ import annotations
@@ -57,11 +64,6 @@ _SOP = 0xFF91
 _EPH = 0xFF92
 _SOD = 0xFF93
 _EOC = 0xFFD9
-
-_UNSUPPORTED = {
-    _PPM: "packed packet headers in the main header (PPM)",
-    _PPT: "packed packet headers in a tile header (PPT)",
-}
 
 _MAX_DECOMPOSITION_LEVELS = 32
 _MAX_COMPONENTS = 16
@@ -1091,6 +1093,9 @@ class Codestream:
     tile_qcd: dict[tuple[int, int], _Qcd]
     tile_rgn: dict[tuple[int, int], int]
     tile_pocs: dict[int, list[_Poc]]
+    #: The packed packet headers of each tile, gathered from ``PPM``/``PPT``.
+    #: Absent means the headers are in front of the packets, as they usually are.
+    tile_packed_headers: dict[int, bytes] = field(default_factory=dict)
 
     def coding_style(self, tile: int, component: int) -> _Cod:
         return (
@@ -1261,6 +1266,11 @@ def parse_codestream(data: bytes) -> Codestream:
     tile_qcd: dict[tuple[int, int], _Qcd] = {}
     tile_rgn: dict[tuple[int, int], int] = {}
     tile_pocs: dict[int, list[_Poc]] = {}
+    # PPM lives in the main header and PPT in a tile header; both are numbered,
+    # because either may be split across several segments (A.7.4, A.7.5).
+    ppm_chunks: dict[int, bytes] = {}
+    tile_ppt: dict[int, dict[int, bytes]] = {}
+    tile_part_order: list[int] = []
 
     while offset + 2 <= len(data):
         marker = _u16(data, offset)
@@ -1269,11 +1279,6 @@ def parse_codestream(data: bytes) -> Codestream:
             break
         if marker in (_SOC,):
             continue
-        if marker in _UNSUPPORTED:
-            raise Jpeg2000Error(
-                f"JPEG 2000 codestream uses {_UNSUPPORTED[marker]}, "
-                "which this decoder does not implement"
-            )
         length = _u16(data, offset)
         if length < 2:
             raise Jpeg2000Error("marker segment shorter than its length field")
@@ -1303,6 +1308,10 @@ def parse_codestream(data: bytes) -> Codestream:
             if siz is None:
                 raise Jpeg2000Error("POC before SIZ")
             pocs.extend(_parse_poc(segment, siz.components))
+        elif marker == _PPM:
+            if not segment:
+                raise Jpeg2000Error("empty PPM segment")
+            ppm_chunks[segment[0]] = segment[1:]
         elif marker == _SOT:
             if siz is None or cod is None or qcd is None:
                 raise Jpeg2000Error("a tile-part precedes the main header")
@@ -1317,6 +1326,8 @@ def parse_codestream(data: bytes) -> Codestream:
                 tile_qcd,
                 tile_rgn,
                 tile_pocs,
+                tile_ppt,
+                tile_part_order,
             )
             continue
         offset += length
@@ -1336,7 +1347,43 @@ def parse_codestream(data: bytes) -> Codestream:
         tile_qcd,
         tile_rgn,
         tile_pocs,
+        _packed_headers(ppm_chunks, tile_ppt, tile_part_order),
     )
+
+
+def _packed_headers(
+    ppm_chunks: dict[int, bytes],
+    tile_ppt: dict[int, dict[int, bytes]],
+    tile_part_order: list[int],
+) -> dict[int, bytes]:
+    """The packet headers each tile keeps outside its packets, by tile index.
+
+    ``PPT`` is per tile: its segments are numbered and concatenate into that
+    tile's headers. ``PPM`` is one stream in the main header, and it carries its
+    own division: an ``Nppm`` count then that many bytes, once per *tile-part* in
+    the order the tile-parts appear (A.7.4). So the stream is cut up first and
+    the pieces handed out in that order, which is why the order was recorded.
+    """
+    packed: dict[int, bytes] = {
+        tile: b"".join(chunks[key] for key in sorted(chunks))
+        for tile, chunks in tile_ppt.items()
+    }
+    if not ppm_chunks:
+        return packed
+    stream = b"".join(ppm_chunks[key] for key in sorted(ppm_chunks))
+    runs: list[bytes] = []
+    cursor = 0
+    while cursor + 4 <= len(stream):
+        length = _u32(stream, cursor)
+        cursor += 4
+        runs.append(stream[cursor : cursor + length])
+        cursor += length
+    for index, tile in enumerate(tile_part_order):
+        if index >= len(runs):
+            break
+        # A tile's headers are its tile-parts' runs, one after another.
+        packed[tile] = packed.get(tile, b"") + runs[index]
+    return packed
 
 
 def _parse_siz(segment: bytes) -> _Siz:
@@ -1381,9 +1428,12 @@ def _read_tile_part(
     tile_qcd: dict[tuple[int, int], _Qcd],
     tile_rgn: dict[tuple[int, int], int],
     tile_pocs: dict[int, list[_Poc]],
+    tile_ppt: dict[int, dict[int, bytes]],
+    tile_part_order: list[int],
 ) -> int:
     """Consume one SOT..SOD tile-part; return the offset just past its data."""
     tile_index = _u16(segment, 0)
+    tile_part_order.append(tile_index)
     psot = _u32(segment, 2)
     start = offset - 2  # the SOT marker itself
     cursor = offset + _u16(data, offset)
@@ -1392,11 +1442,6 @@ def _read_tile_part(
         if marker == _SOD:
             cursor += 2
             break
-        if marker in _UNSUPPORTED:
-            raise Jpeg2000Error(
-                f"JPEG 2000 tile header uses {_UNSUPPORTED[marker]}, "
-                "which this decoder does not implement"
-            )
         length = _u16(data, cursor + 2)
         body = data[cursor + 4 : cursor + 2 + length]
         if marker == _COD:
@@ -1416,6 +1461,10 @@ def _read_tile_part(
             tile_pocs.setdefault(tile_index, []).extend(
                 _parse_poc(body, siz.components)
             )
+        elif marker == _PPT:
+            if not body:
+                raise Jpeg2000Error("empty PPT segment")
+            tile_ppt.setdefault(tile_index, {})[body[0]] = body[1:]
         cursor += 2 + length
     end = start + psot if psot else len(data)
     end = min(end, len(data))
@@ -1678,10 +1727,23 @@ def _segment_lengths(
 
 
 def _decode_packets(
-    tile: _Tile, cod: _Cod, data: bytes, pocs: list[_Poc] | None = None
+    tile: _Tile,
+    cod: _Cod,
+    data: bytes,
+    pocs: list[_Poc] | None = None,
+    packed_headers: bytes | None = None,
 ) -> None:
-    """Walk every packet of *data*, filling each code-block's codeword segments."""
+    """Walk every packet of *data*, filling each code-block's codeword segments.
+
+    *packed_headers* is the ``PPM``/``PPT`` buffer when the codestream keeps its
+    packet headers there instead of in front of each packet's body (ISO 15444-1
+    A.7.4 and A.7.5). The bodies are in *data* either way, so the two are read
+    from separate places and the packet loop tracks a position in each.
+    """
     pos = 0
+    header_reader = (
+        _HeaderReader(packed_headers, 0) if packed_headers is not None else None
+    )
     for layer, r, component_index, precinct_index in _packet_sequence(
         tile, cod, pocs
     ):
@@ -1694,7 +1756,13 @@ def _decode_packets(
         if pos >= len(data):
             return
         pos = _decode_packet(
-            data, pos, resolution, precinct_index, layer, component.cod
+            data,
+            pos,
+            resolution,
+            precinct_index,
+            layer,
+            component.cod,
+            header_reader,
         )
 
 
@@ -1705,10 +1773,15 @@ def _decode_packet(
     precinct_index: int,
     layer: int,
     cod: _Cod,
+    header_reader: _HeaderReader | None = None,
 ) -> int:
     if cod.sop and data[pos : pos + 2] == b"\xff\x91":
         pos += 6
-    reader = _HeaderReader(data, pos)
+    # With packed headers the header is read from the buffer they were gathered
+    # into and the body still follows in the tile data, so where one ends says
+    # nothing about where the other begins.
+    packed = header_reader is not None
+    reader = header_reader if packed else _HeaderReader(data, pos)
     pending: list[tuple[_CodeBlock, int, int]] = []
     if reader.bit():
         for band in resolution.subbands:
@@ -1744,7 +1817,8 @@ def _decode_packet(
                 ):
                     pending.append((block, group, length))
     reader.align()
-    pos = reader.pos
+    if not packed:
+        pos = reader.pos
     if cod.eph and data[pos : pos + 2] == b"\xff\x92":
         pos += 2
     for block, group, length in pending:
@@ -1942,6 +2016,7 @@ def decode(data: bytes, *, limits: PdfLoadLimits | None = None) -> DecodedImage:
             cod,
             b"".join(parts),
             cs.progression_changes(tile_index),
+            cs.tile_packed_headers.get(tile_index),
         )
         samples = [
             _reconstruct_component(component, siz.depths[component.index])

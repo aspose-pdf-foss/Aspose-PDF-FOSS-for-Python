@@ -9,6 +9,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A JPEG 2000 codestream with packed packet headers did not decode.** A packet
+  normally carries its header in front of its body; it may instead gather every
+  header into a `PPT` segment in a tile header or a `PPM` segment in the main
+  header (ISO 15444-1 A.7.4, A.7.5), and the bundled decoder refused such a file
+  outright — so on a default install, without the `images` extra and its
+  OpenJPEG, the image was simply missing. Both are read now, with the segments
+  reassembled by their `Zppt`/`Zppm` indices and a `PPM` stream's `Nppm` runs
+  handed to the tile-parts in codestream order. The test fixtures were made by
+  moving a real codestream's packet headers, one packet at a time, and OpenJPEG
+  decodes every one of them to the same pixels as the original.
+
 - **A variable TrueType always drew its default master.** Variable CFF2 was
   instanced; `glyf` fonts, whose deltas live in `gvar`, were not read at all. A
   modern system font ships as one variable file rather than four static faces,
