@@ -19,6 +19,15 @@ empty outline (or an inert source) rather than raising.
 from __future__ import annotations
 
 import struct
+from collections.abc import Mapping
+from typing import Any
+
+from .font_variations import (
+    normalize_coordinates,
+    parse_fvar_axes,
+    sfnt_table,
+)
+from .gvar import GlyphVariations
 
 __all__ = ["TrueTypeOutlines"]
 
@@ -48,12 +57,29 @@ _CURVE_STEPS = 8
 
 # Guard against pathological / cyclic composite glyphs.
 _MAX_COMPONENT_DEPTH = 6
+#: However many components a composite glyph is allowed to name. Its gvar
+#: deltas are read up to this many, one per component.
+_MAX_COMPONENTS = 64
 
 
 class TrueTypeOutlines:
     """Decode glyph outlines from an embedded TrueType (``glyf``) program."""
 
-    def __init__(self, font_bytes: bytes):
+    def __init__(
+        self,
+        font_bytes: bytes,
+        *,
+        variation: Mapping[str, float] | None = None,
+    ):
+        """Decode a TrueType program, optionally at a variable-font *instance*.
+
+        *variation* names axis coordinates in user units -- ``{"wght": 700}`` --
+        for a font that carries ``fvar`` and ``gvar``. Without it, or for a font
+        that is not variable, the default instance is drawn. Asking a variable
+        font for Bold and getting its Regular back is what this used to do, and
+        a modern system font ships as one variable file rather than four static
+        ones, so it was what a substitute face usually did.
+        """
         self._data = bytes(font_bytes)
         self.units_per_em = 1000
         self.num_glyphs = 0
@@ -65,8 +91,12 @@ class TrueTypeOutlines:
         self._hmtx_len = 0
         self._cache: dict[int, list[Contour]] = {}
         self._ok = False
+        self.axes: list[dict[str, Any]] = []
+        self.coordinates: tuple[float, ...] = ()
+        self._variations: GlyphVariations | None = None
         try:
             self._parse_header()
+            self._parse_variations(variation)
         except (struct.error, IndexError, ValueError):
             self._ok = False
 
@@ -74,6 +104,20 @@ class TrueTypeOutlines:
     def ok(self) -> bool:
         """``True`` when a TrueType ``glyf`` program was parsed successfully."""
         return self._ok
+
+    def _parse_variations(self, variation: Mapping[str, float] | None) -> None:
+        """Read ``fvar``/``gvar`` and settle on the instance to draw."""
+        if not self._ok:
+            return
+        self.axes = parse_fvar_axes(self._data)
+        if not self.axes:
+            return
+        self.coordinates = normalize_coordinates(self.axes, variation, self._data)
+        if not any(self.coordinates):
+            return  # the default instance: the outlines as they are stored
+        table = sfnt_table(self._data, b"gvar")
+        variations = GlyphVariations(table, len(self.axes))
+        self._variations = variations if variations.ok else None
 
     # -- header -----------------------------------------------------------
 
@@ -190,10 +234,12 @@ class TrueTypeOutlines:
             return []
         num_contours = struct.unpack_from(">h", self._data, base)[0]
         if num_contours < 0:
-            return self._decode_composite(base + 10, limit, depth)
-        return self._decode_simple(base, num_contours)
+            return self._decode_composite(base + 10, limit, depth, gid)
+        return self._decode_simple(base, num_contours, gid)
 
-    def _decode_simple(self, base: int, num_contours: int) -> list[Contour]:
+    def _decode_simple(
+        self, base: int, num_contours: int, gid: int = -1
+    ) -> list[Contour]:
         data = self._data
         pos = base + 10
         end_pts: list[int] = []
@@ -244,6 +290,11 @@ class TrueTypeOutlines:
                 pos += 2
             ys.append(y)
 
+        moved = self._point_deltas(gid, num_points, end_pts, list(zip(xs, ys)))
+        if moved is not None:
+            xs = [x + dx for x, (dx, _dy) in zip(xs, moved)]
+            ys = [y + dy for y, (_dx, dy) in zip(ys, moved)]
+
         contours: list[Contour] = []
         start_idx = 0
         for end_idx in end_pts:
@@ -257,10 +308,57 @@ class TrueTypeOutlines:
                 contours.append(flat)
         return contours
 
-    def _decode_composite(self, pos: int, end: int, depth: int) -> list[Contour]:
-        data = self._data
+    def _point_deltas(
+        self,
+        gid: int,
+        point_count: int,
+        contour_ends: list[int] | None,
+        points: list[tuple[float, float]] | None,
+    ) -> list[tuple[float, float]] | None:
+        """How far each of this glyph's points moves for the chosen instance."""
+        if self._variations is None or gid < 0:
+            return None
+        return self._variations.deltas(
+            gid, point_count, self.coordinates, contour_ends, points
+        )
+
+    def _decode_composite(
+        self, pos: int, end: int, depth: int, gid: int = -1
+    ) -> list[Contour]:
+        components = self._read_components(pos, end)
+        if not components:
+            return []
+        # A composite's deltas move its components: one delta per component, in
+        # the order they appear, rather than one per point of the glyphs they are
+        # built from (OpenType, "gvar"). So they can only be read once the
+        # components have been counted, which is why they are collected first.
+        moves = self._point_deltas(gid, len(components), None, None)
+
         contours: list[Contour] = []
-        while pos + 4 <= end:
+        for index, (comp_gid, dx, dy, matrix) in enumerate(components):
+            a, b, c, d = matrix
+            if moves is not None and index < len(moves):
+                move_x, move_y = moves[index]
+                dx += move_x
+                dy += move_y
+            for contour in self._decode_glyph(comp_gid, depth + 1):
+                contours.append(
+                    [
+                        (a * px + c * py + dx, b * px + d * py + dy)
+                        for px, py in contour
+                    ]
+                )
+        return contours
+
+    def _read_components(
+        self, pos: int, end: int
+    ) -> list[tuple[int, float, float, tuple[float, float, float, float]]]:
+        """The component records of a composite glyph, in the order written."""
+        data = self._data
+        components: list[
+            tuple[int, float, float, tuple[float, float, float, float]]
+        ] = []
+        while pos + 4 <= end and len(components) < _MAX_COMPONENTS:
             flags, comp_gid = struct.unpack_from(">HH", data, pos)
             pos += 4
             if flags & _ARG_1_AND_2_ARE_WORDS:
@@ -289,18 +387,11 @@ class TrueTypeOutlines:
             # Point-matching (flag bit clear) is rare; treat as no offset.
             dx = float(arg1) if flags & _ARGS_ARE_XY_VALUES else 0.0
             dy = float(arg2) if flags & _ARGS_ARE_XY_VALUES else 0.0
-
-            for contour in self._decode_glyph(comp_gid, depth + 1):
-                contours.append(
-                    [
-                        (a * px + c * py + dx, b * px + d * py + dy)
-                        for px, py in contour
-                    ]
-                )
+            components.append((comp_gid, dx, dy, (a, b, c, d)))
 
             if not flags & _MORE_COMPONENTS:
                 break
-        return contours
+        return components
 
 
 def _flatten_contour(points: list[tuple[float, float, bool]]) -> Contour:

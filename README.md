@@ -108,8 +108,10 @@ flowchart TD
   directories you name, programs you supply, or the machine's own fonts. A composite font's CIDs
   are mapped to Unicode and on to a real face, so a PDF naming `SimSun` renders even where only
   `PingFang SC` is installed, instead of a row of glyph boxes. Advances still come from the PDF's
-  own `/Widths` / `/W`, so the substitute changes which glyphs are drawn, not where they sit. Off
-  by default, so rendering stays identical across machines unless you ask for it.
+  own `/Widths` / `/W`, so the substitute changes which glyphs are drawn, not where they sit. A
+  variable face — one file with a weight axis, which is how modern system fonts ship — is drawn at
+  the instance the style asks for, whether its outlines are CFF2 or `glyf`. Off by default, so
+  rendering stays identical across machines unless you ask for it.
 - `Document.layers` lists, creates, switches and removes optional content groups; rendering, text
   extraction, and graphics absorption all skip a hidden layer, the way a viewer does.
   `make_exclusive([...])` makes layers mutually exclusive (`/RBGroups`), so switching one on

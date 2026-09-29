@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A variable TrueType always drew its default master.** Variable CFF2 was
+  instanced; `glyf` fonts, whose deltas live in `gvar`, were not read at all. A
+  modern system font ships as one variable file rather than four static faces,
+  so a substitute asked for Bold came back Regular. New `engine/gvar.py` applies
+  the deltas -- scaled by each region's weight at the requested coordinates,
+  with the points a tuple omits inferred from their neighbours (OpenType's IUP)
+  and a composite's deltas moving its components -- and the axis machinery
+  `fvar`/`avar` now lives in `engine/font_variations.py`, shared with the CFF2
+  path. Checked against fontTools' instancer on eight combinations of real
+  variable fonts and axes: over 2 400 glyphs and 100 000 points, no contour
+  differed in structure and no coordinate by more than 1.5 font units, which is
+  fontTools' rounding and not a difference in the deltas.
+
 - **A Bézier stopped being a Bézier.** The interpreter turned every curve into
   twelve line segments and dropped the control points, which cost twice. The
   raster kept a fixed flat on each segment — a 250 pt circle was off by half a

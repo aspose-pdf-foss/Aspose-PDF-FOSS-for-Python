@@ -3012,7 +3012,10 @@ class _PageRasterizer:
         if face.is_cff:
             outlines = CffOutlines(face.data, variation=face.variation)
         else:
-            outlines = TrueTypeOutlines(face.data)
+            # A variable TrueType is the usual shape of a modern system font --
+            # one file with a weight axis rather than four static faces -- so a
+            # substitute asked for Bold used to come back Regular.
+            outlines = TrueTypeOutlines(face.data, variation=face.variation)
         return outlines if outlines.ok else None
 
     def _build_external_simple_font(
