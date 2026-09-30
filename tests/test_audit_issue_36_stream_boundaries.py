@@ -4,6 +4,12 @@ A wrong ``/Length`` used to raise, and with it the whole document failed to
 open; pdfium, MuPDF and qpdf read to the closing ``endstream`` instead, and so
 does this parser now -- still never past the stream's own keyword into a later
 object. The end-of-line before ``endstream`` is not data (ISO 32000-1 7.3.8.1).
+
+The one case left raising here was a stream with no ``endstream`` anywhere after
+it, which fails the document. Measured since: MuPDF reads such a file and takes
+the stream to the end of the input, byte for byte what this parser now returns,
+and a file merely cut off inside a stream loses every intact page before the cut
+if the document is refused. See ``test_truncated_stream_recovery.py``.
 """
 
 from __future__ import annotations
@@ -11,7 +17,6 @@ from __future__ import annotations
 import pytest
 
 from aspose_pdf.engine.pdf_parser_cos import PdfCosParser
-from aspose_pdf.exceptions import PdfParseException
 
 
 def _pdf_with_stream(*, inner_dict: bytes, payload: bytes) -> bytes:
@@ -55,15 +60,24 @@ def test_a_correct_length_is_trusted_past_an_endobj_in_the_data():
     assert doc.objects[1].content == payload
 
 
-def test_a_stream_with_no_endstream_is_still_an_error():
+def test_a_stream_with_no_endstream_runs_to_the_end_of_the_input():
+    """No closing keyword means the input ended inside the stream.
+
+    This used to raise and fail the document. MuPDF reads this very file and
+    returns exactly these bytes -- ``endobj``, the cross-reference section and
+    the trailer included, because nothing marks where the stream stopped. qpdf
+    refuses it, but over the missing catalog rather than the stream: object 1 is
+    the stream itself, so the fixture has no ``/Root`` to find.
+    """
     header = b"%PDF-1.7\n"
     obj = b"1 0 obj\n<< /Length 999 >>\nstream\nno keyword follows\nendobj\n"
     xref_pos = len(header) + len(obj)
     pdf = header + obj + b"xref\n0 2\n0000000000 65535 f \n%010d 00000 n \n" % len(header)
     pdf += b"trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF" % xref_pos
     doc = PdfCosParser(pdf).parse()
-    with pytest.raises(PdfParseException, match="endstream not found"):
-        _ = doc.objects[1]
+
+    stream_start = pdf.index(b"stream\n") + len(b"stream\n")
+    assert doc.objects[1].content == pdf[stream_start:]
 
 
 def test_stream_without_length_uses_rightmost_endstream_token():

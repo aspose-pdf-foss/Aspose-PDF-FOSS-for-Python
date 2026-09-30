@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A file cut off inside a stream failed to open at all.** Truncation is the
+  commonest damage a transfer does to a PDF, and a `/Length` that no longer
+  reaches `endstream` was already treated as damage to recover from -- but a
+  missing `endstream` raised `endstream not found for stream` and failed the
+  whole document, so a three-page file cut in its first content stream gave
+  nothing back although the page dictionary before the cut was intact. The
+  stream is now the bytes that are there, logged as such. qpdf and MuPDF both
+  read such a file; measured across cuts, the recovered page counts are qpdf's
+  and the per-page text is MuPDF's, and for the one synthetic case where the
+  stream is not at the end of the file our bytes are MuPDF's exactly. A cut
+  landing inside an *object* rather than a stream is still refused, which is
+  what qpdf and MuPDF do with it.
+
 - **`unpack_samples` was documented as discarding half of every 16-bit sample.**
   Its docstring said 16-bit "keeps the high byte"; the code returns the whole
   big-endian value, which is what its callers need -- a `/Mask` colour-key range

@@ -91,7 +91,13 @@ Supported:
   by the closing keyword: the first token-shaped `endstream` followed by
   `endobj`, or by the next object, `xref` or the end of the file where a writer
   left `endobj` out. Found that way, the end-of-line before the keyword is not
-  data.
+  data. Where there is no `endstream` anywhere after the stream the input ended
+  inside it, and the stream is the bytes that are there -- logged, and the same
+  remedy as a wrong `/Length`, which is what MuPDF returns for such a file byte
+  for byte. So a file cut off partway through keeps the pages before the cut:
+  the page counts match qpdf's and the text matches MuPDF's. A cut that lands
+  inside an *object* rather than a stream is still refused, as qpdf and MuPDF
+  refuse it.
 - **Hybrid-reference files** (ISO 32000-1 7.5.8.4) are read as the one revision
   they are: the trailer's `/XRefStm` cross-reference stream indexes the objects
   in object streams that the classic table, kept for PDF 1.4 readers, leaves

@@ -187,8 +187,12 @@ def _skip_pdf_whitespace_and_comments(data, pos: int, limit: int) -> int:
 _AFTER_ENDSTREAM = re.compile(rb"endobj|\d+\s+\d+\s+obj|xref|trailer|startxref")
 
 
-def _find_closing_endstream(data, stream_start: int) -> int:
+def _find_closing_endstream(data, stream_start: int) -> int | None:
     """Offset of the ``endstream`` that closes the stream starting at *stream_start*.
+
+    ``None`` when the input holds no such keyword at all, which means the file
+    was cut off inside this stream: there is no later object whose keyword could
+    be found instead, because the stream's own comes before any of theirs.
 
     Used when ``/Length`` cannot be trusted. The first token-shaped ``endstream``
     followed -- past white-space and comments -- by ``endobj`` closes it, or, where
@@ -205,7 +209,7 @@ def _find_closing_endstream(data, stream_start: int) -> int:
     while True:
         at = data.find(tok, pos)
         if at < 0:
-            raise PdfParseException("endstream not found for stream")
+            return None
         after = at + tlen
         before_ok = at == stream_start or data[at - 1] in _PDF_WS
         after_ok = after == n or data[after] in _PDF_WS or data[after] in b"()<>[]{}/%"
@@ -227,6 +231,12 @@ def _extract_stream_bytes(data, stream_start: int, declared_length: int | None) 
     the closing ``endstream``, as pdfium, MuPDF and qpdf do, where it used to
     fail the whole document. Found that way, the end-of-line before the keyword
     is left out: 7.3.8.1 says it is not part of the data.
+
+    When there is no ``endstream`` at all the file was cut off inside this
+    stream, and the stream is the bytes that are there. That is the same damage
+    as a wrong ``/Length``, differing only in how far the loss reached, so it
+    recovers the same way rather than failing the document: qpdf and MuPDF both
+    read such a file, and the pages before the cut come back whole.
     """
     tok, tlen = _ENDSTREAM_KW, len(_ENDSTREAM_KW)
     n = len(data)
@@ -240,6 +250,13 @@ def _extract_stream_bytes(data, stream_start: int, declared_length: int | None) 
             declared_length,
         )
     end_at = _find_closing_endstream(data, stream_start)
+    if end_at is None:
+        logger.warning(
+            "stream at byte %d is not closed by endstream; the input ends "
+            "inside it, so it is read to the end of the data",
+            stream_start,
+        )
+        return bytes(data[stream_start:n])
     if end_at > stream_start and data[end_at - 1] == 0x0A:
         end_at -= 2 if end_at - 1 > stream_start and data[end_at - 2] == 0x0D else 1
     elif end_at > stream_start and data[end_at - 1] == 0x0D:
