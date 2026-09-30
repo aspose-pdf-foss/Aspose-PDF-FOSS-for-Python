@@ -686,6 +686,16 @@ class PdfCosParser:
             self.trailer = trailer_dict
 
         xref_used = {num: off for num, off in all_xref.items() if off > 0}
+        if not xref_used and not self._compressed_objects:
+            # Nothing in the input is a PDF object: no xref entry survived and
+            # the reconstruction scan, which reads the whole file looking for
+            # "N G obj", found nothing either. There is no graph to hand back,
+            # and inventing one would let a caller act on a document that the
+            # file does not describe. qpdf, pdfium and MuPDF all refuse such a
+            # file; so do we.
+            raise PdfParseException(
+                "No PDF objects found in the input: it has a header but no body"
+            )
         self._budget.check_objects(len(xref_used) + len(self._compressed_objects))
         lazy_map = LazyPdfObjectStore(self, xref_used, dict(self._compressed_objects))
         doc.objects = lazy_map

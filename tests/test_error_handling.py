@@ -26,11 +26,18 @@ class TestMissingXrefRecovery:
     """Test recovery from missing xref table."""
 
     def test_pdf_without_xref_parses(self):
-        """PDF without xref should still parse with defaults."""
+        """PDF without xref should still parse: the scan recovers the object."""
         data = b"%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nendobj\n%%EOF"
         pdf = SimplePdf.from_bytes(data)
         assert pdf is not None
-        assert len(pdf.pages) >= 1
+        assert 1 in pdf._cos_doc.objects  # recovered without an xref
+
+        # The recovered object is a /Page, but no page tree reaches it, so the
+        # document has no pages. Grafting an orphan onto a page tree of our own
+        # making would be inventing the document's structure: qpdf and pdfium
+        # refuse this file outright and MuPDF, which repairs it, also reports
+        # no pages.
+        assert len(pdf.pages) == 0
 
     def test_corrupted_xref_recovers(self):
         """Corrupted xref should trigger recovery."""
@@ -39,8 +46,8 @@ class TestMissingXrefRecovery:
         try:
             pdf = SimplePdf.from_bytes(data)
             assert pdf is not None
-        except (ValueError, PdfParseError):
-            pass  # Also acceptable
+        except (ValueError, PdfParseError, PdfParseException):
+            pass  # Also acceptable: there is no object in it to recover
 
 
 class TestTruncatedPdfHandling:
@@ -53,16 +60,10 @@ class TestTruncatedPdfHandling:
             SimplePdf.from_bytes(data)
 
     def test_very_short_pdf_handled(self):
-        """Very short data should be handled appropriately."""
+        """A header and nothing else is refused, as every reference refuses it."""
         data = b"%PDF-1.7"
-        # Parser may raise error OR recover gracefully with defaults
-        try:
-            pdf = SimplePdf.from_bytes(data)
-            # If recovered, should have at least one page
-            assert pdf is not None
-            assert len(pdf.pages) >= 1
-        except (ValueError, PdfParseError):
-            pass  # Raising error is also acceptable
+        with pytest.raises((ValueError, PdfParseError, PdfParseException)):
+            SimplePdf.from_bytes(data)
 
 
 class TestRepairMethod:

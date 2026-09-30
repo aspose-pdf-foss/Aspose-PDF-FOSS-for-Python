@@ -2115,9 +2115,13 @@ class SimplePdf:
             pdf._cos_decrypt_key = extractor._stream_decrypt_key
             pdf._cos_decrypt_algorithm = extractor._stream_decrypt_algorithm
 
-        # Ensure at least one page
-        if not pdf.pages:
-            pdf.pages = [(0, 0, 612, 792)]
+        # No page is invented for a document whose page tree is empty or absent:
+        # it used to be given a blank Letter sheet here, so a caller was told the
+        # file had a page, rendered it and got a sheet the file never described.
+        # MuPDF reports 0 pages for such a file too, and ``repair()`` is where
+        # asking for a page to be added belongs.
+
+        # One content entry per page, for the pages there are.
         if not pdf.page_contents or len(pdf.page_contents) < len(pdf.pages):
             while len(pdf.page_contents) < len(pdf.pages):
                 pdf.page_contents.append(b"")
@@ -2272,9 +2276,6 @@ class SimplePdf:
                 pdf.encryption_algorithm = extractor._stream_decrypt_algorithm
                 pdf._cos_decrypt_key = extractor._stream_decrypt_key
                 pdf._cos_decrypt_algorithm = extractor._stream_decrypt_algorithm
-
-            if not pdf.pages:
-                pdf.pages = [(0, 0, 612, 792)]
 
             pdf._original_page_count = len(pdf.pages)
             pdf._original_metadata = dict(pdf.metadata)
@@ -2452,11 +2453,6 @@ class SimplePdf:
                 "SimplePdf.load_cos: could not inspect catalog /Pages: %s",
                 exc,
             )
-
-        # Add a synthetic blank page when COS loading cannot resolve the page tree.
-        if not pdf.pages:
-            pdf.pages = [(0, 0, 612, 792)]
-            pdf.page_contents = [b""]
 
         return pdf
 

@@ -150,10 +150,23 @@ def test_operations_raise_after_dispose():
         doc.load_from(b"%PDF-1.4 dummy")
 
 
+def _written_document(path):
+    """A real one-page document on disk, for the tests that load one.
+
+    These two used to load ``b"%PDF-1.4\n%EOF"`` -- a header and a comment,
+    with no PDF object in it, which the loader no longer accepts. Neither test
+    is about tolerating that, so each gets a document to work with.
+    """
+    doc = Document()
+    doc.pages.add()
+    doc.save(path)
+    doc.dispose()
+    return path
+
+
 def test_document_load_and_save(tmp_path):
-    src = tmp_path / "a.pdf"
+    src = _written_document(tmp_path / "a.pdf")
     out = tmp_path / "b.pdf"
-    src.write_bytes(b"%PDF-1.4\n%EOF")
 
     doc = Document()
     doc.load_from(src)
@@ -163,8 +176,7 @@ def test_document_load_and_save(tmp_path):
 
 
 def test_dispose_is_idempotent_full(tmp_path):
-    src = tmp_path / "a.pdf"
-    src.write_bytes(b"%PDF-1.4\n%EOF")
+    src = _written_document(tmp_path / "a.pdf")
 
     doc = Document()
     doc.load_from(src)

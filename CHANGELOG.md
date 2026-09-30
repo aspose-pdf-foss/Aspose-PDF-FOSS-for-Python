@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A document with no pages reported one page.** Six shapes of page-less input
+  -- a bare header, a header and `%%EOF`, a header followed by garbage, a header
+  with one object that is not a page, a catalog with no `/Pages`, and a
+  well-formed but empty page tree -- were each answered with `len(doc.pages) == 1`
+  and a blank Letter sheet invented on load, so a caller that checked the count
+  was told the file had a page and then rendered a sheet the file never
+  described. qpdf and pdfium refuse all six; MuPDF refuses the three with no PDF
+  object in them and reports 0 pages for the three that have a structure to
+  read. That split is the rule now: an input with no object in it raises
+  `PdfParseException`, and a document whose page tree is empty or absent reports
+  no pages -- it still opens, saves (qpdf and MuPDF read 0 pages from what we
+  write), encrypts and can be authored into, `validate()` rejects it, and
+  `repair()` is where a page gets added. `SimplePdf.from_bytes_safe`, the
+  tolerant loader, repairs as before.
+
 - **A JPEG 2000 codestream with packed packet headers did not decode.** A packet
   normally carries its header in front of its body; it may instead gather every
   header into a `PPT` segment in a tile header or a `PPM` segment in the main

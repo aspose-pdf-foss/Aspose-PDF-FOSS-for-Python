@@ -187,6 +187,14 @@ Supported:
   makes it null) and does not fail validation. `repair()` reconciles the page
   tree with the model, so a document salvaged from a truncated file writes the
   pages it claims to have.
+- **A document with no pages has no pages.** A file whose page tree is empty or
+  absent opens and reports `0` pages: it saves, encrypts and can be authored
+  into, `validate()` rejects it, and `repair()` is what adds a page to it. No
+  blank sheet is invented on load, which used to make such a file report one
+  page and render a sheet it never described. An input with a PDF header but no
+  PDF object in it -- nothing for the reconstruction scan to find -- raises
+  `PdfParseException`; `SimplePdf.from_bytes_safe` remains the tolerant loader
+  that repairs instead.
 - Open documents in streaming/lazy mode and decode page content on demand.
 - **A streamed document reads and edits like any other, and stays lazy doing
   it.** `extract_text` on a page or the whole document decodes one page at a
