@@ -158,15 +158,25 @@ def test_sub_byte_depths_work_interlaced(depth):
     assert plain.decoded_data == woven.decoded_data
 
 
-def test_16_bit_keeps_the_high_byte():
+def test_16_bit_is_rescaled_not_shifted():
+    """A 16-bit sample is rescaled onto 0..255, not cut down to its high byte.
+
+    ISO 15948 10.4 gives both: the rounded linear rescale as the most accurate
+    way to reduce a sample's depth, and dropping the low byte as the faster,
+    slightly less accurate one for display. These samples are stored in the
+    document, so the accurate rule applies -- and it is the one the image
+    exporter uses for the same conversion, which the shift was not.
+    """
     def sample(x, y):
         return [(x * 4097) % 65536, (y * 8193) % 65536, 0x1234]
 
     image = _decode(_png(_W, _H, 2, 16, sample))
-    expected = bytes(
-        (v >> 8) & 0xFF for y in range(_H) for x in range(_W) for v in sample(x, y)
+    values = [v for y in range(_H) for x in range(_W) for v in sample(x, y)]
+    assert image.decoded_data == bytes(
+        (v * 255 + 32767) // 65535 for v in values
     )
-    assert image.decoded_data == expected
+    # The two rules really do differ on this data.
+    assert image.decoded_data != bytes((v >> 8) & 0xFF for v in values)
 
 
 def test_16_bit_grayscale_interlaced():

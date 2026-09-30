@@ -14,6 +14,7 @@ from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 from .agl import encode_with_base_encoding, unencodable_characters
 from .cos import format_pdf_number
 from .filters import StreamDecoder
+from .image_resample import sample_to_byte
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8"
@@ -424,9 +425,9 @@ def _prepare_png(data: bytes, budget: _LoadBudget) -> AuthoredImage:
     """Decode a PNG to 8-bit samples for embedding.
 
     ``_decode_png`` already normalises every allowed bit depth to 8 bits per
-    sample (16-bit keeps the high byte, sub-byte depths are scaled, palette
-    indices are left as indices) and reassembles Adam7 passes, so the colour
-    type is all that is left to map.
+    sample (rescaled by ``image_resample.sample_to_byte``, the one rule the
+    library uses for this; palette indices are left as indices) and reassembles
+    Adam7 passes, so the colour type is all that is left to map.
     """
     width, height, _bit_depth, color_type, pixels, alpha = _decode_png(data, budget)
     if color_type == 0:
@@ -583,18 +584,21 @@ def _unpack_png_row(
     count = pixels * channels
     if bit_depth == 8:
         return list(row[:count])
-    if bit_depth == 16:
-        # Keep the high byte; PDF images here are 8 bits per component.
-        return [row[i * 2] for i in range(count)]
     mask = (1 << bit_depth) - 1
-    maxval = mask
+    if bit_depth == 16:
+        # PDF images here are 8 bits per component, so a 16-bit sample is
+        # rescaled -- the whole value, not its high byte, which is the faster
+        # approximation ISO 15948 10.4 offers for display and which gave this
+        # path a different answer from the one the image exporter gave.
+        values = [row[i * 2] << 8 | row[i * 2 + 1] for i in range(count)]
+        return [sample_to_byte(v, mask) for v in values] if scale else values
     out: list[int] = []
     for index in range(count):
         bit = index * bit_depth
         byte = row[bit >> 3]
         shift = 8 - bit_depth - (bit & 7)
         value = (byte >> shift) & mask
-        out.append(value * 255 // maxval if scale else value)
+        out.append(sample_to_byte(value, mask) if scale else value)
     return out
 
 

@@ -156,31 +156,49 @@ class TestColorConversion:
         ]
 
     def test_to_8bpc_16bit_rescales_the_full_range(self):
-        # 0x1234 lands on 0x12 either way, which is why this used to be read as
-        # "keeps the high byte". These values tell the two rules apart: rescaling
-        # gives 0 and 1, the high byte would give 1 and 2.
+        # 0x1234 lands on 0x12 under every candidate rule, which is why this used
+        # to be read as "keeps the high byte".
         assert ie.to_8bpc_bytes(bytes([0x12, 0x34]), 16, 1, 1, 1) == bytes([0x12])
-        assert ie.to_8bpc_bytes(bytes([0x01, 0x00, 0x02, 0x00]), 16, 2, 1, 1) == bytes(
-            [0, 1]
-        )
         # The ends of the range are fixed points.
         assert ie.to_8bpc_bytes(bytes([0x00, 0x00, 0xFF, 0xFF]), 16, 2, 1, 1) == bytes(
             [0, 255]
         )
 
-    def test_the_16_bit_rule_is_pdfiums_and_differs_from_mupdfs_by_one_step(self):
-        # Measured over all 65536 values, on a 256x256 16-bit DeviceGray image:
-        # MuPDF answers ``v >> 8`` exactly, in its renderer and in its own image
-        # extraction alike; pdfium answers this rescale, bar 8 values where its
-        # float arithmetic lands a step away. Our renderer and this export agree
-        # with pdfium on every value. The rules differ by at most 1/255 and
-        # neither is the rounded value, so the divergence is recorded, not fixed.
-        raw = b"".join(
-            bytes([value >> 8, value & 0xFF]) for value in (0x0100, 0x0200, 0x8000)
-        )
-        assert ie.to_8bpc_bytes(raw, 16, 3, 1, 1) == bytes([0, 1, 127])
-        mupdf_would_say = bytes([0x0100 >> 8, 0x0200 >> 8, 0x8000 >> 8])
-        assert mupdf_would_say == bytes([1, 2, 128])
+    def test_the_16_bit_rule_is_the_rounded_rescale(self):
+        """One rule, the accurate one, and these two values separate all three.
+
+        ISO 15948 10.4 names the rounded linear rescale the most accurate way to
+        reduce a sample's depth, and both shortcuts -- truncating the division
+        (pdfium) and dropping the low byte (MuPDF) -- slightly less accurate but
+        faster, which is a trade for a screen and not for samples that get
+        stored. Measured over all 65536 values on a 16-bit greyscale image, our
+        export and our renderer are the rounded value everywhere; pdfium's
+        truncation differs on 32640 of them and MuPDF's shift on 16256, always
+        by exactly 1/255.
+        """
+        raw = b"".join(bytes([v >> 8, v & 0xFF]) for v in (0x0100, 0xFF00))
+        assert ie.to_8bpc_bytes(raw, 16, 2, 1, 1) == bytes([1, 254])
+        assert bytes([(0x0100 * 255) // 65535, (0xFF00 * 255) // 65535]) == bytes(
+            [0, 254]
+        )  # pdfium truncates
+        assert bytes([0x0100 >> 8, 0xFF00 >> 8]) == bytes([1, 255])  # MuPDF shifts
+
+    def test_every_path_that_reduces_a_depth_uses_that_one_rule(self):
+        """The reason for the change: the library used to give three answers.
+
+        A 16-bit sample coming in from a PNG was shifted down, the same sample
+        going out to one was truncated down, and a JPEG 2000 codestream's was
+        rounded. Same question, three answers, differing by a step.
+        """
+        from aspose_pdf.engine.content_authoring import _unpack_png_row
+        from aspose_pdf.engine.image_resample import sample_to_byte
+
+        for value in (0x0000, 0x0100, 0x7FFF, 0x8000, 0xFF00, 0xFFFF):
+            row = bytes([value >> 8, value & 0xFF])
+            png_in = _unpack_png_row(row, 1, 1, 16, scale=True)[0]
+            export_out = ie.to_8bpc_bytes(row, 16, 1, 1, 1)[0]
+            jpeg2000 = int(value * (255.0 / 65535) + 0.5)
+            assert png_in == export_out == jpeg2000 == sample_to_byte(value, 65535)
 
 
 # ---------------------------------------------------------------------------
@@ -409,9 +427,9 @@ class TestEndToEnd:
 
     def test_a_16_bit_image_exports_at_its_rescaled_values(self, tmp_path):
         # The authoring path takes 8-bit samples only, so the document is built
-        # by hand. 0x0100 and 0x0200 are the values that tell the rescale apart
-        # from the high byte; the ends of the range are fixed points.
-        values = (0x0000, 0x0100, 0x0200, 0xFFFF)
+        # by hand. 0x0100 separates the rescale from pdfium's truncation and
+        # 0xFF00 from MuPDF's shift; the ends of the range are fixed points.
+        values = (0x0000, 0x0100, 0xFF00, 0xFFFF)
         samples = b"".join(bytes([v >> 8, v & 0xFF]) for v in values)
         pdf = SimplePdf.from_bytes(_grey16_pdf(samples, len(values)))
 
@@ -419,7 +437,7 @@ class TestEndToEnd:
         out = pdf.save_image("Im0", tmp_path / "grey16.png")
         info = parse_png(out.read_bytes())
         assert (info["width"], info["height"], info["color_type"]) == (4, 1, 0)
-        assert info["raw"][1:] == bytes([0, 0, 1, 255])
+        assert info["raw"][1:] == bytes([0, 1, 254, 255])
 
     def test_save_image_unknown_name_raises(self):
         pdf = SimplePdf()

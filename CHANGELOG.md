@@ -9,6 +9,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **One 16-bit sample got three different 8-bit values depending on which path
+  reduced it.** Coming in from a PNG it was shifted down to its high byte, going
+  out to one it was truncated (`value * 255 // 65535`), and inside a JPEG 2000
+  codestream it was rounded -- the same question answered three ways, each a
+  step from the others, so the same pixel embedded and then exported did not
+  come back as itself. There is one rule now, in `engine/image_resample`: the
+  rounded linear rescale, which ISO 15948 (PNG) 10.4 calls the most accurate way
+  to reduce a sample's depth, against the shortcuts it calls "slightly less
+  accurate" but faster -- a trade worth making for a screen, not for samples
+  stored in a document or written to a file the caller keeps. Nothing changes at
+  1, 2, 4 or 8 bits, where the rescale is exact, and an 8-bit value widened to
+  16 the correct way (`value * 257`) still comes back unchanged. A 16-bit image
+  can now read 1/255 away from pdfium (which truncates) or MuPDF (which shifts),
+  which is less than either of them is from the true value; the shift also
+  flattened every value from `0xFF00` up onto 255, losing the top of the range.
+
 - **A file cut off inside a stream failed to open at all.** Truncation is the
   commonest damage a transfer does to a PDF, and a `/Length` that no longer
   reaches `endstream` was already treated as damage to recover from -- but a

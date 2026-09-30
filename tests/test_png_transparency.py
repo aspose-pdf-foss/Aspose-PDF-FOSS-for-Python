@@ -121,8 +121,11 @@ def test_a_palette_trns_gives_each_entry_its_opacity():
     [
         (8, 0, struct.pack(">H", 128), b"\x80", b"\x1e", (30, 30, 30)),
         (8, 2, struct.pack(">HHH", 0, 0, 255), b"\x00\x00\xff", b"\x00\xb4\x00", (0, 180, 0)),
-        # Same high byte as the key, different low byte: not transparent.
-        (16, 0, struct.pack(">H", 0x1234), b"\x12\x34", b"\x12\xff", (18, 18, 18)),
+        # Same high byte as the key, different low byte: not transparent. The
+        # opaque sample 0x12FF rescales to 19 while the key 0x1234 would rescale
+        # to 18, so the two are told apart by value as well as by opacity; under
+        # the old high-byte rule both landed on 18.
+        (16, 0, struct.pack(">H", 0x1234), b"\x12\x34", b"\x12\xff", (19, 19, 19)),
     ],
     ids=["grey-8", "rgb-8", "grey-16"],
 )

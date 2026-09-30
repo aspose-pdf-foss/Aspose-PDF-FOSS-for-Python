@@ -30,6 +30,8 @@ from typing import Any
 from aspose_pdf.exceptions import PdfResourceLimitException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
+from .image_resample import samples_to_bytes
+
 try:  # optional, mirrors engine/jpx.py
     import io as _io
 
@@ -353,18 +355,15 @@ def unpack_samples(
 def _scale_to_byte(values: list[int], bpc: int) -> bytes:
     """Rescale samples of *bpc* bits onto the full 0..255 range.
 
-    Exact for 1, 2 and 4 bits, where 255 is a whole multiple of the maximum.
-    For 16 bits it is a real division, and there the references part company:
-    this is pdfium's answer, while MuPDF takes the high byte instead, which is
-    one step higher over half the range. The two differ by at most 1/255 and
-    neither is the rounded value; ours is kept because it is pdfium's and
-    because it is what the renderer and the image export here already agree on.
+    One rule for the whole library, stated in ``image_resample``: it used to
+    truncate the division here, which is pdfium's answer but a step below the
+    true value over half the range, and a different answer from the one the PNG
+    input path gave the same sample.
 
     There is no 8-bit branch: the one caller returns the bytes untouched before
-    reaching here, and the formula is the identity at that depth in any case.
+    reaching here, and the rescale is the identity at that depth in any case.
     """
-    maxv = (1 << bpc) - 1
-    return bytes(((v * 255) // maxv) & 0xFF for v in values)
+    return samples_to_bytes(values, (1 << bpc) - 1)
 
 
 def to_8bpc_bytes(

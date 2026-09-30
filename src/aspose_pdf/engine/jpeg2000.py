@@ -2098,7 +2098,13 @@ def _place_component(
 def _to_samples(
     planes: list[list[float]], siz: _Siz, width: int, height: int
 ) -> DecodedImage:
-    """DC level shift, clamp, scale to 8 bits and interleave."""
+    """DC level shift, clamp, scale to 8 bits and interleave.
+
+    The scale is the rounded linear rescale that ``image_resample`` states for
+    the whole library, kept in floating point here because the wavelet output is
+    fractional and rounding that is closer than rounding an integer of it. It
+    agrees with the integer form on every value of every depth from 9 to 16.
+    """
     count = len(planes)
     out = bytearray(width * height * count)
     for index, plane in enumerate(planes):

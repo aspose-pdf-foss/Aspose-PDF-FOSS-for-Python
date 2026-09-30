@@ -420,11 +420,8 @@ Boundaries:
   `DeviceRGB`), **Lab**, **Separation**, **DeviceN** and other non-device spaces
   are converted through the same conversion the renderer and the image
   exporter use, so all three produce the same pixels, **1/2/4/16-bit** samples are
-  normalised to 8 -- 1, 2 and 4 bits exactly, 16 bits by rescaling the full
-  range, which is pdfium's answer to within its own float rounding; MuPDF takes
-  the high byte instead, one step higher over half the range, so expect a
-  difference of up to 1/255 against it on a 16-bit image -- and a **CCITT**,
-  **JBIG2** or **JPEG 2000** payload is
+  normalised to 8 by the one rescale the library uses everywhere (below), and a
+  **CCITT**, **JBIG2** or **JPEG 2000** payload is
   decoded like any other filter. A **stencil** (`/ImageMask`) is a shape rather
   than a picture, so it is only ever downscaled -- coverage averaged per
   destination cell and thresholded back to one bit, re-packed and Flate-encoded
@@ -1507,6 +1504,21 @@ Boundaries:
 
 Supported:
 
+- **One rule brings a sample of any depth onto 0..255.** The rounded linear
+  rescale, `round(value * 255 / (2**depth - 1))`, which ISO 15948 (PNG) 10.4
+  calls the most accurate way to reduce a sample's depth; the shortcuts it also
+  offers -- dropping the low bits, or truncating the division -- are "slightly
+  less accurate" and faster, a trade for a screen rather than for samples that
+  get stored in a document or written to a file. Exact at 1, 2, 4 and 8 bits,
+  where 255 is a whole multiple of the maximum, so only 16-bit images and
+  JPEG 2000's odd depths are affected at all, and an 8-bit value widened to 16
+  the correct way (`value * 257`) comes back unchanged. pdfium truncates and
+  MuPDF shifts, so a 16-bit image can read 1/255 away from either of them --
+  less than each of them is from the true value. This used to be three rules:
+  a 16-bit PNG sample was shifted on the way in, truncated on the way out, and
+  rounded inside a JPEG 2000 codestream, so the same pixel got different answers
+  depending on which door it came through, and the shift additionally flattened
+  every value from `0xFF00` up onto 255.
 - Extract image XObjects from parsed PDFs.
 - Place raw 8-bit DeviceGray/DeviceRGB/DeviceCMYK images, JPEG images, and
   PNG images on pages as image XObjects, at any allowed bit depth and with or
@@ -1623,9 +1635,9 @@ Boundaries:
 - `Page.add_image()` accepts raw samples, JPEG, and **PNG** at every bit depth
   and colour type ISO 15948 allows — 1/2/4/8/16 bits, greyscale, truecolour,
   palette and their alpha forms — progressive or **Adam7 interlaced**. Samples
-  are normalised to 8 bits (16-bit keeps the high byte, sub-byte greyscale is
-  scaled, palette indices are looked up rather than scaled) and an alpha
-  channel is dropped.
+  are normalised to 8 bits by the same rescale as everything else (below;
+  palette indices are looked up rather than scaled) and an alpha channel is
+  dropped.
   PNG input bytes, dimensions, filtered output, compression ratio, and working
   memory are bounded before large decode allocations. The JPEG encoder has
   optimized Huffman tables and baseline or progressive output; baseline RGB
@@ -2245,8 +2257,9 @@ Boundaries:
   tile-header progression order changes (`POC`) and Maxshift (`Srgn=0`)
   region-of-interest/component shifts are decoded. What is still declined is
   declined loudly: a region of interest whose style is not Maxshift raises.
-  Output is normalised to 8 bits per component, so a 12- or 16-bit codestream is
-  scaled down rather than returned at its own depth.
+  Output is normalised to 8 bits per component by the same rescale as every
+  other depth reduction, so a 12- or 16-bit codestream is scaled down rather
+  than returned at its own depth.
 - Public-key encryption covers **RSA key-transport** and **EC key-agreement**
   recipients and opens PBKDF2/AES-wrap password recipients (`pwri`) and
   AES-wrap pre-shared-key recipients (`kekri`). DSA certificates and envelopes
