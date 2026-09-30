@@ -414,7 +414,11 @@ Boundaries:
   `DeviceRGB`), **Lab**, **Separation**, **DeviceN** and other non-device spaces
   are converted through the same conversion the renderer and the image
   exporter use, so all three produce the same pixels, **1/2/4/16-bit** samples are
-  normalised to 8, and a **CCITT**, **JBIG2** or **JPEG 2000** payload is
+  normalised to 8 -- 1, 2 and 4 bits exactly, 16 bits by rescaling the full
+  range, which is pdfium's answer to within its own float rounding; MuPDF takes
+  the high byte instead, one step higher over half the range, so expect a
+  difference of up to 1/255 against it on a 16-bit image -- and a **CCITT**,
+  **JBIG2** or **JPEG 2000** payload is
   decoded like any other filter. A **stencil** (`/ImageMask`) is a shape rather
   than a picture, so it is only ever downscaled -- coverage averaged per
   destination cell and thresholded back to one bit, re-packed and Flate-encoded

@@ -145,9 +145,42 @@ class TestColorConversion:
         vals = ie.unpack_samples(bytes([0b10100000]), 1, 3, 1, 1)
         assert vals == [1, 0, 1]
 
-    def test_to_8bpc_16bit_keeps_high_byte(self):
-        # one 16-bit sample 0x1234 -> high byte 0x12
+    def test_unpack_16bit_returns_the_whole_value(self):
+        # Not the high byte, which is what the docstring used to claim and what
+        # the test below used to check on a value where the two agree. Callers
+        # need the full depth: a /Mask colour-key range is given in the image's
+        # own component range, so a 16-bit image's range runs to 65535.
+        assert ie.unpack_samples(bytes([0x12, 0x34, 0xAB, 0xCD]), 16, 2, 1, 1) == [
+            0x1234,
+            0xABCD,
+        ]
+
+    def test_to_8bpc_16bit_rescales_the_full_range(self):
+        # 0x1234 lands on 0x12 either way, which is why this used to be read as
+        # "keeps the high byte". These values tell the two rules apart: rescaling
+        # gives 0 and 1, the high byte would give 1 and 2.
         assert ie.to_8bpc_bytes(bytes([0x12, 0x34]), 16, 1, 1, 1) == bytes([0x12])
+        assert ie.to_8bpc_bytes(bytes([0x01, 0x00, 0x02, 0x00]), 16, 2, 1, 1) == bytes(
+            [0, 1]
+        )
+        # The ends of the range are fixed points.
+        assert ie.to_8bpc_bytes(bytes([0x00, 0x00, 0xFF, 0xFF]), 16, 2, 1, 1) == bytes(
+            [0, 255]
+        )
+
+    def test_the_16_bit_rule_is_pdfiums_and_differs_from_mupdfs_by_one_step(self):
+        # Measured over all 65536 values, on a 256x256 16-bit DeviceGray image:
+        # MuPDF answers ``v >> 8`` exactly, in its renderer and in its own image
+        # extraction alike; pdfium answers this rescale, bar 8 values where its
+        # float arithmetic lands a step away. Our renderer and this export agree
+        # with pdfium on every value. The rules differ by at most 1/255 and
+        # neither is the rounded value, so the divergence is recorded, not fixed.
+        raw = b"".join(
+            bytes([value >> 8, value & 0xFF]) for value in (0x0100, 0x0200, 0x8000)
+        )
+        assert ie.to_8bpc_bytes(raw, 16, 3, 1, 1) == bytes([0, 1, 127])
+        mupdf_would_say = bytes([0x0100 >> 8, 0x0200 >> 8, 0x8000 >> 8])
+        assert mupdf_would_say == bytes([1, 2, 128])
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +347,33 @@ def _rgb_pdf_roundtrip(rgb, w, h):
     return SimplePdf.from_bytes(pdf.to_bytes())
 
 
+def _grey16_pdf(samples: bytes, width: int) -> bytes:
+    """A one-page document holding a ``width``x1 16-bit DeviceGray image."""
+    bodies = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d 1] /Resources "
+        b"<< /XObject << /Im0 4 0 R >> >> >>" % width,
+        b"<< /Type /XObject /Subtype /Image /Width %d /Height 1 /ColorSpace "
+        b"/DeviceGray /BitsPerComponent 16 /Length %d >>\nstream\n%s\nendstream"
+        % (width, len(samples), samples),
+    ]
+    out = bytearray(b"%PDF-1.7\n")
+    offsets = []
+    for number, body in enumerate(bodies, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    start = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(bodies) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(bodies) + 1,
+        start,
+    )
+    return bytes(out)
+
+
 class TestEndToEnd:
     def test_save_image_reconstructs_png(self, tmp_path):
         rgb = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 9, 9, 9])
@@ -346,6 +406,20 @@ class TestEndToEnd:
         sig = b"\x89PNG\r\n\x1a\n"
         out = ImagePlacement("x", sig).save(tmp_path / "out.png")
         assert out.read_bytes() == sig
+
+    def test_a_16_bit_image_exports_at_its_rescaled_values(self, tmp_path):
+        # The authoring path takes 8-bit samples only, so the document is built
+        # by hand. 0x0100 and 0x0200 are the values that tell the rescale apart
+        # from the high byte; the ends of the range are fixed points.
+        values = (0x0000, 0x0100, 0x0200, 0xFFFF)
+        samples = b"".join(bytes([v >> 8, v & 0xFF]) for v in values)
+        pdf = SimplePdf.from_bytes(_grey16_pdf(samples, len(values)))
+
+        assert pdf._image_meta["Im0"]["bpc"] == 16
+        out = pdf.save_image("Im0", tmp_path / "grey16.png")
+        info = parse_png(out.read_bytes())
+        assert (info["width"], info["height"], info["color_type"]) == (4, 1, 0)
+        assert info["raw"][1:] == bytes([0, 0, 1, 255])
 
     def test_save_image_unknown_name_raises(self):
         pdf = SimplePdf()

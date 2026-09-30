@@ -302,8 +302,12 @@ def unpack_samples(
 ) -> list[int]:
     """Return ``width*height*comps`` integer samples, removing per-row padding.
 
-    Handles sub-byte bit depths (1/2/4), 8-bit (fast path), and 16-bit (keeps the
-    high byte). Values are the raw component values (not scaled).
+    Handles sub-byte bit depths (1/2/4), 8-bit (fast path) and 16-bit. Values are
+    the raw component values, unscaled and at their full depth: a 16-bit sample
+    is the whole big-endian value, ``0..65535``, not its high byte. Callers need
+    it that way -- a ``/Mask`` colour-key range is expressed in the image's own
+    component range, and scaling to 8 bits is ``to_8bpc_bytes``' job. A row
+    shorter than the image is padded with zeroes.
     """
     samples_per_row = width * comps
     if bpc == 8:
@@ -347,8 +351,18 @@ def unpack_samples(
 
 
 def _scale_to_byte(values: list[int], bpc: int) -> bytes:
-    if bpc == 8:
-        return bytes(v & 0xFF for v in values)
+    """Rescale samples of *bpc* bits onto the full 0..255 range.
+
+    Exact for 1, 2 and 4 bits, where 255 is a whole multiple of the maximum.
+    For 16 bits it is a real division, and there the references part company:
+    this is pdfium's answer, while MuPDF takes the high byte instead, which is
+    one step higher over half the range. The two differ by at most 1/255 and
+    neither is the rounded value; ours is kept because it is pdfium's and
+    because it is what the renderer and the image export here already agree on.
+
+    There is no 8-bit branch: the one caller returns the bytes untouched before
+    reaching here, and the formula is the identity at that depth in any case.
+    """
     maxv = (1 << bpc) - 1
     return bytes(((v * 255) // maxv) & 0xFF for v in values)
 

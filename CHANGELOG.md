@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`unpack_samples` was documented as discarding half of every 16-bit sample.**
+  Its docstring said 16-bit "keeps the high byte"; the code returns the whole
+  big-endian value, which is what its callers need -- a `/Mask` colour-key range
+  is expressed in the image's own component range, and the conversion to 8 bits
+  is `to_8bpc_bytes`' job. The test that was meant to pin this asserted the high
+  byte on `0x1234`, a value where both rules give `0x12`, so it passed either
+  way; it now uses values that tell them apart. Measured over all 65536 values
+  on a 16-bit greyscale image, our renderer and image export agree with pdfium
+  exactly (bar 8 values where pdfium's float arithmetic lands a step away),
+  while MuPDF answers `v >> 8` throughout -- one step higher over half the
+  range. The rules differ by at most 1/255 and neither is the rounded value, so
+  the divergence is documented rather than changed.
+
 - **A document with no pages reported one page.** Six shapes of page-less input
   -- a bare header, a header and `%%EOF`, a header followed by garbage, a header
   with one object that is not a page, a catalog with no `/Pages`, and a
