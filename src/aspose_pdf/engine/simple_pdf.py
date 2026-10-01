@@ -1839,6 +1839,74 @@ class SimplePdf:
             return None
         return ordered
 
+    def _register_replacing(self, existing: Any, obj: Any):
+        """Register *obj*, taking over *existing*'s object number if it has one.
+
+        A catalog entry that is rewritten -- the XMP metadata stream, the output
+        intent, its array -- used to be registered as a *new* object each time
+        and the catalog pointed at that, leaving the one before it in the file
+        with nothing referring to it. Converting a document to PDF/A twice left
+        two XMP packets and two ICC profiles behind, a third conversion three,
+        and the file grew by about a kilobyte each time for nothing. Taking the
+        number over replaces the object where it stands.
+
+        Only entries the catalog owns are replaced this way. A stream that other
+        objects may also point at -- an ICC profile, which a page's
+        ``/ICCBased`` colour space could share -- is not: there the caller keeps
+        what is already there when it holds the right bytes.
+        """
+        if isinstance(existing, PdfIndirectReference):
+            number = existing.object_number
+            if number in self._cos_doc.objects:
+                obj._obj_number = number
+        return self._cos_doc.register_object(obj)
+
+    def _existing_output_intent(self, intents_ref: Any):
+        """The first ``/OutputIntents`` entry and its profile, as references.
+
+        ``(None, None)`` when the catalog has no usable array, which is the
+        first conversion of a document.
+        """
+        array = self._resolve(intents_ref)
+        if not isinstance(array, PdfArray) or not array.items:
+            return None, None
+        intent_ref = array.items[0]
+        intent = self._resolve(intent_ref)
+        if not isinstance(intent, PdfDictionary):
+            return intent_ref, None
+        return intent_ref, intent.mapping.get(PdfName("DestOutputProfile"))
+
+    def _keep_or_register_profile(self, profile_ref: Any, icc_bytes: bytes):
+        """The reference to use for the output intent's ICC profile.
+
+        The profile that is already there is kept when it holds exactly these
+        bytes -- which is the case for a document converted a second time, since
+        the profile written is always the same one. Its object number is never
+        taken over for different bytes: a ``/DestOutputProfile`` stream can also
+        be a page's ``/ICCBased`` colour space, and overwriting it would change
+        the page's colours.
+        """
+        if isinstance(profile_ref, PdfIndirectReference):
+            existing = self._resolve(profile_ref)
+            if isinstance(existing, PdfStream):
+                try:
+                    same = self._decode_cos_stream(existing, profile_ref) == icc_bytes
+                except PdfResourceLimitException:
+                    raise
+                except PDF_OPERATION_ERRORS:
+                    same = False
+                if same:
+                    return profile_ref
+        icc_stream = PdfStream(
+            content=icc_bytes,
+            mapping={
+                PdfName("N"): PdfNumber(3),
+                PdfName("Alternate"): PdfName("DeviceRGB"),
+                PdfName("Length"): PdfNumber(len(icc_bytes)),
+            },
+        )
+        return self._cos_doc.register_object(icc_stream)
+
     def set_page_crop_box(self, page_index: int, rect) -> None:
         """Set the page's /CropBox to *rect* ``(x0, y0, x1, y1)``."""
         from .cos import PdfArray, PdfName, PdfNumber
@@ -3207,8 +3275,8 @@ class SimplePdf:
             return
 
         serialized = serialize_xmp(self._xmp_packet)
+        existing_ref = root.mapping.get(PdfName("Metadata"))
         if not self._xmp_dirty:
-            existing_ref = root.mapping.get(PdfName("Metadata"))
             existing = self._resolve(existing_ref)
             if isinstance(existing, PdfStream):
                 try:
@@ -3232,7 +3300,7 @@ class SimplePdf:
                 PdfName("Length"): PdfNumber(len(serialized)),
             },
         )
-        xmp_ref = self._cos_doc.register_object(xmp_stream)
+        xmp_ref = self._register_replacing(existing_ref, xmp_stream)
         root.mapping[PdfName("Metadata")] = xmp_ref
 
     def to_bytes(self) -> bytes:
@@ -14213,20 +14281,21 @@ class SimplePdf:
                 PdfName("Length"): PdfNumber(len(xmp_bytes)),
             },
         )
-        xmp_ref = self._cos_doc.register_object(xmp_stream)
+        xmp_ref = self._register_replacing(
+            root.mapping.get(PdfName("Metadata")), xmp_stream
+        )
         root.mapping[PdfName("Metadata")] = xmp_ref
 
-        # 4. Add /OutputIntents with an sRGB ICC v2 profile
-        icc_bytes = _minimal_srgb_icc_profile()
-        icc_stream = PdfStream(
-            content=icc_bytes,
-            mapping={
-                PdfName("N"): PdfNumber(3),
-                PdfName("Alternate"): PdfName("DeviceRGB"),
-                PdfName("Length"): PdfNumber(len(icc_bytes)),
-            },
+        # 4. Add /OutputIntents with an sRGB ICC v2 profile. Converting a
+        # document that already carries this apparatus replaces it rather than
+        # appending a second copy beside it.
+        intents_existing = root.mapping.get(PdfName("OutputIntents"))
+        intent_existing, profile_existing = self._existing_output_intent(
+            intents_existing
         )
-        icc_ref = self._cos_doc.register_object(icc_stream)
+
+        icc_bytes = _minimal_srgb_icc_profile()
+        icc_ref = self._keep_or_register_profile(profile_existing, icc_bytes)
 
         output_intent = PdfDictionary(
             {
@@ -14237,10 +14306,10 @@ class SimplePdf:
                 PdfName("DestOutputProfile"): icc_ref,
             }
         )
-        intent_ref = self._cos_doc.register_object(output_intent)
+        intent_ref = self._register_replacing(intent_existing, output_intent)
 
         intents_array = PdfArray([intent_ref])
-        intents_ref = self._cos_doc.register_object(intents_array)
+        intents_ref = self._register_replacing(intents_existing, intents_array)
         root.mapping[PdfName("OutputIntents")] = intents_ref
 
         # 5. Ensure a trailer /ID is present (required by PDF/A).
@@ -14590,7 +14659,9 @@ class SimplePdf:
                 PdfName("Length"): PdfNumber(len(xmp_bytes)),
             },
         )
-        root.mapping[PdfName("Metadata")] = self._cos_doc.register_object(xmp_stream)
+        root.mapping[PdfName("Metadata")] = self._register_replacing(
+            root.mapping.get(PdfName("Metadata")), xmp_stream
+        )
 
     def _embed_missing_fonts(self, lookup_dir: Path) -> None:
         """Attempt to embed missing fonts from the lookup directory."""

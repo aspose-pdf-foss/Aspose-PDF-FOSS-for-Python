@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Converting a document to PDF/A twice left the first conversion in the file.**
+  `convert_to_pdfa` registered a new XMP stream, a new ICC profile, a new
+  `/OutputIntent` and a new `/OutputIntents` array each time it ran and pointed
+  the catalog at them, abandoning the previous four: converting twice left 4
+  unreachable objects and 1055 bytes of dead streams, a third conversion 8 and
+  2110, without bound. `convert_to_pdfua` leaked its predecessor's XMP packet the
+  same way, and so did an ordinary edit of `xmp_metadata`. The catalog entries are
+  replaced where they stand now, so repeated conversion leaves nothing behind and
+  the file size does not move; a level change still rewrites the packet. The ICC
+  profile is the exception: a `/DestOutputProfile` stream can also be a page's
+  `/ICCBased` colour space, so one holding the right bytes already is kept and one
+  holding other bytes is left alone with a new profile written beside it. Nothing
+  about the output was invalid before -- `optimize()` swept the dead objects up --
+  it was waste in files written to be archived.
+
 - **A page whose `/MediaBox` had no area could not be rendered.** It raised
   `PdfValidationException("page box must have positive area")`, and `Page.rect`
   reported the degenerate rectangle as though it were the page's size; the same

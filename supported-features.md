@@ -2392,6 +2392,17 @@ Supported:
   Device colour is detected both by name (`/DeviceCMYK`) and by operator
   (`k`/`K`, `rg`/`RG`, `g`/`G`), which name no colour space at all.
 - Run batch PDF/A validation through `PdfAValidateOptions` and `PdfAValidator`.
+- **Converting a document that is already converted replaces its apparatus, it
+  does not add a second one.** The XMP metadata stream, the `/OutputIntent` and
+  its array are rewritten where they stand, so a second or third
+  `convert_to_pdfa`/`convert_to_pdfua` on the same document leaves no unreachable
+  objects and the file does not grow -- it used to leave the previous packet and
+  ICC profile behind, about a kilobyte per conversion, without bound. A level
+  change still rewrites the packet. The ICC profile is the one exception: a
+  `/DestOutputProfile` stream can also be a page's `/ICCBased` colour space, so
+  one that already holds the right bytes is kept and one that holds other bytes
+  is left untouched with a new profile written beside it. Editing `xmp_metadata`
+  repeatedly behaves the same way.
 - Convert loaded COS-backed documents toward PDF/A by adding OutputIntents and
   XMP metadata, setting a title and trailer `/ID` when missing, capping the
   header version, and removing prohibited JavaScript/OpenAction/AA/OCProperties
