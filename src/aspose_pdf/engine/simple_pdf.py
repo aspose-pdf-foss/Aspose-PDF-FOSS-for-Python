@@ -2443,6 +2443,23 @@ class SimplePdf:
             pdf.file_id = extractor.extract_file_id()
             pdf._outlines_data = extractor.extract_outlines()
 
+            # Descriptions of the document, like the metadata and the outlines
+            # above. Deferring these did not make the load lazier, it made them
+            # *absent*: a signed document reported no signatures at all, and an
+            # empty ``attachments`` read as "the caller removed them all", so
+            # the next save dropped the embedded-files name tree and the
+            # attachment was gone from the file with nothing said. Only page
+            # content and the resources a page reaches are deferred here; the
+            # payloads these read are bounded by the same load limits as any
+            # other stream.
+            pdf.signature = extractor.extract_signature()
+            att_entries = extractor.extract_attachment_entries()
+            pdf.attachments = {name: payload for name, payload, _meta in att_entries}
+            pdf.attachment_read_meta = {
+                name: meta for name, _payload, meta in att_entries if meta
+            }
+            pdf.signatures = extractor.extract_signatures(mm)
+
             if extractor.detect_encryption():
                 pdf.encrypted = True
                 pdf.password = password

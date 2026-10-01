@@ -224,7 +224,16 @@ Supported:
   eagerly loaded one (the output is identical apart from IDs and timestamps),
   and `validate_pdfa` scans its content for device colour -- it used to skip
   that scan in streaming mode and pass a file the eager validator rejects.
-  `repair()` leaves a streamed document lazy and readable.
+  `repair()` leaves a streamed document lazy and readable. **Its attachments and
+  its signatures are read at load**, beside the metadata and the outlines: only
+  page content and the resources a page reaches are deferred. Deferring those two
+  did not make the load lazier, it made them absent -- a signed document reported
+  no signatures at all, and an empty attachment mapping reads as *the caller
+  removed them all*, so saving a streamed document **deleted its attachments**,
+  dropping the `/Names /EmbeddedFiles` tree with no warning. The payloads this
+  reads are bounded by the same `PdfLoadLimits` as any other stream, so a
+  streamed document with a large attachment now costs for those bytes what an
+  eagerly loaded one costs.
 - **Merge `Document` instances.** A merged page is *imported*: its dictionary
   is copied into this document's object graph along with everything it reaches
   -- resources above all, without which its content names fonts and images that

@@ -9,6 +9,27 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Saving a document opened with `open_streaming` deleted its attachments.**
+  `from_file_lazy` never read them, and `_sync_attachments_to_cos` reads an empty
+  mapping as *the caller removed them all* -- so the save dropped the
+  `/Names /EmbeddedFiles` tree and left the `/Filespec` and `/EmbeddedFile`
+  objects unreachable: 1023 bytes in, 975 out, `attachments == []` on reopening,
+  with no warning and no exception, with or without an intervening edit. They
+  were invisible before any save too (`attachments`, `embedded_files` and
+  `get_embedded_file` all came back empty), along with their mime type,
+  description and dates.
+
+- **A signed document reported no signatures in streaming mode.** `signatures`
+  gave 1 through `Document(path)` and 0 through `Document.open_streaming(path)`
+  for the same file, so a caller asking whether a document is signed was told
+  "no" about a signed one. The bytes were never at risk -- `can_append` and
+  `existing_signatures_bind` read the COS graph rather than that list, so the
+  save still appended a revision and left the signature intact.
+
+  Both are read at load now, beside the metadata and the outlines; only page
+  content and the resources a page reaches are deferred. The payloads are
+  bounded by the same `PdfLoadLimits` as any other stream.
+
 - **Converting a document to PDF/A twice left the first conversion in the file.**
   `convert_to_pdfa` registered a new XMP stream, a new ICC profile, a new
   `/OutputIntent` and a new `/OutputIntents` array each time it ran and pointed
