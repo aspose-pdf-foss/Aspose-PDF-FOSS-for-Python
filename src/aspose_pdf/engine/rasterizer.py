@@ -783,7 +783,9 @@ class _PageRasterizer:
         crop = None
         if hasattr(pdf, "get_page_crop_box"):
             crop = pdf.get_page_crop_box(page_index)
-        self.crop_box = self._normalize_box(crop or self.media_box)
+        self.crop_box = self._normalize_box(
+            crop or self.media_box, fallback=self.media_box
+        )
         self.rotation = self._page_rotation()
         self.crop_width = max(1e-6, self.crop_box[2] - self.crop_box[0])
         self.crop_height = max(1e-6, self.crop_box[3] - self.crop_box[1])
@@ -1098,9 +1100,26 @@ class _PageRasterizer:
                 o += 3
         return bytes(out)
 
-    def _normalize_box(self, box: Any) -> tuple[float, float, float, float]:
+    def _normalize_box(
+        self, box: Any, *, fallback: tuple[float, float, float, float] | None = None
+    ) -> tuple[float, float, float, float]:
+        """A page box with its corners ordered, or *fallback* when it has no area.
+
+        A rectangle of no area describes no page, so it is replaced rather than
+        refused -- it used to raise and leave the page unrenderable, while pdfium
+        and MuPDF both draw the whole sheet instead. What to put in its place
+        depends on which box it is, so the caller says: US Letter for a media
+        box, which is the answer both references give, and the media box for a
+        crop box, which is what an absent crop box means anyway.
+
+        Coordinates that are not four finite numbers are still refused. The
+        loader substitutes before it gets here, so such a box can only come from
+        a model built by hand, and inventing a page for it would hide the
+        mistake rather than report it.
+        """
+        default = fallback if fallback is not None else (0.0, 0.0, 612.0, 792.0)
         if box is None:
-            return (0.0, 0.0, 612.0, 792.0)
+            return default
         if not isinstance(box, (list, tuple)) or len(box) < 4:
             raise PdfValidationException("page box must contain four coordinates")
         try:
@@ -1110,7 +1129,7 @@ class _PageRasterizer:
         if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
             raise PdfValidationException("page box coordinates must be finite")
         if x0 == x1 or y0 == y1:
-            raise PdfValidationException("page box must have positive area")
+            return default
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
     def _page_rotation(self) -> int:

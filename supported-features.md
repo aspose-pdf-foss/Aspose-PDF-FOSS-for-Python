@@ -550,7 +550,18 @@ Supported:
   back with all three references; setting a value outside a table's list, a
   copy count below one, or a print range naming pages the document does not
   have raises rather than writing nonsense.
-- Read page media box/rectangle through `Page.rect` and `Page.media_box`.
+- **Read page media box/rectangle through `Page.rect` and `Page.media_box`,
+  which report a size the page can have.** A `/MediaBox` that cannot give one is
+  replaced with US Letter: absent, not an array, fewer than four entries, an
+  entry that is not a number or is infinite or NaN, or a rectangle with no area.
+  **pdfium and MuPDF answer US Letter for every one of those**, and MuPDF puts it
+  in the media box itself rather than only drawing with it, so our value equals
+  MuPDF's on every shape either can parse. A page of no area used to read back as
+  such and could not be rendered at all. Corners are ordered (7.9.5), so
+  `[612 792 0 0]` reads as the rectangle it describes; a rectangle at negative
+  coordinates is a real rectangle and is kept, as both references keep it. The
+  `/MediaBox` written back is the one the file held -- MuPDF and qpdf both keep a
+  degenerate one too, so nothing is rewritten behind the caller's back.
 - Read and set page rotation through `Page.rotation` (0/90/180/270, clockwise;
   inherited from parent page-tree nodes, normalised, and persisted on save).
 - **Read and set the page crop box through `Page.crop_box`, which reports the

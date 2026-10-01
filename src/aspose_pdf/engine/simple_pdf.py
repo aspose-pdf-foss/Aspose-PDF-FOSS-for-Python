@@ -138,6 +138,46 @@ def _ordered_box(values) -> tuple[float, float, float, float]:
     return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
 
+DEFAULT_MEDIA_BOX = (0.0, 0.0, 612.0, 792.0)
+
+
+def _usable_media_box(items, to_number) -> tuple[float, float, float, float]:
+    """A page's media box from its ``/MediaBox`` items, or US Letter instead.
+
+    A page has to have a size, so a ``/MediaBox`` that cannot give one is
+    replaced rather than passed on: too few entries, an entry that is not a
+    number, one that is infinite or NaN, or a rectangle with no area. All of
+    those used to come through as they stood -- coordinates that are not numbers
+    became zeroes -- and a page of no area then could not be rendered at all,
+    while ``rect`` reported a size the page cannot have. **pdfium and MuPDF both
+    answer US Letter for every one of those shapes**, and MuPDF puts it in the
+    media box itself rather than only using it to draw with, which is what this
+    does.
+
+    The corners come back ordered (7.9.5), so ``[612 792 0 0]`` reads as the
+    rectangle it describes -- again MuPDF's answer. A rectangle at negative
+    coordinates is a real rectangle and is kept: both references keep it too.
+    """
+    if items is None or len(items) < 4:
+        return DEFAULT_MEDIA_BOX
+    values = []
+    for item in items[:4]:
+        number = to_number(item)
+        if number is None:
+            return DEFAULT_MEDIA_BOX
+        try:
+            value = float(number)
+        except (TypeError, ValueError, OverflowError):
+            return DEFAULT_MEDIA_BOX
+        if not math.isfinite(value):
+            return DEFAULT_MEDIA_BOX
+        values.append(value)
+    box = _ordered_box(values)
+    if box[2] <= box[0] or box[3] <= box[1]:
+        return DEFAULT_MEDIA_BOX
+    return box
+
+
 def _trapped_name(text: str) -> str:
     """The ``/Trapped`` name for *text*.
 
@@ -15662,15 +15702,10 @@ class CosExtractor:
         if node_type == "Page":
             # -- MediaBox ---------------------------------------------------
             mbox_obj = self._dict_get(node, "MediaBox")
-            if isinstance(mbox_obj, PdfArray) and len(mbox_obj.items) >= 4:
-                try:
-                    mbox = tuple(
-                        float(self._get_number(v) or 0) for v in mbox_obj.items[:4]
-                    )
-                except (TypeError, ValueError):
-                    mbox = (0, 0, 612, 792)
-            else:
-                mbox = (0, 0, 612, 792)
+            mbox = _usable_media_box(
+                mbox_obj.items if isinstance(mbox_obj, PdfArray) else None,
+                self._get_number,
+            )
             pages_out.append(mbox)
             self._budget.check_pages(len(pages_out))
             self._page_obj_ids.append(obj_id)
@@ -16017,15 +16052,10 @@ class CosExtractor:
 
         if node_type == "Page":
             mbox_obj = self._dict_get(node, "MediaBox")
-            if isinstance(mbox_obj, PdfArray) and len(mbox_obj.items) >= 4:
-                try:
-                    mbox = tuple(
-                        float(self._get_number(v) or 0) for v in mbox_obj.items[:4]
-                    )
-                except (TypeError, ValueError):
-                    mbox = (0, 0, 612, 792)
-            else:
-                mbox = (0, 0, 612, 792)
+            mbox = _usable_media_box(
+                mbox_obj.items if isinstance(mbox_obj, PdfArray) else None,
+                self._get_number,
+            )
             pages_out.append(mbox)
             self._budget.check_pages(len(pages_out))
             obj_id = (

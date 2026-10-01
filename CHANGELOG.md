@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A page whose `/MediaBox` had no area could not be rendered.** It raised
+  `PdfValidationException("page box must have positive area")`, and `Page.rect`
+  reported the degenerate rectangle as though it were the page's size; the same
+  went for coordinates that were not numbers, which silently became zeroes. Such
+  a `/MediaBox` is now replaced with US Letter -- absent, not an array, too
+  short, not numbers, not finite, or no area -- which is what pdfium and MuPDF
+  both answer for every one of those shapes, MuPDF in the media box itself and
+  not merely when drawing. Corners are ordered too, so `[612 792 0 0]` reads as
+  the rectangle it describes, again matching MuPDF; a rectangle at negative
+  coordinates is kept, as both references keep it. Our `Page.rect` now equals
+  MuPDF's `mediabox` on all nine shapes tested. The `/MediaBox` written back is
+  still the one the file held -- MuPDF and qpdf keep a degenerate one as well.
+
 - **An attribute set on a name the object does not have was accepted and lost.**
   `d.pages[0].rotate = 270` -- the property is `rotation` -- raised nothing and
   did nothing: `Page` is rebuilt on every access, so the value went to a
