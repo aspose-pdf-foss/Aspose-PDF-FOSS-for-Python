@@ -38,6 +38,12 @@ class _LayerSection:
 class Page:
     """A page of a PDF document."""
 
+    # Declared, so a name that is not one of these raises instead of being
+    # taken and quietly lost. These objects are rebuilt on demand -- ``pages[0]``
+    # hands back a new one each time -- so an attribute set on a misspelling used
+    # to vanish before the next statement, with the document saved unchanged.
+    __slots__ = ("_annotations", "_document", "_index")
+
     def __init__(self, document: Document, index: int):
         self._document = document
         self._index = index
@@ -656,6 +662,11 @@ class Page:
 
 class PageCollection:
     """A collection to manage PDF pages within a Document."""
+
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = ("_document",)
+
 
     def __init__(self, document: Document):
         """Create a new collection.

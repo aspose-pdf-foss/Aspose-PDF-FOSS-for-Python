@@ -88,6 +88,11 @@ class Field:
     or removed again, even if a new field reuses the same name.
     """
 
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = ("_field_type", "_form", "_name", "_removed", "_value")
+
+
     def __init__(
         self,
         form: Form,
@@ -358,6 +363,11 @@ class Field:
 
 class Form:
     """Represents an interactive form (AcroForm) within a PDF document."""
+
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = ("_document", "_fields")
+
 
     def __init__(self, document: Document):
         self._document = document
@@ -858,6 +868,11 @@ class UnsignedContent:
     Based on net.aspose.pdf.security.unsignedcontentabsorber.unsignedcontentabsorber.unsignedcontent.
     """
 
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = ("_extra", "annotations", "form_fields", "pages")
+
+
     def __init__(
         self,
         pages: list[Any] | None = None,
@@ -926,6 +941,11 @@ class UnsignedContentAbsorber:
     ``annotations`` (or ``form`` and ``pages``), whose items carry an
     ``is_signed`` or ``signed`` flag; an item with neither is unsigned.
     """
+
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = ("_document", "_extracted")
+
 
     def __init__(self, document: Document):
         self._document = document

@@ -77,6 +77,11 @@ def _subtype_value(subtype: Any) -> str:
 class Annotation:
     """Live view over a single annotation on a page."""
 
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = ("_data", "_index", "_page")
+
+
     def __init__(self, page: Page, index: int, data: dict[str, Any]) -> None:
         self._page = page
         self._index = index
@@ -215,9 +220,17 @@ class Annotation:
 class MarkupAnnotation(Annotation):
     """Base class for markup annotations."""
 
+    # Empty: a subclass without its own would hand back a __dict__.
+    __slots__ = ()
+
+
 
 class LinkAnnotation(Annotation):
     """Concrete annotation type kept for compatibility with tests/API."""
+
+    # Empty: a subclass without its own would hand back a __dict__.
+    __slots__ = ()
+
 
 
 _ANNOTATION_CLASSES: dict[str, type[Annotation]] = {
@@ -244,6 +257,11 @@ _ANNOTATION_CLASSES: dict[str, type[Annotation]] = {
 
 class AnnotationCollection:
     """Mutable sequence-like wrapper over page annotations."""
+
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = ("_page",)
+
 
     def __init__(self, page: Page) -> None:
         self._page = page

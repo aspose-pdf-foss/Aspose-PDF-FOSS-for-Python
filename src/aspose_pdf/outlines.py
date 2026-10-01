@@ -23,6 +23,19 @@ class OutlineItem:
         Nested child bookmarks.
     """
 
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = (
+        "_destination",
+        "_loaded_target",
+        "_page_index",
+        "children",
+        "is_bold",
+        "is_italic",
+        "title",
+    )
+
+
     def __init__(
         self,
         title: str,
@@ -126,6 +139,11 @@ class OutlineCollection:
     Behaves like a mutable sequence — supports ``add``, ``remove``,
     iteration, ``len``, and index access.
     """
+
+    # Declared, so a misspelled name raises instead of being taken and
+    # quietly lost; see ``Page`` in ``pages.py``.
+    __slots__ = ("_items",)
+
 
     def __init__(self) -> None:
         self._items: list[OutlineItem] = []

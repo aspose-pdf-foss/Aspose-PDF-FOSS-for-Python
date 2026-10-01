@@ -26,6 +26,15 @@ available as `scripts/check.sh` and `scripts/build.sh`.
 
 Supported:
 
+- **Setting an attribute the object does not have raises `AttributeError`.**
+  `Page`, `PageCollection`, `Annotation` and its subclasses,
+  `AnnotationCollection`, `Field`, `Form`, `OutlineItem`, `OutlineCollection`,
+  `Layer`, `LayerConfiguration` and `LayerCollection` declare their attributes,
+  so a misspelling is refused rather than accepted and dropped. It matters most
+  on `Page`, which is rebuilt on every access -- `pages[0] is pages[0]` is
+  `False` -- so `pages[0].rotate = 270` (the property is `rotation`) used to
+  take the value, lose it with the throwaway object, and save the page upright
+  without a word.
 - Create empty PDF documents.
 - Load PDFs from a path, raw bytes, `bytearray`, or binary stream, either
   through `Document(source, password=..., limits=...)` or through

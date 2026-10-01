@@ -28,9 +28,31 @@ def _object_to_dict(obj: Any) -> dict:
             if not key.startswith("_"):
                 result[key] = _object_to_dict(value)
         return result
+    elif _slot_names(obj):
+        # An object that declares __slots__ has no __dict__ to read, but its
+        # attributes are named for us. Without this, the ones that do -- an
+        # OutlineItem, say -- would come back as repr strings.
+        return {
+            name: _object_to_dict(getattr(obj, name))
+            for name in _slot_names(obj)
+            if not name.startswith("_") and hasattr(obj, name)
+        }
     else:
-        # Fallback for objects without __dict__
+        # Fallback for objects with neither __dict__ nor __slots__
         return str(obj)
+
+
+def _slot_names(obj: Any) -> tuple[str, ...]:
+    """Every ``__slots__`` name of *obj*'s class and the classes it inherits from."""
+    names: list[str] = []
+    for klass in type(obj).__mro__:
+        slots = klass.__dict__.get("__slots__")
+        if isinstance(slots, str):
+            slots = (slots,)
+        for name in slots or ():
+            if name not in names:
+                names.append(name)
+    return tuple(names)
 
 
 def are_objects_json_equal(obj1: Any, obj2: Any, message: str | None = None) -> None:

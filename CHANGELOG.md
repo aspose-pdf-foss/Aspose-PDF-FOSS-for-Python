@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An attribute set on a name the object does not have was accepted and lost.**
+  `d.pages[0].rotate = 270` -- the property is `rotation` -- raised nothing and
+  did nothing: `Page` is rebuilt on every access, so the value went to a
+  throwaway object and was gone before the next statement, and the document saved
+  upright. `Page`, `PageCollection`, `Annotation` and its subclasses,
+  `AnnotationCollection`, `Field`, `Form`, `UnsignedContent`,
+  `UnsignedContentAbsorber`, `OutlineItem` and `OutlineCollection` now declare
+  their attributes with `__slots__`, as `Layer`, `LayerConfiguration`,
+  `LayerCollection` and `pages._LayerSection` already did, so Python refuses an
+  undeclared name with `AttributeError`. The properties and the documented
+  writable attributes are unaffected. `aspose_pdf.utils._object_to_dict`, which
+  read `__dict__`, reads the declared names for such an object instead of
+  falling back to a repr string -- which is what its docstring already promised.
+
 - **A crop box reaching outside the media box was used as it stood.** ISO 32000-1
   Table 30 says it "shall be intersected with the media box" to determine what of
   the page is visible; without that, a page whose crop box was larger than its
