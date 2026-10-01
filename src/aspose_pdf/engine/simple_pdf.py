@@ -128,6 +128,16 @@ def _info_cos_text(value: Any) -> str | None:
     return None
 
 
+def _ordered_box(values) -> tuple[float, float, float, float]:
+    """A rectangle as ``(x0, y0, x1, y1)`` with its corners put in order.
+
+    ISO 32000-1 7.9.5: a rectangle names any two diagonally opposite corners,
+    so one written back-to-front describes the same rectangle.
+    """
+    x0, y0, x1, y1 = (float(v) for v in values[:4])
+    return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+
 def _trapped_name(text: str) -> str:
     """The ``/Trapped`` name for *text*.
 
@@ -1718,19 +1728,76 @@ class SimplePdf:
         page.mapping[PdfName("Rotate")] = PdfNumber(int(degrees) % 360)
 
     def get_page_crop_box(self, page_index: int):
-        """Return the page's /CropBox as an ``(x0, y0, x1, y1)`` tuple, or ``None``."""
+        """The crop box in effect for a page, or ``None`` when it is the media box.
+
+        ISO 32000-1 Table 30: the crop box "shall be intersected with the media
+        box" to decide what of the page is visible. A file may state one that
+        reaches outside -- the entry is written as it stands, and qpdf, pdfium
+        and MuPDF all keep those bytes -- so the intersection is taken here,
+        where the answer is used. Without it a page whose crop box was larger
+        than its media box rendered at the crop box's size, inventing sheet that
+        the document does not describe, and one reaching off an edge placed its
+        content by a corner that is not on the page.
+
+        ``None`` means "the media box", which is what the callers fall back to:
+        that covers an absent or unreadable entry, and also one whose
+        intersection with the media box has no area -- an empty rectangle, or one
+        lying entirely off the page. pdfium and MuPDF both show the whole media
+        box for those.
+
+        The corners come back ordered. 7.9.5 lets a rectangle name any two
+        opposite corners, so an inverted entry is normalised rather than refused.
+        """
         from .cos import PdfArray
 
         page = self._get_page_dict(page_index)
         if page is None:
             return None
         box = self._get_inherited_attr(page, "CropBox")
-        if isinstance(box, PdfArray) and len(box.items) >= 4:
-            try:
-                return tuple(float(self._get_number(v) or 0) for v in box.items[:4])
-            except (TypeError, ValueError):
-                return None
-        return None
+        if not isinstance(box, PdfArray) or len(box.items) < 4:
+            return None
+        try:
+            values = [float(self._get_number(v) or 0) for v in box.items[:4]]
+        except (TypeError, ValueError):
+            return None
+        if not all(math.isfinite(v) for v in values):
+            return None
+        crop = _ordered_box(values)
+
+        media = self._page_media_box(page_index)
+        if media is None:
+            # Nothing sound to intersect against; the media box is defaulted
+            # elsewhere, and clipping to a box that is itself being invented
+            # would be guessing twice.
+            return crop
+        effective = (
+            max(crop[0], media[0]),
+            max(crop[1], media[1]),
+            min(crop[2], media[2]),
+            min(crop[3], media[3]),
+        )
+        if effective[2] <= effective[0] or effective[3] <= effective[1]:
+            return None
+        return effective
+
+    def _page_media_box(self, page_index: int):
+        """The page's media box with its corners ordered, or ``None`` if unusable."""
+        try:
+            box = self.pages[page_index]
+        except (IndexError, TypeError):
+            return None
+        if not isinstance(box, (list, tuple)) or len(box) < 4:
+            return None
+        try:
+            values = [float(v) for v in box[:4]]
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not all(math.isfinite(v) for v in values):
+            return None
+        ordered = _ordered_box(values)
+        if ordered[2] <= ordered[0] or ordered[3] <= ordered[1]:
+            return None
+        return ordered
 
     def set_page_crop_box(self, page_index: int, rect) -> None:
         """Set the page's /CropBox to *rect* ``(x0, y0, x1, y1)``."""

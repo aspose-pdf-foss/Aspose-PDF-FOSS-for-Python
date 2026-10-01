@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A crop box reaching outside the media box was used as it stood.** ISO 32000-1
+  Table 30 says it "shall be intersected with the media box" to determine what of
+  the page is visible; without that, a page whose crop box was larger than its
+  media box rendered at the crop box's size -- 2000x2000 for a Letter page --
+  inventing sheet the document does not describe, and one overhanging an edge
+  placed its content against a corner that is not on the page. The intersection
+  is taken now, wherever the value is used: rendering, text export, stamp
+  placement and `Page.crop_box`, which reports the box in effect. An empty crop
+  box no longer makes a page unrenderable (it used to raise "page box must have
+  positive area"), and one lying entirely off the page gives the media box too.
+  The entry written to the file is still the one that was set, unclipped, as qpdf,
+  pdfium and MuPDF all keep it. Measured across six shapes, the rendered size now
+  matches both pdfium and MuPDF everywhere the two agree, and MuPDF where pdfium
+  reports a page of no size.
+
 - **One 16-bit sample got three different 8-bit values depending on which path
   reduced it.** Coming in from a PNG it was shifted down to its high byte, going
   out to one it was truncated (`value * 255 // 65535`), and inside a JPEG 2000

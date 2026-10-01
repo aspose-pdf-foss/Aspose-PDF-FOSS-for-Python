@@ -544,8 +544,18 @@ Supported:
 - Read page media box/rectangle through `Page.rect` and `Page.media_box`.
 - Read and set page rotation through `Page.rotation` (0/90/180/270, clockwise;
   inherited from parent page-tree nodes, normalised, and persisted on save).
-- Read and set the page crop box through `Page.crop_box` (falls back to the
-  media box when unset).
+- **Read and set the page crop box through `Page.crop_box`, which reports the
+  box in effect.** ISO 32000-1 Table 30: the crop box "shall be intersected with
+  the media box" to determine the visible region, so the value read back is that
+  intersection -- a crop box larger than the media box reads, renders and stamps
+  as the media box, and one overhanging an edge as the part that is on the page.
+  The entry written to the file is the one that was set, unclipped, which is what
+  qpdf, pdfium and MuPDF all keep. An absent entry, an unreadable one, an empty
+  rectangle and one lying entirely off the page all give the media box, which is
+  MuPDF's answer and pdfium's for all but the last, where pdfium reports a page
+  of no size and declines to render it. A rectangle written back-to-front is
+  normalised (7.9.5 allows either pair of opposite corners). `Page.rect` and
+  `Page.media_box` report the media box, unclipped, throughout.
 - Read decoded page content bytes through `Page.content`.
 - Append simple authored content to a page: positioned Standard-14 text or
   embedded Unicode text with `Page.add_text()`, raw/JPEG/PNG image XObjects
