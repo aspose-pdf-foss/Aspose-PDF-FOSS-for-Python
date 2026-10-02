@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A font subset kept every table it was not erasing glyphs from, roughly
+  doubling the embedded program.** One line of text in Arial Unicode (50377
+  glyphs) embedded 869768 bytes, of which the 12 glyphs actually used were 2636:
+  `hdmx` was 302288 bytes, `LTSH` 50381, `GSUB` 66612 and `DSIG` 9648. None of
+  them is read for an embedded font — layout tables because a content stream
+  already carries positioned glyph codes, device metrics and hinting aids because
+  the program is rasterised from `glyf` and `hmtx`, and `DSIG` because it signs
+  the *unmodified* font and so signs nothing after erasure. They are dropped with
+  the glyphs now, which is the set fontTools' own subsetter drops by default,
+  less the colour and bitmap tables that a consumer may draw from. That font's
+  program goes from 869768 to 428568 bytes (142651 to 65364 deflated) and the
+  page renders byte-identically, with the same agreement with MuPDF and pdfium as
+  before. `optimize_resources(subset_fonts=True)` benefits too: it was shrinking
+  the file only because the stream deflates well.
+
 - **Converting to PDF/A-1 or -2 could not remove an attachment added in the same
   session.** Those levels prohibit embedded files (ISO 19005-1 6.1.11), but the
   removal sat inside the catalog's `/Names` branch — and a document has no

@@ -457,6 +457,19 @@ Boundaries:
   `Do`, so an image drawn only inside a form is measured in page space like any
   other; nesting is bounded and a form that draws itself terminates. An image
   that is never placed keeps its resolution, its display size being unknown.
+- **A subset drops the tables an embedded font is never read for**, not only the
+  glyph outlines: OpenType layout (`GSUB`, `GPOS`, `GDEF`, `BASE`, `JSTF`,
+  `kern`) because a content stream already carries positioned glyph codes and no
+  consumer shapes an embedded font; device metrics and hinting aids (`hdmx`,
+  `LTSH`, `VDMX`, `gasp`) because an embedded font is rasterised from `glyf` and
+  `hmtx`; `PCLT`; and `DSIG`, which signs the *unmodified* font and so signs
+  nothing once glyphs are erased. This is the set fontTools' own subsetter drops
+  by default, less the colour and bitmap tables (`COLR`, `CPAL`, `CBDT`, `CBLC`,
+  `sbix`, `SVG`, `EBDT`, `EBLC`, `EBSC`), which are kept because a consumer may
+  draw from them. On a large face the tables outweighed the glyphs: one line of
+  text in a 50377-glyph font embedded 869768 bytes for 12 outlines totalling
+  2636, `hdmx` alone being 302288 — now 428568 bytes, 142651 to 65364 deflated,
+  with the page rendering byte-identically.
 - Font subsetting (glyph erasure) covers embedded **TrueType** (`/FontFile2`),
   **CFF** and **CFF2** (`/FontFile3`) programs. Handled: Type0 fonts with Identity
   encoding

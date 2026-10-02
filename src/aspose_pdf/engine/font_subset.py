@@ -23,6 +23,43 @@ import struct
 
 __all__ = ["read_symbol_code_to_gid", "read_unicode_cmap", "subset_truetype"]
 
+# Tables an embedded font program is never read for, dropped with the glyphs.
+# Erasing outlines left these behind, and on a large face they outweighed what
+# was kept: a one-line document embedded 870 KB, half of it these -- ``hdmx``
+# alone was 302 KB of a 50377-glyph font whose subset needed 12 outlines.
+#
+# * ``DSIG`` signs the *unmodified* font. Once glyphs are erased it signs
+#   nothing, so keeping it is worse than dropping it.
+# * ``hdmx``, ``LTSH``, ``VDMX`` and ``gasp`` are device metrics and hinting
+#   aids. A consumer rasterises an embedded font from ``glyf`` and ``hmtx``.
+# * ``GSUB``, ``GPOS``, ``GDEF``, ``BASE``, ``JSTF`` and ``kern`` are OpenType
+#   layout. A content stream already carries positioned glyph codes, so no PDF
+#   consumer shapes an embedded font -- and this library's own shaper runs only
+#   against a substitute face loaded from disk, never against the program in the
+#   document.
+# * ``PCLT`` is PCL 5 metrics.
+#
+# Colour and bitmap tables (``COLR``, ``CPAL``, ``CBDT``, ``CBLC``, ``sbix``,
+# ``SVG``, ``EBDT``, ``EBLC``, ``EBSC``) are deliberately **kept**: a consumer
+# may draw from them, so dropping them could change what the page looks like.
+# This is the set fontTools' own subsetter drops by default, less those.
+DROPPED_TABLES = frozenset(
+    {
+        "BASE",
+        "DSIG",
+        "GDEF",
+        "GPOS",
+        "GSUB",
+        "JSTF",
+        "LTSH",
+        "PCLT",
+        "VDMX",
+        "gasp",
+        "hdmx",
+        "kern",
+    }
+)
+
 # Composite-glyph component flags (see the OpenType ``glyf`` table spec).
 _ARG_1_AND_2_ARE_WORDS = 0x0001
 _WE_HAVE_A_SCALE = 0x0008
@@ -40,10 +77,11 @@ _MAX_SFNT_TABLES = 4096
 def subset_truetype(font_bytes: bytes, keep_gids: set[int]) -> bytes | None:
     """Return a subset of *font_bytes* keeping only *keep_gids* (and glyph 0).
 
-    Outlines for every other glyph are emptied. Composite glyphs in the keep
-    set pull their component glyphs in automatically. Returns ``None`` when the
-    font is not a parseable TrueType ``glyf`` program, when subsetting is not
-    possible, or when the result would not be smaller than the input.
+    Outlines for every other glyph are emptied, and the tables an embedded font
+    is never read for go with them (:data:`DROPPED_TABLES`). Composite glyphs in
+    the keep set pull their component glyphs in automatically. Returns ``None``
+    when the font is not a parseable TrueType ``glyf`` program, when subsetting
+    is not possible, or when the result would not be smaller than the input.
     """
     try:
         return _subset_truetype(font_bytes, keep_gids)
@@ -111,6 +149,8 @@ def _subset_truetype(font_bytes: bytes, keep_gids: set[int]) -> bytes | None:
     # Assemble new tables: glyf/loca replaced, head switched to long loca.
     new_tables: dict[str, bytes] = {}
     for tag, (off, length) in tables.items():
+        if tag in DROPPED_TABLES:
+            continue
         new_tables[tag] = font_bytes[off : off + length]
     new_tables["glyf"] = bytes(new_glyf)
     new_tables["loca"] = new_loca_bytes
