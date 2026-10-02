@@ -14286,6 +14286,17 @@ class SimplePdf:
             acro.mapping.pop(PdfName("NeedAppearances"), None)
             acro.mapping.pop(PdfName("XFA"), None)
 
+        # Parts 1 and 2 prohibit embedded files, so the attachments go whether or
+        # not the document has been saved yet. This used to sit inside the
+        # ``/Names`` branch below, and a document has no ``/Names`` dictionary
+        # until a save writes one -- so an attachment added in this session
+        # survived the conversion, which then only warned about it. The warning
+        # is still returned for anything that cannot be removed.
+        if level_norm[:1] not in ("3", "4"):
+            self.attachments.clear()
+            self.attachment_read_meta.clear()
+            root.mapping.pop(PdfName("AF"), None)
+
         names_obj = self._resolve(root.mapping.get(PdfName("Names")))
         if isinstance(names_obj, PdfDictionary):
             if PdfName("JavaScript") in names_obj.mapping:
@@ -14293,7 +14304,6 @@ class SimplePdf:
             if level_norm[:1] not in ("3", "4"):
                 if PdfName("EmbeddedFiles") in names_obj.mapping:
                     del names_obj.mapping[PdfName("EmbeddedFiles")]
-                self.attachments.clear()
             else:
                 # PDF/A-3 and PDF/A-4 permit embedded files, but every Filespec
                 # must declare an /AFRelationship saying what it is for. Stamp a

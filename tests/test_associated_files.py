@@ -113,24 +113,56 @@ def test_the_attachment_still_round_trips():
     assert reopened.get_embedded_file("data.bin").contents == b"payload-data.bin"
 
 
-def test_pdfa_1_reports_the_attachment_it_cannot_carry():
-    """PDF/A-1 forbids embedded files, and an in-memory one is reported.
+def test_the_array_goes_as_soon_as_the_conversion_runs():
+    """Not only on the next save: the graph is left consistent straight away.
 
-    ``convert_to_pdfa`` drops the ``/EmbeddedFiles`` tree it finds in the object
-    graph, but an attachment added in this session is not in the graph yet -- it
-    is written at save time -- so the conversion cannot remove it and says so
-    instead, and ``validate_pdfa`` rejects the result. The ``/AF`` array follows
-    the attachment it points at; both are forbidden here, and the warning is
-    about both.
+    A loaded document really does carry ``/AF`` in its catalog, and a caller may
+    look at the object graph -- or validate -- between converting and saving. The
+    save's own removal path would drop it too, so this is the window that line
+    covers.
+    """
+    buffer = io.BytesIO()
+    reloaded = Document(io.BytesIO(_saved()))
+    engine = reloaded._engine_pdf
+    root = engine._resolve(engine._cos_doc.trailer.mapping.get(PdfName("Root")))
+    assert root.mapping.get(PdfName("AF")) is not None
+
+    reloaded.info["Title"] = "A Title"
+    reloaded.convert_to_pdfa("PDF/A-1B")
+
+    root = engine._resolve(engine._cos_doc.trailer.mapping.get(PdfName("Root")))
+    assert root.mapping.get(PdfName("AF")) is None
+    reloaded.save(buffer)
+    assert _af_refs(buffer.getvalue()) == []
+
+
+@pytest.mark.parametrize("level", ["PDF/A-1B", "PDF/A-2B"])
+def test_pdfa_1_and_2_remove_an_attachment_added_in_this_session(level):
+    """The levels that forbid embedded files take them out, saved or not.
+
+    ``convert_to_pdfa`` used to clear the attachments only inside its
+    ``/Names`` branch, and a document has no ``/Names`` dictionary until a save
+    writes one -- so an attachment added in this session survived the conversion
+    and it only *warned* about it. It is removed now, and with it the ``/AF``
+    array that pointed at it; veraPDF passes the result.
     """
     document = Document()
     document.pages.add()
     document.pages[0].add_text("Heading", 50, 720)
     document.add_attachment("data.bin", b"payload")
-    warnings = document.convert_to_pdfa("PDF/A-1B")
+    document.info["Title"] = "A Title"
+    warnings = document.convert_to_pdfa(level)
 
-    assert any("prohibit embedded files" in w for w in warnings), warnings
-    assert document.validate_pdfa("PDF/A-1B").is_valid is False
+    assert list(document.attachments) == []
+    assert not any("prohibit embedded files" in w for w in warnings), warnings
+    assert document.validate_pdfa(level).is_valid
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    data = buffer.getvalue()
+    assert b"/EmbeddedFiles" not in data
+    assert _af_refs(data) == []
+    assert list(Document(io.BytesIO(data)).attachments) == []
 
 
 def test_an_attachment_already_in_the_graph_is_dropped_for_pdfa_1():

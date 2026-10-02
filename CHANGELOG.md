@@ -9,6 +9,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Converting to PDF/A-1 or -2 could not remove an attachment added in the same
+  session.** Those levels prohibit embedded files (ISO 19005-1 6.1.11), but the
+  removal sat inside the catalog's `/Names` branch — and a document has no
+  `/Names` dictionary until a save writes one, so an attachment added in this
+  session survived the conversion, which only warned about it and produced a file
+  veraPDF rejects. The attachments and the `/AF` array that points at them are
+  dropped now whether the document has been saved or not, so the conversion
+  produces a conformant file instead of a warning. veraPDF passes PDF/A-1B and
+  -2B output that started with an attachment.
+
 - **A base PDF/A-4 document whose attachment was not a PDF at all was reported
   valid.** ISO 19005-4 6.9 requires *every* embedded file to conform to PDF/A-1,
   -2 or -4 — veraPDF puts it as "All of the embedded files shall be compliant

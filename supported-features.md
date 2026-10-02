@@ -2462,6 +2462,13 @@ Supported:
   one that already holds the right bytes is kept and one that holds other bytes
   is left untouched with a new profile written beside it. Editing `xmp_metadata`
   repeatedly behaves the same way.
+- **The levels that forbid embedded files remove them.** PDF/A-1 and PDF/A-2
+  prohibit attachments (ISO 19005-1 6.1.11), so converting to them drops the
+  attachments and the `/AF` array that pointed at them — whether or not the
+  document has been saved. The removal used to happen only inside the catalog's
+  `/Names` branch, and a document has no `/Names` dictionary until a save writes
+  one, so an attachment added in the same session survived and the conversion
+  merely warned about it. veraPDF passes the result.
 - Convert loaded COS-backed documents toward PDF/A by adding OutputIntents and
   XMP metadata, setting a title and trailer `/ID` when missing, capping the
   header version, and removing prohibited JavaScript/OpenAction/AA/OCProperties
@@ -2632,9 +2639,8 @@ Boundaries:
   a pass/fail gate this library was never built to meet.
 - **What veraPDF 1.30.2 actually says** about those samples, so the gap is a
   known list rather than a caveat. Font embedding passes on all nine. What
-  remains is, per level: PDF/A-1 — the attachment's `/EF` key, which PDF/A-1
-  forbids outright and the conversion does not remove (ISO 19005-1 6.1.11);
-  PDF/A-2 — an embedded file must itself be PDF/A (6.8); PDF/UA-1 — a
+  remains is, per level: PDF/A-2 — an embedded file must itself be PDF/A (6.8);
+  PDF/UA-1 — a
   widget must be nested in a `Form` tag and a field needs a `/TU` or an `/Alt`
   (ISO 14289-1 7.18.4, 7.18.1); PDF/UA-2 — in-document destinations must be
   structure destinations, and an embedded file needs a `/Desc` (ISO 14289-2 8.8,
