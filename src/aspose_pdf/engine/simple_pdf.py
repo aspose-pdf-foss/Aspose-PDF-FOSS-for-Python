@@ -3111,15 +3111,18 @@ class SimplePdf:
             return
         if not self.attachments:
             # All attachments were removed: drop any existing embedded-files tree
-            # so the save reflects the removal instead of keeping a stale copy.
+            # so the save reflects the removal instead of keeping a stale copy,
+            # and with it the /AF array that pointed at those file specs.
             names_dict = self._resolve(catalog.mapping.get(PdfName("Names")))
             if isinstance(names_dict, PdfDictionary):
                 names_dict.mapping.pop(PdfName("EmbeddedFiles"), None)
+            catalog.mapping.pop(PdfName("AF"), None)
             return
 
         # Name trees must be ordered by key, so emit names sorted.
         slots = self._attachment_slots(catalog)
         array_items: list[Any] = []
+        associated: list[Any] = []
         for name in sorted(self.attachments):
             filespec_slot, stream_slot = slots.get(name, (None, None))
             data = bytes(self.attachments[name])
@@ -3183,6 +3186,17 @@ class SimplePdf:
             )
             array_items.append(PdfString(name))
             array_items.append(fs_ref)
+            associated.append(fs_ref)
+
+        # An embedded file has to be an *associated* file: PDF/A-3 (ISO 19005-3
+        # 6.8) and PDF/A-4 (ISO 19005-4 6.9) require every one of them to be
+        # reachable from an /AF array saying which part of the document it
+        # belongs to, and veraPDF checks exactly that -- `isAssociatedFile`. The
+        # catalog's array is the one that means "the document as a whole", which
+        # is what a plain attachment is associated with. Written for every
+        # document, like the /AFRelationship and /Subtype above: it is a valid
+        # optional catalog key (ISO 32000-2 7.7.2) and nothing else reads it.
+        catalog.mapping[PdfName("AF")] = PdfArray(associated)
 
         embedded = PdfDictionary({PdfName("Names"): PdfArray(array_items)})
         names_dict = self._resolve(catalog.mapping.get(PdfName("Names")))

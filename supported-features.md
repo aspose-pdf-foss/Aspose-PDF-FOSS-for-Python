@@ -1571,6 +1571,15 @@ Supported:
   image's own bit depth, so a 16-bit pixel sharing only the key's high byte
   stays opaque. A fully opaque PNG gets no mask. Push-button icons are placed
   the same way.
+- **Every embedded file is an associated file.** The catalog carries an `/AF`
+  array naming each attachment's file specification, which is what says the
+  embedded file belongs to this document — ISO 19005-3 6.8 and ISO 19005-4 6.9
+  require it of every embedded file, and veraPDF checks it as
+  `isAssociatedFile`. `/AFRelationship` on the specification says *what* the
+  relationship is; the array is what establishes that there is one, and without
+  it veraPDF failed every PDF/A-3 document carrying an attachment even with the
+  relationship stated. The array follows the attachments: it goes when the last
+  one is removed, so it never points at a specification that is not there.
 - **Every embedded file declares a media type.** `/Subtype` carries the `mime=`
   given to `add_attachment`, or `application/octet-stream` when none is — the
   value ISO 19005-3 6.8 and ISO 19005-4 6.9 name for an unknown type, and which
@@ -2620,8 +2629,9 @@ Boundaries:
   known list rather than a caveat. Font embedding passes on all nine. What
   remains is, per level: PDF/A-1 — the attachment's `/EF` key, which PDF/A-1
   forbids outright and the conversion does not remove (ISO 19005-1 6.1.11);
-  PDF/A-2 — an embedded file must itself be PDF/A (6.8); PDF/A-3 — an
-  associated file needs its relationship stated (6.8); PDF/UA-1 — a
+  PDF/A-2 — an embedded file must itself be PDF/A (6.8); PDF/A-4 — the same,
+  for every level but `4f`, and a payload that is not a PDF at all is passed
+  rather than rejected (ISO 19005-4 6.9); PDF/UA-1 — a
   widget must be nested in a `Form` tag and a field needs a `/TU` or an `/Alt`
   (ISO 14289-1 7.18.4, 7.18.1); PDF/UA-2 — the structure tree root must hold
   exactly one `Document` element, in-document destinations must be structure

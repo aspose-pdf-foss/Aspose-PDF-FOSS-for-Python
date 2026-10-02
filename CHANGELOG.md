@@ -9,6 +9,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An attachment was never declared an associated file, so PDF/A-3 output was
+  rejected.** ISO 19005-3 6.8 and ISO 19005-4 6.9 require every embedded file to
+  be associated with the document or a part of it, which an `/AF` array
+  expresses; veraPDF checks it as `isAssociatedFile`. Each file specification
+  carried an `/AFRelationship` saying what the relationship was, but nothing put
+  the specification in an `/AF` array to say there was one — so **veraPDF failed
+  every PDF/A-3 document with an attachment**, relationship and all. The catalog
+  now carries an `/AF` array naming each attachment's file specification, for
+  every document as `/AFRelationship` and `/Subtype` already were, and the array
+  is dropped with the last attachment so it never dangles. veraPDF now passes
+  our PDF/A-3B and PDF/A-4f output with an attachment.
+
 - **An attachment added without a MIME type made every PDF/A-4f file fail
   veraPDF.** ISO 19005-3 6.8 and ISO 19005-4 6.9 require a media type in an
   embedded file stream's `/Subtype` and name `application/octet-stream` as the
