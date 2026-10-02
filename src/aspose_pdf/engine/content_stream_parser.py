@@ -750,8 +750,16 @@ class ContentStreamParser:
     # Public API
     # ---------------------------------------------------------------------
     def extract_text(self) -> str:
-        """Extract and return the textual content of the stream."""
+        """Extract and return the textual content of the stream.
+
+        Afterwards :attr:`showed_text` says whether the stream asked for any
+        text to be drawn at all. The empty string means two different things --
+        a page that draws no text, and a stream this parser could not follow --
+        and the caller has to tell them apart before reaching for a fallback
+        that reads raw bytes.
+        """
         self._buffer = []
+        self.showed_text = False
         self._in_text = False
         self._last_shown_y: float | None = None
         self._marked_actual_text = []
@@ -823,7 +831,7 @@ class ContentStreamParser:
             )
             stack.append(token)
 
-        return "".join(self._buffer).strip()
+        return "".join(self._buffer)
 
     @staticmethod
     def _decode_actual_text(value: Any) -> str | None:
@@ -1026,6 +1034,7 @@ class ContentStreamParser:
             # ops: [bytes]
             if not ops:
                 return
+            self.showed_text = True
             raw = ops[0]
             self._note_glyph_widths_from_bytes(raw)
             if not self._text_suppressed():
@@ -1040,6 +1049,7 @@ class ContentStreamParser:
             array = ops[0]
             if not isinstance(array, list):
                 return
+            self.showed_text = True
 
             for element in array:
                 if isinstance(element, bytes):
@@ -1065,6 +1075,8 @@ class ContentStreamParser:
             # T* with a string, and the double-quote form sets the spacing too.
             self._move_text_position("T*", [])
             self._pending_move = True
+            if ops:
+                self.showed_text = True
             if ops and not self._text_suppressed():
                 self._separate_from_previous_show()
                 self._buffer.append(self._decode_bytes(ops[-1]))

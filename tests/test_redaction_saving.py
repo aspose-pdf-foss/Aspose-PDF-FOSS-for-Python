@@ -157,7 +157,9 @@ def test_selected_page_keeps_another_pages_shared_content():
         assert document.pages[0].redact_text("shared") == 1
         result = _saved(document)
     with Document(result) as loaded:
-        assert loaded.pages[0].extract_text() == "text"
+        # The space the redacted word left behind is kept: extraction
+        # reports what the page draws, and MuPDF and pdfium keep it too.
+        assert loaded.pages[0].extract_text() == " text"
         assert loaded.pages[1].extract_text() == "shared text"
 
 

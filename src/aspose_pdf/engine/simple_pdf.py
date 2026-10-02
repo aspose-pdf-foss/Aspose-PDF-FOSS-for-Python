@@ -8476,8 +8476,19 @@ class SimplePdf:
             )
 
         try:
-            text = parse().extract_text()
-            return text if text else parse().best_effort_extract_text()
+            parser = parse()
+            text = parser.extract_text()
+            # An empty result is not a failure. A page may legibly draw no text,
+            # or only whitespace -- and the extractor strips that, so it comes
+            # back empty too. Treating that as a failure sent it to the
+            # best-effort pass, which reads every string in the stream as raw
+            # bytes: for a composite font those are two-byte CIDs, so extracting
+            # a page whose only text was a space returned ``'\x00\x01'``. The
+            # fallback is for a stream this parser could not follow, which is
+            # what ``showed_text`` tells apart.
+            if text or parser.showed_text:
+                return text
+            return parse().best_effort_extract_text()
         except PdfResourceLimitException:
             raise
         except CONTENT_PARSER_RECOVERABLE:

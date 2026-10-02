@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Text hidden by optional content was extracted anyway, and whitespace-only
+  text came back as raw CID bytes.** One cause: `extract_page_text` read an
+  *empty* extraction as a parse failure and fell back to the best-effort pass,
+  which reads every string in the stream as bytes and does not track the `/OC`
+  state. So a page whose every word sat in an optional-content group that is off
+  extracted that text regardless, and a page whose only text was a space came
+  back as `'\x00\x01'` — binary where a caller expects characters — because
+  extraction stripped the whitespace and so produced the empty string that was
+  mistaken for failure. An empty result is an answer now: the parser reports
+  through `showed_text` whether the stream asked for any text at all, which is
+  what tells a page that draws none from a stream the parser could not follow,
+  and the recovery pass still runs for the latter. Surrounding whitespace is kept
+  as well, which is what MuPDF and pdfium return — extraction reports what the
+  page draws.
+
 - **A font subset kept every table it was not erasing glyphs from, roughly
   doubling the embedded program.** One line of text in Arial Unicode (50377
   glyphs) embedded 869768 bytes, of which the 12 glyphs actually used were 2636:

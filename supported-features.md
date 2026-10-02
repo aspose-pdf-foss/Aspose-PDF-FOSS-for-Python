@@ -1262,7 +1262,15 @@ Supported:
   (`Td`/`TD`/`Tm`/`T*`, and the leading `TL` feeds them) — a change of baseline
   is a line, a move along one is a space. How those lines group into paragraphs
   is a judgement `to_markdown` and `to_html` make and this does not, so a
-  wrapped paragraph is one paragraph there and several lines here.
+  wrapped paragraph is one paragraph there and several lines here. **The
+  whitespace a page draws is kept**, leading and trailing included, which is what
+  MuPDF and pdfium return; it used to be stripped, and a page whose text was only
+  whitespace then came back as the **raw CID bytes** of it, because an empty
+  result was read as a parse failure and the recovery pass reads every string in
+  the stream as bytes. An empty result is now an answer: a page may legibly draw
+  no text. That also keeps the recovery pass away from **text hidden by optional
+  content** — it does not track the `/OC` state, so a page whose every word was
+  hidden used to have it extracted anyway.
 - Use `TextFragmentAbsorber` and `TextAbsorber` to collect text fragments, search
   exact phrases, run regex searches, control case sensitivity, and inspect match
   offsets/page indices. A *document* is taken page by page, which is the only
