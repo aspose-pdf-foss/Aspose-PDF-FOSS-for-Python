@@ -2633,16 +2633,22 @@ Boundaries:
   for every level but `4f`, and a payload that is not a PDF at all is passed
   rather than rejected (ISO 19005-4 6.9); PDF/UA-1 — a
   widget must be nested in a `Form` tag and a field needs a `/TU` or an `/Alt`
-  (ISO 14289-1 7.18.4, 7.18.1); PDF/UA-2 — the structure tree root must hold
-  exactly one `Document` element, in-document destinations must be structure
-  destinations, and an embedded file needs a `/Desc` (ISO 14289-2 8.2.5.2, 8.8,
+  (ISO 14289-1 7.18.4, 7.18.1); PDF/UA-2 — in-document destinations must be
+  structure destinations, and an embedded file needs a `/Desc` (ISO 14289-2 8.8,
   8.14.1). None of these is caught by the checks here either, which is the
   honest measure of "heuristic".
 - The PDF 2.0 parts are checked at the same depth as the earlier ones, which
   means their *identification* and the structural rules that differ, not the
   whole of PDF 2.0. An attached PDF is validated two levels deep; below that
   its `pdfaid:part` is still read but its contents are taken at their word, and
-  a warning says so. `convert_to_pdfua(part=2)`
+  a warning says so. **`convert_to_pdfua(part=2)` gives the structure tree the
+  single `Document` element its root must hold** (ISO 14289-2 8.2.5.2, by way of
+  ISO 32000-2 Annex L and ISO/TS 32005): whatever the root held becomes that
+  element's children, in order and re-parented, and `validate_pdfua(part=2)`
+  reports a root that holds anything else. Part 1 has no such rule and gets no
+  wrapper. Without it veraPDF failed every PDF/UA-2 document the converter
+  produced — headings and paragraphs hung straight off the root — while the
+  check here passed it. `convert_to_pdfua(part=2)`
   moves elements into the standard structure namespace but does not *translate*
   types between vocabularies: the tags this library writes exist in both
   namespaces, and a foreign type keeps whatever namespace it already names.

@@ -1274,6 +1274,7 @@ def pdfua_extended(pdf: Any, part: int = 1) -> tuple[list[str], list[str]]:
         _check_pdfua_version(pdf, part, errors)
         if part >= 2:
             _check_structure_namespace(pdf, root, errors)
+            _check_single_document_root(pdf, root, errors)
         viewer = _get_dict(pdf, root.get(PdfName("ViewerPreferences")))
         display = pdf._resolve(viewer.get(PdfName("DisplayDocTitle"))) if viewer else None
         if not (isinstance(display, PdfBoolean) and display.value):
@@ -1310,6 +1311,49 @@ def pdfua_extended(pdf: Any, part: int = 1) -> tuple[list[str], list[str]]:
     warnings.extend(mcid_warnings)
 
     return errors, warnings
+
+
+def _check_single_document_root(pdf: Any, root: PdfDictionary, errors: list[str]) -> None:
+    """ISO 14289-2 8.2.5.2: one ``Document`` element, and nothing else, at the root.
+
+    By way of ISO 32000-2 Annex L and ISO/TS 32005. veraPDF states it three
+    ways -- exactly one ``Document``, no ``Hn`` under the root, no ``P`` under
+    the root -- and this check used to pass a document whose authored headings
+    and paragraphs hung straight off ``/StructTreeRoot``, which is what the
+    converter produced. Part 1 has no such rule.
+    """
+    struct_root = _get_dict(pdf, root.get(PdfName("StructTreeRoot")))
+    if struct_root is None:
+        return  # the missing-StructTreeRoot error is raised elsewhere
+    kids = pdf._resolve(struct_root.get(PdfName("K")))
+    if isinstance(kids, PdfArray):
+        items = list(kids.items)
+    elif kids is None:
+        items = []
+    else:
+        items = [struct_root.get(PdfName("K"))]
+
+    role_map = _build_role_map(pdf, struct_root)
+    types = []
+    for item in items:
+        element = _get_dict(pdf, item)
+        name = _name(pdf, element, "S") if element is not None else None
+        types.append(_resolved_struct_type(name or "", role_map))
+
+    if types == ["Document"]:
+        return
+    if not types:
+        errors.append(
+            "PDF/UA-2 requires the structure tree root to contain a single "
+            "Document element; it has none (ISO 14289-2 8.2.5.2)."
+        )
+        return
+    shown = ", ".join(types[:5])
+    errors.append(
+        "PDF/UA-2 requires the structure tree root to contain a single "
+        f"Document element as its only child; it has {len(types)} "
+        f"({shown}) (ISO 14289-2 8.2.5.2)."
+    )
 
 
 def _check_pdfua_version(pdf: Any, part: int, errors: list[str]) -> None:

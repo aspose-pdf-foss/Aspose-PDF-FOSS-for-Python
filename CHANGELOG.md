@@ -9,6 +9,19 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Every PDF/UA-2 document the converter produced was rejected by veraPDF, and
+  our own check passed it.** ISO 14289-2 8.2.5.2, by way of ISO 32000-2 Annex L
+  and ISO/TS 32005, requires the structure tree root to contain a single
+  `Document` structure element as its only child; veraPDF states it three ways —
+  exactly one `Document`, no `Hn` under the root, no `P` under the root — and the
+  authored headings and paragraphs were attached to `/StructTreeRoot` itself.
+  `convert_to_pdfua(part=2)` now adds that element, moving whatever the root held
+  into it in order and re-parenting each child, and leaves a root that already
+  has one alone so converting twice changes nothing. `validate_pdfua(part=2)`
+  reports a root holding none, more than one, or anything other than a
+  `Document`. Part 1 has no such rule: its output never had the wrapper and still
+  does not. veraPDF now passes both parts.
+
 - **An attachment was never declared an associated file, so PDF/A-3 output was
   rejected.** ISO 19005-3 6.8 and ISO 19005-4 6.9 require every embedded file to
   be associated with the document or a part of it, which an `/AF` array

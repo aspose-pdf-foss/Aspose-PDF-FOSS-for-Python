@@ -14659,6 +14659,7 @@ class SimplePdf:
             namespace_ref = self._declare_structure_namespace(root)
             if namespace_ref is not None:
                 self._retag_into_namespace(root, namespace_ref)
+            self._wrap_structure_in_document(root, namespace_ref)
 
         # PDF/UA requires every font used for rendering to be embedded
         # (ISO 14289-1 7.21.4.1, ISO 14289-2 8.4.5.5.1), which this used to
@@ -14668,6 +14669,61 @@ class SimplePdf:
 
         logger.info("PDF/UA structure added; checking remaining issues.")
         return self.check_pdfua_compliance(part)[0]
+
+    def _wrap_structure_in_document(self, root: PdfDictionary, namespace_ref: Any) -> None:
+        """Give the structure tree the single ``Document`` root part 2 requires.
+
+        ISO 14289-2 8.2.5.2, by way of ISO 32000-2 Annex L and ISO/TS 32005:
+        "the structure tree root shall contain a single Document structure
+        element as its only child". veraPDF states it three ways -- exactly one
+        ``Document``, and no ``Hn`` or ``P`` directly under the root -- and
+        failed every PDF/UA-2 document this converter produced, because the
+        authored elements were attached to the root itself. Part 1 does not ask
+        for the wrapper, which is why its output passed all along.
+
+        Whatever the root held becomes the ``Document``'s children, in order,
+        each re-parented to it. A root that already has one ``Document`` and
+        nothing else is left alone, so converting twice changes nothing.
+        """
+        struct_entry = root.mapping.get(PdfName("StructTreeRoot"))
+        struct_root = self._resolve(struct_entry)
+        if not isinstance(struct_root, PdfDictionary):
+            return
+
+        kids = self._resolve(struct_root.mapping.get(PdfName("K")))
+        if isinstance(kids, PdfArray):
+            existing = list(kids.items)
+        elif kids is None:
+            existing = []
+        else:
+            existing = [struct_root.mapping.get(PdfName("K"))]
+
+        if len(existing) == 1:
+            only = self._resolve(existing[0])
+            if (
+                isinstance(only, PdfDictionary)
+                and self._get_name(only.mapping.get(PdfName("S"))) == "Document"
+            ):
+                return
+
+        document = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("StructElem"),
+                PdfName("S"): PdfName("Document"),
+                PdfName("K"): PdfArray(existing),
+            }
+        )
+        if namespace_ref is not None:
+            document.mapping[PdfName("NS")] = namespace_ref
+        if isinstance(struct_entry, PdfIndirectReference):
+            document.mapping[PdfName("P")] = struct_entry
+        document_ref = self._cos_doc.register_object(document)
+
+        for item in existing:
+            child = self._resolve(item)
+            if isinstance(child, PdfDictionary):
+                child.mapping[PdfName("P")] = document_ref
+        struct_root.mapping[PdfName("K")] = PdfArray([document_ref])
 
     def _declare_structure_namespace(self, root: PdfDictionary) -> Any:
         """Declare the PDF 2.0 standard structure namespace; return its reference."""
