@@ -1571,6 +1571,16 @@ Supported:
   image's own bit depth, so a 16-bit pixel sharing only the key's high byte
   stays opaque. A fully opaque PNG gets no mask. Push-button icons are placed
   the same way.
+- **Every embedded file declares a media type.** `/Subtype` carries the `mime=`
+  given to `add_attachment`, or `application/octet-stream` when none is — the
+  value ISO 19005-3 6.8 and ISO 19005-4 6.9 name for an unknown type, and which
+  they require of every embedded file. It is written for every attachment, PDF/A
+  or not, being a valid optional key (ISO 32000-1 table 45) and the same
+  reasoning under which `/AFRelationship` has always been written. Reading it
+  back mirrors `/AFRelationship`: `application/octet-stream` and `Unspecified`
+  say nothing the caller did not know, so both report as `None` rather than as a
+  value the producer never chose. Without the default, veraPDF failed every
+  PDF/A-4f file carrying an attachment — the level that exists to carry them.
 - Mark newly authored images as tagged `/Figure` content by passing `alt=...`
   (or an explicit `tag=...`), producing MCID-backed structure elements.
 - Track images by resource name and page association where the page/resource map
@@ -2611,8 +2621,7 @@ Boundaries:
   remains is, per level: PDF/A-1 — the attachment's `/EF` key, which PDF/A-1
   forbids outright and the conversion does not remove (ISO 19005-1 6.1.11);
   PDF/A-2 — an embedded file must itself be PDF/A (6.8); PDF/A-3 — an
-  associated file needs its relationship stated (6.8); PDF/A-4 — an embedded
-  file must declare a MIME type in its `/Subtype` (6.9); PDF/UA-1 — a
+  associated file needs its relationship stated (6.8); PDF/UA-1 — a
   widget must be nested in a `Form` tag and a field needs a `/TU` or an `/Alt`
   (ISO 14289-1 7.18.4, 7.18.1); PDF/UA-2 — the structure tree root must hold
   exactly one `Document` element, in-document destinations must be structure

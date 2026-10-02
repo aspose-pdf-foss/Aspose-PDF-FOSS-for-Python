@@ -3142,10 +3142,16 @@ class SimplePdf:
             ef_mapping = {
                 PdfName("Type"): PdfName("EmbeddedFile"),
                 PdfName("Params"): params,
+                # A media type is required of every embedded file by PDF/A-3
+                # (ISO 19005-3 6.8) and PDF/A-4 (ISO 19005-4 6.9), which name
+                # the value to use when it is not known; harmless otherwise and
+                # a valid optional key (ISO 32000-1 table 45), exactly like the
+                # /AFRelationship below. Without it veraPDF failed every
+                # PDF/A-4f file carrying an attachment added without ``mime=``.
+                PdfName("Subtype"): _encode_mime_name(
+                    meta.get("mime") or "application/octet-stream"
+                ),
             }
-            mime = meta.get("mime")
-            if mime:
-                ef_mapping[PdfName("Subtype")] = _encode_mime_name(mime)
 
             content = data
             if meta.get("compress", True):
@@ -17653,7 +17659,12 @@ class CosExtractor:
         mime = _decode_mime_name(
             self._resolve(ef_stream.mapping.get(PdfName("Subtype")))
         )
-        if mime:
+        # "application/octet-stream" is what PDF/A-3 6.8 and PDF/A-4 6.9 say to
+        # write when the type is not known, and it is what this library writes
+        # for an attachment added without one -- so it carries no more
+        # information than an absent /Subtype and is reported the same way,
+        # exactly as "Unspecified" is for /AFRelationship below.
+        if mime and mime != "application/octet-stream":
             meta["mime"] = mime
 
         desc = self._resolve(filespec.mapping.get(PdfName("Desc")))

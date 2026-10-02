@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An attachment added without a MIME type made every PDF/A-4f file fail
+  veraPDF.** ISO 19005-3 6.8 and ISO 19005-4 6.9 require a media type in an
+  embedded file stream's `/Subtype` and name `application/octet-stream` as the
+  value to use when the type is not known; `add_attachment` without `mime=`
+  wrote no `/Subtype` at all, so the level that exists to carry attachments
+  rejected every document that had one. The same file with an explicit
+  `mime="text/plain"` passed, so only the default was missing. It is written for
+  every attachment now, PDF/A or not, on the same footing as `/AFRelationship`.
+  Reading it back follows the rule already used for `/AFRelationship`'s
+  `Unspecified`: a declared `application/octet-stream` says nothing an absent
+  `/Subtype` did not, so `FileSpecification.mime_type` reports `None` for it
+  rather than a type the producer never chose. veraPDF now passes our PDF/A-4f
+  output with and without an explicit type.
+
 - **Every PDF/A-4 file the converter produced was rejected by veraPDF, and our
   own validator passed it.** ISO 19005-4 clause 6.1.3 forbids `/Info` in the
   trailer unless the catalog carries a `/PieceInfo`, and allows nothing but
