@@ -2422,7 +2422,12 @@ Supported:
   require, and `validate_pdfa` reports both rules. The document still names
   itself in the XMP packet's `dc:title`, which is where part 4 expects it.
   veraPDF passes our PDF/A-4, `4e` and `4f` output on this.
-  An **attached PDF must be PDF/A itself** (ISO 19005-4 6.9): the payload has
+  **Every attached file must be PDF/A itself** (ISO 19005-4 6.9), for every
+  level but `4f`: a payload that is not a PDF at all fails the rule as surely as
+  a non-conforming PDF does, which is what `4f` — the level defined to carry
+  embedded files of any type — exists for. This was read more narrowly, as a
+  rule about PDF payloads only, so a spreadsheet attached to a base part-4
+  document passed where veraPDF rejects it. A PDF payload has
   to declare `pdfaid:part` 1, 2 or 4 — part 3 is not on the list, since its
   purpose is to carry arbitrary files — and is then checked against the same
   rules as any other document, so an attachment that merely *claims* PDF/A
@@ -2629,9 +2634,7 @@ Boundaries:
   known list rather than a caveat. Font embedding passes on all nine. What
   remains is, per level: PDF/A-1 — the attachment's `/EF` key, which PDF/A-1
   forbids outright and the conversion does not remove (ISO 19005-1 6.1.11);
-  PDF/A-2 — an embedded file must itself be PDF/A (6.8); PDF/A-4 — the same,
-  for every level but `4f`, and a payload that is not a PDF at all is passed
-  rather than rejected (ISO 19005-4 6.9); PDF/UA-1 — a
+  PDF/A-2 — an embedded file must itself be PDF/A (6.8); PDF/UA-1 — a
   widget must be nested in a `Form` tag and a field needs a `/TU` or an `/Alt`
   (ISO 14289-1 7.18.4, 7.18.1); PDF/UA-2 — in-document destinations must be
   structure destinations, and an embedded file needs a `/Desc` (ISO 14289-2 8.8,

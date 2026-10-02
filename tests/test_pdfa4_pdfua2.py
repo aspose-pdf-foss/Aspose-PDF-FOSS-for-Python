@@ -274,13 +274,17 @@ def test_an_embedded_file_without_a_relationship_is_flagged_for_part_four():
             filespec = engine._resolve(value)
             filespec.mapping.pop(PdfName("AFRelationship"), None)
 
+    # Checked against 4f, the level that permits an attachment of any type, so
+    # the only rule in play is the relationship one. Under base part 4 a
+    # ``notes.txt`` would fail 6.9 as well -- every embedded file there has to
+    # be PDF/A itself -- and that is a different rule, tested below.
     document = _with_attachment()
-    document.convert_to_pdfa("4")
-    assert _errors(document, "4") == []  # the conversion stamps one on
+    document.convert_to_pdfa("4f")
+    assert _errors(document, "4f") == []  # the conversion stamps one on
 
     strip_relationship(document._engine_pdf)
 
-    assert any("PDF/A-4 requires /AFRelationship" in e for e in _errors(document, "4"))
+    assert any("PDF/A-4 requires /AFRelationship" in e for e in _errors(document, "4f"))
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A base PDF/A-4 document whose attachment was not a PDF at all was reported
+  valid.** ISO 19005-4 6.9 requires *every* embedded file to conform to PDF/A-1,
+  -2 or -4 — veraPDF puts it as "All of the embedded files shall be compliant
+  with ISO 19005-1, 19005-2 or 19005-4" and fails such a file. The check read it
+  as a rule about PDF payloads only and skipped anything else, so a spreadsheet
+  attached to a base part-4 file passed. The existence of PDF/A-4f settles the
+  reading: that level is defined to carry embedded files of any type and
+  *requires* an `/EmbeddedFiles` key, which would add nothing if the base level
+  already permitted arbitrary attachments. A non-PDF payload and one that cannot
+  be read are both reported now, naming `4f` as the level that allows them, and
+  the check reads attachments added in the session as well as the object graph —
+  the same blind spot the part-4 `/Info` check had. `4f` is unaffected, and a
+  conforming PDF/A payload still passes.
+
 - **Every PDF/UA-2 document the converter produced was rejected by veraPDF, and
   our own check passed it.** ISO 14289-2 8.2.5.2, by way of ISO 32000-2 Annex L
   and ISO/TS 32005, requires the structure tree root to contain a single

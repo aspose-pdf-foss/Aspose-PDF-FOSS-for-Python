@@ -145,3 +145,91 @@ def test_an_attachment_already_in_the_graph_is_dropped_for_pdfa_1():
     assert b"/EmbeddedFiles" not in data
     assert _af_refs(data) == []
     assert list(Document(io.BytesIO(data)).attachments) == []
+
+
+# ---------------------------------------------------------------------------
+# ISO 19005-4 6.9: every embedded file in a base part-4 file has to be PDF/A
+# ---------------------------------------------------------------------------
+def _part_four_with(payload: bytes, *, level: str = "PDF/A-4", mime: str | None = None):
+    document = Document()
+    document.pages.add()
+    document.pages[0].add_text("Outer", 50, 720)
+    document.add_attachment("inner", payload, **({"mime": mime} if mime else {}))
+    document.convert_to_pdfa(level)
+    return document
+
+
+def _conforming_pdfa() -> bytes:
+    inner = Document()
+    inner.pages.add()
+    inner.pages[0].add_text("Inner", 50, 700)
+    inner.info["Title"] = "Inner"
+    inner.convert_to_pdfa("PDF/A-2B")
+    buffer = io.BytesIO()
+    inner.save(buffer)
+    return buffer.getvalue()
+
+
+_PLAIN_PDF = (
+    b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+    b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n"
+    b"trailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF\n"
+)
+
+
+def test_a_non_pdf_attachment_fails_base_part_four():
+    """ISO 19005-4 6.9: *every* embedded file, not only the PDF ones.
+
+    veraPDF puts the clause as "All of the embedded files shall be compliant
+    with ISO 19005-1, 19005-2 or 19005-4" and fails such a file. It was read
+    here as a rule about PDF payloads only, so a spreadsheet attached to a base
+    part-4 document passed. PDF/A-4f settles the reading: it is defined to carry
+    embedded files of any type and *requires* an ``/EmbeddedFiles`` key, which
+    would add nothing if the base level already allowed them.
+    """
+    document = _part_four_with(b"not a pdf at all", mime="application/octet-stream")
+    result = document.validate_pdfa("PDF/A-4")
+    assert result.is_valid is False
+    assert any("is not a PDF" in str(e) for e in result.errors), result.errors
+    assert any("PDF/A-4f" in str(e) for e in result.errors), result.errors
+
+
+def test_the_same_attachment_is_fine_under_4f():
+    document = _part_four_with(b"not a pdf at all", level="PDF/A-4F")
+    assert document.validate_pdfa("PDF/A-4F").is_valid
+
+
+def test_a_conforming_pdfa_attachment_passes_base_part_four():
+    document = _part_four_with(_conforming_pdfa(), mime="application/pdf")
+    assert document.validate_pdfa("PDF/A-4").is_valid
+
+
+def test_a_plain_pdf_attachment_fails_base_part_four():
+    # Already the behaviour before: a PDF that is not PDF/A was caught.
+    document = _part_four_with(_PLAIN_PDF, mime="application/pdf")
+    result = document.validate_pdfa("PDF/A-4")
+    assert result.is_valid is False
+    assert any("conform to" in str(e) for e in result.errors), result.errors
+
+
+def test_an_unreadable_attachment_is_reported_rather_than_skipped():
+    # Saved and reloaded first, so the file specification is in the object graph
+    # to break: an attachment added in this session lives in ``attachments``
+    # until a save writes it, and there is nothing to point at yet.
+    document = _part_four_with(_conforming_pdfa(), mime="application/pdf")
+    buffer = io.BytesIO()
+    document.save(buffer)
+    reloaded = Document(io.BytesIO(buffer.getvalue()))
+
+    engine = reloaded._engine_pdf
+    root = engine._resolve(engine._cos_doc.trailer.mapping.get(PdfName("Root")))
+    names = engine._resolve(root.mapping.get(PdfName("Names")))
+    tree = engine._resolve(names.mapping.get(PdfName("EmbeddedFiles")))
+    listed = engine._resolve(tree.mapping.get(PdfName("Names")))
+    engine._resolve(listed.items[1]).mapping.pop(PdfName("EF"), None)
+    engine.attachments.clear()        # so only the graph entry is left to read
+
+    result = reloaded.validate_pdfa("PDF/A-4")
+    assert result.is_valid is False
+    assert any("could not be read" in str(e) for e in result.errors), result.errors

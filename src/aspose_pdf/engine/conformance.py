@@ -47,11 +47,18 @@ _PROHIBITED_ANNOT_SUBTYPES = frozenset(
 # ...of which PDF/A-4e, the engineering level, exists precisely to allow.
 _ENGINEERING_ANNOT_SUBTYPES = frozenset({"RichMedia", "3D"})
 
-# ISO 19005-4 6.9: an embedded file that is itself a PDF shall conform to
-# PDF/A-1, PDF/A-2 or PDF/A-4. Part 3 is deliberately absent -- its whole
-# purpose is to carry arbitrary attachments, so a PDF/A-3 file is no guarantee
-# about what it contains -- and PDF/A-4f is the level that lifts the rule
-# entirely. PDF/A-4e does not: it adds 3D and rich media, nothing else.
+# ISO 19005-4 6.9: *every* embedded file shall conform to PDF/A-1, PDF/A-2 or
+# PDF/A-4 -- veraPDF puts it as "All of the embedded files shall be compliant
+# with ISO 19005-1, 19005-2 or 19005-4", and fails a base part-4 file carrying
+# anything else. This was read more narrowly here, as a rule about PDF payloads
+# only, which passed a part-4 document with a spreadsheet attached that veraPDF
+# rejects. The existence of PDF/A-4f settles it: that level is defined to carry
+# embedded files of any type and *requires* an /EmbeddedFiles key, which would
+# add nothing if the base level already permitted arbitrary attachments.
+# Part 3 is deliberately absent from the list -- its whole purpose is to carry
+# arbitrary attachments, so a PDF/A-3 file is no guarantee about what it
+# contains. PDF/A-4e does not lift the rule either: it adds 3D and rich media,
+# nothing else.
 _EMBEDDED_PDFA_PARTS = frozenset({"1", "2", "4"})
 
 # How far down a chain of attached PDFs the *structural* checks are run. Each
@@ -688,45 +695,78 @@ def _filespec_label(pdf: Any, filespec: PdfDictionary) -> str:
     return "embedded file"
 
 
+def _embedded_files_to_check(pdf: Any) -> list[tuple[str, bytes | None]]:
+    """``(label, payload)`` for every embedded file the next save would write.
+
+    Both sources, because they hold different things: the catalog's
+    ``/EmbeddedFiles`` name tree is what a loaded document carries, and
+    ``attachments`` is where one added in this session lives until a save writes
+    it. Reading only the graph passed a document that was about to be written
+    non-conformant -- the same blind spot the PDF/A-4 ``/Info`` check had.
+    """
+    found: list[tuple[str, bytes | None]] = []
+    seen: set[str] = set()
+
+    root = catalog(pdf)
+    if root is not None:
+        names = _get_dict(pdf, root.get(PdfName("Names")))
+        ef_tree = (
+            _get_dict(pdf, names.get(PdfName("EmbeddedFiles")))
+            if names is not None
+            else None
+        )
+        if ef_tree is not None:
+            for value in _iter_name_tree_values(pdf, ef_tree, set(), 0):
+                filespec = _get_dict(pdf, value)
+                if filespec is None:
+                    continue
+                label = _filespec_label(pdf, filespec)
+                seen.add(label)
+                found.append((label, _embedded_payload(pdf, filespec)))
+
+    for name, payload in sorted(getattr(pdf, "attachments", {}).items()):
+        if name not in seen:
+            found.append((name, bytes(payload) if payload is not None else None))
+    return found
+
+
 def _check_embedded_pdfs(
     pdf: Any, errors: list[str], warnings: list[str], depth: int
 ) -> None:
-    """An attached PDF has to be PDF/A itself (ISO 19005-4 6.9).
+    """Every embedded file has to be PDF/A itself (ISO 19005-4 6.9).
 
-    Only PDF/A-4f lifts this, and only PDF *payloads* are subject to it -- a
-    spreadsheet or an image attached to a PDF/A-4 file is a separate question,
-    answered by whether the level permits attachments at all.
+    Only PDF/A-4f lifts this, and it applies to the attachment whatever it is: a
+    spreadsheet or an image in a base part-4 file fails the rule as surely as a
+    non-conforming PDF does, which is what PDF/A-4f exists for. A payload that
+    is not a PDF used to be skipped here on the reading that the rule was about
+    PDF payloads only, so this passed documents veraPDF rejects.
 
-    Conformance is established the way the rule states it: the payload has to
-    declare ``pdfaid:part`` 1, 2 or 4. What it declares is then checked against
-    the same rules as any other document, so a file that merely *claims* PDF/A
-    does not pass -- until the descent bound stops that second half, past which
-    the declaration alone is checked.
+    Conformance of a PDF payload is established the way the rule states it: it
+    has to declare ``pdfaid:part`` 1, 2 or 4. What it declares is then checked
+    against the same rules as any other document, so a file that merely *claims*
+    PDF/A does not pass -- until the descent bound stops that second half, past
+    which the declaration alone is checked.
     """
     from .simple_pdf import SimplePdf, _extract_xmp_pdfaid_fields
 
-    root = catalog(pdf)
-    if root is None:
-        return
-    names = _get_dict(pdf, root.get(PdfName("Names")))
-    if names is None:
-        return
-    ef_tree = _get_dict(pdf, names.get(PdfName("EmbeddedFiles")))
-    if ef_tree is None:
-        return
-
-    for value in _iter_name_tree_values(pdf, ef_tree, set(), 0):
-        filespec = _get_dict(pdf, value)
-        if filespec is None:
-            continue
-        payload = _embedded_payload(pdf, filespec)
+    for label, payload in _embedded_files_to_check(pdf):
         # The bytes decide, not the declared MIME type or the file extension:
         # both are producer-supplied labels, and the rule is about what the
         # attachment *is*.
-        if payload is None or not payload.startswith(b"%PDF-"):
+        if payload is None:
+            errors.append(
+                f"PDF/A-4 requires every embedded file to conform to PDF/A, "
+                f"and {label!r} could not be read."
+            )
+            continue
+        if not payload.startswith(b"%PDF-"):
+            errors.append(
+                f"PDF/A-4 requires every embedded file to conform to PDF/A; "
+                f"{label!r} is not a PDF. Use PDF/A-4f, the level for embedded "
+                f"files of any type."
+            )
             continue
 
-        label = _filespec_label(pdf, filespec)
         try:
             inner = SimplePdf.from_bytes(
                 payload, limits=getattr(pdf, "_load_limits", None)
