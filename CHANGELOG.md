@@ -9,6 +9,17 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`flatten()` raised `IndexError` on a streamed document.** It read
+  `self.page_contents[i]` -- the content *cache*, which a document opened with
+  `open_streaming` has not filled -- instead of asking for the page, so it failed
+  for every page that had an annotation or a form field to flatten. A page with
+  none reaches a `continue` before that line, which is why flattening a plain
+  streamed document worked and flattening a useful one did not. The same defect
+  `extract_text` once had. It now asks for the content it is about to edit, so
+  only the pages that are actually flattened are decoded and a document with
+  nothing to flatten stays lazy. With this the eager and lazy load paths agree on
+  every operation measured: 28 operations over 18 documents, no divergence.
+
 - **Saving a document opened with `open_streaming` deleted its attachments.**
   `from_file_lazy` never read them, and `_sync_attachments_to_cos` reads an empty
   mapping as *the caller removed them all* -- so the save dropped the

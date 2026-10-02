@@ -169,6 +169,54 @@ def test_a_streamed_save_still_appends_to_a_signed_document(signed):
     assert len(Document(io.BytesIO(data)).signatures) == 1
 
 
+@pytest.fixture
+def with_a_field(tmp_path):
+    document = Document()
+    document.pages.add()
+    document.pages[0].add_text("Body", 50, 700)
+    document.form.add_text_field("name", 0, (50, 500, 250, 525), value="Value")
+    path = tmp_path / "field.pdf"
+    document.save(path)
+    return path
+
+
+def test_flattening_a_streamed_document_works(with_a_field):
+    """It used to raise ``IndexError`` for any page that had an annotation.
+
+    ``flatten`` read ``self.page_contents[i]`` -- the content *cache*, which a
+    streamed document has not filled -- instead of asking for the page. A page
+    with no annotations reaches a ``continue`` before that line, so flattening a
+    plain streamed document worked and flattening a useful one did not. The same
+    defect ``extract_text`` once had.
+    """
+    results = []
+    for document in _both_ways(with_a_field):
+        document.flatten()
+        buffer = io.BytesIO()
+        document.save(buffer)
+        reopened = Document(io.BytesIO(buffer.getvalue()))
+        results.append(
+            (
+                len(reopened.pages),
+                [p.extract_text().strip() for p in reopened.pages],
+                sorted(f.name for f in reopened.form.fields),
+            )
+        )
+    eager, lazy = results
+    assert lazy == eager
+    assert eager[2] == []                     # the field is gone
+    assert "Value" in eager[1][0]             # its value is on the page
+
+
+def test_flattening_decodes_only_the_pages_it_edits(with_attachment):
+    # A document with nothing to flatten stays lazy, as it did before the fix.
+    streamed = Document.open_streaming(with_attachment)
+    engine = streamed._engine_pdf
+    streamed.flatten()
+    assert engine._lazy is True
+    assert engine.page_contents == []
+
+
 def test_a_streamed_document_stays_lazy(with_attachment):
     streamed = Document.open_streaming(with_attachment)
     engine = streamed._engine_pdf
@@ -197,6 +245,7 @@ def test_the_attachments_a_streamed_load_reads_are_bounded(with_attachment):
         ("signatures", lambda d: len(d.signatures)),
         ("outlines", lambda d: [(i.title, i.page_index) for i in d.outlines]),
         ("fields", lambda d: sorted(f.name for f in d.form.fields)),
+        ("flatten", lambda d: (d.flatten(), sorted(f.name for f in d.form.fields))[1]),
         ("validate", lambda d: d.validate()),
         ("html length", lambda d: len(d.to_html())),
     ],

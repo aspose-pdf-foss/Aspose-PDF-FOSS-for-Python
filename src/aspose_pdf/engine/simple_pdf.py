@@ -12380,7 +12380,13 @@ class SimplePdf:
                 xobjects = PdfDictionary({})
                 resources[PdfName("XObject")] = xobjects
 
-            new_content = bytearray(self.page_contents[i])
+            # Asked for, not read out of the cache: a streamed document has
+            # not filled it, and indexing it raised ``IndexError`` for every
+            # page that had an annotation to flatten. ``_set_page_content``
+            # below materialises the rest, so only the pages that are actually
+            # edited are decoded -- a document with no annotations stays lazy,
+            # as it already did.
+            new_content = bytearray(self.get_page_content(i))
 
             for annot_ref in annots.items:
                 annot = self._resolve(annot_ref)

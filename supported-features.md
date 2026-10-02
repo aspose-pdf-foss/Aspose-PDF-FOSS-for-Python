@@ -233,7 +233,11 @@ Supported:
   dropping the `/Names /EmbeddedFiles` tree with no warning. The payloads this
   reads are bounded by the same `PdfLoadLimits` as any other stream, so a
   streamed document with a large attachment now costs for those bytes what an
-  eagerly loaded one costs.
+  eagerly loaded one costs. **`flatten()` works on a streamed document too**: it
+  used to read the not-yet-filled content cache and raise `IndexError` for every
+  page that had an annotation to flatten, so flattening a plain streamed document
+  worked and flattening a useful one did not. It asks for the pages it edits, so a
+  document with nothing to flatten stays lazy.
 - **Merge `Document` instances.** A merged page is *imported*: its dictionary
   is copied into this document's object graph along with everything it reaches
   -- resources above all, without which its content names fonts and images that
