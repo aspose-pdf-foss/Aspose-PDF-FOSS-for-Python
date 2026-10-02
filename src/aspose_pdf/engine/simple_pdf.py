@@ -4280,9 +4280,17 @@ class SimplePdf:
         # from a file or bytes (i.e., has a live COS structure).  A brand-new
         # in-memory SimplePdf() that hasn't been persisted yet is intentionally
         # skipped here.
-        if self._cos_doc is not None:
+        # Part 4 is the exception: ISO 19005-4 6.1.3 *forbids* the information
+        # dictionary unless the catalog carries a /PieceInfo, and allows nothing
+        # but /ModDate in it where it is allowed -- so a title there would be the
+        # violation rather than the requirement. The XMP ``dc:title`` is where a
+        # part-4 document names itself, and the conversion still writes one.
+        level_short = _normalize_pdfa_level_short(level)
+        if self._cos_doc is not None and not level_short.startswith("4"):
             if not self.metadata.get("Title"):
                 problems.append("PDF/A requires a Title in metadata.")
+        if level_short.startswith("4"):
+            problems.extend(self._pdfa4_info_problems())
 
         # 3. Prohibited: JavaScript and Actions
         if self._cos_doc:
@@ -14287,12 +14295,21 @@ class SimplePdf:
         # annotation flags (set Print, clear Hidden/NoView/Invisible).
         self._pdfa_remediate_pages()
 
-        # 2. Ensure /Info has a /Title. Through ``metadata``, which is the one
-        # thing that writes /Info: an entry put straight into the COS dict is
-        # invisible to ``doc.info`` and would be removed by the next save as a
-        # key the caller had deleted.
+        # 2. /Info. Parts 1 to 3 require a /Title; **part 4 forbids the
+        # dictionary altogether** (ISO 19005-4 6.1.3), so converting to it has
+        # to take /Info away rather than fill it in -- veraPDF fails a part-4
+        # file that carries one. Either way this goes through ``metadata``,
+        # which is the one thing that writes /Info: an entry put straight into
+        # the COS dict is invisible to ``doc.info`` and would be removed by the
+        # next save as a key the caller had deleted.
+        # The title is read first either way: the XMP packet below still carries
+        # a ``dc:title``, which part 4 allows -- it is the /Info dictionary it
+        # forbids, not the title itself.
         title = self.metadata.get("Title", "").strip() or "Untitled"
-        self.metadata["Title"] = title
+        if level_norm.startswith("4"):
+            self._pdfa4_restrict_info(root)
+        else:
+            self.metadata["Title"] = title
 
         # 3. Inject XMP metadata stream into the catalog
         xmp_bytes = _make_pdfa_xmp(level, title)
@@ -14375,6 +14392,79 @@ class SimplePdf:
         # 8. Return any compliance issues that remain (e.g. font warnings,
         #    transparency or prohibited annotations that cannot be auto-fixed).
         return self.check_pdfa_compliance(level)
+
+    def _pdfa4_info_problems(self) -> list[str]:
+        """``/Info`` violations of ISO 19005-4 6.1.3, which only part 4 has.
+
+        Test 4: the ``Info`` key shall not be in the trailer unless the catalog
+        has a ``/PieceInfo``. Test 5: where it is there, the dictionary shall
+        hold nothing but ``/ModDate``. veraPDF enforces both, and this used to
+        report a part-4 file carrying a full information dictionary as valid.
+        """
+        if self._cos_doc is None:
+            return []
+
+        # What the next save would write, not only what the graph holds now:
+        # ``metadata`` is where /Info comes from, and an entry set through
+        # ``doc.info`` has not reached the trailer yet. Reading only one of the
+        # two would pass a document that is about to be written non-conformant.
+        keys = {str(name) for name in self.metadata}
+        info = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Info")))
+        if isinstance(info, PdfDictionary):
+            keys |= {key.name.lstrip("/") for key in info.mapping}
+        if not keys:
+            return []
+
+        root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not (isinstance(root, PdfDictionary) and PdfName("PieceInfo") in root.mapping):
+            return [
+                "PDF/A-4 prohibits /Info in the trailer unless the catalog has "
+                "a /PieceInfo (ISO 19005-4 6.1.3)."
+            ]
+        extra = sorted(name for name in keys if name != "ModDate")
+        if extra:
+            return [
+                "PDF/A-4 allows only /ModDate in /Info; found "
+                + ", ".join(f"/{name}" for name in extra)
+                + " (ISO 19005-4 6.1.3)."
+            ]
+        return []
+
+    def _pdfa4_restrict_info(self, root: PdfDictionary) -> None:
+        """Bring ``/Info`` within what PDF/A-4 allows (ISO 19005-4 6.1.3).
+
+        Two rules, and veraPDF enforces both: the ``Info`` key shall not be in
+        the trailer at all unless the catalog carries a ``/PieceInfo``, and where
+        it is allowed the dictionary shall hold nothing but ``/ModDate``. Part 4
+        dropped the ``/Title`` requirement that parts 1 to 3 have and replaced it
+        with this prohibition, so a document converted to part 4 loses the
+        information dictionary it would have gained under any earlier part.
+
+        Both halves are needed. ``metadata`` is what the save writes ``/Info``
+        from, so clearing it is what keeps the dictionary out; and dropping the
+        COS entries as well catches the ones that view cannot see --
+        ``_drop_removed_info_entries`` deliberately keeps an entry whose value
+        has no text form, which would otherwise survive into a part-4 file.
+        """
+        keep = PdfName("PieceInfo") in root.mapping
+        mod_date = self.metadata.get("ModDate")
+        self.metadata.clear()
+
+        info_ref = self._cos_doc.trailer.mapping.get(PdfName("Info"))
+        info_dict = self._resolve(info_ref)
+        if not keep:
+            self._cos_doc.trailer.mapping.pop(PdfName("Info"), None)
+            return
+
+        if isinstance(info_dict, PdfDictionary):
+            if mod_date is None:
+                existing = self._resolve(info_dict.mapping.get(PdfName("ModDate")))
+                mod_date = _info_cos_text(existing) if existing is not None else None
+            for key in list(info_dict.mapping):
+                if key != PdfName("ModDate"):
+                    del info_dict.mapping[key]
+        if mod_date is not None:
+            self.metadata["ModDate"] = mod_date
 
     def _pdfa_remediate_pages(self) -> None:
         """Strip page additional actions and normalise annotation flags.

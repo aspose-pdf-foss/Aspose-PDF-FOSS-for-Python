@@ -9,6 +9,21 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Every PDF/A-4 file the converter produced was rejected by veraPDF, and our
+  own validator passed it.** ISO 19005-4 clause 6.1.3 forbids `/Info` in the
+  trailer unless the catalog carries a `/PieceInfo`, and allows nothing but
+  `/ModDate` in it where it is allowed — part 4 dropped the `/Title` requirement
+  that parts 1 to 3 have and replaced it with this prohibition. The conversion
+  did the opposite: its step 2 is "ensure /Info has a /Title", and it added one.
+  `convert_to_pdfa` now drops the dictionary for part 4 (keeping a `/ModDate`
+  where a `/PieceInfo` allows it), including entries `doc.info` cannot see — an
+  `/Info` value with no text form is deliberately kept by the metadata view and
+  would otherwise have survived. `validate_pdfa` reports both 6.1.3 rules and no
+  longer demands a title for part 4, reading the pending `info` view as well as
+  the object graph so a document about to be written non-conformant is not passed.
+  veraPDF now passes our PDF/A-4, `4e` and `4f` output, alongside 1B, 2B, 3B
+  and 2A.
+
 - **A document could not be reopened with its own owner password once the user
   password reached 31 characters.** Every revision up to 4 was affected -- RC4
   40-bit, RC4 128-bit and AES-128 -- and not only opening: `decrypt()` and

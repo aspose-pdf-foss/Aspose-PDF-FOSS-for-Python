@@ -2396,6 +2396,13 @@ Supported:
   `"4e"` (engineering — 3D and rich media) and `"4f"` (embedded files of any
   type). A `pdfaid:rev` of `2020` is required and written, and a level that
   does not exist is rejected instead of quietly producing PDF/A-1b metadata.
+  **The information dictionary is left out** (ISO 19005-4 6.1.3): part 4
+  forbids `/Info` in the trailer unless the catalog carries a `/PieceInfo`, and
+  allows nothing but `/ModDate` in it where it is allowed — so converting to
+  part 4 drops the dictionary instead of adding the `/Title` that parts 1 to 3
+  require, and `validate_pdfa` reports both rules. The document still names
+  itself in the XMP packet's `dc:title`, which is where part 4 expects it.
+  veraPDF passes our PDF/A-4, `4e` and `4f` output on this.
   An **attached PDF must be PDF/A itself** (ISO 19005-4 6.9): the payload has
   to declare `pdfaid:part` 1, 2 or 4 — part 3 is not on the list, since its
   purpose is to carry arbitrary files — and is then checked against the same
@@ -2604,9 +2611,8 @@ Boundaries:
   remains is, per level: PDF/A-1 — the attachment's `/EF` key, which PDF/A-1
   forbids outright and the conversion does not remove (ISO 19005-1 6.1.11);
   PDF/A-2 — an embedded file must itself be PDF/A (6.8); PDF/A-3 — an
-  associated file needs its relationship stated (6.8); PDF/A-4 — `/Info` is
-  forbidden without a `/PieceInfo` and may then hold only `/ModDate`
-  (ISO 19005-4 6.1.3), and an embedded file must conform (6.9); PDF/UA-1 — a
+  associated file needs its relationship stated (6.8); PDF/A-4 — an embedded
+  file must declare a MIME type in its `/Subtype` (6.9); PDF/UA-1 — a
   widget must be nested in a `Form` tag and a field needs a `/TU` or an `/Alt`
   (ISO 14289-1 7.18.4, 7.18.1); PDF/UA-2 — the structure tree root must hold
   exactly one `Document` element, in-document destinations must be structure
