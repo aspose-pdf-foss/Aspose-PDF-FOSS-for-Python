@@ -9,6 +9,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A document could not be reopened with its own owner password once the user
+  password reached 31 characters.** Every revision up to 4 was affected -- RC4
+  40-bit, RC4 128-bit and AES-128 -- and not only opening: `decrypt()` and
+  `change_passwords()` failed the same way, so the owner could neither remove nor
+  rotate the password of a file this library had written. Algorithm 7 recovers
+  the *padded* user password from `/O`, always exactly 32 bytes, and the padded
+  form is what the key derivation takes; the code turned it back into plaintext
+  first by searching for the two bytes the padding begins with. A 31-byte
+  password leaves exactly one of them and a 32-byte or longer one leaves none, so
+  the search failed, the recovered password fell back to the empty string and the
+  derived key was wrong. A user password merely containing those two bytes was
+  cut in the wrong place. The recovered bytes are now used as they stand. qpdf,
+  pdfium and MuPDF all open the affected files with the owner password at every
+  length, so the `/O` written was correct throughout and only the reading was
+  wrong; AES-256 was never affected, checking `/OE` directly instead.
+
 - **`flatten()` raised `IndexError` on a streamed document.** It read
   `self.page_contents[i]` -- the content *cache*, which a document opened with
   `open_streaming` has not filled -- instead of asking for the page, so it failed

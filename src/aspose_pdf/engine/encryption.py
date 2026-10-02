@@ -286,14 +286,20 @@ class EncryptionUtils:
     # ISO 32000-1:2008 Section 7.6.3
     # -------------------------------------------------------------------------
     @staticmethod
-    def _pad_password(password: str) -> bytes:
+    def _pad_password(password: str | bytes) -> bytes:
         """Pad or truncate password to exactly 32 bytes using PDF padding.
 
         Algorithm 3.2, Step 1: ISO 32000-1:2008
+
+        Bytes are taken as they stand rather than encoded, so a value that is
+        *already* the padded password -- what Algorithm 7 recovers from ``/O`` --
+        passes through unchanged, and the caller does not have to take the
+        padding off to put it back on.
         """
-        if not password:
-            return PDF_PADDING
-        pwd_bytes = password.encode("latin-1", errors="replace")[:32]
+        if isinstance(password, (bytes, bytearray)):
+            pwd_bytes = bytes(password)[:32]
+        else:
+            pwd_bytes = password.encode("latin-1", errors="replace")[:32]
         return (pwd_bytes + PDF_PADDING)[:32]
 
     @staticmethod
@@ -355,7 +361,7 @@ class EncryptionUtils:
 
     @staticmethod
     def compute_file_encryption_key(
-        password: str,
+        password: str | bytes,
         o_value: bytes,
         p_value: int,
         file_id: bytes,
@@ -402,7 +408,7 @@ class EncryptionUtils:
 
     @staticmethod
     def compute_user_key_v4(
-        password: str,
+        password: str | bytes,
         o_value: bytes,
         p_value: int,
         file_id: bytes,
@@ -552,21 +558,16 @@ class EncryptionUtils:
                 modified_key = bytes([b ^ i for b in rc4_key])
                 decrypted = EncryptionUtils._rc4_with_key(modified_key, decrypted)
 
-        # The decrypted value is the padded user password
-        # Use it to compute the encryption key
-        # Find where the padding starts
-        user_pwd = ""
-        try:
-            # Try to decode as latin-1 and find padding boundary
-            decoded = decrypted.decode("latin-1", errors="replace")
-            # User password is before the PDF padding
-            padding_idx = decoded.find("\x28\xbf")
-            if padding_idx > 0:
-                user_pwd = decoded[:padding_idx]
-            elif decoded == PDF_PADDING.decode("latin-1", errors="replace"):
-                user_pwd = ""
-        except Exception:
-            user_pwd = ""
+        # What came out is the *padded* user password, and the padded form is
+        # exactly what the two computations below take. It used to be turned
+        # back into plaintext first by looking for the two bytes the padding
+        # starts with -- which a 31-byte password leaves only one of and a
+        # 32-byte one none of, so the search failed, the password fell back to
+        # the empty string, and the owner password was rejected for every
+        # document whose *user* password was 31 characters or longer. A user
+        # password merely containing those two bytes was cut at the wrong place.
+        # qpdf, pdfium and MuPDF all use the recovered bytes as they are.
+        user_pwd = decrypted
 
         # Compute encryption key with recovered user password
         enc_key = EncryptionUtils.compute_file_encryption_key(

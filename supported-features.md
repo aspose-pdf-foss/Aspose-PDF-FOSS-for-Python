@@ -2028,6 +2028,21 @@ Boundaries:
 Supported:
 
 - Encrypt and decrypt documents with user and owner passwords.
+- **The owner password works whatever the user password's length.** On revisions
+  up to 4 -- RC4 40-bit, RC4 128-bit and AES-128 -- the owner password is checked
+  by recovering the *padded* user password from `/O` (ISO 32000-1 Algorithm 7),
+  and those 32 bytes are what the key derivation takes. They used to be turned
+  back into plaintext first by looking for the two bytes the padding starts with,
+  which a 31-byte user password leaves only one of and a 32-byte or longer one
+  none of: the search failed, the recovered password became the empty string, and
+  the owner password was refused for a document this library had itself written.
+  `decrypt` and `change_passwords` failed with it, so the owner could neither
+  remove nor rotate the password. qpdf, pdfium and MuPDF open those files with
+  the owner password at every length, which is what the fix matches. AES-256
+  (revisions 5 and 6) was never affected: it checks the owner password against
+  `/OE` and recovers nothing. Note that a revision up to 4 sees only the first
+  **32 bytes** of a password, so passwords agreeing in that prefix are the same
+  password -- qpdf and MuPDF agree, and it is the spec's Algorithm 2.
 - **An encrypted save keeps the document it was given.** Encryption is applied
   by the COS writer as it serialises, per object, so a loaded document that is
   encrypted (or re-saved having been opened with a password) keeps its form
