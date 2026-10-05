@@ -1616,7 +1616,13 @@ Supported:
 - Track images by resource name and page association where the page/resource map
   is available.
 - Decode image stream filters through the stream decoder where supported:
-  Flate, ASCII85, ASCIIHex, LZW, RunLength, CCITT Fax, and JBIG2. DCT/JPEG is
+  Flate, ASCII85, ASCIIHex, LZW, RunLength, CCITT Fax, and JBIG2. **CCITT** is
+  Group 3 one-dimensional (`K = 0`), mixed one/two-dimensional (`K > 0`) and
+  Group 4 (`K < 0`), with `/BlackIs1`, `/EncodedByteAlign`, the extended make-up
+  codes for runs of 1792-2560 pixels, and all seven vertical modes; a stream that
+  ends early leaves the rest of the declared `/Height` blank, and one that cannot
+  be followed at all is reported rather than handed back (its compressed bytes
+  are not samples: an image that does not decode is skipped, not painted). DCT/JPEG is
   passed through at the filter level (the JPEG bytes are the canonical stored
   form); a dependency-free baseline **and progressive** JPEG-to-pixels decoder
   (grayscale, RGB/YCbCr, CMYK/YCCK) is available through `aspose_pdf.engine.dct`
@@ -1639,6 +1645,13 @@ Supported:
   written as **PNG** (pure-Python encoder, no dependencies), DCT/JPEG keeps its
   JPEG bytes (`.jpg`). The output suffix is adjusted to the produced format when
   the requested one would mislabel the file.
+- `DeviceCMYK` becomes RGB by the subtractive formula of ISO 32000-1 8.6.4.4
+  (`red = 1 - min(1, cyan + black)`, and so on), with no colour management.
+  Colour-managed viewers do not do this: on a CMYK image MuPDF, pdfium and
+  poppler land up to 113/255 away from the formula (and up to 55 from each other,
+  each using its own profile), so pure `K` renders as black here and as a dark
+  grey there. A `CalRGB` space is treated as `DeviceRGB`, which is what pdfium
+  does; MuPDF and poppler apply its gamma and matrix instead.
 - Convert image colour spaces during reconstruction: **CMYK → RGB**, **Indexed →
   RGB** (palette lookup, including a CMYK base), **Lab**, **Separation** and
   **DeviceN → RGB** (and palettes over them, with `/Decode` applied) -- the

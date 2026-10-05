@@ -9,6 +9,34 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **CCITT-compressed images decoded to noise.** Group 4 is how a scanned
+  bilevel page is almost always stored, and the decoder could follow hardly any
+  of it: of ten bitmaps encoded by libtiff, one came back correct — the
+  all-black one, where a single run per row hid the errors. Two causes, both in
+  the tables rather than the loop. The code words were wrong: the black table
+  was largely a copy of the white one (black run 8 carried the white run 8 code,
+  the black 64 make-up code was the white one), and both tables held codes that
+  prefixed other codes, which cannot happen in a Huffman set and makes a
+  one-bit-at-a-time read stop early. And the two-dimensional decoder knew only
+  V0, VR1, VL1, horizontal and pass, treating everything that begins `0000` as
+  an unsupported extension — so VR2, VL2, VR3 and VL3 could never be read —
+  while `b1` was found as the first pixel of the opposite colour rather than the
+  first *changing element* of it. The tables are regenerated from ITU-T T.4,
+  including the 1792–2560 make-up codes that were missing altogether (every page
+  scanned above 300 dpi needs them), and the row decoder is rewritten in terms of
+  changing elements, the way the standard states it. **Group 3 is decoded now
+  too**: `K >= 0` used to take a fast path that returned the encoded bytes as if
+  they were the bitmap. Measured against MuPDF, pdfium and poppler, which agree
+  with each other and with the source on all twenty documents of the matrix: we
+  agreed on two, and now on twenty.
+
+- **A rectangle of noise where an image failed to decode.** When a filter could
+  not run, the still-compressed bytes were painted as samples — which looks like
+  data, and so is worse than the picture being absent. An image whose stream
+  cannot be decoded is now reported and skipped, with a warning. DCT and JPEG
+  2000 are unaffected: their bytes are passed through on purpose, and the
+  renderer decodes them itself.
+
 - **A text field authored with an embedded font rendered blank in every
   engine.** `add_text_field(font=…)` embeds a Type0 (CID) font so a non-Latin
   value renders, and the appearance it bakes shows that value's CIDs. The font

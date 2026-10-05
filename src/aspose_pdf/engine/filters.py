@@ -466,8 +466,9 @@ class StreamDecoder:
     ) -> bytes:
         """Decode CCITTFaxDecode (Group 3/4 fax) encoded data.
 
-        Delegates to aspose_pdf.engine.ccitt.Decoder.
-        Falls back to pass-through when decoding fails or produces empty output.
+        Delegates to aspose_pdf.engine.ccitt.Decoder. A stream that decodes to
+        nothing is reported, not handed back: its still-compressed bytes are not
+        samples, and painting them is a rectangle of noise.
         """
         if not data:
             return b""
@@ -489,15 +490,10 @@ class StreamDecoder:
                 "CCITTFaxDecode failed while decoding the image stream"
             ) from exc
 
-        parms = parms or {}
-        k = int(parms.get("K", 0))
-        if k >= 0:
-            return result
-
         if not result:
             raise PdfValidationException(
                 "CCITTFaxDecode could not produce bitmap data (truncated stream, "
-                "invalid Group 4 bitstream, or missing row/column parameters)"
+                "invalid Group 3/4 bitstream, or missing row/column parameters)"
             )
         return result
 

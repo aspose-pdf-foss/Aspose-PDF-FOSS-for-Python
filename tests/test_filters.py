@@ -216,11 +216,11 @@ def test_ccitt_decode_empty():
     assert result == b""
 
 
-def test_ccitt_decode_passthrough():
-    """Test CCITT pass-through behavior (no parms)."""
+def test_ccitt_without_parms_is_reported_not_passed_through():
+    """Bytes that are not a fax bitstream are refused, not handed back as samples."""
     data = b"\x00\x01\x02\x03\x04\x05"
-    result = StreamDecoder.decode(data, "CCITTFaxDecode", None)
-    assert result == data  # Pass-through when no parms
+    with pytest.raises(PdfValidationException, match="CCITTFaxDecode"):
+        StreamDecoder.decode(data, "CCITTFaxDecode", None)
 
 
 def test_ccitt_decode_with_parms():
@@ -233,10 +233,9 @@ def test_ccitt_decode_with_parms():
 
 
 def test_ccitt_abbreviation():
-    """Test abbreviated filter name 'CCF' works."""
-    data = b"test"
-    result = StreamDecoder.decode(data, "CCF", None)
-    assert result == data
+    """Test abbreviated filter name 'CCF' reaches the same decoder."""
+    with pytest.raises(PdfValidationException, match="CCITTFaxDecode"):
+        StreamDecoder.decode(b"test", "CCF", None)
 
 
 # ============================================================================
@@ -329,9 +328,8 @@ def test_filter_chain():
 
 def test_filter_with_bytes_name():
     """Test filter name as bytes (common in PDF parsing)."""
-    data = b"test"
-    result = StreamDecoder.decode(data, b"/CCITTFaxDecode", None)
-    assert result == data
+    result = StreamDecoder.decode(b"74657374>", b"/ASCIIHexDecode", None)
+    assert result == b"test"
 
 
 def test_unknown_filter_raises():

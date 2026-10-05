@@ -16296,6 +16296,17 @@ class CosExtractor:
         except PdfResourceLimitException:
             raise
         except PDF_STREAM_DECODE_ERRORS:
+            # Handing the still-compressed bytes back is useful only where the
+            # caller can make something of them: a DCT or JPX image carries its
+            # own decoder and is passed through on purpose, and a damaged
+            # content stream is worth whatever can be recovered from it. For any
+            # other image codec those bytes are not samples -- painting them is
+            # a rectangle of noise -- so the failure is reported instead.
+            if subtype == "Image" and not (
+                filter_names
+                and filter_names[-1] in {"DCTDecode", "DCT", "JPXDecode"}
+            ):
+                raise
             decoded = data
             if max_output_bytes is not None and len(decoded) > max_output_bytes:
                 raise PdfResourceLimitException(

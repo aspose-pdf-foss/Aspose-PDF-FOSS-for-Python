@@ -59,6 +59,7 @@ from .image_export import (
     write_tiff,
 )
 from .jpeg_encoder import encode as jpeg_encode
+from .logging import get_logger
 from .optional_content import OptionalContent
 from .shading import (
     Shading,
@@ -96,6 +97,9 @@ _BLEND_MODES = {
     "color": "Color",
     "luminosity": "Luminosity",
 }
+
+
+logger = get_logger("rasterizer")
 
 
 @dataclass(frozen=True)
@@ -3982,7 +3986,16 @@ class _PageRasterizer:
                 data = stream.content
         except PdfResourceLimitException:
             raise
-        except Exception:
+        except Exception as exc:
+            # A filter that could not run leaves the stream *compressed*, and
+            # compressed bytes painted as samples are a rectangle of noise --
+            # worse than the picture being absent, because it looks like data.
+            # Only an unfiltered stream's own bytes are samples.
+            if stream.mapping.get(PdfName("Filter")) is not None:
+                logger.warning(
+                    "Skipping an image whose stream could not be decoded: %s", exc
+                )
+                return
             data = stream.content
         meta = self._image_meta_from_stream(stream)
         fallback_meta = (getattr(self.pdf, "_image_meta", {}) or {}).get(name)

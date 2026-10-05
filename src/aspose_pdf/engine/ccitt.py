@@ -1,6 +1,15 @@
-"""CCITT Group 4 (T.6) decoder implementation.
+"""CCITT Group 3 and Group 4 (ITU-T T.4 / T.6) decoder.
 
-This module provides a pure Python decoder for CCITT Group 4 compressed image data.
+A pure-Python decoder for the ``CCITTFaxDecode`` filter: one-dimensional
+Modified Huffman (``K = 0``), two-dimensional Modified READ (``K > 0``) and
+pure two-dimensional Modified Modified READ (``K < 0``, Group 4).
+
+A row is carried as its **changing elements** -- the positions where the colour
+changes, which is what T.4 is written in terms of -- rather than as a list of
+pixels, so ``b1`` and ``b2`` are a lookup rather than a scan and the vertical
+and pass modes read the way the standard states them. Internally ``0`` is
+white and ``1`` is black, and the first run of every row is a white run; only
+``_pack_row`` knows about the PDF ``BlackIs1`` convention.
 """
 
 from __future__ import annotations
@@ -13,13 +22,29 @@ from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
 # Import the standard Huffman tables
 try:
-    from .ccitt_tables import BLACK_MAKEUP, BLACK_TERM, WHITE_MAKEUP, WHITE_TERM
+    from .ccitt_tables import (
+        BLACK_MAKEUP,
+        BLACK_TERM,
+        EXTENDED_MAKEUP,
+        WHITE_MAKEUP,
+        WHITE_TERM,
+    )
 except ImportError:
     # Fallback to empty if not found (should not happen in prod)
     WHITE_TERM = {}
     WHITE_MAKEUP = {}
     BLACK_TERM = {}
     BLACK_MAKEUP = {}
+    EXTENDED_MAKEUP = {}
+
+#: The longest Huffman code in any of the tables, in bits.
+_MAX_CODE_BITS = 14
+
+# The two-dimensional modes of T.4 clause 4.2.1.3 / T.6 clause 2.
+_PASS = "P"
+_HORIZONTAL = "H"
+_EXTENSION = "X"
+_EOL = "EOL"
 
 
 class _BitReader:
@@ -49,9 +74,28 @@ class _BitReader:
             raise EOFError
         return (self.data[self.byte_pos] >> (7 - self.bit_pos)) & 1
 
+    # --- positioning, for the lookahead an EOL or a fill run needs ----------
+
+    def tell(self) -> int:
+        """The read position in bits."""
+        return self.byte_pos * 8 + self.bit_pos
+
+    def seek(self, position: int) -> None:
+        self.byte_pos, self.bit_pos = divmod(position, 8)
+
+    def align(self) -> None:
+        """Advance to the next byte boundary (``/EncodedByteAlign``)."""
+        if self.bit_pos:
+            self.bit_pos = 0
+            self.byte_pos += 1
+
+    @property
+    def exhausted(self) -> bool:
+        return self.byte_pos >= len(self.data)
+
 
 class Decoder:
-    # Pre-computed lookup tables for Huffman codes (code, bits) -> length
+    # (code, bit length) -> run length, per colour, plus the shared extensions
     _WHITE_LOOKUP: ClassVar[dict[tuple[int, int], int]] = {}
     _BLACK_LOOKUP: ClassVar[dict[tuple[int, int], int]] = {}
 
@@ -67,6 +111,9 @@ class Decoder:
                 lookup[(code, bits)] = length
             for length, (code, bits) in makeup.items():
                 lookup[(code, bits)] = length
+            # The 1792-2560 make-up codes are common to both colours.
+            for length, (code, bits) in EXTENDED_MAKEUP.items():
+                lookup[(code, bits)] = length
             return lookup
 
         cls._WHITE_LOOKUP = build(WHITE_TERM, WHITE_MAKEUP)
@@ -74,169 +121,174 @@ class Decoder:
 
     @staticmethod
     def _read_run_length(reader, color):
-        # Read Huffman
+        """One run length: make-up codes accumulate, a terminating code ends it."""
         length = 0
         while True:
-            # Simple bit-by-bit reading is slow but robust for 1-shot
-            # We traverse the keys.
-            # Optimization: Try matching common lengths (2-13 bits).
-            # Here we iterate.
-            _found = False
             code = 0
             bits = 0
-
-            # Read bits one at a time, matching the accumulated (code, bits)
-            # against the run-length lookup table (codes are at most 13 bits).
-            while bits < 13:  # Max code length is 13
+            lut = Decoder._WHITE_LOOKUP if color == 0 else Decoder._BLACK_LOOKUP
+            while bits < _MAX_CODE_BITS:
                 code = (code << 1) | reader.read_bit()
                 bits += 1
-
-                lut = Decoder._WHITE_LOOKUP if color == 0 else Decoder._BLACK_LOOKUP
-                if (code, bits) in lut:
-                    run_len = lut[(code, bits)]
-                    length += run_len
-                    if run_len < 64:  # Terminating
-                        return length
-                    # Else Makeup, continue loop
-                    code = 0
-                    bits = 0
-                    # Makeup code: keep the same color and continue decoding.
-                    # White and black runs use separate generated tables.
-                    break
+                run = lut.get((code, bits))
+                if run is None:
+                    continue
+                length += run
+                if run < 64:
+                    return length
+                break  # a make-up code: the same colour continues
             else:
-                # Failed to match in max bits
                 raise PdfParseException("Invalid Huffman Code")
 
-            if bits > 0:  # Loop continued due to Makeup break
-                continue
+    @staticmethod
+    def _read_mode(reader):
+        """The next two-dimensional mode code.
+
+        Returns ``_PASS``, ``_HORIZONTAL``, ``_EXTENSION``, ``_EOL``, or the
+        vertical offset of ``a1`` from ``b1`` as an ``int`` in ``-3..3``.
+        """
+        if reader.read_bit():
+            return 0  # V0 = 1
+        if reader.read_bit():  # 01
+            return 1 if reader.read_bit() else -1  # VR1 = 011, VL1 = 010
+        if reader.read_bit():  # 001
+            return _HORIZONTAL
+        if reader.read_bit():  # 0001
+            return _PASS
+        if reader.read_bit():  # 00001
+            return 2 if reader.read_bit() else -2  # VR2, VL2
+        if reader.read_bit():  # 000001
+            return 3 if reader.read_bit() else -3  # VR3, VL3
+        if reader.read_bit():  # 0000001
+            return _EXTENSION
+        return _EOL  # 00000000 ... an EOL, fill bits, or the end of the block
 
     @staticmethod
-    def _full_decode_row(reader, cur_line, ref_line, cols):
-        # We need to know current color state.
-        # Start of line: White (0).
-        current_color = 0
+    def _b1_b2(ref, a0, color, cols):
+        """``b1`` and ``b2`` on the reference line (T.4 clause 4.2.1.3.1).
 
-        while len(cur_line) < cols:
-            # Modes.
-
-            # V0 (1)
-            if reader.peek_bit() == 1:
-                reader.read_bit()
-                # Find b1 (change on Ref)
-                # b1 search starts from 'current position' + relative offset?
-                # "b1 is first changing element on ref line to right of a0 and of opposite color to a0"
-                # a0 is our current pos. Color of a0 is `current_color`?
-                # No, a0 is transition.
-                # Color BEFORE a0 was `1-current_color`.
-                # Color AT a0 is `current_color`.
-                # Wait. `current_color` is the color we are WRITING.
-                # So previous was opposite.
-                # So we look for change from `1-current_color`?
-                # No. Ref line and Cur line are synced at a0.
-                # We look for b1 on Ref.
-                # b1 must be opposite color to a0.
-                # a0 has `current_color`.
-                # So b1 must be `1-current_color`.
-                # So finding b1: look for `(1-current_color)`.
-                # But wait. Ref line might not have a0 as transition.
-                # V0 means "transition at same place".
-                # So Ref line DOES have transition at same place? Not necessarily.
-                # V0 means "distance a1-a0 = b1-a0".
-                # "First changing element on ref line" -> b1.
-
-                # Correct Logic:
-                # a0_pos = len(cur_line).
-                # b1_pos = Decoder._find_b1(ref_line, a0_pos, current_color) ... Wait.
-                # _find_b1 finds first pixel != color.
-                # Current color at a0 is `current_color`.
-                # So we want first pixel != current_color.
-                # Yes.
-
-                b1_pos = Decoder._find_b1(ref_line, len(cur_line), current_color)
-                run_len = b1_pos - len(cur_line)
-                Decoder._append_run(cur_line, run_len, current_color, cols)
-
-                # After V0, we have handled a run of `current_color`.
-                # Next run will be `opposite`.
-                current_color = 1 - current_color
-                continue
-
-            # Check 0...
-            reader.read_bit()
-
-            # 01...
-            if reader.peek_bit() == 1:
-                reader.read_bit()
-                # 01...
-                if reader.read_bit() == 1:
-                    # 011 -> VR1
-                    # a1 = b1 + 1
-                    b1 = Decoder._find_b1(ref_line, len(cur_line), current_color)
-                    len_run = (b1 + 1) - len(cur_line)
-                    Decoder._append_run(cur_line, len_run, current_color, cols)
-                    current_color = 1 - current_color
-                else:
-                    # 010 -> VL1
-                    # a1 = b1 - 1
-                    b1 = Decoder._find_b1(ref_line, len(cur_line), current_color)
-                    len_run = (b1 - 1) - len(cur_line)
-                    Decoder._append_run(cur_line, len_run, current_color, cols)
-                    current_color = 1 - current_color
-                continue
-
-            # 00...
-            reader.read_bit()
-            if reader.read_bit() == 1:
-                # 001 -> Horizontal
-                # "Run length a0a1... Run length a1a2".
-                # First run is `current_color`.
-                len1 = Decoder._read_run_length(reader, current_color)
-                Decoder._append_run(cur_line, len1, current_color, cols)
-                current_color = 1 - current_color
-
-                # Second run is `new_current_color` (which is 1-old).
-                len2 = Decoder._read_run_length(reader, current_color)
-                Decoder._append_run(cur_line, len2, current_color, cols)
-                current_color = 1 - current_color
-                continue
-
-            # 000...
-            # Check 4th bit
-            if reader.read_bit() == 1:
-                # 0001 -> Pass
-                # Find b2.
-                # b1 = find_b1(len, current).
-                # b2 = find_b1(b1, 1-current).
-                b2 = Decoder._find_b2(ref_line, len(cur_line), current_color)
-
-                len_run = b2 - len(cur_line)
-                Decoder._append_run(cur_line, len_run, current_color, cols)
-
-                # Pass mode does NOT switch color!
-                # "Start new coding ... with a0 set at b2".
-                # This moves a0.
-                # But does color Switch?
-                # No. We passed a transition on Ref, but we haven't placed a transition on Cur.
-                # So we continue with `current_color`.
-                continue
-
-            # 0000... Extensions
-            raise PdfParseException("Unsupported extension")
+        ``ref`` holds the reference line's changing elements in order, so an
+        element at an even index starts a black run and one at an odd index
+        starts a white run. ``b1`` is the first changing element to the right of
+        ``a0`` whose colour is opposite to ``color`` -- that is, the first one
+        past ``a0`` whose index has the same parity as ``color``.
+        """
+        index = 0
+        total = len(ref)
+        while index < total and ref[index] <= a0:
+            index += 1
+        if (index & 1) != color:
+            index += 1
+        b1 = ref[index] if index < total else cols
+        b2 = ref[index + 1] if index + 1 < total else cols
+        return b1, b2
 
     @staticmethod
-    def _append_run(line, length, color, max_length=None):
-        if length < 0:
-            raise PdfParseException("Invalid negative CCITT run length")
-        if max_length is not None and len(line) + length > max_length:
-            raise PdfParseException("CCITT run exceeds the declared row width")
-        if length > 0:
-            line.extend(repeat(color, length))
+    def _decode_row_1d(reader, cols):
+        """A Modified Huffman row, as its changing elements."""
+        changes = []
+        position = 0
+        color = 0
+        while position < cols:
+            run = Decoder._read_run_length(reader, color)
+            position += run
+            changes.append(min(position, cols))
+            color ^= 1
+        return changes
+
+    @staticmethod
+    def _decode_row_2d(reader, ref, cols):
+        """A Modified READ row: ``(changing elements, ended on an EOL)``.
+
+        The second value says the row stopped at a run of at least seven zero
+        bits -- an EOL, the fill before one, or corruption. A row that ends that
+        way with no changing element at all is not a row: nothing was coded for
+        it, and the caller stops rather than inventing a white one.
+        """
+        changes = []
+        # a0 starts on an imaginary changing element just before the row, so
+        # that a changing element at column 0 counts as being to its right.
+        a0 = -1
+        color = 0
+        while a0 < cols:
+            b1, b2 = Decoder._b1_b2(ref, a0, color, cols)
+            mode = Decoder._read_mode(reader)
+            if mode is _PASS:
+                # a0 moves to b2 without a changing element of its own, so the
+                # run of `color` simply continues past b1 and b2.
+                a0 = b2
+                continue
+            if mode is _HORIZONTAL:
+                start = a0 if a0 > 0 else 0
+                first = Decoder._read_run_length(reader, color)
+                second = Decoder._read_run_length(reader, 1 - color)
+                a1 = min(start + first, cols)
+                a2 = min(a1 + second, cols)
+                changes.append(a1)
+                changes.append(a2)
+                a0 = a2
+                continue
+            if mode is _EXTENSION:
+                raise PdfParseException(
+                    "Unsupported CCITT extension code in a two-dimensional row"
+                )
+            if mode is _EOL:
+                # An end-of-line (or the end of the data) closes the row.
+                return changes, True
+            a1 = b1 + mode
+            if a1 < 0:
+                a1 = 0
+            elif a1 > cols:
+                a1 = cols
+            changes.append(a1)
+            a0 = a1
+            color ^= 1
+        return changes, False
+
+    @staticmethod
+    def _expand(changes, cols):
+        """Changing elements back to one byte per pixel (``1`` = black)."""
+        row = bytearray(cols)
+        position = 0
+        color = 0
+        for change in changes:
+            change = min(max(change, position), cols)
+            if color and change > position:
+                row[position:change] = b"\x01" * (change - position)
+            position = change
+            color ^= 1
+        if color and position < cols:
+            row[position:cols] = b"\x01" * (cols - position)
+        return row
+
+    @staticmethod
+    def _skip_eol(reader):
+        """Consume one EOL and any fill bits before it; say whether one was there.
+
+        ``/EndOfLine`` is optional in PDF and encoders disagree about it, so an
+        EOL is skipped wherever it appears rather than required anywhere.
+        """
+        start = reader.tell()
+        zeros = 0
+        try:
+            while True:
+                if reader.read_bit():
+                    if zeros >= 11:
+                        return True
+                    reader.seek(start)
+                    return False
+                zeros += 1
+                if zeros > 64:
+                    reader.seek(start)
+                    return False
+        except EOFError:
+            reader.seek(start)
+            return False
 
     @staticmethod
     def decode(
         data: bytes,
-        params,
-        *,
+        params: dict,
         limits: PdfLoadLimits | None = None,
     ) -> bytes:
         Decoder._init_lookups()
@@ -246,6 +298,7 @@ class Decoder:
         rows = int(params.get("Rows", 0))
         k = int(params.get("K", 0))
         black_is_1 = bool(params.get("BlackIs1", False))
+        byte_align = bool(params.get("EncodedByteAlign", False))
 
         if cols <= 0:
             raise PdfResourceLimitException(
@@ -271,21 +324,13 @@ class Decoder:
             "CCITT decoder working set",
         )
 
-        if k >= 0:
-            budget.check(
-                len(data),
-                "max_decoded_stream_bytes",
-                "CCITT pass-through bytes",
-            )
-            return data
-
         reader = _BitReader(data)
-        ref_line = bytearray(cols)
+        ref: list[int] = []
         output = bytearray()
+        decoded_rows = 0
 
-        curr_idx = 0
-        while (rows == 0 or curr_idx < rows) and reader.byte_pos < len(data):
-            next_row_count = curr_idx + 1
+        while (rows == 0 or decoded_rows < rows) and not reader.exhausted:
+            next_row_count = decoded_rows + 1
             budget.check_image_pixels(cols, next_row_count, "CCITT image")
             budget.check(
                 bytes_per_row * next_row_count,
@@ -298,33 +343,72 @@ class Decoder:
                 "CCITT decoder working set",
             )
 
-            cur_line = bytearray()
-            Decoder._full_decode_row(reader, cur_line, ref_line, cols)
-            # Pad/Truncate
-            if len(cur_line) > cols:
-                cur_line = cur_line[:cols]
-            elif len(cur_line) < cols:
-                cur_line.extend(repeat(0, cols - len(cur_line)))
+            if byte_align and k >= 0:
+                reader.align()
 
-            output.extend(Decoder._pack_row(cur_line, cols, black_is_1))
-            ref_line = cur_line
-            curr_idx += 1
+            # An EOL may precede any row; after one, a mixed-mode stream says
+            # with a single bit whether the row that follows is 1-D or 2-D.
+            saw_eol = Decoder._skip_eol(reader)
+            while saw_eol and Decoder._skip_eol(reader):
+                # Several EOLs in a row are the RTC/EOFB that ends the block.
+                reader.seek(len(data) * 8)
+                break
+            if reader.exhausted:
+                break
+
+            if k < 0:
+                two_dimensional = True
+            elif k == 0:
+                two_dimensional = False
+            else:
+                try:
+                    two_dimensional = not reader.read_bit()
+                except EOFError:
+                    break
+
+            if byte_align and k < 0:
+                reader.align()
+                if reader.exhausted:
+                    break
+
+            try:
+                if two_dimensional:
+                    changes, ended_on_eol = Decoder._decode_row_2d(reader, ref, cols)
+                    if ended_on_eol and not changes:
+                        break
+                else:
+                    changes = Decoder._decode_row_1d(reader, cols)
+            except EOFError:
+                break
+
+            row = Decoder._expand(changes, cols)
+            output.extend(Decoder._pack_row(row, cols, black_is_1))
+            ref = changes
+            decoded_rows += 1
+
+        # Nothing at all came out of a non-empty stream: it is not CCITT data
+        # this decoder can follow, and the caller says so rather than painting
+        # a blank rectangle over whatever the picture was.
+        if data and not decoded_rows:
+            return b""
+
+        # A short stream leaves the rest of a declared bitmap white rather than
+        # handing back a bitmap of the wrong size for its /Height. Padding
+        # completes a partial decode; it does not invent one from no rows.
+        if rows and 0 < decoded_rows < rows:
+            blank = Decoder._pack_row(bytearray(cols), cols, black_is_1)
+            output.extend(blank * (rows - decoded_rows))
 
         return bytes(output)
 
     @staticmethod
-    def _find_b1(ref_line, a0, color):
-        for i in range(a0, len(ref_line)):
-            if ref_line[i] != color:
-                return i
-        return len(ref_line)
-
-    @staticmethod
-    def _find_b2(ref_line, a0, color):
-        # b2 is first changing element after b1
-        b1 = Decoder._find_b1(ref_line, a0, color)
-        color_b1 = 1 - color
-        return Decoder._find_b1(ref_line, b1, color_b1)
+    def _append_run(line, length, color, max_length=None):
+        if length < 0:
+            raise PdfParseException("Invalid negative CCITT run length")
+        if max_length is not None and len(line) + length > max_length:
+            raise PdfParseException("CCITT run exceeds the declared row width")
+        if line is not None and length > 0:
+            line.extend(repeat(color, length))
 
     @staticmethod
     def _pack_row(row, cols, black_is_1):
