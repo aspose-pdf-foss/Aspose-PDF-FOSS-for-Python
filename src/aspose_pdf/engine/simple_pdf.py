@@ -12931,14 +12931,15 @@ class SimplePdf:
         type0_field_name = None
         type0_field_ref = None
         type0_field_size = 12.0
+        type0_field_resource = None
         authored_field_font = None
         if font is not None and field_type == "text":
             from .field_appearance import parse_default_appearance
             from .font_authoring import prepare_authored_font
 
             authored_field_font = prepare_authored_font(font, limits=self._load_limits)
-            type0_field_name, type0_field_ref = self._embed_type0_dr_font(
-                acro, authored_field_font
+            type0_field_name, type0_field_ref, type0_field_resource = (
+                self._embed_type0_dr_font(acro, authored_field_font)
             )
             _n, parsed_size, _c = parse_default_appearance(
                 default_appearance or "/Helv 12 Tf 0 g"
@@ -13082,7 +13083,12 @@ class SimplePdf:
                     authored_field_font.encode(str(value)) if value else b""
                 )
                 widget_map[PdfName("AP")] = self._build_type0_field_appearance(
-                    rect, type0_field_name, type0_field_size, encoded, type0_field_ref
+                    rect,
+                    type0_field_name,
+                    type0_field_size,
+                    encoded,
+                    type0_field_ref,
+                    PdfDictionary(widget_map),
                 )
 
             widget_ref = self._cos_doc.register_object(PdfDictionary(widget_map))
@@ -13093,6 +13099,12 @@ class SimplePdf:
                 page.mapping[PdfName("Annots")] = annots
             annots.items.append(widget_ref)
         field.mapping[PdfName("Kids")] = PdfArray(kid_refs)
+
+        if type0_field_resource is not None:
+            # The embedded program, /W and /CIDToGIDMap were written before the
+            # value was encoded, so they describe a font with no glyphs. Rewrite
+            # them now that every widget has asked for its CIDs.
+            self._refresh_authored_font_resource(type0_field_resource)
 
         inherited = self._acroform_inherited(acro)
         self._gen_field_appearance_rec(field_ref, inherited, acro)
@@ -14056,8 +14068,15 @@ class SimplePdf:
 
     def _embed_type0_dr_font(
         self, acro: PdfDictionary, authored: Any
-    ) -> tuple[str, Any]:
-        """Embed a Type0 font in the AcroForm ``/DR``; return ``(name, ref)``."""
+    ) -> tuple[str, Any, _AuthoredFontResource]:
+        """Embed a Type0 font in the AcroForm ``/DR``.
+
+        Returns ``(name, ref, resource)``. The graph is built before the field
+        value has been encoded, so it starts out empty: the *resource* holds the
+        mutable streams, and the caller must pass it to
+        :meth:`_refresh_authored_font_resource` once the value's glyphs have
+        been requested, exactly as the page-text path does.
+        """
         dr = self._resolve(acro.mapping.get(PdfName("DR")))
         if not isinstance(dr, PdfDictionary):
             dr = PdfDictionary({})
@@ -14067,9 +14086,19 @@ class SimplePdf:
             fonts = PdfDictionary({})
             dr.mapping[PdfName("Font")] = fonts
         name = self._unique_resource_name(fonts, "F", "F1")
-        type0_ref, _parts = self._build_type0_font_graph(authored)
+        type0_ref, parts = self._build_type0_font_graph(authored)
         fonts.mapping[PdfName(name)] = type0_ref
-        return name, type0_ref
+        resource = _AuthoredFontResource(
+            authored_font=authored,
+            resource_name=name,
+            type0_font=parts["type0_font"],
+            cid_font=parts["cid_font"],
+            descriptor=parts["descriptor"],
+            font_stream=parts["font_stream"],
+            to_unicode_stream=parts["to_unicode_stream"],
+            cid_to_gid_stream=parts["cid_to_gid_stream"],
+        )
+        return name, type0_ref, resource
 
     def _build_type0_field_appearance(
         self,
@@ -14078,15 +14107,25 @@ class SimplePdf:
         size: float,
         encoded: bytes,
         font_ref: Any,
+        widget: PdfDictionary | None = None,
     ) -> Any:
         """Bake a left-aligned single-line ``/AP`` for a Type0 field value.
 
         The value is shown as its Identity-H CID codes (two-byte hex), so a
-        non-Latin field value renders through the embedded CID font.
+        non-Latin field value renders through the embedded CID font. The
+        widget's ``/MK`` background and ``/BS`` border are painted underneath
+        it, as they are for a Standard-14 field, so the box is visible whether
+        or not the value draws anything.
         """
+        w = float(rect[2]) - float(rect[0])
         h = float(rect[3]) - float(rect[1])
         baseline = max(2.0, (h - size) / 2.0 + size * 0.2)
-        content = (
+        frame = (
+            self._field_widget_box_content(widget, w, h)
+            if widget is not None
+            else b""
+        )
+        content = frame + (
             "/Tx BMC\nq\nBT\n"
             f"/{type0_name} {size:g} Tf\n0 g\n2 {baseline:g} Td\n"
             f"<{encoded.hex().upper()}> Tj\nET\nQ\nEMC\n"

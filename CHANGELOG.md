@@ -9,6 +9,20 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A text field authored with an embedded font rendered blank in every
+  engine.** `add_text_field(font=…)` embeds a Type0 (CID) font so a non-Latin
+  value renders, and the appearance it bakes shows that value's CIDs. The font
+  graph, though, was written the moment the field was created — before the value
+  had been encoded — and nothing rewrote it afterwards, so the embedded program
+  kept no glyph at all, `/W` was an empty array and `/CIDToGIDMap` held the
+  single entry CID 0. The appearance asked for CIDs the font could not draw:
+  pdfium, MuPDF and this library all rendered nothing, while all three still read
+  the field *value* back correctly. The program, widths and CID map are now
+  rewritten once every widget has asked for its glyphs — the refresh the
+  page-text path has always done — and the widget's `/MK` background and `/BS`
+  border are painted under the value, so the box is visible whether or not the
+  value draws anything.
+
 - **Text hidden by optional content was extracted anyway, and whitespace-only
   text came back as raw CID bytes.** One cause: `extract_page_text` read an
   *empty* extraction as a parse failure and fell back to the best-effort pass,

@@ -3,8 +3,9 @@
 Without an embedded font a field uses the Standard-14 ``/DR`` Helvetica, so a
 non-Latin value cannot be shown. Passing ``font=`` embeds a Type0 font in the
 AcroForm ``/DR`` and bakes a CID-encoded ``/AP`` so the value's real glyphs are
-referenced. (The page rasterizer does not composite widget ``/AP`` streams; the
-appearance is validated at the COS level, as a viewer would consume it.)
+referenced. These tests check the shape of that graph at the COS level; that the
+embedded program actually carries the value's glyphs, so the field is not blank,
+is ``test_field_font_glyphs.py``.
 """
 
 from __future__ import annotations

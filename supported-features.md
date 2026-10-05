@@ -1895,6 +1895,10 @@ Boundaries:
   the AcroForm `/DR`, `/DA` points at it, and a CID-encoded `/AP` is baked at
   authoring time so a non-Latin value renders (this baked appearance is left
   intact by later `generate_appearances`, which cannot re-encode a Type0 value).
+  The embedded program is subset to the value's glyphs *after* the value has been
+  encoded, so `/W` carries the font's own advances and `/CIDToGIDMap` resolves
+  every CID the appearance shows; the widget's `/MK` background and `/BS` border
+  are painted under the value, as they are for a Standard-14 field.
   A push button can carry an **icon** (`add_push_button(icon=…)`, JPEG or
   PNG): the image is wrapped in a form XObject as `/MK /I`,
   drawn into all three faces scaled proportionally and centred, with a `/MK /IF`
