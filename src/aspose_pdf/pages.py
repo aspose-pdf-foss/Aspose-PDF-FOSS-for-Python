@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from aspose_pdf.annotations import AnnotationCollection
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.page_size import PageSize
+from aspose_pdf.viewer_preferences import PageBoundary
 
 if TYPE_CHECKING:
     from aspose_pdf.document import Document
@@ -15,6 +17,61 @@ if TYPE_CHECKING:
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.text_layout import TextLayoutOptions
+
+
+def _box_name(boundary: PageBoundary | str) -> str:
+    """The ``/`` entry name *boundary* stands for, however it was spelled."""
+    try:
+        return str(PageBoundary(boundary).value)
+    except ValueError:
+        allowed = ", ".join(member.value for member in PageBoundary)
+        raise PdfValidationException(f"A page box is one of: {allowed}") from None
+
+
+def _split_page_argument(
+    page: Any, size: PageSize | Sequence[float] | str | None
+) -> tuple[Any, PageSize | None]:
+    """Tell a page to copy from a size to create, however the two arrived.
+
+    ``add`` and ``insert`` took one positional argument long before there were
+    page sizes, so a size may be given there as well as by keyword -- but not
+    both at once, which would be two answers to one question.
+    """
+    if isinstance(page, PageSize):
+        if size is not None:
+            raise PdfValidationException(
+                "Pass a page size once: as the argument or as size=, not both."
+            )
+        return None, page
+    if size is None:
+        return page, None
+    if page is not None:
+        raise PdfValidationException(
+            "size= makes a blank page of that size; it cannot be combined with "
+            "a page to copy."
+        )
+    return None, _coerce_page_size(size)
+
+
+def _coerce_page_size(value: PageSize | Sequence[float] | str) -> PageSize:
+    """*value* as a :class:`PageSize`: one already, a name, or a ``(w, h)`` pair."""
+    if isinstance(value, PageSize):
+        return value
+    if isinstance(value, str):
+        try:
+            return PageSize.by_name(value)
+        except (TypeError, ValueError) as error:
+            raise PdfValidationException(str(error)) from None
+    try:
+        width, height = tuple(value)
+    except (TypeError, ValueError):
+        raise PdfValidationException(
+            "A page size is a PageSize, its name, or a (width, height) pair."
+        ) from None
+    try:
+        return PageSize(width, height)
+    except (TypeError, ValueError) as error:
+        raise PdfValidationException(f"Invalid page size: {error}") from None
 
 
 class _LayerSection:
@@ -90,8 +147,42 @@ class Page:
 
     @property
     def media_box(self) -> tuple[float, float, float, float]:
-        """Alias for rect."""
+        """The page's ``/MediaBox`` ``(x0, y0, x1, y1)`` -- the sheet it is on.
+
+        The same rectangle as :attr:`rect`. Setting it changes the page's size;
+        the sheet is the one box a page cannot be without, so it cannot be
+        removed and has to have a width and a height above zero. A box that
+        reaches outside the new sheet is not touched in the file -- it is
+        intersected with it when read, as a reader does (ISO 32000-1 Table 30 for
+        the crop box, 14.11.2 for the production boxes).
+        """
         return self.rect
+
+    @media_box.setter
+    def media_box(self, value: tuple[float, float, float, float]) -> None:
+        self._set_box("MediaBox", value)
+
+    @property
+    def size(self) -> PageSize:
+        """The page's size in points, from its media box.
+
+        Setting it resizes the sheet from its existing origin, so content keeps
+        the coordinates it was authored at. Accepts a :class:`PageSize`, the name
+        of one, or a plain ``(width, height)`` pair in points::
+
+            page.size = PageSize.A4
+            page.size = PageSize.A4.landscape()
+            page.size = "legal"
+            page.size = (300, 400)
+        """
+        x0, y0, x1, y1 = self.rect
+        return PageSize(abs(x1 - x0), abs(y1 - y0))
+
+    @size.setter
+    def size(self, value: PageSize | tuple[float, float] | str) -> None:
+        size = _coerce_page_size(value)
+        x0, y0, _, _ = self.rect
+        self._set_box("MediaBox", size.as_rect(x0, y0))
 
     @property
     def rotation(self) -> int:
@@ -121,7 +212,11 @@ class Page:
 
     @property
     def crop_box(self) -> tuple[float, float, float, float]:
-        """The page CropBox ``(x0, y0, x1, y1)``; falls back to the MediaBox when unset."""
+        """The page CropBox ``(x0, y0, x1, y1)``; falls back to the MediaBox when unset.
+
+        Assigning ``None`` removes the entry, which is how the page goes back to
+        taking its visible region from the media box.
+        """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is not None and hasattr(eng, "get_page_crop_box"):
@@ -131,18 +226,113 @@ class Page:
         return self.rect
 
     @crop_box.setter
-    def crop_box(self, value: tuple[float, float, float, float]) -> None:
+    def crop_box(self, value: tuple[float, float, float, float] | None) -> None:
+        self._set_box("CropBox", value)
+
+    @property
+    def bleed_box(self) -> tuple[float, float, float, float]:
+        """The page's ``/BleedBox`` -- what a production run clips the page to.
+
+        ISO 32000-1 14.11.2. Falls back to the :attr:`crop_box` when the page
+        does not state one, as the entry's default is; a stated box is reported
+        intersected with the media box, since no production box extends beyond
+        the sheet. Assigning ``None`` removes the entry.
+
+        Unlike the media and crop boxes this one is **not inheritable**, so a
+        value on a page-tree node is not this page's bleed box.
+        """
+        return self._production_box("BleedBox")
+
+    @bleed_box.setter
+    def bleed_box(self, value: tuple[float, float, float, float] | None) -> None:
+        self._set_box("BleedBox", value)
+
+    @property
+    def trim_box(self) -> tuple[float, float, float, float]:
+        """The page's ``/TrimBox`` -- the finished page's size after trimming.
+
+        Falls back to the :attr:`crop_box`, and behaves in every other way like
+        :attr:`bleed_box`.
+        """
+        return self._production_box("TrimBox")
+
+    @trim_box.setter
+    def trim_box(self, value: tuple[float, float, float, float] | None) -> None:
+        self._set_box("TrimBox", value)
+
+    @property
+    def art_box(self) -> tuple[float, float, float, float]:
+        """The page's ``/ArtBox`` -- the extent of its meaningful content.
+
+        Falls back to the :attr:`crop_box`, and behaves in every other way like
+        :attr:`bleed_box`.
+        """
+        return self._production_box("ArtBox")
+
+    @art_box.setter
+    def art_box(self, value: tuple[float, float, float, float] | None) -> None:
+        self._set_box("ArtBox", value)
+
+    def get_box(self, boundary: PageBoundary | str) -> tuple[float, float, float, float]:
+        """The page box *boundary* names, with its default applied.
+
+        Takes a :class:`~aspose_pdf.viewer_preferences.PageBoundary` -- the same
+        enumeration the viewer preferences use to say which box to view or print
+        -- so code holding one of those can ask for the geometry it names::
+
+            page.get_box(document.viewer_preferences.view_area)
+        """
+        name = _box_name(boundary)
+        if name == "MediaBox":
+            return self.media_box
+        if name == "CropBox":
+            return self.crop_box
+        return self._production_box(name)
+
+    def set_box(
+        self,
+        boundary: PageBoundary | str,
+        rect: tuple[float, float, float, float] | None,
+    ) -> Page:
+        """Set the page box *boundary* names; ``rect=None`` removes the entry.
+
+        The media box cannot be removed, and returns this page so calls chain.
+        """
+        self._set_box(_box_name(boundary), rect)
+        return self
+
+    def _production_box(self, name: str) -> tuple[float, float, float, float]:
+        """A bleed/trim/art box as stated, or the crop box it defaults to."""
         self._document._ensure_not_disposed()
-        try:
-            rect = tuple(float(v) for v in value)
-        except (TypeError, ValueError):
-            raise PdfValidationException("CropBox must be four numbers (x0, y0, x1, y1).")
-        if len(rect) != 4:
-            raise PdfValidationException("CropBox must be four numbers (x0, y0, x1, y1).")
         eng = self._document._engine_pdf
-        if eng is None or not hasattr(eng, "set_page_crop_box"):
-            raise AsposePdfException("Cannot set CropBox: no underlying document.")
-        eng.set_page_crop_box(self._index, rect)
+        if eng is not None and hasattr(eng, "get_page_box"):
+            box = eng.get_page_box(self._index, name)
+            if box is not None:
+                return box
+        return self.crop_box
+
+    def _set_box(
+        self, name: str, value: tuple[float, float, float, float] | None
+    ) -> None:
+        """Write one page box, validating it the way its own entry is read."""
+        self._document._ensure_not_disposed()
+        if value is not None:
+            try:
+                rect = tuple(float(v) for v in value)
+            except (TypeError, ValueError):
+                raise PdfValidationException(
+                    f"{name} must be four numbers (x0, y0, x1, y1)."
+                ) from None
+            if len(rect) != 4:
+                raise PdfValidationException(
+                    f"{name} must be four numbers (x0, y0, x1, y1)."
+                )
+        else:
+            rect = None
+        eng = self._document._engine_pdf
+        if eng is None or not hasattr(eng, "set_page_box"):
+            raise AsposePdfException(f"Cannot set {name}: no underlying document.")
+        eng.set_page_box(self._index, name, rect)
 
     @property
     def content(self) -> bytes:
@@ -714,18 +904,46 @@ class PageCollection:
         """Legacy iterator name - returns an iterator over the pages."""
         return self.__iter__()
 
-    def add(self, page: Page | Any | None = None) -> Page:
-        """Append a page to the collection."""
+    def add(
+        self,
+        page: Page | PageSize | Any | None = None,
+        *,
+        size: PageSize | Sequence[float] | str | None = None,
+    ) -> Page:
+        """Append a page to the collection.
+
+        A blank page is US Letter unless a size is given, either as the first
+        argument or as *size* -- a :class:`~aspose_pdf.page_size.PageSize`, one of
+        its names, or a ``(width, height)`` pair in points::
+
+            document.pages.add(PageSize.A4)
+            document.pages.add(PageSize.A4.landscape())
+            document.pages.add(size=(300, 400))
+
+        Passing a :class:`Page` copies it, as :meth:`insert` describes.
+        """
         self._ensure_not_disposed()
         idx = len(self)
-        if page is None:
+        page, size = _split_page_argument(page, size)
+        if page is None and size is None:
             self._document._engine_pdf.add_page_break()
+        elif page is None:
+            self._document._engine_pdf.add((size.as_rect(), b""))
         else:
             self._document._engine_pdf.add(page)
         return Page(self._document, idx)
 
-    def insert(self, index: int, page: Page | Any | None = None) -> Page:
+    def insert(
+        self,
+        index: int,
+        page: Page | PageSize | Any | None = None,
+        *,
+        size: PageSize | Sequence[float] | str | None = None,
+    ) -> Page:
         """Insert a page at *index*, blank or a copy of an existing one.
+
+        A blank page takes a *size* exactly as :meth:`add` does, and is US Letter
+        without one.
 
         A :class:`Page` of *this* document is copied whole -- its resources,
         rotation and boxes, and its annotations as fresh objects. Copying a page
@@ -739,10 +957,12 @@ class PageCollection:
             index = 0
         if index > count:
             index = count
+        page, size = _split_page_argument(page, size)
 
         if page is None:
-            # Insert a blank page
-            self._document._engine_pdf.insert(index, ((0, 0, 612, 792), b""))
+            # Insert a blank page, of the size asked for or the default sheet.
+            rect = size.as_rect() if size is not None else (0, 0, 612, 792)
+            self._document._engine_pdf.insert(index, (rect, b""))
         elif isinstance(page, Page):
             if page._document is not self._document:
                 raise PdfValidationException(

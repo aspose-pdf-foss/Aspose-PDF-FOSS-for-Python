@@ -531,7 +531,18 @@ Supported:
 - `Document.pages` exposes a mutable `PageCollection`.
 - Get page count with `len(document.pages)` or `document.page_count`.
 - Iterate, index, slice, and use negative indexing for pages.
-- Add a blank page.
+- Add a blank page, **of any size**: `pages.add()` is US Letter, and
+  `pages.add(PageSize.A4)`, `pages.add(size=PageSize.A4.landscape())`,
+  `pages.add(size="legal")` or `pages.add(size=(300, 400))` give the size asked
+  for. `PageSize` carries the ISO A sizes `A0`-`A6`, the ISO B sizes `B4`/`B5`
+  and the US `LETTER`, `LEGAL`, `TABLOID`, `LEDGER`, `EXECUTIVE` and
+  `STATEMENT`, each one portrait (`LEDGER` excepted, which is named landscape),
+  with `landscape()`, `portrait()`, `rotated()`, `scaled()`, `as_rect(x, y)`,
+  `from_mm()`, `from_inches()` and `by_name()`. The ISO sizes are exact
+  conversions from millimetres rather than a printer's rounding, so A4 is
+  595.275591 x 841.889764 pt. A size given twice -- as the argument *and* as
+  `size=` -- or alongside a page to copy is refused rather than one of the two
+  being dropped.
 - Insert a blank page, or a **copy of an existing page** of the same document:
   the copy keeps its resources, rotation and boxes, gets its own content stream
   so the two can be edited apart, and gets fresh copies of the page's
@@ -601,6 +612,20 @@ Supported:
   coordinates is a real rectangle and is kept, as both references keep it. The
   `/MediaBox` written back is the one the file held -- MuPDF and qpdf both keep a
   degenerate one too, so nothing is rewritten behind the caller's back.
+- **Set the page's size through `Page.media_box` or `Page.size`.** `media_box`
+  takes the rectangle, `size` takes a `PageSize`, a name or a `(width, height)`
+  pair and resizes the sheet from its existing origin so content keeps the
+  coordinates it was authored at. The value is written on the *page*, which
+  overrides a `/MediaBox` the page was inheriting from a page-tree node and
+  leaves the other pages under that node alone, and it reaches both the page
+  list the renderer measures and the `/MediaBox` a save writes -- a page created
+  or resized to A4 renders at A4 and reopens at A4. Corners may be named in
+  either order and a negative origin is kept, as when reading. The media box is
+  the one box that **must have a width and a height above zero** and cannot be
+  removed: an empty one is replaced with US Letter on the way back in, so
+  accepting it on the way out would make the assignment look as though it had
+  never happened. Shrinking the media box needs no second assignment to the
+  crop box, which is intersected with it when read.
 - Read and set page rotation through `Page.rotation` (0/90/180/270, clockwise;
   inherited from parent page-tree nodes, normalised, and persisted on save).
 - **Read and set the page crop box through `Page.crop_box`, which reports the
@@ -614,7 +639,26 @@ Supported:
   MuPDF's answer and pdfium's for all but the last, where pdfium reports a page
   of no size and declines to render it. A rectangle written back-to-front is
   normalised (7.9.5 allows either pair of opposite corners). `Page.rect` and
-  `Page.media_box` report the media box, unclipped, throughout.
+  `Page.media_box` report the media box, unclipped, throughout. Assigning `None`
+  removes the entry, which is how a page goes back to taking its visible region
+  from the media box.
+- **Read and set the production boxes through `Page.bleed_box`, `Page.trim_box`
+  and `Page.art_box`** (ISO 32000-1 14.11.2 -- what a production run clips to,
+  the finished page after trimming, and the extent of the meaningful content).
+  Each reports the box in effect: the entry the page states, intersected with the
+  media box since none of the three "shall ordinarily extend beyond" it, or the
+  **crop box** they default to where the page states nothing usable -- an absent
+  entry, one that is not four finite numbers, an empty rectangle, and one lying
+  entirely off the page. The entry written to the file is the one that was set,
+  unclipped and in the order it was given, exactly as the crop box is written;
+  assigning `None` removes it. Unlike `/MediaBox` and `/CropBox` these three are
+  **not inheritable** (Table 30 marks only those two, with `/Resources` and
+  `/Rotate`), so a `/TrimBox` on a page-tree node is not the page's trim box.
+- **Any box by name:** `Page.get_box(boundary)` and `Page.set_box(boundary,
+  rect)` take a `PageBoundary` -- the same enumeration `/ViewArea` and
+  `/PrintArea` are written with -- so code holding one of those can ask the page
+  for the geometry it names. `set_box` returns the page, and refuses to remove
+  the media box.
 - Read decoded page content bytes through `Page.content`.
 - Append simple authored content to a page: positioned Standard-14 text or
   embedded Unicode text with `Page.add_text()`, raw/JPEG/PNG image XObjects

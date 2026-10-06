@@ -78,6 +78,7 @@ from .lowcode import (
 )
 from .optimization import OptimizationOptions
 from .page_labels import NumberingStyle, PageLabel, PageLabelCollection
+from .page_size import PageSize
 from .pages import Page, PageCollection
 from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from .pdfua import PdfUaValidateOptions, PdfUaValidationResult, PdfUaValidator
@@ -188,6 +189,7 @@ __all__ = [
     "PageLayout",
     "PageMode",
     "PageNumberStamp",
+    "PageSize",
     "PdfAValidateOptions",
     "PdfAValidationResult",
     "PdfAValidator",

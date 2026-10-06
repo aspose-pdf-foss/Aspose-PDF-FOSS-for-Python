@@ -7,6 +7,47 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A page can be created at any size, and every one of its five boxes can be
+  read and set.** A new page was 612x792 and nothing else: `pages.add()` took no
+  size, `Page.media_box` was a read-only alias of `rect`, and of the five boxes
+  ISO 32000-1 Table 30 defines only `/CropBox` was reachable — a document of A4
+  pages, or a page carrying the trim and bleed a print shop asks for, could not
+  be authored at all.
+  - `PageSize` carries the ISO A sizes `A0`-`A6`, the ISO B sizes `B4`/`B5` and
+    the US `LETTER`, `LEGAL`, `TABLOID`, `LEDGER`, `EXECUTIVE` and `STATEMENT`,
+    with `landscape()`, `portrait()`, `rotated()`, `scaled()`, `as_rect(x, y)`,
+    `from_mm()`, `from_inches()` and `by_name()` for the ones not listed. The ISO
+    sizes are exact conversions from millimetres, so A4 is
+    595.275591 x 841.889764 pt rather than a printer's rounding of it.
+  - `pages.add(PageSize.A4)`, `pages.add(size="legal")` and
+    `pages.insert(0, size=(300, 400))` create a page of that size; without one a
+    blank page is still US Letter. A size given twice, or alongside a page to
+    copy, is refused rather than one of the two being quietly dropped.
+  - `Page.media_box` and `Page.size` now set the sheet. `size` takes a
+    `PageSize`, a name or a `(width, height)` pair and resizes from the existing
+    origin, so content keeps the coordinates it was authored at. The value
+    reaches both places a size is held — the page list the renderer measures and
+    the `/MediaBox` a save writes — so a resized page renders and reopens at its
+    new size, and it is written on the page, overriding a `/MediaBox` inherited
+    from a page-tree node without touching the other pages under it.
+  - `Page.bleed_box`, `Page.trim_box` and `Page.art_box` read and set the
+    production boxes of 14.11.2. Each reports the box in effect: the stated entry
+    intersected with the media box, since none of the three "shall ordinarily
+    extend beyond" the sheet, or the crop box they default to where the page
+    states nothing usable. The entry written to the file is the one that was set,
+    unclipped, exactly as `/CropBox` is written, and assigning `None` removes it.
+    The three are **not inheritable**, so a `/TrimBox` on a page-tree node is not
+    the page's trim box.
+  - `Page.get_box(boundary)` / `Page.set_box(boundary, rect)` take the
+    `PageBoundary` that `/ViewArea` and `/PrintArea` are written with, so code
+    holding one can ask the page for the geometry it names.
+  - The media box is the one box that must have an area and cannot be removed: an
+    empty one is replaced with US Letter when read, so accepting one when written
+    would make the assignment look as though it had never happened. The other
+    four may be written as given, since a reader intersects them and falls back.
+
 ### Fixed
 
 - **A pattern used inside a form XObject was anchored to the page.** ISO 32000-1

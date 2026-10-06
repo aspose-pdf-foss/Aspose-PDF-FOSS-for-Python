@@ -68,6 +68,12 @@ flowchart TD
   equivalent to `Document().load_from(source, ...)` — and merges instances together — a missing
   file, non-PDF data, or a missing password always raises rather than silently handing back an
   empty document.
+- `document.pages.add(PageSize.A4)` creates a page of any size — the ISO A and B sizes, the US
+  sizes, `landscape()`, `from_mm()` or a plain `(width, height)` pair in points — and
+  `Page.media_box`, `Page.size`, `Page.crop_box`, `Page.bleed_box`, `Page.trim_box` and
+  `Page.art_box` read and set all five boxes a page is described by, each reporting the box in
+  effect: a production box falls back to the crop box it defaults to and is reduced to the sheet
+  it is on, the way ISO 32000-1 14.11.2 asks.
 - `Page.add_text()` places Standard-14 or embedded Unicode text on a page. Feed it a
   `FontDescriptor`, raw font bytes, or a path to author Unicode text through a subset Type0/CID
   font — the writer emits two-byte character codes, `/ToUnicode`, and the CID-to-glyph mapping —
@@ -215,10 +221,10 @@ python -m pip install -e '.[images,woff2,text-layout]'
 Create a PDF and add positioned text:
 
 ```python
-from aspose_pdf import Document
+from aspose_pdf import Document, PageSize
 
 with Document() as document:
-    page = document.pages.add()
+    page = document.pages.add(PageSize.A4)
     page.add_text(
         "Hello from Aspose.PDF FOSS!",
         x=72,
@@ -226,6 +232,19 @@ with Document() as document:
         font_size=18,
     )
     document.save("hello.pdf")
+```
+
+`pages.add()` without a size is US Letter. A page's size and its print boundaries can also be set
+after the fact:
+
+```python
+from aspose_pdf import Document, PageSize
+
+with Document("input.pdf") as document:
+    page = document.pages[0]
+    page.size = PageSize.A4.landscape()   # resizes the sheet, keeping its origin
+    page.trim_box = (28, 28, page.rect[2] - 28, page.rect[3] - 28)
+    document.save("resized.pdf")
 ```
 
 A document loads just as easily from an existing path, in-memory bytes, or a binary stream:

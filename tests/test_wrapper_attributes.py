@@ -46,8 +46,11 @@ def test_no_wrapper_carries_an_instance_dict(cls):
     assert "__dict__" not in dir(cls), f"{cls.__name__} still accepts any attribute"
 
 
+# ``size`` used to be in this list and is not any more: a page now has a real
+# ``size`` property, which assigns a PageSize or a (width, height) pair and
+# refuses anything else with a validation error rather than an AttributeError.
 @pytest.mark.parametrize(
-    "name", ["rotate", "mediabox", "cropbox", "width", "height", "size", "text"]
+    "name", ["rotate", "mediabox", "cropbox", "width", "height", "text"]
 )
 def test_a_name_a_page_does_not_have_is_refused(document, name):
     with pytest.raises(AttributeError):

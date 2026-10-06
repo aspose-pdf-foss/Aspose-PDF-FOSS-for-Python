@@ -178,6 +178,44 @@ def _usable_media_box(items, to_number) -> tuple[float, float, float, float]:
     return box
 
 
+def _authored_box(
+    rect, box_name: str, *, require_area: bool = False
+) -> tuple[float, float, float, float]:
+    """A page box a caller asked for, as four numbers, or a refusal that says why.
+
+    A rectangle is four numbers and nothing else, and an infinity has no decimal
+    form to write (7.3.3), so both are refused here rather than at save time.
+
+    *require_area* is for the ``/MediaBox`` alone. The other boxes may be written
+    exactly as asked for, empty ones included: a reader intersects them with the
+    media box and falls back where nothing is left, which is what this package
+    does too (see :meth:`SimplePdf.get_page_box`) -- the file keeps the bytes it
+    was given. The media box is the one box that cannot be read that way, because
+    a page has to have a size: an empty one is replaced with US Letter on the way
+    back in (see :func:`_usable_media_box`), so accepting it on the way out would
+    make the assignment look as though it had never happened.
+    """
+    if rect is None:
+        raise PdfValidationException(f"{box_name} must be four numbers, not None.")
+    try:
+        values = [float(value) for value in tuple(rect)]
+    except (TypeError, ValueError):
+        raise PdfValidationException(
+            f"{box_name} must be four numbers (x0, y0, x1, y1)."
+        ) from None
+    if len(values) != 4:
+        raise PdfValidationException(f"{box_name} must be four numbers (x0, y0, x1, y1).")
+    if not all(math.isfinite(value) for value in values):
+        raise PdfValidationException(f"{box_name} numbers must be finite.")
+    if require_area:
+        ordered = _ordered_box(values)
+        if ordered[2] <= ordered[0] or ordered[3] <= ordered[1]:
+            raise PdfValidationException(
+                f"{box_name} must have a width and a height above zero."
+            )
+    return (values[0], values[1], values[2], values[3])
+
+
 def _trapped_name(text: str) -> str:
     """The ``/Trapped`` name for *text*.
 
@@ -1838,6 +1876,124 @@ class SimplePdf:
         if ordered[2] <= ordered[0] or ordered[3] <= ordered[1]:
             return None
         return ordered
+
+    def set_page_media_box(self, page_index: int, rect) -> None:
+        """Set the page's ``/MediaBox`` -- the sheet every other box is cut from.
+
+        The size is held in two places: ``pages[i]``, which ``rect`` and the
+        renderer read, and the page dictionary's ``/MediaBox``, which is what a
+        save writes. Both are set here, because a size in only one of them is a
+        document that renders at one size and opens at another.
+
+        The entry is written **on the page**, which is where it takes effect even
+        for a page that was inheriting one from a page-tree node (Table 30 makes
+        ``/MediaBox`` inheritable, and a value on the page overrides the node's).
+        The other pages under that node keep theirs.
+
+        The corners are ordered on the way in, unlike the other boxes: this value
+        is not only written but *interpreted*, by ``rect`` and by everything that
+        measures the page, and ordering is what a reader does with it (7.9.5).
+        """
+        self._ensure_not_disposed()
+        box = _ordered_box(_authored_box(rect, "MediaBox", require_area=True))
+        if page_index < 0 or page_index >= len(self.pages):
+            raise PdfValidationException("Page index out of range")
+        self.pages[page_index] = box
+        page = self._get_page_dict(page_index)
+        if isinstance(page, PdfDictionary):
+            page.mapping[PdfName("MediaBox")] = PdfArray(
+                [PdfNumber(value) for value in box]
+            )
+
+    #: The boxes 14.11.2 adds for production, and what each one defaults to when
+    #: the page does not state it. None of the three is inheritable.
+    _PRODUCTION_BOXES = ("BleedBox", "TrimBox", "ArtBox")
+
+    def get_page_box(self, page_index: int, box_name: str):
+        """The page's ``/BleedBox``, ``/TrimBox`` or ``/ArtBox``, or ``None``.
+
+        ISO 32000-1 14.11.2: each of the three defaults to the **crop** box when
+        the page does not state it, and none of them "shall ordinarily extend
+        beyond the boundaries of the media box" -- where one does, it is
+        effectively reduced to its intersection with the media box. The
+        intersection is taken here, where the answer is used, exactly as it is
+        for the crop box; the file keeps the bytes it came with.
+
+        ``None`` means "the default", which the caller falls back to: an absent
+        entry, one that is not four finite numbers, and one whose intersection
+        with the media box has no area all answer ``None`` rather than a
+        rectangle no sheet contains.
+
+        Unlike ``/MediaBox`` and ``/CropBox``, these three are **not
+        inheritable** (Table 30 marks only the first two, with ``/Resources`` and
+        ``/Rotate``), so the page's own dictionary is the only place consulted: a
+        ``/TrimBox`` on a page-tree node is not this page's trim box.
+        """
+        if box_name not in self._PRODUCTION_BOXES:
+            raise PdfValidationException(
+                "get_page_box reads BleedBox, TrimBox or ArtBox; the media and "
+                "crop boxes have their own accessors."
+            )
+        page = self._get_page_dict(page_index)
+        if page is None:
+            return None
+        box = self._resolve(page.mapping.get(PdfName(box_name)))
+        if not isinstance(box, PdfArray) or len(box.items) < 4:
+            return None
+        try:
+            values = [float(self._get_number(v) or 0) for v in box.items[:4]]
+        except (TypeError, ValueError):
+            return None
+        if not all(math.isfinite(v) for v in values):
+            return None
+        stated = _ordered_box(values)
+
+        media = self._page_media_box(page_index)
+        if media is None:
+            # Nothing sound to reduce against; the media box is defaulted
+            # elsewhere, and clipping to a box that is itself being invented
+            # would be guessing twice -- the same reading the crop box takes.
+            return stated
+        effective = (
+            max(stated[0], media[0]),
+            max(stated[1], media[1]),
+            min(stated[2], media[2]),
+            min(stated[3], media[3]),
+        )
+        if effective[2] <= effective[0] or effective[3] <= effective[1]:
+            return None
+        return effective
+
+    def set_page_box(self, page_index: int, box_name: str, rect) -> None:
+        """Set one of the page's five boxes; ``rect=None`` removes the entry.
+
+        Removing an entry is how a page goes back to the default its box has --
+        the crop box to the media box, the production boxes to the crop box --
+        which is a thing no rectangle can express. The media box has no default
+        to go back to and keeps its value.
+        """
+        self._ensure_not_disposed()
+        if box_name == "MediaBox":
+            if rect is None:
+                raise PdfValidationException(
+                    "A page cannot be without a /MediaBox: it is the box that "
+                    "gives the page its size, and the one the others are cut from."
+                )
+            self.set_page_media_box(page_index, rect)
+            return
+        if box_name != "CropBox" and box_name not in self._PRODUCTION_BOXES:
+            raise PdfValidationException(
+                "A page box is one of MediaBox, CropBox, BleedBox, TrimBox or "
+                "ArtBox."
+            )
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page index out of range")
+        if rect is None:
+            page.mapping.pop(PdfName(box_name), None)
+            return
+        box = _authored_box(rect, box_name)
+        page.mapping[PdfName(box_name)] = PdfArray([PdfNumber(value) for value in box])
 
     def _register_replacing(self, existing: Any, obj: Any):
         """Register *obj*, taking over *existing*'s object number if it has one.
