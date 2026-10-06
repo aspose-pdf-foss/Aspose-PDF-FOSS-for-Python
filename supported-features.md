@@ -844,7 +844,14 @@ Supported:
   `ColorDodge`, `ColorBurn`, `HardLight`, `SoftLight`, `Difference`,
   `Exclusion`) plus the non-separable `Hue`, `Saturation`, `Color`, and
   `Luminosity` modes for fills, strokes, shadings, images, and pattern-painted
-  content. Unsupported blend modes fall back to `Normal`.
+  content. Unsupported blend modes fall back to `Normal`. All sixteen were
+  measured against the formulas of 11.3.5 over six backdrop/source pairs each --
+  including the pairs that reach the `ColorDodge`/`ColorBurn` and `SoftLight`
+  branch boundaries -- and come out within **one or two levels of 255**, which is
+  rounding; the composite formula with `ca` at a quarter, a half and three
+  quarters is right to the same tolerance, as are an `/S /Luminosity` and an
+  `/S /Alpha` soft mask, a mask's `/BC` backdrop and its `/TR` transfer
+  function.
 - Apply soft masks. An image XObject's `/SMask` supplies per-pixel alpha, so
   transparent (PNG-style) images composite over the page. An ExtGState
   `/SMask` builds a device-space mask by rendering its `/G` transparency group
@@ -856,7 +863,19 @@ Supported:
 - Composite transparency groups (`/Group /S /Transparency`) as units. The
   renderer honors isolated (`/I`) and knockout (`/K`) group backdrops, including
   internal blend modes and partial alpha, and bounds nested offscreen buffers by
-  `PdfLoadLimits.max_codec_work_bytes`.
+  `PdfLoadLimits.max_codec_work_bytes`. Knockout is worth naming because it is
+  not universal: measured on two half-transparent overlapping squares, MuPDF
+  composites the second against the group's initial backdrop as `/K true` asks
+  and so do we, while pdfium and poppler render `/K true` and `/K false` alike.
+  **A group's blending colour space (`/CS`) is not applied**, though: blending
+  and compositing happen in the page's space whatever the group names, so a
+  group that asks for `/DeviceGray` keeps its colours instead of being flattened
+  to grey. MuPDF does convert (such a group renders grey there, which is what
+  11.6.6 asks for); pdfium and poppler do not, and nor do we. It matters for a
+  document that groups in `/DeviceGray` or `/DeviceCMYK` deliberately -- a print
+  workflow flattening to one ink -- and not otherwise: with a `/DeviceRGB` group,
+  an absent `/CS`, or a non-isolated group of any space, all four renderers agree
+  to within two levels.
 - Paint function-based (`ShadingType 1`), axial (`ShadingType 2`), and radial
   (`ShadingType 3`) gradients through the `sh` operator and shading-pattern
   fills (`PatternType 2`). Type 1 honours `/Domain`, `/Matrix`, `/BBox`, and the
