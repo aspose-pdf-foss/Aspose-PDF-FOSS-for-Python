@@ -887,6 +887,13 @@ Supported:
   its `/XStep`/`/YStep` lattice, clipped to the path being filled. Both coloured
   (`PaintType 1`) and uncoloured (`PaintType 2`, taking the colour from `scn`)
   patterns are supported.
+  **Pattern space is anchored to the stream the pattern is used in** (8.7.3.1),
+  which is the page for a page-level fill and a **form XObject's** own space for
+  a fill inside one -- so a form's matrix moves the tiles with it, while the CTM
+  in force at the moment of the fill does not move them at all. A pattern used
+  inside a pattern cell is anchored to that cell. The same holds for a shading
+  pattern's gradient. Measured against MuPDF and pdfium, which agree with each
+  other to the pixel on all of these.
 - Use `PdfFileEditor` to concatenate, extract, insert, delete, append, and add a
   blank page through file-based workflows. These go through the same page import
   as `Document.merge`: a page arrives with its own resources and annotations,

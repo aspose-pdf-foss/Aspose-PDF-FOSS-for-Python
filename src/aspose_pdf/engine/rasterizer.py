@@ -852,6 +852,12 @@ class _PageRasterizer:
         self._type3_colour_locked = False
         self._color_converter_cache: dict[int, Callable[[list[float]], Color]] = {}
         self._pattern_depth = 0
+        #: Pattern space maps to the default space of the content stream the
+        #: pattern is *used in* (ISO 32000-1 8.7.3.1) -- the page's, or a form
+        #: XObject's or a pattern cell's where the use is inside one. The CTM in
+        #: effect when that stream was entered is what the pattern matrix
+        #: composes with; the CTM at the moment of the fill is not.
+        self._pattern_base: Matrix = IDENTITY
         # Guards against a soft-mask group that itself sets a soft mask.
         self._in_soft_mask = False
         # Optional content (layers): hidden marked-content sections are not
@@ -1927,7 +1933,8 @@ class _PageRasterizer:
         bbox = self._cos_rect(pattern.mapping.get(PdfName("BBox")))
         xstep = self._cos_number(pattern.mapping.get(PdfName("XStep")))
         ystep = self._cos_number(pattern.mapping.get(PdfName("YStep")))
-        inv = _invert_matrix(matrix)
+        to_user = _multiply(self._pattern_base, matrix)
+        inv = _invert_matrix(to_user)
         if bbox is None or not xstep or not ystep or inv is None:
             return
         polys = [
@@ -1965,13 +1972,16 @@ class _PageRasterizer:
         outer_path = self.path
         outer_pending = self.pending_clip
         self._pattern_depth += 1
+        outer_pattern_base = self._pattern_base
         try:
             for i in range(i_lo, i_hi + 1):
                 for j in range(j_lo, j_hi + 1):
                     self.state = copy.deepcopy(outer_state)
                     self.state.ctm = _multiply(
-                        matrix, (1.0, 0.0, 0.0, 1.0, i * xstep, j * ystep)
+                        to_user, (1.0, 0.0, 0.0, 1.0, i * xstep, j * ystep)
                     )
+                    # A pattern used inside this cell is anchored to the cell.
+                    self._pattern_base = self.state.ctm
                     self.state.fill_shading = None
                     self.state.fill_tiling = None
                     self.state.stroke_shading = None
@@ -1986,6 +1996,7 @@ class _PageRasterizer:
                     del self.state_stack[stack_len:]
         finally:
             self._pattern_depth -= 1
+            self._pattern_base = outer_pattern_base
             self.state = outer_state
             self.path = outer_path
             self.pending_clip = outer_pending
@@ -2047,7 +2058,7 @@ class _PageRasterizer:
         even_odd: bool = False,
     ) -> None:
         shading, matrix = fill_shading
-        to_shading = _invert_matrix(matrix)
+        to_shading = _invert_matrix(_multiply(self._pattern_base, matrix))
         if to_shading is None:
             return
         contours = [
@@ -4397,8 +4408,12 @@ class _PageRasterizer:
         saved_clip, saved_clips = self.canvas.clip, self._clip_stack
         saved_text_clip = self._text_clip
         saved_hidden = self._oc_hidden_depth
+        saved_pattern_base = self._pattern_base
         self.state = copy.deepcopy(saved_state)
         self.state.ctm = _concat(matrix, saved_state.ctm)
+        # The form's space is the default space of its content stream, and so
+        # what a pattern used inside it is anchored to.
+        self._pattern_base = self.state.ctm
         self.state_stack, self._clip_stack = [], []
         self.path, self.pending_clip, self._text_clip = _Path(), None, None
         try:
@@ -4424,6 +4439,7 @@ class _PageRasterizer:
             self.canvas.clip, self._clip_stack = saved_clip, saved_clips
             self._text_clip = saved_text_clip
             self._oc_hidden_depth = saved_hidden
+            self._pattern_base = saved_pattern_base
 
     def _is_transparency_group(self, stream: PdfStream) -> bool:
         group = self._resolve(stream.mapping.get(PdfName("Group")))

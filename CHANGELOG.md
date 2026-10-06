@@ -9,6 +9,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A pattern used inside a form XObject was anchored to the page.** ISO 32000-1
+  8.7.3.1 maps pattern space to the default coordinate space of the content
+  stream the pattern is *used in*, so a form's matrix is part of it. A tiling
+  pattern filled inside a form drawn at `1 0 0 1 5 5 cm` laid its tiles from the
+  page's origin and then clipped them to the form's box: the first column of
+  every row came out five units narrow and the rest sat five units off. MuPDF and
+  pdfium place the tiles from the form's origin and agree to the pixel; so do we
+  now, and so does a **shading** pattern, which was anchored the same wrong way.
+  A pattern used inside a pattern cell is anchored to the cell, one level further
+  in, as the same clause says. The CTM in force at the moment of the fill still
+  does not move the tiles.
+
 - **A form XObject's text ran into the page's own with no separator at all.**
   Headers, footers, stamps and anything a layout tool reuses live in form
   XObjects, and their text is placed by a matrix of their own — so after reading
