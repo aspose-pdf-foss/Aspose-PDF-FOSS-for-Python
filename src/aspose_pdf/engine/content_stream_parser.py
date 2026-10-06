@@ -654,9 +654,19 @@ class ContentStreamParser:
         self._is_cid_identity: bool = False
         # Text-object position, and the leading a `T*` moves by. The leading is
         # graphics state (9.3.1) and survives BT; the position does not.
+        self._text_x: float = 0.0
         self._text_y: float = 0.0
         self._leading: float = 0.0
         self._pending_move: bool = False
+        #: Set when the text that follows must start a new line whatever its
+        #: baseline says -- after a form XObject, whose text was positioned by
+        #: a matrix of its own.
+        self._force_break: bool = False
+        #: Where the last string was shown. ``_text_x`` is the start of the
+        #: current *line*, which is all the positioning operators set: the pen is
+        #: not advanced by the width of what is drawn, because the question a
+        #: separator answers only needs to know whether a move went forward.
+        self._last_shown_x: float | None = None
         self._gs_stack: list[dict[str, str | None]] = []
         #: How many form XObjects deep this parser is, so a form that draws
         #: itself cannot recurse forever.
@@ -762,6 +772,8 @@ class ContentStreamParser:
         self.showed_text = False
         self._in_text = False
         self._last_shown_y: float | None = None
+        self._last_shown_x: float | None = None
+        self._force_break = False
         self._marked_actual_text = []
         self._gs_stack = [{"nonstroking_cs": None, "stroking_cs": None}]
         stack: list[Any] = []
@@ -958,14 +970,29 @@ class ContentStreamParser:
         answer depends on the baseline it was drawn at, which is what tells a
         new line from a shift along the current one.
         """
-        if self._last_shown_y is None:
+        if self._force_break:
+            if self._buffer:
+                self._buffer.append("\n")
+        elif self._last_shown_y is None:
             pass
         elif abs(self._text_y - self._last_shown_y) > 1e-6:
             self._buffer.append("\n")
         elif self._pending_move:
-            self._buffer.append(" ")
+            # Same baseline, so the move was along the line -- unless it did not
+            # advance along it. A move back to where the last string started, or
+            # behind it, puts this text *over* that text rather than after it,
+            # and a space would read as two words side by side.
+            if (
+                self._last_shown_x is not None
+                and self._text_x <= self._last_shown_x + 1e-6
+            ):
+                self._buffer.append("\n")
+            else:
+                self._buffer.append(" ")
         self._pending_move = False
+        self._force_break = False
         self._last_shown_y = self._text_y
+        self._last_shown_x = self._text_x
 
     def _move_text_position(self, op: str, ops: list[Any]) -> bool:
         """Apply a text-positioning operator; True if it began a new line.
@@ -978,17 +1005,30 @@ class ContentStreamParser:
         right reading of it changing.
         """
         previous = self._text_y
+        previous_x = self._text_x
         if op == "Tm":
             self._text_y = float(ops[5]) if len(ops) >= 6 and isinstance(
                 ops[5], (int, float)
             ) else previous
+            self._text_x = float(ops[4]) if len(ops) >= 5 and isinstance(
+                ops[4], (int, float)
+            ) else previous_x
         elif op == "T*":
+            # Back to the start of the line, one leading down -- and the start of
+            # the line is exactly what is tracked, so there is nothing to set.
             self._text_y = previous - self._leading
         elif len(ops) >= 2 and isinstance(ops[1], (int, float)):
             if op == "TD":
                 self._leading = -float(ops[1])
             self._text_y = previous + float(ops[1])
-        return abs(self._text_y - previous) > 1e-6
+            if isinstance(ops[0], (int, float)):
+                # 9.4.2: Td and TD offset the current *line* matrix, so they
+                # accumulate rather than being absolute.
+                self._text_x = previous_x + float(ops[0])
+        return (
+            abs(self._text_y - previous) > 1e-6
+            or abs(self._text_x - previous_x) > 1e-6
+        )
 
     def _handle_operator(self, op: str, ops: list[Any]) -> None:
         if op == "BT":
@@ -1098,6 +1138,7 @@ class ContentStreamParser:
         question a separator answers is whether this text is on the same line
         as the text before it -- not whether it is in the same text object.
         """
+        self._text_x = 0.0
         self._text_y = 0.0
         self._pending_move = False
 
@@ -1715,7 +1756,13 @@ class ContentStreamParser:
         if self._buffer:
             self._buffer.append("\n")
         self._buffer.append(text)
+        # The form's text was placed by a matrix of its own, so the next thing
+        # the page shows is on no line of ours: it starts a new one. Saying
+        # "nothing has been shown yet" instead ran the two together with no
+        # separator at all.
         self._last_shown_y = None
+        self._last_shown_x = None
+        self._force_break = True
 
     def _read_inline_image(self) -> Iterator[Any]:
         """Lex a ``BI`` image as one thing and yield it with its ``EI``.

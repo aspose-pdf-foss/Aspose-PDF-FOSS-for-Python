@@ -143,11 +143,16 @@ def test_t_star_steps_down_by_the_leading():
     assert page.extract_text() == "one\ntwo\nthree"
 
 
-def test_t_star_without_a_leading_stays_on_the_line():
-    """`TL` defaults to zero, so `T*` moves nowhere until something sets it."""
+def test_t_star_without_a_leading_draws_over_the_line_it_is_on():
+    """`TL` defaults to zero, so `T*` moves nowhere -- and nowhere is not along.
+
+    The second string is drawn *over* the first, not after it, so a space would
+    read as two words side by side. MuPDF and poppler both answer ``one\ntwo``
+    here, and so does each of them for a plain ``0 0 Td``.
+    """
     page = _from_content(b"BT /F1 12 Tf 72 700 Td (one) Tj T* (two) Tj ET\n").pages[0]
 
-    assert page.extract_text() == "one two"
+    assert page.extract_text() == "one\ntwo"
 
 
 def test_td_capital_sets_the_leading_as_well_as_moving():

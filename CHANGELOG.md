@@ -9,6 +9,24 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A form XObject's text ran into the page's own with no separator at all.**
+  Headers, footers, stamps and anything a layout tool reuses live in form
+  XObjects, and their text is placed by a matrix of their own — so after reading
+  one the extractor said "nothing has been shown yet", and the next string on the
+  page got no separator: `inside a form` and `on the page` came out as
+  `inside a formon the page`. A form's text is now a line of its own, whichever
+  side of the page's text it is drawn on.
+
+- **A text-positioning move that did not advance along the line produced a
+  space.** Two strings at the same position are stacked, not side by side, so
+  `under` drawn over `OVER` read as `under OVER`; `T*` with the default zero
+  leading and a plain `0 0 Td` did the same. A move that goes back to where the
+  last string started, or behind it, starts a new line, which is what MuPDF and
+  poppler both answer. Horizontal position is tracked for this, and `BT` resets
+  it as ISO 32000-1 9.4.1 requires — a `Td` in a new text object used to count
+  from wherever the previous one had left the pen, which could put a string to
+  the right of one that is in fact to its left.
+
 - **A damaged bookmark tree took the whole document with it.** Four shapes of
   damage refused to open at all: an `/Outlines` object that would not tokenise,
   an outline list whose `/First` pointed at an object that is not there (which

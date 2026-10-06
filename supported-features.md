@@ -1284,7 +1284,20 @@ Supported:
   `Page.extract_text` and `Document.extract_text` return what the page says; the
   separator between two runs comes from the text-positioning operators
   (`Td`/`TD`/`Tm`/`T*`, and the leading `TL` feeds them) — a change of baseline
-  is a line, a move along one is a space. How those lines group into paragraphs
+  is a line, a move **forward** along one is a space. A move that does not
+  advance is not a space: two strings at the same position are stacked, not side
+  by side, so that is a line break too, which is what MuPDF and poppler both
+  answer for `T*` with no leading and for a plain `0 0 Td`. `BT` resets the
+  horizontal position with the matrices it resets (9.4.1), and `Td`/`TD` offset
+  the current line matrix rather than being absolute (9.4.2). Text from a **form
+  XObject** is a line of its own, on either side of the page's own text: a form
+  places its text with a matrix of its own, so it is on no line of the page's.
+  *A divergence worth knowing:* the **size** of a horizontal gap is not kept — a
+  column or table-cell boundary comes out as the single space a word gap does.
+  Plain `pdftotext` starts a new line past about 0.86 em and MuPDF past about
+  0.64 em (measured at 14 pt: 12 pt and 9 pt), so a table row reads as nine lines
+  there and as three lines here; `pdftotext -layout` groups the lines as this
+  does and shows the gaps as runs of spaces. How those lines group into paragraphs
   is a judgement `to_markdown` and `to_html` make and this does not, so a
   wrapped paragraph is one paragraph there and several lines here. **The
   whitespace a page draws is kept**, leading and trailing included, which is what
