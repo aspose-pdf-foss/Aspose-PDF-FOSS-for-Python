@@ -711,6 +711,11 @@ Supported:
   limits. Curves and round pen regions are approximated by polylines; pixel
   edges and hairline antialiasing may differ from other renderers. Automatic
   stroke adjustment (`SA`) is not implemented.
+  **Scan conversion:** a fill keeps the pixels whose centres the path encloses
+  and a clip keeps every pixel of which its region covers any area -- the two
+  rules MuPDF, pdfium and poppler use, so an axis-aligned rectangle covers
+  exactly its own pixels in all four. A clipping path with no area (a rectangle
+  of zero width or height, a closed line) passes nothing.
   All eight **text rendering modes** (table 106) are honoured, in both of
   their halves. The four that **stroke** -- 1, 2, 5 and 6 -- draw the glyph's
   outline with the stroke colour and the graphics state's pen, so outlined

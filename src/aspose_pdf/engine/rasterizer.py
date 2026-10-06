@@ -101,6 +101,11 @@ _BLEND_MODES = {
 
 logger = get_logger("rasterizer")
 
+#: Where in a row a clip samples: just inside the top, the centre, and just
+#: inside the bottom. The offsets are strictly within ``(0, 1)`` so that an
+#: edge exactly on a row boundary belongs to one row, not two.
+_CLIP_ROW_SAMPLES = (1.0 / 1024.0, 0.5, 1023.0 / 1024.0)
+
 
 @dataclass(frozen=True)
 class RasterizedPage:
@@ -2068,8 +2073,8 @@ class _PageRasterizer:
         ):
             self._shade_span(
                 y,
-                max(0, math.floor(x_from)),
-                min(self.width - 1, math.ceil(x_to)),
+                max(0, math.ceil(x_from - 0.5)),
+                min(self.width - 1, math.floor(x_to - 0.5)),
                 shading,
                 to_shading,
                 alpha,
@@ -2336,8 +2341,13 @@ class _PageRasterizer:
         for y, x_from, x_to in _scan_spans(
             contours, even_odd=even_odd, height=self.height
         ):
-            x_start = max(0, math.floor(x_from))
-            x_end = min(self.width - 1, math.ceil(x_to))
+            # A pixel belongs to the span when its *centre* does, which is the
+            # rule ``_scan_spans`` already applies to rows (it samples at
+            # ``y + 0.5``) and the one the glyph and stroke paths use for
+            # columns. Covering ``floor(x_from)`` to ``ceil(x_to)`` instead made
+            # every fill a pixel wider than MuPDF, pdfium and poppler draw it.
+            x_start = max(0, math.ceil(x_from - 0.5))
+            x_end = min(self.width - 1, math.floor(x_to - 0.5))
             for x in range(x_start, x_end + 1):
                 self._composite_pixel(x, y, color, alpha)
 
@@ -2372,10 +2382,21 @@ class _PageRasterizer:
         self, contours: list[list[Point]], mask: bytearray, *, even_odd: bool
     ) -> None:
         for y, x_from, x_to in _scan_spans(
-            contours, even_odd=even_odd, height=self.height
+            contours,
+            even_odd=even_odd,
+            height=self.height,
+            sample_offsets=_CLIP_ROW_SAMPLES,
         ):
+            # A clip keeps every pixel of which its region covers any area --
+            # conservative, and what all three reference renderers do. The end
+            # was inclusive, which let one extra column through on the right of
+            # every clip, while the rows were sampled at their centres only, so a
+            # fractional edge lost one. The row samples sit just *inside* the
+            # row, so an edge lying exactly on a row boundary does not pull in
+            # the row beyond it -- which is the difference between covering area
+            # and touching a line.
             x_start = max(0, math.floor(x_from))
-            x_end = min(self.width - 1, math.ceil(x_to))
+            x_end = min(self.width - 1, math.ceil(x_to) - 1)
             row = y * self.width
             for x in range(x_start, x_end + 1):
                 mask[row + x] = 1
@@ -4914,6 +4935,7 @@ def _scan_spans(
     *,
     even_odd: bool,
     height: int,
+    sample_offsets: tuple[float, ...] = (0.5,),
 ) -> Iterator[tuple[int, float, float]]:
     """Yield ``(y, x_from, x_to)`` for the interior of *contours*, row by row.
 
@@ -4924,6 +4946,10 @@ def _scan_spans(
     does not cancel; the even-odd rule counts them unsigned and keeps alternate
     spans. Filling each subpath on its own is neither, and leaves every shape
     with a hole in it solid.
+
+    Each row is sampled at *sample_offsets* within it. A fill asks for the pixel
+    centre alone; a clip asks for the top, the middle and the bottom, because it
+    keeps every pixel its region touches.
     """
     ys = [point[1] for contour in contours for point in contour]
     if not ys:
@@ -4931,29 +4957,32 @@ def _scan_spans(
     min_y = max(0, math.floor(min(ys)))
     max_y = min(height - 1, math.ceil(max(ys)))
     for y in range(min_y, max_y + 1):
-        scan_y = y + 0.5
-        crossings: list[tuple[float, int]] = []
-        for contour in contours:
-            count = len(contour)
-            if count < 3:
-                continue
-            for index in range(count):
-                x0, y0 = contour[index]
-                x1, y1 = contour[(index + 1) % count]
-                if y0 == y1:
+        for offset in sample_offsets:
+            scan_y = y + offset
+            crossings: list[tuple[float, int]] = []
+            for contour in contours:
+                count = len(contour)
+                if count < 3:
                     continue
-                if (y0 <= scan_y < y1) or (y1 <= scan_y < y0):
-                    t = (scan_y - y0) / (y1 - y0)
-                    crossings.append((x0 + t * (x1 - x0), 1 if y1 > y0 else -1))
-        if len(crossings) < 2:
-            continue
-        crossings.sort()
-        winding = 0
-        for index in range(len(crossings) - 1):
-            winding += crossings[index][1]
-            inside = (index % 2 == 0) if even_odd else (winding != 0)
-            if inside:
-                yield y, crossings[index][0], crossings[index + 1][0]
+                for index in range(count):
+                    x0, y0 = contour[index]
+                    x1, y1 = contour[(index + 1) % count]
+                    if y0 == y1:
+                        continue
+                    if (y0 <= scan_y < y1) or (y1 <= scan_y < y0):
+                        t = (scan_y - y0) / (y1 - y0)
+                        crossings.append(
+                            (x0 + t * (x1 - x0), 1 if y1 > y0 else -1)
+                        )
+            if len(crossings) < 2:
+                continue
+            crossings.sort()
+            winding = 0
+            for index in range(len(crossings) - 1):
+                winding += crossings[index][1]
+                inside = (index % 2 == 0) if even_odd else (winding != 0)
+                if inside:
+                    yield y, crossings[index][0], crossings[index + 1][0]
 
 
 def _coerce_rgb(value: Sequence[int]) -> Color:

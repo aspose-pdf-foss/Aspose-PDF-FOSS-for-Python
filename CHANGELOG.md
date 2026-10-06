@@ -9,6 +9,22 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Every filled rectangle and every clip was one pixel too wide.** The
+  rasteriser had four rules for turning a span's floating-point `x` range into
+  pixel columns: glyph outlines and strokes used the pixel-centre rule, while
+  path fill, the clip mask and shading-pattern fill covered `floor(x_from)` to
+  `ceil(x_to)` *inclusive* — one column too many for any integer-aligned edge.
+  Rows had always been chosen by their centres, so the error was asymmetric: a
+  1-point vertical rule rendered two pixels across and a 1-point horizontal rule
+  one pixel down, and a clip leaked a column of content past its right edge (a
+  zero-width clipping rectangle, which encloses nothing, let a whole column
+  through). Fills now keep the pixels whose centres are inside, as the glyph path
+  already did; clips keep every pixel of which the region covers any area, which
+  is conservative and what MuPDF, pdfium and poppler all do. Measured on thirteen
+  rectangles × fill and clip: of the twenty-three cases where all three
+  references agree with each other, they agreed with us on none before and on all
+  twenty-three now.
+
 - **CCITT-compressed images decoded to noise.** Group 4 is how a scanned
   bilevel page is almost always stored, and the decoder could follow hardly any
   of it: of ten bitmaps encoded by libtiff, one came back correct — the
