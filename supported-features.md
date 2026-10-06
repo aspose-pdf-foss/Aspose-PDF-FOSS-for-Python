@@ -670,9 +670,26 @@ Supported:
   `alt=...`, and `actual_text=...`; the writer emits `BDC`/`EMC` marked
   content and maintains `/StructTreeRoot`, page `/StructParents`, and the
   `/ParentTree`.
+- **Authored colour is grey, RGB or CMYK**, in the three device spaces a content
+  stream can set without naming a colour space first (ISO 32000-1 8.6.8): one
+  component writes `g`/`G`, three write `rg`/`RG`, four write `k`/`K`. Every
+  colour argument in the package -- `Page.add_text(color=)`,
+  `draw_rectangle(stroke_color=, fill_color=)`, `draw_line(stroke_color=)`, a
+  stamp's `color`, `redact_text(overlay_color=)` -- reads the same four forms: a
+  component sequence, a single number for grey, a `"#rgb"`/`"#rrggbb"` string, or
+  an `aspose_pdf.Color` (`Color.gray`, `Color.rgb`, `Color.cmyk`,
+  `Color.from_hex`, with `components` and `color_space`). Grey and RGB channels
+  may be given in 0..1 or 0..255, since 8-bit is what a colour picker and a
+  stylesheet speak; **CMYK is 0..1 only**, because ink is quoted as a percentage
+  as often as a byte and dividing 20 by 255 when 20% was meant would be wrong
+  rather than imprecise. A colour that cannot be read is refused: the authoring
+  API sees what a *caller* wrote, unlike a colour read from a file, which is
+  tolerated and the paint skipped. A `Color` carrying a `GradientAxialShading`
+  raises `UnsupportedFeatureException` -- the value object is kept for ported
+  code, and there is no shading-pattern writer for it to feed.
 - **Stamps** (`Page.add_stamp`, `Document.add_stamp(stamp, pages=...)`).
   `TextStamp(value, font_size, font_name, color)` sets a line in one of the 14
-  standard fonts, `ImageStamp(image, width, height)` places a picture (one
+  standard fonts in any of the three device colour spaces (see above), `ImageStamp(image, width, height)` places a picture (one
   point per pixel by default, and giving one side derives the other from the
   image's proportions), and `PageNumberStamp("{page} of {total}",
   starting_number=…)` numbers the pages. All three take `opacity` (written as
@@ -1463,9 +1480,11 @@ Supported:
   metadata, attachments, annotations, images and unselected occurrences are
   outside its scope. The input file is unchanged unless explicitly overwritten.
 - Draw a redaction overlay bar with `redact_text(..., overlay=True,
-  overlay_color=(r, g, b))`. After removing the matched text, a filled
-  rectangle (a DeviceRGB triple of 0..1, default black) is drawn over each
-  removed run's location. The location is found by a best-effort text-position
+  overlay_color=...)`. After removing the matched text, a filled rectangle
+  (grey, RGB or CMYK, default black -- see the colour rule under [Pages](#pages))
+  is drawn over each removed run's location. A colour that cannot be read is
+  refused rather than drawn black: the bar is what makes the removal visible, so
+  the wrong one is worse than an error. The location is found by a best-effort text-position
   tracker (CTM, text matrix, and advance widths from `/Widths` for simple
   fonts, from the CIDFont `/W`/`/DW` arrays for composite fonts, or
   from a bundled metric-compatible substitute) that shares the redactor's run

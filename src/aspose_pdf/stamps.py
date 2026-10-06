@@ -21,7 +21,6 @@ instead of over it. One stamp added to many pages is one object in the file.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -120,22 +119,18 @@ def _with_opacity(content: bytes, opacity: float) -> bytes:
     return b"/GS0 gs\n" + content if opacity < 1.0 else content
 
 
-def _colour_operator(color: Sequence[float]) -> bytes:
-    from aspose_pdf.engine.content_authoring import format_number
+def _colour_operator(color: Any) -> bytes:
+    """The stamp's fill colour, read by the one rule every authored colour is.
 
-    values = [float(value) for value in color]
-    if len(values) == 1:
-        operator = b"g"
-    elif len(values) == 3:
-        operator = b"rg"
-    elif len(values) == 4:
-        operator = b"k"
-    else:
-        raise PdfValidationException("color must have 1, 3 or 4 components")
-    if any(not 0.0 <= value <= 1.0 for value in values):
-        raise PdfValidationException("colour components must be between 0 and 1")
-    numbers = b" ".join(format_number(value).encode("ascii") for value in values)
-    return numbers + b" " + operator
+    A stamp has taken grey, RGB and CMYK since it was written; the page
+    authoring API took RGB only. Both go through
+    ``content_authoring.color_operator`` now, so a colour means the same thing
+    whichever of them it is handed to -- including a single number for grey and a
+    ``"#rrggbb"`` string.
+    """
+    from aspose_pdf.engine.content_authoring import color_operator
+
+    return color_operator(color, stroking=False).encode("ascii")
 
 
 @dataclass
@@ -153,7 +148,7 @@ class TextStamp(Stamp):
     value: str
     font_size: float = 14.0
     font_name: str = "Helvetica"
-    color: Sequence[float] = field(default=(0.0, 0.0, 0.0))
+    color: Any = field(default=(0.0, 0.0, 0.0))
 
     def _text(self, page_index: int, page_count: int) -> str:
         return str(self.value)

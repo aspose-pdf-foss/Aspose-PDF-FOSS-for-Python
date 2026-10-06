@@ -10,6 +10,7 @@ from .annotations import (
     MarkupAnnotation,
 )
 from .attachments import AF_RELATIONSHIPS, FileSpecification
+from .color import Color
 from .document import Document
 from .exceptions import (
     FontEmbeddingException,
@@ -138,6 +139,7 @@ __all__ = [
     "AnnotationType",
     "ByteArrayDataSource",
     "CertificationLevel",
+    "Color",
     "DataSource",
     "Destination",
     "Document",

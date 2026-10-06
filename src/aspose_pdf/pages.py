@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aspose_pdf.annotations import AnnotationCollection
+from aspose_pdf.color import ColorValue
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 from aspose_pdf.page_size import PageSize
 from aspose_pdf.viewer_preferences import PageBoundary
@@ -375,7 +376,7 @@ class Page:
         font_size: float = 12.0,
         font_name: str | None = None,
         font: FontDescriptor | bytes | bytearray | str | Path | None = None,
-        color: Sequence[float] = (0.0, 0.0, 0.0),
+        color: ColorValue = (0.0, 0.0, 0.0),
         tag: str | None = None,
         actual_text: str | None = None,
         layout: TextLayoutOptions | None = None,
@@ -387,6 +388,11 @@ class Page:
         and subset a Unicode Type0/CID font. Pass ``layout`` to enable
         OpenType shaping, bidirectional text, font fallback, wrapping, and
         alignment through :class:`~aspose_pdf.text_layout.TextLayoutOptions`.
+
+        ``color`` is grey, RGB or CMYK: one, three or four components, a single
+        number for grey, a ``"#rrggbb"`` string, or an
+        :class:`~aspose_pdf.color.Color`. Grey and RGB channels may be 0..1 or
+        0..255; CMYK is 0..1.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -465,14 +471,18 @@ class Page:
         width: float,
         height: float,
         *,
-        stroke_color: Sequence[float] | None = (0.0, 0.0, 0.0),
-        fill_color: Sequence[float] | None = None,
+        stroke_color: ColorValue | None = (0.0, 0.0, 0.0),
+        fill_color: ColorValue | None = None,
         line_width: float = 1.0,
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
     ) -> Page:
-        """Append a stroked and/or filled rectangle to this page."""
+        """Append a stroked and/or filled rectangle to this page.
+
+        Both colours take grey, RGB or CMYK -- see :meth:`add_text` -- and
+        ``None`` leaves that half of the paint out: no fill, or no stroke.
+        """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is None:
@@ -499,13 +509,16 @@ class Page:
         x2: float,
         y2: float,
         *,
-        stroke_color: Sequence[float] = (0.0, 0.0, 0.0),
+        stroke_color: ColorValue = (0.0, 0.0, 0.0),
         line_width: float = 1.0,
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
     ) -> Page:
-        """Append a stroked line segment to this page."""
+        """Append a stroked line segment to this page.
+
+        ``stroke_color`` takes grey, RGB or CMYK -- see :meth:`add_text`.
+        """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is None:
@@ -803,12 +816,12 @@ class Page:
         case_sensitive: bool = True,
         max_count: int = 0,
         overlay: bool = False,
-        overlay_color: Sequence[float] = (0.0, 0.0, 0.0),
+        overlay_color: ColorValue = (0.0, 0.0, 0.0),
     ) -> int:
         """Remove existing text from simple text-showing operands on this page.
 
-        With ``overlay=True`` a filled rectangle (``overlay_color``, a DeviceRGB
-        triple of 0..1, default black) is drawn over each removed run -- the
+        With ``overlay=True`` a filled rectangle (``overlay_color`` -- grey, RGB
+        or CMYK, default black) is drawn over each removed run -- the
         classic redaction bar. The bar is cosmetic (the text is already removed);
         runs whose position cannot be tracked are left unmarked.
 
@@ -828,7 +841,7 @@ class Page:
             case_sensitive=case_sensitive,
             max_count=max_count,
             overlay=overlay,
-            overlay_color=tuple(overlay_color),
+            overlay_color=overlay_color,
         )
 
     def add_link(

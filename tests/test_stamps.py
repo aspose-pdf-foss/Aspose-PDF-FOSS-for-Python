@@ -463,10 +463,22 @@ def test_a_text_stamp_takes_any_of_the_three_colour_spaces(color):
 
 def test_a_colour_that_is_not_a_colour_is_refused():
     document = _document()
-    with pytest.raises(PdfValidationException, match="1, 3 or 4"):
+    with pytest.raises(PdfValidationException, match=r"1 \(grey\), 3 \(RGB\) or 4"):
         document.pages[0].add_stamp(TextStamp("X", color=(1, 0)))
-    with pytest.raises(PdfValidationException, match="between 0 and 1"):
-        document.pages[0].add_stamp(TextStamp("X", color=(2, 0, 0)))
+    with pytest.raises(PdfValidationException, match=r"0\.\.1 or 0\.\.255"):
+        document.pages[0].add_stamp(TextStamp("X", color=(300, 0, 0)))
+    with pytest.raises(PdfValidationException, match="CMYK"):
+        document.pages[0].add_stamp(TextStamp("X", color=(0, 2, 0, 0)))
+
+
+def test_a_stamp_colour_takes_the_same_scales_the_page_api_takes():
+    # One rule for colour: a stamp used to insist on 0..1 while Page.add_text
+    # had always taken 0..255 as well. Both go through the same normaliser now.
+    document = _document()
+    document.pages[0].add_stamp(TextStamp("X", font_size=40, color=(255, 0, 0)))
+    document.pages[0].add_stamp(TextStamp("Y", font_size=40, color="#ff0000"))
+    document.pages[0].add_stamp(TextStamp("Z", font_size=40, color=0.25))
+    assert _pixels(_reloaded(document), lambda pixel: sum(pixel) < 700)
 
 
 def test_a_stamps_text_survives_the_round_trip_as_text():

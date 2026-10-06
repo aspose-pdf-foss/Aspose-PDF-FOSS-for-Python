@@ -24,6 +24,7 @@ from aspose_pdf._compat_surface import (
     require_pdf_save_format as _require_pdf_save_format,
 )
 from aspose_pdf.attachments import AF_RELATIONSHIPS, FileSpecification
+from aspose_pdf.color import ColorValue
 from aspose_pdf.engine import viewer_preferences as engine_viewer_prefs
 from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.simple_pdf import (
@@ -1760,12 +1761,12 @@ class Document:
         case_sensitive: bool = True,
         max_count: int = 0,
         overlay: bool = False,
-        overlay_color: Sequence[float] = (0.0, 0.0, 0.0),
+        overlay_color: ColorValue = (0.0, 0.0, 0.0),
     ) -> int:
         """Remove existing text from simple page-content text-showing operands.
 
-        With ``overlay=True`` a filled rectangle (``overlay_color``, a DeviceRGB
-        triple of 0..1, default black) is drawn over each removed run -- the
+        With ``overlay=True`` a filled rectangle (``overlay_color`` -- grey, RGB
+        or CMYK, default black) is drawn over each removed run -- the
         classic redaction bar. The bar is cosmetic (the text is already removed
         from the content); a run whose position cannot be tracked is left unmarked.
 
@@ -1794,7 +1795,7 @@ class Document:
             case_sensitive=case_sensitive,
             max_count=max_count,
             overlay=overlay,
-            overlay_color=tuple(overlay_color),
+            overlay_color=overlay_color,
         )
 
     def load_from(

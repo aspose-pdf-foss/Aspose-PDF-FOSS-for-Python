@@ -9,6 +9,37 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Authored colour is grey, RGB or CMYK, by one rule everywhere a colour is
+  taken.** `Page.add_text`, `draw_rectangle` and `draw_line` went through
+  `normalize_rgb`, which refused anything that was not exactly three components:
+  `fill_color=(0, 0.2, 1, 0.05)` raised "RGB color must contain exactly three
+  channels", so a page could not be painted in ink or in grey. Every other part
+  of the package already read 1/3/4 components — a stamp's colour, an
+  annotation's `/C` and `/IC`, a field's `/MK` background — which left the page
+  authoring API as the one place a print workflow could not use.
+  - One component now writes `g`/`G`, three `rg`/`RG`, four `k`/`K` (ISO 32000-1
+    8.6.8: the three device spaces a content stream can set without naming a
+    colour space first). qpdf 12.4.2 parses the operators and operands back, and
+    poppler 26.09 renders grey and RGB to the same pixel we do.
+  - Every colour argument — `color`, `stroke_color`, `fill_color`, a stamp's
+    `color`, `redact_text(overlay_color=)` — reads a component sequence, a single
+    number for grey, a `"#rgb"`/`"#rrggbb"` string, or an `aspose_pdf.Color`.
+  - `Color` became a usable value object instead of a shell with an `r` property
+    and no `g` or `b`: `Color.gray`, `Color.rgb`, `Color.cmyk`, `Color.from_hex`,
+    `components`, `color_space`, equality and a repr, exported from `aspose_pdf`
+    and from `aspose_pdf.drawing`. The ported `Color(pattern, r, g, b)`
+    constructor still builds an RGB colour. A `Color` carrying a
+    `GradientAxialShading` raises `UnsupportedFeatureException` when asked for
+    components — there is no shading-pattern writer for it to feed.
+  - Grey and RGB channels may be 0..1 or 0..255, which is what `Page.add_text`
+    already accepted; **a stamp's colour now takes that scale too** rather than
+    refusing anything above 1. CMYK is 0..1 only: a percentage and an 8-bit value
+    cannot be told apart from a fraction, so `(0, 20, 100, 10)` is refused with a
+    message saying why instead of being divided by 255.
+  - A **redaction bar** takes an ink as well, and a colour it cannot read is now
+    refused instead of quietly drawn black — the bar is what makes the removal
+    visible, so the wrong colour is worse than an error.
+
 - **A page can be created at any size, and every one of its five boxes can be
   read and set.** A new page was 612x792 and nothing else: `pages.add()` took no
   size, `Page.media_box` was a read-only alias of `rect`, and of the five boxes

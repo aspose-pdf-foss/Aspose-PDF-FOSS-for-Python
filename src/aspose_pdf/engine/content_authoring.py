@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import re
 import struct
 import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
@@ -105,34 +107,106 @@ def pdf_literal(text: str | bytes) -> str:
     return "(" + out.decode("latin-1") + ")"
 
 
-def normalize_rgb(color: Sequence[float]) -> tuple[float, float, float]:
-    """Normalize an RGB color from 0..1 or 0..255 channels to PDF 0..1 values."""
+_HEX_COLOR_RE = re.compile(r"^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
-    if len(color) != 3:
-        raise PdfValidationException("RGB color must contain exactly three channels.")
-    values = []
-    for channel in color:
-        if isinstance(channel, bool):
-            raise PdfValidationException("RGB color channels must be numbers.")
-        try:
-            values.append(float(channel))
-        except (TypeError, ValueError):
-            raise PdfValidationException("RGB color channels must be numbers.")
-    if any(v < 0 for v in values):
-        raise PdfValidationException("RGB color channels cannot be negative.")
-    if any(v > 1.0 for v in values):
-        values = [v / 255.0 for v in values]
-    if any(v > 1.0 for v in values):
-        raise PdfValidationException("RGB color channels must be in 0..1 or 0..255.")
-    return (values[0], values[1], values[2])
+#: The operators that set a device colour, by how many components it has
+#: (stroking, non-stroking). ISO 32000-1 8.6.8: these three spaces are the ones
+#: a content stream can set without naming a colour space first.
+_COLOR_OPERATORS = {1: ("G", "g"), 3: ("RG", "rg"), 4: ("K", "k")}
 
 
-def color_operator(color: Sequence[float], *, stroking: bool) -> str:
-    r, g, b = normalize_rgb(color)
-    op = "RG" if stroking else "rg"
-    return (
-        f"{format_number(r)} {format_number(g)} {format_number(b)} {op}"
-    )
+def normalize_color(color: Any) -> tuple[float, ...]:
+    """A colour a caller asked for, as 1, 3 or 4 components in 0..1.
+
+    One component is DeviceGray, three DeviceRGB, four DeviceCMYK. A single
+    number is grey, a ``"#rgb"``/``"#rrggbb"`` string is parsed as 8-bit RGB, and
+    anything carrying a ``components`` sequence -- :class:`aspose_pdf.Color` --
+    hands that over.
+
+    Grey and RGB channels may be given in 0..255 as well as 0..1, since 8-bit is
+    what a colour picker and a stylesheet both speak; a value above 1 means the
+    whole colour is on that scale. **CMYK is 0..1 only**: ink is quoted as a
+    percentage as often as a byte, and dividing 20 by 255 when 20% was meant
+    would be wrong rather than merely imprecise, so it is refused and says so.
+
+    This is for a colour a *caller* supplied, which is why it refuses what it
+    cannot read. A colour read from a **file** is tolerated instead and the paint
+    skipped -- ``appearance._color_op`` and ``SimplePdf._field_color_operator``
+    do that for annotation and field colours -- because a document that is merely
+    opened and saved must not be refused over an entry it already holds.
+    """
+    components = getattr(color, "components", None)
+    if components is not None:
+        color = components
+    elif isinstance(color, str):
+        color = _hex_components(color)
+    elif isinstance(color, (int, float)) and not isinstance(color, bool):
+        color = (color,)
+
+    if isinstance(color, (bytes, bytearray)):
+        raise PdfValidationException(
+            "A colour is 1 (grey), 3 (RGB) or 4 (CMYK) numbers, a '#rrggbb' "
+            "string, or an aspose_pdf.Color."
+        )
+    try:
+        values = [_color_channel(channel) for channel in tuple(color)]
+    except TypeError:
+        raise PdfValidationException(
+            "A colour is 1 (grey), 3 (RGB) or 4 (CMYK) numbers, a '#rrggbb' "
+            "string, or an aspose_pdf.Color."
+        ) from None
+    if len(values) not in _COLOR_OPERATORS:
+        raise PdfValidationException(
+            f"A colour has 1 (grey), 3 (RGB) or 4 (CMYK) components, not "
+            f"{len(values)}."
+        )
+    if any(value > 1.0 for value in values):
+        if len(values) == 4:
+            raise PdfValidationException(
+                "CMYK components must be between 0 and 1; a percentage or an "
+                "8-bit value cannot be told apart from a fraction here."
+            )
+        values = [value / 255.0 for value in values]
+        if any(value > 1.0 for value in values):
+            raise PdfValidationException(
+                "Colour components must be in 0..1 or 0..255."
+            )
+    return tuple(values)
+
+
+def _color_channel(channel: Any) -> float:
+    """One colour component as a non-negative finite float."""
+    if isinstance(channel, bool):
+        raise PdfValidationException("Colour components must be numbers.")
+    try:
+        value = float(channel)
+    except (TypeError, ValueError):
+        raise PdfValidationException("Colour components must be numbers.") from None
+    if not math.isfinite(value):
+        raise PdfValidationException("Colour components must be finite.")
+    if value < 0:
+        raise PdfValidationException("Colour components cannot be negative.")
+    return value
+
+
+def _hex_components(text: str) -> tuple[float, float, float]:
+    """``"#rgb"`` or ``"#rrggbb"`` as three 0..1 channels."""
+    if not _HEX_COLOR_RE.match(text.strip()):
+        raise PdfValidationException(
+            f"{text!r} is not a hex colour; write '#rgb' or '#rrggbb'."
+        )
+    digits = text.strip().lstrip("#")
+    if len(digits) == 3:
+        digits = "".join(digit * 2 for digit in digits)
+    return tuple(int(digits[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+def color_operator(color: Any, *, stroking: bool) -> str:
+    """The operator that sets *color*, in whichever device space it names."""
+    values = normalize_color(color)
+    stroke_op, fill_op = _COLOR_OPERATORS[len(values)]
+    numbers = " ".join(format_number(value) for value in values)
+    return f"{numbers} {stroke_op if stroking else fill_op}"
 
 
 def build_text_stream(
@@ -141,7 +215,7 @@ def build_text_stream(
     y: float,
     font_resource: str,
     font_size: float,
-    color: Sequence[float],
+    color: Any,
     encoding: str = "WinAnsiEncoding",
 ) -> bytes:
     """Draw *text* with a simple font, in that font's own encoding.
@@ -185,7 +259,7 @@ def build_cid_text_stream(
     y: float,
     font_resource: str,
     font_size: float,
-    color: Sequence[float],
+    color: Any,
 ) -> bytes:
     """Build a text fragment whose show string contains two-byte CID codes."""
 
@@ -210,7 +284,7 @@ def build_positioned_cid_text_stream(
         tuple[str, Sequence[tuple[bytes, str, float, float]]]
     ],
     font_size: float,
-    color: Sequence[float],
+    color: Any,
 ) -> bytes:
     """Build shaped lines from absolute glyph positions and named ActualText."""
     parts = ["q", color_operator(color, stroking=False)]
@@ -269,8 +343,8 @@ def build_rectangle_stream(
     width: float,
     height: float,
     *,
-    stroke_color: Sequence[float] | None,
-    fill_color: Sequence[float] | None,
+    stroke_color: Any | None,
+    fill_color: Any | None,
     line_width: float,
 ) -> bytes:
     if stroke_color is None and fill_color is None:
@@ -298,7 +372,7 @@ def build_line_stream(
     x2: float,
     y2: float,
     *,
-    stroke_color: Sequence[float],
+    stroke_color: Any,
     line_width: float,
 ) -> bytes:
     parts = [

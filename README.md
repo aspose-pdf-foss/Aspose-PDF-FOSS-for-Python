@@ -74,6 +74,11 @@ flowchart TD
   `Page.art_box` read and set all five boxes a page is described by, each reporting the box in
   effect: a production box falls back to the crop box it defaults to and is reduced to the sheet
   it is on, the way ISO 32000-1 14.11.2 asks.
+- Colour is grey, RGB or CMYK wherever one is taken — `page.draw_rectangle(..., fill_color=(0, 0.2, 1,
+  0.05))` sets an ink, `fill_color="#336699"` a web colour, `fill_color=0.25` a grey — with
+  `Color.gray/rgb/cmyk/from_hex` for a value object to pass around. Grey and RGB channels may be
+  0..1 or 0..255; CMYK is 0..1, because a percentage and an 8-bit value cannot be told apart from a
+  fraction.
 - `Page.add_text()` places Standard-14 or embedded Unicode text on a page. Feed it a
   `FontDescriptor`, raw font bytes, or a path to author Unicode text through a subset Type0/CID
   font — the writer emits two-byte character codes, `/ToUnicode`, and the CID-to-glyph mapping —

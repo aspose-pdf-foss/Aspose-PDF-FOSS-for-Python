@@ -7008,12 +7008,19 @@ class SimplePdf:
     def _append_redaction_overlay(
         content: bytes, quads: list, color: tuple
     ) -> bytes:
-        """Append filled quads (in default user space) over redacted runs."""
-        try:
-            r, g, b = (max(0.0, min(1.0, float(c))) for c in color)
-        except (TypeError, ValueError):
-            r, g, b = 0.0, 0.0, 0.0
-        parts = [content, b"\nq\n", f"{r:.4g} {g:.4g} {b:.4g} rg\n".encode("ascii")]
+        """Append filled quads (in default user space) over redacted runs.
+
+        The bar takes grey, RGB and CMYK, like every other authored colour: a
+        redaction over a CMYK page used to be forced through an RGB operator,
+        which is a colour conversion nobody asked for in a print workflow. A
+        colour that cannot be read is refused rather than quietly drawn black --
+        the bar is what makes the removal visible, so the wrong one is worse than
+        an error.
+        """
+        from .content_authoring import color_operator
+
+        operator = color_operator(color, stroking=False)
+        parts = [content, b"\nq\n", operator.encode("ascii") + b"\n"]
         for quad in quads:
             (x0, y0), (x1, y1), (x2, y2), (x3, y3) = quad
             parts.append(
