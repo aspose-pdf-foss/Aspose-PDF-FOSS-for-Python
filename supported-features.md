@@ -209,7 +209,20 @@ Supported:
   page and render a sheet it never described. An input with a PDF header but no
   PDF object in it -- nothing for the reconstruction scan to find -- raises
   `PdfParseException`; `SimplePdf.from_bytes_safe` remains the tolerant loader
-  that repairs instead.
+  that repairs instead. The scan runs whenever the cross-reference data names no
+  object, whether it failed to parse or parsed and was empty (a table truncated
+  to its free entry, say), so that refusal only ever follows a scan that found
+  nothing. A trailer that parsed keeps naming the catalog: a stale `trailer`
+  fragment appended after `%%EOF` does not take it over.
+- **Damage to a structure that is not the page content costs that structure, not
+  the document.** A bookmark tree that will not tokenise, an outline link to an
+  object that is not there (7.3.10: a reference to null), an item that is its own
+  sibling or child, nesting past the internal depth ceiling, a `/Resources` or a
+  `/Font` entry that is a number instead of a dictionary: each is reported in a
+  warning and the pages are read. MuPDF, pdfium and poppler all open such files;
+  measured across thirty-nine damaged copies of one document, every one opens and
+  reads its pages. A **resource limit** still raises -- that ceiling is the
+  caller's, not the file's fault.
 - Open documents in streaming/lazy mode and decode page content on demand.
 - **A streamed document reads and edits like any other, and stays lazy doing
   it.** `extract_text` on a page or the whole document decodes one page at a

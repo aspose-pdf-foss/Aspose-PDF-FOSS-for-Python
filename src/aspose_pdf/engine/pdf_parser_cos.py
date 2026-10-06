@@ -691,6 +691,7 @@ class PdfCosParser:
             doc.trailer = trailer_dict
             self.trailer = trailer_dict
 
+            reconstructed = False
         except (PdfParseException, ValueError, IndexError, zlib.error):
             # Recover only when the primary xref/startxref path failed for
             # xref-typical reasons. Broader ``Exception`` hid non-xref bugs
@@ -701,8 +702,25 @@ class PdfCosParser:
             doc.xref_table = all_xref
             doc.trailer = trailer_dict
             self.trailer = trailer_dict
+            reconstructed = True
 
         xref_used = {num: off for num, off in all_xref.items() if off > 0}
+        if not xref_used and not self._compressed_objects and not reconstructed:
+            # A table that parsed but names no object -- truncated to its free
+            # entry, say -- is as useless as one that would not parse at all,
+            # and the objects are usually still in the file. The scan that the
+            # failure path would have run is run here too, so that the refusal
+            # below only ever follows a reconstruction that found nothing.
+            self._compressed_objects.clear()
+            self._generations.clear()
+            all_xref, recovered_trailer = self._reconstruct_xref()
+            if trailer_dict is None or PdfName("Root") not in trailer_dict.mapping:
+                trailer_dict = recovered_trailer
+            doc.xref_table = all_xref
+            doc.trailer = trailer_dict
+            self.trailer = trailer_dict
+            xref_used = {num: off for num, off in all_xref.items() if off > 0}
+
         if not xref_used and not self._compressed_objects:
             # Nothing in the input is a PDF object: no xref entry survived and
             # the reconstruction scan, which reads the whole file looking for

@@ -17412,26 +17412,40 @@ class CosExtractor:
         return -4
 
     def extract_outlines(self) -> list[dict]:
-        """Return a list of outline-item dicts from the catalog /Outlines tree."""
+        """Return a list of outline-item dicts from the catalog /Outlines tree.
+
+        A bookmark tree is decoration: a document whose own is unreadable still
+        has its pages, and every reference reader opens such a file. So damage
+        here costs the bookmarks and not the document -- an object that will not
+        parse, a list that ends nowhere, a loop -- while a resource limit still
+        stops the read, because that is the caller's ceiling and not the file's
+        fault.
+        """
         from .cos import PdfDictionary, PdfName
 
         root_ref = self._doc.trailer.mapping.get(PdfName("Root"))
-        root = self._resolve(root_ref)
-        if not isinstance(root, PdfDictionary):
+        try:
+            root = self._resolve(root_ref)
+            if not isinstance(root, PdfDictionary):
+                return []
+            outlines_ref = root.mapping.get(PdfName("Outlines"))
+            outlines = self._resolve(outlines_ref)
+            if not isinstance(outlines, PdfDictionary):
+                return []
+            first_ref = outlines.mapping.get(PdfName("First"))
+            if _outline_link_absent(first_ref):
+                return []
+            return self._collect_outline_items(
+                first_ref,
+                named=named_destinations(root, self._resolve, self._budget),
+                _visited=set(),
+                _node_count=[0],
+            )
+        except PdfResourceLimitException:
+            raise
+        except (PdfParseException, PdfValidationException) as exc:
+            logger.warning("Could not read the outline tree: %s", exc)
             return []
-        outlines_ref = root.mapping.get(PdfName("Outlines"))
-        outlines = self._resolve(outlines_ref)
-        if not isinstance(outlines, PdfDictionary):
-            return []
-        first_ref = outlines.mapping.get(PdfName("First"))
-        if _outline_link_absent(first_ref):
-            return []
-        return self._collect_outline_items(
-            first_ref,
-            named=named_destinations(root, self._resolve, self._budget),
-            _visited=set(),
-            _node_count=[0],
-        )
 
     def _collect_outline_items(
         self,
@@ -17444,19 +17458,24 @@ class CosExtractor:
     ) -> list[dict]:
         """Recursively walk the outline linked list, returning dicts.
 
-        Raises
-        ------
-        PdfParseException
-            If the outline tree is cyclic, truncated by a non-dictionary link,
-            references a missing object, or nests deeper than
-            :data:`OUTLINE_TREE_MAX_DEPTH`.
+        A cycle, a link to a missing object or to something that is not a
+        dictionary, and nesting past :data:`OUTLINE_TREE_MAX_DEPTH` each end the
+        walk where they are found, with a warning: the bookmarks read so far are
+        what the file holds, and a damaged bookmark list is no reason to refuse
+        the pages. A resource limit still raises.
         """
         from .cos import PdfDictionary, PdfName, PdfNumber, PdfString
 
         if depth > OUTLINE_TREE_MAX_DEPTH:
-            raise PdfParseException(
-                f"Outline tree nesting exceeds maximum depth ({OUTLINE_TREE_MAX_DEPTH})"
+            # A ceiling on the *file*, to stop runaway recursion, and not the
+            # caller's: the branch below it is dropped, with the bookmarks above
+            # it kept. The caller's own ``max_nesting_depth`` is checked next
+            # and does raise, because that ceiling is theirs to set.
+            logger.warning(
+                "Outline tree nests deeper than %d; dropping the rest of the branch.",
+                OUTLINE_TREE_MAX_DEPTH,
             )
+            return []
         self._budget.check(
             depth + 1,
             "max_nesting_depth",
@@ -17468,21 +17487,25 @@ class CosExtractor:
         while not _outline_link_absent(item_ref):
             item = self._resolve(item_ref)
             if item is None:
-                raise PdfParseException(
-                    "Outline item indirect reference points to a missing object"
-                )
+                # ISO 32000-1 7.3.10: a reference to an object that is not
+                # there is a reference to null, which ends the list. The
+                # bookmarks before it are still bookmarks.
+                logger.warning("Outline list ends at a missing object; dropping the rest.")
+                break
             if not isinstance(item, PdfDictionary):
-                raise PdfParseException(
-                    "Outline item must be a dictionary; outline tree may be corrupt"
-                )
+                logger.warning("Dropping an outline item that is not a dictionary.")
+                break
             if isinstance(item_ref, PdfIndirectReference):
                 cycle_key = ("ref", item_ref.object_number)
             else:
                 cycle_key = ("direct", id(item))
             if cycle_key in visited:
-                raise PdfParseException(
-                    "Outline tree contains a cycle (repeated outline item reference)"
-                )
+                # A list that points back at itself is stopped where it closes,
+                # the way a cyclic resource graph is: the items read so far are
+                # what the file holds, and refusing the document over its
+                # bookmarks would lose the pages too.
+                logger.warning("Dropping a circular reference in the outline tree.")
+                break
             visited.add(cycle_key)
             node_count[0] += 1
             self._budget.check(

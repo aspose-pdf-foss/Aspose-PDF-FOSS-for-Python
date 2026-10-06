@@ -9,6 +9,30 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A damaged bookmark tree took the whole document with it.** Four shapes of
+  damage refused to open at all: an `/Outlines` object that would not tokenise,
+  an outline list whose `/First` pointed at an object that is not there (which
+  ISO 32000-1 7.3.10 defines as a reference to null, not an error), an item that
+  was its own `/First` and `/Next`, and nesting past the internal depth ceiling.
+  A bookmark list is not the page content, and MuPDF, pdfium and poppler open
+  every one of these files and read their pages. The walk now ends where the
+  damage is, with a warning naming it, and the bookmarks above it are kept — a
+  **resource limit** still raises, because that ceiling is the caller's and not
+  the file's fault.
+
+- **A cross-reference table that parsed but named nothing was trusted.** A table
+  truncated to its free entry led straight to "no PDF objects found in the
+  input", although the objects were still in the file and the reconstruction scan
+  would have found them — it ran only when the table failed to *parse*. The scan
+  runs for an empty table too, so the refusal only ever follows a reconstruction
+  that found nothing; a trailer that parsed keeps naming the catalog, so a stale
+  `trailer` fragment appended after `%%EOF` cannot take it over.
+
+- **A `/Resources` or a `/Font` entry that is not a dictionary raised
+  `AttributeError` out of text extraction.** A damaged file may hold a number
+  where a font belongs; without metrics the text still comes out, which is what
+  every reference reader does with such a page.
+
 - **Merging left the structure tree behind, so merged-in pages lost their
   tagging.** Assembling an accessible document out of parts is most of the
   reason to merge, and the parts arrived untagged: the pages came with their

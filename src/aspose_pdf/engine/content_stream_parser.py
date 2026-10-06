@@ -1019,7 +1019,7 @@ class ContentStreamParser:
                 font_name = font_name[1:]
 
             font_key = str(font_name)
-            self._current_font = self._resources.get("Font", {}).get(font_key)
+            self._current_font = self._font_resource(font_key)
             if len(ops) >= 2 and isinstance(ops[1], (int, float)):
                 self._font_size = float(ops[1])
             self._prepare_font_maps()
@@ -1116,6 +1116,23 @@ class ContentStreamParser:
             if isinstance(w, (int, float)):
                 out[base + idx] = int(w)
         return out
+
+    def _font_resource(self, font_key: str) -> dict | None:
+        """The font dictionary *font_key* names, or ``None``.
+
+        A damaged file may hold anything where a resource dictionary or a font
+        belongs -- a number, a string, a dangling reference. None of it is a
+        font, and none of it should stop the page's text being read: without
+        metrics the text still comes out, which is what every reference reader
+        does with such a page. This is the only place ``_current_font`` is set,
+        so everything downstream may take it for a dictionary or ``None``.
+        """
+        resources = self._resources if isinstance(self._resources, dict) else {}
+        fonts = resources.get("Font")
+        if not isinstance(fonts, dict):
+            return None
+        font = fonts.get(font_key)
+        return font if isinstance(font, dict) else None
 
     def _apply_metrics_from_font(self) -> None:
         """Populate width tables from font dict (simple, Type0 / CID)."""
