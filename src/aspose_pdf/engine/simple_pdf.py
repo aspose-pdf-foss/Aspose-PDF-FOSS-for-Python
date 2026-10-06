@@ -9837,11 +9837,292 @@ class SimplePdf:
 
         self._merge_acroform(other, imported, whole=whole)
         self._merge_optional_content(other, imported, whole=whole)
+        self._merge_structure_tree(other, imported, copied)
         self._merge_outlines(other, imported, positions)
         self._merge_image_views(other, positions)
         if whole:
             self._merge_attachments(other)
         self._page_cache_valid = False
+
+    def _merge_structure_tree(
+        self,
+        other: SimplePdf,
+        imported: dict[int, Any],
+        copied: list[tuple[Any, Any]],
+    ) -> None:
+        """Bring the appended pages' structure elements across with them.
+
+        ISO 32000-1 14.7.2: a tagged document's logical structure lives in a
+        tree of elements, each naming the page its content sits on through
+        ``/Pg`` and reached from that page through ``/StructParents`` -- a key
+        into the document's own ``/ParentTree``. Appending used to leave the
+        tree behind and strip the key, so an imported page kept its
+        ``BDC``-marked content with nothing describing it: a document that still
+        said ``/MarkInfo /Marked true`` while half its pages were, to a reader
+        or an assistive tool, untagged. Merging is how an accessible report gets
+        assembled out of parts, so the elements travel now: each page's entry in
+        the source parent tree is imported under a fresh key of ours, and the
+        top-level elements that describe the pages taken are re-parented onto
+        our ``/StructTreeRoot``.
+
+        Elements describing pages that were *not* taken do not come: a subset of
+        pages is a different document, and a structure element whose ``/Pg`` is
+        missing describes nothing.
+        """
+        source_catalog = other._resolve(
+            other._cos_doc.trailer.mapping.get(PdfName("Root"))
+        )
+        if not isinstance(source_catalog, PdfDictionary):
+            return
+        source_root = other._resolve(
+            source_catalog.mapping.get(PdfName("StructTreeRoot"))
+        )
+        if not isinstance(source_root, PdfDictionary):
+            return
+        source_tree = other._resolve(source_root.mapping.get(PdfName("ParentTree")))
+        source_pairs = (
+            dict(other._tagged_number_tree_pairs(source_tree))
+            if isinstance(source_tree, PdfDictionary)
+            else {}
+        )
+
+        # What the pages taken are described by, page by page, before anything
+        # is created here: an empty result means there is nothing to merge and
+        # no reason to turn an untagged document into a tagged one.
+        work: list[tuple[PdfDictionary, PdfArray]] = []
+        for source_page, new_ref in copied:
+            if not isinstance(source_page, PdfDictionary):
+                continue
+            key = other._resolve(source_page.mapping.get(PdfName("StructParents")))
+            if not isinstance(key, PdfNumber):
+                continue
+            entry = source_pairs.get(int(key.value))
+            if isinstance(entry, PdfArray) and entry.items:
+                page = self._resolve(new_ref)
+                if isinstance(page, PdfDictionary):
+                    work.append((page, entry))
+        if not work:
+            return
+
+        struct_root, struct_ref = self._ensure_struct_tree_root()
+        own_kids = self._resolve(struct_root.mapping.get(PdfName("K")))
+        if not isinstance(own_kids, PdfArray):
+            own_kids = PdfArray([] if own_kids is None else [own_kids])
+            struct_root.mapping[PdfName("K")] = own_kids
+
+        # Which elements describe a page that came: one is kept when its own
+        # /Pg is among them, or when a descendant's is. The subtrees are
+        # imported first, pruned to those, so the generic import cannot drag an
+        # element whose page stayed behind -- it would arrive with a null /Pg,
+        # describing nothing.
+        taken = set(imported)
+        keep = self._structure_elements_to_keep(other, source_root, taken)
+        source_kids = other._resolve(source_root.mapping.get(PdfName("K")))
+        tops = (
+            list(source_kids.items)
+            if isinstance(source_kids, PdfArray)
+            else (
+                [source_root.mapping.get(PdfName("K"))]
+                if source_kids is not None
+                else []
+            )
+        )
+        for top in tops:
+            if getattr(top, "object_number", None) not in keep:
+                continue
+            self._graft_structure_top(
+                other, top, imported, keep, taken, struct_ref, own_kids
+            )
+
+        # Then each page's entry, which indexes those same elements by MCID.
+        for page, entry in work:
+            own_entry = self._parent_tree_array_for_page(struct_root, page)
+            for item in entry.items:
+                own_entry.items.append(self._import_object(other, item, imported))
+
+        for name in ("RoleMap", "ClassMap"):
+            source_map = other._resolve(source_root.mapping.get(PdfName(name)))
+            if not isinstance(source_map, PdfDictionary):
+                continue
+            own_map = self._resolve(struct_root.mapping.get(PdfName(name)))
+            if not isinstance(own_map, PdfDictionary):
+                own_map = PdfDictionary({})
+                struct_root.mapping[PdfName(name)] = own_map
+            for key, value in source_map.mapping.items():
+                # Ours wins a disagreement: the target document's own roles are
+                # what its existing elements were written against.
+                own_map.mapping.setdefault(
+                    key, self._import_object(other, value, imported)
+                )
+
+    def _graft_structure_top(
+        self,
+        other: SimplePdf,
+        source_top: Any,
+        imported: dict[int, Any],
+        keep: set[int],
+        taken: set[int],
+        struct_ref: Any,
+        own_kids: PdfArray,
+    ) -> None:
+        """Hang an imported top-level element off our structure root.
+
+        ISO 14289-2 8.2.5.2 wants a single ``Document`` element at the root, so
+        two documents' ``Document`` elements are spliced into one rather than
+        set side by side -- which is the same rule
+        :meth:`_wrap_structure_in_document` applies when converting.
+        """
+        brought = self._import_structure_element(
+            other, source_top, imported, keep, taken
+        )
+        element = self._resolve(brought)
+        if not isinstance(element, PdfDictionary):
+            return
+        own_document = None
+        if self._get_name(element.mapping.get(PdfName("S"))) == "Document":
+            for candidate in own_kids.items:
+                existing = self._resolve(candidate)
+                if (
+                    isinstance(existing, PdfDictionary)
+                    and existing is not element
+                    and self._get_name(existing.mapping.get(PdfName("S")))
+                    == "Document"
+                ):
+                    own_document = (candidate, existing)
+                    break
+        if own_document is None:
+            element.mapping[PdfName("P")] = struct_ref
+            own_kids.items.append(brought)
+            return
+        target_ref, target = own_document
+        children = self._resolve(target.mapping.get(PdfName("K")))
+        if not isinstance(children, PdfArray):
+            children = PdfArray([] if children is None else [children])
+            target.mapping[PdfName("K")] = children
+        incoming = self._resolve(element.mapping.get(PdfName("K")))
+        items = (
+            incoming.items
+            if isinstance(incoming, PdfArray)
+            else ([element.mapping.get(PdfName("K"))] if incoming is not None else [])
+        )
+        for child in items:
+            resolved = self._resolve(child)
+            if isinstance(resolved, PdfDictionary):
+                resolved.mapping[PdfName("P")] = target_ref
+            children.items.append(child)
+
+    def _structure_elements_to_keep(
+        self, other: SimplePdf, source_root: PdfDictionary, taken: set[int]
+    ) -> set[int]:
+        """The structure elements that describe at least one page being taken."""
+        kids = other._resolve(source_root.mapping.get(PdfName("K")))
+        tops = (
+            list(kids.items)
+            if isinstance(kids, PdfArray)
+            else ([source_root.mapping.get(PdfName("K"))] if kids is not None else [])
+        )
+        keep: set[int] = set()
+
+        def visit(ref: Any, depth: int) -> bool:
+            self._load_budget.check(
+                depth + 1, "max_nesting_depth", "structure element depth"
+            )
+            element = other._resolve(ref)
+            if not isinstance(element, PdfDictionary):
+                return False
+            number = getattr(ref, "object_number", None)
+            if number is not None and number in keep:
+                return True
+            page = element.mapping.get(PdfName("Pg"))
+            wanted = getattr(page, "object_number", None) in taken
+            children = other._resolve(element.mapping.get(PdfName("K")))
+            items = (
+                children.items
+                if isinstance(children, PdfArray)
+                else (
+                    [element.mapping.get(PdfName("K"))]
+                    if children is not None
+                    else []
+                )
+            )
+            for child in items:
+                if isinstance(other._resolve(child), PdfDictionary) and visit(
+                    child, depth + 1
+                ):
+                    wanted = True
+            if wanted and number is not None:
+                keep.add(number)
+            return wanted
+
+        for top in tops:
+            visit(top, 0)
+        return keep
+
+    def _import_structure_element(
+        self,
+        other: SimplePdf,
+        ref: Any,
+        imported: dict[int, Any],
+        keep: set[int],
+        taken: set[int],
+        depth: int = 0,
+    ) -> Any:
+        """Import one structure element, pruned to the pages being taken.
+
+        ``/K`` is rebuilt rather than copied: a marked-content id belongs to the
+        element's own ``/Pg``, so it survives only when that page came, and a
+        child element survives only when something in its subtree did. ``/P`` --
+        a structure element's parent, which is ``/P`` and not ``/Parent``
+        (ISO 32000-1 table 323) -- is rebuilt too, since the parent is a
+        different object here.
+        """
+        self._load_budget.check(
+            depth + 1, "max_nesting_depth", "imported structure element depth"
+        )
+        number = getattr(ref, "object_number", None)
+        if number is not None and number in imported:
+            return imported[number]
+        source = other._resolve(ref)
+        if not isinstance(source, PdfDictionary):
+            return PdfNull()
+        element = PdfDictionary({})
+        new_ref: Any = element
+        if number is not None:
+            new_ref = self._cos_doc.register_object(element)
+            imported[number] = new_ref
+
+        own_page = getattr(source.mapping.get(PdfName("Pg")), "object_number", None)
+        on_a_taken_page = own_page in taken
+        for key, value in source.mapping.items():
+            if key.name.lstrip("/") in ("K", "P"):
+                continue
+            element.mapping[key] = self._import_object(other, value, imported)
+
+        children = other._resolve(source.mapping.get(PdfName("K")))
+        items = (
+            children.items
+            if isinstance(children, PdfArray)
+            else ([source.mapping.get(PdfName("K"))] if children is not None else [])
+        )
+        kept: list[Any] = []
+        for child in items:
+            resolved = other._resolve(child)
+            if isinstance(resolved, PdfDictionary) and PdfName("S") in resolved.mapping:
+                if getattr(child, "object_number", None) not in keep:
+                    continue
+                brought = self._import_structure_element(
+                    other, child, imported, keep, taken, depth + 1
+                )
+                child_element = self._resolve(brought)
+                if isinstance(child_element, PdfDictionary):
+                    child_element.mapping[PdfName("P")] = new_ref
+                kept.append(brought)
+            elif on_a_taken_page:
+                # A marked-content id, or an /OBJR naming an annotation: both
+                # mean something only on a page that came.
+                kept.append(self._import_object(other, child, imported))
+        element.mapping[PdfName("K")] = PdfArray(kept)
+        return new_ref
 
     def _merge_image_views(self, other: SimplePdf, positions: dict[int, int]) -> None:
         """Carry the by-name views of the images the appended pages carry.

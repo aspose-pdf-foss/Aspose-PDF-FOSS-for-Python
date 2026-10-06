@@ -890,20 +890,26 @@ Supported:
 Boundaries:
 
 - **Merging does not carry across what belongs to the whole document rather
-  than to its pages.** The document information dictionary, XMP, the page
-  labels, the viewer preferences and the structure tree stay this document's;
-  a merge appends pages, and taking the other document's title or its tagging
-  would be a different operation. Named destinations (`/Dests`) are not merged
-  either, so a bookmark or link of the source that goes by name is carried
-  across as the destination the name stood for there (a name the source does
-  not define becomes no target); a remote `/GoToR` name, which belongs to the
-  other file, is left as it is.
-  Because the tree does not come, the **key into it does not either**: an
-  imported page gives up its `/StructParents`, and its annotations their
-  `/StructParent` (14.7.4.4). Those are indices into the *source* document's
-  `/ParentTree`, and keeping one would have the page's marked content answer to
-  whatever this document holds under that number — another page's headings, or
-  a tree that is not there at all.
+  than to its pages.** The document information dictionary, XMP and the viewer
+  preferences stay this document's; a merge appends pages, and taking the other
+  document's title would be a different operation. Named destinations
+  (`/Dests`) are not merged either, so a bookmark or link of the source that
+  goes by name is carried across as the destination the name stood for there (a
+  name the source does not define becomes no target); a remote `/GoToR` name,
+  which belongs to the other file, is left as it is.
+- **The logical structure of the pages taken comes with them.** Each page's
+  entry in the source `/ParentTree` is imported under a fresh key of this
+  document's, and the top of each imported subtree is re-parented onto its
+  `/StructTreeRoot` — spliced into its `Document` element where both documents
+  have one, since ISO 14289-2 8.2.5.2 wants a single one at the root. `/RoleMap`
+  and `/ClassMap` are unioned, this document's entry winning a disagreement, and
+  an untagged document that is given tagged pages gains `/StructTreeRoot` and
+  `/MarkInfo /Marked`. Taking a **subset** of pages brings only what describes
+  those pages: an element is kept when its own `/Pg` came or a descendant's did,
+  and a kept element's marked-content ids are dropped when they belong to a page
+  that stayed behind. An **annotation**'s `/StructParent` (14.7.4.4) is still
+  given up rather than remapped, so an imported annotation is outside the
+  structure tree; a `/Link` that has to be in it is not yet carried.
 - Deleting a page clears direct and named link destinations, and local `GoTo`
   actions, that resolve to that page. Remote `GoToR` targets are unchanged
   because their page numbers belong to another file. A bookmark target is

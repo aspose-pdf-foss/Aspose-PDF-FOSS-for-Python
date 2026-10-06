@@ -9,6 +9,25 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Merging left the structure tree behind, so merged-in pages lost their
+  tagging.** Assembling an accessible document out of parts is most of the
+  reason to merge, and the parts arrived untagged: the pages came with their
+  `/P <</MCID 0>> BDC` marked content intact while the elements describing it
+  stayed in the source. Merged into a tagged document the result was worse than
+  untagged — it went on saying `/MarkInfo /Marked true`, so it advertised a
+  structure tree that covered only half its pages; merged into an untagged one,
+  there was no `/StructTreeRoot` at all and the marked content was orphaned.
+  (An earlier fix had stopped the imported page *claiming* a key it could not
+  index, which prevented it inheriting someone else's headings but left the
+  tagging lost.) The elements travel now: each page's entry in the source parent
+  tree is imported under a fresh key, the top of each imported subtree is
+  re-parented onto this document's `/StructTreeRoot` — spliced into its
+  `Document` element when both have one, since ISO 14289-2 8.2.5.2 wants a
+  single one at the root — and `/RoleMap` and `/ClassMap` are unioned. Taking a
+  *subset* of pages brings only the elements that describe those pages: a kept
+  element's marked-content ids are dropped when they belong to a page that
+  stayed behind, so nothing arrives describing content that is not there.
+
 - **Every filled rectangle and every clip was one pixel too wide.** The
   rasteriser had four rules for turning a span's floating-point `x` range into
   pixel columns: glyph outlines and strokes used the pixel-centre rule, while
