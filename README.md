@@ -109,7 +109,8 @@ flowchart TD
   bundled renderer — no third-party rasterization library required for the core path — that fills
   real glyph outlines, honors soft masks and blend modes, and paints axial, radial, and mesh
   shadings. Output can be RGB, greyscale, or 1-bit bilevel; TIFF is Deflate-compressed by default,
-  and `Document.save_as_tiff()` writes every page into one multi-page TIFF.
+  and `Document.to_tiff()` / `save_as_tiff()` put every page into one multi-page TIFF, as bytes or
+  as a file.
 - `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
@@ -156,8 +157,12 @@ flowchart TD
 - `Document.optimize()` (aliased `optimize_resources()`) removes unreachable objects,
   deduplicates images, subsets embedded TrueType and CFF fonts, and recompresses streams, all
   controlled through `OptimizationOptions`.
-- The `aspose_pdf.lowcode` plugin layer (`Merger`, `Splitter`, `Optimizer`, `TextExtractor`)
-  wraps common batch workflows behind a uniform `DataSource`/`ResultContainer` interface.
+- The `aspose_pdf.lowcode` plugin layer wraps common batch workflows behind a uniform
+  `DataSource`/`ResultContainer` interface: `Merger`, `Splitter` (per page, or per range),
+  `Optimizer`, `TextExtractor`, `ImageExtractor`, `ImagesToPdf`, `Converter` (HTML, Markdown, SVG,
+  TIFF, PNG, JPEG), `PdfAConverter`, `Rotator`, `PageRemover`, `Stamper`, `FormFlattener`,
+  `Encryptor` and `Decryptor` — each one a composition of the operations above, so a batch job is
+  a few lines and the same code works on files, bytes or streams.
 - `PdfLoadLimits` bounds input size, object counts, decoded-stream bytes, and image pixels when a
   `Document` loads untrusted PDF input, raising `PdfResourceLimitException` instead of hanging or
   silently truncating a hostile file.
@@ -432,6 +437,26 @@ with PdfExtractor() as extractor:
     extractor.bind_pdf("input.pdf")
     extractor.extract_text()
     print(extractor.get_text())
+```
+
+### Run a Batch Workflow With the Plugin Layer
+
+```python
+from aspose_pdf.lowcode import (
+    ByteArrayDataSource, Converter, ConvertOptions, FileDataSource, Rotator, RotateOptions,
+)
+
+# Straighten a scan, keeping each page's existing rotation in account.
+rotated = Rotator().process(
+    RotateOptions(90).add_input(FileDataSource("scan.pdf")).add_output(FileDataSource("upright.pdf"))
+)
+
+# Then turn the result into one PNG per page.
+pages = Converter().process(
+    ConvertOptions("png", dpi=150).add_input(ByteArrayDataSource(rotated[0].to_array()))
+)
+for index, page in enumerate(pages):
+    page.save(f"page-{index + 1}.png")
 ```
 
 ### Merge PDF Files

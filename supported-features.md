@@ -891,9 +891,10 @@ Supported:
 - TIFF output is **Deflate-compressed by default** (`compression="deflate"`,
   or `"none"` for a raw strip): an uncompressed A4 page at 300 dpi is about
   25 MB. The encoder is pure Python, writes the render resolution into the
-  file, and `Document.save_as_tiff()` writes several pages into one
-  **multi-page TIFF**, rendering and encoding them one at a time rather than
-  holding every raster in memory.
+  file, and `Document.to_tiff()` / `Document.save_as_tiff()` put several pages
+  into one **multi-page TIFF** -- the first as bytes, the second as a file --
+  rendering and encoding them one at a time rather than holding every raster in
+  memory.
 - JPEG output uses the bundled encoder (`quality=`, default 85) and records the
   render resolution as the JFIF pixel density.
 - Anti-alias the raster by supersampling: `antialias=True` (the default) renders
@@ -2879,7 +2880,14 @@ Supported:
 Supported:
 
 - Run common workflows through a plugin layer in `aspose_pdf.lowcode`:
-  `Merger`, `Splitter`, `Optimizer`, and `TextExtractor`.
+  `Merger`, `Splitter`, `Optimizer`, `TextExtractor`, `ImageExtractor`,
+  `ImagesToPdf`, `Converter`, `PdfAConverter`, `Rotator`, `PageRemover`,
+  `Stamper`, `FormFlattener`, `Encryptor` and `Decryptor` -- one class per
+  workflow, each with its own options object, and every one of them a composition
+  of operations documented elsewhere in this file. The four generic members of the
+  `Plugin` enum now each name real classes: `EXTRACTOR` (`TextExtractor`,
+  `ImageExtractor`), `CONVERTER` (`Converter`, `PdfAConverter`), `GENERATOR`
+  (`ImagesToPdf`) and `EDITOR` (the rest).
 - Describe inputs and outputs with data sources that abstract over files
   (`FileDataSource`), in-memory bytes (`ByteArrayDataSource`), and binary
   streams (`StreamDataSource`). Writing a seekable stream replaces its existing
@@ -2895,15 +2903,62 @@ Supported:
   snapshots a mutable `bytearray` at construction; a container accepts only
   `OperationResult` instances. Providing more output sources than produced
   results is rejected before any output is written.
-- `Merger` concatenates all inputs; `Splitter` emits one document per page from
-  every input, preserving input and page order; `Optimizer` compresses and
-  garbage-collects each input; `TextExtractor` returns extracted text per input.
+- `Merger` concatenates all inputs; `Optimizer` compresses and garbage-collects
+  each input; `TextExtractor` returns extracted text per input.
+- `Splitter` emits one document per page from every input, preserving input and
+  page order -- or, with `SplitOptions(selections=[...])`, one document per
+  **selection**: each entry is what `Document.extract_pages` takes, an iterable of
+  0-based page indexes or a `slice`, so `[range(0, 3), [3, 4], slice(5, None)]`
+  cuts a document into three. A slice is resolved against the input's own length,
+  a negative index counts from the end, and a selection naming a page the document
+  does not have is refused rather than trimmed.
+- `ImageExtractor` emits one result per embedded image, as a real image file (PNG
+  for raster codecs, the original payload for JPEG and JPEG 2000) -- the same
+  reconstruction `PdfExtractor.get_next_image` performs. An input that draws no
+  image contributes no result.
+- `ImagesToPdf` builds a document from JPEG and PNG inputs, one page per image.
+  Each page is cut to its own picture at `dpi` points per inch (72 is one point
+  per pixel, 300 gives a 300 dpi scan its physical size), or, with `page_size=`,
+  the image is centred inside that sheet and scaled down to fit within `margin`
+  points. `single_document=False` emits one document per image instead of one
+  carrying them all. The size is read from the image's own header, so a PNG is not
+  decoded twice; raw samples carry no size and are refused.
+- `Converter` re-expresses each input: `"html"`, `"markdown"` and `"tiff"` give
+  one result per input, while `"svg"`, `"png"` and `"jpeg"` give one per page,
+  none of the three having a multi-page form. `pages=` selects pages and the
+  remaining options are passed to the operation each format uses (`embed_images`,
+  `dpi`, `mode`, `compression`, `quality`). A format with no writer behind it is
+  refused when the options are constructed, not when the work starts.
+- `PdfAConverter` converts each input to a PDF/A level and collects the fonts it
+  could not embed in `PdfAConverter.unembedded_fonts`, one list per input, rather
+  than raising -- the file is produced either way.
+- `Rotator` turns the pages named (all of them by default) by a multiple of 90
+  degrees, **added** to what each page already says so a batch is straightened
+  whatever each page started at; `relative=False` sets the rotation instead.
+- `PageRemover` drops the pages named, in any order and repeats included, and
+  refuses to remove every page of a document.
+- `Stamper` puts one `Stamp` -- text, image or page number, with its own opacity,
+  rotation and alignment -- on the pages named.
+- `FormFlattener` bakes fields and annotations into page content. There is no
+  fields-only form of this: flattening is one operation in the engine, and
+  `Form.flatten()` is that same call.
+- `Encryptor` applies the standard security handler (passwords, permissions,
+  algorithm) and `Decryptor` removes it, given a password the document accepts.
+  The removal is unconditional, because `Document.is_encrypted` reports whether a
+  document is still *locked*: opening one with its password unlocks it and the
+  flag goes false, while a plain re-save would put the protection back.
 
 Boundaries:
 
 - The plugin layer composes existing high-level operations; it does not add
   new conversion or generation capabilities, and does not integrate with
-  hosted services or billing.
+  hosted services or billing. Everything a plugin can do is reachable through
+  `Document` directly; what the layer adds is the data-source plumbing and one
+  name per workflow.
+- There is no signing plugin. Signing takes a certificate, a key, a field and an
+  appearance, and wrapping that in an options object is a design rather than a
+  composition -- `Document.sign` is the API for it (see
+  [Security, Encryption, And Signatures](#security-encryption-and-signatures)).
 
 ## Known Unsupported Compatibility Surfaces
 

@@ -399,6 +399,32 @@ def wrap_marked_content(content: bytes, tag: str, mcid: int) -> bytes:
     return prefix + body + suffix
 
 
+def image_pixel_size(data: bytes) -> tuple[int, int]:
+    """The pixel width and height of JPEG or PNG *data*, from its header alone.
+
+    Something that needs the size *before* it places the image -- a page sized to
+    fit the picture on it -- would otherwise have to call :func:`prepare_image`
+    first and then place it, decoding a PNG twice over. Only the two formats that
+    carry their own geometry are read here; raw samples arrive with their
+    dimensions supplied by the caller, so there is nothing to find out.
+    """
+    payload = bytes(data)
+    if payload.startswith(_JPEG_MAGIC):
+        width, height, _components, _precision = _jpeg_geometry(payload)
+        return width, height
+    if payload.startswith(_PNG_MAGIC):
+        if len(payload) < 24 or payload[12:16] != b"IHDR":
+            raise PdfValidationException("PNG data has no image header.")
+        width, height = struct.unpack(">II", payload[16:24])
+        if width <= 0 or height <= 0:
+            raise PdfValidationException("PNG dimensions must be above zero.")
+        return width, height
+    raise PdfValidationException(
+        "Only JPEG and PNG data carries its own size; raw samples need "
+        "pixel_width and pixel_height."
+    )
+
+
 def prepare_image(
     data: bytes,
     *,

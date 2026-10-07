@@ -134,6 +134,24 @@ def test_a_size_has_to_be_two_positive_finite_numbers():
         PageSize.by_name(4)
 
 
+def test_two_sizes_are_equal_when_they_write_the_same_numbers():
+    # A PDF holds six decimals, so an A4 page that has been saved and reloaded is
+    # half a nanometre from PageSize.A4 in floating point. Equality compares the
+    # pair as a file would hold it, which is the only answer that is any use.
+    document = Document()
+    document.pages.add(PageSize.A4)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+    reloaded = Document(buffer).pages[0]
+
+    assert reloaded.size != PageSize.A4.rotated()
+    assert reloaded.size == PageSize.A4
+    assert reloaded.size.width != PageSize.A4.width  # the raw floats do differ
+    assert len({reloaded.size, PageSize.A4}) == 1
+    assert PageSize.A4 != "A4"
+
+
 def test_a_size_is_immutable():
     with pytest.raises(AttributeError):
         PageSize.A4.width = 1

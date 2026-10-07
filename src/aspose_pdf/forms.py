@@ -856,7 +856,12 @@ class Form:
         return 0
 
     def flatten(self) -> None:
-        """Flatten all fields in the form, making them part of the page content."""
+        """Flatten the form's fields, making them part of the page content.
+
+        This is :meth:`aspose_pdf.Document.flatten`, so a page's **annotations**
+        are baked in with the fields -- flattening is one operation in the engine,
+        not two. There is no fields-only form of it.
+        """
         if self._document and self._document._engine_pdf:
             self._document._engine_pdf.flatten()
             self._load_fields()

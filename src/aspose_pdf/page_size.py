@@ -19,7 +19,7 @@ _POINTS_PER_INCH = 72.0
 _MM_PER_INCH = 25.4
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class PageSize:
     """A page's width and height in PDF points.
 
@@ -120,6 +120,27 @@ class PageSize:
         """This size with both sides multiplied by *factor*."""
         scale = _positive(factor, "factor")
         return PageSize(self.width * scale, self.height * scale)
+
+    def __eq__(self, other: object) -> bool:
+        """Two sizes are equal when they write the same numbers into a file.
+
+        A PDF holds six decimal places (7.3.3), so an A4 page saved and reloaded
+        comes back as 595.275591 x 841.889764 -- the same sheet as
+        :attr:`PageSize.A4`, half a nanometre from it in floating point. Comparing
+        the rounded pair is what makes ``page.size == PageSize.A4`` true for a
+        document that has been through a save, which is the only answer that is
+        any use.
+        """
+        if not isinstance(other, PageSize):
+            return NotImplemented
+        return self._written() == other._written()
+
+    def __hash__(self) -> int:
+        return hash(self._written())
+
+    def _written(self) -> tuple[float, float]:
+        """The pair as a file would hold it: six decimal places."""
+        return (round(self.width, 6), round(self.height, 6))
 
     def as_rect(self, x: float = 0.0, y: float = 0.0) -> tuple[float, float, float, float]:
         """This size as a rectangle ``(x, y, x + width, y + height)``.

@@ -9,6 +9,36 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The low-code plugin catalogue, from four workflows to fourteen.**
+  `aspose_pdf.lowcode` shipped `Merger`, `Splitter`, `Optimizer` and
+  `TextExtractor` — while its own `Plugin` enum already named `EXTRACTOR`,
+  `CONVERTER`, `GENERATOR` and `EDITOR`, with no class behind any of the four. A
+  batch job that rotates a scan, drops a page, stamps a draft mark or turns pages
+  into PNGs had to be written against `Document` by hand, data sources and all.
+  - New plugins, each a composition of operations that already existed:
+    `ImageExtractor` (one result per embedded image, as a real image file),
+    `ImagesToPdf` (JPEG/PNG in, one page per image, each page cut to its picture
+    at a given dpi or fitted inside a named page size), `Converter` (HTML,
+    Markdown, SVG, TIFF, PNG, JPEG — one result per input for the first and the
+    fourth, one per page for the others), `PdfAConverter`, `Rotator`,
+    `PageRemover`, `Stamper`, `FormFlattener`, `Encryptor` and `Decryptor`.
+  - `Splitter` grew **selections**: `SplitOptions(selections=[range(0, 3), [3, 4],
+    slice(5, None)])` emits one document per selection instead of one per page.
+    Each entry is what `Document.extract_pages` takes, a slice is resolved against
+    the input's own length, and a selection naming a page the document does not
+    have is refused rather than trimmed.
+  - `Document.to_tiff()` returns the bytes of a multi-page TIFF, which only
+    `save_as_tiff()` could produce before — every other export had both forms, and
+    the plugin layer works in bytes.
+  - `PageSize` equality now compares the pair as a file holds it (six decimal
+    places, ISO 32000-1 7.3.3), so `page.size == PageSize.A4` is true for a
+    document that has been saved and reloaded. It was false by half a nanometre.
+  - Checked against qpdf 12.4.2 and poppler 26.09: an images-to-PDF file is two A4
+    pages carrying one image XObject each, the PNG kept as Flate and the JPEG
+    passed through as `/DCTDecode` without re-encoding; an encrypted result needs
+    its password in qpdf's eyes too; and Pillow reads the multi-page TIFF as three
+    Deflate frames.
+
 - **Authored colour is grey, RGB or CMYK, by one rule everywhere a colour is
   taken.** `Page.add_text`, `draw_rectangle` and `draw_line` went through
   `normalize_rgb`, which refused anything that was not exactly three components:
@@ -80,6 +110,11 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     four may be written as given, since a reader intersects them and falls back.
 
 ### Fixed
+
+- **`Form.flatten` said it flattened "all fields in the form".** It is
+  `Document.flatten`: a page's annotations are baked in with the fields, because
+  flattening is one operation in the engine and not two. The docstring now says
+  so, rather than suggesting a fields-only form of it that nothing implements.
 
 - **A pattern used inside a form XObject was anchored to the page.** ISO 32000-1
   8.7.3.1 maps pattern space to the default coordinate space of the content

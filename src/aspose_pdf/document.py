@@ -1649,9 +1649,8 @@ class Document:
         files.write_files(outputs, overwrite)
         return [path for path, _ in outputs]
 
-    def save_as_tiff(
+    def to_tiff(
         self,
-        destination: str | Path,
         *,
         pages: Sequence[int] | None = None,
         dpi: float = 72.0,
@@ -1661,21 +1660,20 @@ class Document:
         mode: str = "rgb",
         compression: str = "deflate",
         threshold: int = 128,
-    ) -> Path:
-        """Render pages into a single multi-page TIFF file.
+    ) -> bytes:
+        """Render pages into the bytes of one multi-page TIFF.
 
-        Every page becomes one image in the file, in the order given by
-        *pages* (all pages, in document order, when omitted). Pages are
-        rendered one at a time and encoded as they go, so only the compressed
-        result accumulates rather than every raster at once.
+        Every page becomes one image in the file, in the order given by *pages*
+        (all pages, in document order, when omitted). Pages are rendered one at a
+        time and encoded as they go, so only the compressed result accumulates
+        rather than every raster at once.
 
         ``mode`` selects ``"rgb"``, ``"gray"`` or ``"bilevel"`` output and
         ``compression`` is ``"deflate"`` (the default) or ``"none"``.
 
-        Returns
-        -------
-        Path
-            The path written.
+        :meth:`save_as_tiff` writes these bytes to a file. Every other export has
+        both forms -- :meth:`to_html`, :meth:`to_markdown`, :meth:`Page.to_svg`,
+        :meth:`render_page` -- and this is TIFF's.
         """
         from aspose_pdf.engine.image_export import TiffPage, write_tiff
 
@@ -1705,9 +1703,42 @@ class Document:
                 )
 
         try:
-            data = write_tiff(rendered(), compression=compression)
+            return write_tiff(rendered(), compression=compression)
         except ValueError as exc:
             raise PdfValidationException(str(exc)) from exc
+
+    def save_as_tiff(
+        self,
+        destination: str | Path,
+        *,
+        pages: Sequence[int] | None = None,
+        dpi: float = 72.0,
+        scale: float = 1.0,
+        background: tuple[int, int, int] = (255, 255, 255),
+        antialias: bool | int = True,
+        mode: str = "rgb",
+        compression: str = "deflate",
+        threshold: int = 128,
+    ) -> Path:
+        """Render pages into a single multi-page TIFF file.
+
+        The bytes are :meth:`to_tiff`'s; this writes them to *destination*.
+
+        Returns
+        -------
+        Path
+            The path written.
+        """
+        data = self.to_tiff(
+            pages=pages,
+            dpi=dpi,
+            scale=scale,
+            background=background,
+            antialias=antialias,
+            mode=mode,
+            compression=compression,
+            threshold=threshold,
+        )
         out = Path(destination)
         out.parent.mkdir(parents=True, exist_ok=True)
         write_file_atomically(out, data)
