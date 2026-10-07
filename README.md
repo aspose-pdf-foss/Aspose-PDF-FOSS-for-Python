@@ -74,6 +74,11 @@ flowchart TD
   `Page.art_box` read and set all five boxes a page is described by, each reporting the box in
   effect: a production box falls back to the crop box it defaults to and is reduced to the sheet
   it is on, the way ISO 32000-1 14.11.2 asks.
+- `Page.draw_path()` draws real geometry — lines, cubic and quadratic curves, rectangles,
+  ellipses, circles, polygons — with the full stroke state (width, caps, joins, miter limit, dash
+  pattern), either fill rule, per-drawing opacity and blend mode, and a transform. `with
+  page.graphics(transform=..., clip=..., opacity=...)` holds a state over several drawings, text
+  and images included, so anything on the page can be turned, scaled, clipped or faded.
 - Colour is grey, RGB or CMYK wherever one is taken — `page.draw_rectangle(..., fill_color=(0, 0.2, 1,
   0.05))` sets an ink, `fill_color="#336699"` a web colour, `fill_color=0.25` a grey — with
   `Color.gray/rgb/cmyk/from_hex` for a value object to pass around. Grey and RGB channels may be
@@ -371,6 +376,29 @@ with Document("report.pdf") as document:
     # Images as files in report_files/ rather than data: URIs; one HTML file per page.
     document.save_as_html("report.html", resources_directory="report_files", split_into_pages=True)
     print(document.to_markdown(pages=[0], markdown_format="CommonMark"))
+```
+
+### Draw Paths and Hold a Graphics State
+
+```python
+from aspose_pdf import Document, GraphicsPath
+
+with Document() as document:
+    page = document.pages.add()
+
+    dial = GraphicsPath().circle(300, 500, 80)
+    page.draw_path(dial, fill_color="#eef3f8", stroke_color=(0.2, 0.3, 0.4), line_width=2)
+
+    needle = GraphicsPath().move_to(300, 500).curve_to(320, 540, 340, 555, 360, 560)
+    page.draw_path(needle, stroke_color="#cc3300", line_width=4, line_cap="round")
+
+    page.draw_rectangle(220, 400, 160, 40, stroke_color=(0.4, 0.4, 0.4), dash=[4, 2])
+
+    # The state applies to everything in the block — text included.
+    with page.graphics(transform=(0, 1, -1, 0, 120, 300), opacity=0.6):
+        page.add_text("rotated and faded", 0, 0, font_size=16)
+
+    document.save("drawing.pdf")
 ```
 
 ### Export a Page as SVG

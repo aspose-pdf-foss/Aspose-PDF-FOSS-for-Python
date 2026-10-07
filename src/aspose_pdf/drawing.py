@@ -8,5 +8,6 @@ from __future__ import annotations
 
 from aspose_pdf.color import Color, GradientAxialShading, Point
 from aspose_pdf.geometry import Rectangle
+from aspose_pdf.paths import GraphicsPath
 
-__all__ = ["Color", "GradientAxialShading", "Point", "Rectangle"]
+__all__ = ["Color", "GradientAxialShading", "GraphicsPath", "Point", "Rectangle"]

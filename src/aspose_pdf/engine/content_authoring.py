@@ -366,6 +366,238 @@ def build_rectangle_stream(
     return (" ".join(parts) + "\n").encode("ascii")
 
 
+#: The line caps and joins of ISO 32000-1 8.4.3.3 and 8.4.3.4, by name.
+LINE_CAPS = {"butt": 0, "round": 1, "square": 2}
+LINE_JOINS = {"miter": 0, "round": 1, "bevel": 2}
+
+#: The blend modes of 11.3.5, which an authored ``/ExtGState`` may name.
+BLEND_MODES = (
+    "Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten",
+    "ColorDodge", "ColorBurn", "HardLight", "SoftLight", "Difference",
+    "Exclusion", "Hue", "Saturation", "Color", "Luminosity",
+)
+
+
+def _enumerated(value: Any, table: dict[str, int], what: str) -> int:
+    """*value* as the number PDF writes for it, by name or by number."""
+    if isinstance(value, bool):
+        raise PdfValidationException(f"{what} must be a name or a number.")
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key not in table:
+            raise PdfValidationException(
+                f"{what} is one of: " + ", ".join(sorted(table)) + f"; not {value!r}."
+            )
+        return table[key]
+    if isinstance(value, int):
+        if value not in table.values():
+            raise PdfValidationException(
+                f"{what} is {sorted(set(table.values()))} as a number; not {value!r}."
+            )
+        return value
+    raise PdfValidationException(f"{what} must be a name or a number.")
+
+
+def dash_operator(dash: Any) -> str:
+    """The ``d`` operator for *dash*: a pattern, or a ``(pattern, phase)`` pair.
+
+    ISO 32000-1 8.4.3.6: the pattern alternates on and off lengths in user space
+    and the phase says how far into it the line starts. ``None`` and an empty
+    pattern are both the solid line, which is what ``[] 0 d`` means. A pattern of
+    all zeros would make a line that is nowhere drawn and is refused, since the
+    caller asked for a dashed line and would get an invisible one.
+    """
+    phase: float = 0.0
+    pattern: Any = dash
+    if isinstance(dash, tuple) and len(dash) == 2 and not _is_number(dash[0]):
+        pattern, phase = dash
+    if pattern is None:
+        return "[] 0 d"
+    if _is_number(pattern):
+        pattern = [pattern]
+    try:
+        lengths = [float(value) for value in pattern]
+    except (TypeError, ValueError):
+        raise PdfValidationException(
+            "A dash pattern is a sequence of numbers, or (pattern, phase)."
+        ) from None
+    if any(not math.isfinite(value) or value < 0 for value in lengths):
+        raise PdfValidationException("Dash lengths must be finite and not negative.")
+    if lengths and not any(value > 0 for value in lengths):
+        raise PdfValidationException(
+            "A dash pattern of zeros would draw nothing; leave it out for a solid line."
+        )
+    try:
+        offset = float(phase)
+    except (TypeError, ValueError):
+        raise PdfValidationException("A dash phase is a number.") from None
+    if not math.isfinite(offset) or offset < 0:
+        raise PdfValidationException("A dash phase must be finite and not negative.")
+    numbers = " ".join(format_number(value) for value in lengths)
+    return f"[{numbers}] {format_number(offset)} d"
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def transform_operator(transform: Any) -> str:
+    """The ``cm`` operator for a six-number matrix ``(a, b, c, d, e, f)``.
+
+    Also accepts anything carrying those six as attributes, which is what
+    ``aspose_pdf.presentation.IMatrix`` is.
+    """
+    if hasattr(transform, "a") and hasattr(transform, "f"):
+        values = [getattr(transform, name) for name in "abcdef"]
+    else:
+        try:
+            values = list(transform)
+        except TypeError:
+            raise PdfValidationException(
+                "A transform is six numbers (a, b, c, d, e, f) or an IMatrix."
+            ) from None
+    if len(values) != 6:
+        raise PdfValidationException(
+            f"A transform is six numbers (a, b, c, d, e, f), not {len(values)}."
+        )
+    numbers = []
+    for name, value in zip("abcdef", values):
+        if isinstance(value, bool):
+            raise PdfValidationException(f"Transform {name} must be a number.")
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise PdfValidationException(f"Transform {name} must be a number.") from None
+        if not math.isfinite(number):
+            raise PdfValidationException(f"Transform {name} must be finite.")
+        numbers.append(format_number(number))
+    return " ".join(numbers) + " cm"
+
+
+def path_operators(path: Any) -> str:
+    """The segment operators of a :class:`~aspose_pdf.paths.GraphicsPath`."""
+    parts = []
+    for operator, values in path._operators():
+        numbers = " ".join(format_number(value) for value in values)
+        parts.append(f"{numbers} {operator}" if numbers else operator)
+    return " ".join(parts)
+
+
+def paint_operator(
+    *, has_fill: bool, has_stroke: bool, even_odd: bool, clip: bool = False
+) -> str:
+    """The operator that paints a path the way it is meant to be painted.
+
+    ISO 32000-1 8.5.3: ``f``/``f*`` fills by the nonzero or even-odd rule,
+    ``S`` strokes, ``B``/``B*`` does both, and ``n`` paints nothing -- which is
+    what a path used only to clip with ends in, after the ``W`` that takes it as
+    the clipping path.
+    """
+    suffix = "*" if even_odd else ""
+    if clip:
+        operator = "W" + suffix + " "
+    else:
+        operator = ""
+    if has_fill and has_stroke:
+        return operator + "B" + suffix
+    if has_fill:
+        return operator + "f" + suffix
+    if has_stroke:
+        return operator + "S"
+    if clip:
+        return operator + "n"
+    raise PdfValidationException("A path needs a stroke colour, a fill colour, or both.")
+
+
+def build_graphics_state(
+    *,
+    stroke_color: Any = None,
+    fill_color: Any = None,
+    line_width: float | None = None,
+    line_cap: Any = None,
+    line_join: Any = None,
+    miter_limit: float | None = None,
+    dash: Any = None,
+    transform: Any = None,
+    ext_gstate: str | None = None,
+) -> list[str]:
+    """The state operators a drawing sets before its path, in writing order.
+
+    The transform comes first, because it applies to the coordinates that follow
+    it, and the colour and line state after -- their order among themselves does
+    not matter to a reader, and this one keeps the bytes a rectangle has always
+    been written with.
+    """
+    parts: list[str] = []
+    if transform is not None:
+        parts.append(transform_operator(transform))
+    if ext_gstate is not None:
+        parts.append(f"/{ext_gstate} gs")
+    if stroke_color is not None:
+        parts.append(color_operator(stroke_color, stroking=True))
+        if line_width is not None:
+            parts.append(f"{format_number(line_width)} w")
+    if fill_color is not None:
+        parts.append(color_operator(fill_color, stroking=False))
+    if line_cap is not None:
+        parts.append(f"{_enumerated(line_cap, LINE_CAPS, 'A line cap')} J")
+    if line_join is not None:
+        parts.append(f"{_enumerated(line_join, LINE_JOINS, 'A line join')} j")
+    if miter_limit is not None:
+        limit = float(miter_limit)
+        if not math.isfinite(limit) or limit < 1:
+            raise PdfValidationException("A miter limit is at least 1 (8.4.3.5).")
+        parts.append(f"{format_number(limit)} M")
+    if dash is not None:
+        parts.append(dash_operator(dash))
+    return parts
+
+
+def build_path_stream(
+    path: Any,
+    *,
+    stroke_color: Any = None,
+    fill_color: Any = None,
+    line_width: float = 1.0,
+    even_odd: bool = False,
+    line_cap: Any = None,
+    line_join: Any = None,
+    miter_limit: float | None = None,
+    dash: Any = None,
+    transform: Any = None,
+    ext_gstate: str | None = None,
+) -> bytes:
+    """A complete ``q ... Q`` drawing of *path*, state and painting included."""
+    if stroke_color is None and fill_color is None:
+        raise PdfValidationException(
+            "A path needs a stroke colour, a fill colour, or both."
+        )
+    parts = ["q"]
+    parts.extend(
+        build_graphics_state(
+            stroke_color=stroke_color,
+            fill_color=fill_color,
+            line_width=line_width,
+            line_cap=line_cap,
+            line_join=line_join,
+            miter_limit=miter_limit,
+            dash=dash,
+            transform=transform,
+            ext_gstate=ext_gstate,
+        )
+    )
+    parts.append(path_operators(path))
+    parts.append(
+        paint_operator(
+            has_fill=fill_color is not None,
+            has_stroke=stroke_color is not None,
+            even_odd=even_odd,
+        )
+    )
+    parts.append("Q")
+    return (" ".join(parts) + "\n").encode("ascii")
+
+
 def build_line_stream(
     x1: float,
     y1: float,

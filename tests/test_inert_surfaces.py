@@ -6,9 +6,11 @@ allowed and *using* one raises, rather than quietly doing nothing — a caller
 should find out at the call, not from a blank page.
 
 Three surfaces were left undecided. ``PrinterSettings`` already followed the
-rule. ``IPath`` did not: it accepted path segments and dropped them.
-``PerformanceLogger`` was the opposite problem — a working stopwatch nothing
-fed, so it is now what the renderer records its phase timings into.
+rule. ``IPath`` did not: it accepted path segments and dropped them, so it was
+made to raise instead — and now that ``Page.draw_path`` exists, **it is a real
+path**: it collects segments and can be drawn, which is what it was always meant
+to be. ``PerformanceLogger`` was the opposite problem — a working stopwatch
+nothing fed, so it is now what the renderer records its phase timings into.
 """
 
 from __future__ import annotations
@@ -35,24 +37,42 @@ def test_a_path_can_still_be_constructed():
     assert path.fill_mode == FillMode.ALTERNATE
 
 
-def test_appending_to_a_path_says_it_cannot_be_drawn():
+def test_a_path_now_collects_the_segments_it_is_given():
+    # It used to raise here, because nothing in the package could draw a path.
     path = IPath()
-    with pytest.raises(UnsupportedFeatureException, match="presentation drawing"):
-        path.append_cubic_bezier_curve(0, 0, 1, 1, 2, 2)
+    path.move_to(10, 10)
+    path.append_line(100, 10)
+    path.append_cubic_bezier_curve(120, 40, 80, 80, 50, 90)
+    path.append_rectangle(200, 200, 40, 40)
+    path.close_all_figures()
+    assert len(path) == 5
+    assert (path.current_x, path.current_y) == (200.0, 200.0)
 
 
-def test_the_refusal_names_the_method_and_points_at_the_documentation():
+def test_a_path_is_drawn_on_a_page_and_reaches_the_content():
+    document = Document()
+    page = document.pages.add()
     path = IPath()
-    with pytest.raises(UnsupportedFeatureException) as caught:
-        path.append_cubic_bezier_curve(0, 0, 1, 1, 2, 2)
-    message = str(caught.value)
-    assert "IPath.append_cubic_bezier_curve" in message
-    assert "supported-features.md" in message
+    path.move_to(60, 500)
+    path.append_cubic_bezier_curve(120, 560, 200, 540, 260, 500)
+    page.draw_path(path, stroke_color=(0, 0, 0), line_width=2)
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    assert b" c " in buffer.getvalue()  # the curve operator
 
 
-def test_the_refusal_is_catchable_as_not_implemented():
-    with pytest.raises(NotImplementedError):
-        IPath().append_cubic_bezier_curve(0, 0, 1, 1, 2, 2)
+def test_a_paths_own_fill_mode_and_matrix_are_used_to_draw_it():
+    document = Document()
+    page = document.pages.add()
+    path = IPath()
+    path.append_rectangle(10, 10, 50, 50)
+    path.fill_mode = FillMode.ALTERNATE
+    path.transform = IMatrix(1, 0, 0, 1, 7, 9)
+    page.draw_path(path, fill_color=(0, 0, 0), stroke_color=None)
+    content = page.content
+    assert b"f*" in content  # the even-odd fill the Alternate mode asks for
+    assert b"1 0 0 1 7 9 cm" in content
 
 
 def test_the_fill_modes_are_the_two_pdf_fill_rules():
@@ -80,7 +100,7 @@ def test_a_path_still_carries_a_transform():
 
 
 def test_geometry_on_a_page_goes_through_the_page_api():
-    """The thing IPath is not: drawing that actually reaches the page."""
+    """The shortcuts beside draw_path, which still write what they always did."""
     document = Document()
     page = document.pages.add()
     page.draw_rectangle(60, 500, 200, 100, fill_color=(0.9, 0.1, 0.1))

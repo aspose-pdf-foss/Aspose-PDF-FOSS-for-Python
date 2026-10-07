@@ -82,6 +82,7 @@ from .optimization import OptimizationOptions
 from .page_labels import NumberingStyle, PageLabel, PageLabelCollection
 from .page_size import PageSize
 from .pages import Page, PageCollection
+from .paths import GraphicsPath
 from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from .pdfua import PdfUaValidateOptions, PdfUaValidationResult, PdfUaValidator
 from .recipients import Recipient
@@ -168,6 +169,7 @@ __all__ = [
     "FormType",
     "GoToAction",
     "GoToRAction",
+    "GraphicsPath",
     "HorizontalAlignment",
     "ImageStamp",
     "JavaScriptAction",

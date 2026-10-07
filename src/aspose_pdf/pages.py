@@ -10,6 +10,7 @@ from aspose_pdf.annotations import AnnotationCollection
 from aspose_pdf.color import ColorValue
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 from aspose_pdf.page_size import PageSize
+from aspose_pdf.paths import GraphicsPath
 from aspose_pdf.viewer_preferences import PageBoundary
 
 if TYPE_CHECKING:
@@ -91,6 +92,51 @@ class _LayerSection:
 
     def __exit__(self, *exc: object) -> None:
         self._engine.end_page_layer(self._page_index)
+
+
+def _resolve_path(
+    path: Any, even_odd: bool | None, transform: Any
+) -> tuple[Any, bool, Any]:
+    """The path to draw, its fill rule and its matrix, whichever kind it is.
+
+    An :class:`~aspose_pdf.presentation.IPath` carries the fill rule and the
+    matrix on itself, where a :class:`~aspose_pdf.paths.GraphicsPath` leaves both
+    to the drawing call. An argument given here wins over what the path says,
+    since the caller said it last.
+    """
+    from aspose_pdf.presentation import FillMode
+
+    converted = getattr(path, "to_graphics_path", None)
+    if callable(converted):
+        if even_odd is None:
+            even_odd = getattr(path, "fill_mode", None) == FillMode.ALTERNATE
+        if transform is None:
+            transform = getattr(path, "transform", None)
+        path = converted()
+    if not isinstance(path, GraphicsPath):
+        raise PdfValidationException(
+            "draw_path takes a GraphicsPath (or an IPath), not "
+            f"{type(path).__name__}."
+        )
+    return path, bool(even_odd), transform
+
+
+class _GraphicsSection:
+    """The open graphics state of :meth:`Page.graphics`."""
+
+    __slots__ = ("_engine", "_page_index", "_state")
+
+    def __init__(self, engine: Any, page_index: int, state: dict[str, Any]) -> None:
+        self._engine = engine
+        self._page_index = page_index
+        self._state = state
+
+    def __enter__(self) -> _GraphicsSection:
+        self._engine.begin_page_graphics(self._page_index, **self._state)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._engine.end_page_graphics(self._page_index)
 
 
 class Page:
@@ -477,11 +523,15 @@ class Page:
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        **style: Any,
     ) -> Page:
         """Append a stroked and/or filled rectangle to this page.
 
         Both colours take grey, RGB or CMYK -- see :meth:`add_text` -- and
         ``None`` leaves that half of the paint out: no fill, or no stroke.
+        ``**style`` is the rest of :meth:`draw_path`'s painting options -- dash,
+        caps, joins, opacity, blend mode, transform -- since a rectangle is one
+        path like any other.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -499,8 +549,135 @@ class Page:
             tag=tag,
             alt=alt,
             actual_text=actual_text,
+            **style,
         )
         return self
+
+    def draw_path(
+        self,
+        path: GraphicsPath | Any,
+        *,
+        stroke_color: ColorValue | None = (0.0, 0.0, 0.0),
+        fill_color: ColorValue | None = None,
+        line_width: float = 1.0,
+        even_odd: bool | None = None,
+        line_cap: str | int | None = None,
+        line_join: str | int | None = None,
+        miter_limit: float | None = None,
+        dash: Any = None,
+        opacity: float | None = None,
+        fill_opacity: float | None = None,
+        stroke_opacity: float | None = None,
+        blend_mode: str | None = None,
+        transform: Any = None,
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
+    ) -> Page:
+        """Append a :class:`~aspose_pdf.paths.GraphicsPath` to this page.
+
+        Build the path first -- lines, cubic curves, rectangles, ellipses,
+        polygons -- then say how to paint it::
+
+            from aspose_pdf import GraphicsPath
+
+            wedge = GraphicsPath().move_to(300, 400).line_to(400, 460).curve_to(
+                430, 470, 450, 440, 460, 410
+            ).close()
+            page.draw_path(wedge, fill_color="#336699", stroke_color=(0, 0, 0))
+
+        ``stroke_color`` and ``fill_color`` take grey, RGB or CMYK (see
+        :meth:`add_text`); ``None`` leaves that half of the paint out, and a path
+        with neither is refused rather than written as an invisible operator.
+        ``even_odd`` fills by the even-odd rule instead of the nonzero winding
+        rule (ISO 32000-1 8.5.3.3), which is what decides whether a hole inside a
+        shape is a hole. An :class:`~aspose_pdf.presentation.IPath` is accepted
+        too, and its own ``fill_mode`` and ``transform`` are used for whichever of
+        the two is not given here.
+
+        The line is drawn with ``line_width``, ``line_cap`` (``"butt"``,
+        ``"round"``, ``"square"``), ``line_join`` (``"miter"``, ``"round"``,
+        ``"bevel"``), ``miter_limit`` and ``dash`` -- a sequence of on/off lengths,
+        or ``(pattern, phase)``.
+
+        ``opacity`` makes the whole drawing transparent, ``fill_opacity`` and
+        ``stroke_opacity`` each half of it, and ``blend_mode`` is one of the
+        sixteen of 11.3.5; the three are written as an ``/ExtGState``, and a state
+        the page already has is reused rather than added again. ``transform`` is
+        six numbers ``(a, b, c, d, e, f)`` -- or an
+        :class:`~aspose_pdf.presentation.IMatrix` -- applied to this drawing only.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        path, even_odd, transform = _resolve_path(path, even_odd, transform)
+        eng.draw_path_on_page(
+            self._index,
+            path,
+            stroke_color=stroke_color,
+            fill_color=fill_color,
+            line_width=line_width,
+            even_odd=even_odd,
+            line_cap=line_cap,
+            line_join=line_join,
+            miter_limit=miter_limit,
+            dash=dash,
+            opacity=opacity,
+            fill_opacity=fill_opacity,
+            stroke_opacity=stroke_opacity,
+            blend_mode=blend_mode,
+            transform=transform,
+            tag=tag,
+            alt=alt,
+            actual_text=actual_text,
+        )
+        return self
+
+    def graphics(
+        self,
+        *,
+        transform: Any = None,
+        clip: GraphicsPath | None = None,
+        clip_even_odd: bool = False,
+        opacity: float | None = None,
+        fill_opacity: float | None = None,
+        stroke_opacity: float | None = None,
+        blend_mode: str | None = None,
+    ) -> Any:
+        """A context manager holding a graphics state over what is drawn inside it.
+
+        Everything appended to the page in the block is drawn under that state --
+        text and images included, which is how either of those is rotated, scaled
+        or made transparent::
+
+            with page.graphics(transform=(0, 1, -1, 0, 500, 100)):
+                page.add_text("sideways", 0, 0, font_size=18)
+
+            with page.graphics(clip=GraphicsPath().circle(300, 400, 80)):
+                page.add_image("photo.jpg", 220, 320, 160, 160)
+
+        ``clip`` confines the block to the inside of a path (``W n``, ISO 32000-1
+        8.5.4), and the state is undone when the block ends, so the rest of the
+        page is unaffected. The other arguments are :meth:`draw_path`'s.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        return _GraphicsSection(
+            eng,
+            self._index,
+            {
+                "transform": transform,
+                "clip": clip,
+                "clip_even_odd": clip_even_odd,
+                "opacity": opacity,
+                "fill_opacity": fill_opacity,
+                "stroke_opacity": stroke_opacity,
+                "blend_mode": blend_mode,
+            },
+        )
 
     def draw_line(
         self,
@@ -514,10 +691,13 @@ class Page:
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        **style: Any,
     ) -> Page:
         """Append a stroked line segment to this page.
 
-        ``stroke_color`` takes grey, RGB or CMYK -- see :meth:`add_text`.
+        ``stroke_color`` takes grey, RGB or CMYK -- see :meth:`add_text` --
+        and ``**style`` is the rest of :meth:`draw_path`'s painting options, so a
+        line can be dashed, capped, transparent or turned.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -534,6 +714,7 @@ class Page:
             tag=tag,
             alt=alt,
             actual_text=actual_text,
+            **style,
         )
         return self
 

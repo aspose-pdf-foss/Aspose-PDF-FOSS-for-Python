@@ -35,7 +35,6 @@ _UNSUPPORTED_TYPES: dict[str, str] = {
     "CgmLoadOptions": "CGM import",
     "HtmlLoadOptions": "HTML import",
     "LatexFragment": "LaTeX authoring",
-    "IPath": "the presentation drawing model",
     "OfdLoadOptions": "OFD import",
     "PrinterSettings": "printing",
     "SvgLoadOptions": "SVG import",

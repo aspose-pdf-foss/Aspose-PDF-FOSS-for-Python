@@ -703,6 +703,46 @@ Supported:
   for the geometry it names. `set_box` returns the page, and refuses to remove
   the media box.
 - Read decoded page content bytes through `Page.content`.
+- **Draw paths** with `Page.draw_path()` and a `GraphicsPath`: `move_to`,
+  `line_to`, `curve_to` (cubic), `quadratic_to` (written as the cubic that draws
+  the same curve, not an approximation of it), `close`, `rect`, `ellipse`,
+  `circle`, `polygon` and `polyline`. The builders chain, and one that continues a
+  subpath -- a line, a curve, a close -- is refused on a path that has not been
+  started, rather than writing an operator with nothing to draw from. An ellipse
+  is four Bézier curves, since PDF has no arc operator; the control points are
+  4/3·(√2−1) of the way along each side, which meets the circle at both ends and
+  the midpoint and is about 0.027% of the radius out in between.
+  - The paint: `stroke_color` and `fill_color` (grey, RGB or CMYK; `None` leaves
+    that half out, and neither is refused), `even_odd` for the even-odd fill rule
+    of 8.5.3.3, `line_width`, `line_cap` (`"butt"`/`"round"`/`"square"`),
+    `line_join` (`"miter"`/`"round"`/`"bevel"`), `miter_limit`, and `dash` -- a
+    sequence of on/off lengths or `(pattern, phase)`. A pattern of nothing but
+    zeros would draw an invisible line and is refused; an empty one is the solid
+    line `[] 0 d` means.
+  - `opacity`, `fill_opacity`, `stroke_opacity` and `blend_mode` (the sixteen of
+    11.3.5) are written as an `/ExtGState`, and a state the page already carries
+    is **reused** rather than added again. `transform` is six numbers
+    `(a, b, c, d, e, f)`, or an `IMatrix`, applied to that drawing alone.
+  - `Page.draw_rectangle()` and `Page.draw_line()` are the shortcuts for the two
+    common shapes and take all of the same options, since each is one path. A
+    plain rectangle or line still writes exactly the bytes it always wrote.
+  - `aspose_pdf.presentation.IPath` is **no longer a placeholder**: it collects
+    segments (`move_to`, `append_line`, `append_cubic_bezier_curve`,
+    `append_rectangle`, `close_all_figures`) and `draw_path` takes it, reading its
+    own `fill_mode` and `transform` for whichever of the two the call does not
+    give. It used to raise, because nothing could draw a path.
+- **Hold a graphics state over several drawings** with `with page.graphics(...)`:
+  a `transform`, a `clip` path (taken with `W n`, 8.5.4, which paints nothing
+  itself), `clip_even_odd`, and the same opacity and blend options. Everything
+  appended inside the block is drawn under it -- **text and images included**,
+  which is how either of those is turned, scaled or made transparent -- and the
+  state is undone at the end, so the rest of the page is untouched. Sections
+  nest. The whole section is appended as **one balanced `q … Q` fragment** when
+  the block closes: appending the `q` on its own would leave the page's content
+  unbalanced, and the content isolation that keeps one authored fragment from
+  leaking into the next would close it again before the very next drawing. A
+  consequence worth knowing: `Page.content` does not show a section's drawings
+  until the block ends.
 - Append simple authored content to a page: positioned Standard-14 text or
   embedded Unicode text with `Page.add_text()`, raw/JPEG/PNG image XObjects
   with `Page.add_image()`, rectangles with `Page.draw_rectangle()`, and lines
@@ -3029,7 +3069,6 @@ with Document("input.pdf") as document:
 | Non-PDF export | `SaveFormat.PPTX` | Rejected by `Document.save(destination, save_format)` before anything is written to the path or stream. (`DocFormat.SVG`/`HTML`/`MARKDOWN`, `HtmlSaveOptions` and `MarkdownSaveOptions` are implemented — see [Pages](#pages).) |
 | Printing | `Duplex`, `PrintRange`, `PrinterSettings` | No print operation exists; `PrinterSettings` is rejected by `Document.save`. |
 | LaTeX | `LatexFragment` | Rejected as a load source; no LaTeX authoring or import path exists. |
-| Presentation drawing model | `IPath` in `aspose_pdf.presentation` | Constructible, but `append_cubic_bezier_curve` raises: there is no path-drawing operation for it to feed, and it used to accept segments and drop them. `FillMode` and `IMatrix` from the same module are *not* placeholders — the two PDF fill rules, and an affine matrix that really multiplies. Draw with `Page.draw_rectangle` / `Page.draw_line`. |
 | Instrumentation | `VirtualizationPerformance` in `aspose_pdf.visualization` | A process-global stopwatch, kept for ported code. It works and callers may use it, but the package never writes to it: timing a library into module-level state would interleave two documents rendered at once. It does not virtualise or accelerate anything. (`PerformanceLogger` from the same module is *not* a placeholder — see [Rendering](#rendering); `RasterizedPage` is the real render result.) |
 
 `Document.save` accepts `None` (the default), `SaveFormat.PDF`,

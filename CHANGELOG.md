@@ -9,6 +9,40 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Paths, the stroke state, transparency and clipping, on the authoring side.**
+  A page could be given exactly two things: an axis-aligned rectangle and a
+  straight line. No curve, no circle, no polygon, no dash, no line cap or join,
+  no transparency, and no way to turn, scale or clip anything — while the
+  *renderer* had always drawn all of it, because that is what reading a PDF
+  means. `IPath` sat in the "Known Unsupported" table for exactly this reason:
+  there was nothing for a path to be drawn with.
+  - `GraphicsPath` collects the subpaths of ISO 32000-1 8.5.2 — `move_to`,
+    `line_to`, `curve_to`, `quadratic_to`, `close`, `rect`, `ellipse`, `circle`,
+    `polygon`, `polyline` — and the builders chain. A segment that continues a
+    subpath is refused on a path that has not been started, rather than writing an
+    operator with nothing to draw from.
+  - `Page.draw_path()` paints one: either fill rule, `line_width`, `line_cap`,
+    `line_join`, `miter_limit`, `dash` (a pattern or `(pattern, phase)`),
+    `opacity`/`fill_opacity`/`stroke_opacity`, `blend_mode`, and a `transform`.
+    The alpha and blend go into an `/ExtGState` that is **reused** when the page
+    already carries the same one, instead of one dictionary per drawing.
+  - `with page.graphics(transform=..., clip=..., opacity=...)` holds a state over
+    everything appended inside it — **text and images included**, which is how
+    either of those is turned, scaled or faded — and clips to a path with `W n`.
+    Sections nest, and the state is undone at the end.
+  - `draw_rectangle` and `draw_line` take all of the same options now, each being
+    one path; a plain rectangle or line still writes byte for byte what it wrote
+    before.
+  - `IPath` is no longer a placeholder and leaves the unsupported table: it
+    collects segments and `draw_path` draws it, reading its own `fill_mode` and
+    `transform` for whichever the call does not give.
+  - Checked against poppler 26.09 at 288 dpi — curves, dashes, caps, joins,
+    even-odd fills, transforms, clips, alpha and blend modes all render
+    pixel-identical (0–4 levels of 255). At 72 dpi a one-point hairline's
+    antialiasing differs between any two rasterizers, the *undashed* reference
+    case included, so the comparison is made where the geometry is what is being
+    measured.
+
 - **Named destinations, and the two bookmark entries that go with them.** The
   engine resolved these names on the way *in* all along — a bookmark written by
   name already reported the right page — but nothing could list, add, repoint or
@@ -143,6 +177,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     four may be written as given, since a reader intersects them and falls back.
 
 ### Fixed
+
+- **A section holding a graphics state open could not survive the next append.**
+  Found while building the above: content isolation saves and restores what a
+  page's existing content leaves behind, so appending an unbalanced `q` on its own
+  had its `Q` inserted before the very next fragment — the text meant to be inside
+  a rotated section landed outside it, and the page's stream ended up unbalanced
+  (poppler: "Restoring state when no valid states to pop"). A section now collects
+  what is drawn inside it and appends the whole thing as one balanced fragment,
+  which leaves isolation doing exactly what it did before.
 
 - **`Form.flatten` said it flattened "all fields in the form".** It is
   `Document.flatten`: a page's annotations are baked in with the fields, because

@@ -41,9 +41,7 @@ from .content_authoring import (
     AuthoredImage,
     build_cid_text_stream,
     build_image_stream,
-    build_line_stream,
     build_positioned_cid_text_stream,
-    build_rectangle_stream,
     build_text_stream,
     prepare_image,
     safe_resource_name,
@@ -214,6 +212,28 @@ def _authored_box(
                 f"{box_name} must have a width and a height above zero."
             )
     return (values[0], values[1], values[2], values[3])
+
+
+def _same_gstate(existing: dict[Any, Any], wanted: dict[Any, Any]) -> bool:
+    """Whether an ``/ExtGState`` already on the page is the one being asked for.
+
+    Compared by what it *says*, not by identity: two dictionaries with the same
+    alpha and blend mode are the same state, and reusing the one that is there
+    keeps a page that draws a hundred transparent paths to one resource.
+    """
+    if set(existing) != set(wanted):
+        return False
+    for key, value in wanted.items():
+        other = existing[key]
+        if isinstance(value, PdfNumber) and isinstance(other, PdfNumber):
+            if abs(float(other.value) - float(value.value)) > 1e-9:
+                return False
+        elif isinstance(value, PdfName) and isinstance(other, PdfName):
+            if other.name != value.name:
+                return False
+        else:
+            return False
+    return True
 
 
 def _trapped_name(text: str) -> str:
@@ -5203,6 +5223,18 @@ class SimplePdf:
         self._validate_page_index(page_index)
         if not content:
             return
+        sections = getattr(self, "_open_graphics_sections", None)
+        if sections:
+            buffered = sections.get(page_index)
+            if buffered:
+                # A graphics section is open on this page: its content is
+                # collected and appended as *one* balanced fragment when the
+                # section closes. Appending the ``q`` on its own instead would
+                # leave the page's content unbalanced, and content isolation --
+                # which exists to stop exactly that leaking into what comes next
+                # -- would close it again before the very next fragment.
+                buffered[-1].append(bytes(content))
+                return
         self._materialize_page_contents_for_edit()
         if self._cos_doc is None:
             self._ensure_cos()
@@ -8614,32 +8646,98 @@ class SimplePdf:
         )
         return resource_name
 
-    def draw_rectangle_on_page(
+    def _register_page_ext_gstate(
         self,
         page_index: int,
-        x: float,
-        y: float,
-        width: float,
-        height: float,
         *,
-        stroke_color: Sequence[float] | None = (0.0, 0.0, 0.0),
-        fill_color: Sequence[float] | None = None,
+        fill_opacity: float | None = None,
+        stroke_opacity: float | None = None,
+        blend_mode: str | None = None,
+    ) -> str | None:
+        """Register an ``/ExtGState`` on the page for the alpha and blend asked for.
+
+        ``None`` when nothing was asked for, so a plain drawing writes no state
+        and no resource. An identical state already on the page is **reused**:
+        drawing a hundred half-transparent paths otherwise left a hundred
+        dictionaries in the file saying the same thing.
+        """
+        from .content_authoring import BLEND_MODES
+
+        mapping: dict[Any, Any] = {}
+        for key, value in (("ca", fill_opacity), ("CA", stroke_opacity)):
+            if value is None:
+                continue
+            alpha = float(value)
+            if not 0.0 <= alpha <= 1.0:
+                raise PdfValidationException("Opacity must be between 0 and 1.")
+            mapping[PdfName(key)] = PdfNumber(alpha)
+        if blend_mode is not None:
+            name = str(blend_mode).strip().lstrip("/")
+            if name not in BLEND_MODES:
+                raise PdfValidationException(
+                    f"{blend_mode!r} is not a blend mode of ISO 32000-1 11.3.5; "
+                    "use one of: " + ", ".join(BLEND_MODES)
+                )
+            mapping[PdfName("BM")] = PdfName(name)
+        if not mapping:
+            return None
+        mapping[PdfName("Type")] = PdfName("ExtGState")
+        states = self._ensure_resource_subdict(page_index, "ExtGState")
+        for key, value in states.mapping.items():
+            existing = self._resolve(value)
+            if isinstance(existing, PdfDictionary) and _same_gstate(
+                existing.mapping, mapping
+            ):
+                return key.name.lstrip("/")
+        name = self._unique_resource_name(states, "GS")
+        states.mapping[PdfName(name)] = PdfDictionary(mapping)
+        return name
+
+    def draw_path_on_page(
+        self,
+        page_index: int,
+        path: Any,
+        *,
+        stroke_color: Any = (0.0, 0.0, 0.0),
+        fill_color: Any = None,
         line_width: float = 1.0,
+        even_odd: bool = False,
+        line_cap: Any = None,
+        line_join: Any = None,
+        miter_limit: float | None = None,
+        dash: Any = None,
+        opacity: float | None = None,
+        fill_opacity: float | None = None,
+        stroke_opacity: float | None = None,
+        blend_mode: str | None = None,
+        transform: Any = None,
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
     ) -> None:
-        """Append a rectangle path to a page content stream."""
+        """Append a path -- lines, curves, shapes -- to a page content stream."""
+        from .content_authoring import build_path_stream
+
         self._ensure_not_disposed()
         self._validate_page_index(page_index)
-        content = build_rectangle_stream(
-            x,
-            y,
-            width,
-            height,
+        gstate = self._register_page_ext_gstate(
+            page_index,
+            fill_opacity=fill_opacity if fill_opacity is not None else opacity,
+            stroke_opacity=stroke_opacity if stroke_opacity is not None else opacity,
+            blend_mode=blend_mode,
+        )
+        content = build_path_stream(
+            path,
             stroke_color=stroke_color,
             fill_color=fill_color,
             line_width=line_width,
+            even_odd=even_odd,
+            line_cap=line_cap,
+            line_join=line_join,
+            miter_limit=miter_limit,
+            dash=dash,
+            transform=transform,
+            ext_gstate=gstate,
         )
         mark = self._register_marked_content(
             page_index,
@@ -8651,6 +8749,113 @@ class SimplePdf:
             content = wrap_marked_content(content, mark[0], mark[1])
         self._append_content_to_page(page_index, content)
 
+    def begin_page_graphics(
+        self,
+        page_index: int,
+        *,
+        transform: Any = None,
+        clip: Any = None,
+        clip_even_odd: bool = False,
+        opacity: float | None = None,
+        fill_opacity: float | None = None,
+        stroke_opacity: float | None = None,
+        blend_mode: str | None = None,
+    ) -> None:
+        """Open a graphics state section on a page: ``q``, then what was asked for.
+
+        Everything appended until :meth:`end_page_graphics` is drawn under it --
+        text and images included, which is how either of those is rotated or made
+        transparent. A clipping path is taken with ``W n`` (ISO 32000-1 8.5.4),
+        which paints nothing itself and confines what follows to its inside.
+        """
+        from .content_authoring import (
+            build_graphics_state,
+            paint_operator,
+            path_operators,
+        )
+
+        self._ensure_not_disposed()
+        self._validate_page_index(page_index)
+        gstate = self._register_page_ext_gstate(
+            page_index,
+            fill_opacity=fill_opacity if fill_opacity is not None else opacity,
+            stroke_opacity=stroke_opacity if stroke_opacity is not None else opacity,
+            blend_mode=blend_mode,
+        )
+        parts = ["q"]
+        parts.extend(build_graphics_state(transform=transform, ext_gstate=gstate))
+        if clip is not None:
+            parts.append(path_operators(clip))
+            parts.append(
+                paint_operator(
+                    has_fill=False, has_stroke=False, even_odd=clip_even_odd, clip=True
+                )
+            )
+        if not hasattr(self, "_open_graphics_sections"):
+            self._open_graphics_sections = {}
+        stack = self._open_graphics_sections.setdefault(page_index, [])
+        stack.append([" ".join(parts).encode("ascii")])
+
+    def end_page_graphics(self, page_index: int) -> None:
+        """Close the section :meth:`begin_page_graphics` opened, and write it.
+
+        The whole section -- its state, and everything drawn inside it -- is
+        appended as one balanced ``q ... Q`` fragment here. A nested section
+        closes into the one around it, so the outer state stays open until its own
+        turn.
+        """
+        self._ensure_not_disposed()
+        self._validate_page_index(page_index)
+        stack = getattr(self, "_open_graphics_sections", {}).get(page_index)
+        if not stack:
+            raise PdfValidationException(
+                "No graphics section is open on this page to close."
+            )
+        collected = stack.pop()
+        collected.append(b"Q")
+        fragment = b"\n".join(
+            stripped for stripped in (part.strip() for part in collected) if stripped
+        )
+        if not stack:
+            self._open_graphics_sections.pop(page_index, None)
+        self._append_content_to_page(page_index, fragment)
+
+    def draw_rectangle_on_page(
+        self,
+        page_index: int,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        *,
+        stroke_color: Any = (0.0, 0.0, 0.0),
+        fill_color: Any = None,
+        line_width: float = 1.0,
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
+        **style: Any,
+    ) -> None:
+        """Append a rectangle path to a page content stream.
+
+        One ``re`` subpath through :meth:`draw_path_on_page`, so a rectangle takes
+        the same dash, cap, join, opacity and transform as any other path -- and
+        writes the same bytes it always did when it takes none of them.
+        """
+        from aspose_pdf.paths import GraphicsPath
+
+        self.draw_path_on_page(
+            page_index,
+            GraphicsPath().rect(x, y, width, height),
+            stroke_color=stroke_color,
+            fill_color=fill_color,
+            line_width=line_width,
+            tag=tag,
+            alt=alt,
+            actual_text=actual_text,
+            **style,
+        )
+
     def draw_line_on_page(
         self,
         page_index: int,
@@ -8659,32 +8864,32 @@ class SimplePdf:
         x2: float,
         y2: float,
         *,
-        stroke_color: Sequence[float] = (0.0, 0.0, 0.0),
+        stroke_color: Any = (0.0, 0.0, 0.0),
         line_width: float = 1.0,
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        **style: Any,
     ) -> None:
-        """Append a stroked line segment to a page content stream."""
-        self._ensure_not_disposed()
-        self._validate_page_index(page_index)
-        content = build_line_stream(
-            x1,
-            y1,
-            x2,
-            y2,
-            stroke_color=stroke_color,
-            line_width=line_width,
-        )
-        mark = self._register_marked_content(
+        """Append a stroked line segment to a page content stream.
+
+        A two-point path through :meth:`draw_path_on_page`, so a line takes the
+        same dash, cap, opacity and transform as any other path -- and writes the
+        same bytes it always did when it takes none of them.
+        """
+        from aspose_pdf.paths import GraphicsPath
+
+        self.draw_path_on_page(
             page_index,
-            tag or ("Figure" if alt is not None or actual_text is not None else None),
+            GraphicsPath().move_to(x1, y1).line_to(x2, y2),
+            stroke_color=stroke_color,
+            fill_color=None,
+            line_width=line_width,
+            tag=tag,
             alt=alt,
             actual_text=actual_text,
+            **style,
         )
-        if mark is not None:
-            content = wrap_marked_content(content, mark[0], mark[1])
-        self._append_content_to_page(page_index, content)
 
     # ---------------------------------------------------------------------------
     # Image handling
