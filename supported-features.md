@@ -594,6 +594,22 @@ Supported:
   where typing in either changes both. A page from a *different* document is
   refused; `Document.merge` brings pages across.
 - Delete pages by index and clear all pages.
+- **Imposition**: `Document.n_up(rows, columns, …)` puts a grid of pages on each
+  sheet and `Document.booklet(…)` lays a document out two pages to a sheet in
+  saddle-stitch order -- the last page beside the first, the second beside the
+  second-last, each pair starting on the other side, padded to a multiple of four
+  because a folded sheet carries four pages whether they are all used or not
+  (`engine.imposition.booklet_order` is that order on its own). Both return a new
+  document and leave the original alone. Each page is imported as a form XObject,
+  scaled to fit its cell **proportionally** and centred in it, so nothing is
+  stretched or cut off; the import memo is shared across the run, so a font or an
+  image several pages have in common is copied once. The sheet is the size given,
+  or the first page's own size for an N-up (four pages onto a sheet the size of
+  one) and twice its width for a booklet. Nothing is rotated behind the caller's
+  back: a landscape sheet for a 2-up of portrait pages is asked for by passing
+  one. `margin`, `gutter` and `order` (`"row"` or `"column"`) place the cells.
+  `PdfFileEditor.make_n_up()` and `make_booklet()` are the same two with file I/O,
+  reporting `False` and recording `last_exception` instead of raising.
 - A **link or bookmark points at the page named**, whatever has happened to the
   page order since it was loaded. A destination's page is resolved by walking
   the page tree at the moment it is written, so one authored between an insert
@@ -771,8 +787,22 @@ Supported:
   raises `UnsupportedFeatureException` -- the value object is kept for ported
   code, and there is no shading-pattern writer for it to feed.
 - **Stamps** (`Page.add_stamp`, `Document.add_stamp(stamp, pages=...)`).
+  `PageStamp(page_or_document, page_index=…)` places **a page of a document on a
+  page** -- a letterhead, a background form, a watermark a designer drew in a PDF.
+  The page is brought across as a form XObject with everything it draws with (the
+  deep copy a merge makes), so the document it came from may be closed afterwards;
+  what is placed is the page as a reader *shows* it, its crop box with its
+  `/Rotate` applied, which for a quarter turn swaps the width and the height of
+  the form. A page of the document being stamped may be placed on another of its
+  pages. All of the placement below applies, `background=True` included -- which is
+  what a letterhead wants -- and `opacity` draws the page through an alpha of its
+  own inside the form.
   `TextStamp(value, font_size, font_name, color)` sets a line in one of the 14
-  standard fonts in any of the three device colour spaces (see above), `ImageStamp(image, width, height)` places a picture (one
+  standard fonts in any of the three device colour spaces (see above), or in an
+  **embedded Unicode font** with `font=` (bytes, a path or a `FontDescriptor`),
+  which writes the text through a subset Type0/CID font so a stamp can say what
+  the standard encodings have no codes for; `font_name` then has nothing to say
+  and is not checked against the fourteen, `ImageStamp(image, width, height)` places a picture (one
   point per pixel by default, and giving one side derives the other from the
   image's proportions), and `PageNumberStamp("{page} of {total}",
   starting_number=…)` numbers the pages. All three take `opacity` (written as

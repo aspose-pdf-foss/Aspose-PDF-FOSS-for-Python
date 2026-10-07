@@ -9,6 +9,36 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A page can be placed on a page, and a document can be imposed.** Stamps drew
+  a line of text, an image or a page number; the one thing nobody could stamp was
+  a *page* — a letterhead, a background form, a watermark drawn in a PDF — even
+  though both pieces it takes were already there: the deep object copy a merge
+  makes, and the form-XObject placement every stamp goes through. Without it there
+  was no imposition either, so four pages could not be put on a sheet and a
+  document could not be laid out as a folded booklet.
+  - `PageStamp(page)` places a page as a reader shows it — its crop box, with its
+    `/Rotate` applied, which for a quarter turn swaps the form's width and height
+    — and imports everything it draws with, so the source document may be closed
+    straight afterwards. Every placement option applies, `background=True`
+    included, which is what a letterhead wants, and `opacity` goes into an
+    `/ExtGState` inside the form.
+  - `Document.n_up(rows, columns, …)` and `Document.booklet(…)` return a new
+    imposed document; `PdfFileEditor.make_n_up()` and `make_booklet()` are the
+    same two over files. Pages are scaled to fit their cell proportionally and
+    centred, the import memo is shared so a common font is copied once, and
+    nothing is rotated behind the caller's back — a landscape sheet is asked for
+    by passing one.
+  - `TextStamp(font=…)` sets a stamp in an **embedded Unicode font**, through the
+    same subset Type0/CID path page text uses, so a stamp can say what the
+    standard fonts' encodings have no codes for. `font_name` is then not checked
+    against the fourteen, since the face comes from the font.
+  - Checked with qpdf 12.4.2: a 4-up sheet carries four form XObjects whose BBox
+    is the source page's size, each invoked under its own scale-and-translate; a
+    booklet of six pages is four sheets of two A5 pages side by side, two of them
+    half empty; and a stamped page's `/Contents` becomes an array with the
+    background stamp first. poppler renders all of it, and the imported
+    letterhead's colours come out pixel-identical to ours.
+
 - **How a form field looks, and what a field, a page or the document does.** Two
   holes, both on the authoring side. A field could be created but not styled:
   `/MK` was written with a hardcoded black border and a white background, `/BS`

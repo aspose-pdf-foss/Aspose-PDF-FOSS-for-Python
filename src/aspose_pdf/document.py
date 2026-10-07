@@ -2531,6 +2531,78 @@ class Document:
         result._engine_pdf = extracted
         return result
 
+    def n_up(
+        self,
+        rows: int = 2,
+        columns: int = 2,
+        *,
+        page_size: Any = None,
+        margin: float = 0.0,
+        gutter: float = 0.0,
+        order: str = "row",
+    ) -> Document:
+        """Return a new document with ``rows * columns`` pages on each sheet.
+
+        Each page is brought across as a form XObject with everything it draws
+        with, scaled to fit its cell proportionally and centred in it -- nothing
+        is stretched and nothing is cut off. The sheet is *page_size*, or the
+        first page's own size when none is given, so four pages go onto a sheet
+        the size of one. A landscape sheet for a 2-up of portrait pages is asked
+        for by passing one::
+
+            two_up = document.n_up(1, 2, page_size=PageSize.A4.landscape())
+
+        *order* is ``"row"`` (left to right, top row first) or ``"column"``.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine import imposition
+
+        imposed = imposition.n_up(
+            self._engine_pdf,
+            rows=rows,
+            columns=columns,
+            page_size=page_size,
+            margin=margin,
+            gutter=gutter,
+            order=order,
+        )
+        result = Document(limits=self._load_limits)
+        result._engine_pdf = imposed
+        return result
+
+    def booklet(
+        self,
+        *,
+        page_size: Any = None,
+        margin: float = 0.0,
+        gutter: float = 0.0,
+    ) -> Document:
+        """Return a new document imposed as a saddle-stitched booklet.
+
+        Two pages to a sheet, in the order that reads correctly once the printed
+        stack is folded down the middle: the last page beside the first, the
+        second beside the second-last, and so on. The page count is padded to a
+        multiple of four with blanks, because a folded sheet carries four pages
+        whether they are all used or not. The sheet is twice the width of a page
+        unless *page_size* says otherwise.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine import imposition
+
+        imposed = imposition.booklet(
+            self._engine_pdf,
+            page_size=page_size,
+            margin=margin,
+            gutter=gutter,
+        )
+        result = Document(limits=self._load_limits)
+        result._engine_pdf = imposed
+        return result
+
     def merge(self, *documents: Document) -> Document:
         """Merge the supplied documents into this one."""
         self._ensure_not_disposed()

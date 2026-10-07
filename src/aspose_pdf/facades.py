@@ -313,6 +313,88 @@ class PdfFileEditor:
                         exc,
                     )
 
+    def make_n_up(
+        self,
+        source: str,
+        destination: str,
+        rows: int = 2,
+        columns: int = 2,
+        *,
+        page_size: Any = None,
+        margin: float = 0.0,
+        gutter: float = 0.0,
+        order: str = "row",
+    ) -> bool:
+        """Impose *source* as ``rows x columns`` pages per sheet into *destination*.
+
+        See :meth:`aspose_pdf.Document.n_up`, which this wraps with file I/O.
+
+        Returns
+        -------
+        bool
+            ``True`` on success, ``False`` on failure (and
+            :attr:`last_exception` says why).
+        """
+        return self._impose(
+            source,
+            destination,
+            lambda document: document.n_up(
+                rows,
+                columns,
+                page_size=page_size,
+                margin=margin,
+                gutter=gutter,
+                order=order,
+            ),
+        )
+
+    def make_booklet(
+        self,
+        source: str,
+        destination: str,
+        *,
+        page_size: Any = None,
+        margin: float = 0.0,
+        gutter: float = 0.0,
+    ) -> bool:
+        """Impose *source* as a saddle-stitched booklet into *destination*.
+
+        See :meth:`aspose_pdf.Document.booklet`, which this wraps with file I/O.
+        """
+        return self._impose(
+            source,
+            destination,
+            lambda document: document.booklet(
+                page_size=page_size, margin=margin, gutter=gutter
+            ),
+        )
+
+    def _impose(self, source: str, destination: str, impose: Any) -> bool:
+        """Open *source*, impose it, write *destination*; dispose of both either way."""
+        self._ensure_not_disposed()
+        self._operation_start()
+        from aspose_pdf.document import Document
+
+        document = None
+        imposed = None
+        try:
+            document = Document(source)
+            imposed = impose(document)
+            imposed.save(destination)
+            return True
+        except PDF_OPERATION_ERRORS as exc:
+            return self._operation_fail(exc)
+        finally:
+            for opened in (imposed, document):
+                if opened is None:
+                    continue
+                try:
+                    opened.dispose()
+                except PDF_OPERATION_ERRORS as exc:
+                    logger.warning(
+                        "PdfFileEditor: dispose failed after imposing: %s", exc
+                    )
+
     def extract(
         self,
         source: str,

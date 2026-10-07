@@ -32,6 +32,7 @@ __all__ = [
     "HorizontalAlignment",
     "ImageStamp",
     "PageNumberStamp",
+    "PageStamp",
     "Stamp",
     "TextStamp",
     "VerticalAlignment",
@@ -149,6 +150,14 @@ class TextStamp(Stamp):
     font_size: float = 14.0
     font_name: str = "Helvetica"
     color: Any = field(default=(0.0, 0.0, 0.0))
+    font: Any = None
+    """A font to embed instead: bytes, a path, or a ``FontDescriptor``.
+
+    With one, the text is written through a subset Type0/CID font, so a stamp can
+    say something the standard fonts' encodings have no codes for -- a Cyrillic or
+    a CJK watermark. Without one, the stamp is set in one of the 14 standard
+    fonts, which is what :attr:`font_name` picks.
+    """
 
     def _text(self, page_index: int, page_count: int) -> str:
         return str(self.value)
@@ -157,6 +166,10 @@ class TextStamp(Stamp):
         super()._validate()
         if float(self.font_size) <= 0.0:
             raise PdfValidationException("font_size must be above zero")
+        if self.font is not None:
+            # The face comes from the font itself; ``font_name`` names a standard
+            # one and has nothing to say about an embedded program.
+            return
         from aspose_pdf.engine.std_metrics import WIDTHS
 
         if str(self.font_name).lstrip("/") not in WIDTHS:
@@ -166,6 +179,63 @@ class TextStamp(Stamp):
             )
 
     def _content(self, pdf: Any, page_index: int) -> tuple[bytes, tuple[float, float], Any]:
+        if self.font is not None:
+            return self._embedded_content(pdf, page_index)
+        return self._standard_content(pdf, page_index)
+
+    def _embedded_content(
+        self, pdf: Any, page_index: int
+    ) -> tuple[bytes, tuple[float, float], Any]:
+        """The stamp set in an embedded Type0 font, written in CID codes."""
+        from aspose_pdf.engine.content_authoring import format_number
+        from aspose_pdf.engine.font_authoring import prepare_authored_font
+
+        self._validate()
+        size = float(self.font_size)
+        text = self._text(page_index, len(pdf.pages))
+        authored = prepare_authored_font(self.font, limits=pdf._load_limits)
+        encoded = authored.encode(text)
+        widths = authored.cid_widths()
+        total = sum(
+            widths.get((encoded[i] << 8) | encoded[i + 1], 0)
+            for i in range(0, len(encoded) - 1, 2)
+        )
+        width = total / 1000.0 * size
+        metrics = dict(authored.descriptor_metrics)
+        box = metrics.get("FontBBox")
+        if isinstance(box, (list, tuple)) and len(box) == 4:
+            top, bottom = float(box[3]), float(box[1])
+        else:
+            top = float(metrics.get("Ascent", 750) or 750)
+            bottom = float(metrics.get("Descent", -250) or -250)
+        height = (top - bottom) / 1000.0 * size
+        baseline = -bottom / 1000.0 * size
+
+        type0_ref, _parts = pdf._build_type0_font_graph(authored)
+        opacity = float(self.opacity)
+        content = _with_opacity(
+            b"BT "
+            + _colour_operator(self.color)
+            + b" /F1 "
+            + format_number(size).encode("ascii")
+            + b" Tf 1 0 0 1 0 "
+            + format_number(baseline).encode("ascii")
+            + b" Tm <"
+            + encoded.hex().encode("ascii")
+            + b"> Tj ET\n",
+            opacity,
+        )
+        resources = _opacity_resources(pdf, opacity)
+        from aspose_pdf.engine.cos import PdfDictionary, PdfName
+
+        if not isinstance(resources, PdfDictionary):
+            resources = PdfDictionary()
+        resources.mapping[PdfName("Font")] = PdfDictionary({PdfName("F1"): type0_ref})
+        return bytes(content), (max(width, 1e-6), max(height, 1e-6)), resources
+
+    def _standard_content(
+        self, pdf: Any, page_index: int
+    ) -> tuple[bytes, tuple[float, float], Any]:
         from aspose_pdf.engine.agl import (
             encode_with_base_encoding,
             unencodable_characters,
@@ -246,6 +316,79 @@ class PageNumberStamp(TextStamp):
 
     def _reusable(self) -> bool:
         return False
+
+
+@dataclass
+class PageStamp(Stamp):
+    """A page of a document, drawn onto a page -- a letterhead, a background form.
+
+    *source* is the page to place: an :class:`aspose_pdf.Page`, or a
+    :class:`aspose_pdf.Document` with *page_index* saying which of its pages. The
+    page is brought across as a form XObject with everything it draws with -- its
+    fonts, its images, the forms nested inside it -- which is the same deep copy a
+    merge makes, so the source document can be closed afterwards.
+
+    What is placed is the page as a reader *shows* it: its crop box, with its
+    ``/Rotate`` applied. All of :class:`Stamp`'s placement applies on top --
+    ``zoom`` to scale it, ``rotate`` to turn it, the alignments and indents to put
+    it somewhere, ``opacity`` to see through it, and ``background=True`` to put it
+    *under* the page's own content, which is what a letterhead wants::
+
+        letterhead = Document("letterhead.pdf")
+        document.add_stamp(PageStamp(letterhead.pages[0], background=True))
+
+    A page of the document being stamped may be placed on another of its pages;
+    placing a page on *itself* is refused, since the content being drawn would be
+    the content being added to.
+    """
+
+    source: Any = None
+    page_index: int = 0
+
+    def _validate(self) -> None:
+        super()._validate()
+        if self.source is None:
+            raise PdfValidationException("A page stamp needs a page to place")
+        if int(self.page_index) != self.page_index or int(self.page_index) < 0:
+            raise PdfValidationException("page_index must be a page number from zero")
+
+    def _resolved(self) -> tuple[Any, int]:
+        """The engine document and page index the stamp places, whatever it was given."""
+        from aspose_pdf.document import Document
+        from aspose_pdf.pages import Page
+
+        self._validate()
+        source = self.source
+        if isinstance(source, Page):
+            document = source._document
+            index = source.index
+        elif isinstance(source, Document):
+            document = source
+            index = int(self.page_index)
+        else:
+            raise PdfValidationException(
+                "A page stamp places a Page or a Document, not "
+                f"{type(source).__name__}"
+            )
+        document._ensure_not_disposed()
+        engine = document._engine_pdf
+        if engine is None:
+            raise PdfValidationException("The page to place has no document loaded")
+        return engine, index
+
+    def _form(self, pdf: Any) -> tuple[Any, tuple[float, float]]:
+        from aspose_pdf.engine.stamps import import_page_form
+
+        engine, index = self._resolved()
+        return import_page_form(pdf, engine, index, opacity=float(self.opacity))
+
+    def _content(self, pdf: Any, page_index: int) -> tuple[bytes, tuple[float, float], Any]:
+        # Unused: this stamp hands over a form instead of content to wrap, since
+        # importing the page *is* the work. Kept so the class still answers the
+        # base's contract if something asks.
+        raise PdfValidationException(
+            "A page stamp is placed as an imported form, not as content"
+        )
 
 
 @dataclass

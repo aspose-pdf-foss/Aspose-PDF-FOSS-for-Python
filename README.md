@@ -143,6 +143,9 @@ flowchart TD
   file rather than leaving it there for the next reader to switch back on.
 - `ImagePlacementAbsorber` collects the images a page draws, and `ImagePlacement.replace` /
   `hide` change them in the document — the new picture keeps the old one's place and size.
+- `PageStamp` puts a page of another PDF onto a page — a letterhead, a background form, a
+  designed watermark — importing everything it draws with, and `Document.n_up(2, 2)` /
+  `Document.booklet()` impose a document as a grid or as a folded booklet.
 - `Page.add_stamp` and `Document.add_stamp` put a text, image or page-number stamp over or
   under a page — aligned in the box a reader shows, upright whatever the page's rotation, with
   opacity and rotation, and written once however many pages it goes on.

@@ -23,6 +23,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+from ..exceptions import PdfValidationException
 from .cos import (
     PdfArray,
     PdfDictionary,
@@ -66,6 +67,11 @@ def rotation(degrees: float) -> Matrix:
     radians = math.radians(float(degrees))
     cos, sin = math.cos(radians), math.sin(radians)
     return (cos, sin, -sin, cos, 0.0, 0.0)
+
+
+#: The same function under a name that does not collide with the ``rotation``
+#: *argument* the placement code takes.
+rotation_matrix = rotation
 
 
 def visible_box(pdf: Any, page_index: int) -> tuple[float, float, float, float]:
@@ -135,6 +141,101 @@ def placement_matrix(
         270: multiply(rotation(270), translation(x0, y0 + page_height)),
     }[page_rotation % 360]
     return multiply(placed, unrotate)
+
+
+def page_form_matrix(
+    box: tuple[float, float, float, float], rotation: int
+) -> tuple[Matrix, tuple[float, float]]:
+    """How a page's own content maps into a form of its displayed size.
+
+    A form's ``/BBox`` here starts at the origin, while a page's box may start
+    anywhere, so the content is translated by its box's corner. ``/Rotate`` is
+    then applied -- a page rotated 90 degrees is *shown* turned, and a page placed
+    on another page has to look the way it looks on screen -- which for a quarter
+    turn swaps the width and the height of what the form holds.
+
+    Returns the matrix to draw the content under, and the form's size.
+    """
+    x0, y0, x1, y1 = box
+    width, height = x1 - x0, y1 - y0
+    turn = rotation % 360
+    origin = translation(-x0, -y0)
+    if turn == 90:
+        return multiply(multiply(origin, rotation_matrix(-90)), translation(0, width)), (
+            height,
+            width,
+        )
+    if turn == 180:
+        return multiply(
+            multiply(origin, rotation_matrix(180)), translation(width, height)
+        ), (width, height)
+    if turn == 270:
+        return multiply(
+            multiply(origin, rotation_matrix(90)), translation(height, 0)
+        ), (height, width)
+    return origin, (width, height)
+
+
+def import_page_form(
+    target: Any,
+    source: Any,
+    source_index: int,
+    *,
+    imported: dict[int, Any] | None = None,
+    opacity: float = 1.0,
+) -> tuple[PdfIndirectReference, tuple[float, float]]:
+    """Copy a page of *source* into *target* as a form XObject.
+
+    The page's content is wrapped in the matrix :func:`page_form_matrix` gives,
+    and its ``/Resources`` -- inherited from the page tree where the page itself
+    declares none -- are **imported**, which is the same deep copy a merge makes:
+    every font, image and nested form the content names is brought across, and a
+    reference to a page of the source document becomes null rather than dragging
+    that page along.
+
+    *imported* carries the memo between calls, so importing several pages of one
+    document shares the objects they have in common instead of copying each once
+    per page.
+
+    *opacity* below 1 draws the page through an ``/ExtGState`` alpha of its own,
+    inside the form, which is where every other stamp puts one.
+
+    Returns the form's reference and the size it occupies.
+    """
+    from .content_authoring import format_number
+
+    target._ensure_cos()
+    source._ensure_not_disposed()
+    source._validate_page_index(source_index)
+    page = source._get_page_dict(source_index)
+    if not isinstance(page, PdfDictionary):
+        raise PdfValidationException("The page to place has no page dictionary")
+
+    matrix, size = page_form_matrix(
+        visible_box(source, source_index), source.get_page_rotation(source_index)
+    )
+    content = source.get_page_content(source_index) or b""
+    numbers = " ".join(format_number(value) for value in matrix)
+    alpha = b""
+    if float(opacity) < 1.0:
+        alpha = b"/GS0 gs "
+    body = b"q " + alpha + f"{numbers} cm\n".encode("ascii") + content + b"\nQ\n"
+
+    resources = source._get_inherited_attr(page, "Resources")
+    copied = None
+    if isinstance(resources, PdfDictionary):
+        copied = target._import_object(
+            source, resources, {} if imported is None else imported
+        )
+    if not isinstance(copied, PdfDictionary):
+        copied = PdfDictionary()
+    if alpha:
+        states = target._build_appearance_resources(
+            {"GS0": {"ca": float(opacity), "CA": float(opacity)}}
+        )
+        if isinstance(states, PdfDictionary):
+            copied.mapping[PdfName("ExtGState")] = states.mapping[PdfName("ExtGState")]
+    return build_form(target, body, size, copied), size
 
 
 def build_form(
@@ -210,10 +311,17 @@ def apply(pdf: Any, stamp: Any, page_indices: Sequence[int]) -> None:
     placement = stamp._placement()
     form: PdfIndirectReference | None = None
     size: tuple[float, float] | None = None
+    # A stamp that is a *form* already -- a page of another document -- hands one
+    # over rather than describing content to wrap, since importing it is the whole
+    # of the work and doing it per page would copy the same objects again.
+    build = getattr(stamp, "_form", None)
     for page_index in indices:
         if form is None or not stamp._reusable():
-            content, size, resources = stamp._content(pdf, page_index)
-            form = build_form(pdf, content, size, resources)
+            if callable(build):
+                form, size = build(pdf)
+            else:
+                content, size, resources = stamp._content(pdf, page_index)
+                form = build_form(pdf, content, size, resources)
         assert size is not None
         matrix = placement_matrix(
             box=visible_box(pdf, page_index),
