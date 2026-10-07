@@ -25,6 +25,7 @@ from aspose_pdf._compat_surface import (
 )
 from aspose_pdf.attachments import AF_RELATIONSHIPS, FileSpecification
 from aspose_pdf.color import ColorValue
+from aspose_pdf.destinations import NamedDestinationCollection
 from aspose_pdf.engine import viewer_preferences as engine_viewer_prefs
 from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.simple_pdf import (
@@ -213,6 +214,7 @@ class Document:
         self._pages: Any | None = None
         self._form: Any | None = None
         self._outlines: OutlineCollection | None = None
+        self._destinations: NamedDestinationCollection | None = None
         self._tagged_content: Any | None = None
         self._password: str | None = None
         self._encrypted: bool = False
@@ -1133,6 +1135,25 @@ class Document:
         from aspose_pdf.engine.optional_content import flatten
 
         return flatten(self._engine_pdf)
+
+    @property
+    def destinations(self) -> NamedDestinationCollection:
+        """The document's named destinations, as a mapping of name to destination.
+
+        ISO 32000-1 12.3.2.3: a place in the document under a name, which a link,
+        a bookmark or another file can point at instead of naming a page and a
+        view. Both places a PDF keeps them are read, and writing one name leaves
+        every other entry in the file exactly as it was::
+
+            document.destinations["chapter-2"] = XYZDestination(page=7, top=760)
+            page.add_link((72, 700, 200, 720), "chapter-2")
+
+        See :class:`~aspose_pdf.destinations.NamedDestinationCollection`.
+        """
+        self._ensure_not_disposed()
+        if self._destinations is None:
+            self._destinations = NamedDestinationCollection(self)
+        return self._destinations
 
     @property
     def outlines(self) -> OutlineCollection:

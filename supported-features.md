@@ -283,7 +283,50 @@ Supported:
   a remote destination). Setting either replaces the target, since the caller
   has then said where the bookmark goes; `page_index = None` leaves a bookmark
   with no target. Merging carries a named bookmark across as the destination it
-  names, since the other document's names do not come with it.
+  names, since the other document's names do not come with it. A **string** is a
+  destination *name*: `OutlineItem(destination="chapter-2")` writes the name
+  itself, so the bookmark follows whatever that name is later pointed at, and
+  `OutlineItem.destination_name` reads the name a bookmark targets.
+- **A bookmark's colour and its open state.** `OutlineItem.color` is the `/C`
+  entry -- three **DeviceRGB** numbers, which is what Table 153 types it as, so
+  it is the one colour in the package that takes no grey and no ink; it reads the
+  same forms as every other colour (`"#rrggbb"`, 0..1 or 0..255 components, an
+  `aspose_pdf.Color`) and `None` leaves the entry out so a viewer uses its own.
+  `OutlineItem.open` says whether a viewer draws the item unfolded, and is
+  written as the **sign of `/Count`**: positive when open, negative when closed,
+  with the same magnitude either way -- every row opening it would show, counting
+  what an already-open child unfolds in turn (Table 153). The outline root's
+  `/Count` is every row the panel shows (Table 152). An item with no children has
+  no `/Count` at all, as the table requires, so `open` reads back `False` for one.
+  Both entries survive a round trip, and an item that was read from a file keeps
+  the colour and state it came with.
+- **Named destinations** (12.3.2.3) through `Document.destinations`, a mapping of
+  name to destination. Both places a PDF keeps them are read -- the
+  `/Names /Dests` name tree and the older `/Dests` dictionary -- and a name the
+  two disagree about reads as the dictionary's, which is what a viewer resolves
+  first. A value is the typed destination the name lands on, or `None` for an
+  entry this API cannot express (one into another file, one whose page has been
+  deleted, a view the standard does not define); such an entry is still listed,
+  because a name that is there should not be invisible. Assigning takes a
+  `Destination` or a page index (that page, fitted), and refuses a page the
+  document does not have rather than clamping it to one. A name is encoded with
+  **latin-1**, the one codec that round-trips a name tree's byte keys unchanged
+  (the standard compares those keys byte for byte), and a character outside it is
+  refused rather than written as a replacement nothing would find again.
+  Writing a name edits **that name**: the tree is rewritten as one ordered node,
+  since a name tree must stay sorted by key, and every other entry is carried
+  over as the same object it already was -- so an entry this API cannot even type
+  comes through a write untouched. A name already defined in the older
+  dictionary is updated *there*, so a document that uses the PDF 1.1 form keeps
+  using it instead of saying two different things in two places; a removal clears
+  both. Checked against **qpdf 12.4.2**: the tree it reads back is sorted, every
+  value resolves to a page, and a file qpdf has rewritten still reads here with
+  its names, colours and open states intact.
+- A **name is a target** wherever a typed destination is: `Page.add_link(rect,
+  "chapter-2")`, `OutlineItem(destination="chapter-2")` and
+  `Document.open_action = "chapter-2"` all write `/Dest (chapter-2)`, which
+  12.6.2 and 12.3.2.3 allow for exactly this. Repointing the name then moves
+  every reference to it at once, which is the whole purpose of the indirection.
 - **A literal string keeps its parentheses and backslashes.** Escapes inside
   `( ... )` are decoded per ISO 32000-1 7.3.4.2 -- `\n \r \t \b \f \( \) \\`,
   octal `\ddd`, and a backslash before an end-of-line as a line continuation --

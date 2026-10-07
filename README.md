@@ -124,6 +124,10 @@ flowchart TD
   variable face — one file with a weight axis, which is how modern system fonts ship — is drawn at
   the instance the style asks for, whether its outlines are CFF2 or `glyf`. Off by default, so
   rendering stays identical across machines unless you ask for it.
+- `Document.destinations` names places in the document — `destinations["chapter-2"] =
+  XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
+  (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks
+  also carry a title colour and an open/closed state.
 - `Document.layers` lists, creates, switches and removes optional content groups; rendering, text
   extraction, and graphics absorption all skip a hidden layer, the way a viewer does.
   `make_exclusive([...])` makes layers mutually exclusive (`/RBGroups`), so switching one on

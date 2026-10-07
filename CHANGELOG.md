@@ -9,6 +9,39 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Named destinations, and the two bookmark entries that go with them.** The
+  engine resolved these names on the way *in* all along — a bookmark written by
+  name already reported the right page — but nothing could list, add, repoint or
+  remove one, so the indirection that keeps a link valid when its target moves
+  was unreachable.
+  - `Document.destinations` is a mapping of name to destination. It reads both
+    places a PDF keeps them (the `/Names /Dests` tree and the older `/Dests`
+    dictionary), types each value where this API has a class for it, and lists an
+    entry it cannot type rather than hiding it. Assigning takes a `Destination` or
+    a page index; a page the document does not have is refused rather than
+    clamped.
+  - A write edits **one** name. The tree is rewritten as a single ordered node,
+    because a name tree must stay sorted by key, and every other value is carried
+    over as the same object it already was — so an entry this API cannot express
+    comes through untouched. A name already defined in the older dictionary is
+    updated there instead of being duplicated into the tree; a removal clears
+    both places.
+  - A **name is now a target** wherever a typed destination is:
+    `page.add_link(rect, "chapter-2")`, `OutlineItem(destination="chapter-2")` and
+    `Document.open_action = "chapter-2"`. `OutlineItem.destination_name` reads it
+    back. Repointing the name moves every reference to it at once.
+  - `OutlineItem.color` is the bookmark's `/C` title colour (three DeviceRGB
+    numbers, as Table 153 types it) and `OutlineItem.open` its unfolded state,
+    written as the **sign of `/Count`** with the magnitude Table 153 asks for:
+    every row opening the item would show, counting what an already-open child
+    unfolds in turn. The outline root's `/Count` is now that same total rather
+    than the number of top-level items, which was only right while everything was
+    closed — which, before this, it always was.
+  - Checked against qpdf 12.4.2: the tree it reads back is sorted and every value
+    resolves to a page, its own outline API resolves a bookmark's name, and a file
+    qpdf has rewritten still reads here with its names, colours and open states
+    intact.
+
 - **The low-code plugin catalogue, from four workflows to fourteen.**
   `aspose_pdf.lowcode` shipped `Merger`, `Splitter`, `Optimizer` and
   `TextExtractor` — while its own `Plugin` enum already named `EXTRACTOR`,

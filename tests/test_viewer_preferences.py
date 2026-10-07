@@ -154,10 +154,22 @@ def test_an_open_action_pointing_at_a_page_that_is_gone_reads_as_nothing():
     assert b"/OpenAction" in buffer.getvalue()
 
 
-def test_only_an_action_or_a_destination_can_be_opened_with():
+def test_a_document_can_open_at_a_named_destination():
+    # 12.6.2 lets /OpenAction be a destination, and 12.3.2.3 lets a destination be
+    # a name, so a string here is the name of one -- it used to be refused.
     document = _pages()
-    with pytest.raises(TypeError):
-        document.open_action = "page 2 please"
+    document.destinations["start-here"] = 1
+    document.open_action = "start-here"
+    buffer = io.BytesIO()
+    document.save(buffer)
+    assert b"start-here" in buffer.getvalue()
+
+
+def test_only_an_action_a_destination_or_a_name_can_be_opened_with():
+    document = _pages()
+    for bad in (3, 1.5, ["page", 2], object()):
+        with pytest.raises(TypeError):
+            document.open_action = bad
 
 
 # --- /ViewerPreferences ----------------------------------------------------

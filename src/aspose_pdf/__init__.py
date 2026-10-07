@@ -11,6 +11,7 @@ from .annotations import (
 )
 from .attachments import AF_RELATIONSHIPS, FileSpecification
 from .color import Color
+from .destinations import NamedDestinationCollection
 from .document import Document
 from .exceptions import (
     FontEmbeddingException,
@@ -177,6 +178,7 @@ __all__ = [
     "MergeOptions",
     "Merger",
     "NamedAction",
+    "NamedDestinationCollection",
     "NamespaceProvider",
     "NumberingStyle",
     "OperationResult",

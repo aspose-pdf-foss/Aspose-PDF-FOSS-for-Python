@@ -1373,6 +1373,27 @@ def _put_named(found: dict[Any, Any], key: Any, value: Any, budget: _LoadBudget)
         found[key] = value
 
 
+def _destination_name_bytes(name: Any) -> bytes:
+    """A destination name as the byte string a name tree keys on.
+
+    12.3.2.3 keys the tree on byte strings and compares them literally, so the
+    name is encoded with latin-1 -- the codec that maps one character to one
+    byte and back. A character outside it has no byte to be, and is refused
+    rather than written as a replacement that would never be found again.
+    """
+    if not isinstance(name, str):
+        raise PdfValidationException("A destination name must be a string.")
+    if not name:
+        raise PdfValidationException("A destination name cannot be empty.")
+    try:
+        return name.encode("latin-1")
+    except UnicodeEncodeError:
+        raise PdfValidationException(
+            f"The destination name {name!r} has characters a name tree's byte "
+            "keys cannot hold; use Latin-1 characters."
+        ) from None
+
+
 def explicit_destination(target: Any, resolve: Any, named: dict[Any, Any]) -> Any:
     """The destination array *target* stands for, following a name; else ``None``.
 
@@ -2933,6 +2954,181 @@ class SimplePdf:
         self._named_destination_cache = (catalog, found)
         return found
 
+    # -- named destinations (ISO 32000-1 12.3.2.3) --------------------------
+
+    def _dests_tree_entries(self, catalog: Any) -> dict[bytes, Any]:
+        """The ``/Names /Dests`` tree's entries, by key, the tree only.
+
+        :func:`named_destinations` merges in the older ``/Dests`` *dictionary*
+        as well, which is a different place with different keys; a write has to
+        know which of the two it is editing.
+        """
+        entries: dict[bytes, Any] = {}
+        if not isinstance(catalog, PdfDictionary):
+            return entries
+        names = self._resolve(catalog.mapping.get(PdfName("Names")))
+        if not isinstance(names, PdfDictionary):
+            return entries
+        stack = [(self._resolve(names.mapping.get(PdfName("Dests"))), 1)]
+        seen: set[int] = set()
+        while stack:
+            node, depth = stack.pop()
+            if not isinstance(node, PdfDictionary) or id(node) in seen:
+                continue
+            seen.add(id(node))
+            self._load_budget.check(
+                depth, "max_nesting_depth", "named destination tree depth"
+            )
+            pairs = self._resolve(node.mapping.get(PdfName("Names")))
+            if isinstance(pairs, PdfArray):
+                for key, value in zip(pairs.items[0::2], pairs.items[1::2]):
+                    key = self._resolve(key)
+                    if isinstance(key, PdfString) and key.value not in entries:
+                        self._load_budget.check(
+                            len(entries) + 1,
+                            "max_container_items",
+                            "named destinations",
+                        )
+                        entries[key.value] = value
+            kids = self._resolve(node.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray):
+                stack.extend((self._resolve(kid), depth + 1) for kid in kids.items)
+        return entries
+
+    def _write_dests_tree(self, catalog: PdfDictionary, entries: dict[bytes, Any]) -> None:
+        """Replace ``/Names /Dests`` with one node holding *entries*, key order.
+
+        A name tree is searched by key, so its ``/Names`` array has to stay
+        sorted (12.3.2.3 and 7.9.6). The whole tree is rewritten as a single
+        ordered node rather than spliced into: a value is carried over as the
+        *same* object or reference it already was, so no entry is copied, lost or
+        changed -- only the shape of the tree is, and a one-node tree is a tree.
+        """
+        names = self._resolve(catalog.mapping.get(PdfName("Names")))
+        if not entries:
+            if isinstance(names, PdfDictionary):
+                names.mapping.pop(PdfName("Dests"), None)
+                if not names.mapping:
+                    catalog.mapping.pop(PdfName("Names"), None)
+            self._named_destination_cache = None
+            return
+        if not isinstance(names, PdfDictionary):
+            names = PdfDictionary()
+            catalog.mapping[PdfName("Names")] = names
+        items: list[Any] = []
+        for key in sorted(entries):
+            items.append(PdfString(key))
+            items.append(entries[key])
+        names.mapping[PdfName("Dests")] = PdfDictionary(
+            {PdfName("Names"): PdfArray(items)}
+        )
+        self._named_destination_cache = None
+
+    def named_destination_entries(self) -> dict[str, Any]:
+        """Every named destination, by name, as the entry the file holds.
+
+        Keys come back as text decoded with latin-1, which is the one codec that
+        round-trips a name tree's **byte** strings unchanged: 12.3.2.3 compares
+        those keys byte for byte, so a lossy decode would be a name that no
+        longer finds its destination. The older ``/Dests`` dictionary's names are
+        included, and win where both define the same one, which is how
+        :func:`explicit_destination` resolves them.
+        """
+        self._ensure_not_disposed()
+        found: dict[str, Any] = {}
+        for key, value in self._named_destinations().items():
+            name = key.decode("latin-1") if isinstance(key, bytes) else str(key)
+            found.setdefault(name, value)
+        return found
+
+    def named_destination(self, name: str) -> Any:
+        """The destination array *name* stands for, or ``None``."""
+        self._ensure_not_disposed()
+        return explicit_destination(
+            PdfString(str(name).encode("latin-1", "replace")),
+            self._resolve,
+            self._named_destinations(),
+        )
+
+    def named_destination_target(self, name: str) -> Any:
+        """The typed destination *name* lands on, or ``None``.
+
+        ``None`` covers a name nothing defines and a destination this API has no
+        class for -- one into another file, one whose page has been deleted, or a
+        view ISO 32000-1 does not define. The entry itself is untouched either
+        way; the caller is told what can be read, not what the file holds.
+        """
+        array = self.named_destination(name)
+        if array is None:
+            return None
+        destination = self._destination_from_cos(array)
+        return None if destination is _UNRESOLVED_DESTINATION else destination
+
+    def set_named_destination(self, name: str, destination: Any) -> None:
+        """Define or replace the named destination *name*.
+
+        The entry goes where the name already lives: a name the older ``/Dests``
+        dictionary defines is updated there, so a document that uses the PDF 1.1
+        form keeps using it, and everything else goes into the ``/Names /Dests``
+        tree.
+        """
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(catalog, PdfDictionary):
+            raise PdfValidationException("The document has no catalog to name a destination in.")
+        key = _destination_name_bytes(name)
+        array = self._destination_cos(destination, self._make_page_ref)
+        legacy = self._resolve(catalog.mapping.get(PdfName("Dests")))
+        legacy_key = PdfName(key.decode("latin-1"))
+        if isinstance(legacy, PdfDictionary) and legacy_key in legacy.mapping:
+            legacy.mapping[legacy_key] = array
+            self._named_destination_cache = None
+            return
+        entries = self._dests_tree_entries(catalog)
+        entries[key] = array
+        self._write_dests_tree(catalog, entries)
+
+    def remove_named_destination(self, name: str) -> bool:
+        """Remove the named destination *name*; ``True`` when there was one.
+
+        Both places are cleared, so a name defined in the ``/Dests`` dictionary
+        *and* in the name tree does not come back from the other one.
+        """
+        self._ensure_not_disposed()
+        if self._cos_doc is None:
+            return False
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(catalog, PdfDictionary):
+            return False
+        key = _destination_name_bytes(name)
+        removed = False
+        legacy = self._resolve(catalog.mapping.get(PdfName("Dests")))
+        if isinstance(legacy, PdfDictionary):
+            if legacy.mapping.pop(PdfName(key.decode("latin-1")), None) is not None:
+                removed = True
+                if not legacy.mapping:
+                    catalog.mapping.pop(PdfName("Dests"), None)
+        entries = self._dests_tree_entries(catalog)
+        if key in entries:
+            del entries[key]
+            self._write_dests_tree(catalog, entries)
+            removed = True
+        if removed:
+            self._named_destination_cache = None
+        return removed
+
+    def clear_named_destinations(self) -> None:
+        """Remove every named destination, from both places they live."""
+        self._ensure_not_disposed()
+        if self._cos_doc is None:
+            return
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(catalog, PdfDictionary):
+            return
+        catalog.mapping.pop(PdfName("Dests"), None)
+        self._write_dests_tree(catalog, {})
+
     def _loaded_target_still_lands(self, loaded: Any) -> bool:
         """True unless the target names a page this document no longer has.
 
@@ -3029,7 +3225,13 @@ class SimplePdf:
 
         def build_outline_item(
             item: dict, parent_ref: PdfIndirectReference
-        ) -> PdfIndirectReference | None:
+        ) -> tuple[PdfIndirectReference, int] | None:
+            """Write one item, and say how many rows it shows when open.
+
+            That number is what ``/Count`` is made of (Table 153): the items a
+            viewer would draw under this one, which is each child plus, for a
+            child that is itself open, everything *it* shows.
+            """
             flags = (1 if item.get("is_italic") else 0) | (
                 2 if item.get("is_bold") else 0
             )
@@ -3071,17 +3273,31 @@ class SimplePdf:
             if flags:
                 outline_dict.mapping[PdfName("F")] = PdfNumber(flags)
 
+            color = item.get("color")
+            if color is not None:
+                outline_dict.mapping[PdfName("C")] = PdfArray(
+                    [PdfNumber(float(value)) for value in color]
+                )
+
             children = item.get("children", [])
             child_refs: list[PdfIndirectReference] = []
+            visible = 0
             for child in children:
-                child_ref = build_outline_item(child, item_ref)
-                if child_ref is not None:
-                    child_refs.append(child_ref)
+                built = build_outline_item(child, item_ref)
+                if built is None:
+                    continue
+                child_ref, child_visible = built
+                child_refs.append(child_ref)
+                visible += 1 + (child_visible if child.get("open") else 0)
 
             if child_refs:
                 outline_dict.mapping[PdfName("First")] = child_refs[0]
                 outline_dict.mapping[PdfName("Last")] = child_refs[-1]
-                outline_dict.mapping[PdfName("Count")] = PdfNumber(-len(child_refs))
+                # Positive when the item is open, negative when it is closed, and
+                # the magnitude is the same either way: what opening it shows.
+                outline_dict.mapping[PdfName("Count")] = PdfNumber(
+                    visible if item.get("open") else -visible
+                )
 
             if child_refs:
                 for i, ref in enumerate(child_refs):
@@ -3093,21 +3309,23 @@ class SimplePdf:
                         if i < len(child_refs) - 1:
                             obj.mapping[PdfName("Next")] = child_refs[i + 1]
 
-            return item_ref
+            return item_ref, visible
 
-        outline_root = PdfDictionary(
-            {
-                PdfName("Type"): PdfName("Outlines"),
-                PdfName("Count"): PdfNumber(len(outline_items)),
-            }
-        )
+        outline_root = PdfDictionary({PdfName("Type"): PdfName("Outlines")})
         outline_root_ref = self._register_at(outline_root, next_slot())
 
         item_refs: list[PdfIndirectReference] = []
+        root_visible = 0
         for item in outline_items:
-            ref = build_outline_item(item, outline_root_ref)
-            if ref is not None:
-                item_refs.append(ref)
+            built = build_outline_item(item, outline_root_ref)
+            if built is None:
+                continue
+            ref, visible = built
+            item_refs.append(ref)
+            root_visible += 1 + (visible if item.get("open") else 0)
+        # The root's /Count is every row the panel shows (Table 152): the
+        # top-level items plus whatever the open ones have unfolded.
+        outline_root.mapping[PdfName("Count")] = PdfNumber(root_visible)
 
         if item_refs:
             outline_root.mapping[PdfName("First")] = item_refs[0]
@@ -9654,7 +9872,14 @@ class SimplePdf:
             return self._destination_cos(target, self._make_page_ref), "Dest"
         if isinstance(target, Action):
             return self._action_cos(target), "A"
-        raise TypeError("target must be an Action or a Destination")
+        if isinstance(target, str):
+            # A named destination: the name itself goes in /Dest (12.3.2.3), and
+            # the catalog says where it lands. Reading one back gives the name
+            # again, so this is the inverse of what the property channel reports.
+            return PdfString(_destination_name_bytes(target)), "Dest"
+        raise TypeError(
+            "target must be an Action, a Destination, or the name of one"
+        )
 
     def _build_button_icon(self, data: bytes) -> tuple[Any, int, int]:
         """Wrap image *data* in a form XObject usable as ``/MK /I``.
@@ -17708,6 +17933,21 @@ class CosExtractor:
             if isinstance(flags_obj, PdfNumber):
                 flags = int(flags_obj.value)
 
+            # Title colour (/C), three DeviceRGB numbers; anything else is not a
+            # colour and is read as none rather than as part of one.
+            color = None
+            color_obj = self._resolve(item.mapping.get(PdfName("C")))
+            if isinstance(color_obj, PdfArray) and len(color_obj.items) == 3:
+                channels = [self._resolve(value) for value in color_obj.items]
+                if all(isinstance(value, PdfNumber) for value in channels):
+                    color = tuple(
+                        min(1.0, max(0.0, float(value.value))) for value in channels
+                    )
+
+            # /Count is positive for an item a viewer shows unfolded (Table 153).
+            count_obj = self._resolve(item.mapping.get(PdfName("Count")))
+            is_open = isinstance(count_obj, PdfNumber) and count_obj.value > 0
+
             # Children
             children: list[dict] = []
             first_child = item.mapping.get(PdfName("First"))
@@ -17726,6 +17966,8 @@ class CosExtractor:
                     "page_index": page_index,
                     "is_bold": bool(flags & 2),
                     "is_italic": bool(flags & 1),
+                    "color": color,
+                    "open": is_open,
                     "target": target,
                     "loaded_target": loaded_target,
                     "children": children,

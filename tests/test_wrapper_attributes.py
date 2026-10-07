@@ -128,6 +128,7 @@ def test_the_dict_helper_still_describes_a_slotted_object():
 
     described = _object_to_dict(OutlineItem("T", 2, is_bold=True))
     assert described == {
-        "title": "T", "is_bold": True, "is_italic": False, "children": [],
+        "title": "T", "is_bold": True, "is_italic": False, "open": False,
+        "children": [],
     }
     are_objects_json_equal(OutlineItem("T", 2), OutlineItem("T", 2))
