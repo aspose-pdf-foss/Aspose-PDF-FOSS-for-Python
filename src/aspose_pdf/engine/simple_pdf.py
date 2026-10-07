@@ -9915,8 +9915,8 @@ class SimplePdf:
             return decode_pdf_text_string(val)
         return ""
 
-    def add_annotation(self, page_index: int, data: dict[str, Any]) -> None:
-        """Add an annotation to a page."""
+    def add_annotation(self, page_index: int, data: dict[str, Any]) -> int | None:
+        """Add an annotation to a page, and return the index it was added at."""
         self._ensure_not_disposed()
         self._ensure_cos()
         if self._cos_doc is None:
@@ -9972,6 +9972,9 @@ class SimplePdf:
             annots_array = self._resolve(annots_ref)
             if isinstance(annots_array, PdfArray):
                 annots_array.items.append(annot_ref)
+        # The index it landed at, which is what a caller linking one annotation
+        # to another has to name it by.
+        return len(annots_array.items) - 1 if isinstance(annots_array, PdfArray) else None
 
     # -- typed interactive targets (actions / destinations) ---------------
 
@@ -10176,6 +10179,134 @@ class SimplePdf:
             annots_array = self._resolve(annots_ref)
             if isinstance(annots_array, PdfArray):
                 annots_array.items.append(annot_ref)
+
+    def _annotation_refs(self, page_index: int) -> list[Any]:
+        """The page's ``/Annots`` entries, as the references the array holds."""
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            return []
+        annots = self._resolve(page.mapping.get(PdfName("Annots")))
+        return list(annots.items) if isinstance(annots, PdfArray) else []
+
+    def _annotation_ref(self, page_index: int, annot_index: int) -> Any:
+        """The reference to one annotation, or a refusal naming the index."""
+        refs = self._annotation_refs(page_index)
+        if annot_index < 0 or annot_index >= len(refs):
+            raise PdfValidationException("Annotation index out of range")
+        ref = refs[annot_index]
+        if not isinstance(ref, PdfIndirectReference):
+            raise PdfValidationException(
+                "That annotation is written inline in the page, so nothing can "
+                "point at it; only an indirect object has a reference."
+            )
+        return ref
+
+    def annotation_links(self, page_index: int, annot_index: int) -> dict[str, Any]:
+        """What one annotation says about the others around it, by index.
+
+        ``in_reply_to`` is the annotation this one replies to (``/IRT``),
+        ``popup`` its popup window (``/Popup``), ``parent`` the annotation a popup
+        belongs to (``/Parent``), and ``replies`` every annotation on the page
+        whose ``/IRT`` names this one.
+
+        These are **references between annotations**, which the plain property
+        channel deliberately drops: a reference is not a value, and handing one
+        out as a nested dictionary would let a caller write back a copy of an
+        annotation that already exists. Indices are what the public surface names
+        annotations by, so indices are what this answers with.
+        """
+        self._ensure_not_disposed()
+        refs = self._annotation_refs(page_index)
+        if annot_index < 0 or annot_index >= len(refs):
+            raise PdfValidationException("Annotation index out of range")
+        numbers = {
+            ref.object_number: index
+            for index, ref in enumerate(refs)
+            if isinstance(ref, PdfIndirectReference)
+        }
+        annot = self._resolve(refs[annot_index])
+        links: dict[str, Any] = {
+            "in_reply_to": None,
+            "popup": None,
+            "parent": None,
+            "replies": [],
+        }
+        if not isinstance(annot, PdfDictionary):
+            return links
+        for key, name in (("IRT", "in_reply_to"), ("Popup", "popup"), ("Parent", "parent")):
+            value = annot.mapping.get(PdfName(key))
+            if isinstance(value, PdfIndirectReference):
+                links[name] = numbers.get(value.object_number)
+        own = refs[annot_index]
+        if isinstance(own, PdfIndirectReference):
+            for index, ref in enumerate(refs):
+                other = self._resolve(ref)
+                if index == annot_index or not isinstance(other, PdfDictionary):
+                    continue
+                irt = other.mapping.get(PdfName("IRT"))
+                if (
+                    isinstance(irt, PdfIndirectReference)
+                    and irt.object_number == own.object_number
+                ):
+                    links["replies"].append(index)
+        return links
+
+    def add_annotation_reply(
+        self, page_index: int, parent_index: int, data: dict[str, Any]
+    ) -> int:
+        """Add an annotation that replies to the one at *parent_index*.
+
+        ISO 32000-1 12.5.6.2: a reply is an ordinary markup annotation carrying
+        ``/IRT``, the annotation it is in reply to, and ``/RT /Reply`` to say that
+        it replies rather than grouping. A viewer shows the two as one thread.
+        """
+        parent_ref = self._annotation_ref(page_index, parent_index)
+        payload = dict(data)
+        properties = dict(payload.get("Properties") or {})
+        properties.setdefault("RT", AnnotationName("Reply"))
+        payload["Properties"] = properties
+        index = self.add_annotation(page_index, payload)
+        if index is None:
+            raise PdfValidationException("The reply could not be added to the page")
+        annot = self._resolve(self._annotation_ref(page_index, index))
+        if isinstance(annot, PdfDictionary):
+            annot.mapping[PdfName("IRT")] = parent_ref
+        return index
+
+    def add_annotation_popup(
+        self,
+        page_index: int,
+        parent_index: int,
+        rect: Any,
+        *,
+        is_open: bool = False,
+    ) -> int:
+        """Add the popup window of the annotation at *parent_index*.
+
+        Linked both ways, as 12.5.6.14 requires: the popup's ``/Parent`` names the
+        annotation it belongs to and that annotation's ``/Popup`` names the popup.
+        One alone leaves a window a viewer cannot associate with anything.
+        """
+        parent_ref = self._annotation_ref(page_index, parent_index)
+        index = self.add_annotation(
+            page_index,
+            {
+                "Subtype": "Popup",
+                "Rect": rect,
+                "Contents": "",
+                "Properties": {"Open": bool(is_open)},
+            },
+        )
+        if index is None:
+            raise PdfValidationException("The popup could not be added to the page")
+        popup_ref = self._annotation_ref(page_index, index)
+        popup = self._resolve(popup_ref)
+        parent = self._resolve(parent_ref)
+        if isinstance(popup, PdfDictionary):
+            popup.mapping[PdfName("Parent")] = parent_ref
+        if isinstance(parent, PdfDictionary):
+            parent.mapping[PdfName("Popup")] = popup_ref
+        return index
 
     def insert_annotation(
         self, page_index: int, annot_index: int, data: dict[str, Any]

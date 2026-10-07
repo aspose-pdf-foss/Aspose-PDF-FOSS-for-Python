@@ -9,6 +9,40 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **An annotation class per subtype, and the comment threads the property channel
+  could not carry.** Reading and writing annotations worked — every entry
+  travelled through `Annotation.properties`, which is what preserves subtypes this
+  API has no class for — but a caller had to know the standard's spellings
+  (`/IC`, `/QuadPoints`, `/Vertices`, `/InkList`, `/L`, `/LE`, `/CA`, `/BS`) and
+  get the corner order of a quadrilateral right by hand.
+  - `TextAnnotation`, `FreeTextAnnotation`, `SquareAnnotation`,
+    `CircleAnnotation`, `LineAnnotation`, `PolygonAnnotation`,
+    `PolyLineAnnotation`, `InkAnnotation`, the four text markups,
+    `StampAnnotation`, `FileAttachmentAnnotation`, `RedactAnnotation` and
+    `PopupAnnotation` name those entries. The typed properties *are* the property
+    channel — `square.interior_color` and `square.get_property("IC")` are the same
+    entry — and a subtype with no class of its own is still read as it was.
+  - Shared markup entries: `opacity`, `subject`, `creation_date`, `modified`, and
+    `border_width`/`border_style`/`border_dash`, which edit one `/BS` dictionary
+    entry at a time instead of replacing it.
+  - A factory per subtype, each computing a `/Rect` that holds what the annotation
+    draws (12.5.2) with room for the stroke and the line endings, and
+    `quad_from_rect` writing the corner order viewers expect (12.5.6.10) — the
+    order whose classic mistake draws a highlight as a bow tie. A single rectangle
+    handed to a text-markup factory is taken as the one quad it describes.
+  - **Replies and popups**: `annotation.reply(...)` writes `/IRT` and
+    `/RT /Reply`, `replies` and `in_reply_to` read the thread, and `add_popup()`
+    links a window **both ways** (`/Parent` and `/Popup`), since one without the
+    other leaves a window a viewer cannot associate with anything. These are
+    references between annotations, which the property channel drops on purpose,
+    so there had been no way to thread a comment at all.
+  - `Annotation.color` reads the same forms every other colour in the package
+    does: 1/3/4 components, a `"#rrggbb"` string, or an `aspose_pdf.Color`.
+  - Checked with qpdf 12.4.2: a reply's `/IRT` is the same object as the
+    annotation it answers, a popup and its annotation point at each other, and
+    `/BS`, `/CA`, `/IC`, `/QuadPoints` and `/LE` are written as the tables type
+    them.
+
 - **Paths, the stroke state, transparency and clipping, on the authoring side.**
   A page could be given exactly two things: an axis-aligned rectangle and a
   straight line. No curve, no circle, no polygon, no dash, no line cap or join,

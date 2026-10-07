@@ -149,6 +149,10 @@ flowchart TD
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content.
+- One annotation class per subtype — `page.annotations.add_square(...)`, `add_highlight(...)`,
+  `add_line(...)`, `add_ink(...)` and the rest — with the entries each subtype is defined by named
+  (`interior_color`, `quad_points`, `vertices`, `ink_list`, `opacity`, `border_width`), and
+  `annotation.reply("...")` / `annotation.add_popup()` for comment threads and popup windows.
 - `Annotation` and `AnnotationCollection` read, add, and auto-generate `/AP /N` appearance
   streams for the standard shape and text-markup annotation subtypes.
 - `Document.encrypt(..., algorithm=...)` and `Document.decrypt()` apply and remove standard-handler

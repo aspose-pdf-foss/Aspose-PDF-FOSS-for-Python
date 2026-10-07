@@ -2143,6 +2143,56 @@ Supported:
 
 - Read page annotations through `Page.annotations`.
 - Add, insert, update, delete, clear, iterate, and index annotations.
+- **One class per subtype, over the one property channel.** `TextAnnotation`,
+  `FreeTextAnnotation`, `SquareAnnotation`, `CircleAnnotation`, `LineAnnotation`,
+  `PolygonAnnotation`, `PolyLineAnnotation`, `InkAnnotation`,
+  `HighlightAnnotation`, `UnderlineAnnotation`, `StrikeOutAnnotation`,
+  `SquigglyAnnotation`, `StampAnnotation`, `FileAttachmentAnnotation`,
+  `RedactAnnotation`, `PopupAnnotation` and `LinkAnnotation` name the entries
+  their own subtype is defined by, so a caller does not have to remember the
+  standard's spellings. A subtype with no class of its own is still read -- as
+  `MarkupAnnotation` where it is one, `Annotation` otherwise -- and the typed
+  properties *are* the property channel: `square.interior_color` and
+  `square.get_property("IC")` are the same entry, and an entry no class names
+  round-trips as it always did.
+  - Shared by every markup annotation: `opacity` (`/CA`), `subject` (`/Subj`),
+    `creation_date` (`/CreationDate`), `modified` (`/M`), and the border as
+    `border_width` / `border_style` / `border_dash`, which edit the entries of one
+    `/BS` dictionary rather than replacing it -- setting the width leaves a dash
+    pattern alone, and removing the last entry removes `/BS`.
+  - Per subtype: `interior_color` (`/IC`) on the shapes and redactions,
+    `start`/`end`/`set_line`/`line_endings` on a line, `vertices` on a polygon or
+    polyline, `ink_list` on ink (a list of strokes, so two marks stay two),
+    `quad_points` on the four text markups and redactions,
+    `default_appearance`/`alignment`/`rich_text` on free text, `icon` on a note, a
+    stamp and a file attachment, `is_open`/`state`/`state_model` on a note,
+    `overlay_text` on a redaction, `is_open` on a popup.
+  - `color` (`/C`) now reads the same forms every other colour in the package
+    does: one, three or four components, a `"#rrggbb"` string, or an
+    `aspose_pdf.Color`.
+  - A factory per subtype on the collection -- `add_text`, `add_free_text`,
+    `add_square`, `add_circle`, `add_line`, `add_polygon`, `add_polyline`,
+    `add_ink`, `add_highlight`, `add_underline`, `add_strike_out`, `add_squiggly`,
+    `add_stamp`, `add_redact` -- each taking the geometry that subtype needs and
+    computing a `/Rect` that **holds what it draws** (12.5.2) where the geometry
+    implies one, with room for the stroke width and what a line ending reaches
+    past. `quad_from_rect` writes a rectangle as the four corners `/QuadPoints`
+    wants, in the upper-left, upper-right, lower-left, lower-right order viewers
+    expect (12.5.6.10) -- the order whose classic mistake draws a highlight as a
+    bow tie -- and a single rectangle handed to a text-markup factory is taken as
+    the one quad it describes.
+- **Replies and popups** (12.5.6.2, 12.5.6.14), which are the one thing the
+  property channel cannot carry: they are *references* between annotations rather
+  than values, and handing one out as a nested dictionary would let a caller write
+  back a second copy of an annotation that already exists. `Annotation.reply()`
+  adds an annotation carrying `/IRT` and `/RT /Reply`, so a viewer shows the two
+  as one thread; `replies` lists what answers an annotation, `in_reply_to` what it
+  answers. `Annotation.add_popup()` adds the window and links it **both ways** --
+  the popup's `/Parent` and the annotation's `/Popup` -- since one without the
+  other leaves a window a viewer cannot associate with anything; `popup` and
+  `parent_annotation` read the pair back. Replies thread onto replies. Checked
+  against **qpdf 12.4.2**: the references are the same objects, and the entries
+  the factories write are the ones the tables name.
 - Preserve all standard annotation subtypes (for example `Text`, `Link`,
   `FreeText`, `Line`, `Square`, `Circle`, `Polygon`, `PolyLine`, `Highlight`,
   `Underline`, `Squiggly`, `StrikeOut`, `Stamp`, `Caret`, `Ink`) through
