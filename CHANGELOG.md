@@ -9,6 +9,37 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **How a form field looks, and what a field, a page or the document does.** Two
+  holes, both on the authoring side. A field could be created but not styled:
+  `/MK` was written with a hardcoded black border and a white background, `/BS`
+  with a width of 1, the `/DA` colour was always black, and `border_color` and
+  `background` reached the widget of a **push button** only — while the appearance
+  generator had read `/MK /BC` and `/MK /BG` all along, so the drawing side was
+  waiting for entries nothing could set. And there were no actions anywhere: not a
+  field's `/AA` (the keystroke, format, validate and calculate scripts that make a
+  form compute), not a page's, not the catalog's, and not the document-level
+  scripts of `/Names /JavaScript` where the functions those call are defined.
+  `JavaScriptAction` existed with nowhere to put one but a link.
+  - Every factory now takes `border_color`, `background_color`, `border_width`,
+    `border_style`, `rotation` and `text_color`, and a `Field` has each as a
+    property plus `font_size` and `set_appearance(**options)`. Setting one entry
+    leaves the others alone; `None` removes one. A `font_size` of 0 is auto-size
+    (12.7.3.3), which the appearance generator already resolved.
+  - `Field.actions`, `Page.actions` and `Document.actions` are mappings of trigger
+    to action. `keystroke`, `format`, `validate` and `calculate` are written on the
+    **field** and the pointer and focus triggers on the **widget** — which is
+    where a viewer looks for each — and a trigger the owner does not have is
+    refused, since a viewer never fires one and the mistake would otherwise be
+    invisible.
+  - `Document.javascript` is the document-level script tree. It is written sorted,
+    because a viewer runs the scripts in key order, and each script goes **into**
+    the tree as a direct dictionary: an indirect action would stay in the file as
+    an orphan when the script was removed, with its source still readable.
+  - Checked with qpdf 12.4.2: `/DA` carries the size and the colour, `/AA /V` is on
+    the field and `/AA /U` on the widget, `/MK` holds `/BC`, `/BG` and `/R`, `/BS`
+    holds `/W` and `/S`, the page and catalog `/AA` are where the tables put them,
+    and the script tree is in key order.
+
 - **An annotation class per subtype, and the comment threads the property channel
   could not carry.** Reading and writing annotations worked — every entry
   travelled through `Annotation.properties`, which is what preserves subtypes this

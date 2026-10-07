@@ -146,6 +146,11 @@ flowchart TD
 - `Page.add_stamp` and `Document.add_stamp` put a text, image or page-number stamp over or
   under a page — aligned in the box a reader shows, upright whatever the page's rotation, with
   opacity and rotation, and written once however many pages it goes on.
+- Fields carry their own look and their own behaviour: `border_color`, `background_color`,
+  `border_width`, `border_style`, `rotation`, `text_color` and `font_size=0` for auto-size, plus
+  `field.actions["validate"] = JavaScriptAction(...)` for the keystroke, format, validate and
+  calculate scripts that make a form compute. `page.actions`, `document.actions` and
+  `document.javascript` are the page, catalog and document-level script equivalents.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content.

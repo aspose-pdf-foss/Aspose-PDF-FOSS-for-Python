@@ -2025,6 +2025,49 @@ Supported:
   `/DR` and `/DA`, common/type-specific flags, choice `/Opt` and multiselect
   `/I`, `/DV`, and generated appearances. Choice options may be strings or
   `(export_value, display_value)` pairs.
+- **How a field looks** (`/MK`, `/BS`, `/DA`), at creation or afterwards. Every
+  factory takes `border_color`, `background_color`, `border_width`,
+  `border_style` (`solid`, `dashed`, `beveled`, `inset`, `underline`, or the
+  letter), `rotation` (`/MK /R`, a multiple of 90 -- the rectangle stays put and
+  what is drawn in it turns) and `text_color`, and a `Field` has each of those as
+  a property plus `font_size` and `set_appearance(**options)`. `None` removes an
+  entry, so a field can be made borderless or transparent again, and setting one
+  entry leaves the others alone: a background does not take a dash pattern with
+  it. These used to reach the widget of a **push button** only, while every other
+  field got a hardcoded black border and a white background -- and the appearance
+  generator had read `/MK /BC` and `/MK /BG` all along, so the drawing side was
+  waiting for entries nothing could set. Colours are read the way every colour in
+  the package is (grey, RGB, CMYK, `"#rrggbb"`, an `aspose_pdf.Color`).
+  A **`font_size` of 0 is auto-size** (12.7.3.3): the appearance generator picks a
+  size that fits the widget's height.
+- **What a field, a page or the document does** (`/AA`, 12.6.3), through an
+  `actions` mapping of trigger to `aspose_pdf.interactive` action:
+  - `Field.actions` takes `keystroke`, `format`, `validate` and `calculate` --
+    which are written on the **field**, where a viewer looks for the handling of a
+    value -- and `enter`, `exit`, `mouse_down`, `mouse_up`, `focus`, `blur` and the
+    page triggers, which go on each **widget**, which is what a pointer reaches.
+    The widget's activation action (`/A`) is in the same mapping under `A`.
+  - `Page.actions` takes `open` and `close` (Table 194).
+  - `Document.actions` takes `will_close`, `will_save`, `did_save`, `will_print`
+    and `did_print`, on the catalog (Table 197). What happens when the document is
+    *opened* stays `Document.open_action` (`/OpenAction`, 12.6.2).
+  - A trigger the owner does not have is **refused**, because a viewer simply
+    never fires one and the mistake would otherwise be invisible. The standard's
+    own key (`"V"`, `"O"`, `"WP"`) is accepted as well as the friendly name.
+    Assigning `None`, or deleting the key, removes the trigger and the `/AA`
+    dictionary with the last of them.
+- **Document-level JavaScript** (12.6.4.17) through `Document.javascript`, a
+  mapping of name to source over the catalog's `/Names /JavaScript` name tree --
+  where the functions a field's scripts call are defined. A viewer runs them in
+  **key order**, which is why such names are usually numbered, and the tree is
+  written sorted. A script is written **into** the tree as a direct dictionary
+  rather than as an object of its own, so removing one leaves nothing behind: an
+  indirect action would stay in the file as an orphan whose source is still
+  readable. Names are latin-1, as in [the destinations tree](#documents), and the
+  two trees live side by side on the catalog without displacing each other.
+  Checked against **qpdf 12.4.2**: `/DA` carries the size and the colour, the
+  value scripts are on the field and the pointer ones on the widget, `/MK` holds
+  `/BC`, `/BG` and `/R`, `/BS` holds `/W` and `/S`, and the script tree is sorted.
 - Author empty (unsigned) signature fields with `Form.add_signature_field()`.
   The field is written as `/FT /Sig` with a widget on the page, the AcroForm
   `/SigFlags` SignaturesExist bit is set (existing bits preserved), the widget

@@ -23,6 +23,11 @@ from aspose_pdf._compat_surface import (
 from aspose_pdf._compat_surface import (
     require_pdf_save_format as _require_pdf_save_format,
 )
+from aspose_pdf.actions import (
+    DOCUMENT_TRIGGERS,
+    ActionCollection,
+    JavaScriptCollection,
+)
 from aspose_pdf.attachments import AF_RELATIONSHIPS, FileSpecification
 from aspose_pdf.color import ColorValue
 from aspose_pdf.destinations import NamedDestinationCollection
@@ -215,6 +220,7 @@ class Document:
         self._form: Any | None = None
         self._outlines: OutlineCollection | None = None
         self._destinations: NamedDestinationCollection | None = None
+        self._javascript: JavaScriptCollection | None = None
         self._tagged_content: Any | None = None
         self._password: str | None = None
         self._encrypted: bool = False
@@ -1135,6 +1141,48 @@ class Document:
         from aspose_pdf.engine.optional_content import flatten
 
         return flatten(self._engine_pdf)
+
+    @property
+    def actions(self) -> ActionCollection:
+        """What the document does around saving, printing and closing (``/AA``).
+
+        ISO 32000-1 12.6.3, Table 197: ``will_close``, ``will_save``,
+        ``did_save``, ``will_print`` and ``did_print``, on the catalog::
+
+            document.actions["will_print"] = JavaScriptAction("...")
+
+        :attr:`open_action` is the separate entry for what happens when the
+        document is *opened* (12.6.2), and :attr:`javascript` holds the scripts a
+        viewer runs before any of it.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        engine = self._engine_pdf
+        return ActionCollection(
+            DOCUMENT_TRIGGERS,
+            engine.get_document_actions,
+            engine.set_document_action,
+            "document",
+        )
+
+    @property
+    def javascript(self) -> JavaScriptCollection:
+        """The document-level scripts, as a mapping of name to source.
+
+        ISO 32000-1 12.6.4.17: the catalog's ``/Names /JavaScript`` name tree
+        holds what a viewer runs when the document opens -- the place to define
+        the functions a field's ``/AA`` scripts call -- and it runs them **in key
+        order**, which is why such names are usually written to sort the way they
+        are meant to run::
+
+            document.javascript["00_helpers"] = "function total(a, b) ..."
+            del document.javascript["00_helpers"]
+        """
+        self._ensure_not_disposed()
+        if self._javascript is None:
+            self._javascript = JavaScriptCollection(self)
+        return self._javascript
 
     @property
     def destinations(self) -> NamedDestinationCollection:

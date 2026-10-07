@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from aspose_pdf.actions import FIELD_TRIGGERS, ActionCollection
 from aspose_pdf.engine.form_fields import validate_choice_value
 from aspose_pdf.exceptions import PdfValidationException
 
@@ -330,6 +331,145 @@ class Field:
             return []
         return on_states(self._engine(), self._dictionary())
 
+    # -- how it looks (/MK, /BS, /DA) --------------------------------------
+
+    def _appearance(self) -> dict[str, Any]:
+        return self._engine().get_field_appearance(self._name)
+
+    def _set_appearance(self, **options: Any) -> None:
+        self._engine().set_field_appearance(self._name, **options)
+
+    @property
+    def border_color(self) -> tuple[float, ...] | None:
+        """The colour of the widget's border (``/MK /BC``), or ``None``.
+
+        Read the way every colour in the package is -- grey, RGB or CMYK, a
+        ``"#rrggbb"`` string, or an :class:`~aspose_pdf.color.Color` -- and
+        ``None`` removes the entry, which is a field with no border drawn.
+        :meth:`Form.generate_appearances` draws what these entries say.
+        """
+        return self._appearance()["border_color"]
+
+    @border_color.setter
+    def border_color(self, value: Any) -> None:
+        self._set_appearance(border_color=value)
+
+    @property
+    def background_color(self) -> tuple[float, ...] | None:
+        """The colour behind the widget (``/MK /BG``), or ``None`` for none."""
+        return self._appearance()["background_color"]
+
+    @background_color.setter
+    def background_color(self, value: Any) -> None:
+        self._set_appearance(background_color=value)
+
+    @property
+    def border_width(self) -> float | None:
+        """The width of the widget's border in points (``/BS /W``)."""
+        return self._appearance()["border_width"]
+
+    @border_width.setter
+    def border_width(self, value: float | None) -> None:
+        self._set_appearance(border_width=value)
+
+    @property
+    def border_style(self) -> str | None:
+        """The widget's border style (``/BS /S``): ``S``, ``D``, ``B``, ``I``, ``U``.
+
+        Assigning takes the word as well as the letter: ``"solid"``, ``"dashed"``,
+        ``"beveled"``, ``"inset"``, ``"underline"``.
+        """
+        return self._appearance()["border_style"]
+
+    @border_style.setter
+    def border_style(self, value: str | None) -> None:
+        self._set_appearance(border_style=value)
+
+    @property
+    def rotation(self) -> int | None:
+        """How far the widget's content is turned inside its rectangle (``/MK /R``).
+
+        A multiple of 90, counter-clockwise. The rectangle does not move; what is
+        drawn in it does, which is how a field reads sideways on a rotated page.
+        """
+        return self._appearance()["rotation"]
+
+    @rotation.setter
+    def rotation(self, value: int | None) -> None:
+        self._set_appearance(rotation=value)
+
+    @property
+    def text_color(self) -> tuple[float, ...] | None:
+        """The colour the value is drawn in, from the field's ``/DA``."""
+        return self._appearance()["text_color"]
+
+    @text_color.setter
+    def text_color(self, value: Any) -> None:
+        self._set_appearance(text_color=value)
+
+    @property
+    def font_size(self) -> float | None:
+        """The size the value is drawn at, from ``/DA``; ``0`` means auto.
+
+        Auto-size is what ISO 32000-1 12.7.3.3 calls a size of 0: the appearance
+        generator picks a size that fits the widget's height, which is what makes
+        a one-line field readable whatever it was drawn at.
+        """
+        return self._appearance()["font_size"]
+
+    @font_size.setter
+    def font_size(self, value: float | None) -> None:
+        self._set_appearance(font_size=value)
+
+    def set_appearance(self, **options: Any) -> Field:
+        """Set several appearance entries at once, and return the field.
+
+        Takes the same names as the properties above. Only what is passed is
+        touched, so a background can be set without disturbing a border.
+        """
+        allowed = {
+            "border_color",
+            "background_color",
+            "border_width",
+            "border_style",
+            "rotation",
+            "text_color",
+            "font_size",
+        }
+        unknown = set(options) - allowed
+        if unknown:
+            raise TypeError(
+                "Unknown appearance options: " + ", ".join(sorted(unknown))
+            )
+        self._set_appearance(**options)
+        return self
+
+    # -- what it does (/AA, /A) --------------------------------------------
+
+    @property
+    def actions(self) -> ActionCollection:
+        """What the field does when something happens to it (``/AA``, ``/A``).
+
+        A mapping of trigger to :class:`~aspose_pdf.interactive.Action`::
+
+            field.actions["validate"] = JavaScriptAction("event.rc = ...")
+            field.actions["format"] = JavaScriptAction("...")
+            field.actions["mouse_up"] = JavaScriptAction("...")
+
+        ``keystroke``, ``format``, ``validate`` and ``calculate`` are written on
+        the **field**, where a viewer looks for the handling of a value; the mouse
+        and focus triggers go on each **widget**, which is what a pointer reaches.
+        ``A``, the widget's activation action, is in the same mapping.
+        """
+        return ActionCollection(
+            {**FIELD_TRIGGERS, "A": "A"},
+            lambda: self._engine().get_field_actions(self._name),
+            lambda key, action: self._engine().set_field_action(
+                self._name, key, action
+            ),
+            "field",
+        )
+
     @property
     def widgets(self) -> list[FieldWidget]:
         """Each place the field appears: page and rectangle, one per widget."""
@@ -452,13 +592,41 @@ class Form:
         return int(alignment)
 
     @staticmethod
-    def _default_appearance(font_size: float) -> str:
+    def _default_appearance(font_size: float, text_color: Any = None) -> str:
+        """The ``/DA`` string: the font, its size, and the colour of the value.
+
+        A size of 0 is auto-size (12.7.3.3), which the appearance generator
+        resolves against the widget's height.
+        """
         if isinstance(font_size, bool) or not isinstance(font_size, (int, float)):
             raise TypeError("font_size must be a number")
         size = float(font_size)
         if not math.isfinite(size) or size < 0:
             raise PdfValidationException("font_size must be finite and non-negative")
-        return f"/Helv {size:g} Tf 0 g"
+        if text_color is None:
+            colour = "0 g"
+        else:
+            from aspose_pdf.engine.content_authoring import color_operator
+
+            colour = color_operator(text_color, stroking=False)
+        return f"/Helv {size:g} Tf {colour}"
+
+    @staticmethod
+    def _appearance_options(options: dict[str, Any]) -> dict[str, Any]:
+        """The ``/MK`` and ``/BS`` options a factory passes to the engine."""
+        allowed = {
+            "border_color": "border_color",
+            "background_color": "background",
+            "border_width": "border_width",
+            "border_style": "border_style",
+            "rotation": "rotation",
+        }
+        unknown = set(options) - set(allowed)
+        if unknown:
+            raise TypeError(
+                "Unknown appearance options: " + ", ".join(sorted(unknown))
+            )
+        return {allowed[key]: value for key, value in options.items()}
 
     @staticmethod
     def _common_flags(*, read_only: bool, required: bool) -> int:
@@ -487,12 +655,20 @@ class Form:
         alignment: str | int = "left",
         read_only: bool = False,
         required: bool = False,
+        text_color: Any = None,
+        **appearance: Any,
     ) -> Field:
         """Add an editable text field and return it.
 
         *font* embeds a Type0 (CID) field font — bytes/path/``FontDescriptor`` —
         so a non-Latin *value* renders (its ``/AP`` is baked with CID codes at
         authoring time). Without *font*, the Standard-14 ``/DR`` Helvetica is used.
+
+        ``font_size=0`` is **auto-size** (12.7.3.3): the appearance generator
+        picks a size that fits the widget. ``text_color`` is the colour the value
+        is drawn in, and ``**appearance`` takes ``border_color``,
+        ``background_color``, ``border_width``, ``border_style`` and ``rotation``
+        — the ``/MK`` and ``/BS`` entries :meth:`Field.set_appearance` also sets.
         """
         if not isinstance(value, str):
             raise TypeError("Text field value must be a string")
@@ -507,9 +683,10 @@ class Form:
             [{"page_index": self._page_index(page), "rect": rect}],
             value=value,
             flags=flags,
-            default_appearance=self._default_appearance(font_size),
+            default_appearance=self._default_appearance(font_size, text_color),
             alignment=self._alignment_value(alignment),
             font=font,
+            **self._appearance_options(appearance),
         )
 
     def add_checkbox(
@@ -522,6 +699,7 @@ class Form:
         on_value: str = "Yes",
         read_only: bool = False,
         required: bool = False,
+        **appearance: Any,
     ) -> Field:
         """Add a check box with generated Off/on appearances."""
         if not isinstance(checked, bool):
@@ -533,6 +711,7 @@ class Form:
             value=checked,
             flags=self._common_flags(read_only=read_only, required=required),
             on_value=on_value,
+            **self._appearance_options(appearance),
         )
 
     def add_radio_group(
@@ -545,6 +724,7 @@ class Form:
         value: str | None = None,
         read_only: bool = False,
         required: bool = False,
+        **appearance: Any,
     ) -> Field:
         """Add a radio field whose option names map to widget rectangles."""
         items = list(options.items()) if isinstance(options, Mapping) else list(options)
@@ -570,7 +750,14 @@ class Form:
         if value is not None and not isinstance(value, str):
             raise TypeError("Radio value must be a string or None")
         flags = self._common_flags(read_only=read_only, required=required) | (1 << 15)
-        return self._create_field(name, "radio", widgets, value=value, flags=flags)
+        return self._create_field(
+            name,
+            "radio",
+            widgets,
+            value=value,
+            flags=flags,
+            **self._appearance_options(appearance),
+        )
 
     @staticmethod
     def _choice_exports(options: Sequence[Any]) -> list[str]:
@@ -607,6 +794,8 @@ class Form:
         alignment: str | int = "left",
         read_only: bool = False,
         required: bool = False,
+        text_color: Any = None,
+        **appearance: Any,
     ) -> Field:
         """Add a list box with string or export/display options."""
         if isinstance(options, (str, bytes)):
@@ -626,8 +815,9 @@ class Form:
             value=selected,
             flags=flags,
             options=normalized_options,
-            default_appearance=self._default_appearance(font_size),
+            default_appearance=self._default_appearance(font_size, text_color),
             alignment=self._alignment_value(alignment),
+            **self._appearance_options(appearance),
         )
 
     def add_combo_box(
@@ -643,6 +833,8 @@ class Form:
         alignment: str | int = "left",
         read_only: bool = False,
         required: bool = False,
+        text_color: Any = None,
+        **appearance: Any,
     ) -> Field:
         """Add a combo box, optionally allowing values outside its option list."""
         if isinstance(options, (str, bytes)):
@@ -662,8 +854,9 @@ class Form:
             value=value,
             flags=flags,
             options=normalized_options,
-            default_appearance=self._default_appearance(font_size),
+            default_appearance=self._default_appearance(font_size, text_color),
             alignment=self._alignment_value(alignment),
+            **self._appearance_options(appearance),
         )
 
     def add_push_button(
@@ -675,10 +868,11 @@ class Form:
         caption: str = "",
         action: Any = None,
         icon: bytes | None = None,
-        border_color: Sequence[float] | None = None,
-        background: Sequence[float] | None = None,
+        border_color: Any = None,
+        background: Any = None,
         read_only: bool = False,
         required: bool = False,
+        **appearance: Any,
     ) -> Field:
         """Add a push button with generated caption/rollover/down appearances.
 
@@ -707,6 +901,7 @@ class Form:
             icon=icon,
             border_color=border_color,
             background=background,
+            **self._appearance_options(appearance),
         )
 
     def add_signature_field(
@@ -719,6 +914,7 @@ class Form:
         required: bool = False,
         seed_value: Mapping[str, Any] | None = None,
         lock: Mapping[str, Any] | None = None,
+        **appearance: Any,
     ) -> Field:
         """Add an empty (unsigned) signature field and return it.
 
@@ -741,6 +937,7 @@ class Form:
             flags=self._common_flags(read_only=read_only, required=required),
             seed_value=seed_value,
             field_lock=lock,
+            **self._appearance_options(appearance),
         )
 
     # --- form data in and out: FDF and XFDF -------------------------------------------

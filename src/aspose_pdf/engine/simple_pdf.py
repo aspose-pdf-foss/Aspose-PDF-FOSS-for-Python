@@ -1393,6 +1393,47 @@ def _put_named(found: dict[Any, Any], key: Any, value: Any, budget: _LoadBudget)
         found[key] = value
 
 
+#: "Nothing was said about this", which ``None`` cannot mean where ``None``
+#: already means "remove the entry".
+_UNSET = object()
+
+
+def _border_style_letter(style: Any) -> str:
+    """The ``/BS /S`` letter *style* names (Table 166), by word or by letter."""
+    names = {
+        "solid": "S",
+        "dashed": "D",
+        "beveled": "B",
+        "bevelled": "B",
+        "inset": "I",
+        "underline": "U",
+    }
+    letter = names.get(str(style).strip().lower(), str(style).strip().lstrip("/"))
+    if letter not in ("S", "D", "B", "I", "U"):
+        raise PdfValidationException(
+            "A border style is solid, dashed, beveled, inset or underline "
+            "(/BS /S: S, D, B, I, U)."
+        )
+    return letter
+
+
+def _default_appearance_colour(text: str) -> str | None:
+    """The colour operator a ``/DA`` string ends with, or ``None``.
+
+    Rewriting one entry of a ``/DA`` must not change the others, and the colour is
+    the part with no fixed spelling: ``0 g``, ``1 0 0 rg`` and ``0 0 0 1 k`` are
+    all it. The last colour operator in the string is the one in force.
+    """
+    tokens = text.split()
+    for index in range(len(tokens) - 1, -1, -1):
+        operator = tokens[index]
+        if operator in ("g", "rg", "k"):
+            count = {"g": 1, "rg": 3, "k": 4}[operator]
+            if index >= count:
+                return " ".join(tokens[index - count : index + 1])
+    return None
+
+
 def _destination_name_bytes(name: Any) -> bytes:
     """A destination name as the byte string a name tree keys on.
 
@@ -13867,8 +13908,11 @@ class SimplePdf:
         caption: str = "",
         on_value: str = "Yes",
         action: Any = None,
-        border_color: Sequence[float] | None = None,
-        background: Sequence[float] | None = None,
+        border_color: Any = None,
+        background: Any = None,
+        border_width: float | None = None,
+        border_style: Any = None,
+        rotation: int | None = None,
         font: Any = None,
         icon: bytes | None = None,
         seed_value: Mapping[str, Any] | None = None,
@@ -14036,6 +14080,27 @@ class SimplePdf:
                     ]
                 ),
             }
+            # The appearance characteristics every field takes, not only a push
+            # button: a border colour, a background, and the border's width and
+            # style. The defaults are what this has always written, so a field
+            # that asks for none of them comes out byte for byte as before.
+            from .content_authoring import normalize_color
+
+            if border_color is not None:
+                mk_map[PdfName("BC")] = PdfArray(
+                    [PdfNumber(float(c)) for c in normalize_color(border_color)]
+                )
+            if background is not None:
+                mk_map[PdfName("BG")] = PdfArray(
+                    [PdfNumber(float(c)) for c in normalize_color(background)]
+                )
+            if rotation is not None:
+                degrees = int(rotation)
+                if degrees % 90 != 0:
+                    raise PdfValidationException(
+                        "A widget's rotation is a multiple of 90 degrees (/MK /R)."
+                    )
+                mk_map[PdfName("R")] = PdfNumber(degrees % 360)
             widget_map: dict[PdfName, Any] = {
                 PdfName("Type"): PdfName("Annot"),
                 PdfName("Subtype"): PdfName("Widget"),
@@ -14047,6 +14112,18 @@ class SimplePdf:
                     {PdfName("W"): PdfNumber(1), PdfName("S"): PdfName("S")}
                 ),
             }
+            if border_width is not None or border_style is not None:
+                bs_map = {PdfName("W"): PdfNumber(1), PdfName("S"): PdfName("S")}
+                if border_width is not None:
+                    width = float(border_width)
+                    if width < 0:
+                        raise PdfValidationException(
+                            "A border width cannot be negative."
+                        )
+                    bs_map[PdfName("W")] = PdfNumber(width)
+                if border_style is not None:
+                    bs_map[PdfName("S")] = PdfName(_border_style_letter(border_style))
+                widget_map[PdfName("BS")] = PdfDictionary(bs_map)
             if field_type == "checkbox":
                 widget_map[PdfName("AS")] = PdfName(on_value)
                 mk_map[PdfName("CA")] = PdfString(b"4")
@@ -14055,14 +14132,6 @@ class SimplePdf:
             elif field_type == "pushbutton":
                 mk_map[PdfName("CA")] = _pdf_text_string(caption)
                 widget_map[PdfName("H")] = PdfName("P")
-                if border_color is not None:
-                    mk_map[PdfName("BC")] = PdfArray(
-                        [PdfNumber(float(c)) for c in border_color]
-                    )
-                if background is not None:
-                    mk_map[PdfName("BG")] = PdfArray(
-                        [PdfNumber(float(c)) for c in background]
-                    )
                 if action is not None:
                     widget_map[PdfName("A")] = self._widget_action_cos(action)
                 if icon is not None:
@@ -14290,6 +14359,463 @@ class SimplePdf:
         return [
             replace(item, color=self._painted_color(painted, item.rect)) for item in found
         ]
+
+    # -- field appearance characteristics and actions (12.5.6.19, 12.6.3) ---
+
+    def _field_and_widgets(
+        self, name: str
+    ) -> tuple[PdfDictionary, list[PdfDictionary]]:
+        """The field dictionary *name* names, and the widgets that show it.
+
+        A terminal field either carries its own widget -- the merged form, where
+        one dictionary is both -- or has ``/Kids`` that are the widget
+        annotations. Both shapes are legal (12.7.3.1) and both are returned the
+        same way: the field, and the dictionaries a viewer draws.
+        """
+        self._ensure_not_disposed()
+        if self._cos_doc is None:
+            raise AsposePdfException("No document loaded")
+        for field_name, candidate in self._iter_form_fields():
+            if field_name != name:
+                continue
+            kids = self._resolve(candidate.mapping.get(PdfName("Kids")))
+            widgets: list[PdfDictionary] = []
+            if isinstance(kids, PdfArray):
+                for kid in kids.items:
+                    widget = self._resolve(kid)
+                    if isinstance(widget, PdfDictionary) and (
+                        self._get_name(widget.mapping.get(PdfName("Subtype")))
+                        == "Widget"
+                        or PdfName("Rect") in widget.mapping
+                    ):
+                        widgets.append(widget)
+            if not widgets and PdfName("Rect") in candidate.mapping:
+                widgets = [candidate]
+            return candidate, widgets
+        raise PdfValidationException(f"Form field '{name}' does not exist")
+
+    @staticmethod
+    def _mk_dict(widget: PdfDictionary, *, create: bool) -> PdfDictionary | None:
+        """A widget's ``/MK`` appearance characteristics, made if asked for."""
+        existing = widget.mapping.get(PdfName("MK"))
+        if isinstance(existing, PdfDictionary):
+            return existing
+        if not create:
+            return None
+        made = PdfDictionary()
+        widget.mapping[PdfName("MK")] = made
+        return made
+
+    def set_field_appearance(
+        self,
+        name: str,
+        *,
+        border_color: Any = _UNSET,
+        background_color: Any = _UNSET,
+        border_width: Any = _UNSET,
+        border_style: Any = _UNSET,
+        rotation: Any = _UNSET,
+        text_color: Any = _UNSET,
+        font_size: Any = _UNSET,
+    ) -> None:
+        """Set how a field's widgets look: ``/MK``, ``/BS``, ``/R`` and ``/DA``.
+
+        Only what is passed is touched, so setting the background keeps the
+        border. ``None`` removes an entry, which is what makes a field borderless
+        or transparent again. The appearance streams are **not** rebuilt here --
+        ``generate_field_appearances`` does that, and a caller setting several
+        things wants one rebuild rather than one per entry.
+        """
+        from .content_authoring import normalize_color
+
+        field, widgets = self._field_and_widgets(name)
+        if not widgets:
+            raise PdfValidationException(
+                f"Form field '{name}' has no widget to give an appearance to"
+            )
+        for widget in widgets:
+            for key, value in (("BC", border_color), ("BG", background_color)):
+                if value is _UNSET:
+                    continue
+                mk = self._mk_dict(widget, create=value is not None)
+                if value is None:
+                    if mk is not None:
+                        mk.mapping.pop(PdfName(key), None)
+                        if not mk.mapping:
+                            widget.mapping.pop(PdfName("MK"), None)
+                    continue
+                mk.mapping[PdfName(key)] = PdfArray(
+                    [PdfNumber(float(channel)) for channel in normalize_color(value)]
+                )
+            if rotation is not _UNSET:
+                mk = self._mk_dict(widget, create=rotation is not None)
+                if rotation is None:
+                    if mk is not None:
+                        mk.mapping.pop(PdfName("R"), None)
+                        if not mk.mapping:
+                            widget.mapping.pop(PdfName("MK"), None)
+                else:
+                    degrees = int(rotation)
+                    if degrees % 90 != 0:
+                        raise PdfValidationException(
+                            "A widget's rotation is a multiple of 90 degrees (/MK /R)."
+                        )
+                    mk.mapping[PdfName("R")] = PdfNumber(degrees % 360)
+            if border_width is not _UNSET or border_style is not _UNSET:
+                self._set_widget_border(widget, border_width, border_style)
+        if text_color is not _UNSET or font_size is not _UNSET:
+            self._set_field_default_appearance(field, text_color, font_size)
+
+    def _set_widget_border(
+        self, widget: PdfDictionary, width: Any, style: Any
+    ) -> None:
+        """Change a widget's ``/BS`` entries, leaving the ones not named alone."""
+        bs = self._resolve(widget.mapping.get(PdfName("BS")))
+        if not isinstance(bs, PdfDictionary):
+            bs = PdfDictionary()
+        else:
+            bs = PdfDictionary(dict(bs.mapping))
+        if width is not _UNSET:
+            if width is None:
+                bs.mapping.pop(PdfName("W"), None)
+            else:
+                value = float(width)
+                if value < 0:
+                    raise PdfValidationException("A border width cannot be negative.")
+                bs.mapping[PdfName("W")] = PdfNumber(value)
+        if style is not _UNSET:
+            if style is None:
+                bs.mapping.pop(PdfName("S"), None)
+            else:
+                bs.mapping[PdfName("S")] = PdfName(_border_style_letter(style))
+        if bs.mapping:
+            widget.mapping[PdfName("BS")] = bs
+        else:
+            widget.mapping.pop(PdfName("BS"), None)
+
+    def _set_field_default_appearance(
+        self, field: PdfDictionary, text_color: Any, font_size: Any
+    ) -> None:
+        """Rewrite a field's ``/DA``, keeping the part that was not asked about."""
+        from .content_authoring import color_operator
+        from .field_appearance import parse_default_appearance
+
+        current = self._resolve(field.mapping.get(PdfName("DA")))
+        text = (
+            decode_pdf_text_string(current) if isinstance(current, PdfString) else ""
+        )
+        resource, size, _color = parse_default_appearance(text or "/Helv 12 Tf 0 g")
+        resource = resource or "Helv"
+        if font_size is not _UNSET:
+            if font_size is None:
+                size = 0.0
+            else:
+                size = float(font_size)
+                if size < 0 or not math.isfinite(size):
+                    raise PdfValidationException(
+                        "A field's font size is 0 (auto) or above."
+                    )
+        size = 0.0 if size is None else float(size)
+        if text_color is _UNSET:
+            # Keep whatever colour operator the string already ends with.
+            colour = _default_appearance_colour(text) or "0 g"
+        elif text_color is None:
+            colour = "0 g"
+        else:
+            colour = color_operator(text_color, stroking=False)
+        field.mapping[PdfName("DA")] = PdfString(
+            f"/{resource} {size:g} Tf {colour}".encode("ascii")
+        )
+
+    def get_field_appearance(self, name: str) -> dict[str, Any]:
+        """How a field's first widget looks: the ``/MK``, ``/BS`` and ``/DA`` values."""
+        from .field_appearance import parse_default_appearance
+
+        field, widgets = self._field_and_widgets(name)
+        result: dict[str, Any] = {
+            "border_color": None,
+            "background_color": None,
+            "border_width": None,
+            "border_style": None,
+            "rotation": None,
+            "text_color": None,
+            "font_size": None,
+        }
+        if widgets:
+            widget = widgets[0]
+            mk = self._resolve(widget.mapping.get(PdfName("MK")))
+            if isinstance(mk, PdfDictionary):
+                for key, field_name in (
+                    ("BC", "border_color"),
+                    ("BG", "background_color"),
+                ):
+                    value = self._cos_number_list(mk.mapping.get(PdfName(key)))
+                    if value:
+                        result[field_name] = tuple(float(item) for item in value)
+                rotation = self._get_number(mk.mapping.get(PdfName("R")))
+                if rotation is not None:
+                    result["rotation"] = int(rotation) % 360
+            bs = self._resolve(widget.mapping.get(PdfName("BS")))
+            if isinstance(bs, PdfDictionary):
+                width = self._get_number(bs.mapping.get(PdfName("W")))
+                if width is not None:
+                    result["border_width"] = float(width)
+                style = self._get_name(bs.mapping.get(PdfName("S")))
+                if style is not None:
+                    result["border_style"] = style
+        da = self._resolve(field.mapping.get(PdfName("DA")))
+        if isinstance(da, PdfString):
+            text = decode_pdf_text_string(da)
+            _resource, size, colour = parse_default_appearance(text)
+            result["font_size"] = float(size) if size is not None else None
+            # ``parse_default_appearance`` hands the colour back as the operator
+            # it is written with -- "0 g", "1 0 0 rg" -- so the components are
+            # every token but the last.
+            tokens = colour.split()
+            if len(tokens) >= 2:
+                try:
+                    result["text_color"] = tuple(
+                        float(item) for item in tokens[:-1]
+                    )
+                except ValueError:
+                    result["text_color"] = None
+        return result
+
+    def get_field_actions(self, name: str) -> dict[str, Any]:
+        """A field's actions by ``/AA`` key, the widget's among them.
+
+        ``/A`` -- what a widget does when it is activated -- is reported under the
+        key ``A``, since it is the same kind of thing to a caller even though the
+        standard keeps it outside ``/AA``.
+        """
+        field, widgets = self._field_and_widgets(name)
+        actions: dict[str, Any] = {}
+        for holder in ([field, *widgets] if widgets and widgets[0] is not field else [field]):
+            aa = self._resolve(holder.mapping.get(PdfName("AA")))
+            if isinstance(aa, PdfDictionary):
+                for key, value in aa.mapping.items():
+                    if isinstance(key, PdfName):
+                        actions[key.name.lstrip("/")] = action_from_cos(
+                            self._resolve(value), self._resolve, self._page_index_of
+                        )
+        for widget in widgets:
+            activation = widget.mapping.get(PdfName("A"))
+            if activation is not None:
+                actions["A"] = action_from_cos(
+                    self._resolve(activation), self._resolve, self._page_index_of
+                )
+        return actions
+
+    def set_field_action(self, name: str, key: str, action: Any) -> None:
+        """Set one of a field's actions; *action* of ``None`` removes it.
+
+        ``/K``, ``/F``, ``/V`` and ``/C`` go on the **field**, which is where a
+        viewer looks for the formatting and validation of a value; the rest go on
+        each **widget**, which is what the mouse and the keyboard reach. ``A`` is
+        the widget's activation action.
+        """
+        field, widgets = self._field_and_widgets(name)
+        if key == "A":
+            for widget in widgets:
+                if action is None:
+                    widget.mapping.pop(PdfName("A"), None)
+                else:
+                    widget.mapping[PdfName("A")] = self._action_cos(action)
+            return
+        holders = [field] if key in ("K", "F", "V", "C") else (widgets or [field])
+        for holder in holders:
+            self._set_additional_action(holder, key, action)
+
+    def _set_additional_action(
+        self, holder: PdfDictionary, key: str, action: Any
+    ) -> None:
+        """Set one ``/AA`` entry on *holder*, removing the dictionary when empty."""
+        aa = self._resolve(holder.mapping.get(PdfName("AA")))
+        if not isinstance(aa, PdfDictionary):
+            if action is None:
+                return
+            aa = PdfDictionary()
+            holder.mapping[PdfName("AA")] = aa
+        if action is None:
+            aa.mapping.pop(PdfName(key), None)
+            if not aa.mapping:
+                holder.mapping.pop(PdfName("AA"), None)
+            return
+        aa.mapping[PdfName(key)] = self._action_cos(action)
+
+    def get_page_actions(self, page_index: int) -> dict[str, Any]:
+        """A page's ``/AA`` actions by key (``O`` on open, ``C`` on close)."""
+        self._ensure_not_disposed()
+        page = self._get_page_dict(page_index)
+        actions: dict[str, Any] = {}
+        if not isinstance(page, PdfDictionary):
+            return actions
+        aa = self._resolve(page.mapping.get(PdfName("AA")))
+        if isinstance(aa, PdfDictionary):
+            for key, value in aa.mapping.items():
+                if isinstance(key, PdfName):
+                    actions[key.name.lstrip("/")] = action_from_cos(
+                        self._resolve(value), self._resolve, self._page_index_of
+                    )
+        return actions
+
+    def set_page_action(self, page_index: int, key: str, action: Any) -> None:
+        """Set one of a page's ``/AA`` actions; ``None`` removes it."""
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page index out of range")
+        self._set_additional_action(page, key, action)
+
+    def get_document_actions(self) -> dict[str, Any]:
+        """The catalog's ``/AA`` actions by key (``WC``, ``WS``, ``DS``, ``WP``, ``DP``)."""
+        self._ensure_not_disposed()
+        actions: dict[str, Any] = {}
+        if self._cos_doc is None:
+            return actions
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(catalog, PdfDictionary):
+            return actions
+        aa = self._resolve(catalog.mapping.get(PdfName("AA")))
+        if isinstance(aa, PdfDictionary):
+            for key, value in aa.mapping.items():
+                if isinstance(key, PdfName):
+                    actions[key.name.lstrip("/")] = action_from_cos(
+                        self._resolve(value), self._resolve, self._page_index_of
+                    )
+        return actions
+
+    def set_document_action(self, key: str, action: Any) -> None:
+        """Set one of the catalog's ``/AA`` actions; ``None`` removes it."""
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(catalog, PdfDictionary):
+            raise PdfValidationException("The document has no catalog")
+        self._set_additional_action(catalog, key, action)
+
+    # -- document-level JavaScript (/Names /JavaScript, 12.6.4.17) ----------
+
+    def _javascript_tree_entries(self, catalog: Any) -> dict[bytes, Any]:
+        """The ``/Names /JavaScript`` tree's entries, by key."""
+        entries: dict[bytes, Any] = {}
+        if not isinstance(catalog, PdfDictionary):
+            return entries
+        names = self._resolve(catalog.mapping.get(PdfName("Names")))
+        if not isinstance(names, PdfDictionary):
+            return entries
+        stack = [(self._resolve(names.mapping.get(PdfName("JavaScript"))), 1)]
+        seen: set[int] = set()
+        while stack:
+            node, depth = stack.pop()
+            if not isinstance(node, PdfDictionary) or id(node) in seen:
+                continue
+            seen.add(id(node))
+            self._load_budget.check(
+                depth, "max_nesting_depth", "document JavaScript tree depth"
+            )
+            pairs = self._resolve(node.mapping.get(PdfName("Names")))
+            if isinstance(pairs, PdfArray):
+                for key, value in zip(pairs.items[0::2], pairs.items[1::2]):
+                    key = self._resolve(key)
+                    if isinstance(key, PdfString) and key.value not in entries:
+                        self._load_budget.check(
+                            len(entries) + 1,
+                            "max_container_items",
+                            "document JavaScript entries",
+                        )
+                        entries[key.value] = value
+            kids = self._resolve(node.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray):
+                stack.extend((self._resolve(kid), depth + 1) for kid in kids.items)
+        return entries
+
+    def document_javascript(self) -> dict[str, str]:
+        """The document-level scripts by name, in the order they will run.
+
+        12.6.4.17: the catalog's ``/Names /JavaScript`` name tree holds scripts a
+        viewer runs when the document opens, and it runs them **in key order** --
+        which is why the names are usually written to sort the way they are meant
+        to run.
+        """
+        self._ensure_not_disposed()
+        if self._cos_doc is None:
+            return {}
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        scripts: dict[str, str] = {}
+        for key, value in sorted(self._javascript_tree_entries(catalog).items()):
+            action = self._resolve(value)
+            if not isinstance(action, PdfDictionary):
+                continue
+            source = self._resolve(action.mapping.get(PdfName("JS")))
+            if isinstance(source, PdfString):
+                scripts[key.decode("latin-1")] = decode_pdf_text_string(source)
+            elif isinstance(source, PdfStream):
+                try:
+                    scripts[key.decode("latin-1")] = self._decode_cos_stream(
+                        source, value
+                    ).decode("utf-8", "replace")
+                except PDF_OPERATION_ERRORS:
+                    continue
+        return scripts
+
+    def set_document_javascript(self, name: str, script: str | None) -> None:
+        """Add, replace or remove (``None``) a document-level script."""
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(catalog, PdfDictionary):
+            raise PdfValidationException("The document has no catalog")
+        key = _destination_name_bytes(name)
+        entries = self._javascript_tree_entries(catalog)
+        if script is None:
+            if key not in entries:
+                return
+            del entries[key]
+        else:
+            # Written **into** the tree rather than registered as an object of
+            # its own: a name tree's value may be a direct dictionary, and an
+            # indirect one would stay in the file as an orphan when the script is
+            # removed -- a deleted script whose source is still readable.
+            entries[key] = PdfDictionary(
+                {
+                    PdfName("Type"): PdfName("Action"),
+                    PdfName("S"): PdfName("JavaScript"),
+                    PdfName("JS"): _pdf_text_string(str(script)),
+                }
+            )
+        names = self._resolve(catalog.mapping.get(PdfName("Names")))
+        if not entries:
+            if isinstance(names, PdfDictionary):
+                names.mapping.pop(PdfName("JavaScript"), None)
+                if not names.mapping:
+                    catalog.mapping.pop(PdfName("Names"), None)
+            return
+        if not isinstance(names, PdfDictionary):
+            names = PdfDictionary()
+            catalog.mapping[PdfName("Names")] = names
+        items: list[Any] = []
+        for entry_key in sorted(entries):
+            items.append(PdfString(entry_key))
+            items.append(entries[entry_key])
+        names.mapping[PdfName("JavaScript")] = PdfDictionary(
+            {PdfName("Names"): PdfArray(items)}
+        )
+
+    def clear_document_javascript(self) -> None:
+        """Remove every document-level script."""
+        self._ensure_not_disposed()
+        if self._cos_doc is None:
+            return
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(catalog, PdfDictionary):
+            return
+        names = self._resolve(catalog.mapping.get(PdfName("Names")))
+        if isinstance(names, PdfDictionary):
+            names.mapping.pop(PdfName("JavaScript"), None)
+            if not names.mapping:
+                catalog.mapping.pop(PdfName("Names"), None)
 
     def set_field_value(self, name: str, value: Any) -> None:
         """Set the value of a form field by name."""

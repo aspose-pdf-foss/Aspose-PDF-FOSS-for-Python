@@ -6,6 +6,7 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from aspose_pdf.actions import PAGE_TRIGGERS, ActionCollection
 from aspose_pdf.annotations import AnnotationCollection
 from aspose_pdf.color import ColorValue
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
@@ -380,6 +381,28 @@ class Page:
         if eng is None or not hasattr(eng, "set_page_box"):
             raise AsposePdfException(f"Cannot set {name}: no underlying document.")
         eng.set_page_box(self._index, name, rect)
+
+    @property
+    def actions(self) -> ActionCollection:
+        """What the page does when it is opened or closed (``/AA``).
+
+        ISO 32000-1 12.6.3, Table 194: ``open`` fires when the page becomes the
+        one on screen, ``close`` when it stops being it::
+
+            page.actions["open"] = JavaScriptAction("app.alert('here')")
+            del page.actions["open"]
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        index = self._index
+        return ActionCollection(
+            PAGE_TRIGGERS,
+            lambda: eng.get_page_actions(index),
+            lambda key, action: eng.set_page_action(index, key, action),
+            "page",
+        )
 
     @property
     def content(self) -> bytes:
