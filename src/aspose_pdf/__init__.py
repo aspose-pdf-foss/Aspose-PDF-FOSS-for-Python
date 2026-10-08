@@ -35,7 +35,18 @@ from .exceptions import (
     PdfResourceLimitException,
     UnsupportedFeatureException,
 )
-from .facades import PdfExtractor, PdfFileEditor
+from .facades import (
+    PdfAnnotationEditor,
+    PdfBookmarkEditor,
+    PdfConverter,
+    PdfExtractor,
+    PdfFileEditor,
+    PdfFileInfo,
+    PdfFileSecurity,
+    PdfFileStamp,
+    PdfPageEditor,
+    PdfXmpMetadata,
+)
 from .font_registry import FontDescriptor
 from .font_repository import (
     FileFontSource,
@@ -224,15 +235,23 @@ __all__ = [
     "PdfAValidateOptions",
     "PdfAValidationResult",
     "PdfAValidator",
+    "PdfAnnotationEditor",
+    "PdfBookmarkEditor",
+    "PdfConverter",
     "PdfExtractor",
     "PdfFileEditor",
+    "PdfFileInfo",
+    "PdfFileSecurity",
+    "PdfFileStamp",
     "PdfLoadLimits",
+    "PdfPageEditor",
     "PdfPlugin",
     "PdfResourceLimitException",
     "PdfSignature",
     "PdfUaValidateOptions",
     "PdfUaValidationResult",
     "PdfUaValidator",
+    "PdfXmpMetadata",
     "Plugin",
     "PluginOptions",
     "PolyLineAnnotation",

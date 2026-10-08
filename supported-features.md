@@ -3081,6 +3081,46 @@ Supported:
 - Decode common PDF stream filters and surface unsupported/corrupt filters as
   explicit validation errors.
 
+## Facades
+
+Supported:
+
+- The task-shaped classes ported Aspose.PDF code reaches for, in
+  `aspose_pdf.facades` (all exported from `aspose_pdf`): `PdfExtractor` and
+  `PdfFileEditor` as before, plus **`PdfFileInfo`** (the information dictionary
+  as properties, custom entries through `get_meta_info`/`set_meta_info`, page
+  width, height, rotation and boxes, the page count, the PDF version),
+  **`PdfFileSecurity`** (`encrypt_file`, `decrypt_file`, `change_password`,
+  `permissions`), **`PdfBookmarkEditor`** (`extract_bookmarks` nested or flat,
+  `create_bookmark_of_page`, `create_bookmarks`, `delete_bookmarks` by title or
+  altogether), **`PdfAnnotationEditor`** (`extract_annotations` by page and by
+  subtype, `delete_annotations`, `generate_appearances`, `flatten_annotations`),
+  **`PdfFileStamp`** (`add_stamp` for any stamp, `add_header`, `add_footer`,
+  `add_page_number`), **`PdfPageEditor`** (`rotate`, `resize`, `crop`,
+  `move_page`, `delete_pages`), **`PdfXmpMetadata`** (`get_value`, `set_value`,
+  the packet itself, and syncing either way with `/Info`), and
+  **`PdfConverter`** (`do_convert` then `has_next_image`/`get_next_image`,
+  `save_as_tiff`, a `resolution`).
+- They add **no capability**: each is a composition of the `Document` API
+  documented above. What they add is the shape, and three habits of the layer:
+  - **Page numbers are 1-based**, as in the Aspose facades and as
+    `PdfFileEditor.extract` already was, while the rest of the package counts
+    pages from zero. A number outside the document is refused rather than
+    clamped.
+  - An operation that **writes** answers `True` or `False` and records why in
+    `last_exception`; the readers raise as usual.
+  - `bind_pdf` takes a path, bytes, a stream **or an open `Document`**. An open
+    document is *borrowed*: the facade works on it in place and does not close
+    it, so a facade can be used on a document the caller is still holding.
+    Nothing is written until `save(destination)`.
+
+Boundaries:
+
+- A facade holds one document at a time; binding another releases the first
+  (unless it was borrowed). There is no `PdfFileSignature` facade: signing takes
+  a certificate, a key, a field and an appearance, which is a design rather than a
+  composition -- `Document.sign` is the API for it, as for the low-code layer.
+
 ## Low-Code Plugins
 
 Supported:

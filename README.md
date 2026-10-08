@@ -91,6 +91,11 @@ flowchart TD
   OpenType shaping, Unicode bidi runs, ordered font fallback, and width-constrained line
   wrapping; a character the font can't represent raises `FontEmbeddingException` instead of
   silently falling back to `.notdef`.
+- The facade layer carries the classes ported Aspose.PDF code expects — `PdfFileInfo`,
+  `PdfFileSecurity`, `PdfBookmarkEditor`, `PdfAnnotationEditor`, `PdfFileStamp`, `PdfPageEditor`,
+  `PdfXmpMetadata`, `PdfConverter` beside `PdfExtractor` and `PdfFileEditor`. Each binds a
+  document (a path, bytes, a stream, or one you already have open), works on it, and saves;
+  page numbers there are 1-based, as in the original API.
 - `PdfExtractor` pulls all page text with `get_text()` or walks it page by page (reading each page
   through the engine, so lazily loaded and damaged pages are read too), extracts embedded images as
   real image files (`extract_image()`/`get_next_image(destination=None)`) and file attachments

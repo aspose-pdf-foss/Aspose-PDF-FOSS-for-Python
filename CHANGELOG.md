@@ -9,6 +9,27 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The facade layer, from two classes to ten.** `PdfExtractor` and
+  `PdfFileEditor` were the whole of it, so ported code that reached for
+  `PdfFileInfo`, `PdfFileSecurity`, `PdfBookmarkEditor`, `PdfAnnotationEditor`,
+  `PdfFileStamp`, `PdfPageEditor`, `PdfXmpMetadata` or `PdfConverter` had to be
+  rewritten against `Document` by hand — which is the one thing a compatibility
+  surface exists to avoid.
+  - They add no capability: each is a composition of operations documented
+    elsewhere. What they add is the shape, and three habits of the layer: page
+    numbers are **1-based** (as in the Aspose facades, and as
+    `PdfFileEditor.extract` already was), a writing operation answers `True` or
+    `False` and records why in `last_exception`, and `bind_pdf` takes a path,
+    bytes, a stream or an **open `Document`** — which is borrowed, not taken over,
+    so the facade does not close a document the caller is still holding.
+  - `PdfFileStamp.add_header`/`add_footer`/`add_page_number` are running heads
+    built on the stamp placement, and `PdfPageEditor.move_page` reorders pages,
+    which needed the page sizes and boxes of an earlier change to be settable at
+    all.
+  - `PdfXmpMetadata.get_value` reads a **language alternative** — which is what
+    `dc:title` and `dc:description` are — as its default text rather than as the
+    array it is written as, with the field itself one line away through `packet`.
+
 - **A page can be placed on a page, and a document can be imposed.** Stamps drew
   a line of text, an image or a page number; the one thing nobody could stamp was
   a *page* — a letterhead, a background form, a watermark drawn in a PDF — even
