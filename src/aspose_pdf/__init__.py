@@ -132,6 +132,7 @@ from .stamps import (
 )
 from .tables import Cell, Row, Table
 from .tagged import StructureElement, TaggedContent
+from .text_block import Paragraph, TextBlock
 from .text_layout import TextLayoutOptions
 from .validation import (
     CertificationLevel,
@@ -240,6 +241,7 @@ __all__ = [
     "PageNumberStamp",
     "PageSize",
     "PageStamp",
+    "Paragraph",
     "PdfAValidateOptions",
     "PdfAValidationResult",
     "PdfAValidator",
@@ -292,6 +294,7 @@ __all__ = [
     "Table",
     "TaggedContent",
     "TextAnnotation",
+    "TextBlock",
     "TextExtractor",
     "TextExtractorOptions",
     "TextLayoutOptions",

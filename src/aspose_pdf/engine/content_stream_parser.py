@@ -1100,11 +1100,25 @@ class ContentStreamParser:
                 elif isinstance(element, (int, float)):
                     # TJ numbers: thousandths of a text space unit; large negative
                     # gaps often separate words — compare to last glyph width.
+                    #
+                    # Unless the words are already separated. A justified line
+                    # holds both a space *and* a displacement at every gap --
+                    # the space is the text, the displacement is the slack that
+                    # spreads the line (and in a composite font a displacement
+                    # is the only way to spread it, since /Tw cannot reach a
+                    # two-byte code). Counting both reads one space as two,
+                    # which is what pdfminer.six does with such a line and
+                    # pdfium does not. A gap that follows a space needs no
+                    # second one: the word boundary is already there.
                     adj = float(element)
                     if adj < 0:
                         lw = max(self._last_glyph_width, 1)
+                        separated = bool(self._buffer) and self._buffer[-1].endswith(
+                            (" ", "\n")
+                        )
                         if (
                             not self._text_suppressed()
+                            and not separated
                             and -adj > max(100.0, 0.3 * float(lw))
                         ):
                             self._buffer.append(" ")

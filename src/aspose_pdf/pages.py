@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.tables import Table
+    from aspose_pdf.text_block import TextBlock
     from aspose_pdf.text_layout import TextLayoutOptions
 
 
@@ -777,6 +778,53 @@ class Page:
             eng,
             self._index,
             table,
+            float(x),
+            float(y),
+            bottom_margin=float(bottom_margin),
+            tag=bool(tag),
+        )
+
+    def add_text_block(
+        self,
+        block: TextBlock,
+        x: float,
+        y: float,
+        *,
+        bottom_margin: float = 36.0,
+        tag: bool = True,
+    ) -> dict[str, Any]:
+        """Draw *block* with the top-left of its measure at ``(x, y)``.
+
+        Text is wrapped to the block's ``width`` -- or to the room between *x*
+        and the right edge of the page -- with the font's own advances, lines
+        are aligned (``left``, ``center``, ``right`` or ``justify``), and a
+        block taller than the room left **continues onto the next page**, adding
+        a page like this one when there is none to continue onto. Pass
+        ``bottom_margin`` to say how much to leave at the foot of a page.
+
+        Unlike :meth:`add_text` with ``layout=TextLayoutOptions(...)``, this
+        needs no embedded font and no optional dependency: the standard 14 fonts
+        are measured by their own advances. What it does not do is shape, so
+        right-to-left and complex scripts still want that path.
+
+        Each paragraph is tagged with its own structure type -- ``/P`` unless it
+        says otherwise -- and a paragraph continued onto the next page stays one
+        element. Pass ``tag=False`` to leave the text untagged.
+
+        Returns ``{"pages": [...], "bottom": y, "lines": n}``: the pages drawn
+        on, where the text ended, and how many lines were placed -- so the next
+        thing on the page knows where to go.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine import text_blocks as engine_text_blocks
+
+        return engine_text_blocks.draw(
+            eng,
+            self._index,
+            block,
             float(x),
             float(y),
             bottom_margin=float(bottom_margin),

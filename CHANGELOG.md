@@ -9,6 +9,40 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Flowing text.** Authored text could only be placed one string at a time at
+  one point. Wrapping it meant measuring the font yourself, or passing
+  `layout=TextLayoutOptions(...)` to `Page.add_text` — which shapes with
+  HarfBuzz and so refuses the Standard-14 fonts and needs the `text-layout`
+  extra. The plain case had no API at all, although the measuring it needs was
+  already written: the table generator has used the Standard-14 advances and an
+  embedded subset's CID widths since it landed.
+  - `Page.add_text_block(block, x, y)` takes a `TextBlock` of `Paragraph`s and
+    wraps each to the block's `width`, or to the room between *x* and the right
+    edge of the page. A plain string is one paragraph and a blank line starts a
+    new one; a single newline stays a hard break. Per paragraph: alignment,
+    font, size, colour, line height, space before and after, first-line indent
+    (negative for a hanging one), left and right indent, structure tag, and
+    `keep_together`.
+  - **Justification**, which is the part that needed thought. A justified line
+    is spread to the measure exactly — pdfium reads every one as ending on it to
+    the hundredth of a point — and the last line of a paragraph, the line before
+    every hard break, and a line of one word are all left alone. A simple font
+    is spread with `Tw`, a composite one with `TJ` adjustments, because
+    ISO 32000-1 9.3.3 says word spacing "shall not apply" to a two-byte code: an
+    Identity-encoded Type0 font ignores `Tw` entirely and the line would come
+    out unjustified.
+  - A block taller than the room left continues onto the next page, adding a
+    page like the one it is leaving when there is none. A paragraph continued
+    across pages stays **one** structure element, with the ids on the other
+    pages named as marked-content references (14.7.4.3) rather than the
+    paragraph being split into one `/P` per page — which would tell a reader the
+    sentence ended at the foot of the page. A tagged block passes
+    `convert_to_pdfua()` + `validate_pdfua()` and `convert_to_pdfa("2a")`.
+  - The faces the measuring runs on moved out of the table engine into
+    `engine.text_faces`, so a table and a block measure with the same code and
+    place their baselines the same way; the two line up when set one after the
+    other.
+
 - **PDF/X.** The print-exchange standards had no support at all: a document
   could be checked and converted for PDF/A and PDF/UA, but the one standard
   family that is about a file *printing* the same way everywhere was missing, so
@@ -832,6 +866,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   property as missing, which rejected a conforming file written by another tool.
   The opening tag may now carry attributes. This is the reader the PDF/UA
   identification checks share.
+
+- **A justified line's gaps were read back as two spaces each.** Found while
+  building the above: a gap in a justified line holds a space *and* a
+  displacement — the space is the text, the displacement is the slack that
+  spreads the line — and the text extractor counted both, so `extract_text()`
+  returned `"one  two  three"` for a line that says `one two three`.
+  pdfminer.six reads such a line the same way; pdfium does not. A gap that
+  follows a space now adds nothing, since the word boundary is already there.
 
 ### Added
 

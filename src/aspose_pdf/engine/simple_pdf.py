@@ -6540,6 +6540,83 @@ class SimplePdf:
         self._append_struct_root_kid(struct_root, elem_ref)
         return tag_name, mcids
 
+    def _register_spanning_marked_content(
+        self,
+        tag: str | None,
+        parts: Sequence[tuple[int, int]],
+        *,
+        alt: str | None = None,
+        actual_text: str | None = None,
+    ) -> dict[int, list[int]] | None:
+        """One StructElem whose content lies on **several pages**.
+
+        A marked-content id belongs to the page it is on, so an element with
+        kids on more than one page cannot just list numbers: ISO 32000-1 14.7.4.3
+        has it name each one with a marked-content reference --
+        ``<< /Type /MCR /Pg <page> /MCID n >>`` -- and only the ids on the
+        element's own ``/Pg`` may be written as bare numbers. That is what a
+        paragraph continued onto the next page needs, so that it stays one
+        paragraph to a reader instead of becoming two.
+
+        *parts* is ``[(page_index, how many sequences on it), ...]`` in reading
+        order. Returns ``{page_index: [mcid, ...]}``, or ``None`` when there is
+        no tag or nothing to mark.
+        """
+        tag_name = self._coerce_structure_type(tag)
+        if tag_name is None:
+            return None
+        wanted = [(int(page), int(count)) for page, count in parts if int(count) > 0]
+        if not wanted:
+            return None
+        struct_root, struct_ref = self._ensure_struct_tree_root()
+        own_page_index = wanted[0][0]
+        own_page_ref = self._page_ref_for_structure(own_page_index)
+        elem = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("StructElem"),
+                PdfName("S"): PdfName(tag_name),
+                PdfName("P"): struct_ref,
+                PdfName("Pg"): own_page_ref,
+            }
+        )
+        if alt is not None:
+            elem.mapping[PdfName("Alt")] = PdfString(str(alt))
+        if actual_text is not None:
+            elem.mapping[PdfName("ActualText")] = PdfString(str(actual_text))
+        elem_ref = self._cos_doc.register_object(elem)
+
+        kids: list[Any] = []
+        mcids: dict[int, list[int]] = {}
+        for page_index, count in wanted:
+            page = self._get_page_dict(page_index)
+            if not isinstance(page, PdfDictionary):
+                raise PdfValidationException("Page dictionary is unavailable.")
+            page_ref = self._page_ref_for_structure(page_index)
+            parent_array = self._parent_tree_array_for_page(struct_root, page)
+            on_page: list[int] = []
+            for _ in range(count):
+                mcid = len(parent_array.items)
+                parent_array.items.append(elem_ref)
+                on_page.append(mcid)
+                if page_index == own_page_index:
+                    kids.append(PdfNumber(mcid))
+                else:
+                    kids.append(
+                        PdfDictionary(
+                            {
+                                PdfName("Type"): PdfName("MCR"),
+                                PdfName("Pg"): page_ref,
+                                PdfName("MCID"): PdfNumber(mcid),
+                            }
+                        )
+                    )
+            mcids[page_index] = on_page
+        elem.mapping[PdfName("K")] = (
+            kids[0] if len(kids) == 1 else PdfArray(kids)
+        )
+        self._append_struct_root_kid(struct_root, elem_ref)
+        return mcids
+
     def _register_list_marked_content(
         self, page_index: int, items: list[list[Any]]
     ) -> list[tuple[int, int, str, int]] | None:

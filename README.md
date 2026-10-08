@@ -148,6 +148,12 @@ flowchart TD
   file rather than leaving it there for the next reader to switch back on.
 - `ImagePlacementAbsorber` collects the images a page draws, and `ImagePlacement.replace` /
   `hide` change them in the document — the new picture keeps the old one's place and size.
+- `Page.add_text_block(block, x, y)` flows a `TextBlock` of `Paragraph`s into a measure: wrapped
+  with the font's own advances, aligned left, centre, right or **justified**, with first-line and
+  hanging indents, per-paragraph style, a continuation onto the next page, and each paragraph
+  tagged as its own structure element — one element even where it spans pages. It needs no
+  optional dependency, the Standard-14 fonts being measured by their own metrics, while
+  `Page.add_text(layout=...)` stays the shaping path for right-to-left and complex scripts.
 - `Page.add_table(table, x, y)` draws a real table — `Table`, `Row`, `Cell`, column spans, per-cell
   style, text wrapped to each column with the font's own advances, headers repeated when the table
   runs onto the next page — and tags it as a nested `/Table` of `/TR` of `/TH`/`/TD`, so the result
@@ -663,6 +669,7 @@ and delete workflows. 265 public types are organized by module below.
 | `Page` | A page of a PDF document. |
 | `PageCollection` | A collection to manage PDF pages within a Document. |
 | `PageInfo` | Class with 1 property. |
+| `Paragraph` | One paragraph of a text block: what it says, and how it differs from the block. |
 | `PdfAConversionResult` | Result of a PDF/A conversion operation. |
 | `PdfAValidateOptions-pdfa` | Container for PDF/A validation settings. |
 | `PdfAValidationResult-pdfa` | Detailed result of a PDF/A validation run. |
@@ -713,6 +720,7 @@ and delete workflows. 265 public types are organized by module below.
 | `TaggedContent` | Editable view of a document's logical structure tree. |
 | `TaggedContext` | Class with 4 properties. |
 | `TextAbsorber` | Absorbs text from PDF pages (legacy class, alias for TextFragmentAbsorber). |
+| `TextBlock` | Paragraphs wrapped to a measure, ready to be placed on a page. |
 | `TextExtractionOptions` | Options for text extraction from PDF pages. |
 | `TextExtractor` | Extract plain text from each input PDF. |
 | `TextExtractorOptions` | Options for :class:`TextExtractor`: extract text from each input. |

@@ -1658,9 +1658,70 @@ Supported:
   `ZapfDingbats` are left without a declared encoding, because their built-in
   one is the point of them.
 - Mark newly authored text with a structure tag and optional `/ActualText`.
+- **Flow text into a measure, with nothing to install.** `Page.add_text_block(
+  block, x, y)` takes a `TextBlock` of `Paragraph`s (both exported from
+  `aspose_pdf`) and wraps each one to the block's `width` -- or to the room
+  between *x* and the right edge of the page -- using the font's **own
+  advances**: the Standard-14 metrics in `engine.std_metrics` for a named font,
+  the subset's CID widths for one embedded through `font=`. This is the plain
+  case of laying out text, and it needs no optional dependency; the shaping path
+  (`Page.add_text(layout=TextLayoutOptions(...))`) stays the one for
+  right-to-left and complex scripts, and it still requires an embedded font plus
+  the `text-layout` extra.
+  - A plain string is one paragraph and a **blank line starts a new one**, which
+    is the convention of every plain-text format; a single newline stays a hard
+    break inside its paragraph. `TextBlock.add_paragraph(...)` is the explicit
+    form, and a paragraph says only where it departs from the block --
+    `alignment`, `font_name`, `font_size`, `text_color`, `line_height`,
+    `space_before`/`space_after`, `first_line_indent`, `left_indent`,
+    `right_indent`, `tag`, `keep_together`.
+  - `alignment` is `left`, `center`, `right` or **`justify`**. A justified line
+    is spread to the measure exactly: pdfium reads every one of them as ending
+    on the measure to the hundredth of a point. The **last line of a paragraph
+    is left alone**, and so is the line before every hard break -- those were
+    ended by their author rather than by the measure, and stretching them would
+    open gaps nobody asked for. A line of one word is not stretched either.
+  - **How a line is spread depends on the font, and it has to.** A simple font's
+    space is the single-byte code 32, so `Tw` widens it (ISO 32000-1 9.3.3) and
+    the line carries no positioning adjustments at all. A composite font has no
+    single-byte code -- 9.3.3 says word spacing "shall not apply" to a two-byte
+    code -- so an Identity-encoded Type0 font ignores `Tw` entirely and the line
+    is spread with `TJ` adjustments instead. Both place the same glyphs in the
+    same places; the difference is what an extractor sees, which is why the
+    cheaper one is used wherever it works.
+  - `first_line_indent` moves the first line of a paragraph, and a **negative**
+    one widens it instead -- the hanging indent a bibliography or a dictionary
+    entry is set with. `left_indent`/`right_indent` narrow the measure for one
+    paragraph.
+  - A block taller than the room left **continues onto the next page**, adding a
+    page like the one it is leaving when there is none to continue onto, and
+    `bottom_margin` says how much to leave at the foot. A paragraph marked
+    `keep_together` moves whole rather than splitting.
+  - Each paragraph is tagged with its own structure type (`/P` unless `tag=`
+    says otherwise, `None` to leave it untagged, `tag=False` on the call to
+    leave the whole block untagged). A paragraph **continued onto the next page
+    stays one element**: a marked-content id belongs to its page, so the ids on
+    the other pages are named with marked-content references
+    (`/K [ 0 1 << /Type /MCR /Pg … /MCID 0 >> … ]`, ISO 32000-1 14.7.4.3) rather
+    than the paragraph being split into one `/P` per page, which would tell a
+    reader the sentence ended at the foot of the page. A tagged block passes
+    `convert_to_pdfua()` + `validate_pdfua()` and `convert_to_pdfa("2a")`.
+  - It returns `{"pages": [...], "bottom": y, "lines": n}` -- the pages drawn
+    on, where the text ended and how many lines were placed -- so the next thing
+    on the page knows where to go. A block and a `Table` share the measuring
+    code (`engine.text_faces`) and the same baseline placement, so the two line
+    up when set one after the other.
 
 Boundaries:
 
+- A text block's line breaking is **greedy** at whitespace, with a word too long
+  for the measure broken so that nothing overflows. There is no hyphenation, no
+  Knuth-Plass paragraph optimisation, and no orphan or widow control beyond
+  `keep_together` -- a paragraph either moves whole or splits wherever the page
+  ends. Lines are not shaped either: for right-to-left or complex scripts use
+  `Page.add_text(layout=TextLayoutOptions(...))`, which does shape and needs the
+  `text-layout` extra. A block does not flow **around** anything, and it has one
+  column.
 - OCR is not implemented.
 - Existing text replacement/redaction edits the content stream but does not
   reflow layout. Phrases split across several `TJ` elements, consecutive show
@@ -1719,7 +1780,10 @@ Supported:
   when no supplied font covers a visible character.
 - Wrap text to `max_width`, honor explicit newlines, configure line height,
   and align lines using physical (`left`, `center`, `right`) or bidi-aware
-  (`start`, `end`) alignment. Logical text is preserved through `/ActualText`
+  (`start`, `end`) alignment. (For wrapping that needs **no** optional
+  dependency and works with the Standard-14 fonts, including justification and
+  a break onto the next page, see `Page.add_text_block` under
+  [Text](#text) -- that path does not shape, which is the trade.) Logical text is preserved through `/ActualText`
   while positioned glyph CIDs retain their shaped visual order.
 - Assign independent two-byte CIDs to TrueType Unicode scalars and emit an
   explicit `/CIDToGIDMap`. This preserves exact `/ToUnicode` extraction even

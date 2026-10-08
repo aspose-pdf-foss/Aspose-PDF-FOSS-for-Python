@@ -279,6 +279,102 @@ def build_cid_text_stream(
     return (" ".join(parts) + "\n").encode("ascii")
 
 
+def build_word_spaced_text_stream(
+    text: str,
+    extra: float,
+    x: float,
+    y: float,
+    font_resource: str,
+    font_size: float,
+    color: Any,
+    encoding: str = "WinAnsiEncoding",
+) -> bytes:
+    """Draw *text* with *extra* points added to every space in it.
+
+    This is how a **simple** font's line is justified. ``Tw`` (ISO 32000-1
+    9.3.3) widens the advance of the single-byte code 32 itself, so the line
+    carries no positioning adjustments at all: the string is the text, the
+    spaces are spaces, and every reader -- including one whose extractor
+    synthesises a space from a wide gap -- reads back exactly the words that
+    were written. A ``TJ`` of inter-word adjustments places the same glyphs in
+    the same places, but a gap then holds both a space *and* a displacement,
+    and an extractor that counts the displacement as well reads two spaces
+    where there is one. pdfminer.six does exactly that; pdfium does not.
+
+    ``Tw`` is only an option here because a simple font's space really is byte
+    32. A composite font has no single-byte code (9.3.3: word spacing "shall
+    not apply" to a two-byte code), so :func:`build_adjusted_text_stream` is
+    what justifies that.
+    """
+    parts = [
+        "q",
+        color_operator(color, stroking=False),
+        "BT",
+        f"/{font_resource} {format_number(font_size)} Tf",
+        f"{format_number(extra)} Tw",
+        f"1 0 0 1 {format_number(x)} {format_number(y)} Tm",
+        f"{pdf_literal(encode_simple_text(text, encoding))} Tj",
+        "ET",
+        "Q",
+    ]
+    return (" ".join(parts) + "\n").encode("latin-1")
+
+
+def build_adjusted_text_stream(
+    segments: Sequence[bytes],
+    adjustments: Sequence[float],
+    x: float,
+    y: float,
+    font_resource: str,
+    font_size: float,
+    color: Any,
+    *,
+    hex_strings: bool,
+) -> bytes:
+    """Show *segments* in one line, inserting *adjustments* points between them.
+
+    This is how a justified line is drawn. A number inside a ``TJ`` array moves
+    the next glyph by ``-number / 1000`` of the font size (ISO 32000-1 9.4.3),
+    so the extra space a gap needs is written as a negative number -- the slack
+    in points scaled into thousandths of an em.
+
+    ``Tw`` would be shorter, but it only ever reaches **byte 32**: in a
+    composite font a single-byte code 32 does not exist (9.3.3 says word
+    spacing "shall not apply" to a two-byte code), so an Identity-encoded
+    Type0 font ignores it entirely and the line comes out unjustified. One
+    ``TJ`` works for both kinds of font, which is why there is one path here.
+    """
+    if len(adjustments) != max(len(segments) - 1, 0):
+        raise PdfValidationException(
+            "A justified line needs one adjustment for each gap between its "
+            "segments."
+        )
+    if font_size <= 0:
+        raise PdfValidationException("font_size must be a positive number.")
+
+    def show(raw: bytes) -> str:
+        return f"<{bytes(raw).hex().upper()}>" if hex_strings else pdf_literal(raw)
+
+    items: list[str] = []
+    for index, segment in enumerate(segments):
+        items.append(show(segment))
+        if index < len(adjustments):
+            # Negative moves the next glyph to the right, which is what opening
+            # the gap means.
+            items.append(format_number(-adjustments[index] * 1000.0 / font_size))
+    parts = [
+        "q",
+        color_operator(color, stroking=False),
+        "BT",
+        f"/{font_resource} {format_number(font_size)} Tf",
+        f"1 0 0 1 {format_number(x)} {format_number(y)} Tm",
+        "[" + " ".join(items) + "] TJ",
+        "ET",
+        "Q",
+    ]
+    return (" ".join(parts) + "\n").encode("latin-1")
+
+
 def build_positioned_cid_text_stream(
     lines: Sequence[
         tuple[str, Sequence[tuple[bytes, str, float, float]]]
