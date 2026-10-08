@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.stamps import Stamp
+    from aspose_pdf.tables import Table
     from aspose_pdf.text_layout import TextLayoutOptions
 
 
@@ -740,6 +741,47 @@ class Page:
             **style,
         )
         return self
+
+    def add_table(
+        self,
+        table: Table,
+        x: float,
+        y: float,
+        *,
+        bottom_margin: float = 36.0,
+        tag: bool = True,
+    ) -> dict[str, Any]:
+        """Draw *table* with its top-left corner at ``(x, y)`` on this page.
+
+        Cell text is wrapped to its column with the font's own advances, rows
+        grow to hold what they are given, and a table taller than the room left
+        **continues onto the next page** -- repeating the rows marked as headers,
+        adding a page like this one when there is none to continue onto. Pass
+        ``bottom_margin`` to say how much to leave at the foot of a page.
+
+        The structure is tagged as it is drawn -- a ``/Table`` of ``/TR`` of
+        ``/TH`` and ``/TD``, nested as ISO 32000-1 14.8.4.3 asks -- unless
+        ``tag=False``.
+
+        Returns ``{"pages": [...], "bottom": y, "rows": n}``: the pages drawn on,
+        where the last row ended, and how many rows were placed -- so the next
+        thing on the page knows where to go.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine import tables as engine_tables
+
+        return engine_tables.draw(
+            eng,
+            self._index,
+            table,
+            float(x),
+            float(y),
+            bottom_margin=float(bottom_margin),
+            tag=bool(tag),
+        )
 
     def add_stamp(self, stamp: Stamp) -> Page:
         """Put *stamp* on this page, over or under what it already draws.

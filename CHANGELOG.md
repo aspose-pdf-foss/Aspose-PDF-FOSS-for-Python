@@ -9,6 +9,30 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Tables.** There was no table API at all — no `Table`, no `Row`, no `Cell` —
+  so a report meant placing every string and every line by hand, measuring the
+  text first to know where the next one goes. The two pieces that makes hard were
+  already written and need no optional dependency: the Standard-14 advances in
+  `engine.std_metrics` and an embedded font's CID widths.
+  - `Page.add_table(table, x, y)` draws one: column widths or equal columns,
+    column spans, text wrapped to each column (newlines hard-break, long words
+    break rather than overflow), rows that grow to hold their lines, and style
+    falling back cell → row → table — fonts, sizes, colours, padding, both
+    alignments, borders, backgrounds, and a separate set for header rows.
+  - A table taller than the room left **continues onto the next page**, repeating
+    the header rows and adding a page like the one it is leaving when there is
+    none to continue onto. It returns where it ended, so the next thing on the
+    page knows where to go.
+  - The structure is tagged as it is drawn: a nested `/Table` of `/TR` of `/TH`
+    and `/TD` (14.8.4.3), each cell owning its marked-content sequence. A tagged
+    table passes `convert_to_pdfua()` + `validate_pdfua()` and
+    `convert_to_pdfa("2a")`, both of which require tagging; `tag=False` turns it
+    off.
+  - `font=` sets a whole table in an embedded Unicode font. A subset font grows as
+    it is *encoded*, so measuring from a width table taken before the text was
+    encoded answered zero for every character — the text is encoded first now,
+    and the table re-read when a CID is missing from it.
+
 - **The facade layer, from two classes to ten.** `PdfExtractor` and
   `PdfFileEditor` were the whole of it, so ported code that reached for
   `PdfFileInfo`, `PdfFileSecurity`, `PdfBookmarkEditor`, `PdfAnnotationEditor`,

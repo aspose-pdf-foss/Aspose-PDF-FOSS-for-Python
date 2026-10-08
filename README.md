@@ -148,6 +148,10 @@ flowchart TD
   file rather than leaving it there for the next reader to switch back on.
 - `ImagePlacementAbsorber` collects the images a page draws, and `ImagePlacement.replace` /
   `hide` change them in the document — the new picture keeps the old one's place and size.
+- `Page.add_table(table, x, y)` draws a real table — `Table`, `Row`, `Cell`, column spans, per-cell
+  style, text wrapped to each column with the font's own advances, headers repeated when the table
+  runs onto the next page — and tags it as a nested `/Table` of `/TR` of `/TH`/`/TD`, so the result
+  passes PDF/UA.
 - `PageStamp` puts a page of another PDF onto a page — a letterhead, a background form, a
   designed watermark — importing everything it draws with, and `Document.n_up(2, 2)` /
   `Document.booklet()` impose a document as a grid or as a folded booklet.
@@ -393,6 +397,27 @@ with Document("report.pdf") as document:
     # Images as files in report_files/ rather than data: URIs; one HTML file per page.
     document.save_as_html("report.html", resources_directory="report_files", split_into_pages=True)
     print(document.to_markdown(pages=[0], markdown_format="CommonMark"))
+```
+
+### Build a Table
+
+```python
+from aspose_pdf import Document, PageSize, Table
+
+table = Table(column_widths=[220, 70, 90], padding=5,
+              header_background_color="#003366", header_text_color=(1, 1, 1))
+table.add_header_row(["Item", "Qty", "Price"])
+table.add_row(["Widget, the larger kind", "2", "9.99"])
+table.add_row(["Grommet", "14", "0.40"])
+total = table.add_row()
+total.add_cell("Total", column_span=2, alignment="right")
+total.add_cell("14.38", alignment="right")
+
+with Document() as document:
+    page = document.pages.add(PageSize.A4)
+    placement = page.add_table(table, 60, 760)   # continues onto new pages if needed
+    page.add_text("Thank you", 60, placement["bottom"] - 24)
+    document.save("invoice.pdf")
 ```
 
 ### Draw Paths and Hold a Graphics State

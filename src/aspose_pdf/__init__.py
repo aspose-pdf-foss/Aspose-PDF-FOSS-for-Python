@@ -124,6 +124,7 @@ from .stamps import (
     TextStamp,
     VerticalAlignment,
 )
+from .tables import Cell, Row, Table
 from .tagged import StructureElement, TaggedContent
 from .text_layout import TextLayoutOptions
 from .validation import (
@@ -169,6 +170,7 @@ __all__ = [
     "AnnotationFlags",
     "AnnotationType",
     "ByteArrayDataSource",
+    "Cell",
     "CertificationLevel",
     "CircleAnnotation",
     "Color",
@@ -265,6 +267,7 @@ __all__ = [
     "ResetFormAction",
     "ResultContainer",
     "RevocationStatus",
+    "Row",
     "SplitOptions",
     "Splitter",
     "SquareAnnotation",
@@ -276,6 +279,7 @@ __all__ = [
     "StructureElement",
     "SubmitFormAction",
     "SystemFontSource",
+    "Table",
     "TaggedContent",
     "TextAnnotation",
     "TextExtractor",

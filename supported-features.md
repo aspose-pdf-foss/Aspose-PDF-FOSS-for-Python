@@ -786,6 +786,41 @@ Supported:
   tolerated and the paint skipped. A `Color` carrying a `GradientAxialShading`
   raises `UnsupportedFeatureException` -- the value object is kept for ported
   code, and there is no shading-pattern writer for it to feed.
+- **Tables** (`Page.add_table(table, x, y)`), built from `Table`, `Row` and
+  `Cell` and then placed -- which is what a package with no flow layout can
+  honestly offer. The two things that makes hard were already written and need no
+  optional dependency: the Standard-14 advances of `engine.std_metrics` and an
+  embedded font's CID widths, so a column's text is wrapped to **what it will
+  occupy** rather than to a guess.
+  - `column_widths` are points and decide the table's width; without them
+    `columns` (or the widest row) splits `width`, or the room left on the page,
+    into equal columns. A cell may span columns.
+  - Cell text wraps to the column: explicit newlines are hard breaks, words pack
+    greedily, and a word too long for the column is broken so nothing overflows.
+    A row grows to hold the lines its cells wrap to, and `row_height` or a row's
+    own `height` set a minimum.
+  - A table taller than the room left **continues onto the next page** --
+    repeating the rows marked as headers, and adding a page like the one it is
+    leaving when there is none to continue onto. `bottom_margin` says how much to
+    leave at the foot. A first row that cannot fit at all is refused rather than
+    drawn off the page.
+  - Style falls back cell → row → table: `font_name`/`font_size`/`text_color`,
+    `padding`, `alignment` (left/center/right) and `vertical_alignment`
+    (top/middle/bottom), `background_color`, `border_width`/`border_color`, and
+    `header_background_color`/`header_text_color`/`header_font_size` for the
+    header rows. `font=` embeds a Unicode font for the whole table, measured by
+    its own widths -- and a subset grows as it is encoded, so the text is encoded
+    before it is measured (a table measured from a table taken too early came out
+    zero-width).
+  - The structure is **tagged as it is drawn**: a `/Table` of `/TR` of `/TH` and
+    `/TD`, nested as ISO 32000-1 14.8.4.3 asks, each cell owning the
+    marked-content sequence its text is in. Flattening that -- every cell a
+    sibling of the table -- is what a reader would then read out, so it is not
+    done; `tag=False` turns tagging off altogether. A tagged table passes
+    `convert_to_pdfua()` + `validate_pdfua()` and `convert_to_pdfa("2a")`, both of
+    which require tagging.
+  - `add_table` returns `{"pages": [...], "bottom": y, "rows": n}`, so whatever
+    comes next on the page knows where the table ended.
 - **Stamps** (`Page.add_stamp`, `Document.add_stamp(stamp, pages=...)`).
   `PageStamp(page_or_document, page_index=…)` places **a page of a document on a
   page** -- a letterhead, a background form, a watermark a designer drew in a PDF.
