@@ -148,6 +148,10 @@ flowchart TD
   file rather than leaving it there for the next reader to switch back on.
 - `ImagePlacementAbsorber` collects the images a page draws, and `ImagePlacement.replace` /
   `hide` change them in the document — the new picture keeps the old one's place and size.
+- Stamps, page numbers and redaction bars are marked as `/Artifact`, so a tagged document stays
+  PDF/UA-conformant once it is stamped — and `validate_pdfua()` reports any mark that is neither
+  tagged nor an artifact. `artifact=` on `Page.add_text`, `add_image` and the path helpers says the
+  same thing about decoration drawn by hand.
 - `Document.replace_text` and `redact_text` take `regex=True`, or a compiled `re.Pattern`, so a
   *shape* can be matched rather than a phrase — `\d{3}-\d{2}-\d{4}` for a social security number,
   `\b\d{4}( \d{4}){3}\b` for a card — with `\1` and `\g<name>` in the replacement expanding to

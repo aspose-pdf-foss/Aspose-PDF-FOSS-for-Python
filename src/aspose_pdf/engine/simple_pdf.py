@@ -47,6 +47,7 @@ from .content_authoring import (
     build_text_stream,
     prepare_image,
     safe_resource_name,
+    wrap_artifact,
     wrap_marked_content,
 )
 from .content_isolation import Isolation, isolation_for
@@ -6456,6 +6457,35 @@ class SimplePdf:
         else:
             element.mapping[PdfName(key)] = _pdf_text_string(value)
 
+    def _artifact_properties(
+        self,
+        artifact: Any,
+        *,
+        tag: str | None = None,
+        alt: str | None = None,
+        actual_text: str | None = None,
+    ) -> dict[str, Any] | None:
+        """What ``artifact=`` asks for, as :func:`wrap_artifact` keywords.
+
+        ``None``/``False`` is no marking, ``True`` the bare ``/Artifact`` that
+        says "this is decoration" and nothing more, and a string the artifact
+        type (``Pagination``, ``Layout``, ``Page``).
+
+        Asking for an artifact *and* a tag is refused rather than one of the two
+        being dropped: ISO 14289-1 7.1 has content be real or be an artifact, and
+        a caller who has said both has not decided which this is.
+        """
+        if artifact is None or artifact is False:
+            return None
+        if tag is not None or alt is not None or actual_text is not None:
+            raise PdfValidationException(
+                "Content is either tagged or an artifact, not both: drop tag=/"
+                "alt=/actual_text= or drop artifact=."
+            )
+        if artifact is True:
+            return {}
+        return {"artifact_type": str(artifact)}
+
     def _register_marked_content(
         self,
         page_index: int,
@@ -7772,13 +7802,20 @@ class SimplePdf:
         colour that cannot be read is refused rather than quietly drawn black --
         the bar is what makes the removal visible, so the wrong one is worse than
         an error.
+        The bars are marked as a ``Layout`` artifact: they are a visual device
+        laid over the page, not something the document says, and ISO 14289-1 7.1
+        wants every mark on a tagged page to say which of the two it is. The
+        ``/BBox`` is what the bars together cover, so a reader that honours
+        artifacts knows their extent without reading the paths.
         """
-        from .content_authoring import color_operator
+        from .content_authoring import color_operator, wrap_artifact
 
         operator = color_operator(color, stroking=False)
-        parts = [content, b"\nq\n", operator.encode("ascii") + b"\n"]
+        parts = [b"q\n", operator.encode("ascii") + b"\n"]
+        corners: list[tuple[float, float]] = []
         for quad in quads:
             (x0, y0), (x1, y1), (x2, y2), (x3, y3) = quad
+            corners.extend(((x0, y0), (x1, y1), (x2, y2), (x3, y3)))
             parts.append(
                 (
                     f"{x0:.3f} {y0:.3f} m {x1:.3f} {y1:.3f} l "
@@ -7786,7 +7823,19 @@ class SimplePdf:
                 ).encode("ascii")
             )
         parts.append(b"Q\n")
-        return b"".join(parts)
+        bars = wrap_artifact(
+            b"".join(parts),
+            artifact_type="Layout",
+            bbox=(
+                min(x for x, _y in corners),
+                min(y for _x, y in corners),
+                max(x for x, _y in corners),
+                max(y for _x, y in corners),
+            )
+            if corners
+            else None,
+        )
+        return content + b"\n" + bars
 
     def _pdf_number(self, obj: Any) -> float | None:
         obj = self._resolve(obj)
@@ -8896,6 +8945,7 @@ class SimplePdf:
         color: Sequence[float] = (0.0, 0.0, 0.0),
         tag: str | None = None,
         actual_text: str | None = None,
+        artifact: bool | str | None = None,
         layout: TextLayoutOptions | None = None,
     ) -> None:
         """Append positioned text to a page content stream."""
@@ -8970,15 +9020,21 @@ class SimplePdf:
                 self._refresh_authored_font_resource(authored_resource)
             resource = authored_resource.resource_name
             content = build_cid_text_stream(encoded, x, y, resource, size, color)
-        mark = self._register_marked_content(
-            page_index,
-            tag or ("P" if actual_text is not None or layout is not None else None),
-            actual_text=(actual_text if actual_text is not None else str(text))
-            if layout is not None
-            else actual_text,
+        properties = self._artifact_properties(
+            artifact, tag=tag, actual_text=actual_text
         )
-        if mark is not None:
-            content = wrap_marked_content(content, mark[0], mark[1])
+        if properties is not None:
+            content = wrap_artifact(content, **properties)
+        else:
+            mark = self._register_marked_content(
+                page_index,
+                tag or ("P" if actual_text is not None or layout is not None else None),
+                actual_text=(actual_text if actual_text is not None else str(text))
+                if layout is not None
+                else actual_text,
+            )
+            if mark is not None:
+                content = wrap_marked_content(content, mark[0], mark[1])
         self._append_content_to_page(page_index, content)
 
     def _build_laid_out_text_content(
@@ -9108,6 +9164,7 @@ class SimplePdf:
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        artifact: bool | str | None = None,
     ) -> str:
         """Register an image XObject and append a placement operation to a page."""
         self._ensure_not_disposed()
@@ -9127,14 +9184,21 @@ class SimplePdf:
         content = build_image_stream(
             resource_name, x, y, placement_width, placement_height
         )
-        mark = self._register_marked_content(
-            page_index,
-            tag or ("Figure" if alt is not None or actual_text is not None else None),
-            alt=alt,
-            actual_text=actual_text,
+        properties = self._artifact_properties(
+            artifact, tag=tag, alt=alt, actual_text=actual_text
         )
-        if mark is not None:
-            content = wrap_marked_content(content, mark[0], mark[1])
+        if properties is not None:
+            content = wrap_artifact(content, **properties)
+        else:
+            mark = self._register_marked_content(
+                page_index,
+                tag
+                or ("Figure" if alt is not None or actual_text is not None else None),
+                alt=alt,
+                actual_text=actual_text,
+            )
+            if mark is not None:
+                content = wrap_marked_content(content, mark[0], mark[1])
         self._append_content_to_page(page_index, content)
         self._image_matrix_map[(page_index, resource_name)] = (
             float(placement_width),
@@ -9220,6 +9284,7 @@ class SimplePdf:
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        artifact: bool | str | None = None,
     ) -> None:
         """Append a path -- lines, curves, shapes -- to a page content stream."""
         from .content_authoring import build_path_stream
@@ -9245,14 +9310,21 @@ class SimplePdf:
             transform=transform,
             ext_gstate=gstate,
         )
-        mark = self._register_marked_content(
-            page_index,
-            tag or ("Figure" if alt is not None or actual_text is not None else None),
-            alt=alt,
-            actual_text=actual_text,
+        properties = self._artifact_properties(
+            artifact, tag=tag, alt=alt, actual_text=actual_text
         )
-        if mark is not None:
-            content = wrap_marked_content(content, mark[0], mark[1])
+        if properties is not None:
+            content = wrap_artifact(content, **properties)
+        else:
+            mark = self._register_marked_content(
+                page_index,
+                tag
+                or ("Figure" if alt is not None or actual_text is not None else None),
+                alt=alt,
+                actual_text=actual_text,
+            )
+            if mark is not None:
+                content = wrap_marked_content(content, mark[0], mark[1])
         self._append_content_to_page(page_index, content)
 
     def begin_page_graphics(

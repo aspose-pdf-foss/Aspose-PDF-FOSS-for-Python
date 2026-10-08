@@ -9,6 +9,37 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Decoration now says it is decoration (`/Artifact`).** ISO 14289-1 7.1 has
+  every mark on a page of a tagged document be either tagged as real content or
+  marked as an artifact, and nothing this package authored said the second: a
+  perfectly tagged document stopped being conformant the moment it was stamped,
+  and `validate_pdfua()` reported it as valid with no warnings.
+  - `TextStamp`, `ImageStamp` and `PageStamp` are `/Pagination` artifacts with
+    `/Subtype /Watermark` by default; a `PageNumberStamp` is a `/Header` or a
+    `/Footer` when its alignment puts it at the top or the bottom of the sheet,
+    with the matching `/Attached` — read off what the caller already said rather
+    than guessed. Each carries the `/BBox` of where it landed on that page, all
+    four corners of a rotated stamp included. `artifact=False` puts a stamp on as
+    bare content; `artifact_type`/`artifact_subtype` override the defaults.
+  - Redaction bars became a `/Layout` artifact whose `/BBox` is what the bars
+    cover.
+  - **Imposition was deliberately left alone** even though `n_up` and `booklet`
+    place their pages through the same code as a stamp: an imposed page is the
+    sheet's real content and has to stay taggable. The decision moved to the
+    caller rather than living in the placement.
+  - `Page.add_text`, `add_image`, `draw_rectangle`, `draw_line` and `draw_path`
+    take `artifact=True`, or `artifact="Pagination"`/`"Layout"`/`"Page"`, so a
+    rule or a running head drawn by hand can say what it is. Asking for an
+    artifact *and* a tag is refused.
+  - `validate_pdfua()` now scans each page of a tagged document for marks that no
+    marked-content sequence encloses and names the page and the operators. A `Do`
+    invoking a **form** is followed rather than flagged, because a form may cover
+    its own content. Reported as warnings: the scan reads operators, and
+    `convert_to_pdfua()` offers a shell-only conversion whose content is untagged
+    by design.
+  - qpdf's own content parser resolves every property list written this way, and
+    pdfium renders a marked page and an unmarked one pixel for pixel the same.
+
 - **Regular expressions in `replace_text` and `redact_text`.** Searching
   already understood patterns — `TextFragmentAbsorber` with
   `TextSearchOptions(is_regular_expression=True)` — while editing took a literal

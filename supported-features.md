@@ -3010,6 +3010,49 @@ Supported:
   per page: a marked-content `/MCID` with no `/ParentTree` structure element, a
   `/ParentTree` slot referencing an MCID no marked content uses, and a page
   `/StructParents` key with no matching `/ParentTree` entry are all reported.
+- **Decoration says it is decoration.** ISO 14289-1 7.1 has every mark on a page
+  of a tagged document be one of two things -- real content inside a tagged
+  marked-content sequence, or decoration inside an `/Artifact` one -- so a
+  watermark or a page number that says neither makes an otherwise conformant
+  document non-conformant. What this package authors as decoration now says so:
+  - **Stamps** are marked, by default. `TextStamp`, `ImageStamp` and `PageStamp`
+    are `/Pagination` artifacts with `/Subtype /Watermark`; a `PageNumberStamp`
+    is a `/Header` or a `/Footer` when its vertical alignment puts it at the top
+    or the bottom of the sheet, with the matching `/Attached [/Top]` or
+    `[/Bottom]` -- which is read off what the caller already said rather than
+    guessed. Each carries a `/BBox` of where it landed *on that page*, all four
+    corners of a rotated stamp included. `artifact=False` puts a stamp on as
+    bare content, and `artifact_type`/`artifact_subtype` override the defaults.
+  - **Redaction bars** are a `/Layout` artifact whose `/BBox` is what the bars
+    together cover: a visual device laid over the page, not something the
+    document says.
+  - **Imposition is not decoration** and is left unmarked, although `n_up` and
+    `booklet` place their pages through the very same code as a stamp: an
+    imposed page is the sheet's real content and has to stay taggable.
+  - `Page.add_text`, `add_image`, `draw_rectangle`, `draw_line` and `draw_path`
+    take `artifact=True` for a bare `/Artifact`, or `artifact="Pagination"` /
+    `"Layout"` / `"Page"` to say which kind -- so a rule or a running head drawn
+    by hand can say what it is. Asking for an artifact *and* a tag is refused:
+    content is one or the other, and a caller who has said both has not decided.
+  - The marking goes *outside* any `q`/`Q` the fragment carries, which is what
+    14.6 means by properly nested. qpdf's own content parser resolves every
+    property list written this way, and pdfium renders a marked page and an
+    unmarked one pixel for pixel the same.
+- **What is still unmarked is reported.** `validate_pdfua()` scans each page of a
+  tagged document for mark-producing operators that no marked-content sequence
+  encloses -- text showing, path painting, `sh`, an inline image, and an image
+  `Do` -- and names the page and the operators. A `Do` that invokes a **form**
+  XObject is followed rather than flagged, since a form may cover its own
+  content (14.8.2.2 lets a whole form be an artifact), and a form invoked inside
+  a sequence is covered along with it; the descent is bounded and a form that
+  invokes itself is followed once.
+  These are **warnings**, deliberately. The scan reads operators, so a sequence
+  that is open but carries neither an `/MCID` nor `/Artifact` is not counted
+  against the page -- deciding what a producer meant by one is not something a
+  scan can do. And `convert_to_pdfua()` offers a shell-only conversion whose
+  content is untagged by design, which an error would turn from "a shell, as
+  asked for" into a failure. `convert_to_pdfua(auto_tag=True)`, tagging as the
+  content is authored, or marking it as an artifact all clear them.
 - Add the PDF/UA catalog shell with `Document.convert_to_pdfua` (structure tree
   with an empty `/ParentTree`, MarkInfo without `/Suspects`, `/Tabs /S` on pages
   carrying annotations, language, DisplayDocTitle, title, and a `pdfuaid` XMP

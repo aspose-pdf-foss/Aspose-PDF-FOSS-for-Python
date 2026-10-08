@@ -451,6 +451,7 @@ class Page:
         color: ColorValue = (0.0, 0.0, 0.0),
         tag: str | None = None,
         actual_text: str | None = None,
+        artifact: bool | str | None = None,
         layout: TextLayoutOptions | None = None,
     ) -> Page:
         """Append positioned text to this page.
@@ -465,6 +466,13 @@ class Page:
         number for grey, a ``"#rrggbb"`` string, or an
         :class:`~aspose_pdf.color.Color`. Grey and RGB channels may be 0..1 or
         0..255; CMYK is 0..1.
+
+        ``artifact`` marks this as **decoration** rather than content:
+        ``True`` for a bare ``/Artifact``, or one of ``"Pagination"``,
+        ``"Layout"``, ``"Page"`` to say which kind (ISO 32000-1 14.8.2.2). A
+        tagged document needs every mark to be one or the other (ISO 14289-1
+        7.1), so a rule or a running head drawn by hand says so this way.
+        Asking for an artifact *and* a tag is refused.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -481,6 +489,7 @@ class Page:
             color=color,
             tag=tag,
             actual_text=actual_text,
+            artifact=artifact,
             layout=layout,
         )
         return self
@@ -501,6 +510,7 @@ class Page:
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        artifact: bool | str | None = None,
     ) -> str:
         """Place an image on this page and return its resource name."""
         self._document._ensure_not_disposed()
@@ -534,6 +544,7 @@ class Page:
             tag=tag,
             alt=alt,
             actual_text=actual_text,
+            artifact=artifact,
         )
 
     def draw_rectangle(
@@ -549,6 +560,7 @@ class Page:
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        artifact: bool | str | None = None,
         **style: Any,
     ) -> Page:
         """Append a stroked and/or filled rectangle to this page.
@@ -575,6 +587,7 @@ class Page:
             tag=tag,
             alt=alt,
             actual_text=actual_text,
+            artifact=artifact,
             **style,
         )
         return self
@@ -599,6 +612,7 @@ class Page:
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        artifact: bool | str | None = None,
     ) -> Page:
         """Append a :class:`~aspose_pdf.paths.GraphicsPath` to this page.
 
@@ -657,6 +671,7 @@ class Page:
             tag=tag,
             alt=alt,
             actual_text=actual_text,
+            artifact=artifact,
         )
         return self
 
@@ -717,6 +732,7 @@ class Page:
         tag: str | None = None,
         alt: str | None = None,
         actual_text: str | None = None,
+        artifact: bool | str | None = None,
         **style: Any,
     ) -> Page:
         """Append a stroked line segment to this page.
@@ -740,6 +756,7 @@ class Page:
             tag=tag,
             alt=alt,
             actual_text=actual_text,
+            artifact=artifact,
             **style,
         )
         return self

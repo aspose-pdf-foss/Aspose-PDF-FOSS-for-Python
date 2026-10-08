@@ -27,6 +27,7 @@ warnings)`` tuples.  None of them mutate the document.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -1353,6 +1354,9 @@ def pdfua_extended(pdf: Any, part: int = 1) -> tuple[list[str], list[str]]:
     mcid_errors, mcid_warnings = pdfua_mcid_coverage(pdf)
     errors.extend(mcid_errors)
     warnings.extend(mcid_warnings)
+    artifact_errors, artifact_warnings = pdfua_artifact_coverage(pdf)
+    errors.extend(artifact_errors)
+    warnings.extend(artifact_warnings)
 
     return errors, warnings
 
@@ -2565,3 +2569,180 @@ def _collect_filter_names(filter_obj: Any, resolve: Any) -> list[str]:
             if isinstance(resolved, PdfName):
                 names.append(resolved.name.lstrip("/"))
     return names
+
+
+# ---------------------------------------------------------------------------
+# "Tagged or artifact": the rule a stamp used to break silently
+# ---------------------------------------------------------------------------
+
+#: Operators that put a mark on the page. ``n`` is absent on purpose -- it ends
+#: a path without painting it -- and so are the text-positioning and
+#: graphics-state operators, which move the pen without marking anything.
+_MARK_OPERATORS = frozenset(
+    {
+        # text showing
+        "Tj", "TJ", "'", '"',
+        # path painting, filling and stroking
+        "S", "s", "f", "F", "f*", "B", "B*", "b", "b*",
+        # a shading fill, and an inline image's samples
+        "sh", "BI",
+    }
+)
+
+#: How far down a chain of form XObjects the coverage scan follows an
+#: *uncovered* invocation. A form invoked inside a covered scope is covered with
+#: it and is not descended into at all.
+_MAX_ARTIFACT_FORM_DEPTH = 6
+
+
+def _uncovered_marks(
+    pdf: Any,
+    content: bytes,
+    resources: PdfDictionary | None,
+    depth: int,
+    seen: set[int],
+) -> list[str]:
+    """Operators in *content* that no marked-content sequence encloses.
+
+    The scan tracks ``BDC``/``BMC``/``EMC`` nesting and reports a mark-producing
+    operator only when **nothing** is open around it -- the unambiguous case, and
+    the one authored decoration used to produce. A sequence that is open but
+    carries neither an ``/MCID`` nor ``/Artifact`` (a bare ``/P BMC``) is content
+    a structure tree cannot reach either, but saying so would mean deciding what
+    a producer meant by it, so it is left alone; see the docstring of
+    :func:`pdfua_artifact_coverage`.
+
+    A ``Do`` outside any sequence is followed: a form XObject may cover its own
+    content, in which case the invocation needs no sequence of its own (14.8.2.2
+    lets a whole form be an artifact, or carry tagged content). An image has no
+    content of its own, so an uncovered one is a mark.
+    """
+    from .auto_tag import _tokens
+
+    found: list[str] = []
+    open_sequences = 0
+    dict_depth = 0
+    last_name: str | None = None
+    xobjects = (
+        _get_dict(pdf, resources.get(PdfName("XObject")))
+        if resources is not None
+        else None
+    )
+    for token, _start, _end in _tokens(
+        content, limits=pdf._load_limits, budget=pdf._load_budget
+    ):
+        if token is None:
+            continue
+        if token == "<<":
+            dict_depth += 1
+            continue
+        if token == ">>":
+            dict_depth = max(0, dict_depth - 1)
+            continue
+        if dict_depth:
+            continue  # inside a property list, not a stream of operators
+        if token in ("BDC", "BMC"):
+            open_sequences += 1
+            last_name = None
+            continue
+        if token == "EMC":
+            open_sequences = max(0, open_sequences - 1)
+            last_name = None
+            continue
+        if token.startswith("/"):
+            last_name = token.lstrip("/")
+            continue
+        if open_sequences:
+            last_name = None
+            continue
+        if token == "Do":
+            name = last_name
+            last_name = None
+            xobject = (
+                pdf._resolve(xobjects.get(PdfName(name)))
+                if xobjects is not None and name
+                else None
+            )
+            if not isinstance(xobject, PdfStream):
+                continue  # a name the page does not define: not this check's business
+            subtype = pdf._get_name(xobject.get(PdfName("Subtype")))
+            if subtype == "Form":
+                if depth >= _MAX_ARTIFACT_FORM_DEPTH or id(xobject) in seen:
+                    continue
+                seen.add(id(xobject))
+                try:
+                    body = pdf._decode_cos_stream(xobject, None)
+                except PdfResourceLimitException:
+                    raise
+                except PDF_OPERATION_ERRORS:
+                    continue
+                nested = _get_dict(pdf, xobject.get(PdfName("Resources")))
+                found.extend(
+                    _uncovered_marks(
+                        pdf, body, nested if nested is not None else resources,
+                        depth + 1, seen,
+                    )
+                )
+            else:
+                found.append("Do")
+            continue
+        last_name = None
+        if token in _MARK_OPERATORS:
+            found.append(token)
+    return found
+
+
+def pdfua_artifact_coverage(pdf: Any) -> tuple[list[str], list[str]]:
+    """Content on a tagged page that is neither tagged nor marked as an artifact.
+
+    ISO 14289-1 7.1 requires every mark on the page of a tagged document to be
+    one or the other: real content inside a tagged marked-content sequence, or
+    decoration inside an ``/Artifact`` one. A watermark, a page number or a rule
+    that says neither leaves the document non-conformant however well the rest
+    of it is tagged -- which is why this library marks the decoration it authors
+    (see :func:`.content_authoring.wrap_artifact`).
+
+    Reported as **warnings**, for two reasons. The scan sees the operators of a
+    content stream, not everything a producer may have meant: a sequence that is
+    open but carries neither an ``/MCID`` nor ``/Artifact`` is not counted
+    against the page, because deciding what it was for is not something a scan
+    can do. And ``convert_to_pdfua()`` deliberately offers a shell-only
+    conversion whose content is untagged by design, which this would otherwise
+    turn from "a shell, as asked for" into a failure. Use
+    ``convert_to_pdfua(auto_tag=True)``, tag the content as it is authored, or
+    mark it as an artifact, and the warnings go.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    root = catalog(pdf)
+    if root is None:
+        return errors, warnings
+    if _get_dict(pdf, root.get(PdfName("StructTreeRoot"))) is None:
+        return errors, warnings  # not a tagged document; the rule does not apply
+
+    try:
+        for i in range(len(pdf.pages)):
+            page = pdf._get_page_dict(i)
+            if not isinstance(page, PdfDictionary):
+                continue
+            resources = _get_dict(pdf, page.get(PdfName("Resources")))
+            found = _uncovered_marks(
+                pdf, pdf.get_page_content(i), resources, 0, set()
+            )
+            if not found:
+                continue
+            counted = Counter(found)
+            shown = ", ".join(
+                f"{operator} x{count}" if count > 1 else operator
+                for operator, count in sorted(counted.items())
+            )
+            warnings.append(
+                f"PDF/UA: page {i + 1} marks content that is neither tagged nor "
+                f"an artifact ({shown}); ISO 14289-1 7.1 asks for one or the "
+                "other."
+            )
+    except PdfResourceLimitException:
+        raise
+    except PDF_OPERATION_ERRORS:
+        pass
+    return errors, warnings

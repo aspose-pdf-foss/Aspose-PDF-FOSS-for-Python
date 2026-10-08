@@ -20,7 +20,7 @@ qpdf writes for the same stamp, to the last digit.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..exceptions import PdfValidationException
@@ -269,6 +269,24 @@ def _invocation(name: str, matrix: Matrix) -> bytes:
     return b"q " + numbers + b" cm /" + name.encode("ascii") + b" Do Q\n"
 
 
+def artifact_box(matrix: Matrix, size: tuple[float, float]) -> tuple[float, float, float, float]:
+    """Where a form of *size*, drawn under *matrix*, lands in user space.
+
+    All four corners are transformed and bounded, because a rotated stamp's box
+    is not its corners mapped pairwise -- which is the same reason
+    :func:`placement_matrix` measures a turned stamp by the box it occupies.
+    """
+    a, b, c, d, e, f = matrix
+    width, height = size
+    corners = [
+        (a * x + c * y + e, b * x + d * y + f)
+        for x, y in ((0.0, 0.0), (width, 0.0), (0.0, height), (width, height))
+    ]
+    xs = [point[0] for point in corners]
+    ys = [point[1] for point in corners]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def place(
     pdf: Any,
     page_index: int,
@@ -276,6 +294,7 @@ def place(
     matrix: Matrix,
     *,
     background: bool,
+    artifact: Mapping[str, Any] | None = None,
 ) -> str:
     """Draw *form* on the page under *matrix*; return its resource name.
 
@@ -283,11 +302,21 @@ def place(
     the way; a background one is put in front of that content, where it needs
     no isolation of its own -- its ``q``/``Q`` is balanced, so what follows is
     unaffected by it.
+
+    *artifact* marks the invocation as decoration rather than content (see
+    :func:`.content_authoring.wrap_artifact`). It is the **caller's** decision,
+    not this function's: a stamp is decoration, while an imposed page placed
+    through the very same code is the sheet's real content and must stay
+    taggable.
     """
     xobjects = pdf._ensure_resource_subdict(page_index, "XObject")
     name = pdf._unique_resource_name(xobjects, "Stamp", "Stamp1")
     xobjects.mapping[PdfName(name)] = form
     content = _invocation(name, matrix)
+    if artifact is not None:
+        from .content_authoring import wrap_artifact
+
+        content = wrap_artifact(content, **artifact)
     if background:
         _prepend(pdf, page_index, content)
     else:
@@ -329,7 +358,19 @@ def apply(pdf: Any, stamp: Any, page_indices: Sequence[int]) -> None:
             size=size,
             **placement,
         )
-        place(pdf, page_index, form, matrix, background=bool(stamp.background))
+        artifact = stamp._artifact()
+        if artifact is not None:
+            # The box is the stamp's own, on this page: the matrix differs per
+            # page, since each page is measured on its own.
+            artifact = {**artifact, "bbox": artifact_box(matrix, size)}
+        place(
+            pdf,
+            page_index,
+            form,
+            matrix,
+            background=bool(stamp.background),
+            artifact=artifact,
+        )
 
 
 def _prepend(pdf: Any, page_index: int, content: bytes) -> None:

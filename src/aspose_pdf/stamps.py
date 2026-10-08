@@ -80,6 +80,32 @@ class Stamp:
     zoom: float = 1.0
     """Scale the stamp by this much, after it is measured."""
 
+    artifact: bool = True
+    """Mark the stamp as an ``/Artifact``: decoration, not what the page says.
+
+    A stamp is not part of the document's content -- that is what stamping
+    means -- and ISO 14289-1 7.1 requires every mark on a page of a *tagged*
+    document to be either tagged as real content or marked as an artifact. So a
+    stamp says which it is, and the answer is always the same one. On an
+    untagged document the marking is inert: a reader that is not looking for
+    structure ignores it.
+
+    Set it to ``False`` to put the stamp on as bare content, which is what a
+    stamp that *is* part of the document -- an imposed page, a form being filled
+    in -- would want.
+    """
+
+    artifact_type: str | None = None
+    """``Pagination`` (the default), ``Layout`` or ``Page``; see 14.8.2.2."""
+
+    artifact_subtype: str | None = None
+    """``Header``, ``Footer`` or ``Watermark`` for a ``Pagination`` artifact.
+
+    ``None`` takes the subclass's own answer: a page number placed at the top or
+    bottom of the sheet is a header or a footer, and anything else a stamp puts
+    on a page is a watermark.
+    """
+
     def _validate(self) -> None:
         if not 0.0 <= float(self.opacity) <= 1.0:
             raise PdfValidationException("opacity must be between 0 and 1")
@@ -87,6 +113,46 @@ class Stamp:
             raise PdfValidationException("zoom must be above zero")
         HorizontalAlignment(self.horizontal_alignment)
         VerticalAlignment(self.vertical_alignment)
+        if self.artifact:
+            # Through the writer, so one rule decides what a valid artifact is.
+            from aspose_pdf.engine.content_authoring import wrap_artifact
+
+            wrap_artifact(
+                b"",
+                artifact_type=self.artifact_type or "Pagination",
+                subtype=self._artifact_subtype(),
+            )
+
+    def _artifact_subtype(self) -> str | None:
+        """Which kind of running matter this stamp is, when it is Pagination."""
+        if self.artifact_subtype is not None:
+            return self.artifact_subtype
+        if (self.artifact_type or "Pagination") != "Pagination":
+            return None
+        return "Watermark"
+
+    def _artifact(self) -> dict[str, Any] | None:
+        """What to say about the stamp in its ``/Artifact`` property list.
+
+        ``None`` when the stamp is to go on as bare content. ``/Attached`` is
+        written only for a header or a footer, which is the only case where a
+        stamp really is fixed to an edge of the sheet: a watermark sits wherever
+        it was aligned and is attached to nothing.
+        """
+        if not self.artifact:
+            return None
+        artifact_type = self.artifact_type or "Pagination"
+        subtype = self._artifact_subtype()
+        attached: list[str] | None = None
+        if subtype in ("Header", "Footer"):
+            vertical = VerticalAlignment(self.vertical_alignment).value
+            if vertical in ("Top", "Bottom"):
+                attached = [vertical]
+        return {
+            "artifact_type": artifact_type,
+            "subtype": subtype,
+            "attached": attached,
+        }
 
     def _placement(self) -> dict[str, Any]:
         return {
@@ -304,6 +370,23 @@ class PageNumberStamp(TextStamp):
         super()._validate()
         if int(self.starting_number) != self.starting_number:
             raise PdfValidationException("starting_number must be a whole number")
+
+    def _artifact_subtype(self) -> str | None:
+        """A page number at the top of the sheet is a header, at the foot a footer.
+
+        Not a guess: the caller has already said where the stamp goes, and 14.8.2.2
+        names exactly these two for running matter at an edge. A page number
+        placed in the middle of the page is left as a watermark, which is the
+        honest answer for something that is not at an edge at all.
+        """
+        if self.artifact_subtype is not None:
+            return self.artifact_subtype
+        if (self.artifact_type or "Pagination") != "Pagination":
+            return None
+        return {
+            "Top": "Header",
+            "Bottom": "Footer",
+        }.get(VerticalAlignment(self.vertical_alignment).value, "Watermark")
 
     def _text(self, page_index: int, page_count: int) -> str:
         number = int(self.starting_number) + page_index

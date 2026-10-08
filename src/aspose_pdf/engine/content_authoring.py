@@ -727,6 +727,99 @@ def wrap_marked_content(content: bytes, tag: str, mcid: int) -> bytes:
     return prefix + body + suffix
 
 
+#: The artifact types ISO 32000-1 14.8.2.2 defines. ``Pagination`` is running
+#: matter -- a header, a footer, a page number, a watermark; ``Layout`` is a
+#: visual device such as a rule or a box; ``Page`` is production furniture such
+#: as a cut mark or a colour bar.
+ARTIFACT_TYPES = ("Pagination", "Layout", "Page")
+
+#: ``/Subtype`` values Table 330 gives a ``Pagination`` artifact.
+ARTIFACT_SUBTYPES = ("Header", "Footer", "Watermark")
+
+#: Page edges an artifact may be attached to.
+ARTIFACT_EDGES = ("Top", "Bottom", "Left", "Right")
+
+
+def wrap_artifact(
+    content: bytes,
+    *,
+    artifact_type: str | None = None,
+    subtype: str | None = None,
+    bbox: Sequence[float] | None = None,
+    attached: Sequence[str] | None = None,
+) -> bytes:
+    """Wrap a fragment in an ``/Artifact`` marked-content sequence.
+
+    An artifact is content that is *not* part of what the document says: a
+    watermark, a page number, a rule. ISO 14289-1 7.1 requires every mark on a
+    page of a tagged document to be either tagged as real content or marked as
+    an artifact, so a stamp on an otherwise conformant document makes it
+    non-conformant until it says it is decoration. This is that statement.
+
+    The sequence goes *outside* any ``q``/``Q`` the fragment carries, which is
+    what 14.6 means by properly nested: a marked-content sequence may contain
+    whole graphics-state pairs but may not straddle one.
+
+    ``/BBox`` is the artifact's box in default user space and ``/Attached`` the
+    page edges it is attached to -- both of which only mean something for
+    running matter, so ``/Attached`` is refused on a ``Layout`` artifact, as
+    Table 330 requires.
+    """
+    properties: list[str] = []
+    if artifact_type is not None:
+        name = str(artifact_type).strip().lstrip("/")
+        if name not in ARTIFACT_TYPES:
+            raise PdfValidationException(
+                "An artifact type is one of: " + ", ".join(ARTIFACT_TYPES)
+            )
+        properties.append(f"/Type /{name}")
+    else:
+        name = None
+    if subtype is not None:
+        sub = str(subtype).strip().lstrip("/")
+        if sub not in ARTIFACT_SUBTYPES:
+            raise PdfValidationException(
+                "An artifact subtype is one of: " + ", ".join(ARTIFACT_SUBTYPES)
+            )
+        if name not in (None, "Pagination"):
+            raise PdfValidationException(
+                f"/Subtype belongs to a Pagination artifact, not to /{name}"
+            )
+        properties.append(f"/Subtype /{sub}")
+    if bbox is not None:
+        values = [float(value) for value in bbox]
+        if len(values) != 4 or not all(math.isfinite(value) for value in values):
+            raise PdfValidationException(
+                "An artifact's /BBox is four finite numbers"
+            )
+        properties.append(
+            "/BBox [" + " ".join(format_number(value) for value in values) + "]"
+        )
+    if attached:
+        edges = [str(edge).strip().lstrip("/").title() for edge in attached]
+        unknown = [edge for edge in edges if edge not in ARTIFACT_EDGES]
+        if unknown:
+            raise PdfValidationException(
+                "An artifact is attached to one or more of: "
+                + ", ".join(ARTIFACT_EDGES)
+            )
+        if name == "Layout":
+            raise PdfValidationException(
+                "/Attached belongs to a Pagination or Page artifact, not to a "
+                "Layout one"
+            )
+        properties.append("/Attached [" + " ".join(f"/{e}" for e in edges) + "]")
+
+    head = "/Artifact"
+    if properties:
+        head += " << " + " ".join(properties) + " >>"
+    prefix = (head + " BDC\n").encode("ascii")
+    body = bytes(content)
+    if body and not body.endswith((b"\n", b"\r")):
+        body += b"\n"
+    return prefix + body + b"EMC\n"
+
+
 def image_pixel_size(data: bytes) -> tuple[int, int]:
     """The pixel width and height of JPEG or PNG *data*, from its header alone.
 
