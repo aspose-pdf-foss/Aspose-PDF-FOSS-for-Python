@@ -6,6 +6,7 @@ This module provides the main Document class that wraps the native PDF engine.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import (
@@ -1816,12 +1817,13 @@ class Document:
 
     def replace_text(
         self,
-        search: str,
+        search: str | re.Pattern[str],
         replacement: str,
         *,
         page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
+        regex: bool = False,
         font: FontDescriptor | bytes | bytearray | str | Path | None = None,
         layout: TextLayoutOptions | None = None,
     ) -> int:
@@ -1840,6 +1842,19 @@ class Document:
         for direction, script, and features. Reshaping needs the optional
         ``text-layout`` extra; without a usable path the edit raises rather than
         emit misshaped glyphs.
+
+        With ``regex=True`` -- or a compiled :class:`re.Pattern` as *search*,
+        which needs no flag -- the search is a regular expression and
+        *replacement* becomes a **template**: ``\\1`` and ``\\g<name>`` expand to
+        what each match captured, as :func:`re.sub` defines them. ``\\d{3}-\\d{2}-
+        \\d{4}`` finds a shape rather than a phrase, which is what redacting an
+        account number or a date needs. The pattern is matched against one
+        logical text run at a time -- the text the page paints as one -- so
+        ``^`` and ``$`` anchor to the run and not to a line, and a match cannot
+        reach across a break that starts a new run. A pattern that matches the
+        empty string is ignored. An RTL phrase is found in its stored visual
+        order only when searched for as a literal; a regular expression's source
+        is grammar, not text, and is not reordered.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -1850,17 +1865,19 @@ class Document:
             page_index=page_index,
             case_sensitive=case_sensitive,
             max_count=max_count,
+            regex=regex,
             font=font,
             layout=layout,
         )
 
     def redact_text(
         self,
-        search: str,
+        search: str | re.Pattern[str],
         *,
         page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
+        regex: bool = False,
         overlay: bool = False,
         overlay_color: ColorValue = (0.0, 0.0, 0.0),
     ) -> int:
@@ -1886,6 +1903,13 @@ class Document:
         This edits matched page/form text only, not independent copies in
         metadata, attachments, annotations, images, or unselected occurrences.
         The original input file is unchanged unless explicitly overwritten.
+
+        With ``regex=True`` -- or a compiled :class:`re.Pattern` as *search* --
+        the search is a regular expression, which is what redacting a *shape*
+        rather than a phrase needs: ``\\d{3}-\\d{2}-\\d{4}`` for a social security
+        number, ``\\b\\d{4}( \\d{4}){3}\\b`` for a card. The overlay bars come from
+        the same spans the removal used, so they land on the text that went. See
+        :meth:`replace_text` for how a pattern is matched.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -1895,6 +1919,7 @@ class Document:
             page_index=page_index,
             case_sensitive=case_sensitive,
             max_count=max_count,
+            regex=regex,
             overlay=overlay,
             overlay_color=overlay_color,
         )

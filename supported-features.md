@@ -1563,6 +1563,36 @@ Supported:
   so text assembled from several runs, text inside a form XObject, or text in
   a font the page does not declare stays unplaced (`rect` is `None`) rather
   than being given a box that is not its own.
+- **Match a shape, not only a phrase.** `replace_text` and `redact_text` take
+  `regex=True`, or a compiled `re.Pattern` as the search (which needs no flag),
+  so `\d{3}-\d{2}-\d{4}` finds a social security number and
+  `\b\d{4}( \d{4}){3}\b` a card -- which is what redaction is mostly wanted
+  for, and what searching could already do (`TextSearchOptions(
+  is_regular_expression=True)`) while editing could not.
+  - With a pattern the replacement is a **template**: `\1` and `\g<name>`
+    expand to what *each* match captured, as `re.sub` defines them, so
+    `(\d{3})-(\d{2})-(\d{4})` → `***-**-\3` keeps the last four digits of
+    every number it finds. A literal search has nothing to expand, so its
+    replacement keeps its backslashes exactly as before.
+  - The pattern is matched against **one logical run at a time** -- the text the
+    page paints as one, which is the same unit a literal phrase is matched in --
+    so it reaches across `TJ` elements and consecutive show operators, while
+    `^` and `$` anchor to the run rather than to a line and a match cannot cross
+    a break that starts a new run.
+  - A pattern matching the **empty string** is ignored: an empty span removes
+    nothing and has no character to inject at, so `\d*` finds the runs of
+    digits and not the gaps between letters.
+  - `case_sensitive=False` adds `IGNORECASE`; a compiled pattern keeps the flags
+    it already carries and gains that one. A pattern that cannot compile, and a
+    replacement template naming a group the pattern does not have, are both
+    reported as `PdfValidationException` rather than escaping as `re.error`.
+  - An RTL or complex-script phrase is still found in its stored visual order
+    only when searched for as a **literal**: a regular expression's source is
+    grammar rather than text, so reordering it would not reorder what it
+    matches.
+  - The overlay bars of a regex redaction come from the same spans the removal
+    used -- the locator shares the editor's span alignment -- so a pattern's bar
+    lands exactly where the equivalent literal's would.
 - Replace or redact existing text in simple page content streams with
   `Document.replace_text`, `Document.redact_text`, `Page.replace_text`, and
   `Page.redact_text`. The editor rewrites literal and hexadecimal string

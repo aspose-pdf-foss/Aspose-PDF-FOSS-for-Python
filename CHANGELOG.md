@@ -9,6 +9,30 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Regular expressions in `replace_text` and `redact_text`.** Searching
+  already understood patterns — `TextFragmentAbsorber` with
+  `TextSearchOptions(is_regular_expression=True)` — while editing took a literal
+  phrase only, so the one thing redaction is most wanted for, removing a *shape*
+  rather than a phrase, could not be asked for: `page.redact_text(r"\d{3}-\d{2}-\d{4}")`
+  found nothing and returned 0.
+  - `regex=True`, or a compiled `re.Pattern` as the search (which needs no
+    flag), on `Document.replace_text`, `Document.redact_text`,
+    `Page.replace_text` and `Page.redact_text`.
+  - With a pattern the replacement is a **template**: `\1` and `\g<name>`
+    expand to what *each* match captured, as `re.sub` defines them. A literal
+    search keeps its replacement verbatim, backslashes and all.
+  - A pattern reaches across `TJ` elements and consecutive show operators,
+    because it is matched against the same logical run a literal phrase is; `^`
+    and `$` anchor to that run. A pattern matching the empty string is ignored.
+    A pattern that will not compile, and a template naming a group that is not
+    there, are reported as `PdfValidationException`.
+  - The redaction **overlay bars** came along for free: the locator shares the
+    editor's span alignment, so a pattern's bars land exactly where the
+    equivalent literal's would. Verified three ways — pikepdf/qpdf finds the
+    redacted numbers in neither the decoded streams nor the raw file bytes,
+    pdfminer.six and pdfium both read the text with them gone, and pdfium's
+    raster shows a solid bar over where the digits were.
+
 - **Flowing text.** Authored text could only be placed one string at a time at
   one point. Wrapping it meant measuring the font yourself, or passing
   `layout=TextLayoutOptions(...)` to `Page.add_text` — which shapes with

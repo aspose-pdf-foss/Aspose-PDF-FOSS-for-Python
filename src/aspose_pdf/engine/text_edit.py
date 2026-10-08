@@ -861,7 +861,7 @@ def _last_operand(operands: list[tuple], kind: str):
 
 def replace_text_in_content(
     content: bytes,
-    search: str,
+    search: str | re.Pattern[str],
     replacement: str,
     *,
     case_sensitive: bool = True,
@@ -898,6 +898,13 @@ def replace_text_in_content(
     :class:`CidTextCodec` for composite (Type0) fonts, enabling matching over
     exactly decoded variable-length show strings. Fonts without a codec use
     the default Latin-1/UTF-16BE operand decoding.
+
+    *search* may be a compiled :class:`re.Pattern` instead of a literal string
+    (see :func:`prepare_search`), in which case *replacement* is a template and
+    each match expands its own groups. The pattern is matched against **one
+    logical run at a time**, which is what a run is for: it is the text the page
+    paints as one, so ``^`` and ``$`` anchor to the run rather than to a line,
+    and a pattern cannot reach across a break that starts a new run.
     """
     _validate_edit_args(search, max_count)
     active_budget = _resolve_load_budget(limits, budget)
@@ -952,7 +959,7 @@ def _is_number_word(value: str) -> bool:
 
 def redact_text_in_content(
     content: bytes,
-    search: str,
+    search: str | re.Pattern[str],
     *,
     case_sensitive: bool = True,
     max_count: int = 0,
@@ -962,7 +969,11 @@ def redact_text_in_content(
     budget: _LoadBudget | None = None,
     context: Any = None,
 ) -> tuple[bytes, int]:
-    """Remove text from simple text-showing operands."""
+    """Remove text from simple text-showing operands.
+
+    *search* may be a literal string or a compiled :class:`re.Pattern`, as for
+    :func:`replace_text_in_content`.
+    """
     from .redaction import RedactionContext
 
     return replace_text_in_content(
@@ -979,10 +990,48 @@ def redact_text_in_content(
     )
 
 
-def _validate_edit_args(search: str, max_count: int) -> None:
+def prepare_search(
+    search: str | re.Pattern[str],
+    *,
+    regex: bool = False,
+    case_sensitive: bool = True,
+) -> str | re.Pattern[str]:
+    """What the edit should look for: the literal string, or a compiled pattern.
+
+    A compiled pattern is **always** treated as one, whatever *regex* says, so
+    handing one over needs no flag; ``case_sensitive=False`` then adds
+    ``IGNORECASE`` to the flags it already carries rather than discarding them.
+    A string with ``regex=False`` is returned unchanged, which keeps the literal
+    path -- a plain ``str.find`` scan -- exactly as it was.
+
+    A pattern that cannot compile is reported as a validation error naming the
+    position, rather than escaping as ``re.error`` from inside the engine.
+    """
+    if isinstance(search, re.Pattern):
+        if not case_sensitive and not search.flags & re.IGNORECASE:
+            return re.compile(search.pattern, search.flags | re.IGNORECASE)
+        return search
     if not isinstance(search, str):
-        raise TypeError("search must be a string")
+        raise TypeError("search must be a string or a compiled regular expression")
+    if not regex:
+        return search
     if search == "":
+        raise ValueError("search must not be empty")
+    try:
+        return re.compile(search, 0 if case_sensitive else re.IGNORECASE)
+    except re.error as error:
+        raise PdfValidationException(
+            f"search is not a usable regular expression: {error}"
+        ) from None
+
+
+def _validate_edit_args(search: str | re.Pattern[str], max_count: int) -> None:
+    if isinstance(search, re.Pattern):
+        if search.pattern == "":
+            raise ValueError("search must not be empty")
+    elif not isinstance(search, str):
+        raise TypeError("search must be a string or a compiled regular expression")
+    elif search == "":
         raise ValueError("search must not be empty")
     if int(max_count) < 0:
         raise ValueError("max_count must be greater than or equal to zero")
@@ -990,14 +1039,35 @@ def _validate_edit_args(search: str, max_count: int) -> None:
 
 def _find_matches(
     full: str,
-    search: str,
+    search: str | re.Pattern[str],
     case_sensitive: bool,
     max_count: int,
     *,
     budget: _LoadBudget | None = None,
-) -> list[tuple[int, int]]:
-    """Return non-overlapping ``(start, end)`` match spans in *full*."""
-    spans: list[tuple[int, int]] = []
+) -> list[tuple[int, int, re.Match[str] | None]]:
+    """Non-overlapping ``(start, end, match)`` spans of *search* in *full*.
+
+    *match* is the :class:`re.Match` for a pattern search, so a replacement can
+    expand its groups, and ``None`` for a literal one -- where there is nothing
+    to expand and the replacement is used as it is.
+
+    A pattern that matches the **empty string** is skipped: an empty span
+    removes nothing and has no character to inject at, and a pattern like
+    ``\\d*`` would otherwise report a match between every pair of letters.
+    """
+    spans: list[tuple[int, int, re.Match[str] | None]] = []
+    if isinstance(search, re.Pattern):
+        for match in search.finditer(full):
+            if match.start() == match.end():
+                continue
+            span = (match.start(), match.end(), match)
+            if budget is None:
+                spans.append(span)
+            else:
+                _append_checked(spans, span, budget, "text edit match spans")
+            if max_count and len(spans) >= max_count:
+                break
+        return spans
     if case_sensitive:
         pos = 0
         step = len(search)
@@ -1005,7 +1075,7 @@ def _find_matches(
             j = full.find(search, pos)
             if j < 0:
                 break
-            span = (j, j + step)
+            span = (j, j + step, None)
             if budget is None:
                 spans.append(span)
             else:
@@ -1020,7 +1090,7 @@ def _find_matches(
                 break
     else:
         for m in re.finditer(re.escape(search), full, re.IGNORECASE):
-            span = (m.start(), m.end())
+            span = (m.start(), m.end(), None)
             if budget is None:
                 spans.append(span)
             else:
@@ -1119,17 +1189,23 @@ def _run_char_data(
     return infos, "".join(full_parts), entries, seg_starts
 
 
-def _search_variants(search: str) -> list[str]:
+def _search_variants(search: str | re.Pattern[str]) -> list[str | re.Pattern[str]]:
     """Return the forms of *search* to look for in a decoded (visual-order) run.
 
     A right-to-left or complex-script phrase is stored in a content stream in
     visual order, so the logical search string never matches directly. When the
     optional bidi dependency is present the reordered (display) form is added, so
     an RTL phrase can be located and reshaped. LTR/ASCII searches are unchanged.
+
+    A **pattern** is matched as it is. Reordering a regular expression's source
+    into visual order would not reorder what it matches -- the grammar is not
+    text -- so an RTL phrase is looked for with a literal rather than a pattern.
     """
     from .text_layout import needs_shaping
 
-    variants = [search]
+    if isinstance(search, re.Pattern):
+        return [search]
+    variants: list[str | re.Pattern[str]] = [search]
     if needs_shaping(search):
         try:
             from bidi.algorithm import get_display
@@ -1144,13 +1220,13 @@ def _search_variants(search: str) -> list[str]:
 def _aligned_spans(
     full: str,
     entries: list[tuple[int, int, bool, bool, bool, bool]],
-    search: str,
+    search: str | re.Pattern[str],
     case_sensitive: bool,
     max_count: int,
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
-) -> list[tuple[int, int]]:
+) -> list[tuple[int, int, re.Match[str] | None]]:
     """Match spans that cover whole code units and at least one real char.
 
     A span ending inside a multi-char code unit (a ligature) cannot be
@@ -1159,7 +1235,7 @@ def _aligned_spans(
     visual (display) order; overlapping candidates keep the earliest.
     """
     active_budget = _resolve_load_budget(limits, budget)
-    candidates: list[tuple[int, int]] = []
+    candidates: list[tuple[int, int, re.Match[str] | None]] = []
     for variant in _search_variants(search):
         for span in _find_matches(
             full,
@@ -1174,10 +1250,12 @@ def _aligned_spans(
                 active_budget,
                 "text edit candidate match spans",
             )
-    candidates.sort()
-    kept: list[tuple[int, int]] = []
+    # On the span alone: a re.Match has no ordering, so a tuple sort would
+    # compare two of them whenever two variants found the same span.
+    candidates.sort(key=lambda candidate: candidate[:2])
+    kept: list[tuple[int, int, re.Match[str] | None]] = []
     last_end = -1
-    for s, e in candidates:
+    for s, e, match in candidates:
         if s < last_end:
             continue  # overlaps an already-kept span
         if not entries[s][2] or not entries[e - 1][3]:
@@ -1188,7 +1266,7 @@ def _aligned_spans(
             continue
         _append_checked(
             kept,
-            (s, e),
+            (s, e, match),
             active_budget,
             "text edit aligned match spans",
         )
@@ -1370,9 +1448,30 @@ def _encode_cid_replacement(
     return encoded
 
 
+def _expand_replacement(
+    replacement: str, match: re.Match[str] | None
+) -> str:
+    """The text to inject for one match.
+
+    With a pattern the replacement is a **template**: ``\\1`` and ``\\g<name>``
+    stand for what the match captured, exactly as :meth:`re.Match.expand`
+    defines them, which is also what :func:`re.sub` does. A literal search has
+    nothing to expand, so its replacement is used as it is -- a backslash in it
+    stays a backslash.
+    """
+    if match is None:
+        return replacement
+    try:
+        return match.expand(replacement)
+    except (re.error, IndexError) as error:
+        raise PdfValidationException(
+            f"replacement is not a usable template for this pattern: {error}"
+        ) from None
+
+
 def _edit_run(
     run: _Run,
-    search: str,
+    search: str | re.Pattern[str],
     replacement: str,
     *,
     case_sensitive: bool,
@@ -1412,16 +1511,20 @@ def _edit_run(
     )
     covered = [False] * len(full)
     inject: dict[int, dict[int, Any]] = {}  # seg -> unit/char index -> payload
-    for s, e in spans:
+    for s, e, match in spans:
         for i in range(s, e):
             covered[i] = True
         target = next(i for i in range(s, e) if not entries[i][4])
         t_seg, t_unit = entries[target][0], entries[target][1]
+        # Each match brings its own replacement: with a pattern the template
+        # may name the groups this match captured, so it cannot be expanded
+        # once for the whole run.
+        text_for_match = _expand_replacement(replacement, match)
         if infos[t_seg][0] == "cid":
             payload: Any = b""
-            if replacement:
+            if text_for_match:
                 payload = _encode_cid_replacement(
-                    replacement,
+                    text_for_match,
                     run,
                     segs[t_seg],
                     infos[t_seg][2],
@@ -1430,7 +1533,7 @@ def _edit_run(
                     budget=budget,
                 )
         else:
-            payload = replacement
+            payload = text_for_match
         if t_seg not in inject:
             budget.check(
                 len(inject) + 1,

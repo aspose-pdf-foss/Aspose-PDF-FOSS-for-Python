@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1068,11 +1069,12 @@ class Page:
 
     def replace_text(
         self,
-        search: str,
+        search: str | re.Pattern[str],
         replacement: str,
         *,
         case_sensitive: bool = True,
         max_count: int = 0,
+        regex: bool = False,
         font: FontDescriptor | bytes | bytearray | str | Path | None = None,
         layout: TextLayoutOptions | None = None,
     ) -> int:
@@ -1088,6 +1090,12 @@ class Page:
         embedded and the replacement drawn at the match position (see
         :meth:`Document.replace_text`). Reshaping needs the optional
         ``text-layout`` extra.
+
+        With ``regex=True``, or a compiled :class:`re.Pattern` as *search*, the
+        search is a regular expression and *replacement* is a template whose
+        ``\\1`` and ``\\g<name>`` expand to what each match captured. See
+        :meth:`aspose_pdf.document.Document.replace_text` for what a pattern is
+        matched against.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -1099,16 +1107,18 @@ class Page:
             page_index=self._index,
             case_sensitive=case_sensitive,
             max_count=max_count,
+            regex=regex,
             font=font,
             layout=layout,
         )
 
     def redact_text(
         self,
-        search: str,
+        search: str | re.Pattern[str],
         *,
         case_sensitive: bool = True,
         max_count: int = 0,
+        regex: bool = False,
         overlay: bool = False,
         overlay_color: ColorValue = (0.0, 0.0, 0.0),
     ) -> int:
@@ -1124,6 +1134,10 @@ class Page:
         are invalidated. Shared content still used by other pages is retained.
         See :meth:`aspose_pdf.document.Document.redact_text` for alternate-text
         handling, unsupported cases and output-stream requirements.
+
+        With ``regex=True``, or a compiled :class:`re.Pattern` as *search*, a
+        *shape* is redacted rather than a phrase -- an account number, a date, a
+        card -- and the overlay bars come from the same spans the removal used.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -1134,6 +1148,7 @@ class Page:
             page_index=self._index,
             case_sensitive=case_sensitive,
             max_count=max_count,
+            regex=regex,
             overlay=overlay,
             overlay_color=overlay_color,
         )

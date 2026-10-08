@@ -18,6 +18,7 @@ missing cosmetic mark, never leaked text.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -280,7 +281,7 @@ def _bounds(quads: list[Quad]) -> tuple[float, float, float, float]:
 
 def locate_text(
     content: bytes,
-    search: str,
+    search: str | re.Pattern[str],
     font_for_name: Callable[[str], FontMetric | None],
     *,
     case_sensitive: bool = True,
@@ -319,7 +320,7 @@ def locate_text(
         spans = _aligned_spans(
             full, entries, search, case_sensitive, remaining, budget=active_budget
         )
-        for start, end in spans:
+        for start, end, _match in spans:
             quads = _span_quads(
                 run.origin_trm, geometry, start, end, budget=active_budget
             )
@@ -345,7 +346,7 @@ def _segment_of(seg_starts: list[int], char_index: int) -> int:
 
 def locate_matches(
     content: bytes,
-    search: str,
+    search: str | re.Pattern[str],
     font_for_name: Callable[[str], FontMetric | None],
     *,
     case_sensitive: bool = True,
@@ -358,8 +359,9 @@ def locate_matches(
 
     Runs, decoding and match filtering mirror the redactor exactly (the same
     walker and span alignment are used), so every returned box corresponds to
-    text the redactor would remove. A match spanning several baselines (a
-    line-moving ``'``/``"`` inside the run) yields one quad per baseline.
+    text the redactor would remove -- which is what makes the bars land on the
+    text that went. *search* may therefore be a compiled :class:`re.Pattern`
+    too, and the quads are the ones that pattern's matches occupied.
     """
     active_budget = _resolve_load_budget(limits, budget)
     tokens = _lex(content, budget=active_budget)
@@ -394,7 +396,7 @@ def locate_matches(
             remaining,
             budget=active_budget,
         )
-        for start, end in spans:
+        for start, end, _match in spans:
             matches += 1
             span_quads = _span_quads(
                 run.origin_trm,

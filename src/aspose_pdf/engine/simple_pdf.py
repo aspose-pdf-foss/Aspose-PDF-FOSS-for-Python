@@ -7046,12 +7046,13 @@ class SimplePdf:
 
     def replace_text(
         self,
-        search: str,
+        search: str | re.Pattern[str],
         replacement: str,
         *,
         page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
+        regex: bool = False,
         font: FontDescriptor | bytes | bytearray | str | Path | None = None,
         layout: TextLayoutOptions | None = None,
     ) -> int:
@@ -7070,22 +7071,30 @@ class SimplePdf:
         replacement drawn at the match position. Reshaping needs the optional
         ``text-layout`` extra; without a usable path the edit raises rather than
         emit misshaped glyphs.
+
+        With ``regex=True`` -- or a compiled :class:`re.Pattern` as *search*,
+        which needs no flag -- the search is a regular expression and
+        *replacement* is a template whose ``\\1`` and ``\\g<name>`` expand to
+        what each match captured. The pattern is matched against one logical run
+        at a time, so ``^``/``$`` anchor to the run and not to a line.
         """
         self._ensure_not_disposed()
-        if not isinstance(search, str):
-            raise TypeError("search must be a string")
         if not isinstance(replacement, str):
             raise TypeError("replacement must be a string")
-        if search == "":
-            raise ValueError("search must not be empty")
         max_count = int(max_count)
         if max_count < 0:
             raise ValueError("max_count must be greater than or equal to zero")
 
         from aspose_pdf.text_layout import TextLayoutOptions
 
-        from .text_edit import Reshaper
+        from .text_edit import Reshaper, prepare_search
         from .text_layout import needs_shaping
+
+        search = prepare_search(
+            search, regex=regex, case_sensitive=case_sensitive
+        )
+        if isinstance(search, str) and search == "":
+            raise ValueError("search must not be empty")
 
         if layout is not None and not isinstance(layout, TextLayoutOptions):
             raise TypeError("layout must be a TextLayoutOptions instance or None")
@@ -7215,11 +7224,12 @@ class SimplePdf:
 
     def redact_text(
         self,
-        search: str,
+        search: str | re.Pattern[str],
         *,
         page_index: int | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
+        regex: bool = False,
         overlay: bool = False,
         overlay_color: tuple = (0.0, 0.0, 0.0),
     ) -> int:
@@ -7238,11 +7248,20 @@ class SimplePdf:
         objects, including replaced streams and old object-stream storage.
         Alternate text attached to edited runs is removed; unsafe structure
         mappings and unsupported form metadata raise instead of retaining it.
+
+        With ``regex=True`` -- or a compiled :class:`re.Pattern` as *search* --
+        the search is a regular expression, which is what redacting a shape
+        rather than a phrase needs: an account number, a date, a card. The
+        overlay bars are placed from the same spans the removal used, so they
+        land on the text that went.
         """
         self._ensure_not_disposed()
-        if not isinstance(search, str):
-            raise TypeError("search must be a string")
-        if search == "":
+        from .text_edit import prepare_search
+
+        search = prepare_search(
+            search, regex=regex, case_sensitive=case_sensitive
+        )
+        if isinstance(search, str) and search == "":
             raise ValueError("search must not be empty")
         max_count = int(max_count)
         if max_count < 0:
