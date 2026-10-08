@@ -113,6 +113,12 @@ from .pages import Page, PageCollection
 from .paths import GraphicsPath
 from .pdfa import PdfAValidateOptions, PdfAValidationResult, PdfAValidator
 from .pdfua import PdfUaValidateOptions, PdfUaValidationResult, PdfUaValidator
+from .pdfx import (
+    PdfXStandard,
+    PdfXValidateOptions,
+    PdfXValidationResult,
+    PdfXValidator,
+)
 from .recipients import Recipient
 from .signature import PdfSignature
 from .stamps import (
@@ -253,6 +259,10 @@ __all__ = [
     "PdfUaValidateOptions",
     "PdfUaValidationResult",
     "PdfUaValidator",
+    "PdfXStandard",
+    "PdfXValidateOptions",
+    "PdfXValidationResult",
+    "PdfXValidator",
     "PdfXmpMetadata",
     "Plugin",
     "PluginOptions",

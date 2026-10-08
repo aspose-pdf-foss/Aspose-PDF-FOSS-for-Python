@@ -9,6 +9,46 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **PDF/X.** The print-exchange standards had no support at all: a document
+  could be checked and converted for PDF/A and PDF/UA, but the one standard
+  family that is about a file *printing* the same way everywhere was missing, so
+  preparing artwork for a press meant assembling the output intent, the
+  identification keys and the trim geometry by hand.
+  - `Document.validate_pdfx(standard)`, `Document.is_pdfx_compliant(standard)`
+    and `Document.convert_to_pdfx(standard, ...)`, with `PdfXStandard`,
+    `PdfXValidationResult`, `PdfXValidateOptions` and `PdfXValidator` in
+    `aspose_pdf.pdfx` mirroring the PDF/A and PDF/UA shapes. Five levels:
+    `PDF/X-1a:2001`, `PDF/X-1a:2003`, `PDF/X-3:2002`, `PDF/X-3:2003`, `PDF/X-4`.
+  - Checked: the identification keys, one `/GTS_PDFX` output intent with an
+    embedded ICC profile whose colour space suits the part, font embedding,
+    `/TrimBox`-or-`/ArtBox` with bleed and media containment, `/Trapped` saying
+    True or False, encryption, prohibited actions and annotations, transfer
+    functions, and — per part — transparency, optional content, JPEG 2000,
+    JBIG2, LZW, alternate images and device-independent colour.
+  - **The identification is a different shape in each part**, and the conversion
+    writes each part's own. Parts 1 to 3 use the information dictionary plus the
+    `pdfx` XMP schema; ISO 15930-1 omits the conformance letter from its version
+    string (`PDF/X-1:2001` with `PDF/X-1a:2001` as the conformance). PDF/X-4
+    identifies itself in XMP alone under the separate PDF/X ID schema
+    (`pdfxid`), and converting to it removes the legacy Info keys. `exiftool`
+    and `qpdf` read all five back as written.
+  - **The conversion does not invent a printing condition.** The output intent
+    is the promise a PDF/X file makes about the press, so without an
+    `icc_profile=` and without a usable one already in the document the
+    requirement is *returned* rather than a profile nobody chose being embedded
+    — the position already taken on a font whose program is not in the file.
+    Parts 3 and 4 fall back to the bundled sRGB profile, a real registered
+    characterization; PDF/X-1a admits no RGB intent and needs a CMYK profile.
+    Colour is never converted either.
+  - The header version is deliberately **not** a conformance rule here:
+    ISO 15930-4 clause 5 says the header shall not be used to decide it. The
+    conversion still raises the header to the part's own version, never lowers
+    it.
+  - No free validator covers PDF/X — veraPDF does not — so unlike every PDF/A
+    level this library produces, these rules are not corroborated by a reference
+    implementation. They were cross-checked with `qpdf`/`pikepdf` and `exiftool`
+    in both directions, and `supported-features.md` says so in those words.
+
 - **Tables.** There was no table API at all — no `Table`, no `Row`, no `Cell` —
   so a report meant placing every string and every line by hand, measuring the
   text first to know where the next one goes. The two pieces that makes hard were
@@ -783,6 +823,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   both now return whether the document was changed. pdfium and MuPDF render
   every case identically, and a replacement leaves no second copy of the image
   behind: the file comes out the size it went in.
+
+- **An XMP property whose namespace is declared on its own element was read as
+  absent.** Found while cross-checking PDF/X identification against pikepdf: the
+  packet reader matched `name>`, so
+  `<pdfxid:GTS_PDFXVersion xmlns:pdfxid="...">PDF/X-4</...>` — how pikepdf
+  writes a property in a namespace nothing else in the packet uses — reported the
+  property as missing, which rejected a conforming file written by another tool.
+  The opening tag may now carry attributes. This is the reader the PDF/UA
+  identification checks share.
 
 ### Added
 

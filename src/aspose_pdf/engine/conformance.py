@@ -1,7 +1,8 @@
-"""Extended structural conformance checks for PDF/A and PDF/UA.
+"""Extended structural conformance checks for PDF/A, PDF/UA and PDF/X.
 
-This module materially expands the heuristic PDF/A (ISO 19005) and PDF/UA
-(ISO 14289) coverage of :mod:`aspose_pdf.engine.simple_pdf`.  Everything here
+This module materially expands the heuristic PDF/A (ISO 19005), PDF/UA
+(ISO 14289) and PDF/X (ISO 15930) coverage of
+:mod:`aspose_pdf.engine.simple_pdf`.  Everything here
 operates purely on the parsed COS object graph of a loaded document: the
 checks look for structures that are *prohibited* or *required* by the
 standards and that are observable without rendering the page — catalog
@@ -10,7 +11,9 @@ optional-content constructs.
 
 They remain **heuristic**: they do not verify glyph coverage, colour
 rendering, or the semantic correctness of a structure tree, so they are not a
-substitute for a certification-grade validator such as veraPDF.  Together with
+substitute for a certification-grade validator such as veraPDF (which covers
+PDF/A and PDF/UA) or a prepress preflight tool (for PDF/X, which no free
+validator checks).  Together with
 the base checks in ``SimplePdf`` they nonetheless catch the large majority of
 the catalog-, page-, font-, annotation-, action- and transparency-level rules
 that real validators enforce.
@@ -24,6 +27,7 @@ warnings)`` tuples.  None of them mutate the document.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from ..exceptions import PDF_OPERATION_ERRORS, PdfResourceLimitException
@@ -1433,9 +1437,17 @@ def _check_pdfua_identifier(xmp: bytes, part: int, errors: list[str]) -> None:
 
 
 def _xmp_value(text: str, qualified_name: str) -> str | None:
-    """Read an XMP property written either as an element or as an attribute."""
+    """Read an XMP property written either as an element or as an attribute.
+
+    The element form tolerates attributes on the opening tag, because a
+    namespace may be bound there rather than on an ancestor:
+    ``<pdfxid:GTS_PDFXVersion xmlns:pdfxid="...">PDF/X-4</...>`` is how pikepdf
+    writes a property in a namespace nothing else in the packet uses, and
+    reading only ``name>`` reported such a packet as not declaring the property
+    at all.
+    """
     pattern = re.escape(qualified_name)
-    match = re.search(rf"{pattern}\s*>([^<]+)</", text, re.IGNORECASE)
+    match = re.search(rf"{pattern}(?:\s+[^<>]*?)?\s*>([^<]+)</", text, re.IGNORECASE)
     if match is None:
         match = re.search(
             rf"{pattern}\s*=\s*[\"\']([^\"\']+)[\"\']", text, re.IGNORECASE
@@ -1518,3 +1530,1038 @@ def _has_document_title(pdf: Any, root: PdfDictionary) -> bool:
         if "dc:title" in metadata.content.decode("utf-8", errors="replace"):
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# PDF/X (ISO 15930)
+# ---------------------------------------------------------------------------
+#
+# PDF/X is a family of print-exchange profiles rather than one standard, and the
+# parts differ in what they *allow* rather than in how they are structured: a
+# PDF/X-1a file is CMYK-or-spot with no live transparency, a PDF/X-3 file may
+# carry colour-managed (device-independent) colour under the same output intent,
+# and a PDF/X-4 file may additionally carry live transparency and optional
+# content. The rules each part states are therefore held as data in
+# :data:`PDFX_STANDARDS` and the checks below read them, so that adding a part
+# is a table entry rather than another branch in every function.
+#
+# Two details of ISO 15930 are easy to get wrong and are worth stating here.
+# The first: ISO 15930-4:2003 clause 5 says in as many words that "neither the
+# version number in the header of a PDF file, nor the value of the Version key
+# in the Catalog of a PDF file shall be used in determining whether a file is in
+# accordance with this part" -- so unlike PDF/A, which pins the header to the
+# part, **PDF/X validation here never looks at the header version**. The
+# converter still raises it to the version the part is written against, because
+# the features a part permits are those of that PDF version, but a file with an
+# older header is not thereby non-conformant.
+# The second: the identification keys are not the same shape across the family.
+# Parts 1 to 3 identify the file in the **information dictionary**
+# (``/GTS_PDFXVersion``, plus ``/GTS_PDFXConformance`` for part 1, the two
+# mirrored into XMP under the ``pdfx`` schema), while PDF/X-4 identifies it in
+# **XMP only**, under the separate PDF/X ID schema (``pdfxid``), and carries no
+# year in the value. ISO 15930-1:2001 is the odd one out even within parts 1-3:
+# its version string omits the conformance letter (``PDF/X-1:2001`` with
+# ``PDF/X-1a:2001`` as the conformance), which the 2003 part quotes verbatim in
+# its clause 5 when it says which older files a reader must accept.
+
+
+@dataclass(frozen=True)
+class PdfXStandardRules:
+    """What one PDF/X conformance level requires, as data.
+
+    ``name`` is the canonical identifier (``"PDF/X-4"``) and the value the
+    public API takes and reports.
+    """
+
+    name: str
+    #: The conformance family: 1 (PDF/X-1a), 3 (PDF/X-3) or 4 (PDF/X-4). What a
+    #: file may contain follows from this, not from the ISO part number.
+    part: int
+    #: The part of ISO 15930 that defines this level, which is *not* the family
+    #: number: PDF/X-1a:2001 is part 1 but PDF/X-1a:2003 is part 4, PDF/X-3:2002
+    #: is part 3 but PDF/X-3:2003 is part 6, and PDF/X-4 is part 7. Messages
+    #: cite this.
+    iso_part: int
+    #: ``/GTS_PDFXVersion`` for the information dictionary, or ``None`` when the
+    #: part identifies itself in XMP alone (part 4 on).
+    info_version: str | None
+    #: ``/GTS_PDFXConformance``, which only parts 1 and 2 carry.
+    info_conformance: str | None
+    #: XMP schema prefix the identification lives under: ``pdfx`` up to part 3,
+    #: ``pdfxid`` (the PDF/X ID schema) from part 4.
+    xmp_prefix: str
+    xmp_version: str
+    #: The PDF version the part is written against. Used by the converter only
+    #: (see the note above): validation does not read the header.
+    base_pdf_version: str
+    allows_transparency: bool
+    #: Device-independent (ICCBased, CalRGB, CalGray, Lab) and RGB colour.
+    #: Part 1 is CMYK, grey and spot colour only.
+    allows_device_independent_colour: bool
+    allows_optional_content: bool
+    allows_jpx: bool
+    #: Topic -> clause number, for the parts whose clause structure this
+    #: library has read. It is deliberately **empty** for the parts it has not:
+    #: a citation is only useful if it is right, so a message about one of those
+    #: names the standard without a clause rather than borrowing a sibling
+    #: part's numbering. See :func:`pdfx_cite`.
+    clauses: dict[str, str]
+
+
+#: Clause numbers of ISO 15930-4:2003 (PDF/X-1a:2003), from its table of
+#: contents. ISO 15930-1 (PDF/X-1a:2001), -3 and -6 (PDF/X-3) number their
+#: clauses differently and are left without a map.
+_ISO15930_4_CLAUSES = {
+    "colour": "6.2",
+    "fonts": "6.3",
+    "files": "6.4",
+    "compression": "6.5",
+    "trapping": "6.6",
+    "identification": "6.7",
+    "boxes": "6.8",
+    "extgstate": "6.9",
+    "postscript": "6.10",
+    "encryption": "6.11",
+    "annotations": "6.13",
+    "actions": "6.14",
+    "transparency": "6.16",
+}
+
+#: Clause numbers of ISO 15930-7:2010 (PDF/X-4), from its table of contents.
+_ISO15930_7_CLAUSES = {
+    "colour": "6.4",
+    "fonts": "6.5",
+    "files": "6.7",
+    "compression": "6.8",
+    "trapping": "6.9",
+    "identification": "6.11",
+    "boxes": "6.12",
+    "extgstate": "6.13",
+    "postscript": "6.14",
+    "encryption": "6.15",
+    "images": "6.16",
+    "annotations": "6.17",
+    "actions": "6.18",
+    "transparency": "6.20",
+    "optional_content": "6.24",
+    "xfa": "6.26",
+    "jpeg2000": "6.27",
+}
+
+
+#: The PDF/X conformance levels this library knows, keyed by canonical name.
+#: ISO 15930-2 (PDF/X-2) and the external-profile variants (PDF/X-4p, PDF/X-5,
+#: PDF/X-6) are deliberately absent -- see ``supported-features.md``.
+PDFX_STANDARDS: dict[str, PdfXStandardRules] = {
+    "PDF/X-1a:2001": PdfXStandardRules(
+        name="PDF/X-1a:2001",
+        part=1,
+        iso_part=1,
+        info_version="PDF/X-1:2001",
+        info_conformance="PDF/X-1a:2001",
+        xmp_prefix="pdfx",
+        xmp_version="PDF/X-1:2001",
+        base_pdf_version="1.3",
+        allows_transparency=False,
+        allows_device_independent_colour=False,
+        allows_optional_content=False,
+        allows_jpx=False,
+        clauses={},
+    ),
+    "PDF/X-1a:2003": PdfXStandardRules(
+        name="PDF/X-1a:2003",
+        part=1,
+        iso_part=4,
+        info_version="PDF/X-1a:2003",
+        info_conformance="PDF/X-1a:2003",
+        xmp_prefix="pdfx",
+        xmp_version="PDF/X-1a:2003",
+        base_pdf_version="1.4",
+        allows_transparency=False,
+        allows_device_independent_colour=False,
+        allows_optional_content=False,
+        allows_jpx=False,
+        clauses=_ISO15930_4_CLAUSES,
+    ),
+    "PDF/X-3:2002": PdfXStandardRules(
+        name="PDF/X-3:2002",
+        part=3,
+        iso_part=3,
+        info_version="PDF/X-3:2002",
+        info_conformance=None,
+        xmp_prefix="pdfx",
+        xmp_version="PDF/X-3:2002",
+        base_pdf_version="1.3",
+        allows_transparency=False,
+        allows_device_independent_colour=True,
+        allows_optional_content=False,
+        allows_jpx=False,
+        clauses={},
+    ),
+    "PDF/X-3:2003": PdfXStandardRules(
+        name="PDF/X-3:2003",
+        part=3,
+        iso_part=6,
+        info_version="PDF/X-3:2003",
+        info_conformance=None,
+        xmp_prefix="pdfx",
+        xmp_version="PDF/X-3:2003",
+        base_pdf_version="1.4",
+        allows_transparency=False,
+        allows_device_independent_colour=True,
+        allows_optional_content=False,
+        allows_jpx=False,
+        clauses={},
+    ),
+    "PDF/X-4": PdfXStandardRules(
+        name="PDF/X-4",
+        part=4,
+        iso_part=7,
+        info_version=None,
+        info_conformance=None,
+        xmp_prefix="pdfxid",
+        xmp_version="PDF/X-4",
+        base_pdf_version="1.6",
+        allows_transparency=True,
+        allows_device_independent_colour=True,
+        allows_optional_content=True,
+        allows_jpx=True,
+        clauses=_ISO15930_7_CLAUSES,
+    ),
+}
+
+def pdfx_cite(rules: PdfXStandardRules, topic: str) -> str:
+    """The standard, and the clause, to cite for *topic* under *rules*.
+
+    ``"ISO 15930-7 6.12"`` where the clause is known, ``"ISO 15930-3"`` where it
+    is not. Citing a clause number taken from another part of the same family
+    would read as authority this library does not have.
+    """
+    clause = rules.clauses.get(topic)
+    if clause:
+        return f"ISO 15930-{rules.iso_part} {clause}"
+    return f"ISO 15930-{rules.iso_part}"
+
+
+#: ``/S`` value of the PDF/X output intent (ISO 15930, carried from PDF 1.3).
+PDFX_OUTPUT_INTENT_SUBTYPE = "GTS_PDFX"
+
+#: Spelling variants the public API accepts for each canonical standard name.
+#: A bare part without a year resolves to the newest edition of that part,
+#: which is what a caller asking for "PDF/X-1a" means.
+_PDFX_ALIASES: dict[str, str] = {
+    "x1a": "PDF/X-1a:2003",
+    "x1a2001": "PDF/X-1a:2001",
+    "x1a2003": "PDF/X-1a:2003",
+    "x1": "PDF/X-1a:2003",
+    "x3": "PDF/X-3:2003",
+    "x32002": "PDF/X-3:2002",
+    "x32003": "PDF/X-3:2003",
+    "x4": "PDF/X-4",
+}
+
+
+def normalize_pdfx_standard(value: Any) -> str:
+    """Resolve *value* to a key of :data:`PDFX_STANDARDS`, or raise.
+
+    Accepts the canonical names (``"PDF/X-4"``), the same without the ``PDF/``
+    prefix, and spellings without punctuation or case (``"x-1a"``, ``"X1a"``,
+    ``"pdf/x-3:2002"``). A part named without a year resolves to its newest
+    edition. An unknown name raises rather than falling back to a standard the
+    caller did not ask for -- which would write a file claiming conformance to
+    something nobody chose.
+    """
+    text = str(getattr(value, "value", value)).strip()
+    if text in PDFX_STANDARDS:
+        return text
+    key = re.sub(r"[^a-z0-9]", "", text.lower())
+    if key.startswith("pdf"):
+        key = key[3:]
+    resolved = _PDFX_ALIASES.get(key)
+    if resolved is None:
+        raise ValueError(
+            f"Unknown PDF/X standard {text!r}; expected one of "
+            + ", ".join(sorted(PDFX_STANDARDS))
+        )
+    return resolved
+
+
+def pdfx_extended(pdf: Any, rules: PdfXStandardRules) -> tuple[list[str], list[str]]:
+    """Return ``(errors, warnings)`` for the structural PDF/X checks.
+
+    *rules* is an entry of :data:`PDFX_STANDARDS`. As with
+    :func:`pdfa_extended`, nothing here mutates the document and a malformed
+    object never escapes as an exception.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    if pdf._cos_doc is None:
+        return errors, warnings
+
+    try:
+        _check_trailer_id(pdf, errors)
+        _check_pdfx_identification(pdf, rules, errors, warnings)
+        _check_pdfx_output_intent(pdf, rules, errors, warnings)
+        _check_pdfx_trapped(pdf, rules, errors)
+        _check_pdfx_catalog(pdf, rules, errors)
+        _check_pdfx_filters(pdf, rules, errors)
+        for i in range(len(pdf.pages)):
+            page = pdf._get_page_dict(i)
+            if not isinstance(page, PdfDictionary):
+                continue
+            _check_pdfx_boxes(pdf, page, i, rules, errors)
+            _check_pdfx_page_group(pdf, page, i, rules, errors)
+            _check_pdfx_annotations(pdf, page, i, rules, errors, warnings)
+            if PdfName("AA") in page:
+                errors.append(
+                    f"PDF/X prohibits page additional actions (/AA) on page {i + 1} "
+                    f"({pdfx_cite(rules, 'actions')})."
+                )
+            resources = _get_dict(pdf, page.get(PdfName("Resources")))
+            if resources is not None:
+                _check_pdfx_resources(pdf, resources, i, rules, errors, set(), 0)
+    except PdfResourceLimitException:
+        raise
+    except PDF_OPERATION_ERRORS:
+        pass
+
+    return errors, warnings
+
+
+def _info_dict(pdf: Any) -> PdfDictionary | None:
+    return _get_dict(pdf, pdf._cos_doc.trailer.get(PdfName("Info")))
+
+
+def _info_value(pdf: Any, key: str) -> str | None:
+    """The ``/Info`` entry *key* as the **next save** would write it.
+
+    ``pdf.metadata`` is the view a save writes ``/Info`` from: it is filled from
+    the dictionary on load, and an entry set or removed through it has not
+    reached the object graph yet. Reading the graph alone would report an entry
+    the file is about to carry as missing -- which is exactly what a check run
+    straight after a conversion does -- so the pending view is consulted first.
+    The graph is still the fallback, for an entry whose value has no text form
+    (a ``/GTS_PDFXVersion`` some producer wrote as a name, say), which the view
+    does not carry.
+    """
+    metadata = getattr(pdf, "metadata", None)
+    view_is_authoritative = isinstance(metadata, dict)
+    if view_is_authoritative and key in metadata:
+        value = metadata[key]
+        return None if value is None else str(value).strip()
+    info = _info_dict(pdf)
+    if info is None:
+        return None
+    value = pdf._resolve(info.get(PdfName(key)))
+    if isinstance(value, PdfString):
+        # The view holds every text-valued entry, so a string that is in the
+        # dictionary and not in the view is one the next save removes.
+        return None if view_is_authoritative else decode_pdf_text_string(value).strip()
+    if isinstance(value, PdfName):
+        return value.name.lstrip("/")
+    return None
+
+
+def _document_xmp(pdf: Any) -> str | None:
+    """The catalog's XMP packet as text, or ``None`` when there is none."""
+    root = catalog(pdf)
+    if root is None:
+        return None
+    metadata = pdf._resolve(root.get(PdfName("Metadata")))
+    if not isinstance(metadata, PdfStream):
+        return None
+    return metadata.content.decode("utf-8", errors="replace")
+
+
+def _check_pdfx_identification(
+    pdf: Any, rules: PdfXStandardRules, errors: list[str], warnings: list[str]
+) -> None:
+    """The file has to say which PDF/X level it claims, and say it once.
+
+    Where the claim lives depends on the part (see the note above the standards
+    table): the information dictionary for parts 1 to 3, the XMP PDF/X ID schema
+    for part 4. Both places are *read* for every part, because a file that says
+    the right thing in the wrong place is better reported as misplaced than as
+    missing; only a value that names a different level is an error.
+    """
+    clause = pdfx_cite(rules, "identification")
+    info_version = _info_value(pdf, "GTS_PDFXVersion")
+    info_conformance = _info_value(pdf, "GTS_PDFXConformance")
+    xmp = _document_xmp(pdf)
+    xmp_version = None
+    if xmp is not None:
+        xmp_version = _xmp_value(xmp, f"{rules.xmp_prefix}:GTS_PDFXVersion")
+        if xmp_version is None and rules.xmp_prefix == "pdfxid":
+            # A producer that wrote the part-3 schema for a part-4 file states
+            # the right value under the wrong prefix; naming that is more use
+            # than reporting the identification as absent.
+            misplaced = _xmp_value(xmp, "pdfx:GTS_PDFXVersion")
+            if misplaced == rules.xmp_version:
+                errors.append(
+                    f"{rules.name} identification must use the PDF/X ID schema "
+                    f"(pdfxid:GTS_PDFXVersion); the packet declares it as "
+                    f"pdfx:GTS_PDFXVersion ({clause})."
+                )
+                return
+
+    if rules.info_version is None:
+        # Part 4 identifies itself in XMP alone.
+        if xmp_version is None:
+            errors.append(
+                f"{rules.name} requires the XMP metadata to declare "
+                f"{rules.xmp_prefix}:GTS_PDFXVersion = {rules.xmp_version} "
+                f"({clause})."
+            )
+        elif xmp_version != rules.xmp_version:
+            errors.append(
+                f"XMP {rules.xmp_prefix}:GTS_PDFXVersion is {xmp_version!r} but "
+                f"{rules.name} requires {rules.xmp_version!r} ({clause})."
+            )
+        if info_version is not None:
+            # Sources disagree on whether the legacy key is merely redundant
+            # here or a violation; preflight tools report it, so it is said.
+            warnings.append(
+                f"{rules.name} identifies itself in XMP; the information "
+                f"dictionary also carries /GTS_PDFXVersion ({info_version!r}), "
+                "which some preflight tools reject."
+            )
+        return
+
+    if info_version is None:
+        errors.append(
+            f"{rules.name} requires /GTS_PDFXVersion = ({rules.info_version}) in "
+            f"the document information dictionary ({clause})."
+        )
+    elif info_version != rules.info_version:
+        errors.append(
+            f"/GTS_PDFXVersion is {info_version!r} but {rules.name} requires "
+            f"{rules.info_version!r} ({clause})."
+        )
+    if rules.info_conformance is not None:
+        if info_conformance is None:
+            errors.append(
+                f"{rules.name} requires /GTS_PDFXConformance = "
+                f"({rules.info_conformance}) in the document information "
+                f"dictionary ({clause})."
+            )
+        elif info_conformance != rules.info_conformance:
+            errors.append(
+                f"/GTS_PDFXConformance is {info_conformance!r} but {rules.name} "
+                f"requires {rules.info_conformance!r} ({clause})."
+            )
+    if xmp_version is not None and xmp_version != rules.xmp_version:
+        errors.append(
+            f"XMP {rules.xmp_prefix}:GTS_PDFXVersion is {xmp_version!r} but "
+            f"{rules.name} requires {rules.xmp_version!r} ({clause})."
+        )
+
+
+def _pdfx_output_intents(pdf: Any) -> list[PdfDictionary]:
+    """Every ``/OutputIntents`` entry whose ``/S`` is ``GTS_PDFX``."""
+    root = catalog(pdf)
+    if root is None:
+        return []
+    array = pdf._resolve(root.get(PdfName("OutputIntents")))
+    if not isinstance(array, PdfArray):
+        return []
+    found = []
+    for ref in array.items:
+        intent = _get_dict(pdf, ref)
+        if intent is None:
+            continue
+        if _name(pdf, intent, "S") == PDFX_OUTPUT_INTENT_SUBTYPE:
+            found.append(intent)
+    return found
+
+
+def _check_pdfx_output_intent(
+    pdf: Any, rules: PdfXStandardRules, errors: list[str], warnings: list[str]
+) -> None:
+    """One PDF/X output intent, naming the printing condition it was made for.
+
+    The output intent is what makes a PDF/X file exchangeable: it says which
+    characterized printing condition the colour in the file was prepared for.
+    Part 1 permits no colour that is not already in the output device's own
+    space, so its intent profile has to be that space -- a CMYK or grey one;
+    parts 3 and 4 may carry colour-managed content and accept an RGB profile
+    too. ``/DestOutputProfileRef`` (the externally referenced profile) is
+    recognised, since a file carrying one is a PDF/X-4p rather than a file with
+    no profile at all, and is reported as the different level it claims.
+    """
+    clause = pdfx_cite(rules, "identification")
+    intents = _pdfx_output_intents(pdf)
+    if not intents:
+        errors.append(
+            "PDF/X requires a /OutputIntents entry with /S /GTS_PDFX naming the "
+            f"printing condition the file was prepared for ({clause})."
+        )
+        return
+    if len(intents) > 1:
+        errors.append(
+            f"PDF/X permits one /GTS_PDFX output intent; the catalog has "
+            f"{len(intents)} ({clause})."
+        )
+    intent = intents[0]
+    identifier = pdf._resolve(intent.get(PdfName("OutputConditionIdentifier")))
+    if not isinstance(identifier, PdfString) or not identifier.value:
+        errors.append(
+            "The PDF/X output intent requires /OutputConditionIdentifier, the "
+            f"name of the characterized printing condition ({clause})."
+        )
+    profile = pdf._resolve(intent.get(PdfName("DestOutputProfile")))
+    if not isinstance(profile, PdfStream):
+        if PdfName("DestOutputProfileRef") in intent.mapping:
+            errors.append(
+                "The output intent references an external profile "
+                "(/DestOutputProfileRef) rather than embedding one, which makes "
+                f"the file PDF/X-4p rather than {rules.name} ({clause})."
+            )
+        else:
+            errors.append(
+                "The PDF/X output intent requires an embedded ICC profile "
+                f"(/DestOutputProfile) ({clause})."
+            )
+        return
+
+    space = _pdfx_profile_space(pdf, profile)
+    if space is None:
+        errors.append(
+            "The output intent's /DestOutputProfile is not a readable ICC "
+            f"profile ({clause})."
+        )
+        return
+    permitted = ("CMYK", "Gray") if not rules.allows_device_independent_colour else (
+        "CMYK",
+        "Gray",
+        "RGB",
+    )
+    if space not in permitted:
+        errors.append(
+            f"{rules.name} requires the output intent profile to be "
+            f"{' or '.join(permitted)}; the embedded profile is {space} "
+            f"({clause})."
+        )
+
+
+def _pdfx_profile_space(pdf: Any, profile: PdfStream) -> str | None:
+    """``"CMYK"``/``"RGB"``/``"Gray"`` for an output intent profile stream."""
+    try:
+        data = pdf._decode_cos_stream(profile, None)
+    except PdfResourceLimitException:
+        raise
+    except PDF_OPERATION_ERRORS:
+        return None
+    if len(data) < 128 or data[36:40] != b"acsp":
+        return None
+    return {b"GRAY": "Gray", b"RGB ": "RGB", b"CMYK": "CMYK"}.get(bytes(data[16:20]))
+
+
+def _check_pdfx_trapped(
+    pdf: Any, rules: PdfXStandardRules, errors: list[str]
+) -> None:
+    """``/Trapped`` has to state whether the file has been trapped.
+
+    ISO 32000-1 14.3.3 allows ``/Unknown``, and it is the default; PDF/X does
+    not, because a printer receiving the file has to know whether to trap it.
+    """
+    clause = pdfx_cite(rules, "trapping")
+    value = _info_value(pdf, "Trapped")
+    if value is None:
+        errors.append(
+            "PDF/X requires /Trapped in the document information dictionary, "
+            f"with the value /True or /False ({clause})."
+        )
+    elif value not in ("True", "False"):
+        errors.append(
+            f"/Trapped is /{value}; PDF/X requires /True or /False ({clause})."
+        )
+
+
+def _check_pdfx_catalog(
+    pdf: Any, rules: PdfXStandardRules, errors: list[str]
+) -> None:
+    """Catalog-level prohibitions: actions, scripts, forms, optional content."""
+    root = catalog(pdf)
+    if root is None:
+        return
+    actions = pdfx_cite(rules, "actions")
+    if PdfName("AA") in root:
+        errors.append(
+            f"PDF/X prohibits document-level additional actions (/AA) ({actions})."
+        )
+    names = _get_dict(pdf, root.get(PdfName("Names")))
+    if names is not None and PdfName("JavaScript") in names.mapping:
+        errors.append(f"PDF/X prohibits document-level JavaScript ({actions}).")
+    if PdfName("OpenAction") in root:
+        _check_pdfx_action(pdf, root.get(PdfName("OpenAction")), None, rules, errors)
+    acro = _get_dict(pdf, root.get(PdfName("AcroForm")))
+    if acro is not None and PdfName("XFA") in acro.mapping:
+        topic = "xfa" if "xfa" in rules.clauses else "actions"
+        errors.append(
+            f"PDF/X prohibits XFA forms (AcroForm /XFA) "
+            f"({pdfx_cite(rules, topic)})."
+        )
+    if not rules.allows_optional_content and PdfName("OCProperties") in root:
+        errors.append(
+            f"{rules.name} prohibits optional content / layers (/OCProperties); "
+            "it is a PDF 1.5 feature and the part is written against PDF "
+            f"{rules.base_pdf_version}."
+        )
+
+
+def _check_pdfx_action(
+    pdf: Any,
+    action_ref: Any,
+    page_index: int | None,
+    rules: PdfXStandardRules,
+    errors: list[str],
+) -> None:
+    """Flag prohibited action types, following ``/Next`` as PDF/A's check does."""
+    where = "" if page_index is None else f" (page {page_index + 1})"
+    clause = pdfx_cite(rules, "actions")
+    queue = [pdf._resolve(action_ref)]
+    seen: set[int] = set()
+    while queue:
+        action = queue.pop()
+        if not isinstance(action, PdfDictionary) or id(action) in seen:
+            continue
+        seen.add(id(action))
+        s = _name(pdf, action, "S")
+        if s in _PROHIBITED_ACTION_TYPES:
+            errors.append(f"PDF/X prohibits /{s} actions{where} ({clause}).")
+        nxt = pdf._resolve(action.get(PdfName("Next")))
+        if isinstance(nxt, PdfDictionary):
+            queue.append(nxt)
+        elif isinstance(nxt, PdfArray):
+            queue.extend(pdf._resolve(x) for x in nxt.items)
+
+
+def _box(pdf: Any, page: PdfDictionary, key: str) -> tuple[float, float, float, float] | None:
+    """A page's own *key* rectangle with corners ordered, or ``None``.
+
+    The page's own dictionary only: none of the production boxes is inheritable
+    (ISO 32000-1 Table 30), so a ``/TrimBox`` on a page-tree node is not this
+    page's trim box -- and PDF/X asks for the entry, not for a default.
+    """
+    value = pdf._resolve(page.get(PdfName(key)))
+    if not isinstance(value, PdfArray) or len(value.items) < 4:
+        return None
+    numbers = []
+    for item in value.items[:4]:
+        number = pdf._resolve(item)
+        if not isinstance(number, PdfNumber):
+            return None
+        numbers.append(float(number.value))
+    x0, y0, x1, y1 = numbers
+    return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+
+def _contains(outer: tuple[float, ...], inner: tuple[float, ...]) -> bool:
+    """Whether *outer* contains *inner*, to within a thousandth of a point."""
+    tol = 1e-3
+    return (
+        outer[0] <= inner[0] + tol
+        and outer[1] <= inner[1] + tol
+        and outer[2] >= inner[2] - tol
+        and outer[3] >= inner[3] - tol
+    )
+
+
+def _check_pdfx_boxes(
+    pdf: Any,
+    page: PdfDictionary,
+    i: int,
+    rules: PdfXStandardRules,
+    errors: list[str],
+) -> None:
+    """Every page says where the finished piece is, and says it once.
+
+    A print exchange file has to state the final trimmed size: a ``/TrimBox``
+    (the trimmed page) or an ``/ArtBox`` (the extent of the artwork), and not
+    both, since the two would be two answers to one question. The bleed box,
+    where present, holds the trim box, and the media box holds everything.
+    """
+    clause = pdfx_cite(rules, "boxes")
+    trim = _box(pdf, page, "TrimBox")
+    art = _box(pdf, page, "ArtBox")
+    has_trim = PdfName("TrimBox") in page.mapping
+    has_art = PdfName("ArtBox") in page.mapping
+    if has_trim and has_art:
+        errors.append(
+            f"PDF/X requires a /TrimBox or an /ArtBox on page {i + 1}, not both "
+            f"({clause})."
+        )
+    elif not has_trim and not has_art:
+        errors.append(
+            f"PDF/X requires a /TrimBox or an /ArtBox on page {i + 1} ({clause})."
+        )
+    final = trim if trim is not None else art
+    if final is None:
+        if has_trim or has_art:
+            errors.append(
+                f"The /{'TrimBox' if has_trim else 'ArtBox'} on page {i + 1} is "
+                f"not four numbers ({clause})."
+            )
+        return
+
+    bleed = _box(pdf, page, "BleedBox")
+    if bleed is not None and not _contains(bleed, final):
+        errors.append(
+            f"The /BleedBox on page {i + 1} does not contain the "
+            f"/{'TrimBox' if trim is not None else 'ArtBox'} ({clause})."
+        )
+    media = pdf._page_media_box(i)
+    if media is not None:
+        outer = bleed if bleed is not None else final
+        if not _contains(media, outer):
+            errors.append(
+                f"The /MediaBox on page {i + 1} does not contain the "
+                f"/{'BleedBox' if bleed is not None else 'TrimBox'} ({clause})."
+            )
+
+
+def _check_pdfx_page_group(
+    pdf: Any,
+    page: PdfDictionary,
+    i: int,
+    rules: PdfXStandardRules,
+    errors: list[str],
+) -> None:
+    """Live transparency: prohibited before part 4, colour-managed from it.
+
+    A transparency group blends its contents in a colour space, and what that
+    space is decides the result. Part 4 permits live transparency and asks a
+    page group to name the space (``/CS``) so that the blend is defined rather
+    than left to whatever the reader picks; the earlier parts do not permit the
+    group at all.
+    """
+    group = _get_dict(pdf, page.get(PdfName("Group")))
+    if group is None or _name(pdf, group, "S") != "Transparency":
+        return
+    clause = pdfx_cite(rules, "transparency")
+    if not rules.allows_transparency:
+        errors.append(
+            f"{rules.name} prohibits transparency groups (page {i + 1} /Group "
+            f"/S /Transparency) ({clause})."
+        )
+        return
+    if PdfName("CS") not in group.mapping:
+        errors.append(
+            f"{rules.name} requires a page's transparency group to name its "
+            f"blending colour space (/Group /CS) (page {i + 1}) "
+            f"({pdfx_cite(rules, 'colour')})."
+        )
+
+
+def _check_pdfx_annotations(
+    pdf: Any,
+    page: PdfDictionary,
+    i: int,
+    rules: PdfXStandardRules,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """Multimedia annotations are out; the rest stay off the printed area.
+
+    A PDF/X file is print data, so an annotation that would be rendered on the
+    sheet is a mark nobody authored. The prohibition on the multimedia subtypes
+    is stated as an error; whether a given rectangle counts as "inside" the
+    trimmed area is a judgement about intent, so an annotation overlapping it is
+    reported as a warning rather than a failure.
+    """
+    annots = pdf._resolve(page.get(PdfName("Annots")))
+    if not isinstance(annots, PdfArray):
+        return
+    clause = pdfx_cite(rules, "annotations")
+    keep_out = _box(pdf, page, "BleedBox") or _box(pdf, page, "TrimBox") or _box(
+        pdf, page, "ArtBox"
+    )
+    for ref in annots.items:
+        annot = _get_dict(pdf, ref)
+        if annot is None:
+            continue
+        subtype = _name(pdf, annot, "Subtype")
+        if subtype in _PROHIBITED_ANNOT_SUBTYPES:
+            errors.append(
+                f"PDF/X prohibits /{subtype} annotations (page {i + 1}) ({clause})."
+            )
+            continue
+        if subtype in ("Popup", "TrapNet"):
+            continue
+        flags_obj = pdf._resolve(annot.get(PdfName("F")))
+        flags = int(flags_obj.value) if isinstance(flags_obj, PdfNumber) else 0
+        if not flags & ANNOT_FLAG_PRINT:
+            continue
+        rect = _box(pdf, annot, "Rect")
+        if keep_out is None or rect is None:
+            continue
+        overlaps = (
+            rect[0] < keep_out[2]
+            and rect[2] > keep_out[0]
+            and rect[1] < keep_out[3]
+            and rect[3] > keep_out[1]
+        )
+        if overlaps:
+            warnings.append(
+                f"A printable /{subtype or 'annotation'} on page {i + 1} lies "
+                "over the area PDF/X reserves for print data; annotations "
+                f"belong outside the bleed or trim box ({clause})."
+            )
+
+
+#: Colour space families that carry colour independently of any device, which
+#: part 1 (CMYK, grey and spot colour only) does not permit.
+_DEVICE_INDEPENDENT_SPACES = frozenset({"CalRGB", "CalGray", "Lab", "ICCBased"})
+
+
+def _check_pdfx_colour_space(
+    pdf: Any,
+    space: Any,
+    i: int,
+    rules: PdfXStandardRules,
+    errors: list[str],
+    seen: set[int],
+    depth: int = 0,
+) -> None:
+    """Walk one colour space, reporting families the part does not permit.
+
+    Indexed, Separation, DeviceN and Pattern all stand on another space, so the
+    walk follows the base and alternate spaces: an ``/Indexed`` palette over
+    ``/DeviceRGB`` paints RGB however its own name reads.
+    """
+    if rules.allows_device_independent_colour or depth > _MAX_RESOURCE_DEPTH:
+        return
+    space = pdf._resolve(space)
+    if space is None or id(space) in seen:
+        return
+    seen.add(id(space))
+    clause = pdfx_cite(rules, "colour")
+
+    if isinstance(space, PdfName):
+        name = space.name.lstrip("/")
+        if name == "DeviceRGB":
+            errors.append(
+                f"{rules.name} permits CMYK, grey and spot colour only; page "
+                f"{i + 1} uses /DeviceRGB ({clause})."
+            )
+        return
+    if not isinstance(space, PdfArray) or not space.items:
+        return
+    family = pdf._get_name(space.items[0])
+    if family in _DEVICE_INDEPENDENT_SPACES:
+        errors.append(
+            f"{rules.name} permits CMYK, grey and spot colour only; page "
+            f"{i + 1} uses the device-independent /{family} ({clause})."
+        )
+        return
+    if family == "Indexed" and len(space.items) > 1:
+        _check_pdfx_colour_space(
+            pdf, space.items[1], i, rules, errors, seen, depth + 1
+        )
+    elif family in ("Separation", "DeviceN") and len(space.items) > 2:
+        # The alternate space is what a reader paints when it has no colorant
+        # of that name, so it is as much a part of the file's colour as a
+        # directly selected space.
+        _check_pdfx_colour_space(
+            pdf, space.items[2], i, rules, errors, seen, depth + 1
+        )
+    elif family == "Pattern" and len(space.items) > 1:
+        _check_pdfx_colour_space(
+            pdf, space.items[1], i, rules, errors, seen, depth + 1
+        )
+
+
+def _check_pdfx_resources(
+    pdf: Any,
+    resources: PdfDictionary,
+    i: int,
+    rules: PdfXStandardRules,
+    errors: list[str],
+    visited: set[int],
+    depth: int,
+) -> None:
+    """Resource-level prohibitions, recursing through form XObjects."""
+    if depth > _MAX_RESOURCE_DEPTH or id(resources) in visited:
+        return
+    visited.add(id(resources))
+
+    spaces = _get_dict(pdf, resources.get(PdfName("ColorSpace")))
+    if spaces is not None:
+        for ref in spaces.mapping.values():
+            _check_pdfx_colour_space(pdf, ref, i, rules, errors, set())
+
+    extgstates = _get_dict(pdf, resources.get(PdfName("ExtGState")))
+    if extgstates is not None:
+        for ref in extgstates.mapping.values():
+            gs = _get_dict(pdf, ref)
+            if gs is not None:
+                _check_pdfx_extgstate(pdf, gs, i, rules, errors)
+
+    shadings = _get_dict(pdf, resources.get(PdfName("Shading")))
+    if shadings is not None:
+        for ref in shadings.mapping.values():
+            shading = _get_dict(pdf, ref)
+            if shading is not None:
+                _check_pdfx_colour_space(
+                    pdf, shading.get(PdfName("ColorSpace")), i, rules, errors, set()
+                )
+
+    xobjects = _get_dict(pdf, resources.get(PdfName("XObject")))
+    if xobjects is None:
+        return
+    for ref in xobjects.mapping.values():
+        xobj = pdf._resolve(ref)
+        if not isinstance(xobj, PdfStream):
+            continue
+        subtype = _name(pdf, xobj, "Subtype")
+        if subtype == "PS":
+            errors.append(
+                f"PDF/X prohibits PostScript XObjects (page {i + 1}) "
+                f"({pdfx_cite(rules, 'postscript')})."
+            )
+        elif subtype == "Image":
+            _check_pdfx_image(pdf, xobj, i, rules, errors)
+        elif subtype == "Form":
+            if PdfName("Ref") in xobj.mapping:
+                errors.append(
+                    "PDF/X prohibits reference XObjects pointing at external "
+                    f"content (page {i + 1}) "
+                    f"({pdfx_cite(rules, 'files')})."
+                )
+            group = _get_dict(pdf, xobj.get(PdfName("Group")))
+            if (
+                group is not None
+                and _name(pdf, group, "S") == "Transparency"
+                and not rules.allows_transparency
+            ):
+                errors.append(
+                    f"{rules.name} prohibits transparency groups (form XObject, "
+                    f"page {i + 1}) "
+                    f"({pdfx_cite(rules, 'transparency')})."
+                )
+            nested = _get_dict(pdf, xobj.get(PdfName("Resources")))
+            if nested is not None:
+                _check_pdfx_resources(
+                    pdf, nested, i, rules, errors, visited, depth + 1
+                )
+
+
+def _check_pdfx_image(
+    pdf: Any,
+    image: PdfStream,
+    i: int,
+    rules: PdfXStandardRules,
+    errors: list[str],
+) -> None:
+    """An image's colour, its codec, and the alternates the parts rule out."""
+    _check_pdfx_colour_space(
+        pdf, image.get(PdfName("ColorSpace")), i, rules, errors, set()
+    )
+    if not rules.allows_jpx:
+        names = []
+        filters = pdf._resolve(image.get(PdfName("Filter")))
+        if isinstance(filters, PdfName):
+            names = [filters.name.lstrip("/")]
+        elif isinstance(filters, PdfArray):
+            names = [
+                pdf._get_name(f) or "" for f in filters.items
+            ]
+        if "JPXDecode" in names:
+            topic = "jpeg2000" if "jpeg2000" in rules.clauses else "compression"
+            errors.append(
+                f"{rules.name} prohibits JPEG 2000 images (/JPXDecode) "
+                f"(page {i + 1}) ({pdfx_cite(rules, topic)})."
+            )
+    if rules.part != 4 and PdfName("Alternates") in image.mapping:
+        errors.append(
+            f"{rules.name} prohibits alternate images (/Alternates) "
+            f"(page {i + 1})."
+        )
+    if not rules.allows_transparency and isinstance(
+        pdf._resolve(image.get(PdfName("SMask"))), PdfStream
+    ):
+        errors.append(
+            f"{rules.name} prohibits soft-mask images (/SMask) (page {i + 1}) "
+            f"({pdfx_cite(rules, 'transparency')})."
+        )
+
+
+def _check_pdfx_extgstate(
+    pdf: Any,
+    gs: PdfDictionary,
+    i: int,
+    rules: PdfXStandardRules,
+    errors: list[str],
+) -> None:
+    """Transfer functions always, and the transparency knobs before part 4."""
+    clause = pdfx_cite(rules, "extgstate")
+    for key, allowed in (("TR", {"Identity"}), ("TR2", {"Identity", "Default"})):
+        if PdfName(key) in gs.mapping and _name(pdf, gs, key) not in allowed:
+            errors.append(
+                f"PDF/X prohibits transfer functions in ExtGState (/{key}) "
+                f"(page {i + 1}) ({clause})."
+            )
+    if rules.allows_transparency:
+        return
+    transparency = pdfx_cite(rules, "transparency")
+    if isinstance(pdf._resolve(gs.get(PdfName("SMask"))), PdfDictionary):
+        errors.append(
+            f"{rules.name} prohibits soft masks in ExtGState (/SMask) "
+            f"(page {i + 1}) ({transparency})."
+        )
+    blend = pdf._resolve(gs.get(PdfName("BM")))
+    blend_names = (
+        [pdf._get_name(x) for x in blend.items]
+        if isinstance(blend, PdfArray)
+        else [pdf._get_name(blend)]
+    )
+    for name in blend_names:
+        if name not in (None, "Normal", "Compatible"):
+            errors.append(
+                f"{rules.name} prohibits blend mode /{name} in ExtGState "
+                f"(page {i + 1}) ({transparency})."
+            )
+            break
+    for key in ("CA", "ca"):
+        alpha = pdf._resolve(gs.get(PdfName(key)))
+        if isinstance(alpha, PdfNumber) and alpha.value < 1.0 - 1e-9:
+            errors.append(
+                f"{rules.name} prohibits constant alpha < 1 (/{key}) in "
+                f"ExtGState (page {i + 1}) ({transparency})."
+            )
+
+
+def _check_pdfx_filters(
+    pdf: Any, rules: PdfXStandardRules, errors: list[str]
+) -> None:
+    """``LZWDecode`` is out of every part; JBIG2 is out of the PDF 1.4 parts."""
+    clause = pdfx_cite(rules, "compression")
+    flagged: set[str] = set()
+    prohibited = {"LZWDecode"}
+    if rules.part != 4:
+        prohibited.add("JBIG2Decode")
+    for obj in pdf._cos_doc.objects.values():
+        if not isinstance(obj, PdfStream):
+            continue
+        for name in _collect_filter_names(obj.mapping.get(PdfName("Filter")), pdf._resolve):
+            if name in prohibited and name not in flagged:
+                flagged.add(name)
+                errors.append(
+                    f"{rules.name} prohibits the /{name} stream filter ({clause})."
+                )
+        if flagged == prohibited:
+            return
+
+
+def _collect_filter_names(filter_obj: Any, resolve: Any) -> list[str]:
+    """``/Filter`` as a list of names without the leading slash."""
+    filter_obj = resolve(filter_obj)
+    if isinstance(filter_obj, PdfName):
+        return [filter_obj.name.lstrip("/")]
+    names = []
+    if isinstance(filter_obj, PdfArray):
+        for item in filter_obj.items:
+            resolved = resolve(item)
+            if isinstance(resolved, PdfName):
+                names.append(resolved.name.lstrip("/"))
+    return names

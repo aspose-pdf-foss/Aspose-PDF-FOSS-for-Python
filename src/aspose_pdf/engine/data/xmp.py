@@ -65,6 +65,11 @@ STANDARD_XMP_NAMESPACES: dict[str, str] = {
     # PDF-specific schemas.
     "pdf": "http://ns.adobe.com/pdf/1.3/",
     "pdfx": "http://ns.adobe.com/pdfx/1.3/",
+    # The PDF/X ID schema, which ISO 15930-7 (PDF/X-4) identifies a file in;
+    # the ``pdfx`` schema above is what the earlier parts use. The two are
+    # separate namespaces holding a key of the same name, so a packet may
+    # legitimately carry both and a reader has to ask for the right one.
+    "pdfxid": "http://www.npes.org/pdfx/ns/id/",
     "pdfaid": "http://www.aiim.org/pdfa/ns/id/",
     "pdfuaid": "http://www.aiim.org/pdfua/ns/id/",
     "pdfaExtension": "http://www.aiim.org/pdfa/ns/extension/",

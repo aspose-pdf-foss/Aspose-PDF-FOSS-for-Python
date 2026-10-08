@@ -5,6 +5,7 @@ Provides parsing, writing, and manipulation of PDF documents.
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import logging
 import math
@@ -29,6 +30,7 @@ from ..exceptions import (
     PDF_STREAM_DECODE_ERRORS,
     AsposePdfException,
     FontEmbeddingException,
+    PdfIOException,
     PdfParseException,
     PdfResourceLimitException,
     PdfSecurityException,
@@ -954,6 +956,201 @@ def _make_pdfa_xmp(level: str, title: str) -> bytes:
             ),
         )
     )
+    return serialize_xmp(packet)
+
+
+def _pdfx_trapped_name(value: Any) -> str:
+    """``"True"`` or ``"False"`` for *value*, or raise.
+
+    ``/Trapped`` may also be ``/Unknown`` in a plain PDF, and that is its
+    default -- but PDF/X exists so that a printer does not have to guess, so a
+    conversion that wrote ``Unknown`` would produce a file failing its own
+    trapping clause. Refusing is better than writing one of the two answers at
+    random.
+    """
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    text = str(value).strip().lstrip("/").lower()
+    if text in ("true", "yes", "1"):
+        return "True"
+    if text in ("false", "no", "0"):
+        return "False"
+    raise PdfValidationException(
+        f"trapped must say True or False, not {value!r}: PDF/X requires "
+        "/Trapped to state whether the file has been trapped."
+    )
+
+
+def _pdfx_xmp_timestamp() -> str:
+    """The current time as the ISO 8601 form XMP dates take."""
+    return (
+        datetime.datetime.now(datetime.UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _pdfx_uuid() -> str:
+    """A fresh ``uuid:`` identifier for the ``xmpMM`` document/instance keys."""
+    raw = EncryptionUtils.generate_file_id().hex()
+    return (
+        f"uuid:{raw[0:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:32]}"
+    )
+
+
+def _pdfx_profile_bytes(
+    source: bytes | bytearray | str | Path | None, budget: Any
+) -> bytes | None:
+    """ICC profile bytes from *source*, or ``None`` when none was given.
+
+    A path is read through the load budget, as every other file this package
+    opens is: an output intent profile is input of unknown size.
+    """
+    if source is None:
+        return None
+    if isinstance(source, (bytes, bytearray)):
+        data = bytes(source)
+    else:
+        path = Path(source)
+        if not path.is_file():
+            raise PdfIOException(f"ICC profile file does not exist: {path}")
+        if budget is not None:
+            budget.check_input(path.stat().st_size)
+        data = path.read_bytes()
+    if _icc_profile_color_space(data) is None:
+        raise PdfValidationException(
+            "icc_profile is not a usable ICC profile: its header does not "
+            "declare the 'acsp' signature with a Gray, RGB or CMYK data "
+            "colour space."
+        )
+    return data
+
+
+def _pdfx_profile_description(data: bytes) -> str | None:
+    """The profile's own ``desc`` tag, which names the printing condition.
+
+    ICC.1 clause 7.3: the tag table follows the 128-byte header, each entry
+    being a signature and an offset/size pair. The ``desc`` tag of a v2 profile
+    is a ``textDescriptionType`` whose ASCII form is length-prefixed; a v4
+    profile stores ``mluc``, which is not read here -- a caller naming the
+    condition itself is the better answer either way.
+    """
+    if len(data) < 132:
+        return None
+    try:
+        count = struct.unpack(">I", data[128:132])[0]
+        if count > 200:
+            return None
+        for i in range(count):
+            entry = 132 + i * 12
+            if entry + 12 > len(data):
+                return None
+            signature = data[entry : entry + 4]
+            if signature != b"desc":
+                continue
+            offset, size = struct.unpack(">II", data[entry + 4 : entry + 12])
+            if offset + size > len(data) or size < 12:
+                return None
+            tag = data[offset : offset + size]
+            if tag[:4] != b"desc":
+                return None
+            length = struct.unpack(">I", tag[8:12])[0]
+            if length == 0 or 12 + length > len(tag):
+                return None
+            text = tag[12 : 12 + length].split(b"\x00")[0]
+            return text.decode("ascii", errors="replace").strip() or None
+    except (struct.error, ValueError, IndexError):
+        return None
+    return None
+
+
+def _make_pdfx_xmp(
+    rules: Any,
+    title: str | None,
+    *,
+    document_id: str,
+    instance_id: str,
+    timestamp: str,
+) -> bytes:
+    """Return a UTF-8 XMP packet identifying a PDF/X file.
+
+    Which schema carries the identification depends on the part: ``pdfx`` up to
+    ISO 15930-6, the separate PDF/X ID schema (``pdfxid``) from ISO 15930-7 on.
+    Part 4 additionally asks for the document to identify itself and date itself
+    (ISO 15930-7 6.10), so the ``xmpMM`` identifiers and the three XMP dates go
+    in for it; the earlier parts have no such clause and are left with the
+    identification and the title alone.
+    """
+    uri = STANDARD_XMP_NAMESPACES[rules.xmp_prefix]
+    packet = XmpPacket()
+    packet.add(
+        XmpField(
+            prefix=rules.xmp_prefix,
+            name="GTS_PDFXVersion",
+            namespace_uri=uri,
+            value=rules.xmp_version,
+        )
+    )
+    if rules.info_conformance is not None:
+        packet.add(
+            XmpField(
+                prefix=rules.xmp_prefix,
+                name="GTS_PDFXConformance",
+                namespace_uri=uri,
+                value=rules.info_conformance,
+            )
+        )
+    if rules.part >= 4:
+        xmp_ns = STANDARD_XMP_NAMESPACES["xmp"]
+        mm = STANDARD_XMP_NAMESPACES["xmpMM"]
+        for name in ("CreateDate", "ModifyDate", "MetadataDate"):
+            packet.add(
+                XmpField(
+                    prefix="xmp", name=name, namespace_uri=xmp_ns, value=timestamp
+                )
+            )
+        packet.add(
+            XmpField(
+                prefix="xmpMM",
+                name="DocumentID",
+                namespace_uri=mm,
+                value=document_id,
+            )
+        )
+        packet.add(
+            XmpField(
+                prefix="xmpMM",
+                name="InstanceID",
+                namespace_uri=mm,
+                value=instance_id,
+            )
+        )
+        packet.add(
+            XmpField(
+                prefix="xmpMM", name="VersionID", namespace_uri=mm, value="1"
+            )
+        )
+        packet.add(
+            XmpField(
+                prefix="xmpMM",
+                name="RenditionClass",
+                namespace_uri=mm,
+                value="default",
+            )
+        )
+    if title:
+        packet.add(
+            XmpField(
+                prefix="dc",
+                name="title",
+                namespace_uri=STANDARD_XMP_NAMESPACES["dc"],
+                value=XmpArray(
+                    kind="Alt",
+                    items=[XmpField(value=title, language="x-default")],
+                ),
+            )
+        )
     return serialize_xmp(packet)
 
 
@@ -2135,11 +2332,23 @@ class SimplePdf:
                     same = False
                 if same:
                     return profile_ref
+        # ``/N`` and ``/Alternate`` come from the profile's own header rather
+        # than being assumed: a PDF/X output intent is usually a CMYK profile,
+        # and an ICC stream declaring three components for a four-component
+        # profile is a stream a reader cannot use as a colour space. sRGB, the
+        # only profile the PDF/A conversion writes, resolves to the same 3 and
+        # /DeviceRGB this used to hard-code.
+        space = _icc_profile_color_space(icc_bytes)
+        components, alternate = {
+            "Gray": (1, "DeviceGray"),
+            "RGB": (3, "DeviceRGB"),
+            "CMYK": (4, "DeviceCMYK"),
+        }.get(space or "", (3, "DeviceRGB"))
         icc_stream = PdfStream(
             content=icc_bytes,
             mapping={
-                PdfName("N"): PdfNumber(3),
-                PdfName("Alternate"): PdfName("DeviceRGB"),
+                PdfName("N"): PdfNumber(components),
+                PdfName("Alternate"): PdfName(alternate),
                 PdfName("Length"): PdfNumber(len(icc_bytes)),
             },
         )
@@ -5025,6 +5234,166 @@ class SimplePdf:
             logger.info(f"PDF/A compliance check passed for level {level}.")
 
         return problems, warnings
+
+    def check_pdfx_compliance(
+        self, standard: str = "PDF/X-4"
+    ) -> tuple[list[str], list[str]]:
+        """Check the document against a PDF/X conformance level (heuristic).
+
+        PDF/X (ISO 15930) is about *print exchange*: a conforming file carries
+        everything a printer needs and nothing that would make the result depend
+        on the reader -- every font embedded, one output intent naming the
+        printing condition the colour was prepared for, a stated trim size, and
+        a stated trapping status.
+
+        Rule-of-thumb structural checks only, as for PDF/A, and with one
+        difference worth knowing: **no free validator checks PDF/X**, so these
+        rules have not been cross-checked against a reference implementation the
+        way the PDF/A ones have been against veraPDF. See
+        :class:`~aspose_pdf.pdfx.PdfXValidationResult`.
+
+        Args:
+            standard: ``"PDF/X-1a:2001"``, ``"PDF/X-1a:2003"``,
+                ``"PDF/X-3:2002"``, ``"PDF/X-3:2003"`` or ``"PDF/X-4"``, in any
+                of the spellings
+                :func:`aspose_pdf.engine.conformance.normalize_pdfx_standard`
+                accepts.
+
+        Returns:
+            Tuple of ``(errors, warnings)``. Errors break conformance; warnings
+            are advisory -- an annotation over the trimmed area, or a part-4
+            metadata entry whose normative strength this library does not claim
+            to settle.
+        """
+        self._ensure_not_disposed()
+        name = conformance.normalize_pdfx_standard(standard)
+        rules = conformance.PDFX_STANDARDS[name]
+        logger.info("Beginning PDF/X compliance check for %s.", name)
+
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        if self.encrypted:
+            errors.append(
+                "PDF/X prohibits encryption and access control "
+                f"({conformance.pdfx_cite(rules, 'encryption')})."
+            )
+
+        if self._cos_doc is not None:
+            errors.extend(self._pdfx_font_problems(rules))
+            errors.extend(self._pdfx_content_colour_problems(rules))
+            extended_errors, extended_warnings = conformance.pdfx_extended(self, rules)
+            errors.extend(extended_errors)
+            warnings.extend(extended_warnings)
+            warnings.extend(self._pdfx_metadata_warnings(rules))
+
+        if errors:
+            logger.warning(
+                "PDF/X compliance check failed for %s: %d issues found.",
+                name,
+                len(errors),
+            )
+        else:
+            logger.info("PDF/X compliance check passed for %s.", name)
+        return errors, warnings
+
+    def _pdfx_font_problems(self, rules: Any) -> list[str]:
+        """Fonts used for rendering that carry no embedded program.
+
+        Every part of ISO 15930 requires it, for the same reason PDF/A does: a
+        file whose text depends on a font the receiver happens to have is not a
+        blind exchange. The walk is ``_rendering_font_dictionaries``, so a form
+        field's ``/DR`` font counts as much as a page's own.
+        """
+        clause = conformance.pdfx_cite(rules, "fonts")
+        problems: list[str] = []
+        for font, where in self._rendering_font_dictionaries():
+            subtype = self._get_name(font.mapping.get(PdfName("Subtype")))
+            if subtype == "Type3":
+                continue  # a Type 3 font carries its glyphs as content streams
+            base_font = font.mapping.get(PdfName("BaseFont"))
+            descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+            if not isinstance(descriptor, PdfDictionary):
+                problems.append(
+                    f"Font {base_font} in {where} has no /FontDescriptor, so it "
+                    f"cannot carry an embedded program ({clause})."
+                )
+                continue
+            allowed = {
+                "Type1": ("FontFile", "FontFile3"),
+                "MMType1": ("FontFile", "FontFile3"),
+                "TrueType": ("FontFile2", "FontFile3"),
+            }.get(subtype or "", ("FontFile", "FontFile2", "FontFile3"))
+            if not any(PdfName(key) in descriptor.mapping for key in allowed):
+                problems.append(
+                    f"PDF/X requires every font embedded; {base_font} in {where} "
+                    f"is not ({clause})."
+                )
+        return problems
+
+    def _pdfx_content_colour_problems(self, rules: Any) -> list[str]:
+        """RGB selected by operator rather than by a named colour space.
+
+        The resource walk in :mod:`~aspose_pdf.engine.conformance` sees the
+        colour spaces a page names; ``rg``/``RG`` name none -- they select
+        DeviceRGB directly -- so the content itself is scanned for them. Only
+        part 1 restricts the colour model this way; parts 3 and 4 permit RGB
+        under the output intent.
+        """
+        if rules.allows_device_independent_colour:
+            return []
+        clause = conformance.pdfx_cite(rules, "colour")
+        for i in range(len(self.pages)):
+            rgb = [False]
+            cmyk = [False]
+            gray = [False]
+            _scan_content_for_device_colors(
+                self.get_page_content(i), rgb, cmyk, gray
+            )
+            if rgb[0]:
+                return [
+                    f"{rules.name} permits CMYK, grey and spot colour only; the "
+                    f"content of page {i + 1} selects RGB ({clause})."
+                ]
+        return []
+
+    def _pdfx_metadata_warnings(self, rules: Any) -> list[str]:
+        """Part-4 metadata entries whose absence is reported, not failed.
+
+        ISO 15930-7 6.10 ("Metadata and document identification") asks a PDF/X-4
+        file to date and identify itself in XMP. Which of those entries are
+        normative and which recommended is not something this library has been
+        able to settle against the published text, so a missing one is a warning
+        rather than an error -- and the converter writes all of them, so a file
+        this library produces carries them either way.
+        """
+        if rules.part < 4:
+            return []
+        root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        if not isinstance(root, PdfDictionary):
+            return []
+        metadata = self._resolve(root.mapping.get(PdfName("Metadata")))
+        if not isinstance(metadata, PdfStream):
+            return []  # the missing packet is already an error
+        text = metadata.content.decode("utf-8", errors="replace")
+        missing = [
+            name
+            for name in (
+                "xmp:CreateDate",
+                "xmp:ModifyDate",
+                "xmp:MetadataDate",
+                "xmpMM:DocumentID",
+                "xmpMM:VersionID",
+                "xmpMM:RenditionClass",
+            )
+            if conformance._xmp_value(text, name) is None
+        ]
+        if not missing:
+            return []
+        return [
+            f"{rules.name} dates and identifies itself in XMP; the packet does "
+            "not declare " + ", ".join(missing) + " (ISO 15930-7 6.10)."
+        ]
 
     def check_pdfua_compliance(self, part: int = 1) -> tuple[list[str], list[str]]:
         """Inspect catalog-level PDF/UA prerequisites (heuristic only).
@@ -16003,6 +16372,327 @@ class SimplePdf:
         # 8. Return any compliance issues that remain (e.g. font warnings,
         #    transparency or prohibited annotations that cannot be auto-fixed).
         return self.check_pdfa_compliance(level)
+
+    def convert_to_pdfx(
+        self,
+        standard: str = "PDF/X-4",
+        *,
+        icc_profile: bytes | bytearray | str | Path | None = None,
+        output_condition_identifier: str | None = None,
+        output_condition: str | None = None,
+        registry_name: str = "http://www.color.org",
+        trapped: str | bool = "False",
+        title: str | None = None,
+        font_lookup_directory: str | Path | None = None,
+    ) -> list[str]:
+        """Bring this document toward a PDF/X conformance level, in place.
+
+        What the conversion can do on its own:
+
+        - Strips what PDF/X prohibits outright: document and page additional
+          actions, document-level JavaScript, XFA, and -- for the parts written
+          against PDF 1.4 -- optional content.
+        - Gives every page a ``/TrimBox`` when it has neither trim nor art box,
+          taking the crop box (or the media box) as the trimmed size, and drops
+          the ``/ArtBox`` where a page carries both, since PDF/X asks for one of
+          the two and not for both.
+        - States the trapping status, which PDF/X requires and ISO 32000-1
+          leaves optional.
+        - Writes the identification the part asks for, in the place the part
+          asks for it: the information dictionary plus the ``pdfx`` XMP schema
+          up to ISO 15930-6, the ``pdfxid`` schema alone for PDF/X-4 (and the
+          legacy information-dictionary keys are *removed* for it).
+        - Writes the output intent, and embeds *icc_profile* as its
+          ``/DestOutputProfile``.
+        - Embeds the bundled substitutes for any unembedded Standard-14 font, as
+          the PDF/A conversion does.
+
+        What it will not do is **invent a printing condition**. The output
+        intent is the promise a PDF/X file makes about the press it was prepared
+        for, so where one is needed and none is available -- no *icc_profile*,
+        no usable intent already in the document -- the conversion leaves the
+        requirement in the list it returns rather than embedding a profile
+        nobody chose. The one exception is a standard that permits an RGB intent
+        (parts 3 and 4): there the bundled sRGB profile is a real, registered
+        characterization, so it is used as the default and logged. Part 1 admits
+        no RGB intent, so converting to it without a CMYK profile reports the
+        profile as missing.
+
+        Colour is **not converted**: a part-1 target with RGB content reports
+        the RGB rather than guessing a separation for it, exactly as an
+        unembeddable font is reported rather than substituted.
+
+        Args:
+            standard: the target level; see :meth:`check_pdfx_compliance`.
+            icc_profile: the characterized printing condition, as ICC profile
+                bytes or a path to a ``.icc``/``.icm`` file.
+            output_condition_identifier: ``/OutputConditionIdentifier``, the
+                name of that printing condition (for example
+                ``"FOGRA39"``). Defaults to the profile's own description where
+                one can be read, and otherwise to ``"Custom"``.
+            output_condition: ``/OutputCondition``, a human-readable note about
+                the intended printing condition.
+            registry_name: ``/RegistryName``, where the identifier is registered.
+            trapped: ``True``/``False`` (or the strings), written to ``/Trapped``.
+                ``"Unknown"`` is refused: PDF/X exists to answer this question.
+            title: ``dc:title`` for the XMP packet, and ``/Title`` for parts
+                that keep an information dictionary. Defaults to the document's
+                existing title.
+            font_lookup_directory: searched for the programs of unembedded
+                fonts before the bundled substitutes are tried.
+
+        Returns:
+            The compliance issues that remain, which is
+            ``check_pdfx_compliance(standard)[0]``. An empty list means the
+            document now passes this library's checks for that level.
+
+        Raises:
+            AsposePdfException: if the document is disposed, has no loaded COS
+                structure, or is encrypted (PDF/X prohibits encryption).
+            PdfValidationException: if *trapped* is not a yes-or-no answer.
+            ValueError: if *standard* is not a level this library knows.
+        """
+        self._ensure_not_disposed()
+
+        if self._cos_doc is None:
+            raise AsposePdfException(
+                "convert_to_pdfx requires a document loaded from file or bytes. "
+                "Use SimplePdf.from_file() or SimplePdf.from_bytes() first."
+            )
+        if self.encrypted:
+            raise AsposePdfException(
+                "PDF/X prohibits encryption. "
+                "Decrypt the document before converting to PDF/X."
+            )
+        root = self._resolve(self._cos_doc.trailer.get(PdfName("Root")))
+        if not isinstance(root, PdfDictionary):
+            raise AsposePdfException(
+                "Cannot locate the PDF catalog (/Root). The document may be corrupt."
+            )
+
+        name = conformance.normalize_pdfx_standard(standard)
+        rules = conformance.PDFX_STANDARDS[name]
+        trapped_name = _pdfx_trapped_name(trapped)
+
+        # 1. Prohibited constructs, at the catalog and on every page.
+        root.mapping.pop(PdfName("AA"), None)
+        if not rules.allows_optional_content:
+            root.mapping.pop(PdfName("OCProperties"), None)
+        names_obj = self._resolve(root.mapping.get(PdfName("Names")))
+        if isinstance(names_obj, PdfDictionary):
+            names_obj.mapping.pop(PdfName("JavaScript"), None)
+        acro = self._resolve(root.mapping.get(PdfName("AcroForm")))
+        if isinstance(acro, PdfDictionary):
+            acro.mapping.pop(PdfName("XFA"), None)
+        for i in range(len(self.pages)):
+            page = self._get_page_dict(i)
+            if isinstance(page, PdfDictionary):
+                page.mapping.pop(PdfName("AA"), None)
+
+        # 2. The trimmed size of every page.
+        self._pdfx_ensure_trim_boxes()
+
+        # 3. Trapping status and title, both in the information dictionary.
+        resolved_title = (
+            title
+            if title is not None
+            else (self.metadata.get("Title", "").strip() or None)
+        )
+        self.metadata["Trapped"] = trapped_name
+        if resolved_title:
+            self.metadata["Title"] = resolved_title
+
+        # 4. Identification, in the place this part puts it.
+        if rules.info_version is None:
+            # Part 4 identifies itself in XMP alone, and a stale
+            # information-dictionary key contradicts it.
+            for key in ("GTS_PDFXVersion", "GTS_PDFXConformance"):
+                self.metadata.pop(key, None)
+        else:
+            self.metadata["GTS_PDFXVersion"] = rules.info_version
+            if rules.info_conformance is not None:
+                self.metadata["GTS_PDFXConformance"] = rules.info_conformance
+            else:
+                self.metadata.pop("GTS_PDFXConformance", None)
+
+        # 5. The XMP packet, unfiltered as every standard here requires.
+        xmp_bytes = _make_pdfx_xmp(
+            rules,
+            resolved_title,
+            document_id=_pdfx_uuid(),
+            instance_id=_pdfx_uuid(),
+            timestamp=_pdfx_xmp_timestamp(),
+        )
+        xmp_stream = PdfStream(
+            content=xmp_bytes,
+            mapping={
+                PdfName("Type"): PdfName("Metadata"),
+                PdfName("Subtype"): PdfName("XML"),
+                PdfName("Length"): PdfNumber(len(xmp_bytes)),
+            },
+        )
+        root.mapping[PdfName("Metadata")] = self._register_replacing(
+            root.mapping.get(PdfName("Metadata")), xmp_stream
+        )
+
+        # 6. The output intent.
+        self._pdfx_write_output_intent(
+            root,
+            rules,
+            icc_profile=icc_profile,
+            identifier=output_condition_identifier,
+            condition=output_condition,
+            registry_name=registry_name,
+        )
+
+        # 7. A file identifier, which the identification clause asks for.
+        if PdfName("ID") not in self._cos_doc.trailer.mapping:
+            id1 = EncryptionUtils.generate_file_id()
+            id2 = EncryptionUtils.generate_file_id()
+            self.file_id = [id1, id2]
+            self._cos_doc.trailer.mapping[PdfName("ID")] = PdfArray(
+                [PdfString(id1), PdfString(id2)]
+            )
+
+        # 8. The header version. ISO 15930-4 clause 5 says the header shall not
+        # be used to decide conformance, so this is not a requirement being
+        # satisfied -- it is the file describing the features it may now use.
+        # It is only ever raised: lowering it would misdescribe what is there.
+        current = conformance._parse_pdf_version(self.pdf_version or "")
+        target = float(rules.base_pdf_version)
+        if current is None or current < target:
+            self.pdf_version = rules.base_pdf_version
+
+        # 9. Fonts.
+        if font_lookup_directory:
+            self._embed_missing_fonts(Path(font_lookup_directory))
+        self._embed_standard14_fonts()
+
+        logger.info("PDF/X conversion complete for %s.", name)
+        return self.check_pdfx_compliance(name)[0]
+
+    def _pdfx_ensure_trim_boxes(self) -> None:
+        """Give every page one of the two boxes PDF/X asks for.
+
+        A page with neither gets a ``/TrimBox`` of its crop box -- which is the
+        area a reader already shows, so the trimmed size this states is the page
+        as it looks -- falling back to the media box. A page carrying *both*
+        loses its ``/ArtBox``: the two are two answers to one question, and the
+        trim box is the one that names the finished sheet.
+        """
+        for i in range(len(self.pages)):
+            page = self._get_page_dict(i)
+            if not isinstance(page, PdfDictionary):
+                continue
+            has_trim = PdfName("TrimBox") in page.mapping
+            has_art = PdfName("ArtBox") in page.mapping
+            if has_trim and has_art:
+                del page.mapping[PdfName("ArtBox")]
+                logger.info(
+                    "Page %d carried both /TrimBox and /ArtBox; kept the trim box.",
+                    i + 1,
+                )
+                continue
+            if has_trim or has_art:
+                continue
+            rect = self.get_page_crop_box(i) or self._page_media_box(i)
+            if rect is None:
+                continue
+            page.mapping[PdfName("TrimBox")] = PdfArray(
+                [PdfNumber(float(v)) for v in rect[:4]]
+            )
+
+    def _pdfx_write_output_intent(
+        self,
+        root: PdfDictionary,
+        rules: Any,
+        *,
+        icc_profile: bytes | bytearray | str | Path | None,
+        identifier: str | None,
+        condition: str | None,
+        registry_name: str,
+    ) -> None:
+        """Write the ``/GTS_PDFX`` output intent, or leave the lack of one.
+
+        An intent already in the document is replaced rather than joined, so
+        converting twice does not leave two of them; its profile stream is kept
+        when it holds the same bytes (see :meth:`_keep_or_register_profile`).
+        """
+        profile_bytes = _pdfx_profile_bytes(icc_profile, self._load_budget)
+        existing_intents = root.mapping.get(PdfName("OutputIntents"))
+        intent_existing, profile_existing = self._existing_output_intent(
+            existing_intents
+        )
+
+        if profile_bytes is None:
+            kept = self._pdfx_usable_profile(profile_existing, rules)
+            if kept is not None:
+                profile_bytes = kept
+            elif rules.allows_device_independent_colour:
+                # A standard that accepts an RGB intent can have a real one: the
+                # bundled sRGB profile is the characterization it names, not a
+                # made-up press condition.
+                profile_bytes = _minimal_srgb_icc_profile()
+                identifier = identifier or "sRGB IEC61966-2.1"
+                condition = condition or "sRGB IEC61966-2.1"
+                logger.info(
+                    "No ICC profile supplied for %s; using the bundled sRGB "
+                    "profile as the output intent.",
+                    rules.name,
+                )
+            else:
+                logger.warning(
+                    "No CMYK ICC profile supplied for %s, and the document "
+                    "carries none; the output intent is left unwritten.",
+                    rules.name,
+                )
+                return
+
+        space = _icc_profile_color_space(profile_bytes)
+        icc_ref = self._keep_or_register_profile(profile_existing, profile_bytes)
+        intent = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("OutputIntent"),
+                PdfName("S"): PdfName(conformance.PDFX_OUTPUT_INTENT_SUBTYPE),
+                PdfName("OutputConditionIdentifier"): PdfString(
+                    identifier or _pdfx_profile_description(profile_bytes) or "Custom"
+                ),
+                PdfName("DestOutputProfile"): icc_ref,
+            }
+        )
+        if condition:
+            intent.mapping[PdfName("OutputCondition")] = PdfString(condition)
+            intent.mapping[PdfName("Info")] = PdfString(condition)
+        elif space is not None:
+            intent.mapping[PdfName("Info")] = PdfString(
+                f"{space} output intent"
+            )
+        if registry_name:
+            intent.mapping[PdfName("RegistryName")] = PdfString(registry_name)
+
+        intent_ref = self._register_replacing(intent_existing, intent)
+        intents_ref = self._register_replacing(
+            existing_intents, PdfArray([intent_ref])
+        )
+        root.mapping[PdfName("OutputIntents")] = intents_ref
+
+    def _pdfx_usable_profile(self, profile_ref: Any, rules: Any) -> bytes | None:
+        """The bytes of an existing ``/DestOutputProfile`` this part can use."""
+        profile = self._resolve(profile_ref)
+        if not isinstance(profile, PdfStream):
+            return None
+        try:
+            data = self._decode_cos_stream(profile, profile_ref)
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return None
+        space = _icc_profile_color_space(data)
+        if space is None:
+            return None
+        if space == "RGB" and not rules.allows_device_independent_colour:
+            return None
+        return data
 
     def _pdfa4_info_problems(self) -> list[str]:
         """``/Info`` violations of ISO 19005-4 6.1.3, which only part 4 has.

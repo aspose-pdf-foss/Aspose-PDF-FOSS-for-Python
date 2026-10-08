@@ -48,7 +48,7 @@ flowchart TD
       c6["Interactive form fields"]
       c7["Annotations with generated appearances"]
       c8["Encryption and signature validation"]
-      c9["PDF/A and PDF/UA validation"]
+      c9["PDF/A, PDF/UA and PDF/X validation"]
       c10["Resource optimization"]
     end
   end
@@ -184,6 +184,11 @@ flowchart TD
 - `Document.validate_pdfa()`, `Document.convert_to_pdfa()`, `Document.validate_pdfua()`, and
   `Document.auto_tag()` run heuristic PDF/A and PDF/UA compliance checks and generate a structure
   tree for existing content.
+- `Document.validate_pdfx()` and `Document.convert_to_pdfx()` do the same for the print-exchange
+  standards — PDF/X-1a:2001/2003, PDF/X-3:2002/2003 and PDF/X-4 — checking and writing the
+  identification keys, the `GTS_PDFX` output intent and its ICC profile, font embedding, the
+  trim/bleed geometry and the trapping status. The conversion will not invent a printing
+  condition: pass `icc_profile=` or the requirement is reported rather than guessed at.
 - `Document.optimize()` (aliased `optimize_resources()`) removes unreachable objects,
   deduplicates images, subsets embedded TrueType and CFF fonts, and recompresses streams, all
   controlled through `OptimizationOptions`.
@@ -677,6 +682,10 @@ and delete workflows. 265 public types are organized by module below.
 | `PdfUaValidationResult` | Detailed result of a PDF/UA structure check (heuristic). |
 | `PdfUaValidator` | Plugin that runs heuristic PDF/UA validation on one or more inputs. |
 | `PdfValidationException` | Raised when a PDF document fails validation or compliance checks. |
+| `PdfXStandard` | The PDF/X conformance levels this library validates and writes. |
+| `PdfXValidateOptions` | Container for batch PDF/X validation settings. |
+| `PdfXValidationResult` | Detailed result of a PDF/X validation run (heuristic). |
+| `PdfXValidator` | Plugin that runs heuristic PDF/X validation on one or more inputs. |
 | `PerformanceLogger` | Class with 2 methods and 1 property. |
 | `Plugin` | Identifiers for the available low-code plugins. |
 | `PluginOptions` | Hold input/output data sources and their PDF resource-limit policy. |

@@ -55,6 +55,7 @@ from aspose_pdf.load_limits import (
 from aspose_pdf.outlines import OutlineCollection
 from aspose_pdf.pdfa import PdfAValidationResult
 from aspose_pdf.pdfua import PdfUaValidationResult
+from aspose_pdf.pdfx import PdfXValidationResult, normalize_pdfx_standard
 from aspose_pdf.recipients import ALL_PERMISSIONS, Recipient
 
 if TYPE_CHECKING:
@@ -2196,6 +2197,161 @@ class Document:
             raise AsposePdfException("No document loaded")
         return self._engine_pdf.convert_to_pdfa(
             level, font_lookup_directory=font_lookup_directory
+        )
+
+    def is_pdfx_compliant(self, standard: str = "PDF/X-4") -> bool:
+        """Whether the document conforms to a PDF/X level (heuristic).
+
+        Uses the same checks as :meth:`validate_pdfx`; do not use as a
+        certification gate -- and note that no free validator covers PDF/X, so
+        unlike the PDF/A checks these are not cross-checked against a reference
+        implementation.
+
+        Parameters
+        ----------
+        standard : str
+            ``"PDF/X-1a:2001"``, ``"PDF/X-1a:2003"``, ``"PDF/X-3:2002"``,
+            ``"PDF/X-3:2003"`` or ``"PDF/X-4"``, in any spelling
+            :meth:`aspose_pdf.pdfx.PdfXStandard.by_name` accepts.
+
+        Returns
+        -------
+        bool
+            ``True`` when the document raises no PDF/X errors.
+        """
+        return self.validate_pdfx(standard).is_valid
+
+    def validate_pdfx(self, standard: str = "PDF/X-4") -> PdfXValidationResult:
+        """Validate the document against a PDF/X standard (heuristic checks).
+
+        PDF/X (ISO 15930) is about print exchange: a conforming file carries
+        everything the press needs and nothing whose result would depend on the
+        reader. The checks cover the identification keys, the output intent and
+        its ICC profile, font embedding, the trim/bleed geometry, the trapping
+        status, encryption, prohibited actions and annotations, transfer
+        functions, and -- per standard -- transparency, optional content,
+        JPEG 2000 and device-independent colour.
+
+        Partial, rule-of-thumb checks only. Use
+        :attr:`~aspose_pdf.pdfx.PdfXValidationResult.is_heuristic` (always
+        ``True`` here) and
+        :attr:`~aspose_pdf.pdfx.PdfXValidationResult.HEURISTIC_VALIDATION_NOTICE`
+        when building prepress automation.
+
+        Parameters
+        ----------
+        standard : str
+            The conformance level to check. Defaults to ``"PDF/X-4"``, the
+            newest level this library implements.
+
+        Returns
+        -------
+        PdfXValidationResult
+            ``errors``, ``warnings``, ``standard``, ``is_heuristic`` and
+            ``is_valid``. ``len(result)`` equals ``len(result.errors)``, as for
+            :meth:`validate_pdfa`.
+
+        Raises
+        ------
+        ValueError
+            If *standard* is not a level this library knows.
+        """
+        self._ensure_not_disposed()
+        name = normalize_pdfx_standard(standard)
+        if self._engine_pdf:
+            errors, warnings = self._engine_pdf.check_pdfx_compliance(name)
+        else:
+            errors, warnings = (["No document loaded"], [])
+        return PdfXValidationResult(
+            errors=errors, warnings=warnings, standard=name
+        )
+
+    def convert_to_pdfx(
+        self,
+        standard: str = "PDF/X-4",
+        *,
+        icc_profile: bytes | bytearray | str | Path | None = None,
+        output_condition_identifier: str | None = None,
+        output_condition: str | None = None,
+        registry_name: str = "http://www.color.org",
+        trapped: str | bool = "False",
+        title: str | None = None,
+        font_lookup_directory: str | Path | None = None,
+    ) -> list[str]:
+        """Convert the document toward a PDF/X standard in place.
+
+        Writes the identification the standard asks for in the place it asks
+        for it, states the trapping status, gives every page a ``/TrimBox``
+        where it has neither trim nor art box, embeds the output intent, strips
+        what the standard prohibits (additional actions, document JavaScript,
+        XFA, and optional content for the parts built on PDF 1.4), and embeds
+        the bundled substitutes for unembedded Standard-14 fonts.
+
+        It will **not invent a printing condition**. The output intent is the
+        promise a PDF/X file makes about the press it was made for, so where
+        one is needed and neither *icc_profile* nor the document supplies it,
+        the requirement stays in the returned list instead of a profile nobody
+        chose being embedded. A standard that permits an RGB intent (PDF/X-3
+        and PDF/X-4) falls back to the bundled sRGB profile, which is a real
+        registered characterization; PDF/X-1a admits no RGB intent, so
+        converting to it needs a CMYK profile passed in.
+
+        Colour is **not** converted either: a PDF/X-1a target with RGB content
+        reports the RGB rather than guessing a separation for it, the way an
+        unembeddable font is reported rather than substituted.
+
+        Parameters
+        ----------
+        standard : str
+            Target conformance level; see :meth:`validate_pdfx`.
+        icc_profile : bytes, bytearray, str or Path, optional
+            The characterized printing condition, as ICC profile bytes or the
+            path of an ``.icc``/``.icm`` file.
+        output_condition_identifier : str, optional
+            ``/OutputConditionIdentifier`` -- the registered name of that
+            printing condition, such as ``"FOGRA39"``. Defaults to the
+            profile's own ``desc`` tag, and failing that to ``"Custom"``.
+        output_condition : str, optional
+            ``/OutputCondition``, a human-readable note about the condition.
+        registry_name : str
+            ``/RegistryName``, where the identifier is registered.
+        trapped : str or bool
+            Written to ``/Trapped``. ``"Unknown"`` is refused: PDF/X exists so
+            that the receiver does not have to guess.
+        title : str, optional
+            ``dc:title`` for the XMP packet. Defaults to the existing title.
+        font_lookup_directory : str or Path, optional
+            Searched for the programs of unembedded fonts before the bundled
+            substitutes are tried.
+
+        Returns
+        -------
+        List[str]
+            The conformance issues that remain. An empty list means the
+            document now passes :meth:`validate_pdfx` for that standard.
+
+        Raises
+        ------
+        AsposePdfException
+            If the document is disposed, was not loaded from a file or byte
+            stream, or is encrypted (PDF/X prohibits encryption).
+        PdfValidationException
+            If *trapped* is not a yes-or-no answer.
+        ValueError
+            If *standard* is not a level this library knows.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return self._engine_pdf.convert_to_pdfx(
+            standard,
+            icc_profile=icc_profile,
+            output_condition_identifier=output_condition_identifier,
+            output_condition=output_condition,
+            registry_name=registry_name,
+            trapped=trapped,
+            title=title,
+            font_lookup_directory=font_lookup_directory,
         )
 
     def convert_to_pdfua(

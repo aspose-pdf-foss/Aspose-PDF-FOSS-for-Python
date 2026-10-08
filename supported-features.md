@@ -3102,6 +3102,173 @@ Boundaries:
   `serialize` emits a canonical form — a parse → serialize round-trip preserves
   the data model (it is not guaranteed byte-identical to a foreign input).
 
+## PDF/X
+
+PDF/X (ISO 15930) is the print-exchange branch of the PDF standards. Where
+PDF/A is about a file still being readable in fifty years, PDF/X is about a
+file printing the same way wherever it is sent: a conforming file carries
+everything the press needs -- every font embedded, one output intent naming the
+printing condition the colour was prepared for, a stated trim size, a stated
+trapping status -- and nothing whose result would depend on the reader.
+
+`Document.validate_pdfx(standard)`, `Document.is_pdfx_compliant(standard)` and
+`Document.convert_to_pdfx(standard, ...)` are the API, with
+`PdfXStandard`, `PdfXValidationResult`, `PdfXValidateOptions` and
+`PdfXValidator` in `aspose_pdf.pdfx` (all exported from `aspose_pdf`) mirroring
+the PDF/A and PDF/UA shapes.
+
+**The checks are heuristic, and less corroborated than the PDF/A ones.**
+veraPDF validates PDF/A and PDF/UA but **not** PDF/X, and no other free
+validator does either, so these rules have not been cross-checked against a
+reference implementation the way every PDF/A level this library produces has
+been against veraPDF. They were checked against `qpdf`/`pikepdf` and `exiftool`
+for what a third party reads back, and in both directions (a file built by
+pikepdf validates here; a file written here validates after a qpdf rewrite).
+Preflight with a prepress tool before committing a job to print.
+
+Supported:
+
+| Standard | Defined by | Identification | Live transparency | Device-independent colour | Optional content | JPEG 2000 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `PDF/X-1a:2001` | ISO 15930-1 | `/GTS_PDFXVersion (PDF/X-1:2001)` + `/GTS_PDFXConformance (PDF/X-1a:2001)` | no | no | no | no |
+| `PDF/X-1a:2003` | ISO 15930-4 | `/GTS_PDFXVersion (PDF/X-1a:2003)` + `/GTS_PDFXConformance (PDF/X-1a:2003)` | no | no | no | no |
+| `PDF/X-3:2002` | ISO 15930-3 | `/GTS_PDFXVersion (PDF/X-3:2002)` | no | yes | no | no |
+| `PDF/X-3:2003` | ISO 15930-6 | `/GTS_PDFXVersion (PDF/X-3:2003)` | no | yes | no | no |
+| `PDF/X-4` | ISO 15930-7 | XMP `pdfxid:GTS_PDFXVersion` = `PDF/X-4` | yes | yes | yes | yes |
+
+- **The conformance level and the ISO part are different numbers.**
+  `PDF/X-1a:2003` is ISO 15930-**4** and `PDF/X-3:2003` is ISO 15930-**6**; the
+  part number is what the error messages cite. Clause numbers are quoted only
+  for ISO 15930-4 and ISO 15930-7, whose clause structure this library has
+  read; a message about another part names the standard without a clause rather
+  than borrowing a sibling part's numbering.
+- **The identification keys change shape across the family**, and the
+  conversion writes each part's own. Parts 1 to 3 identify the file in the
+  information dictionary and mirror it into XMP under the `pdfx` schema
+  (`http://ns.adobe.com/pdfx/1.3/`); `/GTS_PDFXConformance` exists only for
+  part 1. ISO 15930-1 is the odd one even there -- its version string omits the
+  conformance letter (`PDF/X-1:2001`, with `PDF/X-1a:2001` as the conformance),
+  which ISO 15930-4 clause 5 quotes verbatim when it says which older files a
+  reader must accept. PDF/X-4 identifies itself in **XMP alone**, under the
+  separate PDF/X ID schema (`pdfxid`, `http://www.npes.org/pdfx/ns/id/`), with
+  no year in the value; converting to it *removes* the legacy
+  information-dictionary keys, which preflight tools report on a part-4 file.
+  `exiftool` reads the `pdfxid` identification back as
+  `[XMP-pdfxid] GTS PDFX Version`.
+- Standard names are accepted in any spelling: the canonical form, the same
+  without `PDF/`, and forms without punctuation or case (`"x-4"`, `"X1a"`). A
+  part named without a year resolves to its newest edition, so `"x-1a"` is
+  `PDF/X-1a:2003`. An unknown name **raises** rather than falling back to a
+  level nobody asked for.
+- **The header version is deliberately not checked.** ISO 15930-4 clause 5 says
+  that "neither the version number in the header of a PDF file, nor the value
+  of the `Version` key in the `Catalog` of a PDF file shall be used in
+  determining whether a file is in accordance with this part" -- so unlike
+  PDF/A, which pins the header to the part, a PDF/X file with an older header
+  is not thereby non-conformant. The conversion still *raises* the header to
+  the version the part is written against (1.3, 1.4 or 1.6), because the
+  features a part permits are that version's; it never lowers one, which would
+  misdescribe what the file contains.
+- **One output intent**, with `/S /GTS_PDFX`, `/OutputConditionIdentifier`, and
+  an embedded `/DestOutputProfile`. The profile's own data colour space is
+  checked against the part: PDF/X-1a permits CMYK and grey (the colour it
+  permits is the output device's own), parts 3 and 4 also accept RGB. A
+  `/DestOutputProfileRef` is recognised and reported as making the file
+  PDF/X-4p, which this library does not implement, rather than as a missing
+  profile. A second `/GTS_PDFX` intent is an error; a `/GTS_PDFA1` intent is
+  not a PDF/X one and does not satisfy the requirement, so a file can carry
+  both.
+- **The conversion will not invent a printing condition.** The output intent is
+  the promise a PDF/X file makes about the press it was prepared for, so where
+  one is needed and neither `icc_profile=` nor the document supplies it, the
+  requirement is returned in the remaining-issues list instead of a profile
+  nobody chose being embedded -- the same position taken on a font whose
+  program is not in the file. The one exception is a standard that permits an
+  RGB intent (parts 3 and 4): there the bundled sRGB profile is used, being a
+  real registered characterization and the same profile the PDF/A conversion
+  writes. PDF/X-1a admits no RGB intent, so converting to it needs a CMYK
+  profile passed in. `/OutputConditionIdentifier` defaults to the profile's own
+  `desc` tag where one can be read, and otherwise to `Custom`.
+- The ICC stream's `/N` and `/Alternate` come from the profile's own header
+  (1/`DeviceGray`, 3/`DeviceRGB`, 4/`DeviceCMYK`), not from an assumption.
+- **`/Trapped` must say `True` or `False`.** ISO 32000-1 14.3.3 allows
+  `/Unknown` and makes it the default; PDF/X does not, because the receiver has
+  to know whether to trap. `convert_to_pdfx(trapped=...)` takes either answer
+  as a bool or a string and **refuses** `"Unknown"`.
+- **Every page states its trimmed size**: a `/TrimBox` or an `/ArtBox`, and not
+  both. A `/BleedBox` must contain it and the `/MediaBox` must contain
+  everything. None of the three is inheritable (ISO 32000-1 Table 30), so a
+  `/TrimBox` on a page-tree node is not that page's trim box and does not
+  satisfy the rule. The conversion gives a page with neither a `/TrimBox` of
+  its crop box (falling back to the media box) and drops the `/ArtBox` of a
+  page carrying both.
+- **Colour.** PDF/X-1a permits CMYK, grey and spot colour only: `/DeviceRGB`,
+  `/CalRGB`, `/CalGray`, `/Lab` and `/ICCBased` are reported, and the walk
+  follows what a space stands on -- an `/Indexed` palette over `/DeviceRGB`, or
+  a `/Separation` whose alternate is RGB, paints RGB whatever its own name
+  reads. `rg`/`RG` name no colour space, so page content is scanned for them
+  too. Parts 3 and 4 permit device-independent colour under the output intent.
+  **Colour is never converted**: a part-1 target with RGB content reports the
+  RGB rather than guessing a separation for it.
+- **Transparency.** Parts 1 and 3 permit none: a page or form-XObject
+  `/Group /S /Transparency`, an ExtGState `/SMask`, a blend mode other than
+  `Normal`/`Compatible`, a constant alpha below 1, and an image `/SMask` are all
+  reported. PDF/X-4 permits live transparency and requires a **page**
+  transparency group to name its blending colour space (`/Group /CS`), so that
+  the blend is defined rather than left to the reader.
+- Transfer functions in an ExtGState (`/TR`, `/TR2` other than
+  `Identity`/`Default`) are prohibited by every part.
+- Prohibited constructs, which the conversion strips where it can: document and
+  page additional actions (`/AA`), document-level JavaScript, XFA forms, the
+  action types PDF/A also prohibits (`Launch`, `Movie`, `Sound`, `ResetForm`,
+  `ImportData`, `JavaScript`, `SetOCGState`, `Rendition`, `GoTo3DView`,
+  `Trans`) wherever they are reached, PostScript XObjects, reference XObjects
+  (`/Ref`), `LZWDecode` in any part, `JBIG2Decode` and `JPXDecode` before part
+  4, alternate images (`/Alternates`) before part 4, and optional content
+  before part 4.
+- Encryption is prohibited; `convert_to_pdfx` raises on an encrypted document
+  rather than writing a file that claims conformance.
+- Every font used for rendering must be embedded, walked the way the PDF/A
+  check walks them -- a form field's `/DR` font counts as much as a page's own.
+  Unembedded Standard-14 fonts are filled from the bundled substitutes, and
+  `font_lookup_directory=` is searched first.
+- The multimedia annotation subtypes (`Sound`, `Movie`, `Screen`, `RichMedia`,
+  `3D`) are prohibited. A **printable** annotation whose rectangle lies over the
+  bleed (or trim) box is reported as a **warning**: the prohibition is clear but
+  whether a given rectangle counts as intruding on the print area is a
+  judgement about intent. `/Popup` and `/TrapNet` are exempt -- the latter is a
+  PDF/X construct.
+- A trailer `/ID` is required, and the conversion adds one.
+
+Boundaries:
+
+- **No free validator covers PDF/X**, so `is_valid` is a signal and not a
+  certification. The rule set above is what is checked; rules this library does
+  not implement are not reported as passing so much as not looked at.
+- **PDF/X-2, PDF/X-4p, PDF/X-5 and PDF/X-6 are not implemented.** The
+  external-profile variants (X-4p, X-5pg/X-5n) turn on a
+  `/DestOutputProfileRef` and a registered external profile, which is a
+  different promise about colour from the one an embedded profile makes; a file
+  carrying one is reported as PDF/X-4p rather than quietly accepted as PDF/X-4.
+- ISO 15930-7 6.10 asks a PDF/X-4 file to date and identify itself in XMP
+  (`xmp:CreateDate`, `xmp:ModifyDate`, `xmp:MetadataDate`,
+  `xmpMM:DocumentID`, `xmpMM:InstanceID`, `xmpMM:VersionID`,
+  `xmpMM:RenditionClass`). Which of those entries are normative and which are
+  recommended is not something this library has settled against the published
+  text, so a missing one is a **warning**; the conversion writes all of them.
+- A document that has never been written has no object graph to inspect, and
+  `validate_pdfx` reports no issues for it -- the same answer
+  `validate_pdfa` gives, for the same reason. Convert first, or save and
+  reopen.
+- Pre-separated pages (ISO 15930-4 6.1), the `BX`/`EX` compatibility operators,
+  halftone dictionaries, screening, rendering intents, viewer preferences and
+  the architectural limits are not checked.
+- Colour conversion (RGB to a separation) is not performed; see above. Authoring
+  in CMYK is available through `Color.cmyk(...)` (see [Pages](#pages)) -- note
+  that `draw_rectangle` and friends default their **stroke** colour to RGB
+  black, so a page drawn with CMYK fills still selects RGB unless
+  `stroke_color=` is given a CMYK colour too.
+
 ## Low-Level PDF Engine
 
 Supported:
