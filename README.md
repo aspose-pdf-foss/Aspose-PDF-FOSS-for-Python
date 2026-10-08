@@ -156,6 +156,10 @@ flowchart TD
   *shape* can be matched rather than a phrase — `\d{3}-\d{2}-\d{4}` for a social security number,
   `\b\d{4}( \d{4}){3}\b` for a card — with `\1` and `\g<name>` in the replacement expanding to
   what each match captured. The redaction bars come from the same spans the removal used.
+- `Page.add_list(text_list, x, y)` sets a `TextList` of `ListItem`s: bulleted or numbered, nested
+  with each sub-list restarting its own count, markers right-aligned in a gutter so `9.` and `10.`
+  line up, continuing onto the next page, and tagged as the nested `/L` → `/LI` → `/Lbl` + `/LBody`
+  with the `/ListNumbering` that says what the markers mean.
 - `Page.add_text_block(block, x, y)` flows a `TextBlock` of `Paragraph`s into a measure: wrapped
   with the font's own advances, aligned left, centre, right or **justified**, with first-line and
   hanging indents, per-paragraph style, a continuation onto the next page, and each paragraph
@@ -658,6 +662,7 @@ and delete workflows. 265 public types are organized by module below.
 | `Layer` | One optional content group, and whether it is currently shown. |
 | `LayerCollection` | The document's layers, indexable by position or by name. |
 | `License` | License management class for Aspose.PDF. |
+| `ListItem` | One item of a list: what it says, and what hangs under it. |
 | `Margin` | The Margin class provides top, left, bottom, and right properties for defining page margins. |
 | `MarkdownSaveOptions` | Class with 1 method and 4 properties. |
 | `Matrix3D` | Represents a 3D transformation matrix. |
@@ -737,6 +742,7 @@ and delete workflows. 265 public types are organized by module below.
 | `TextFragmentAbsorber-text` | Absorbs text fragments from a PDF page or document. |
 | `TextFragmentCollection` | A mutable ordered collection of :class:`TextFragment` objects. |
 | `TextLayoutOptions` | Configure complex-text shaping and line layout for ``Page.add_text``. |
+| `TextList` | Items ready to be placed on a page, bulleted or numbered. |
 | `TextSearchOptions` | Options controlling how text search is performed. |
 | `TrustStatus` | Outcome of building/validating the signer's certificate chain. |
 | `UnsignedContent-forms` | Represents a collection of unsigned content elements in a PDF document. |

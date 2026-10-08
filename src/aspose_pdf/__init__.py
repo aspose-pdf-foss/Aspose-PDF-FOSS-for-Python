@@ -86,6 +86,7 @@ from .interactive import (
     URIAction,
     XYZDestination,
 )
+from .lists import ListItem, TextList
 from .load_limits import PdfLoadLimits
 from .lowcode import (
     ByteArrayDataSource,
@@ -219,6 +220,7 @@ __all__ = [
     "LaunchAction",
     "LineAnnotation",
     "LinkAnnotation",
+    "ListItem",
     "MarkupAnnotation",
     "MemoryFontSource",
     "MergeOptions",
@@ -298,6 +300,7 @@ __all__ = [
     "TextExtractor",
     "TextExtractorOptions",
     "TextLayoutOptions",
+    "TextList",
     "TextStamp",
     "TrustStatus",
     "URIAction",

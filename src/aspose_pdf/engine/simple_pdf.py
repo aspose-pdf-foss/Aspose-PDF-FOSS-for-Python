@@ -1066,6 +1066,18 @@ def _pdfx_profile_description(data: bytes) -> str | None:
     return None
 
 
+def _append_kid(element: PdfDictionary, kid: Any) -> None:
+    """Add *kid* to *element*'s ``/K``, whatever shape it is in already."""
+    existing = element.mapping.get(PdfName("K"))
+    if existing is None:
+        element.mapping[PdfName("K")] = kid
+        return
+    if isinstance(existing, PdfArray):
+        existing.items.append(kid)
+        return
+    element.mapping[PdfName("K")] = PdfArray([existing, kid])
+
+
 def _make_pdfx_xmp(
     rules: Any,
     title: str | None,
@@ -6780,6 +6792,173 @@ class SimplePdf:
             return None
         l_elem.mapping[PdfName("K")] = PdfArray(root_frame["kids"])
         self._append_struct_root_kid(struct_root, l_ref)
+        return marks
+
+    def _register_authored_list(
+        self,
+        items: Sequence[Mapping[str, Any]],
+        *,
+        numbering_for: Callable[[int], str | None] | None = None,
+    ) -> list[dict[str, Any]] | None:
+        """Build a nested ``/L`` → ``/LI`` → ``/Lbl``/``/LBody`` for new content.
+
+        The sibling of :meth:`_register_list_marked_content`, which re-tags
+        content already on the page by byte range. This one is for content about
+        to be *written*: each item says its ``depth``, whether it has a
+        ``label`` (and on which page), and which page each of its lines will
+        land on, and gets back the marked-content ids to wrap those fragments
+        with.
+
+        A marked-content id belongs to the page it is on, so an item -- or a
+        whole list -- continuing onto the next page names the ids that are not
+        on its own element's page with marked-content references (14.7.4.3),
+        exactly as :meth:`_register_spanning_marked_content` does for a
+        paragraph. A list broken over three pages is still one list.
+
+        *numbering_for* answers, per depth, the ``/ListNumbering`` of Table 345
+        -- ``Decimal``, ``LowerAlpha``, ``Disc`` and the rest -- or ``None`` for
+        a marker no standard value describes. It is what tells a reader that
+        cannot see the glyphs whether the list is ordered.
+
+        Returns one dict per item, ``{"label": mcid | None, "lines": [mcid]}``,
+        in the order the items were given.
+        """
+        if not items:
+            return None
+        struct_root, struct_ref = self._ensure_struct_tree_root()
+
+        def page_ref(index: int) -> Any:
+            if not isinstance(self._get_page_dict(index), PdfDictionary):
+                raise PdfValidationException("Page dictionary is unavailable.")
+            return self._page_ref_for_structure(index)
+
+        def parents(index: int) -> PdfArray:
+            page = self._get_page_dict(index)
+            if not isinstance(page, PdfDictionary):
+                raise PdfValidationException("Page dictionary is unavailable.")
+            return self._parent_tree_array_for_page(struct_root, page)
+
+        def element(kind: str, parent: Any, index: int) -> tuple[PdfDictionary, Any]:
+            elem = PdfDictionary(
+                {
+                    PdfName("Type"): PdfName("StructElem"),
+                    PdfName("S"): PdfName(kind),
+                    PdfName("P"): parent,
+                    PdfName("Pg"): page_ref(index),
+                }
+            )
+            return elem, self._cos_doc.register_object(elem)
+
+        def claim(owner_ref: Any, owner_page: int, index: int) -> tuple[int, Any]:
+            """One id on page *index* for *owner_ref*: a number, or an ``/MCR``."""
+            array = parents(index)
+            mcid = len(array.items)
+            array.items.append(owner_ref)
+            if index == owner_page:
+                return mcid, PdfNumber(mcid)
+            return mcid, PdfDictionary(
+                {
+                    PdfName("Type"): PdfName("MCR"),
+                    PdfName("Pg"): page_ref(index),
+                    PdfName("MCID"): PdfNumber(mcid),
+                }
+            )
+
+        def numbering(elem: PdfDictionary, depth: int) -> None:
+            value = numbering_for(depth) if numbering_for is not None else None
+            if not value:
+                return
+            elem.mapping[PdfName("A")] = PdfDictionary(
+                {
+                    PdfName("O"): PdfName("List"),
+                    PdfName("ListNumbering"): PdfName(value),
+                }
+            )
+
+        def first_page_of(item: Mapping[str, Any], fallback: int) -> int:
+            label = item.get("label")
+            if label is not None:
+                return int(label)
+            lines = item.get("lines") or ()
+            return int(lines[0]) if lines else fallback
+
+        start_page = first_page_of(items[0], 0)
+        root, root_ref = element("L", struct_ref, start_page)
+        numbering(root, 0)
+        # One frame per open depth: the /L it is, the /LI kids collected so far,
+        # and the /LBody (with its reference) a deeper list nests inside.
+        stack: list[dict[str, Any]] = [
+            {"elem": root, "ref": root_ref, "kids": [], "body": None, "body_ref": None}
+        ]
+        marks: list[dict[str, Any]] = []
+
+        def close() -> None:
+            frame = stack.pop()
+            if not frame["kids"]:
+                return
+            frame["elem"].mapping[PdfName("K")] = PdfArray(frame["kids"])
+            parent_body = stack[-1]["body"]
+            if parent_body is not None:
+                _append_kid(parent_body, frame["ref"])
+
+        for item in items:
+            depth = max(0, int(item.get("depth", 0)))
+            while len(stack) - 1 > depth:
+                close()
+            while len(stack) - 1 < depth and stack[-1]["body_ref"] is not None:
+                nested, nested_ref = element(
+                    "L", stack[-1]["body_ref"], first_page_of(item, start_page)
+                )
+                numbering(nested, len(stack))
+                stack.append(
+                    {
+                        "elem": nested,
+                        "ref": nested_ref,
+                        "kids": [],
+                        "body": None,
+                        "body_ref": None,
+                    }
+                )
+            frame = stack[-1]
+
+            line_pages = [int(page) for page in item.get("lines", ())]
+            label_page = item.get("label")
+            own_page = first_page_of(item, start_page)
+            list_item, list_item_ref = element("LI", frame["ref"], own_page)
+            kids: list[Any] = []
+            label_mcid: int | None = None
+            if label_page is not None:
+                label, label_ref = element("Lbl", list_item_ref, int(label_page))
+                label_mcid, kid = claim(label_ref, int(label_page), int(label_page))
+                label.mapping[PdfName("K")] = kid
+                kids.append(label_ref)
+            body_page = line_pages[0] if line_pages else own_page
+            body, body_ref = element("LBody", list_item_ref, body_page)
+            body_kids: list[Any] = []
+            line_mcids: list[int] = []
+            for page in line_pages:
+                mcid, kid = claim(body_ref, body_page, page)
+                line_mcids.append(mcid)
+                body_kids.append(kid)
+            if body_kids:
+                body.mapping[PdfName("K")] = (
+                    body_kids[0] if len(body_kids) == 1 else PdfArray(body_kids)
+                )
+            kids.append(body_ref)
+            list_item.mapping[PdfName("K")] = (
+                kids[0] if len(kids) == 1 else PdfArray(kids)
+            )
+            frame["kids"].append(list_item_ref)
+            frame["body"] = body
+            frame["body_ref"] = body_ref
+            marks.append({"label": label_mcid, "lines": line_mcids})
+
+        while len(stack) > 1:
+            close()
+        if not stack[0]["kids"]:
+            return None
+        root.mapping[PdfName("K")] = PdfArray(stack[0]["kids"])
+        self._append_struct_root_kid(struct_root, root_ref)
         return marks
 
     def _register_table_marked_content(

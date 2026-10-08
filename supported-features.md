@@ -1741,17 +1741,60 @@ Supported:
     on the page knows where to go. A block and a `Table` share the measuring
     code (`engine.text_faces`) and the same baseline placement, so the two line
     up when set one after the other.
+- **Author a list, bulleted or numbered.** `Page.add_list(text_list, x, y)`
+  takes a `TextList` of `ListItem`s (both exported from `aspose_pdf`) and sets
+  them with a marker in a gutter and a body wrapped to the list's `width` -- or
+  to the room between *x* and the right edge. The nested structure a list needs
+  had been in the engine since `auto_tag` learned to *recognise* one; this is
+  the authoring side of it.
+  - Sub-items nest: `ListItem(text, items=[...])`, or a plain list of strings.
+    Each depth is set one `indent` further in and gets the next marker --
+    `markers` cycles `•`, `–`, `·` by depth, and an ordered list's `numbering`
+    cycles `decimal`, `lower-alpha`, `lower-roman`, each sub-list **restarting
+    its own count**. Roman and alphabetic numbering go past the first round
+    (`z` then `aa`), and `number_format`, `start` and a per-item `label`
+    override what an item is marked with -- `label=""` for an item with none.
+  - The marker sits in a gutter as wide as the widest marker in the list, plus
+    `label_gap`, and is **right-aligned against the body** so that `9.` and
+    `10.` line up on their dots; `label_alignment="left"` or an explicit
+    `label_width` say otherwise. pdfium reads every marker in a ten-item list as
+    ending on one edge and every body as starting on another.
+  - A list taller than the room left **continues onto the next page**, and an
+    item's marker always lands on the page its first line does -- it rides that
+    line rather than being placed on its own.
+  - The result is tagged as the nested `/L` → `/LI` → `/Lbl` + `/LBody` of
+    ISO 32000-1 14.8.4, with a sub-list inside its parent item's `/LBody` where
+    the standard puts one -- flattening it would tell a reader the sub-items are
+    siblings of the item they belong to. The `/L` carries the `/ListNumbering`
+    of Table 345 (`Decimal`, `LowerAlpha`, `Disc`, …) where the markers have a
+    standard name, so a reader that cannot see the glyphs still knows an ordered
+    list from an unordered one; a marker no value describes -- an en dash is a
+    perfectly good bullet and is none of `Disc`/`Circle`/`Square` -- writes no
+    attribute rather than the wrong one. A list **continued onto the next page
+    stays one list**, its far marked-content ids named with references
+    (14.7.4.3) as a continued paragraph's are. A tagged list passes
+    `convert_to_pdfua()` + `validate_pdfua()` with no warnings, including the
+    artifact-coverage check, and `convert_to_pdfa("2a")`.
+  - It returns `{"pages": [...], "bottom": y, "items": n}`, and shares its
+    measuring, its line emitting and its baseline placement with a `TextBlock`
+    and a `Table`, so the three line up when set one after another.
 
 Boundaries:
 
-- A text block's line breaking is **greedy** at whitespace, with a word too long
-  for the measure broken so that nothing overflows. There is no hyphenation, no
+- A text block's and a list's line breaking is **greedy** at whitespace, with a
+  word too long for the measure broken so that nothing overflows. There is no hyphenation, no
   Knuth-Plass paragraph optimisation, and no orphan or widow control beyond
   `keep_together` -- a paragraph either moves whole or splits wherever the page
   ends. Lines are not shaped either: for right-to-left or complex scripts use
   `Page.add_text(layout=TextLayoutOptions(...))`, which does shape and needs the
   `text-layout` extra. A block does not flow **around** anything, and it has one
-  column.
+  column. A list's marker is set in the body's font, so a bullet the font has no
+  code for is **refused** naming it, as any other character would be -- the
+  `markers` a Standard-14 list can use are those `WinAnsiEncoding` holds
+  (`\u2022`, `\u2013`, `\u00b7` and the rest of Latin-1), and an embedded font
+  must carry the glyph. A continuation starts at the height the list or block
+  started at, which is the top margin the caller chose, exactly as a table's
+  does.
 - OCR is not implemented.
 - Existing text replacement/redaction edits the content stream but does not
   reflow layout. Phrases split across several `TJ` elements, consecutive show

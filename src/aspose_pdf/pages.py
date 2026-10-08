@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
+    from aspose_pdf.lists import TextList
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.tables import Table
     from aspose_pdf.text_block import TextBlock
@@ -843,6 +844,53 @@ class Page:
             eng,
             self._index,
             block,
+            float(x),
+            float(y),
+            bottom_margin=float(bottom_margin),
+            tag=bool(tag),
+        )
+
+    def add_list(
+        self,
+        text_list: TextList,
+        x: float,
+        y: float,
+        *,
+        bottom_margin: float = 36.0,
+        tag: bool = True,
+    ) -> dict[str, Any]:
+        """Draw *text_list* with the top-left of its measure at ``(x, y)``.
+
+        Items are bulleted, or numbered with ``ordered=True``, and the marker
+        sits in a gutter to the left of a body wrapped to the list's ``width``
+        -- or to the room between *x* and the right edge of the page. Sub-items
+        are set in one step further and get the next depth's marker, with an
+        ordered list's numbering restarting at each sub-list. A list taller than
+        the room left **continues onto the next page**, adding a page like this
+        one when there is none, and an item's marker always goes on the page its
+        first line goes on.
+
+        The result is tagged as the nested ``/L`` → ``/LI`` → ``/Lbl`` +
+        ``/LBody`` that ISO 32000-1 asks for, with the ``/ListNumbering`` of
+        Table 345 where the markers have a standard name -- so a reader that
+        cannot see the glyphs still knows an ordered list from an unordered one.
+        A list continued onto the next page stays one list. Pass ``tag=False``
+        to leave it untagged.
+
+        Returns ``{"pages": [...], "bottom": y, "items": n}``: the pages drawn
+        on, where the list ended, and how many items were placed -- so the next
+        thing on the page knows where to go.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine import lists as engine_lists
+
+        return engine_lists.draw(
+            eng,
+            self._index,
+            text_list,
             float(x),
             float(y),
             bottom_margin=float(bottom_margin),

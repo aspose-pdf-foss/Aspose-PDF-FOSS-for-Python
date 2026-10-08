@@ -9,6 +9,34 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Lists, authored.** The nested structure a list needs — `/L` of `/LI` of
+  `/Lbl` and `/LBody` — had been in the engine since `auto_tag` learned to
+  *recognise* one, but only for re-tagging content that was already on the page.
+  Writing a list meant placing every bullet and every line by hand.
+  - `Page.add_list(text_list, x, y)` takes a `TextList` of `ListItem`s: a marker
+    in a gutter, a body wrapped to the measure, sub-items a step further in.
+    `markers` cycles `•`, `–`, `·` by depth; an ordered list's `numbering`
+    cycles `decimal`, `lower-alpha`, `lower-roman`, each sub-list restarting its
+    own count, with Roman and alphabetic numbering going past the first round
+    (`z` then `aa`). `number_format`, `start` and a per-item `label` say
+    otherwise, `label=""` for an item with no marker at all.
+  - Markers are **right-aligned against the body**, so `9.` and `10.` line up on
+    their dots. pdfium reads every marker of a ten-item list as ending on one
+    edge and every body as starting on another.
+  - A list taller than the room left continues onto the next page, and an item's
+    marker always lands on the page its first line does — it rides that line.
+  - The `/L` carries the `/ListNumbering` of ISO 32000-1 Table 345 where the
+    markers have a standard name, so a reader that cannot see the glyphs knows
+    an ordered list from an unordered one; a marker no value describes writes no
+    attribute rather than the wrong one. A sub-list goes inside its parent
+    item's `/LBody`, where the standard puts it. A list continued onto the next
+    page **stays one list**, its far ids named with marked-content references.
+    A tagged list passes `convert_to_pdfua()` + `validate_pdfua()` with no
+    warnings and `convert_to_pdfa("2a")`.
+  - `engine/lists.py` reuses `text_faces` for the measuring and `text_blocks`
+    for the line objects and the line emitter, so a list, a text block and a
+    table place their baselines the same way and line up when set in sequence.
+
 - **Decoration now says it is decoration (`/Artifact`).** ISO 14289-1 7.1 has
   every mark on a page of a tagged document be either tagged as real content or
   marked as an artifact, and nothing this package authored said the second: a
