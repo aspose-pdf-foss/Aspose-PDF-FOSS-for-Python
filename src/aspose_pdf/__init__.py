@@ -120,6 +120,7 @@ from .pdfx import (
     PdfXValidationResult,
     PdfXValidator,
 )
+from .permissions import Permissions
 from .recipients import Recipient
 from .signature import PdfSignature
 from .stamps import (
@@ -268,6 +269,7 @@ __all__ = [
     "PdfXValidationResult",
     "PdfXValidator",
     "PdfXmpMetadata",
+    "Permissions",
     "Plugin",
     "PluginOptions",
     "PolyLineAnnotation",

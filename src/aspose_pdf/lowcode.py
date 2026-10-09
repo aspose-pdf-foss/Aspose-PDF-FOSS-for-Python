@@ -44,6 +44,7 @@ from aspose_pdf.load_limits import (
     _read_limited,
 )
 from aspose_pdf.optimization import OptimizationOptions
+from aspose_pdf.permissions import Permissions
 
 __all__ = [
     "ByteArrayDataSource",
@@ -742,14 +743,14 @@ class EncryptOptions(PluginOptions):
         user_password: str = "",
         owner_password: str | None = None,
         *,
-        permissions: int = -4,
+        permissions: int | Permissions = -4,
         algorithm: str = "AES-256",
         limits: PdfLoadLimits | None = None,
     ) -> None:
         super().__init__(limits=limits)
         self.user_password = user_password
         self.owner_password = owner_password
-        self.permissions = permissions
+        self.permissions = Permissions.of(permissions)
         self.algorithm = algorithm
 
 
@@ -1045,7 +1046,7 @@ class Encryptor(PdfPlugin):
             document.encrypt(
                 getattr(options, "user_password", ""),
                 getattr(options, "owner_password", None),
-                permissions=getattr(options, "permissions", -4),
+                permissions=getattr(options, "permissions", Permissions.all()),
                 algorithm=getattr(options, "algorithm", "AES-256"),
             )
 

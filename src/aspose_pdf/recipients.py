@@ -11,7 +11,7 @@ Each recipient also gets its **own** permissions -- one reader may print and
 another only read the same file -- which no password-based scheme can express::
 
     from cryptography import x509
-    from aspose_pdf import Document, Recipient
+    from aspose_pdf import Document, Permissions, Recipient
 
     auditor = x509.load_pem_x509_certificate(Path("auditor.pem").read_bytes())
     reviewer = x509.load_pem_x509_certificate(Path("reviewer.pem").read_bytes())
@@ -20,7 +20,10 @@ another only read the same file -- which no password-based scheme can express::
         document.encrypt_for_recipients(
             [
                 Recipient(auditor),                       # everything
-                Recipient(reviewer, permissions=-3844),   # read and print only
+                Recipient(
+                    reviewer,
+                    permissions=Permissions.allowing("print", "copy"),
+                ),
             ]
         )
         document.save("report-sealed.pdf")
@@ -57,11 +60,14 @@ class Recipient:
         extension, RSA certificates must permit ``keyEncipherment`` or
         ``dataEncipherment`` and EC certificates must permit ``keyAgreement``.
     permissions:
-        This recipient's access flags as a signed 32-bit integer, defaulting to
-        every permission. The layout is close to the standard handler's ``/P``
-        (bit 3 print, 4 modify, 5 copy, 6 annotate, 9 fill forms, 10 accessible
-        extraction, 11 assemble, 12 high-quality print) with the differences
-        noted above; the fixed bits are normalised for you.
+        This recipient's access flags, defaulting to every permission. A signed
+        32-bit integer, or a :class:`~aspose_pdf.permissions.Permissions` built
+        by name -- the eight permissions it knows sit at the same bit positions
+        in this word as in the standard handler's ``/P`` (bit 3 print, 4 modify,
+        5 copy, 6 annotate, 9 fill forms, 10 accessible extraction, 11 assemble,
+        12 high-quality print). The differences are in the bits noted above, and
+        they are normalised for you, so ``Permissions.denying("copy")`` says here
+        what it says there.
     """
 
     certificate: Any

@@ -5558,6 +5558,9 @@ class SimplePdf:
         old_password: str,
         new_user_password: str,
         new_owner_password: str | None = None,
+        *,
+        permissions: int | None = None,
+        algorithm: str | None = None,
     ) -> None:
         """Change document passwords, keeping everything else the protection says.
 
@@ -5567,16 +5570,23 @@ class SimplePdf:
         allowed both (``/P`` -4) -- and moved it to AES-256 whatever it had
         been. A document with no protection simply gains one, with the
         defaults, since there is nothing to keep.
+
+        *permissions* and *algorithm* change those too, which is the one
+        operation that otherwise needs a decrypt and a re-encrypt: ``None``
+        keeps what the document has, which is what makes the defaults above the
+        defaults.
         """
         self._ensure_not_disposed()
         if not self._password_unlocks(old_password):
             raise PdfSecurityException("Incorrect old password")
         protected = self.encrypted or self._loaded_protection_active()
+        kept_permissions = self.P if protected else -4
+        kept_algorithm = self.encryption_algorithm if protected else "AES-256"
         self.encrypt(
             new_user_password,
             new_owner_password or "",
-            permissions=self.P if protected else -4,
-            algorithm=self.encryption_algorithm if protected else "AES-256",
+            permissions=kept_permissions if permissions is None else int(permissions),
+            algorithm=kept_algorithm if algorithm is None else algorithm,
         )
 
     def _loaded_protection_active(self) -> bool:

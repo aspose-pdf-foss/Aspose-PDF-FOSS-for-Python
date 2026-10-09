@@ -148,6 +148,10 @@ flowchart TD
   file rather than leaving it there for the next reader to switch back on.
 - `ImagePlacementAbsorber` collects the images a page draws, and `ImagePlacement.replace` /
   `hide` change them in the document — the new picture keeps the old one's place and size.
+- `Permissions` gives the `/P` word names: `Permissions.denying("copy")` instead of `-20`, with
+  `document.permissions.can_print` and `.allowed` to read one back. It is an `int` subclass, so it
+  goes anywhere the raw number did, and it keeps the reserved bits that ORing the bit values by
+  hand clears. Checked against qpdf flag for flag, in both directions.
 - Stamps, page numbers and redaction bars are marked as `/Artifact`, so a tagged document stays
   PDF/UA-conformant once it is stamped — and `validate_pdfua()` reports any mark that is neither
   tagged nor an artifact. `artifact=` on `Page.add_text`, `add_image` and the path helpers says the
@@ -706,6 +710,7 @@ and delete workflows. 265 public types are organized by module below.
 | `PdfXValidateOptions` | Container for batch PDF/X validation settings. |
 | `PdfXValidationResult` | Detailed result of a PDF/X validation run (heuristic). |
 | `PdfXValidator` | Plugin that runs heuristic PDF/X validation on one or more inputs. |
+| `Permissions` | What a reader may do with an encrypted document: `/P`, with names. |
 | `PerformanceLogger` | Class with 2 methods and 1 property. |
 | `Plugin` | Identifiers for the available low-code plugins. |
 | `PluginOptions` | Hold input/output data sources and their PDF resource-limit policy. |

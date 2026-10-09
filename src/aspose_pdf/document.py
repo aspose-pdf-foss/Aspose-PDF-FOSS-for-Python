@@ -57,6 +57,7 @@ from aspose_pdf.outlines import OutlineCollection
 from aspose_pdf.pdfa import PdfAValidationResult
 from aspose_pdf.pdfua import PdfUaValidationResult
 from aspose_pdf.pdfx import PdfXValidationResult, normalize_pdfx_standard
+from aspose_pdf.permissions import Permissions
 from aspose_pdf.recipients import ALL_PERMISSIONS, Recipient
 
 if TYPE_CHECKING:
@@ -1219,17 +1220,21 @@ class Document:
         return self._outlines
 
     @property
-    def permissions(self) -> int:
-        """Access-permission flags (PDF ``/P`` value).
+    def permissions(self) -> Permissions:
+        """What a reader may do with this document: the ``/P`` word, with names.
 
-        For unencrypted documents this returns ``-4`` (all permissions granted).
-        The value is a signed 32-bit integer as defined in the PDF spec
-        (Table 22 - User access permissions).
+        A :class:`~aspose_pdf.permissions.Permissions` -- an ``int`` subclass, so
+        it still compares and masks exactly as the raw signed 32-bit value did,
+        while ``permissions.can_copy`` and ``permissions.allowed`` say what it
+        means (ISO 32000-1 Table 22).
+
+        An **unencrypted** document has no ``/P`` at all, and nothing is being
+        withheld, so this reports :meth:`Permissions.all` (``-4``) for one.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
-            return -4
-        return self._engine_pdf.P
+            return Permissions.all()
+        return Permissions.of(self._engine_pdf.P)
 
     @classmethod
     def open_streaming(
@@ -2821,9 +2826,15 @@ class Document:
         owner_password : str, optional
             Password required to change security settings.  Defaults to the
             user password if omitted.
-        permissions : int
-            PDF access-permission flags (signed 32-bit, see PDF spec Table 22).
-            Defaults to ``-4`` (all standard permissions granted).
+        permissions : int or Permissions
+            What a reader may then do, as a ``/P`` word (ISO 32000-1 Table 22).
+            A raw signed integer still works; build one by name with
+            :class:`~aspose_pdf.permissions.Permissions` --
+            ``Permissions.denying("copy")``,
+            ``Permissions.allowing("print", "print_high_resolution")`` -- which
+            keeps the reserved bits as the standard requires, where ORing the
+            bit values together by hand clears them. Defaults to
+            :meth:`Permissions.all` (``-4``), every permission granted.
         algorithm : str
             ``"AES-256"`` (the default, ``/V 5 /R 6``), ``"AES-128"``
             (``/V 4 /R 4``, AESV2) or ``"RC4"`` (128-bit, ``/V 2 /R 3``).
@@ -2840,6 +2851,7 @@ class Document:
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
+        permissions = int(Permissions.of(permissions))
         self._engine_pdf.encrypt(
             user_password,
             owner_password or user_password,
@@ -2877,7 +2889,12 @@ class Document:
         permissions:
             Flags for recipients given as bare certificates. Defaults to
             granting everything; see :class:`~aspose_pdf.Recipient` for the bit
-            layout, which is *not* quite the standard handler's ``/P``.
+            layout, which is *not* quite the standard handler's ``/P``. The
+            eight permissions :class:`~aspose_pdf.permissions.Permissions` names
+            sit at the same bit positions in both words, so
+            ``Permissions.denying("copy")`` means the same thing here -- the
+            handler's own fixed bits are normalised on the way out, which is why
+            the default is ``-1`` rather than :meth:`Permissions.all`.
         ignore_key_usage:
             Encrypt to a certificate whose ``keyUsage`` extension forbids RSA
             key transport or EC key agreement. Off by default, because a
@@ -2931,15 +2948,28 @@ class Document:
         old_password: str,
         new_user_password: str,
         new_owner_password: str | None = None,
+        *,
+        permissions: int | Permissions | None = None,
+        algorithm: str | None = None,
     ) -> Document:
         """Change the document's passwords and keep everything else.
 
-        *old_password* may be the user or the owner password. The new
+        *old_password* may be the user or the owner password. By default the new
         passwords guard the **same permissions with the same cipher** the
         document already had; only the passwords change. As with
         :meth:`encrypt`, an omitted *new_owner_password* makes the new user
         password the owner password too. A document with no protection gains
         one with :meth:`encrypt`'s defaults.
+
+        Parameters
+        ----------
+        permissions : int or Permissions, optional
+            New access permissions -- ``Permissions.denying("print")`` and the
+            rest. ``None``, the default, keeps the ones the document has, which
+            is what makes this a password change rather than a re-protection.
+        algorithm : str, optional
+            A new cipher, as :meth:`encrypt` names them. ``None`` keeps the
+            document's own.
 
         Raises
         ------
@@ -2950,7 +2980,13 @@ class Document:
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
         self._engine_pdf.change_passwords(
-            old_password, new_user_password, new_owner_password
+            old_password,
+            new_user_password,
+            new_owner_password,
+            permissions=(
+                None if permissions is None else int(Permissions.of(permissions))
+            ),
+            algorithm=algorithm,
         )
         return self
 

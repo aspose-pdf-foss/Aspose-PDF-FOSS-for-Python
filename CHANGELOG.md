@@ -9,6 +9,36 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Permissions have names.** `/P` is a signed 32-bit integer whose unused bits
+  are all 1, so "everything allowed" is `-4` and "nothing allowed" is `-3904`,
+  and `Permissions.PRINT | Permissions.COPY` as plain integers is `20` — a `/P`
+  with every reserved bit cleared, which ISO 32000-1 Table 22 does not allow.
+  Every permission argument in the package took one of those numbers.
+  - `Permissions` (exported from `aspose_pdf`) is that integer with the names
+    attached. It **is** an `int` subclass, so `Document.permissions` still
+    compares, masks, hashes and passes anywhere the raw value did — the whole
+    suite passed unchanged — while `can_copy`, `allowed`, `denied`, `to_dict()`
+    and `repr` say what it means.
+  - `Permissions.all()`, `none()`, `allowing(...)`, `denying(...)`, `with_(...)`
+    and `without(...)` keep the reserved bits right. Flags are names or the
+    eight class constants; a number carrying any bit outside Table 22's eight is
+    refused rather than ORed in.
+  - Taken by `Document.encrypt`, `change_passwords`, `encrypt_for_recipients`,
+    `Recipient`, `PdfFileSecurity.encrypt_file`/`change_password` and the
+    low-code `EncryptOptions`; a raw integer still works everywhere.
+  - **Bit 12 qualifies bit 3**, which cross-checking against qpdf is what
+    showed: `print_high_resolution` granted while `print` is clear is a document
+    nobody may print, and qpdf reads it that way. The value is written as asked
+    rather than silently corrected, and `can_print_faithfully` asks for both.
+  - Verified flag for flag: a file granting exactly one permission is read by
+    qpdf's own `Pdf.allow` as granting exactly that one, for all eight; and a
+    `/P` qpdf wrote reads back here by name with no bit forced or cleared
+    (`tests/fixtures_permissions_qpdf_no_copy.pdf`).
+  - The public-key handler's word is **not** `/P`, which is why
+    `encrypt_for_recipients` defaults to `-1` where `encrypt` defaults to `-4`.
+    The two differ because the two words do, not because either is wrong; the
+    eight permissions sit at the same bit positions in both.
+
 - **Lists, authored.** The nested structure a list needs — `/L` of `/LI` of
   `/Lbl` and `/LBody` — had been in the engine since `auto_tag` learned to
   *recognise* one, but only for re-tagging content that was already on the page.
@@ -957,6 +987,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   returned `"one  two  three"` for a line that says `one two three`.
   pdfminer.six reads such a line the same way; pdfium does not. A gap that
   follows a space now adds nothing, since the word boundary is already there.
+
+- **`PdfFileSecurity.change_password(permissions=…)` could never work.** The
+  facade has offered `permissions` and `algorithm` since it was written and
+  forwarded them to `Document.change_passwords`, which has neither — so either
+  one returned `False` with a `TypeError` in `last_exception`, swallowed by the
+  facade's own report-rather-than-raise contract, which is why no test caught
+  it. `Document.change_passwords` now takes both, `None` keeping what the
+  document has, so a password change can deliberately re-permission or re-cipher
+  a document instead of needing a decrypt and a re-encrypt.
 
 ### Added
 

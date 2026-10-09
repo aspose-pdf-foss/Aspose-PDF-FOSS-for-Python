@@ -30,6 +30,7 @@ from aspose_pdf.exceptions import (
     PdfResourceLimitException,
 )
 from aspose_pdf.load_limits import PdfLoadLimits
+from aspose_pdf.permissions import Permissions
 
 logger = logging.getLogger(__name__)
 
@@ -928,10 +929,14 @@ class PdfFileSecurity(_BoundFacade):
         user_password: str = "",
         owner_password: str | None = None,
         *,
-        permissions: int = -4,
+        permissions: int | Permissions = -4,
         algorithm: str = "AES-256",
     ) -> bool:
-        """Apply the standard security handler. See ``Document.encrypt``."""
+        """Apply the standard security handler. See ``Document.encrypt``.
+
+        *permissions* takes a raw ``/P`` or a
+        :class:`~aspose_pdf.permissions.Permissions` built by name.
+        """
         self._ensure_not_disposed()
         self._operation_start()
         try:
@@ -968,10 +973,15 @@ class PdfFileSecurity(_BoundFacade):
         new_user_password: str = "",
         new_owner_password: str | None = None,
         *,
-        permissions: int | None = None,
+        permissions: int | Permissions | None = None,
         algorithm: str | None = None,
     ) -> bool:
-        """Replace the passwords, given one that opens the document now."""
+        """Replace the passwords, given one that opens the document now.
+
+        *permissions*, when given, takes a raw ``/P`` or a
+        :class:`~aspose_pdf.permissions.Permissions`; ``None`` keeps the ones
+        the document has.
+        """
         self._ensure_not_disposed()
         self._operation_start()
         try:
@@ -988,8 +998,13 @@ class PdfFileSecurity(_BoundFacade):
             return self._operation_fail(exc)
 
     @property
-    def permissions(self) -> int:
-        """The permission flags in force (ISO 32000-1 table 22)."""
+    def permissions(self) -> Permissions:
+        """What a reader may do with the bound document (Table 22).
+
+        A :class:`~aspose_pdf.permissions.Permissions`, so
+        ``security.permissions.can_copy`` answers directly; it is still the
+        ``int`` the raw ``/P`` was.
+        """
         return self.document.permissions
 
 

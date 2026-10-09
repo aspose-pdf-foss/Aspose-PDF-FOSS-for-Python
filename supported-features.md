@@ -2612,6 +2612,45 @@ Supported:
   than being rebuilt from an in-memory model. `Document.decrypt(password)` is
   the counterpart of `encrypt`: it takes the protection off, `/O` and `/U`
   included, so the next save writes a plain file.
+- **Permissions have names.** `/P` is a signed 32-bit integer whose unused bits
+  are all 1, so "everything allowed" is `-4` and "nothing allowed" is `-3904`,
+  and ORing two bit values together gives `20` -- a `/P` with every reserved bit
+  cleared, which ISO 32000-1 Table 22 does not allow. `Permissions` (exported
+  from `aspose_pdf`) is that integer with the names attached:
+  - It **is** an `int`, so `Document.permissions` still compares, masks, hashes
+    and passes anywhere the raw value did, while
+    `document.permissions.can_copy`, `.allowed`, `.denied` and `.to_dict()` say
+    what it means and `repr` prints `Permissions(-28: print, annotate, …)`.
+  - `Permissions.all()`, `none()`, `allowing(...)`, `denying(...)`, `with_(...)`
+    and `without(...)` build one and keep the reserved bits as the standard
+    requires. Flags are named (`"print"`, `"fill_forms"`, `"accessibility"`,
+    with hyphens and the `extract`/`extract_for_accessibility` aliases accepted)
+    or the eight class constants, which are Table 22's bit values. A number
+    carrying any bit outside those eight is **refused** rather than ORed in.
+  - `Document.encrypt`, `change_passwords`, `encrypt_for_recipients`,
+    `Recipient`, `PdfFileSecurity.encrypt_file`/`change_password` and the
+    low-code `EncryptOptions` all take one, and a raw integer still works
+    everywhere it did.
+  - **An unencrypted document reports `Permissions.all()`.** It has no `/P` at
+    all, and nothing is being withheld.
+  - **Bit 12 qualifies bit 3.** `print_high_resolution` granted while `print` is
+    clear is a document nobody may print -- qpdf reads it that way too -- so the
+    value is written as asked rather than silently corrected, and
+    `can_print_faithfully` is the question most callers mean (both bits).
+  - Verified against qpdf flag for flag: a file written here granting exactly
+    one permission is read by qpdf's own `Pdf.allow` as granting exactly that
+    one, for all eight, with `print_high_resolution` alone correctly granting no
+    printing; and a `/P` **qpdf** wrote reads back here by name, with no bit
+    forced or cleared on the way in
+    (`tests/fixtures_permissions_qpdf_no_copy.pdf`).
+  - The public-key handler's permission word is **not** `/P` -- bit 1 is
+    required, bit 2 means "may change encryption settings" and bit 13 "a missing
+    PDF 2.0 MAC is acceptable" -- which is why `encrypt_for_recipients` defaults
+    to `-1` where `encrypt` defaults to `-4`. The two differ because the two
+    words do, not because either is wrong. The eight permissions above sit at
+    the same bit positions in both, and the handler's fixed bits are normalised
+    on the way out, so `Permissions.denying("copy")` says the same thing to a
+    recipient.
 - **A password has to be right to change the protection, and changing it keeps
   what the protection said.** `decrypt` and `change_passwords` accept the
   user or the owner password -- checked against the file's own `/Encrypt`
@@ -2621,7 +2660,12 @@ Supported:
   protection. `change_passwords` keeps the document's **permissions and
   cipher**: it used to re-encrypt with `encrypt`'s defaults, so changing a
   password on a file that forbade printing and copying produced one that
-  allowed both (`/P` -4) and switched it to AES-256. Checked with qpdf on
+  allowed both (`/P` -4) and switched it to AES-256. Passing
+  `permissions=`/`algorithm=` changes them deliberately, which is the one
+  operation that otherwise needed a decrypt and a re-encrypt --
+  `PdfFileSecurity.change_password` has offered both arguments since it was
+  written and could not pass them on, returning `False` with a `TypeError` in
+  `last_exception`. Checked with qpdf on
   every revision: `/P` survives exactly, the cipher family is kept (a
   revision-5 AES-256 file comes out as standard revision 6, and 40-bit RC4 as
   128-bit), and the new passwords take the user and owner roles.
