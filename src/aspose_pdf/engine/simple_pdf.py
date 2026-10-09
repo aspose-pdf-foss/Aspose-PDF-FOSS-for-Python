@@ -960,6 +960,32 @@ def _make_pdfa_xmp(level: str, title: str) -> bytes:
     return serialize_xmp(packet)
 
 
+def _finite_number(value: Any, name: str) -> float:
+    """*value* as a finite number, refused when it cannot be a measurement."""
+    if isinstance(value, bool):
+        raise PdfValidationException(f"{name} must be a number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise PdfValidationException(f"{name} must be a number") from None
+    if not math.isfinite(number):
+        raise PdfValidationException(f"{name} must be finite")
+    return number
+
+
+def _positive_factor(value: Any, name: str) -> float:
+    """*value* as a finite number above zero.
+
+    A factor of zero collapses the page to a line and a negative one turns it
+    inside out; both are refused rather than written, since neither is what a
+    caller asking to resize a page meant.
+    """
+    number = _finite_number(value, name)
+    if number <= 0.0:
+        raise PdfValidationException(f"{name} must be above zero")
+    return number
+
+
 def _pdfx_trapped_name(value: Any) -> str:
     """``"True"`` or ``"False"`` for *value*, or raise.
 
@@ -7245,6 +7271,256 @@ class SimplePdf:
                 if isinstance(subtype, PdfName) and subtype.name.lstrip("/") == "Image":
                     names.add(key.name.lstrip("/"))
         return names
+
+    #: How a page's content is fitted to a new sheet. ``fit`` keeps the aspect
+    #: ratio and leaves a margin on the long side; ``fill`` keeps it and lets
+    #: the content run past the short side; ``stretch`` scales the two axes
+    #: apart so the content fills the sheet exactly.
+    RESIZE_MODES = ("fit", "fill", "stretch")
+
+    #: Annotation entries that are geometry in default user space, and how to
+    #: read each one: a rectangle, a run of ``x y`` points, a list of such runs,
+    #: or the four **distances** of a difference rectangle (Table 164's ``/RD``,
+    #: which insets a rectangle rather than naming a point in it).
+    _ANNOTATION_GEOMETRY: ClassVar[dict[str, str]] = {
+        "Rect": "rect",
+        "QuadPoints": "points",
+        "Vertices": "points",
+        "L": "points",
+        "CL": "points",
+        "InkList": "point-lists",
+        "RD": "insets",
+    }
+
+    def scale_page_content(
+        self,
+        page_index: int,
+        sx: float,
+        sy: float | None = None,
+        *,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        scale_boxes: bool = False,
+    ) -> None:
+        """Multiply everything the page draws by ``(sx, sy)``, then move it.
+
+        The page's own operators are not rewritten: the whole content stream is
+        put inside one ``q`` ... ``Q`` with the matrix at the top, which is both
+        cheaper and exact (see
+        :func:`.content_isolation.wrap_in_force`). Its **annotations** are moved
+        with it -- a rectangle, the points of a markup or a shape, an ink
+        stroke, and the insets of a ``/RD`` -- because an appearance stream is
+        fitted to its ``/Rect`` by the reader (12.5.5), so the rectangle is what
+        carries the appearance along.
+
+        With *scale_boxes* the five page boxes are transformed too. Without it
+        they are left alone, which is what shrinking content inside the sheet it
+        is already on wants.
+
+        Raises
+        ------
+        PdfValidationException
+            If a factor is not a positive finite number, or the page's content
+            carries a ``Q`` that would restore the transform away -- a page that
+            cannot be wrapped without changing how it draws.
+        """
+        from .content_authoring import format_number
+        from .content_isolation import wrap_in_force
+
+        self._ensure_not_disposed()
+        self._validate_page_index(page_index)
+        factor_x = _positive_factor(sx, "sx")
+        factor_y = factor_x if sy is None else _positive_factor(sy, "sy")
+        shift_x = _finite_number(dx, "dx")
+        shift_y = _finite_number(dy, "dy")
+        if (factor_x, factor_y, shift_x, shift_y) == (1.0, 1.0, 0.0, 0.0):
+            return  # the identity: nothing to say and nothing to rewrite
+
+        self._materialize_page_contents_for_edit()
+        content = (
+            self.page_contents[page_index]
+            if page_index < len(self.page_contents)
+            else b""
+        )
+        matrix = " ".join(
+            format_number(value)
+            for value in (factor_x, 0.0, 0.0, factor_y, shift_x, shift_y)
+        )
+        if content:
+            wrapped = wrap_in_force(
+                content,
+                (matrix + " cm").encode("ascii"),
+                budget=self._load_budget,
+            )
+            if wrapped is None:
+                raise PdfValidationException(
+                    f"The content of page {page_index + 1} cannot be scaled: it "
+                    "restores a graphics state it never saved, so putting a "
+                    "transform around it would change how the page itself "
+                    "draws."
+                )
+            self._set_page_content(page_index, wrapped)
+
+        def place(x: float, y: float) -> tuple[float, float]:
+            return factor_x * x + shift_x, factor_y * y + shift_y
+
+        if scale_boxes:
+            media = self._page_media_box(page_index)
+            if media is not None:
+                x0, y0 = place(media[0], media[1])
+                x1, y1 = place(media[2], media[3])
+                self.set_page_media_box(page_index, (x0, y0, x1, y1))
+            page = self._get_page_dict(page_index)
+            if isinstance(page, PdfDictionary):
+                for name in ("CropBox", *self._PRODUCTION_BOXES):
+                    self._scale_number_array(
+                        page, name, "rect", factor_x, factor_y, shift_x, shift_y
+                    )
+        self._scale_page_annotations(
+            page_index, factor_x, factor_y, shift_x, shift_y
+        )
+        self._extracted_text = None
+
+    def _scale_page_annotations(
+        self, page_index: int, sx: float, sy: float, dx: float, dy: float
+    ) -> None:
+        """Move every annotation on a page with the content it annotates."""
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            return
+        annots = self._resolve(page.mapping.get(PdfName("Annots")))
+        if not isinstance(annots, PdfArray):
+            return
+        for reference in annots.items:
+            annotation = self._resolve(reference)
+            if not isinstance(annotation, PdfDictionary):
+                continue
+            for name, kind in self._ANNOTATION_GEOMETRY.items():
+                self._scale_number_array(annotation, name, kind, sx, sy, dx, dy)
+
+    def _scale_number_array(
+        self,
+        owner: PdfDictionary,
+        name: str,
+        kind: str,
+        sx: float,
+        sy: float,
+        dx: float,
+        dy: float,
+    ) -> None:
+        """Transform one geometry entry of *owner*, if it has a usable one.
+
+        An entry that is not the numbers it should be is left exactly as it is:
+        a damaged annotation is not this operation's to repair, and a guess at
+        what it meant would move something to the wrong place.
+        """
+        value = self._resolve(owner.mapping.get(PdfName(name)))
+        if value is None:
+            return
+        if kind == "point-lists":
+            if not isinstance(value, PdfArray):
+                return
+            for index, entry in enumerate(value.items):
+                resolved = self._resolve(entry)
+                if isinstance(resolved, PdfArray):
+                    scaled = self._scaled_numbers(
+                        resolved, "points", sx, sy, dx, dy
+                    )
+                    if scaled is not None:
+                        value.items[index] = scaled
+            return
+        if not isinstance(value, PdfArray):
+            return
+        scaled = self._scaled_numbers(value, kind, sx, sy, dx, dy)
+        if scaled is not None:
+            owner.mapping[PdfName(name)] = scaled
+
+    def _scaled_numbers(
+        self, array: PdfArray, kind: str, sx: float, sy: float, dx: float, dy: float
+    ) -> PdfArray | None:
+        """*array* transformed, or ``None`` when it is not the geometry it claims."""
+        numbers: list[float] = []
+        for item in array.items:
+            number = self._pdf_number(item)
+            if number is None:
+                return None
+            numbers.append(number)
+        if kind == "rect":
+            if len(numbers) != 4:
+                return None
+            out = [
+                sx * numbers[0] + dx,
+                sy * numbers[1] + dy,
+                sx * numbers[2] + dx,
+                sy * numbers[3] + dy,
+            ]
+        elif kind == "insets":
+            # Distances, not points: an inset scales but is never shifted.
+            if len(numbers) != 4:
+                return None
+            out = [sx * numbers[0], sy * numbers[1], sx * numbers[2], sy * numbers[3]]
+        else:
+            if not numbers or len(numbers) % 2:
+                return None
+            out = []
+            for index in range(0, len(numbers), 2):
+                out.append(sx * numbers[index] + dx)
+                out.append(sy * numbers[index + 1] + dy)
+        return PdfArray([PdfNumber(value) for value in out])
+
+    def resize_page(
+        self,
+        page_index: int,
+        width: float,
+        height: float,
+        *,
+        mode: str = "fit",
+    ) -> None:
+        """Give the page a new sheet size and scale its content onto it.
+
+        Where :meth:`set_page_media_box` changes the sheet and leaves the
+        drawing where it was -- so a smaller sheet crops it and a larger one
+        pads it -- this scales the drawing with the sheet. The content is
+        **centred**: a ``fit`` onto a sheet of another shape leaves an even
+        margin on the long side rather than pinning the content to a corner.
+
+        The sheet keeps its origin, as the ``size`` setter does, and the crop and
+        production boxes travel with the content. A page whose media box is
+        unusable is measured as US Letter, which is the size everything else in
+        the package reads for one.
+        """
+        self._ensure_not_disposed()
+        self._validate_page_index(page_index)
+        if mode not in self.RESIZE_MODES:
+            raise PdfValidationException(
+                "mode is one of: " + ", ".join(self.RESIZE_MODES)
+            )
+        target_width = _positive_factor(width, "width")
+        target_height = _positive_factor(height, "height")
+        # A page whose media box is unusable -- missing, malformed, or without
+        # area -- is measured as US Letter here, which is what ``rect`` and the
+        # renderer already answer for one, so a resize scales from the sheet the
+        # rest of the package believes it is on.
+        x0, y0, x1, y1 = self._page_media_box(page_index) or DEFAULT_MEDIA_BOX
+        current_width = x1 - x0
+        current_height = y1 - y0
+        ratio_x = target_width / current_width
+        ratio_y = target_height / current_height
+        if mode == "fit":
+            sx = sy = min(ratio_x, ratio_y)
+        elif mode == "fill":
+            sx = sy = max(ratio_x, ratio_y)
+        else:
+            sx, sy = ratio_x, ratio_y
+        # Centre what is left over, measured from the sheet's own origin.
+        dx = x0 * (1.0 - sx) + (target_width - sx * current_width) / 2.0
+        dy = y0 * (1.0 - sy) + (target_height - sy * current_height) / 2.0
+        self.scale_page_content(
+            page_index, sx, sy, dx=dx, dy=dy, scale_boxes=True
+        )
+        self.set_page_media_box(
+            page_index, (x0, y0, x0 + target_width, y0 + target_height)
+        )
 
     def _set_page_content(self, page_index: int, content: bytes) -> None:
         """Replace a page's content stream(s) with a single decoded stream."""

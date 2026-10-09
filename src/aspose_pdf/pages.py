@@ -325,6 +325,95 @@ class Page:
     def art_box(self, value: tuple[float, float, float, float] | None) -> None:
         self._set_box("ArtBox", value)
 
+    def scale_content(
+        self,
+        factor: float,
+        factor_y: float | None = None,
+        *,
+        about: str = "center",
+    ) -> Page:
+        """Scale everything this page draws, leaving the sheet the size it is.
+
+        One factor scales both axes; two scale them apart. ``about="center"``,
+        the default, keeps the drawing centred on the sheet -- so
+        ``page.scale_content(0.95)`` adds an even margin all round, which is what
+        a printer's non-printable edge wants -- while ``about="origin"`` scales
+        from the sheet's own origin and leaves the drawing's lower-left corner
+        where it was.
+
+        The page's operators are not rewritten: the content is put inside one
+        ``q`` ... ``Q`` with the matrix at the top. Annotations travel with it,
+        since an appearance stream is fitted to its ``/Rect`` by the reader.
+
+        To change the sheet *and* the drawing together, use :meth:`resize`;
+        to change the sheet alone, set :attr:`size`.
+
+        Raises
+        ------
+        PdfValidationException
+            If a factor is not a positive finite number, *about* is neither
+            name, or the page's content restores a graphics state it never
+            saved -- a page that cannot be wrapped without changing how it
+            draws.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        if about not in ("center", "centre", "origin"):
+            raise PdfValidationException(
+                "about is 'center' or 'origin'"
+            )
+        # Through the engine's own validator, so "what a factor is" is decided
+        # in one place: the centre anchor needs the numbers before the engine
+        # would otherwise see them.
+        from aspose_pdf.engine.simple_pdf import _positive_factor
+
+        sx = _positive_factor(factor, "factor")
+        sy = sx if factor_y is None else _positive_factor(factor_y, "factor_y")
+        dx = dy = 0.0
+        if about != "origin":
+            x0, y0, x1, y1 = self.media_box
+            # Keep the middle of the sheet where it is.
+            dx = (x0 + x1) / 2 * (1.0 - sx)
+            dy = (y0 + y1) / 2 * (1.0 - sy)
+        eng.scale_page_content(self._index, sx, sy, dx=dx, dy=dy)
+        return self
+
+    def resize(
+        self,
+        size: PageSize | Sequence[float] | str,
+        *,
+        mode: str = "fit",
+    ) -> Page:
+        """Give this page a new sheet size and scale its drawing onto it.
+
+        Setting :attr:`size` changes the sheet and leaves the drawing where it
+        was, so a smaller sheet crops it and a larger one pads it. This scales
+        the drawing with the sheet, which is what resizing a page usually means:
+        ``page.resize(PageSize.LETTER)`` on an A4 page gives a Letter page
+        showing the same thing.
+
+        ``mode`` says what to do when the two shapes differ: ``"fit"`` (the
+        default) keeps the aspect ratio and leaves an even margin on the long
+        side, ``"fill"`` keeps it and lets the drawing run past the short side,
+        and ``"stretch"`` scales the axes apart so the drawing fills the sheet
+        exactly. The drawing is **centred** either way, and the sheet keeps its
+        own origin.
+
+        The crop and production boxes travel with the drawing; the media box
+        becomes the size asked for.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        resolved = _coerce_page_size(size)
+        eng.resize_page(
+            self._index, resolved.width, resolved.height, mode=str(mode)
+        )
+        return self
+
     def get_box(self, boundary: PageBoundary | str) -> tuple[float, float, float, float]:
         """The page box *boundary* names, with its default applied.
 

@@ -25,7 +25,7 @@ from aspose_pdf.load_limits import _LoadBudget
 
 from .auto_tag import _tokens
 
-__all__ = ["Isolation", "isolation_for"]
+__all__ = ["Isolation", "isolation_for", "wrap_in_force"]
 
 # Operators that change the graphics state (ISO 32000-1 table 57), the colour
 # operators (table 74), the clipping operators (table 61) and the text state
@@ -119,3 +119,62 @@ def isolation_for(content: bytes, *, budget: _LoadBudget) -> Isolation:
         closing=closing,
         complete=not (dirty[0] and unrestorable),
     )
+
+
+def wrap_in_force(
+    content: bytes, operators: bytes, *, budget: _LoadBudget
+) -> bytes | None:
+    """*content* with *operators* in force for every mark it makes.
+
+    This is how a page's own drawing is transformed -- scaled onto another sheet
+    size, say -- without rewriting a single one of its operators: the whole
+    stream is put inside a ``q`` ... ``Q`` with *operators* at the top, so the
+    matrix they set applies to everything that follows and to nothing after.
+
+    A **stray** ``Q`` is the catch. One with nothing to restore is ignored by a
+    viewer (8.4.2), so a stream may carry several and still draw correctly --
+    but once a ``q`` stands in front of the content each of them *has* something
+    to restore, and the first would pop the very save that holds the transform,
+    leaving the rest of the page drawn untransformed. So one extra ``q`` is
+    pushed per stray for them to consume, inside the transform rather than
+    outside it, and the closing ``Q`` count matches.
+
+    ``None`` when that cannot be done without changing how the page itself
+    draws: a stray ``Q`` *after* the content has changed the initial state would
+    restore the state saved at the top rather than what the page had set, which
+    is a different page. :func:`isolation_for` calls the same case incomplete,
+    and the caller says which page it was.
+
+    A text object left open is ended first, because ``Q`` is not allowed inside
+    one (9.4).
+    """
+    dirty = [False]
+    strays = 0
+    unrestorable = False
+    in_text = False
+    for token, _start, _end in _tokens(content, budget=budget):
+        if token == "q":
+            dirty.append(False)
+        elif token == "Q":
+            if len(dirty) > 1:
+                dirty.pop()
+            elif dirty[0]:
+                unrestorable = True
+            else:
+                strays += 1
+        elif token == "BT":
+            in_text = True
+        elif token == "ET":
+            in_text = False
+        elif token in _STATE_OPERATORS:
+            dirty[-1] = True
+    if unrestorable:
+        return None
+
+    open_levels = len(dirty) - 1
+    opening = b"q\n" + operators.rstrip() + b"\n" + b"q\n" * strays
+    closing = (b"ET\n" if in_text else b"") + b"Q\n" * (1 + strays + open_levels)
+    body = bytes(content)
+    if body and not body.endswith((b"\n", b"\r")):
+        body += b"\n"
+    return opening + body + closing

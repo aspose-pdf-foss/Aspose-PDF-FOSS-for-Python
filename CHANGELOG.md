@@ -9,6 +9,34 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Resizing a page now takes its drawing with it.** `Page.size` and
+  `PdfPageEditor.resize` changed the **sheet** and left the drawing where it
+  was, so a smaller sheet cropped it and a larger one padded it. Nothing scaled
+  page content at all.
+  - `Page.resize(size, mode=…)`, `Document.resize_pages(size, mode=…, pages=…)`
+    and `PdfPageEditor.resize(..., scale_content=True)` scale the drawing onto
+    the new sheet; `Page.scale_content(factor)` scales it inside the sheet it is
+    already on, centred by default or `about="origin"`.
+  - `mode` is `"fit"`, `"fill"` or `"stretch"`; the drawing is centred and the
+    sheet keeps its own origin. The facade's default is unchanged, so nothing
+    that called it moved.
+  - **The page's operators are not rewritten**: the stream goes inside one
+    `q` ... `Q` with the matrix at the top (new
+    `content_isolation.wrap_in_force`). A stray `Q` — one with nothing to
+    restore, which a viewer ignores — would pop that very save once a `q` stands
+    in front of it, so one extra `q` is pushed per stray to consume them, and a
+    text object left open is ended first. A page that restores a state it never
+    saved cannot be wrapped without changing how it draws and is refused by
+    name.
+  - Annotations travel with the drawing: `/Rect`, `/QuadPoints`, `/Vertices`,
+    `/L`, `/CL`, each run of an `/InkList`, and `/RD`'s four distances, which
+    scale but are never shifted. A `resize` takes the crop and production boxes
+    too.
+  - Checked with pdfium: an A4 page fitted onto Letter comes out 612x792 with
+    every glyph box, its height and the link rectangle scaled by the same 0.9407
+    and shifted by the same 26 points, and our raster of the result differs from
+    pdfium's on 0.07% of samples.
+
 - **A bookmark tree from the document's headings.** `Document.outlines` could
   be read and edited, but every bookmark had to be written by hand — and the
   heading model needed to generate them had been computed for the HTML and

@@ -1251,13 +1251,30 @@ class PdfPageEditor(_BoundFacade):
         except PDF_OPERATION_ERRORS as exc:
             return self._operation_fail(exc)
 
-    def resize(self, page_size: Any, page_numbers: Any = None) -> bool:
-        """Give the pages named a new size, keeping each box's origin."""
+    def resize(
+        self,
+        page_size: Any,
+        page_numbers: Any = None,
+        *,
+        scale_content: bool = False,
+        mode: str = "fit",
+    ) -> bool:
+        """Give the pages named a new size, keeping each box's origin.
+
+        By default the **sheet** changes and the drawing stays where it was, so
+        a smaller sheet crops it -- which is what this has always done. With
+        *scale_content* the drawing is scaled onto the new sheet instead, in the
+        *mode* :meth:`aspose_pdf.pages.Page.resize` describes.
+        """
         self._ensure_not_disposed()
         self._operation_start()
         try:
             for index in self._page_indices(page_numbers):
-                self.document.pages[index].size = page_size
+                page = self.document.pages[index]
+                if scale_content:
+                    page.resize(page_size, mode=mode)
+                else:
+                    page.size = page_size
             return True
         except PDF_OPERATION_ERRORS as exc:
             return self._operation_fail(exc)

@@ -627,6 +627,48 @@ Supported:
   where typing in either changes both. A page from a *different* document is
   refused; `Document.merge` brings pages across.
 - Delete pages by index and clear all pages.
+- **Resize a page and take its drawing with it.** Setting `Page.size` changes
+  the **sheet** and leaves the drawing where it was, so a smaller sheet crops it
+  and a larger one pads it -- right for trimming a page, wrong for every other
+  sense of the word. `Page.resize(size, mode=…)`,
+  `Document.resize_pages(size, mode=…, pages=…)` and
+  `PdfPageEditor.resize(..., scale_content=True)` scale the drawing onto the new
+  sheet instead, so an A4 page resized to Letter is a Letter page showing the
+  same thing. `Page.scale_content(factor)` scales the drawing inside the sheet
+  it is already on -- `0.95` adds an even margin all round, which is what a
+  printer's non-printable edge wants.
+  - `mode` is `"fit"` (keep the aspect ratio, an even margin on the long side),
+    `"fill"` (keep it, let the drawing run past the short side) or `"stretch"`
+    (scale the axes apart to fill the sheet exactly). The drawing is **centred**
+    either way, and the sheet keeps its own origin as the `size` setter does.
+    `scale_content` is centred too, or `about="origin"` leaves the drawing's
+    lower-left corner where it was.
+  - **The page's operators are not rewritten.** The whole content stream goes
+    inside one `q` ... `Q` with the matrix at the top, which is exact and costs
+    nothing per operator. A **stray `Q`** is the catch: one with nothing to
+    restore is ignored by a viewer (8.4.2), but once a `q` stands in front of
+    the content it *has* something to restore and would pop the save holding the
+    transform -- so one extra `q` is pushed per stray for them to consume, inside
+    the transform. A text object left open is ended first, because `Q` is not
+    allowed inside one.
+  - **Annotations travel with the drawing**: `/Rect`, `/QuadPoints`,
+    `/Vertices`, `/L`, `/CL`, each run of an `/InkList`, and the four
+    **distances** of a `/RD`, which scale but are never shifted because they
+    inset a rectangle rather than name a point in one (Table 164). An appearance
+    stream is fitted to its `/Rect` by the reader (12.5.5), so moving the
+    rectangle carries the appearance. A geometry entry that is not the numbers
+    it claims is left exactly as it is -- a damaged annotation is not a resize's
+    to repair. A `resize` also takes the crop and production boxes along;
+    `scale_content` leaves every box alone.
+  - A page whose content **restores a graphics state it never saved** cannot be
+    wrapped without changing how the page itself draws, and is refused by name
+    rather than scaled into something else. A page whose media box is unusable
+    is measured as US Letter, which is the size everything else in the package
+    reads for one.
+  - Checked with pdfium on an A4 page fitted onto Letter: the sheet is 612x792
+    exactly, every glyph box, its height and the link's `/Rect` scale by the same
+    0.9407 and shift by the same 26 points, and our own raster of the result
+    differs from pdfium's on 0.07% of samples.
 - **Imposition**: `Document.n_up(rows, columns, …)` puts a grid of pages on each
   sheet and `Document.booklet(…)` lays a document out two pages to a sheet in
   saddle-stitch order -- the last page beside the first, the second beside the

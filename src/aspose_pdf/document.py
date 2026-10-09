@@ -2892,6 +2892,47 @@ class Document:
         result._engine_pdf = imposed
         return result
 
+    def resize_pages(
+        self,
+        size: Any,
+        *,
+        mode: str = "fit",
+        pages: Sequence[int] | slice | None = None,
+    ) -> int:
+        """Give *pages* a new sheet size and scale their drawing onto it.
+
+        The operation :meth:`Page.resize` performs, over a document: every page
+        when none are named. A mixed-size document comes out uniform, each page
+        scaled from whatever it was -- which is what printing a folder of
+        drawings on one paper stock needs.
+
+        ``mode`` is ``"fit"`` (keep the aspect ratio, even margin on the long
+        side), ``"fill"`` (keep it, let the drawing run past the short side) or
+        ``"stretch"`` (scale the axes apart to fill the sheet exactly). See
+        :meth:`Page.resize`; setting :attr:`Page.size` changes the sheet and
+        leaves the drawing where it was.
+
+        Returns
+        -------
+        int
+            How many pages were resized.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        count = len(self._engine_pdf.pages)
+        if pages is None:
+            indices: Sequence[int] = range(count)
+        elif isinstance(pages, slice):
+            indices = range(count)[pages]
+        else:
+            indices = [int(index) for index in pages]
+        resolved = 0
+        for index in indices:
+            self.pages[index].resize(size, mode=mode)
+            resolved += 1
+        return resolved
+
     def merge(self, *documents: Document) -> Document:
         """Merge the supplied documents into this one."""
         self._ensure_not_disposed()

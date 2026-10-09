@@ -148,6 +148,10 @@ flowchart TD
   file rather than leaving it there for the next reader to switch back on.
 - `ImagePlacementAbsorber` collects the images a page draws, and `ImagePlacement.replace` /
   `hide` change them in the document — the new picture keeps the old one's place and size.
+- `Page.resize(size)` and `Document.resize_pages(size)` scale a page's drawing onto a new sheet —
+  `fit`, `fill` or `stretch`, centred, with annotations and the production boxes travelling along —
+  while `Page.scale_content(0.95)` shrinks the drawing inside the sheet it is on. Setting
+  `Page.size` still changes the sheet alone.
 - `Document.generate_outlines()` builds the bookmark tree from the document's own headings — the
   structure tree when it is tagged, the inferred size tiers when it is not — nesting them by level
   and pointing each one at the heading itself rather than at the top of its page.
