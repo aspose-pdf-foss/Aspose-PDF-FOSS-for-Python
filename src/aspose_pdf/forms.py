@@ -920,9 +920,9 @@ class Form:
 
         Creates an ``/FT /Sig`` field with a widget on *page* and sets the
         AcroForm ``/SigFlags`` ``SignaturesExist`` bit. The field carries no
-        value until it is signed; it renders as an empty box. Fill it later
-        with :func:`aspose_pdf.engine.sign_field.sign_field`, which signs the
-        saved bytes as an incremental update.
+        value until it is signed, and renders until then as an empty box. Fill
+        it with :meth:`aspose_pdf.Document.sign`, whose ``appearance=`` draws
+        into that box -- who signed, when, why, and an image if you have one.
 
         *seed_value* constrains how the field may be signed (``/SV``) — keys
         ``filter``, ``sub_filter``, ``digest_method``, ``reasons``, plus

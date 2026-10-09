@@ -216,6 +216,11 @@ flowchart TD
   PAdES-LTA without breaking the signatures it already has, and `PdfSignature.validate()`
   cryptographically verifies a signer's identity, trust chain, revocation status, and PAdES
   conformance level.
+- `SignatureAppearance` makes a signature **visible**: who signed, when, why and where, plus a
+  scanned signature or seal, drawn into the field instead of the empty box a signature field is
+  otherwise. It is written before the document is serialised, so the signature covers it — edit
+  the drawn name and the signature fails. pyHanko reports a file signed this way as intact with
+  whole-file coverage.
 - `Document.validate_pdfa()`, `Document.convert_to_pdfa()`, `Document.validate_pdfua()`, and
   `Document.auto_tag()` run heuristic PDF/A and PDF/UA compliance checks and generate a structure
   tree for existing content.
@@ -408,6 +413,29 @@ with Document("contract.pdf") as document:
     document.add_document_timestamp(timestamp_url="http://timestamp.example/rfc3161")  # PAdES-LTA
     document.save("contract-signed.pdf")  # each step is an appended revision
     print([signature.valid for signature in document.signatures])
+```
+
+### Make the Signature Visible
+
+```python
+from pathlib import Path
+
+from aspose_pdf import Document, SignatureAppearance
+
+with Document("contract.pdf") as document:
+    document.sign(
+        "Approval",
+        certificate=certificate,
+        private_key=key,
+        reason="I approve this document",
+        location="Prague",
+        appearance=SignatureAppearance(
+            image=Path("signature-scan.png"),   # beside the text; "background" puts it behind
+            border_color="#204060",
+            background="#eef2f7",
+        ),
+    )
+    document.save("contract-signed.pdf")
 ```
 
 ### Put a Watermark on a Layer, Then Resolve It
@@ -1048,7 +1076,8 @@ and delete workflows. 265 public types are organized by module below.
 - `Document.encrypt(user_password, owner_password, permissions)` / `Document.decrypt(password)` /
   `Document.change_passwords(...)`
 - `Document.sign(field=None, *, certificate, private_key, extra_certificates, reason, location,
-  contact, signer_name, pades, timestamp_url, timestamp_authority, timestamp_timeout, certify)`,
+  contact, signer_name, pades, timestamp_url, timestamp_authority, timestamp_timeout, certify,
+  appearance)`,
   `Document.add_ltv(certificates, crls, ocsp_responses)`,
   `Document.add_document_timestamp(timestamp_url | timestamp_authority)` — carried out by `save()`
   as appended revisions (PAdES-B/T/LT/LTA), after which `Document.signatures` lists them

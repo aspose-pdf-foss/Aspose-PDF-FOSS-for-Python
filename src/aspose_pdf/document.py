@@ -59,6 +59,7 @@ from aspose_pdf.pdfua import PdfUaValidationResult
 from aspose_pdf.pdfx import PdfXValidationResult, normalize_pdfx_standard
 from aspose_pdf.permissions import Permissions
 from aspose_pdf.recipients import ALL_PERMISSIONS, Recipient
+from aspose_pdf.signature_appearance import SignatureAppearance
 
 if TYPE_CHECKING:
     import datetime as _datetime
@@ -791,6 +792,7 @@ class Document:
         timestamp_authority: tuple[Any, Any] | None = None,
         timestamp_timeout: float = 10.0,
         certify: CertificationLevel | int | None = None,
+        appearance: SignatureAppearance | None = None,
     ) -> Document:
         """Sign the document when it is next saved.
 
@@ -835,6 +837,24 @@ class Document:
             Make this a certifying (DocMDP) signature permitting no changes (1),
             form filling (2), or form filling and annotations (3). It has to be
             the document's first signature.
+        appearance : SignatureAppearance, optional
+            Make the signature **visible**: draw who signed, when, why and
+            where -- and an image, if one is given -- into the field's widget.
+            Without it the signature shows whatever the field already showed,
+            which for a field this library authored is an empty box and for a
+            field it added itself is nothing at all.
+
+            The appearance is drawn into the document *before* it is
+            serialized, so the signature covers it: it cannot be replaced
+            without breaking the signature. Its name line is *signer_name*, or
+            the common name in *certificate* when that is not given, and its
+            date is the moment of the save.
+
+            Signing a field that exists draws into that field's widget, so the
+            field says where the appearance goes. With no *field*, give the
+            appearance a ``page`` and ``rect`` and the field is added there;
+            an appearance with neither is refused, since the invisible field
+            that would otherwise be added has no area to draw in.
 
         Returns
         -------
@@ -870,6 +890,19 @@ class Document:
         ):
             if value is not None and not isinstance(value, str):
                 raise TypeError(f"{label} must be a string")
+        if appearance is not None and not isinstance(appearance, SignatureAppearance):
+            raise TypeError("appearance must be a SignatureAppearance")
+        if (
+            appearance is not None
+            and field is None
+            and not appearance.places_its_own_field
+        ):
+            raise PdfValidationException(
+                "A visible signature needs somewhere to be drawn: name a "
+                "field with a rectangle, or give the appearance a page and "
+                "rect to add one at. Without either, the field added here is "
+                "invisible and nothing would be shown."
+            )
         authority = pending.check_timestamp_source(timestamp_url, timestamp_authority)
         level = pending.certification_level(certify)
         if level is not None and (self.signatures or self._pending_signing):
@@ -878,7 +911,7 @@ class Document:
                 "signature, and this document is signed, or is to be, already"
             )
         self._check_reopenable()
-        name = self._signature_field_to_fill(field)
+        name = self._signature_field_to_fill(field, appearance)
         self._pending_signing.append(
             pending.PendingSignature(
                 field=name,
@@ -894,6 +927,7 @@ class Document:
                 timestamp_authority=authority,
                 timestamp_timeout=float(timestamp_timeout),
                 certify=level,
+                appearance=appearance,
             )
         )
         return self
@@ -982,8 +1016,15 @@ class Document:
         )
         return self
 
-    def _signature_field_to_fill(self, field: str | None) -> str:
-        """Name the field :meth:`sign` fills, adding an invisible one when asked."""
+    def _signature_field_to_fill(
+        self, field: str | None, appearance: SignatureAppearance | None = None
+    ) -> str:
+        """Name the field :meth:`sign` fills, adding one when asked.
+
+        The field added is invisible -- a zero-size widget covering the whole
+        document -- unless *appearance* says where to put it, in which case it
+        is a visible field of that size on that page.
+        """
         from aspose_pdf._pending_signatures import PendingSignature
         from aspose_pdf.engine.cos import PdfName
         from aspose_pdf.engine.sign_field import _find_field
@@ -991,13 +1032,25 @@ class Document:
         engine = self._engine_pdf
         engine._ensure_cos()
         if field is None:
-            # A field queued for signing is in the form already: an invisible
-            # one is added when it is asked for, not when it is signed.
+            # A field queued for signing is in the form already: one is added
+            # when it is asked for, not when it is signed.
             taken = {name for name, _entry in engine._iter_form_fields()}
             number = 1
             while f"Signature{number}" in taken:
                 number += 1
-            return engine._ensure_signature_field(f"Signature{number}")
+            name = f"Signature{number}"
+            if appearance is not None and appearance.places_its_own_field:
+                if appearance.page >= len(self.pages):
+                    raise PdfValidationException(
+                        f"The appearance puts the signature on page "
+                        f"{appearance.page + 1}, and the document has "
+                        f"{len(self.pages)}."
+                    )
+                self.form.add_signature_field(
+                    name, appearance.page, list(appearance.rect)
+                )
+                return name
+            return engine._ensure_signature_field(name)
         if not isinstance(field, str):
             raise TypeError("field must be the name of a signature field")
         queued = {op.field for op in self._pending_signing if isinstance(op, PendingSignature)}
@@ -1026,6 +1079,37 @@ class Document:
                 "signed here: after the save it could only be reopened with a "
                 "recipient's private key. Save it, open it with a recipient "
                 "credential, then sign it."
+            )
+
+    def _flush_signature_appearances(self) -> None:
+        """Draw every queued visible signature into its widget, before the save.
+
+        The appearance goes into the document the save is about to serialize,
+        not into the revision ``sign_field`` appends afterwards, so the bytes
+        the signature covers include it: a visible signature cannot be lifted
+        off one document and dropped on another, nor its name and date edited,
+        without the signature failing. It is written here rather than at
+        :meth:`sign` time so the date it shows is the moment of the save.
+        """
+        from aspose_pdf._pending_signatures import (
+            PendingSignature,
+            certificate_common_name,
+        )
+
+        for operation in self._pending_signing:
+            if not isinstance(operation, PendingSignature):
+                continue
+            appearance = operation.appearance
+            if appearance is None:
+                continue
+            self._engine_pdf.write_signature_appearance(
+                operation.field,
+                appearance,
+                signer_name=operation.signer_name
+                or certificate_common_name(operation.certificate),
+                reason=operation.reason,
+                location=operation.location,
+                contact=operation.contact,
             )
 
     def _apply_pending_signing(self, data: bytes) -> bytes:
@@ -2762,6 +2846,8 @@ class Document:
         if signing:
             # Protection may have changed since sign() was called.
             self._check_reopenable()
+            # Before serialization, so the signature covers what it draws.
+            self._flush_signature_appearances()
         incremental = self._choose_incremental(incremental)
         path = None if hasattr(destination, "write") else Path(destination)
         redacted = self._engine_pdf._redacted

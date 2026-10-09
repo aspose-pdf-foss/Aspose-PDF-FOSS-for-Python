@@ -2385,7 +2385,9 @@ Supported:
 - Author empty (unsigned) signature fields with `Form.add_signature_field()`.
   The field is written as `/FT /Sig` with a widget on the page, the AcroForm
   `/SigFlags` SignaturesExist bit is set (existing bits preserved), the widget
-  renders as an empty box, and the field carries no value until signed. It
+  renders as an empty box until it is signed, and the field carries no value
+  until then. Signing it with an `appearance=` draws into that box -- see
+  **A visible signature** below. It
   round-trips and reports as a `signature` field and can be removed like any
   other. A **seed value** (`seed_value=` → `/SV`) constrains how the field may
   be signed (`filter`, `sub_filter`, `digest_method`, `reasons`, `v`,
@@ -2889,8 +2891,9 @@ Supported:
 - **Sign, add LTV material and timestamp through `Document`.**
   `Document.sign(field=None, *, certificate, private_key, extra_certificates,
   reason, location, contact, signer_name, pades, timestamp_url,
-  timestamp_authority, timestamp_timeout, certify)` fills the named signature
-  field, or an invisible `SignatureN` field it adds to the first page;
+  timestamp_authority, timestamp_timeout, certify, appearance)` fills the named
+  signature field, or an invisible `SignatureN` field it adds to the first page
+  (a visible one where `appearance` says, if it says);
   `Document.add_ltv(certificates=..., crls=..., ocsp_responses=...)` builds or
   extends the `/DSS`; `Document.add_document_timestamp(timestamp_url=... |
   timestamp_authority=...)` appends a document timestamp. They are carried out
@@ -2912,6 +2915,45 @@ Supported:
   documents, a second signature on a signed file, LTV with two document
   timestamps, Ed25519 -- as intact, valid, trusted, whole file covered and at
   benign modification levels, and opened in pdfium and MuPDF.
+- **A visible signature.** `Document.sign(..., appearance=SignatureAppearance(
+  ...))` draws the signature on the page instead of leaving the field blank.
+  Nothing in the signature dictionary describes this (ISO 32000-1 12.7.4.5):
+  the appearance is an ordinary annotation appearance stream (`/AP /N`, 12.5.5)
+  in the widget's own coordinate space, and what goes in it is the producer's
+  business.
+  - **The text** is four labelled lines by default -- who signed, when, why,
+    where -- each droppable with its `show_*` argument, unlabelled with
+    `labels=False`, or replaced wholesale with `text=`. `show_contact` adds a
+    fifth, off by default. A line whose value is empty is left out rather than
+    drawn as a bare label. The name is `signer_name`, falling back to the
+    signing certificate's subject common name (then its organization name);
+    the date is the moment of the save, formatted by `date_format`.
+  - **An image** (`image=`, bytes or a path) goes to the `left` of the text,
+    the `right`, on `top`, `background` (behind the text) or `only` (no text),
+    taking `image_fraction` of the box when it sits beside or above it, and
+    scaled to the largest size that fits **without being squashed**. A
+    background image is painted before the text, since operators paint over
+    what came before them.
+  - **The size** is `font_size`, or chosen when that is 0: the largest at which
+    no entry wraps and the whole lot fits the height, down to a floor below
+    which wrapping is preferred to shrinking further.
+  - **Non-Latin text** needs `font=`, which embeds a font exactly as
+    `Page.add_text` does and draws through a Type0 resource. Without one, text
+    the standard fonts' encodings cannot represent is refused by name -- a
+    signature that drew the wrong letters for a name would be worse than one
+    that refused to be drawn.
+  - **The signature covers it.** The appearance is written into the document
+    before the save serializes it, not into a revision appended afterwards, so
+    the signed ByteRange includes it: it cannot be edited, nor lifted onto
+    another document, without the signature failing. Checked with **pyHanko**:
+    a document signed this way reports `INTACT:UNTOUCHED` with
+    `coverage=ENTIRE_FILE`, and one byte changed inside the appearance stream
+    reports `INVALID`. The same holds for a signature field authored by
+    qpdf/pikepdf and signed here.
+  - A field shown on several pages gets the appearance on each widget. A field
+    whose rectangle encloses no area is refused rather than signed with an
+    appearance nothing could show.
+
 - **Sign an authored signature field in place**
   (`engine.sign_field.sign_field(pdf_bytes, name, cert, key, …)`): the field
   created by `Form.add_signature_field()` is filled as an *incremental update*,

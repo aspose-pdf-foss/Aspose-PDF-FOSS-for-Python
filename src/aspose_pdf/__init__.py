@@ -124,6 +124,7 @@ from .pdfx import (
 from .permissions import Permissions
 from .recipients import Recipient
 from .signature import PdfSignature
+from .signature_appearance import SignatureAppearance
 from .stamps import (
     HorizontalAlignment,
     ImageStamp,
@@ -287,6 +288,7 @@ __all__ = [
     "ResultContainer",
     "RevocationStatus",
     "Row",
+    "SignatureAppearance",
     "SplitOptions",
     "Splitter",
     "SquareAnnotation",

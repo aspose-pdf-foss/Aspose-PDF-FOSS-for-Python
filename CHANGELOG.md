@@ -9,6 +9,38 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A signature can now be seen.** A signature field is invisible until
+  something is drawn in it, and nothing could draw anything: `Document.sign`
+  took no appearance, and `Form.add_signature_field` authored an empty box its
+  own docstring described as such. A signed document showed no sign of being
+  signed outside a viewer's signature panel.
+  - `Document.sign(..., appearance=SignatureAppearance(...))` draws who signed,
+    when, why and where into the field's widget. The name is `signer_name`, or
+    the common name in the signing certificate when that is not given; the date
+    is the moment of the save. Any line can be turned off, labels dropped, or
+    the lot replaced with `text=` of your own.
+  - **An image** — a scanned signature, a seal, a logo — goes beside the text
+    (`image_position="left"`, `"right"`, `"top"`), behind it
+    (`"background"`), or alone (`"only"`), scaled to fit without being
+    squashed. Colours: `background`, `border_color`, `border_width`,
+    `text_color`.
+  - The size is chosen to fit the box, preferring one at which no entry wraps:
+    `Date: 2026-10-09 12:03:32 +0200` broken after the time, with the zone
+    offset alone underneath, reads worse than the same line a point smaller.
+  - **Non-Latin names work** through `font=`, which embeds a font the way
+    `Page.add_text` does. Without one, text the standard fonts cannot encode is
+    refused by name rather than drawn as the wrong letters.
+  - With no `field`, `SignatureAppearance(page=…, rect=…)` adds a visible field
+    there; an appearance with neither a field nor a rect is refused, since the
+    invisible field that would otherwise be added has nowhere to draw.
+  - **The signature covers the appearance.** It is written into the document
+    before the save serializes it, not into a later revision, so it cannot be
+    edited or lifted onto another document without breaking the signature.
+    pyHanko reports a file signed this way as `INTACT:UNTOUCHED` with
+    `coverage=ENTIRE_FILE`, and one byte changed inside the appearance as
+    `INVALID`. A signature field authored by qpdf/pikepdf and signed here comes
+    back the same way.
+
 - **A font the document only names can now be put into it.** A PDF may refer to
   `Arial` and not carry it, and then its text draws differently wherever Arial
   is different or absent — which PDF/A, PDF/UA and PDF/X all forbid, and which

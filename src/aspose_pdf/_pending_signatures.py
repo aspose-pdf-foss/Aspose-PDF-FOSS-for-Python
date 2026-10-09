@@ -19,6 +19,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 from cryptography.x509 import ocsp
+from cryptography.x509.oid import NameOID
 
 from aspose_pdf.engine.dss import DssMaterial, add_document_timestamp, enable_ltv
 from aspose_pdf.engine.sign_field import sign_field
@@ -51,6 +52,26 @@ def _check_pair(certificate: Any, private_key: Any, role: str) -> None:
     # accepts; nothing further along notices, so it is caught here.
     if _public_key_der(private_key.public_key()) != _public_key_der(certificate.public_key()):
         raise PdfValidationException(f"The {role} private key does not belong to its certificate")
+
+
+def certificate_common_name(certificate: Any) -> str | None:
+    """The name to show for *certificate*'s holder, or ``None``.
+
+    A visible signature says who signed, and the certificate is the one place
+    that already knows. The subject's **common name** is what every other
+    producer shows; an organization certificate that has none falls back to
+    its organization name, and a certificate with neither is left for the
+    caller's own ``signer_name``.
+    """
+    for oid in (NameOID.COMMON_NAME, NameOID.ORGANIZATION_NAME):
+        for attribute in certificate.subject.get_attributes_for_oid(oid):
+            value = attribute.value
+            if isinstance(value, bytes):  # a non-UTF-8 directory string
+                value = value.decode("utf-8", "replace")
+            text = str(value).strip()
+            if text:
+                return text
+    return None
 
 
 def check_signer(certificate: Any, private_key: Any, *, pades: bool) -> None:
@@ -143,6 +164,11 @@ class PendingSignature:
     timestamp_authority: tuple[Any, Any] | None
     timestamp_timeout: float
     certify: int | None
+    #: How the signature is drawn, or ``None`` for an invisible one. It is not
+    #: used here: the appearance is written into the widget before the document
+    #: is serialized, so the signature covers it (see
+    #: ``Document._flush_signature_appearances``).
+    appearance: Any = None
 
     def apply(self, data: bytes, *, encryption: Any, limits: Any) -> bytes:
         return sign_field(

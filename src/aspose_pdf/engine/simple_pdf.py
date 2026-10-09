@@ -4229,6 +4229,236 @@ class SimplePdf:
         )
         return name
 
+    def write_signature_appearance(
+        self,
+        field_name: str,
+        spec: Any,
+        *,
+        signer_name: str | None = None,
+        reason: str | None = None,
+        location: str | None = None,
+        contact: str | None = None,
+        when: Any = None,
+    ) -> None:
+        """Draw *spec* into the ``/AP /N`` of every widget of a signature field.
+
+        A signature field is invisible until something is drawn in it: nothing
+        in the signature dictionary says what it looks like (12.7.4.5), so the
+        appearance is an ordinary annotation appearance stream and this is what
+        writes one. It replaces whatever the widget showed -- the empty box an
+        unsigned field is authored with -- so a field signed twice would show
+        the later signature, which is why signing refuses a signed field.
+
+        The text is :meth:`compose_lines`' four lines unless *spec* carries its
+        own, drawn in Helvetica or in the font *spec* names, at a size that
+        fits the box when none is given. The caller passes the signature's own
+        ``/Reason``, ``/Location``, ``/ContactInfo`` and ``/Name``, so what is
+        drawn and what the dictionary says cannot disagree.
+        """
+        from datetime import datetime
+
+        from . import signature_appearance as layout
+        from .content_authoring import normalize_color, prepare_image
+        from .text_faces import _EmbeddedFace, _StandardFace
+
+        self._ensure_cos()
+        widgets = self._signature_widgets(field_name)
+        if not widgets:
+            raise PdfValidationException(
+                f"Signature field '{field_name}' has no widget to draw an "
+                "appearance in."
+            )
+
+        if spec.draws_text:
+            if spec.text is not None:
+                text = [spec.text]
+            else:
+                moment = when or datetime.now().astimezone()
+                text = layout.compose_lines(
+                    name=signer_name if spec.show_name else None,
+                    date=(
+                        moment.strftime(spec.date_format) if spec.show_date else None
+                    ),
+                    reason=reason if spec.show_reason else None,
+                    location=location if spec.show_location else None,
+                    contact=contact if spec.show_contact else None,
+                    labels=spec.labels,
+                )
+        else:
+            text = []
+
+        face = (
+            _EmbeddedFace(self, spec.font)
+            if spec.font is not None
+            else _StandardFace(self, "Helvetica")
+        )
+        image = None
+        if spec.image is not None:
+            data = spec.image
+            if isinstance(data, Path):
+                data = data.read_bytes()
+            image = prepare_image(
+                bytes(data), limits=self._load_limits, budget=self._load_budget
+            )
+
+        text_op = self._field_color_operator(
+            list(normalize_color(spec.text_color)) if spec.text_color is not None
+            else [0.0],
+            stroke=False,
+        )
+        background_op = (
+            self._field_color_operator(
+                list(normalize_color(spec.background)), stroke=False
+            )
+            if spec.background is not None
+            else None
+        )
+        border_op = (
+            self._field_color_operator(
+                list(normalize_color(spec.border_color)), stroke=True
+            )
+            if spec.border_color is not None
+            else None
+        )
+
+        for widget in widgets:
+            self._draw_signature_widget(
+                widget, spec, face, text, image, text_op, background_op, border_op
+            )
+
+    def _draw_signature_widget(
+        self,
+        widget: PdfDictionary,
+        spec: Any,
+        face: Any,
+        text: list[str],
+        image: Any,
+        text_op: str,
+        background_op: str | None,
+        border_op: str | None,
+    ) -> None:
+        """Build and attach one widget's appearance, sized to its own rectangle."""
+        from . import signature_appearance as layout
+
+        rect = self._get_cos_rect(widget.mapping.get(PdfName("Rect")))
+        llx, urx = min(rect[0], rect[2]), max(rect[0], rect[2])
+        lly, ury = min(rect[1], rect[3]), max(rect[1], rect[3])
+        width, height = urx - llx, ury - lly
+        if width <= 0 or height <= 0:
+            raise PdfValidationException(
+                "A signature appearance needs a widget with an area to draw "
+                f"in; this one's rectangle is {width:g} by {height:g}. Give "
+                "the field a rectangle, or sign without an appearance."
+            )
+
+        if image is not None:
+            aspect = (image.width / image.height) if image.height else 1.0
+            image_area, text_area = layout.image_box(
+                width,
+                height,
+                position=spec.image_position,
+                fraction=spec.image_fraction,
+                aspect=aspect,
+            )
+        else:
+            image_area = None
+            text_area = (
+                layout.PADDING,
+                layout.PADDING,
+                max(0.0, width - 2.0 * layout.PADDING),
+                max(0.0, height - 2.0 * layout.PADDING),
+            )
+
+        placement = layout.fit(face, text, text_area, size=spec.font_size)
+        if image_area is not None:
+            placement = replace(placement, image=image_area)
+
+        resources: dict[PdfName, Any] = {}
+        font_resource = "F1"
+        if placement.lines:
+            resources[PdfName("Font")] = PdfDictionary(
+                {PdfName(font_resource): self._appearance_font_value(face)}
+            )
+        image_resource = None
+        if image is not None and image_area and image_area[2] > 0:
+            image_resource = "Im1"
+            resources[PdfName("XObject")] = PdfDictionary(
+                {PdfName(image_resource): self._register_image_xobject(image)}
+            )
+
+        content = layout.draw(
+            placement,
+            width=width,
+            height=height,
+            face=face,
+            font_resource=font_resource,
+            text_color_op=text_op,
+            background_op=background_op,
+            border_op=border_op,
+            border_width=spec.border_width,
+            image_resource=image_resource,
+        )
+        widget.mapping[PdfName("AP")] = self._register_annotation_appearance(
+            (llx, lly, urx, ury),
+            {"N": content},
+            PdfDictionary(resources) if resources else None,
+        )
+
+    def _appearance_font_value(self, face: Any) -> Any:
+        """The font an appearance stream's ``/Resources`` points at for *face*.
+
+        An embedded face is the whole Type0 graph the authoring path builds, so
+        the appearance draws the same glyphs a page would. A standard face is a
+        plain Type 1 dictionary written inline -- it names a font every reader
+        has, and carries no program to share.
+        """
+        from .std_fonts import StandardFonts
+        from .text_faces import _EmbeddedFace
+
+        if isinstance(face, _EmbeddedFace):
+            type0_ref, _parts = self._build_type0_font_graph(face.authored)
+            return type0_ref
+        font = PdfDictionary(
+            {
+                PdfName("Type"): PdfName("Font"),
+                PdfName("Subtype"): PdfName("Type1"),
+                PdfName("BaseFont"): PdfName(face.name),
+            }
+        )
+        declared = StandardFonts.declared_encoding(face.name)
+        if declared is not None:
+            font.mapping[PdfName("Encoding")] = PdfName(declared)
+        return font
+
+    def _signature_widgets(self, field_name: str) -> list[PdfDictionary]:
+        """Every widget annotation of the signature field called *field_name*.
+
+        A field is either merged with its one widget -- the terminal case, a
+        dictionary carrying both ``/FT`` and ``/Rect`` -- or has ``/Kids``
+        holding them separately (12.7.4.1). Both shapes are walked, so a field
+        shown on several pages gets the appearance on each.
+        """
+        for name, entry in self._iter_form_fields():
+            if name != field_name:
+                continue
+            if self._resolve(entry.mapping.get(PdfName("FT"))) != PdfName("Sig"):
+                raise PdfValidationException(
+                    f"Field '{field_name}' is not a signature field."
+                )
+            return list(self._widget_annotations(entry))
+        raise PdfValidationException(f"No field called '{field_name}'.")
+
+    def _widget_annotations(self, field: PdfDictionary):
+        """Yield the widget annotations under *field*, merged or in ``/Kids``."""
+        kids = self._resolve(field.mapping.get(PdfName("Kids")))
+        if isinstance(kids, PdfArray) and kids.items:
+            for kid_ref in kids.items:
+                kid = self._resolve(kid_ref)
+                if isinstance(kid, PdfDictionary):
+                    yield from self._widget_annotations(kid)
+        elif PdfName("Rect") in field.mapping:
+            yield field
+
     def _iter_form_fields(self):
         """Yield ``(fully qualified name, field dictionary)`` for every AcroForm field."""
         root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
