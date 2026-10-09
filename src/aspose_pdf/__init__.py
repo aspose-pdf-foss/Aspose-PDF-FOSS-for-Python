@@ -108,6 +108,7 @@ from .lowcode import (
     TextExtractorOptions,
 )
 from .optimization import OptimizationOptions
+from .outlines import OutlineCollection, OutlineItem
 from .page_labels import NumberingStyle, PageLabel, PageLabelCollection
 from .page_size import PageSize
 from .pages import Page, PageCollection
@@ -234,6 +235,8 @@ __all__ = [
     "OptimizationOptions",
     "OptimizeOptions",
     "Optimizer",
+    "OutlineCollection",
+    "OutlineItem",
     "Page",
     "PageBoundary",
     "PageCollection",

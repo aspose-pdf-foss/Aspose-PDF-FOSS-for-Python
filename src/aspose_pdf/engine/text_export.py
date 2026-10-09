@@ -87,6 +87,13 @@ class Block:
     image: bytes | None = None
     """A figure's PNG bytes, when images are being carried over."""
 
+    x: float = 0.0
+    y: float = 0.0
+    """Where the block starts on the page: the baseline origin of its first
+    element, in default user space. The exports do not use it -- a flowing
+    document has no coordinates -- but a bookmark pointing at a heading does,
+    which is what :mod:`.headings` reads it for."""
+
 
 # ---------------------------------------------------------------------------
 # Text for a structure element
@@ -481,10 +488,21 @@ def _flow_blocks(
             continue
         flush_list()
         tag = group[0].tag or "P"
+        anchor = group[0]
         if tag.startswith("H") and tag[1:].isdigit():
-            blocks.append(Block(kind="heading", level=int(tag[1:]), text=text))
+            blocks.append(
+                Block(
+                    kind="heading",
+                    level=int(tag[1:]),
+                    text=text,
+                    x=anchor.x,
+                    y=anchor.y,
+                )
+            )
         else:
-            blocks.append(Block(kind="paragraph", text=text))
+            blocks.append(
+                Block(kind="paragraph", text=text, x=anchor.x, y=anchor.y)
+            )
     flush_list()
     return blocks
 

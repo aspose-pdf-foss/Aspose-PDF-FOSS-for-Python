@@ -9,6 +9,32 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A bookmark tree from the document's headings.** `Document.outlines` could
+  be read and edited, but every bookmark had to be written by hand — and the
+  heading model needed to generate them had been computed for the HTML and
+  Markdown exports all along, just without a position to point at.
+  - `Document.generate_outlines()` makes an `OutlineItem` per heading, nested by
+    level. A **tagged** document is read from its structure tree (`/H1`..`/H6`,
+    or `/H` with the section nesting giving the level, `/RoleMap` followed) —
+    the author's own answer; an untagged one from the same size tiers `auto_tag`
+    infers, which is a heuristic and labelled one. `prefer_structure=False`
+    reads the pages either way.
+  - **Each bookmark lands on the heading, not on the top of its page.** The
+    place comes from the marked-content sequence the element owns — new
+    `auto_tag.mcid_spans` bounds it by byte range and the text objects inside
+    carry the coordinates — or from the inferred block's own anchor, which
+    `Block` now records. Written as `/XYZ` with the reader's magnification kept.
+  - Levels nest with skips: an `H3` after an `H1` becomes its child, not its
+    sibling. `max_level`, `open_to_level`, `replace=False` and `zoom=` adjust
+    the rest. It returns how many it made, and zero is the honest answer for a
+    document of uniform body text.
+  - Verified against qpdf's own outline reader — nesting, titles, each `/XYZ`
+    resolving to the right page and coordinate, the open state in the sign of
+    `/Count` — and the tree reads back identically after a qpdf rewrite.
+  - `OutlineItem` and `OutlineCollection` are now exported from `aspose_pdf`:
+    `Document.outlines` handed them out while a caller could not construct one
+    without reaching into the submodule.
+
 - **Permissions have names.** `/P` is a signed 32-bit integer whose unused bits
   are all 1, so "everything allowed" is `-4` and "nothing allowed" is `-3904`,
   and `Permissions.PRINT | Permissions.COPY` as plain integers is `20` — a `/P`

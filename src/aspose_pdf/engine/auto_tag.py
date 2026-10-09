@@ -553,6 +553,112 @@ def has_marked_content(
     return False
 
 
+def mcid_spans(
+    content: bytes,
+    *,
+    named_properties: Mapping[str, int] | None = None,
+    limits: PdfLoadLimits | None = None,
+    budget: _LoadBudget | None = None,
+) -> dict[int, tuple[int, int]]:
+    """Where each ``/MCID`` sequence lies in *content*, as a byte range.
+
+    :func:`find_mcids` answers *which* ids a stream declares; this answers
+    *where*, which is what turns a structure element into a position on the
+    page -- the text objects inside the range are the ones the element owns, and
+    they carry their own coordinates.
+
+    The range runs from the ``BDC`` to the matching ``EMC``, nesting counted, so
+    an id inside another id's scope gets its own range rather than the outer
+    one's. An unbalanced ``EMC`` closes nothing, and a sequence left open at the
+    end of the stream runs to the end of it: the point is to bound the content,
+    and a damaged stream still has content in it.
+    """
+    active_budget = _resolve_scan_budget(limits, budget)
+    spans: dict[int, tuple[int, int]] = {}
+    # One frame per open sequence: the id it declared (or None) and where its
+    # content began.
+    stack: list[tuple[int | None, int]] = []
+    depth = 0
+    current: int | None = None
+    expect_value = False
+    last_name: str | None = None
+    previous_name: str | None = None
+    inline_properties = False
+    for token, start, end in _tokens(content, budget=active_budget):
+        if token is None:
+            continue
+        if token == "<<":
+            depth += 1
+            if depth == 1:
+                current = None
+                expect_value = False
+                inline_properties = True
+            continue
+        if token == ">>":
+            depth = max(0, depth - 1)
+            continue
+        if depth > 0:
+            if expect_value:
+                value = _to_float(token)
+                if value is not None:
+                    current = int(value)
+                expect_value = False
+            elif token == "/MCID":
+                expect_value = True
+            continue
+        if token in ("BDC", "BMC"):
+            resolved = current
+            if (
+                resolved is None
+                and not inline_properties
+                and previous_name is not None
+                and last_name is not None
+                and named_properties
+            ):
+                resolved = named_properties.get(last_name)
+                if resolved is None:
+                    resolved = named_properties.get(f"/{last_name}")
+            if resolved is not None:
+                active_budget.check(
+                    len(stack) + 1,
+                    "max_container_items",
+                    "marked-content nesting",
+                )
+            stack.append((None if resolved is None else int(resolved), end))
+            current = None
+            last_name = None
+            previous_name = None
+            inline_properties = False
+            continue
+        if token == "EMC":
+            if stack:
+                mcid, began = stack.pop()
+                if mcid is not None and mcid not in spans:
+                    active_budget.check(
+                        len(spans) + 1,
+                        "max_container_items",
+                        "marked-content spans",
+                    )
+                    spans[mcid] = (began, start)
+            last_name = None
+            previous_name = None
+            inline_properties = False
+            continue
+        if token.startswith("/"):
+            inline_properties = False
+            previous_name = last_name
+            last_name = token.lstrip("/")
+        else:
+            inline_properties = False
+            previous_name = None
+            last_name = None
+    while stack:
+        mcid, began = stack.pop()
+        if mcid is not None and mcid not in spans:
+            spans[mcid] = (began, len(content))
+    return spans
+
+
 def find_layout_elements(
     content: bytes,
     *,

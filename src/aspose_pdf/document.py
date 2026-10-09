@@ -53,7 +53,7 @@ from aspose_pdf.load_limits import (
     _LoadBudget,
     _read_limited,
 )
-from aspose_pdf.outlines import OutlineCollection
+from aspose_pdf.outlines import OutlineCollection, OutlineItem
 from aspose_pdf.pdfa import PdfAValidationResult
 from aspose_pdf.pdfua import PdfUaValidationResult
 from aspose_pdf.pdfx import PdfXValidationResult, normalize_pdfx_standard
@@ -2438,6 +2438,109 @@ class Document:
         return self._engine_pdf.convert_to_pdfua(
             language=language, title=title, auto_tag=auto_tag, part=part
         )
+
+    def generate_outlines(
+        self,
+        *,
+        max_level: int = 6,
+        prefer_structure: bool = True,
+        replace: bool = True,
+        open_to_level: int = 0,
+        zoom: float | None = None,
+    ) -> int:
+        """Build a bookmark tree from the document's headings.
+
+        A **tagged** document has already been told what its headings are: the
+        structure tree names them ``/H1``..``/H6``, or ``/H`` with the section
+        nesting giving the level, and that is the author's own answer. An
+        untagged one is read with the same size-tier analysis
+        :meth:`to_markdown` and :meth:`auto_tag` use -- a heuristic, so the
+        headings it finds are the ones those would find, and no better.
+
+        Each bookmark lands on the heading itself, not on the top of its page: a
+        heading's place comes from the marked-content sequence it owns, or from
+        the block's own anchor, and is written as an ``/XYZ`` destination. A
+        heading whose place cannot be told -- a structure element whose content
+        is not on its own page -- gets the page alone.
+
+        Levels nest, skips included: an ``H3`` after an ``H1`` with no ``H2``
+        between them becomes a child of the ``H1`` rather than a sibling.
+
+        Parameters
+        ----------
+        max_level : int
+            Ignore headings deeper than this (1 to 6).
+        prefer_structure : bool
+            Read the structure tree when it has headings in it. ``False`` reads
+            the pages whatever the tree says, which is what a document whose
+            tagging is only a shell wants.
+        replace : bool
+            Clear the existing bookmarks first, which is what *generate* means.
+            ``False`` appends to them.
+        open_to_level : int
+            Write bookmarks up to this level **unfolded**, so a reader shows
+            their children. ``0``, the default, leaves every one folded, as a
+            bookmark tree is written unless asked otherwise.
+        zoom : float, optional
+            The magnification each bookmark asks for. ``None`` keeps whatever
+            the reader is already using, which is what a reader expects of a
+            bookmark.
+
+        Returns
+        -------
+        int
+            How many bookmarks were created. ``0`` means no headings were
+            found -- a document of body text has none, and one whose only
+            structure is a shell has none to read either.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if int(max_level) < 1:
+            raise PdfValidationException("max_level is a whole number from one")
+        from aspose_pdf.engine.headings import find_headings
+        from aspose_pdf.interactive import XYZDestination
+
+        headings = find_headings(
+            self._engine_pdf,
+            max_level=int(max_level),
+            prefer_structure=bool(prefer_structure),
+        )
+        outlines = self.outlines
+        if replace:
+            outlines.clear()
+        if not headings:
+            return 0
+
+        # One frame per open level, so a deeper heading becomes a child of the
+        # nearest shallower one -- which is what nesting means even when a level
+        # is skipped.
+        stack: list[tuple[int, OutlineItem]] = []
+        created = 0
+        for heading in headings:
+            target: object | None = None
+            if heading.x is not None and heading.y is not None:
+                target = XYZDestination(
+                    page=heading.page_index,
+                    left=heading.x,
+                    top=heading.y,
+                    zoom=zoom,
+                )
+            item = OutlineItem(
+                heading.text,
+                heading.page_index,
+                destination=target,
+                open=heading.level <= int(open_to_level),
+            )
+            while stack and stack[-1][0] >= heading.level:
+                stack.pop()
+            if stack:
+                stack[-1][1].add(item)
+            else:
+                outlines.add(item)
+            stack.append((heading.level, item))
+            created += 1
+        return created
 
     def auto_tag(
         self,

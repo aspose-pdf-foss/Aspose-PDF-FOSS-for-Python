@@ -300,6 +300,39 @@ Supported:
   no `/Count` at all, as the table requires, so `open` reads back `False` for one.
   Both entries survive a round trip, and an item that was read from a file keeps
   the colour and state it came with.
+- **Build the bookmark tree from the document's headings.**
+  `Document.generate_outlines()` reads a document's headings and makes an
+  `OutlineItem` for each, nested by level. Two sources, and which one is used
+  matters:
+  - A **tagged** document has already been told what its headings are: the
+    structure tree names them `/H1`..`/H6`, or `/H` with the section nesting
+    giving the level -- ISO 14289-1 7.4's unnumbered form, one `/H` per `/Sect`
+    -- and that is the author's own answer. A custom type mapped to a heading
+    through the `/RoleMap` counts as one.
+  - An **untagged** one is read with the same size-tier analysis `auto_tag` and
+    the HTML/Markdown exports use, so the headings a bookmark tree finds are the
+    ones a Markdown export would show, and no better: it is a heuristic.
+    `prefer_structure=False` reads the pages whatever the tree says, which is
+    what a document whose tagging is only a shell wants.
+  - **Each bookmark lands on the heading, not on the top of its page.** A
+    heading's place comes from the marked-content sequence it owns -- the byte
+    range bounds it and the text objects inside carry their coordinates -- or
+    from the inferred block's own anchor, and is written as an `/XYZ`
+    destination with the reader's own magnification kept (`zoom=` sets one). A
+    heading whose place cannot be told, such as a structure element whose
+    content is not on its own page, gets the page alone.
+  - Levels nest with **skips included**: an `H3` after an `H1` with no `H2`
+    between them becomes a child of the `H1` rather than a sibling, and a level
+    coming back up closes the deeper ones. `max_level` ignores the deeper
+    headings, `open_to_level` writes the shallower ones unfolded, and
+    `replace=False` appends to the bookmarks already there instead of
+    replacing them -- replacing being what *generate* means.
+  - It returns how many bookmarks it made. **Zero** is the honest answer for a
+    document of uniform body text, and for one whose only structure is a shell.
+  - Checked against qpdf's own outline reader: the nesting, the titles and each
+    `/XYZ` destination resolving to the right page object and the heading's own
+    coordinate, with the open state carried in the sign of `/Count`; and the
+    tree reads back identically after a qpdf rewrite.
 - **Named destinations** (12.3.2.3) through `Document.destinations`, a mapping of
   name to destination. Both places a PDF keeps them are read -- the
   `/Names /Dests` name tree and the older `/Dests` dictionary -- and a name the

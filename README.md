@@ -148,6 +148,9 @@ flowchart TD
   file rather than leaving it there for the next reader to switch back on.
 - `ImagePlacementAbsorber` collects the images a page draws, and `ImagePlacement.replace` /
   `hide` change them in the document — the new picture keeps the old one's place and size.
+- `Document.generate_outlines()` builds the bookmark tree from the document's own headings — the
+  structure tree when it is tagged, the inferred size tiers when it is not — nesting them by level
+  and pointing each one at the heading itself rather than at the top of its page.
 - `Permissions` gives the `/P` word names: `Permissions.denying("copy")` instead of `-20`, with
   `document.permissions.can_print` and `.allowed` to read one back. It is an `int` subclass, so it
   goes anywhere the raw number did, and it keeps the reserved bits that ORing the bit values by
