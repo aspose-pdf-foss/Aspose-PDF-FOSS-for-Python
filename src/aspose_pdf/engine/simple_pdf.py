@@ -1341,6 +1341,19 @@ def _scan_content_for_device_colors(
             flags[key][0] = True
 
 
+# Where a font of each kind keeps its program (ISO 32000-1 tables 122 and 126).
+# A program under any other key is not an embedded font: a reader draws nothing
+# from a TrueType program hung off a /Type1 font, and veraPDF says so too.
+_FONT_PROGRAM_KEYS: dict[str, tuple[str, ...]] = {
+    "Type1": ("FontFile", "FontFile3"),
+    "MMType1": ("FontFile", "FontFile3"),
+    "TrueType": ("FontFile2", "FontFile3"),
+    "CIDFontType0": ("FontFile3",),
+    "CIDFontType2": ("FontFile2", "FontFile3"),
+}
+_ANY_FONT_PROGRAM_KEY = ("FontFile", "FontFile2", "FontFile3")
+
+
 # ICC profile header: bytes 16-19 hold the data colour space signature and
 # bytes 36-39 the 'acsp' file signature (ICC.1 clause 7.2).
 _ICC_HEADER_MIN = 128
@@ -5040,23 +5053,22 @@ class SimplePdf:
                 base_font = font.mapping.get(PdfName("BaseFont"))
                 base_name = self._get_name(base_font)
                 standard_subset = _is_standard14_base_font_name(base_name)
-                descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+                carrier, kind = self._font_program_carrier(font)
+                if carrier is None:
+                    problems.append(
+                        f"Composite font {base_font} in {where} names no "
+                        "descendant font."
+                    )
+                    continue
+                descriptor = self._resolve(
+                    carrier.mapping.get(PdfName("FontDescriptor"))
+                )
                 if not isinstance(descriptor, PdfDictionary):
                     problems.append(
                         f"Font {base_font} in {where} missing FontDescriptor."
                     )
                     continue
-
-                # A program counts only under the key its kind uses (table 122):
-                # /FontFile for Type 1, /FontFile2 for TrueType, /FontFile3 for
-                # a compact or OpenType program. A TrueType program hung off a
-                # Type 1 font is not an embedded font, and a reader draws
-                # nothing from it -- which is what veraPDF says about one.
-                allowed = {
-                    "Type1": ("FontFile", "FontFile3"),
-                    "MMType1": ("FontFile", "FontFile3"),
-                    "TrueType": ("FontFile2", "FontFile3"),
-                }.get(subtype or "", ("FontFile", "FontFile2", "FontFile3"))
+                allowed = _FONT_PROGRAM_KEYS.get(kind or "", _ANY_FONT_PROGRAM_KEY)
                 embedded = any(PdfName(k) in descriptor.mapping for k in allowed)
                 if not embedded:
                     present = [
@@ -5066,9 +5078,9 @@ class SimplePdf:
                     ]
                     if present:
                         problems.append(
-                            f"Font {base_font} in {where} is /{subtype} but carries"
+                            f"Font {base_font} in {where} is /{kind} but carries"
                             f" its program as /{present[0]}, which is not a"
-                            f" program a /{subtype} font can have."
+                            f" program a /{kind} font can have."
                         )
                     else:
                         problems.append(f"Font {base_font} in {where} is not embedded.")
@@ -5351,18 +5363,22 @@ class SimplePdf:
             if subtype == "Type3":
                 continue  # a Type 3 font carries its glyphs as content streams
             base_font = font.mapping.get(PdfName("BaseFont"))
-            descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+            # A composite font keeps both its descriptor and its program on the
+            # descendant (9.7.4); looking for them here reported every embedded
+            # CID font as carrying no descriptor at all.
+            carrier, kind = self._font_program_carrier(font)
+            descriptor = (
+                self._resolve(carrier.mapping.get(PdfName("FontDescriptor")))
+                if carrier is not None
+                else None
+            )
             if not isinstance(descriptor, PdfDictionary):
                 problems.append(
                     f"Font {base_font} in {where} has no /FontDescriptor, so it "
                     f"cannot carry an embedded program ({clause})."
                 )
                 continue
-            allowed = {
-                "Type1": ("FontFile", "FontFile3"),
-                "MMType1": ("FontFile", "FontFile3"),
-                "TrueType": ("FontFile2", "FontFile3"),
-            }.get(subtype or "", ("FontFile", "FontFile2", "FontFile3"))
+            allowed = _FONT_PROGRAM_KEYS.get(kind or "", _ANY_FONT_PROGRAM_KEY)
             if not any(PdfName(key) in descriptor.mapping for key in allowed):
                 problems.append(
                     f"PDF/X requires every font embedded; {base_font} in {where} "
@@ -16984,12 +17000,13 @@ class SimplePdf:
         if current is None or current > limit or (limit >= 2.0 and current < limit):
             self.pdf_version = target
 
-        # 7. Automatic font embedding
-        if font_lookup_directory:
-            self._embed_missing_fonts(Path(font_lookup_directory))
-        # Fill any still-unembedded Standard-14/symbol fonts with bundled
-        # metric-compatible substitutes (PDF/A requires even Standard-14 embedded).
-        self._embed_standard14_fonts()
+        # 7. Automatic font embedding. The bundled metric-compatible
+        # substitutes go in first, since the Standard-14 families need no
+        # external font and are the same on every machine; what is left is
+        # resolved against the font sources the caller named -- a directory
+        # here, or the document's own ``font_substitution``, which is what the
+        # renderer already substitutes from.
+        self.embed_missing_fonts(lookup_directory=font_lookup_directory)
         # Normalize DeviceCMYK content color to RGB under the sRGB OutputIntent.
         self._normalize_cmyk_content()
         # PDF/A-1 forbids transparency groups; drop the ones that are inert.
@@ -17196,10 +17213,9 @@ class SimplePdf:
         if current is None or current < target:
             self.pdf_version = rules.base_pdf_version
 
-        # 9. Fonts.
-        if font_lookup_directory:
-            self._embed_missing_fonts(Path(font_lookup_directory))
-        self._embed_standard14_fonts()
+        # 9. Fonts, as for PDF/A: the bundled substitutes first, then whatever
+        # font sources the caller named.
+        self.embed_missing_fonts(lookup_directory=font_lookup_directory)
 
         logger.info("PDF/X conversion complete for %s.", name)
         return self.check_pdfx_compliance(name)[0]
@@ -17578,8 +17594,10 @@ class SimplePdf:
         # PDF/UA requires every font used for rendering to be embedded
         # (ISO 14289-1 7.21.4.1, ISO 14289-2 8.4.5.5.1), which this used to
         # leave undone: a converted document failed its own check, and veraPDF,
-        # for a Standard-14 font the converter can perfectly well supply.
-        self._embed_standard14_fonts()
+        # for a Standard-14 font the converter can perfectly well supply. The
+        # document's own font sources are consulted too, so a named font is
+        # supplied here exactly as it is for PDF/A.
+        self.embed_missing_fonts()
 
         logger.info("PDF/UA structure added; checking remaining issues.")
         return self.check_pdfua_compliance(part)[0]
@@ -17766,78 +17784,362 @@ class SimplePdf:
             root.mapping.get(PdfName("Metadata")), xmp_stream
         )
 
-    def _embed_missing_fonts(self, lookup_dir: Path) -> None:
-        """Attempt to embed missing fonts from the lookup directory."""
-        if not self._cos_doc or not lookup_dir.is_dir():
-            return
+    def embed_missing_fonts(
+        self,
+        *,
+        options: Any = None,
+        lookup_directory: Path | str | None = None,
+        bundled: bool = True,
+    ) -> list[str]:
+        """Embed a real program for every non-embedded font a face can be found for.
 
-        for i in range(len(self.pages)):
-            page_dict = self._get_page_dict(i)
-            if not isinstance(page_dict, PdfDictionary):
+        PDF/A, PDF/UA and PDF/X all require every font used for rendering to be
+        embedded, and a document that names ``Arial`` without carrying it cannot
+        be made to conform by any amount of rewriting -- the program is not in
+        the file. What *can* be done is to supply it, which is what this does:
+        the font sources the renderer already substitutes from
+        (:class:`~aspose_pdf.font_substitution.FontSubstitutionOptions` -- named
+        directories, programs handed over, the machine's own fonts) are indexed
+        by their **real** ``name`` tables and a face is resolved for each
+        missing font, exactly as the rasterizer resolves one to draw with. The
+        difference is that this writes it into the file, so the document carries
+        the font from then on.
+
+        The face is matched on the font's own ``/BaseFont`` name, refined by the
+        descriptor's bold/italic signals, and its advances are **not** imposed
+        on the page: the document's own ``/Widths`` stay, so a substituted face
+        changes which glyphs are drawn and never where they sit. That is the
+        same contract the renderer's substitution has always had, and what a
+        viewer does with a font it does not have -- with the same consequence,
+        that a face whose advances differ from the named font's draws at the
+        named font's spacing, which can run its glyphs together.
+
+        The program is attached through the key its kind uses and ``/Subtype``
+        is corrected to match (ISO 32000-1 Table 122), since a TrueType program
+        under a ``/Type1`` font is not an embedded font at all. A directory
+        named here is searched the same way: by what each face *is*, not by
+        what its file is called. Matching filenames meant ``arial.ttf`` was
+        missed for ``Arial``, ``Arial.otf`` produced a Type 1 key over an
+        OpenType program -- which the compliance check then reported as not
+        embedded at all -- and the AcroForm's own fonts were never looked at.
+
+        A **Standard-14** family, and Symbol and ZapfDingbats, need no font
+        source at all: they are supplied from the bundled metric-compatible
+        faces first, which is why this is worth calling with no arguments.
+        Pass ``bundled=False`` to use only the sources named.
+
+        Returns the fonts it could **not** supply, one message each: a name no
+        indexed face answers to, a face whose outlines cannot be attached to
+        that kind of font, and a composite font, whose CIDs index its original
+        program's glyphs (see ``supported-features.md``). An empty list means
+        every missing font now has a program.
+        """
+        from .font_resolver import resolver_for
+
+        self._ensure_not_disposed()
+        if self._cos_doc is None:
+            return []
+        if options is None and lookup_directory is not None:
+            from aspose_pdf.font_substitution import FontSubstitutionOptions
+
+            options = FontSubstitutionOptions(directories=[Path(lookup_directory)])
+        if options is None:
+            options = getattr(self, "_font_substitution", None)
+        if bundled:
+            self._embed_standard14_fonts()
+        # No font source named is not the same as nothing to say: the fonts
+        # the bundled faces could not cover are still missing, and the caller
+        # asked which ones. The walk below reports them.
+        resolver = resolver_for(options)
+
+        from .font_authoring import prepare_authored_font
+        from .font_subset import read_unicode_cmap
+        from .glyph_outlines import TrueTypeOutlines
+
+        unsupplied: list[str] = []
+        cache: dict[bytes, dict | None] = {}
+
+        def entry_for(face: Any) -> dict | None:
+            """The attachable form of a resolved face, built once per program."""
+            if face.data in cache:
+                return cache[face.data]
+            outlines = TrueTypeOutlines(face.data)
+            if not outlines.ok:
+                cache[face.data] = None
+                return None
+            try:
+                metrics = prepare_authored_font(face.data).descriptor_metrics
+            except FontEmbeddingException:
+                cache[face.data] = None
+                return None
+            stream = PdfStream(
+                bytes(face.data),
+                {
+                    PdfName("Length"): PdfNumber(len(face.data)),
+                    PdfName("Length1"): PdfNumber(len(face.data)),
+                },
+            )
+            cache[face.data] = {
+                "ref": self._cos_doc.register_object(stream),
+                "metrics": metrics,
+                "unicode_to_gid": read_unicode_cmap(face.data) or {},
+                "outlines": outlines,
+                "upem": outlines.units_per_em or 1000,
+                "key": face.name,
+            }
+            return cache[face.data]
+
+        for font, where in self._rendering_font_dictionaries():
+            subtype = self._get_name(font.mapping.get(PdfName("Subtype")))
+            if subtype == "Type3":
+                continue  # a Type 3 font carries its glyphs as content streams
+            base_font = self._get_name(font.mapping.get(PdfName("BaseFont")))
+            label = f"{base_font or '(unnamed font)'} in {where}"
+            if subtype == "Type0":
+                message = self._embed_descendant_font(font, where, resolver, entry_for)
+                if message:
+                    unsupplied.append(message)
                 continue
-            res = self._resolve(page_dict.get(PdfName("Resources")))
-            if not isinstance(res, PdfDictionary):
+            if subtype not in ("Type1", "MMType1", "TrueType"):
                 continue
-            fonts = self._resolve(res.get(PdfName("Font")))
-            if not isinstance(fonts, PdfDictionary):
-                continue
-
-            for font_ref in fonts.mapping.values():
-                font = self._resolve(font_ref)
-                if not isinstance(font, PdfDictionary):
-                    continue
-
-                descriptor = self._resolve(font.get(PdfName("FontDescriptor")))
-                if not isinstance(descriptor, PdfDictionary):
-                    continue
-
-                # Check if already embedded
-                embedded = any(
-                    PdfName(k) in descriptor
-                    for k in ["FontFile", "FontFile2", "FontFile3"]
+            descriptor = self._resolve(font.mapping.get(PdfName("FontDescriptor")))
+            if isinstance(descriptor, PdfDictionary) and any(
+                PdfName(key) in descriptor.mapping
+                for key in ("FontFile", "FontFile2", "FontFile3")
+            ):
+                continue  # already embedded
+            flags, italic, weight = self._descriptor_signals(descriptor)
+            face = (
+                resolver.by_name(
+                    base_font, flags=flags, italic_angle=italic, font_weight=weight
                 )
-                if embedded:
-                    continue
+                if resolver is not None
+                else None
+            )
+            if face is None:
+                unsupplied.append(
+                    f"No font source answers to {label}; name a directory or "
+                    "hand over the program through FontSubstitutionOptions."
+                )
+                continue
+            if face.is_cff:
+                unsupplied.append(
+                    f"The face found for {label} ({face.name}) keeps its "
+                    "outlines in a CFF table, which cannot be attached to a "
+                    f"/{subtype} font as a TrueType program."
+                )
+                continue
+            entry = entry_for(face)
+            if entry is None:
+                unsupplied.append(
+                    f"The face found for {label} ({face.name}) is not a usable "
+                    "font program."
+                )
+                continue
+            self._apply_embedded_substitute(font, descriptor, base_font, entry)
+            logger.info("Embedded %s for %s", face.name, label)
+        return unsupplied
 
-                base_font = self._get_name(font.get(PdfName("BaseFont")))
-                if not base_font:
-                    continue
+    def _embed_descendant_font(
+        self, font: PdfDictionary, where: str, resolver: Any, entry_for: Any
+    ) -> str | None:
+        """Supply a program for a composite font, or say why it cannot be.
 
-                # Clean base font name (remove subset prefix if any,
-                # e.g. ABCDEF+Arial -> Arial)
-                font_name = base_font.split("+")[-1]
+        A ``CIDFontType2`` selects glyphs by **glyph index**, through
+        ``/CIDToGIDMap``, so another program's glyphs are not the ones its CIDs
+        name: the map has to be rebuilt. It can be, when the font says what its
+        codes mean -- ``/ToUnicode`` gives the character for each CID and the
+        face's own ``cmap`` gives that character's glyph -- which is the same
+        route the renderer takes to draw a substituted composite font. The
+        document's ``/W`` is left alone, so nothing moves.
 
-                # Search for font file in lookup directory
-                font_file = None
-                for ext in [".ttf", ".otf", ".TTF", ".OTF"]:
-                    candidate = lookup_dir / (font_name + ext)
-                    if candidate.is_file():
-                        font_file = candidate
-                        break
+        A ``CIDFontType0`` is refused: its CIDs index a CID-keyed CFF's charset,
+        which no amount of remapping turns into a TrueType glyph order. So is a
+        font whose ``/Encoding`` is not an Identity CMap, because then
+        ``/ToUnicode``'s codes are not its CIDs.
+        """
+        base_font = self._get_name(font.mapping.get(PdfName("BaseFont")))
+        label = f"{base_font or '(unnamed font)'} in {where}"
+        descendants = self._resolve(font.mapping.get(PdfName("DescendantFonts")))
+        items = descendants.items if isinstance(descendants, PdfArray) else []
+        descendant = self._resolve(items[0]) if items else None
+        if not isinstance(descendant, PdfDictionary):
+            return f"The composite font {label} names no descendant font."
+        kind = self._get_name(descendant.mapping.get(PdfName("Subtype")))
+        descriptor = self._resolve(descendant.mapping.get(PdfName("FontDescriptor")))
+        if isinstance(descriptor, PdfDictionary) and any(
+            PdfName(key) in descriptor.mapping
+            for key in ("FontFile", "FontFile2", "FontFile3")
+        ):
+            return None  # already embedded
+        if kind != "CIDFontType2":
+            return (
+                f"{label} is a /{kind}, whose CIDs index a CID-keyed CFF's own "
+                "charset; a replacement program cannot be mapped onto them."
+            )
+        # The rebuilt map is indexed by CID, and the only thing that says what
+        # each CID means is /ToUnicode -- which is keyed by *character code*.
+        # Under an Identity encoding the two are the same number (9.7.4.2);
+        # under a predefined CMap a code reaches its CID through that CMap, so
+        # taking codes for CIDs would index the table at the wrong places and
+        # draw wrong glyphs. Better to say so than to do that quietly.
+        encoding = self._get_name(font.mapping.get(PdfName("Encoding")))
+        if encoding not in ("Identity-H", "Identity-V"):
+            named = f"/{encoding}" if encoding else "an embedded CMap"
+            return (
+                f"{label} maps its codes to CIDs through {named}, so its "
+                "/ToUnicode does not say what each CID means and a glyph map "
+                "for another program cannot be built from it."
+            )
+        cid_to_unicode = self._cid_to_unicode(font)
+        if not cid_to_unicode:
+            return (
+                f"{label} carries no /ToUnicode map, so there is nothing to say "
+                "which character each CID stands for and no way to find it in "
+                "another font."
+            )
+        flags, italic, weight = self._descriptor_signals(descriptor)
+        face = None
+        if resolver is not None:
+            face = resolver.by_name(
+                base_font, flags=flags, italic_angle=italic, font_weight=weight
+            )
+        if face is None and resolver is not None:
+            # Nothing answers to the name, but a composite font also says which
+            # character collection it is written for (9.7.3), and that is enough
+            # to pick a face that covers the script.
+            ordering = self._cid_system_ordering(descendant)
+            face = resolver.by_ordering(
+                ordering,
+                serif=bool(flags & 2),
+                bold=bool(weight and weight >= 600),
+                italic=bool(italic),
+            )
+        if face is None:
+            return (
+                f"No font source answers to {label}; name a directory or hand "
+                "over the program through FontSubstitutionOptions."
+            )
+        if face.is_cff:
+            return (
+                f"The face found for {label} ({face.name}) keeps its outlines "
+                "in a CFF table, which a /CIDFontType2 cannot carry."
+            )
+        entry = entry_for(face)
+        if entry is None:
+            return (
+                f"The face found for {label} ({face.name}) is not a usable "
+                "font program."
+            )
+        if not isinstance(descriptor, PdfDictionary):
+            descriptor = PdfDictionary({PdfName("Type"): PdfName("FontDescriptor")})
+            descendant.mapping[PdfName("FontDescriptor")] = (
+                self._cos_doc.register_object(descriptor)
+            )
+        descriptor.mapping[PdfName("FontFile2")] = entry["ref"]
+        if base_font and PdfName("FontName") not in descriptor.mapping:
+            descriptor.mapping[PdfName("FontName")] = PdfName(base_font)
+        metrics = entry["metrics"]
+        for name, value in (
+            ("Flags", PdfNumber(int(metrics.get("Flags", 4)))),
+            ("ItalicAngle", PdfNumber(float(metrics.get("ItalicAngle", 0.0)))),
+            ("Ascent", PdfNumber(int(metrics.get("Ascent", 880)))),
+            ("Descent", PdfNumber(int(metrics.get("Descent", -120)))),
+            ("CapHeight", PdfNumber(int(metrics.get("CapHeight", 880)))),
+            ("StemV", PdfNumber(int(metrics.get("StemV", 80)))),
+        ):
+            descriptor.mapping.setdefault(PdfName(name), value)
+        bbox = metrics.get("FontBBox")
+        if isinstance(bbox, (tuple, list)) and len(bbox) == 4:
+            descriptor.mapping.setdefault(
+                PdfName("FontBBox"), PdfArray([PdfNumber(int(v)) for v in bbox])
+            )
+        self._write_cid_to_gid_map(descendant, cid_to_unicode, entry)
+        logger.info("Embedded %s for %s, remapping its CIDs", face.name, label)
+        return None
 
-                if font_file:
-                    try:
-                        font_data = font_file.read_bytes()
-                        font_stream = PdfStream(
-                            content=font_data,
-                            mapping={
-                                PdfName("Length1"): PdfNumber(len(font_data)),
-                                PdfName("Length"): PdfNumber(len(font_data)),
-                            },
-                        )
-                        # For TrueType fonts, use FontFile2
-                        key = (
-                            "FontFile2"
-                            if font_file.suffix.lower() == ".ttf"
-                            else "FontFile"
-                        )
-                        stream_ref = self._cos_doc.register_object(font_stream)
-                        descriptor.mapping[PdfName(key)] = stream_ref
-                        logger.info(f"Embedded font {base_font} from {font_file}")
-                    except PdfResourceLimitException:
-                        raise
-                    except PDF_OPERATION_ERRORS as e:
-                        logger.error(f"Failed to embed font {base_font}: {e}")
+    def _write_cid_to_gid_map(
+        self, descendant: PdfDictionary, cid_to_unicode: dict, entry: dict
+    ) -> None:
+        """Point each CID at the glyph the supplied face holds for its character.
+
+        A stream of two-byte glyph indices, indexed by CID (ISO 32000-1 9.7.4.2).
+        A CID whose character the face does not have becomes glyph 0 -- the
+        notdef box, which is the honest answer for a character the supplied font
+        cannot draw, and better than a glyph belonging to something else.
+        """
+        unicode_to_gid = entry["unicode_to_gid"]
+        highest = max(cid_to_unicode)
+        self._load_budget.check(
+            (highest + 1) * 2,
+            "max_decoded_stream_bytes",
+            "CIDToGIDMap for a supplied font",
+        )
+        table = bytearray((highest + 1) * 2)
+        for cid, text in cid_to_unicode.items():
+            if not text:
+                continue
+            gid = unicode_to_gid.get(ord(text[0]), 0)
+            table[cid * 2] = (gid >> 8) & 0xFF
+            table[cid * 2 + 1] = gid & 0xFF
+        stream = PdfStream(
+            bytes(table), {PdfName("Length"): PdfNumber(len(table))}
+        )
+        descendant.mapping[PdfName("CIDToGIDMap")] = self._cos_doc.register_object(
+            stream
+        )
+
+    def _cid_system_ordering(self, descendant: PdfDictionary) -> str | None:
+        """The character collection a descendant font declares, if any."""
+        info = self._resolve(descendant.mapping.get(PdfName("CIDSystemInfo")))
+        if not isinstance(info, PdfDictionary):
+            return None
+        ordering = self._resolve(info.mapping.get(PdfName("Ordering")))
+        if isinstance(ordering, PdfString):
+            return decode_pdf_text_string(ordering).strip() or None
+        return None
+
+    def _cid_to_unicode(self, font: PdfDictionary) -> dict[int, str]:
+        """``CID -> text`` from a composite font's ``/ToUnicode``.
+
+        The map is keyed by *character code*, which for the Identity encodings
+        a composite font almost always uses is the CID itself (9.7.4.2). A code
+        of another width is not a CID and is left out rather than guessed at:
+        the point of the map here is to find each CID's character in another
+        font, and a wrong character draws a wrong glyph.
+        """
+        codes = self._font_to_unicode_map(font) or {}
+        out: dict[int, str] = {}
+        for code, text in codes.items():
+            if len(code) != 2 or not text:
+                continue
+            out[(code[0] << 8) | code[1]] = text
+        return out
+
+    def _font_program_carrier(
+        self, font: PdfDictionary
+    ) -> tuple[PdfDictionary | None, str | None]:
+        """The dictionary that holds *font*'s program, and the kind that decides its key.
+
+        A simple font is its own carrier. A **composite** font is not: Table 121
+        gives a Type 0 font no ``/FontDescriptor`` at all, and 9.7.4 puts it on
+        the descendant along with the program. Looking for the descriptor on the
+        Type 0 font reported every CID font -- embedded or not -- as missing
+        one, so a document carrying a perfectly good font could not be made to
+        validate.
+
+        ``(None, None)`` for a composite font that names no descendant, which is
+        a malformed font rather than an unembedded one.
+        """
+        subtype = self._get_name(font.mapping.get(PdfName("Subtype")))
+        if subtype != "Type0":
+            return font, subtype
+        descendants = self._resolve(font.mapping.get(PdfName("DescendantFonts")))
+        items = descendants.items if isinstance(descendants, PdfArray) else []
+        descendant = self._resolve(items[0]) if items else None
+        if not isinstance(descendant, PdfDictionary):
+            return None, None
+        return descendant, self._get_name(descendant.mapping.get(PdfName("Subtype")))
 
     def _descriptor_signals(
         self, descriptor: Any

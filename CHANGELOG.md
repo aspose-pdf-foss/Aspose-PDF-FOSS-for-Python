@@ -9,6 +9,47 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A font the document only names can now be put into it.** A PDF may refer to
+  `Arial` and not carry it, and then its text draws differently wherever Arial
+  is different or absent — which PDF/A, PDF/UA and PDF/X all forbid, and which
+  no rewriting fixes, because the program is not in the file. The renderer
+  could already *draw* such a font from faces the caller made available
+  (`Document.font_substitution`); nothing could write one in.
+  - `Document.embed_fonts()` supplies it. With no arguments it covers the
+    Standard 14, Symbol and ZapfDingbats from the bundled metric-compatible
+    faces — no font source needed. `directory=` or
+    `sources=FontSubstitutionOptions(...)` (programs handed over, named
+    folders, the machine's own fonts) covers everything else, and with neither,
+    the document's own `font_substitution` is used.
+  - It returns what it could **not** supply, one message per font saying why:
+    no source answers to the name, the face's outlines are a kind that font
+    cannot carry, the font is a `CIDFontType0`, or it is a composite font whose
+    codes are not its CIDs (anything but an Identity CMap), so `/ToUnicode`
+    cannot say what to map. An empty list means every font in the document now
+    has a program.
+  - **Composite fonts too.** A `CIDFontType2` selects glyphs by index
+    (9.7.4.2), so another program's glyphs are not the ones its CIDs name: the
+    `/CIDToGIDMap` is rebuilt through `/ToUnicode` and the face's own `cmap`.
+    A document whose program was stripped and re-supplied renders
+    **pixel-identically** to the original under pdfium.
+  - The program goes under the key its kind uses and `/Subtype` is corrected to
+    match (table 122), since a TrueType program under a `/Type1` font is not an
+    embedded font at all. The document's `/Widths` and `/W` are kept, so
+    glyphs change and positions do not.
+  - `convert_to_pdfa`, `convert_to_pdfua` and `convert_to_pdfx` all run this
+    pass. PDF/UA previously embedded only the bundled Standard-14 faces and
+    ignored the document's font sources, so a named font it could have supplied
+    stayed missing.
+  - `convert_to_pdfa(font_lookup_directory=...)` searches that directory by
+    what each face **is** — the family and style in its own `name` table — not
+    by file name. It used to look for a file *called* `Arial.ttf` and attach
+    whatever was under that name: `arial.ttf` was missed, `Arial.otf` produced
+    a Type 1 key over an OpenType program, and 14 bytes of anything embedded as
+    a font program.
+  - Verified against qpdf (structure), pdfminer.six (text) and pdfium
+    (rendering), in both directions: a qpdf-written file with a named,
+    unembedded font comes back with a 50 KB `/FontFile2` that all three read.
+
 - **Resizing a page now takes its drawing with it.** `Page.size` and
   `PdfPageEditor.resize` changed the **sheet** and left the drawing where it
   was, so a smaller sheet cropped it and a larger one padded it. Nothing scaled
@@ -558,6 +599,18 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     four may be written as given, since a reader intersects them and falls back.
 
 ### Fixed
+
+- **An embedded composite font failed our own PDF/A and PDF/X font checks.**
+  Both looked for `/FontDescriptor` on the top-level font dictionary, where a
+  `Type0` font legitimately has none — table 121 does not give it one, and
+  9.7.4 puts it on the descendant along with the program. Every CID-font
+  document was therefore reported as `missing FontDescriptor`, embedded or not,
+  and could not be made to validate. Both now follow `/DescendantFonts`, and
+  judge the program by the key its kind uses (table 126: `/FontFile3` for a
+  `CIDFontType0`, `/FontFile2` or `/FontFile3` for a `CIDFontType2`). A
+  composite font that really carries no program now reads as *not embedded*
+  rather than as missing a descriptor. The PDF/UA check already did this
+  correctly and is unchanged.
 
 - **A section holding a graphics state open could not survive the next append.**
   Found while building the above: content isolation saves and restores what a

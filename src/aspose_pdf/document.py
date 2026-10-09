@@ -1367,6 +1367,84 @@ class Document:
             raise AsposePdfException("No document loaded")
         self._engine_pdf._font_substitution = value
 
+    def embed_fonts(
+        self,
+        *,
+        sources: FontSubstitutionOptions | None = None,
+        directory: str | Path | None = None,
+    ) -> list[str]:
+        """Embed a real font program for every font the document only names.
+
+        A PDF may *refer* to a font without carrying it -- ``/BaseFont /Arial``
+        and nothing else -- and then it draws differently wherever Arial is
+        different or absent. PDF/A, PDF/UA and PDF/X all forbid that, and no
+        amount of rewriting fixes it, because the program simply is not in the
+        file. This supplies it: each missing font is matched to a real face, and
+        the face is written into the document, which carries it from then on::
+
+            report = document.embed_fonts()                      # bundled faces
+            report = document.embed_fonts(directory="/fonts")    # and a folder
+            report = document.embed_fonts(
+                sources=FontSubstitutionOptions.system()         # and this machine
+            )
+
+        With no arguments it supplies the **Standard-14** families, and Symbol
+        and ZapfDingbats, from the bundled metric-compatible faces -- those need
+        no font source and are the same on every machine. For anything else,
+        name where the fonts are: a *directory*, a
+        :class:`~aspose_pdf.font_substitution.FontSubstitutionOptions` with
+        programs you hand over or the machine's own fonts, or neither, in which
+        case the document's :attr:`font_substitution` is used. Faces are matched
+        on what they *are* -- the family and style in their own ``name`` table,
+        refined by the font's descriptor -- not on what their files are called.
+
+        The document's own metrics stay: ``/Widths`` and ``/W`` are not
+        replaced, so an embedded face changes which glyphs are drawn and never
+        where they sit. That is deliberate -- it is the contract rendering
+        substitution has always had, and what a viewer does with a font it does
+        not have. It also means a face that is **not** metrically compatible
+        with the one the document named shows as bad spacing, up to glyphs
+        overlapping each other, rather than as reflowed text. Supply a face
+        metrically close to the original, and check the result, before relying
+        on this for a document whose look matters.
+
+        Returns
+        -------
+        List[str]
+            One message per font it could **not** supply, saying why: no source
+            answers to the name; the face's outlines are a kind that font
+            cannot carry; the font is a ``CIDFontType0``, whose CIDs index its
+            original program's own charset; or it is a composite font whose
+            codes are not its CIDs -- anything but an Identity CMap -- so
+            nothing says which character each CID stands for. An empty list
+            means every font in the document now has a program. Call it before
+            :meth:`convert_to_pdfa`, :meth:`convert_to_pdfua` or
+            :meth:`convert_to_pdfx` to see what will be left over -- each of
+            those does this pass itself.
+
+        Raises
+        ------
+        PdfValidationException
+            If *sources* is not a ``FontSubstitutionOptions``, or both *sources*
+            and *directory* are given.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if sources is not None and directory is not None:
+            raise PdfValidationException(
+                "Name the fonts' location once: either sources or directory, "
+                "not both."
+            )
+        if sources is not None and not isinstance(sources, FontSubstitutionOptions):
+            raise PdfValidationException(
+                "sources must be a FontSubstitutionOptions or None, not "
+                f"{type(sources).__name__}."
+            )
+        return self._engine_pdf.embed_missing_fonts(
+            options=sources, lookup_directory=directory
+        )
+
     def render_page(
         self,
         page_index: int,

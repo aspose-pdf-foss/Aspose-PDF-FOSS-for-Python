@@ -1961,6 +1961,41 @@ Supported:
   face's own advance, as it already did for the bundled substitutes.
   Discovery is **opt-in**: with no options the renderer uses only the bundled
   substitute faces, exactly as before, and stays identical across machines.
+- **Write a font the document only names into the document.**
+  `Document.embed_fonts()` supplies a real program for every font with none,
+  from the same sources the renderer substitutes from. With no arguments it
+  covers the Standard 14, Symbol and ZapfDingbats from the bundled
+  metric-compatible faces; `directory=` or
+  `sources=FontSubstitutionOptions(...)` covers the rest, and with neither, the
+  document's own `font_substitution` is used. A directory is searched by what
+  each face **is** -- the family and style its own `name` table declares,
+  refined by the font's descriptor flags -- falling back to the file stem for a
+  stripped subset that declares none. The program is attached under the key its
+  kind uses and `/Subtype` is corrected to match (Table 122), since a TrueType
+  program under a `/Type1` font is not an embedded font at all. For a
+  **composite** font the `/CIDToGIDMap` is rebuilt from `/ToUnicode` and the
+  face's `cmap`, because a `CIDFontType2`'s CIDs are glyph indices into the
+  program it no longer has (9.7.4.2); a document whose program is stripped and
+  re-supplied renders pixel-identically to the original under pdfium.
+  `convert_to_pdfa`, `convert_to_pdfua` and `convert_to_pdfx` all run this pass
+  before reporting what is left.
+  - **Not supplied, and said so**: the return value is one message per font it
+    could not cover -- no source answers to the name, the face keeps its
+    outlines in a CFF table that kind of font cannot carry, the font is a
+    `CIDFontType0` (its CIDs index a CID-keyed CFF's own charset, which no
+    remapping turns into TrueType glyph order), a composite font carries no
+    `/ToUnicode` to say what its CIDs mean, or a composite font's `/Encoding`
+    is not an Identity CMap -- then a character code is not the same number as
+    a CID (9.7.4.2) and `/ToUnicode`, which is keyed by code, says nothing
+    about CIDs. An empty list means every font in the document now has a
+    program.
+  - **Metrics are the document's, not the face's**: `/Widths` and `/W` are
+    kept, so a supplied face changes which glyphs are drawn and never where
+    they sit -- the same contract substitution has at render time, and what a
+    viewer does with a font it does not have. A face whose advances differ
+    from the named font's therefore draws at the named font's spacing, which
+    at the extreme runs glyphs into each other. Supply a metrically close face
+    when the result has to look right.
 - Discover fonts through `FontRepository` and the `FontSource` hierarchy:
   `FolderFontSource` (optionally recursive), `FileFontSource`,
   `MemoryFontSource`, and `SystemFontSource`.
@@ -2030,9 +2065,11 @@ Boundaries:
   collection) only for a face that wins, and are cached per options object.
   Indexing is bounded in files scanned, file size and cached bytes. A face is
   matched by the names its own `name` table declares, falling back to the file
-  stem (or the caller's label) for a stripped subset that has none. It affects
-  **rendering only**: text extraction, editing and PDF/A font embedding are
-  unchanged, and no substituted program is written into the document.
+  stem (or the caller's label) for a stripped subset that has none. Rendering
+  never writes a substituted program into the document, and text extraction and
+  editing are unchanged by it; `Document.embed_fonts()` (and the PDF/A, PDF/UA
+  and PDF/X conversions, which call it) is the one path that resolves a face
+  from these same sources and **writes** it into the file.
 - Embedded glyph outlines are rasterized by the page renderer (see
   [Pages](#pages)) for all three program formats: TrueType (`glyf`), CFF
   (`/FontFile3`, name-keyed and CID-keyed), and Type 1 (`/FontFile`, including
@@ -3137,8 +3174,10 @@ Supported:
   entries, AcroForm `/NeedAppearances`/XFA, and offending annotation flags.
   Non-embedded **Standard-14 and Symbol/ZapfDingbats** fonts are embedded with
   the bundled metric-compatible substitute (with synthesized `/Widths` from that
-  face) even without a `font_lookup_directory`; other non-embedded fonts still
-  need the directory and stay reported. **DeviceCMYK** content color is
+  face) even without a `font_lookup_directory`; any other non-embedded font is
+  supplied from `font_lookup_directory=` or the document's `font_substitution`
+  if one of them answers to it (see `Document.embed_fonts()` under
+  [Fonts](#fonts)), and stays reported when none does. **DeviceCMYK** content color is
   normalized to RGB (the `k`/`K` operators and `/DeviceCMYK` color-space
   fills/strokes), using the same device conversion the renderer applies so
   appearance is unchanged — in page content **and** inside nested form XObjects.
@@ -3530,7 +3569,10 @@ Supported:
 - Every font used for rendering must be embedded, walked the way the PDF/A
   check walks them -- a form field's `/DR` font counts as much as a page's own.
   Unembedded Standard-14 fonts are filled from the bundled substitutes, and
-  `font_lookup_directory=` is searched first.
+  `font_lookup_directory=` (or the document's `font_substitution`) supplies the
+  rest where it can; see `Document.embed_fonts()` under [Fonts](#fonts). A
+  **composite** font's descriptor and program are read off its descendant,
+  where 9.7.4 puts them.
 - The multimedia annotation subtypes (`Sound`, `Movie`, `Screen`, `RichMedia`,
   `3D`) are prohibited. A **printable** annotation whose rectangle lies over the
   bleed (or trim) box is reported as a **warning**: the prohibition is clear but

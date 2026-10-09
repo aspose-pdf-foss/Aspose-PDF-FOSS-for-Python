@@ -134,6 +134,12 @@ flowchart TD
   variable face — one file with a weight axis, which is how modern system fonts ship — is drawn at
   the instance the style asks for, whether its outlines are CFF2 or `glyf`. Off by default, so
   rendering stays identical across machines unless you ask for it.
+- `Document.embed_fonts()` writes those faces **into** the file, so a PDF that merely names `Arial`
+  ends up carrying it — which is what PDF/A, PDF/UA and PDF/X require and what no amount of
+  rewriting can otherwise fix. With no arguments it supplies the Standard 14 from bundled
+  metric-compatible faces; name a directory or hand over the programs for the rest. A composite
+  font's `/CIDToGIDMap` is rebuilt so its CIDs still land on the right glyphs, and whatever it
+  could not supply comes back as a list saying why.
 - `Document.destinations` names places in the document — `destinations["chapter-2"] =
   XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
   (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks
@@ -497,6 +503,19 @@ with Document("report-cjk.pdf") as document:
     # FontSubstitutionOptions(fonts={"SimSun": data}) keep it reproducible.
     document.font_substitution = FontSubstitutionOptions.system()
     document.save_page_as_image(0, "page-1.png", dpi=144)
+```
+
+### Put a Missing Font Into the Document
+
+```python
+from aspose_pdf import Document, FontSubstitutionOptions
+
+with Document("names-arial.pdf") as document:
+    unsupplied = document.embed_fonts(sources=FontSubstitutionOptions.system())
+    for message in unsupplied:          # empty when every font now has a program
+        print(message)
+    document.convert_to_pdfa("2b")
+    document.save("archival.pdf")
 ```
 
 ### Author Multi-Script Unicode Text
@@ -944,6 +963,7 @@ and delete workflows. 265 public types are organized by module below.
     `change_passwords(old_password, new_user_password, new_owner_password) -> Document`
   - `validate() -> bool` / `check() -> bool` / `repair() -> Document`
   - `validate_pdfa(level) -> PdfAValidationResult` / `convert_to_pdfa(level, font_lookup_directory) -> list[str]`
+  - `embed_fonts(sources, directory) -> list[str]`
   - `validate_pdfua() -> PdfUaValidationResult` / `convert_to_pdfua(language, title, auto_tag) -> list[str]` /
     `auto_tag(image_alt) -> int`
   - `replace_text(search, replacement, page_index, case_sensitive, max_count) -> int` /
