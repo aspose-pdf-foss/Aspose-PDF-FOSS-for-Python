@@ -140,6 +140,10 @@ flowchart TD
   metric-compatible faces; name a directory or hand over the programs for the rest. A composite
   font's `/CIDToGIDMap` is rebuilt so its CIDs still land on the right glyphs, and whatever it
   could not supply comes back as a list saying why.
+- `pages.insert(i, other.pages[j])` takes a page out of another document and puts it where you
+  want it, with everything that belongs to it — resources, annotations, the fields its widgets
+  belong to, its tagging, its label, the bookmarks that pointed at it. Previously that meant
+  `extract_pages` into a scratch document, `merge`, then `move_page`.
 - `Document.destinations` names places in the document — `destinations["chapter-2"] =
   XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
   (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks
@@ -1026,7 +1030,8 @@ and delete workflows. 265 public types are organized by module below.
   - `add_stamp(stamp) -> Page` — a text, image or page-number stamp over or under the page
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - properties: `index`, `label`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
-- `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`,
+- `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`
+  (the page may belong to another document, and is then imported with all it names),
   `delete(index) -> None`, `clear() -> None`, `contains(page) -> bool`, `index_of(page) -> int`
 - `PageLabelCollection` (`Document.page_labels`) — a mutable mapping from the page a label range
   starts at to its `PageLabel(style, prefix, start)`; `NumberingStyle` names the five styles and

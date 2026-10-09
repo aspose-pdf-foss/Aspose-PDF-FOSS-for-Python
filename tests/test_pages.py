@@ -3,8 +3,8 @@ import io
 import pytest
 
 from aspose_pdf.document import Document
-from aspose_pdf.engine.cos import PdfArray
-from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfName
+from aspose_pdf.exceptions import AsposePdfException
 from aspose_pdf.pages import Page
 
 
@@ -546,13 +546,30 @@ def test_a_copy_hangs_from_the_node_that_lists_it():
     assert listing == [parent]
 
 
-def test_a_page_from_another_document_is_refused():
-    """Its resources live in that document's graph; merge brings them across."""
+def test_a_page_from_another_document_is_imported_with_what_it_names():
+    """Not refused any more, and not copied bare either.
+
+    The page dictionary on its own leaves content naming resources that are
+    not there: ``/F1`` then resolves to the *target's* ``/F1``, or to nothing.
+    Bringing it across is the same import ``merge`` does, for one page.
+    """
     document = Document(io.BytesIO(_document_with_a_furnished_page()))
     other = Document(io.BytesIO(_document_with_a_furnished_page()))
 
-    with pytest.raises(PdfValidationException, match="merge"):
-        document.pages.insert(0, other.pages[0])
+    document.pages.insert(0, other.pages[0])
+
+    assert len(document.pages) == 3
+    assert "SOURCE TEXT" in document.pages[0].extract_text()
+    engine = document._engine_pdf
+    resources = engine._resolve(
+        engine._get_page_dict(0).get(PdfName("Resources"))
+    )
+    assert isinstance(resources, PdfDictionary)
+    fonts = engine._resolve(resources.mapping.get(PdfName("Font")))
+    xobjects = engine._resolve(resources.mapping.get(PdfName("XObject")))
+    assert fonts is not None and len(fonts.mapping) == 1
+    assert xobjects is not None and len(xobjects.mapping) == 1
+    assert [a.subtype for a in document.pages[0].annotations] == ["Square"]
 
 
 def test_delete_takes_the_page_it_names_with_it(document):

@@ -9,6 +9,25 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A page can be taken from one document and put in another.**
+  `pages.insert(i, other.pages[j])` was refused outright — moving a page
+  between documents meant `extract_pages` into a scratch document, `merge` it,
+  then `move_page` it into position.
+  - `PageCollection.insert` and `PageCollection.add` now accept a `Page` of
+    another document and **import** it: the page and the graph it names —
+    resources, annotations, the fields its widgets belong to, the optional
+    content it mentions, its part of the structure tree, its label, and any
+    bookmark that pointed at it. It is the same import `Document.merge` does,
+    for one page and at a position; both now go through one
+    `Document._import_pages_from`.
+  - Checked with qpdf (`--check` clean, each page carrying its own
+    `/Resources`), pdfium and pdfminer.six, in both directions: a page out of
+    a qpdf-written file lands in ours intact, and a document we assemble this
+    way reads back correctly.
+  - Taking *every* page is still `merge`'s job, and a long run of pages is
+    cheaper through `extract_pages` plus a merge than one call each, since
+    each import walks the other document's forms, outlines and structure tree.
+
 - **A signature can now be seen.** A signature field is invisible until
   something is drawn in it, and nothing could draw anything: `Document.sign`
   took no appearance, and `Form.add_signature_field` authored an empty box its
@@ -631,6 +650,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     four may be written as given, since a reader intersects them and falls back.
 
 ### Fixed
+
+- **Appending a page from another document silently corrupted it.**
+  `pages.insert` refused a foreign page, but `pages.add` accepted one and
+  copied the page dictionary alone. The content kept naming `/F1` while the
+  page carried no `/Resources` of its own, so the name resolved to the
+  **target's** `/F1` — text written in Courier-Bold came out in whatever font
+  the target happened to have under that name, with no error anywhere. pdfium
+  rendered it; only the wrong letterforms showed it. `add` now takes the same
+  import as `insert`, so the page brings its own resources.
 
 - **An embedded composite font failed our own PDF/A and PDF/X font checks.**
   Both looked for `/FontDescriptor` on the top-level font dictionary, where a

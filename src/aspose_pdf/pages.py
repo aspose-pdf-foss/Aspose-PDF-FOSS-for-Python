@@ -1396,7 +1396,8 @@ class PageCollection:
             document.pages.add(PageSize.A4.landscape())
             document.pages.add(size=(300, 400))
 
-        Passing a :class:`Page` copies it, as :meth:`insert` describes.
+        Passing a :class:`Page` copies it, as :meth:`insert` describes --
+        including one from another document.
         """
         self._ensure_not_disposed()
         idx = len(self)
@@ -1405,6 +1406,14 @@ class PageCollection:
             self._document._engine_pdf.add_page_break()
         elif page is None:
             self._document._engine_pdf.add((size.as_rect(), b""))
+        elif isinstance(page, Page):
+            # Through insert(), so a page from another document is imported
+            # with what it names rather than copied bare. Appending one used to
+            # take the page dictionary alone: its content kept naming ``/F1``,
+            # the page carried no ``/Resources`` of its own, and the name then
+            # resolved to the *target's* ``/F1`` -- so the text drew in
+            # whatever font happened to be there, silently.
+            self.insert(idx, page)
         else:
             self._document._engine_pdf.add(page)
         return Page(self._document, idx)
@@ -1422,10 +1431,22 @@ class PageCollection:
         without one.
 
         A :class:`Page` of *this* document is copied whole -- its resources,
-        rotation and boxes, and its annotations as fresh objects. Copying a page
-        out of a *different* document is refused rather than half-done: the
-        objects its content names live in that document's graph, and bringing
-        them across is what :meth:`aspose_pdf.Document.merge` is for.
+        rotation and boxes, and its annotations as fresh objects.
+
+        A page of a **different** document is imported, with everything it
+        names: the resources its content draws with, its annotations, the form
+        fields its widgets belong to, the optional content groups it mentions,
+        its part of the structure tree, its label, and any bookmark that
+        pointed at it. That is the same import :meth:`aspose_pdf.Document.merge`
+        does, for one page and at a position::
+
+            report.pages.insert(0, cover.pages[0])
+
+        Taking *every* page of the other document is still :meth:`merge`'s job,
+        and a run of them is cheaper through
+        :meth:`~aspose_pdf.Document.extract_pages` and a merge than one call
+        each, since each import walks the other document's forms, outlines and
+        structure tree.
         """
         self._ensure_not_disposed()
         count = len(self)
@@ -1441,15 +1462,34 @@ class PageCollection:
             self._document._engine_pdf.insert(index, (rect, b""))
         elif isinstance(page, Page):
             if page._document is not self._document:
-                raise PdfValidationException(
-                    "insert() copies a page within one document; use "
-                    "Document.merge to bring pages in from another"
-                )
-            self._document._engine_pdf.copy_page(page.index, index)
+                self._import_page(page, index)
+            else:
+                self._document._engine_pdf.copy_page(page.index, index)
         else:
             self._document._engine_pdf.insert(index, page)
 
         return Page(self._document, index)
+
+    def _import_page(self, page: Page, index: int) -> None:
+        """Bring *page* in from the document it belongs to, at *index*."""
+        source = page._document
+        if source is None:
+            raise PdfValidationException(
+                "The page belongs to no document, so there is nothing to bring "
+                "it from."
+            )
+        source._ensure_not_disposed()
+        if source._engine_pdf is None:
+            raise PdfValidationException(
+                "The page's document holds nothing to import."
+            )
+        count = len(source.pages)
+        if not 0 <= page.index < count:
+            raise IndexError(
+                f"The page is index {page.index} of a document with {count} "
+                "page(s); it may have been deleted since."
+            )
+        self._document._import_pages_from(source, pages=[page.index], at=index)
 
     def delete(self, index: int) -> None:
         """Delete the page at index."""

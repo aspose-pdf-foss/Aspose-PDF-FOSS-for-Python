@@ -3107,15 +3107,36 @@ class Document:
             if not isinstance(doc, Document):
                 raise TypeError("All items to merge must be Document instances")
             if doc._engine_pdf is not None:
-                doc._flush_outlines()
-                self._flush_outlines()
-                self._engine_pdf.append(doc._engine_pdf)
-                # The bookmarks the merge appended are the engine's now; a
-                # collection taken before it would still be the old tree.
-                self._outlines = None
-                if self._form is not None:
-                    self._form._load_fields()
+                self._import_pages_from(doc)
         return self
+
+    def _import_pages_from(
+        self,
+        other: Document,
+        pages: Sequence[int] | None = None,
+        at: int | None = None,
+    ) -> None:
+        """Bring pages from *other* into this document, with all they own.
+
+        The one way pages cross a document boundary, whether that is a whole
+        :meth:`merge` or a single :meth:`PageCollection.insert
+        <aspose_pdf.pages.PageCollection.insert>`: the page *and* the graph it
+        names -- resources, annotations, the fields its widgets belong to, the
+        optional content it mentions, the structure under it, the bookmarks
+        pointing at it. Copying the page dictionary alone leaves content whose
+        ``/F1`` resolves to the target's ``/F1``, or to nothing.
+
+        *pages* names which of *other*'s pages to take, in the order to take
+        them, and *at* where to put them; both default to "all, at the end".
+        """
+        other._flush_outlines()
+        self._flush_outlines()
+        self._engine_pdf.append(other._engine_pdf, pages=pages, at=at)
+        # The bookmarks the import appended are the engine's now; a collection
+        # taken before it would still be the old tree.
+        self._outlines = None
+        if self._form is not None:
+            self._form._load_fields()
 
     def encrypt(
         self,

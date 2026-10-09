@@ -624,8 +624,19 @@ Supported:
   so the two can be edited apart, and gets fresh copies of the page's
   annotations. **Widget** annotations are left out — one is a form field's
   presence on a page, and duplicating it would put a single field in two places
-  where typing in either changes both. A page from a *different* document is
-  refused; `Document.merge` brings pages across.
+  where typing in either changes both.
+- **Take a page from another document**: `pages.insert(i, other.pages[j])` and
+  `pages.add(other.pages[j])` import it, with the graph it names — its
+  resources, its annotations, the form fields its widgets belong to, the
+  optional content groups it mentions, its part of the structure tree, its page
+  label, and any bookmark of the other document that pointed at it (a bookmark
+  pointing at a page left behind does not come). It is the same import
+  `Document.merge` performs, for one page and at a position, and the source
+  document is left untouched. Taking *every* page is still `merge`'s job, and a
+  long run of pages is cheaper through `Document.extract_pages` and a merge than
+  one call each, since every import walks the other document's forms, outlines
+  and structure tree. The page-label rule is `merge`'s: a document with no
+  labels of its own contributes empty ones rather than numbers it never had.
 - Delete pages by index and clear all pages.
 - **Resize a page and take its drawing with it.** Setting `Page.size` changes
   the **sheet** and leaves the drawing where it was, so a smaller sheet crops it
