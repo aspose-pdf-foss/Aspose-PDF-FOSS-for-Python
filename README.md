@@ -125,6 +125,10 @@ flowchart TD
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
   file — which a password cannot express.
+- `page.to_svg(text="both")` exports a page as SVG whose words can be selected, searched and
+  copied — `<text>` elements over the glyph outlines, each glyph carrying its own position so the
+  layout holds whatever font the viewer picks. The page still renders pixel for pixel as it did.
+  Invisible OCR text comes across too, which is what makes an exported scan searchable.
 - `Document.sanitize()` strips what a PDF carries beyond what it shows — author and producer
   metadata, the editor's private store, scripts and the actions that run them, embedded files,
   hidden layers, reviewer comments — in one pass, and reports what it took. The save after it is a
@@ -532,6 +536,12 @@ from aspose_pdf import Document
 with Document("report.pdf") as document:
     document.pages[0].save_as_svg("page-1.svg")
     document.save_as_svg("report.svg")  # one file per page: report-1.svg, ...
+
+    # text="both" keeps the glyph outlines and puts selectable <text> over them,
+    # so the page looks identical and its words can be searched and copied.
+    # text="text" writes the words instead of the curves: far smaller, and the
+    # glyph shapes become whatever font the viewer resolves the name to.
+    document.pages[0].save_as_svg("page-1-selectable.svg", text="both")
 ```
 
 ### Render a Page Whose Fonts Are Not Embedded
@@ -1032,6 +1042,7 @@ and delete workflows. 265 public types are organized by module below.
   - `validate() -> bool` / `check() -> bool` / `repair() -> Document`
   - `validate_pdfa(level) -> PdfAValidationResult` / `convert_to_pdfa(level, font_lookup_directory) -> list[str]`
   - `sanitize(metadata, javascript, attachments, hidden_layers, comments, links, forms) -> SanitizationReport`
+  - `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, text, overwrite) -> list[Path]`
   - `fonts -> list[DocumentFont]` (name, subtype, encoding, embedded, program size, pages)
   - `embed_fonts(sources, directory) -> list[str]`
   - `validate_pdfua() -> PdfUaValidationResult` / `convert_to_pdfua(language, title, auto_tag) -> list[str]` /

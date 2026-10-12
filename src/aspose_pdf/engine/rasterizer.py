@@ -2564,6 +2564,7 @@ class _PageRasterizer:
                     w1y, v1x, v1y = font.vertical_metrics_1000(cid)
                 else:
                     w1y, v1x, v1y = -1000.0, font.default_width_1000 / 2.0, 880.0
+                self._note_glyph(font, cid, resources_cos)
                 if draw_gid is not None:
                     contours = font.outlines.outline(draw_gid)
                     if contours:
@@ -2577,6 +2578,7 @@ class _PageRasterizer:
                     (1.0, 0.0, 0.0, 1.0, 0.0, advance), text.text_matrix
                 )
                 continue
+            self._note_glyph(font, cid, resources_cos)
             if draw_gid is not None:
                 contours = font.outlines.outline(draw_gid)
                 if contours:
@@ -2622,6 +2624,23 @@ class _PageRasterizer:
         if mapping is None:
             return None
         return [mapping.get(index) for index in range(len(codepoints))]
+
+    def _note_glyph(
+        self, font: _GlyphFont, cid: int | None, resources_cos: PdfDictionary | None
+    ) -> None:
+        """A sink: one glyph has been shown, at the current text position.
+
+        Does nothing here -- the rasterizer's answer is the pixels, and what
+        the glyph *means* does not come into it. It is called once per glyph,
+        before the glyph is drawn and before the text matrix advances, so an
+        exporter that overrides it reads the glyph's own origin off
+        ``self.state`` and can still decide what :meth:`_fill_glyph` should do
+        with it. It is called for an invisible glyph too (mode 3), which is
+        exactly the one a scanned page's OCR layer is made of.
+
+        :class:`~aspose_pdf.engine.svg_export._SvgPageExporter` overrides it to
+        collect text that can be selected in the SVG.
+        """
 
     def _open_text_clip(self) -> None:
         """Note that a glyph has been shown in a clipping mode (table 106).

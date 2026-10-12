@@ -1368,9 +1368,7 @@ Boundaries:
   being whatever twelve segments happened to give; MuPDF renders an exported
   page and its PDF with no pixel differing beyond antialiasing. A shape built
   as points rather than curves — a glyph contour, a rectangle — is still the
-  polyline it is. Text is glyph
-  outlines, which renders exactly and needs no embedded font, but is not
-  selectable or searchable. A shading SVG has no gradient for -- function-based
+  polyline it is. A shading SVG has no gradient for -- function-based
   and mesh -- is sampled into an embedded image rather than dropped, as are
   soft-masked images (through an SVG `<mask>`). Standard blend modes and
   isolated transparency groups use CSS Compositing Level 1; viewers must
@@ -1383,6 +1381,38 @@ Boundaries:
   RGBA image at 72 dpi**, retaining transparency and the raster renderer's
   limitations. SVG has no multi-page model, so a document becomes one file
   per page.
+- **SVG text: curves, words, or both** (`to_svg(text=…)`, also on
+  `Page.save_as_svg` and `Document.save_as_svg`).
+  - `"outlines"` (the default) draws each glyph as the curves its font gives
+    it. Exact, needs no font at the other end, and about as selectable as a
+    photograph of the page.
+  - `"text"` writes `<text>` elements instead, which a reader can select,
+    search, copy and read aloud. **Every glyph carries its own `x`**, so the
+    layout does not move even though the viewer draws with whatever font it
+    resolves the name to; rotation, skew and scale ride in the element's
+    `transform`, whose y column is negated so the page's own flip does not
+    mirror the words. The face is *described* rather than supplied — the
+    `/BaseFont` family with a generic one appended from the descriptor flags
+    (`Times, serif`), and `font-weight`/`font-style` from the PostScript
+    name — because the embedded program is in the PDF, not in the SVG. Glyph
+    *shapes* will therefore not match exactly.
+  - `"both"` draws the outlines and puts the `<text>` over them unfilled: the
+    page renders **pixel for pixel** as `"outlines"` does and the words are
+    still there to select. The largest of the three.
+  - **Invisible text (rendering mode 3) is collected**, so a scanned page's OCR
+    layer survives the export as searchable text.
+  - A glyph whose meaning nothing in the file states — no `/ToUnicode`, and an
+    encoding that resolves nothing — gets no `<text>` and keeps its outlines
+    whatever the mode says: a guess would put the wrong word in a copy buffer.
+    A composite font under a predefined CMap is the usual case, since its codes
+    are not its CIDs.
+  - One element per line, per font, per colour, per clip. A gap along one line
+    does not split a run; a different baseline does, because gluing two lines
+    together hands whoever copies the text one word made of two.
+  - Checked against **cairosvg** and `ElementTree`: `"both"` rasterises
+    identically to `"outlines"` with no pixel differing, the words read
+    straight out of the parsed document, and `"text"`'s ink lands in the same
+    bounding box to within a pixel.
 - `GraphicsAbsorber` collects every mark a page makes: painted paths, placed
   images (XObject and inline `BI`/`ID`/`EI` alike), shown **text runs** and
   `sh` shading fills. A text element carries the box its glyphs occupy,

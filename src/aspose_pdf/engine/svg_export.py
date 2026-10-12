@@ -29,9 +29,14 @@ from __future__ import annotations
 import base64
 import copy
 import math
+from dataclasses import dataclass
 from typing import Any
 
-from aspose_pdf.exceptions import PDF_OPERATION_ERRORS, PdfResourceLimitException
+from aspose_pdf.exceptions import (
+    PDF_OPERATION_ERRORS,
+    PdfResourceLimitException,
+    PdfValidationException,
+)
 from aspose_pdf.load_limits import PdfLoadLimits
 
 from .cos import PdfDictionary, PdfName
@@ -86,7 +91,9 @@ def _fmt(value: float, precision: int = 3) -> str:
     text = f"{value:.{precision}f}"
     if "." in text:
         text = text.rstrip("0").rstrip(".")
-    return text or "0"
+    # A value that rounds to nothing is zero, not negative zero: "-0" is valid
+    # SVG but reads as a mistake in the output.
+    return "0" if text in ("", "-0", "-") else text
 
 
 def _rgb(color: Color) -> str:
@@ -95,6 +102,34 @@ def _rgb(color: Color) -> str:
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+#: How text is written out. ``outlines`` draws each glyph as the curves the
+#: font gives it -- exact, and no more selectable than a photograph of a page.
+#: ``text`` writes ``<text>`` instead, which a reader can select, search and
+#: copy, and which a viewer draws with whatever font it resolves the name to.
+#: ``both`` draws the outlines and puts the ``<text>`` over them with no fill,
+#: so the page looks exactly as it does now and the words are still there.
+TEXT_MODES = ("outlines", "text", "both")
+
+
+@dataclass(frozen=True)
+class _Glyph:
+    """One shown glyph: what it is, where it sits, and how it is painted."""
+
+    char: str
+    #: ``device x ctm x text_matrix`` at the moment the glyph was shown.
+    matrix: Matrix
+    size: float
+    #: What a viewer is asked to draw with: ``(font-family, weight, style)``.
+    #: Part of the glyph's identity -- two fonts at one size on one line are
+    #: still two fonts, and one ``<text>`` can only name one of them.
+    face: tuple[str | None, str | None, str | None]
+    #: ``None`` for invisible text (mode 3), which is still worth collecting:
+    #: a scanned page's OCR layer is made of nothing else.
+    fill: Color | None
+    alpha: float
+    clip_id: str | None
 
 
 class _SvgWriter(_PageRasterizer):
@@ -109,6 +144,7 @@ class _SvgWriter(_PageRasterizer):
         draw_annotations: bool = True,
         font_substitution: Any = None,
         precision: int = 3,
+        text: str = "outlines",
         limits: PdfLoadLimits | None = None,
     ) -> None:
         super().__init__(
@@ -133,6 +169,18 @@ class _SvgWriter(_PageRasterizer):
         self._clip_id_stack: list[str | None] = []
         self._soft_masks: dict[bytes, str] = {}
         self._soft_mask_bytes = 0
+        if text not in TEXT_MODES:
+            raise PdfValidationException(
+                f"text is one of {', '.join(TEXT_MODES)}, not {text!r}."
+            )
+        self._text_mode = text
+        # Glyphs collected since the last run was closed, and the maps that say
+        # what a font's codes mean, cached per font dictionary.
+        self._run: list[_Glyph] = []
+        self._unicode_maps: dict[int, Any] = {}
+        self._faces: dict[int, tuple] = {}
+        # Whether the glyph about to be drawn is going out as text.
+        self._glyph_is_text = False
 
     # -- output ------------------------------------------------------------
 
@@ -145,6 +193,7 @@ class _SvgWriter(_PageRasterizer):
                 )
             if self.draw_annotations:
                 self._paint_annotations()
+            self._close_run()
         except _RasterFallback:
             self._raster_page()
         width = _fmt(self.target_width, self._precision)
@@ -341,6 +390,280 @@ class _SvgWriter(_PageRasterizer):
             )
         finally:
             self._clip_id, self._clip_id_stack = saved_clip, saved_stack
+
+    # -- selectable text ---------------------------------------------------
+
+    def _note_glyph(self, font: Any, cid: int | None, resources_cos: Any) -> None:
+        """Collect one shown glyph for the ``<text>`` layer.
+
+        The rasterizer calls this before the text matrix advances, so
+        ``self.state`` still holds the glyph's own origin. Mode 3 arrives here
+        too: text drawn invisibly over a scan is the whole point of an OCR
+        layer, and it is as selectable as any other once it is written out.
+        """
+        self._glyph_is_text = False
+        if self._text_mode == "outlines" or cid is None:
+            return
+        char = self._glyph_char(cid, resources_cos)
+        if not char:
+            # Nothing says what this code means -- no /ToUnicode, and an
+            # encoding that resolves nothing. Writing a guess would put the
+            # wrong word in someone's copy buffer, so this glyph gets no
+            # ``<text>``; the flag leaves its outlines to be drawn instead, so
+            # it is still *on the page*, just not selectable.
+            self._close_run()
+            return
+        self._glyph_is_text = True
+        text_state = self.state.text
+        glyph = _Glyph(
+            char=char,
+            # Text space all the way to SVG space: the interpreter's matrices
+            # stop at PDF user space, and ``_fill_glyph`` takes its outlines
+            # the rest of the way a point at a time.
+            matrix=_multiply(
+                self._device_matrix(),
+                _multiply(self.state.ctm, text_state.text_matrix),
+            ),
+            size=text_state.font_size * text_state.horizontal_scale,
+            face=self._font_face(resources_cos),
+            fill=None
+            if text_state.rendering_mode == 3
+            else self.state.fill_color,
+            alpha=self.state.fill_alpha,
+            clip_id=self._clip_id,
+        )
+        if self._run and not self._joins_run(glyph):
+            self._close_run()
+        self._run.append(glyph)
+
+    def _joins_run(self, glyph: _Glyph) -> bool:
+        """Whether *glyph* belongs with the run being collected.
+
+        One ``<text>`` element has one transform, so everything in it shares an
+        orientation; and one font, one fill, one size and one clip.
+
+        It also has to share a **baseline**. Along one, a jump is no reason to
+        break -- the element carries an x per glyph, so a gap is just a larger
+        x -- but a glyph on a different line is a different line, and gluing
+        the two together would hand whoever copies the text one word made of
+        two.
+        """
+        first = self._run[0]
+        if (
+            glyph.matrix[:4] != first.matrix[:4]
+            or glyph.size != first.size
+            or glyph.face != first.face
+            or glyph.fill != first.fill
+            or glyph.alpha != first.alpha
+            or glyph.clip_id != first.clip_id
+        ):
+            return False
+        offset = self._offset_in_run(glyph)
+        return offset is not None and abs(offset[1]) < 0.01
+
+    def _offset_in_run(self, glyph: _Glyph) -> tuple[float, float] | None:
+        """Where *glyph* sits in the run's first glyph's own coordinates.
+
+        The run shares ``a, b, c, d``, so only the translation differs and the
+        shared 2x2 is what undoes it.
+        """
+        a, b, c, d, e, f = self._run[0].matrix
+        determinant = a * d - b * c
+        if not determinant:
+            return None
+        dx, dy = glyph.matrix[4] - e, glyph.matrix[5] - f
+        return (
+            (d * dx - c * dy) / determinant,
+            (a * dy - b * dx) / determinant,
+        )
+
+    def _close_run(self) -> None:
+        """Write the collected glyphs out as one ``<text>`` element."""
+        run, self._run = self._run, []
+        if not run:
+            return
+        first = run[0]
+        a, b, c, d, e, f = first.matrix
+        self._run = run  # _offset_in_run reads the first glyph from it
+        offsets = [self._offset_in_run(glyph) for glyph in run]
+        self._run = []
+        if any(offset is None for offset in offsets):
+            return
+        text = "".join(glyph.char for glyph in run)
+        xs = " ".join(_fmt(offset[0], self._precision) for offset in offsets)
+        # The glyphs sit on the baseline, which is y = 0 in text space; the
+        # transform already carries the flip, so no y list is needed.
+        # The y column is negated so the glyphs come out the right way up. SVG
+        # draws text with y increasing *downward* and PDF text space has it
+        # increasing upward, and the device matrix already carries that flip --
+        # handed to a ``<text>`` as it stands it would render every word
+        # mirrored. Negating the column flips the glyphs back without moving
+        # where they sit.
+        attributes = [
+            f'transform="matrix({_fmt(a, self._precision)},'
+            f'{_fmt(b, self._precision)},{_fmt(-c, self._precision)},'
+            f'{_fmt(-d, self._precision)},{_fmt(e, self._precision)},'
+            f'{_fmt(f, self._precision)})"',
+            f'x="{xs}"',
+            'y="0"',
+            f'font-size="{_fmt(first.size, self._precision)}"',
+        ]
+        family, weight, style = first.face
+        if family:
+            attributes.append(f'font-family="{_escape(family)}"')
+        if weight:
+            attributes.append(f'font-weight="{weight}"')
+        if style:
+            attributes.append(f'font-style="{style}"')
+        if first.fill is None or self._text_mode == "both":
+            # Invisible, and still selectable: in ``both`` the outlines are
+            # already drawn, and in ``text`` an invisible glyph stays invisible.
+            attributes.append('fill="none"')
+        else:
+            attributes.append(f'fill="{_rgb(first.fill)}"')
+            if first.alpha < 1.0:
+                attributes.append(
+                    f'fill-opacity="{_fmt(first.alpha, self._precision)}"'
+                )
+        if first.clip_id:
+            attributes.append(f'clip-path="url(#{first.clip_id})"')
+        # The glyphs are positioned one by one, so a viewer must not add its
+        # own spacing on top, and must not reorder them for bidi.
+        attributes.append('xml:space="preserve"')
+        self._emit(f"<text {' '.join(attributes)}>{_escape(text)}</text>")
+
+    def _font_face(
+        self, resources_cos: Any
+    ) -> tuple[str | None, str | None, str | None]:
+        """``(font-family, font-weight, font-style)`` for the current font.
+
+        A ``<text>`` cannot use the font the PDF embeds -- the program is in
+        the PDF, not in the SVG -- so what it can do is *describe* the face and
+        let the viewer match it. The name comes from ``/BaseFont`` with the
+        subset tag off; a generic family is appended from the descriptor's
+        flags (table 123), so a viewer that has never heard of ``Corporate
+        Sans`` still picks something of the right shape rather than its default
+        serif. The style words a PostScript name carries become the weight and
+        the slant, which is where CSS keeps them.
+        """
+        font_dict = self._text_font_dict(resources_cos)
+        if font_dict is None:
+            return (None, None, None)
+        cached = self._faces.get(id(font_dict))
+        if cached is not None:
+            return cached
+        base = self._cos_name(font_dict.mapping.get(PdfName("BaseFont"))) or ""
+        base = base.split("+")[-1]
+        family = base.split("-")[0].split(",")[0]
+        lowered = base.lower()
+        weight = "bold" if ("bold" in lowered or "black" in lowered) else None
+        style = (
+            "italic"
+            if ("italic" in lowered or "oblique" in lowered)
+            else None
+        )
+        generic = self._generic_family(font_dict)
+        names = [name for name in (family, generic) if name]
+        face = (", ".join(dict.fromkeys(names)) or None, weight, style)
+        self._faces[id(font_dict)] = face
+        return face
+
+    def _generic_family(self, font_dict: PdfDictionary) -> str:
+        """``monospace``, ``serif`` or ``sans-serif`` from the descriptor flags."""
+        carrier = font_dict
+        if self._cos_name(font_dict.mapping.get(PdfName("Subtype"))) == "Type0":
+            descendants = self._resolve(font_dict.mapping.get(PdfName("DescendantFonts")))
+            items = getattr(descendants, "items", None) or []
+            first = self._resolve(items[0]) if items else None
+            if isinstance(first, PdfDictionary):
+                carrier = first
+        descriptor = self._resolve(carrier.mapping.get(PdfName("FontDescriptor")))
+        flags = 0
+        if isinstance(descriptor, PdfDictionary):
+            value = self._resolve(descriptor.mapping.get(PdfName("Flags")))
+            flags = int(getattr(value, "value", 0) or 0)
+        if flags & 1:
+            return "monospace"
+        if flags & 2:
+            return "serif"
+        if flags:
+            return "sans-serif"
+        # No descriptor at all is a Standard 14 font, whose name says it.
+        base = (
+            self._cos_name(font_dict.mapping.get(PdfName("BaseFont"))) or ""
+        ).lower()
+        if "courier" in base:
+            return "monospace"
+        if "times" in base or "roman" in base:
+            return "serif"
+        return "sans-serif"
+
+    def _text_font_dict(self, resources_cos: Any) -> PdfDictionary | None:
+        name = self.state.text.font_name
+        if name is None or resources_cos is None:
+            return None
+        fonts = self._resource_dict(resources_cos, "Font")
+        if fonts is None:
+            return None
+        font_dict = self._resolve(fonts.mapping.get(PdfName(name)))
+        return font_dict if isinstance(font_dict, PdfDictionary) else None
+
+    def _glyph_char(self, cid: int, resources_cos: Any) -> str:
+        """What the code *cid* stands for, or ``""`` when nothing says."""
+        font_dict = self._text_font_dict(resources_cos)
+        if font_dict is None:
+            return ""
+        mapping = self._unicode_maps.get(id(font_dict))
+        if mapping is None:
+            mapping = self._build_unicode_map(font_dict)
+            self._unicode_maps[id(font_dict)] = mapping
+        return mapping.get(cid, "")
+
+    def _build_unicode_map(self, font_dict: PdfDictionary) -> dict[int, str]:
+        """``code -> text`` for a font, from ``/ToUnicode`` or its encoding.
+
+        ``/ToUnicode`` is keyed by character *code*, which is the number the
+        rasterizer reports for a simple font and for the Identity encodings a
+        composite font almost always uses (9.10.3). Under a predefined CMap the
+        two differ, and the map simply will not answer -- which is the right
+        answer, since a guess would put the wrong text in the copy buffer.
+        """
+        mapping: dict[int, str] = {}
+        try:
+            to_unicode = self.pdf._font_to_unicode_map(font_dict)
+        except PDF_OPERATION_ERRORS:
+            to_unicode = None
+        for code_bytes, value in (to_unicode or {}).items():
+            if not value:
+                continue
+            code = int.from_bytes(code_bytes, "big")
+            mapping[code] = value
+        if mapping:
+            return mapping
+        subtype = self._cos_name(font_dict.mapping.get(PdfName("Subtype")))
+        if subtype in ("Type1", "MMType1", "TrueType"):
+            try:
+                simple = self.pdf._simple_code_to_unicode(font_dict)
+            except PDF_OPERATION_ERRORS:
+                simple = {}
+            mapping = {code: chr(uni) for code, uni in (simple or {}).items()}
+        return mapping
+
+    def _fill_glyph(self, contours, units_per_em, offset=(0.0, 0.0), depth=0):
+        """Draw the glyph's curves, unless ``<text>`` is standing in for them.
+
+        In ``text`` mode the outlines are not drawn, with two exceptions: a
+        glyph whose meaning nothing states gets no ``<text>``, so its curves
+        are all there is of it; and the clipping modes, where what a glyph
+        *clips* is part of the page's geometry and no ``<text>`` replaces it.
+        """
+        if (
+            self._text_mode == "text"
+            and self._glyph_is_text
+            and self.state.text.rendering_mode < 4
+        ):
+            return
+        super()._fill_glyph(contours, units_per_em, offset, depth)
 
     def _fill_tiling(self, subpaths, tiling, depth, *, even_odd=False):
         raise _RasterFallback
@@ -822,6 +1145,7 @@ def page_to_svg(
     draw_annotations: bool = True,
     font_substitution: Any = None,
     precision: int = 3,
+    text: str = "outlines",
     limits: PdfLoadLimits | None = None,
 ) -> str:
     """Return *page_index* of *pdf* as an SVG document."""
@@ -832,6 +1156,7 @@ def page_to_svg(
         draw_annotations=draw_annotations,
         font_substitution=font_substitution,
         precision=precision,
+        text=text,
         limits=limits,
     )
     return writer.to_svg()

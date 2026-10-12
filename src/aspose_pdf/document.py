@@ -1884,6 +1884,7 @@ class Document:
         draw_annotations: bool = True,
         font_substitution: FontSubstitutionOptions | None = None,
         precision: int = 3,
+        text: str = "outlines",
         overwrite: bool = True,
     ) -> list[Path]:
         """Write pages as SVG and return the files written.
@@ -1895,7 +1896,8 @@ class Document:
         still say which page they came from.
 
         See :meth:`~aspose_pdf.pages.Page.to_svg` for what the conversion does
-        and does not turn into vectors. *overwrite* is as for
+        and does not turn into vectors, and for *text*, which chooses between
+        glyph outlines and selectable ``<text>``. *overwrite* is as for
         :meth:`save_as_html`.
 
         Returns
@@ -1927,6 +1929,7 @@ class Document:
                 draw_annotations=draw_annotations,
                 font_substitution=font_substitution,
                 precision=precision,
+                text=text,
             )
             outputs.append((path, svg.encode("utf-8")))
         files.write_files(outputs, overwrite)

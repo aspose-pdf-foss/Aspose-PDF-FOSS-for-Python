@@ -9,6 +9,34 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **SVG export can write words instead of curves.** Every glyph went out as the
+  outline its font gives it — exact, and about as selectable as a photograph of
+  a page: nothing could search it, copy from it or read it aloud.
+  - `Page.to_svg(text=…)`, `Page.save_as_svg(text=…)` and
+    `Document.save_as_svg(text=…)` take `"outlines"` (the default, unchanged),
+    `"text"` (`<text>` elements instead of curves) or `"both"` (the curves,
+    with unfilled `<text>` over them).
+  - **Every glyph carries its own `x`.** A viewer draws with whatever font it
+    resolves the name to, so its advances are not the PDF's; positioning each
+    glyph means the layout does not move even when the face does. Rotation,
+    skew and scale ride in the element's `transform`, whose y column is negated
+    so the words are not mirrored by the page's own flip.
+  - The face is *described* for a viewer to match — `Times, serif` with
+    `font-weight`/`font-style` off the PostScript name, and a generic family
+    from the descriptor flags — since an embedded program lives in the PDF, not
+    in the SVG.
+  - **Invisible text (rendering mode 3) is collected**, which is what makes a
+    scanned page's OCR layer searchable once exported.
+  - A glyph whose meaning nothing in the file states gets no `<text>` and keeps
+    its outlines: a guess would put the wrong word in someone's copy buffer.
+  - One element per line, per font, per colour — gluing two lines together
+    would hand whoever copies the text one word made of two.
+  - Checked against cairosvg: `"both"` renders **pixel-identically** to
+    `"outlines"` while `ElementTree` reads the words straight out, and
+    `"text"`'s ink lands in the same bounding box to within a pixel.
+  - The rasterizer gained one no-op sink (`_note_glyph`) for this; rendering is
+    unchanged by construction.
+
 - **`Document.sanitize()` takes out everything that is not what the document
   shows.** Each piece was removable on its own — `info`, `javascript`,
   `attachments`, `flatten_layers`, the annotation collections — but there was

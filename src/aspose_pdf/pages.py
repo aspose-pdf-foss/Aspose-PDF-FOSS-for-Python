@@ -1077,6 +1077,7 @@ class Page:
         draw_annotations: bool = True,
         font_substitution: Any = None,
         precision: int = 3,
+        text: str = "outlines",
     ) -> str:
         """Return this page as an SVG document.
 
@@ -1092,6 +1093,28 @@ class Page:
         ``background`` paints an opaque page behind the content; pass ``None``
         for a transparent SVG. ``precision`` is the number of decimal places
         coordinates are written with, trading file size against exactness.
+
+        ``text`` decides how the page's words are written out:
+
+        ``"outlines"``
+            Each glyph as the curves its font gives it. Exact, and no more
+            selectable than a photograph of the page. The default, and what
+            this has always done.
+        ``"text"``
+            ``<text>`` elements instead, which a reader can select, search and
+            copy. Every glyph keeps the position the PDF gave it, so the
+            layout does not move; the glyph *shapes* are whatever font the
+            viewer resolves the name to, so they will not match exactly.
+        ``"both"``
+            The outlines, with the ``<text>`` over them unfilled. The page
+            looks exactly as ``"outlines"`` does and the words are still
+            there to select. The largest of the three.
+
+        Text a font gives no meaning to -- no ``/ToUnicode``, and an encoding
+        that resolves nothing -- stays outlines whatever this says, because
+        the alternative is putting a guess in someone's copy buffer. Invisible
+        text (rendering mode 3) is collected too: a scanned page's OCR layer is
+        made of nothing else, and this is what makes it searchable.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -1106,6 +1129,7 @@ class Page:
             draw_annotations=draw_annotations,
             font_substitution=font_substitution,
             precision=precision,
+            text=text,
         )
 
     def save_as_svg(
@@ -1116,8 +1140,13 @@ class Page:
         draw_annotations: bool = True,
         font_substitution: Any = None,
         precision: int = 3,
+        text: str = "outlines",
     ) -> Path:
-        """Write this page to *path* as SVG and return the path."""
+        """Write this page to *path* as SVG and return the path.
+
+        See :meth:`to_svg` for *text*, which chooses between glyph outlines
+        and selectable ``<text>``.
+        """
         from aspose_pdf.engine.file_output import write_file_atomically
 
         target = Path(path)
@@ -1126,6 +1155,7 @@ class Page:
             draw_annotations=draw_annotations,
             font_substitution=font_substitution,
             precision=precision,
+            text=text,
         )
         target.parent.mkdir(parents=True, exist_ok=True)
         write_file_atomically(target, svg.encode("utf-8"))
