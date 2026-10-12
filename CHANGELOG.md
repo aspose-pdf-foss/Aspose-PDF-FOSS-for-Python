@@ -757,6 +757,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Five annotation subtypes could be given an appearance and nothing said so.**
+  `Annotation.generate_appearance` builds one for fifteen subtypes;
+  its docstring named ten, omitting `FreeText`, `Stamp`, `Caret`, `Text` and
+  `FileAttachment`, and `supported-features.md` omitted the last two. A
+  docstring listing ten of fifteen is worse than one listing none — it reads as
+  a complete answer. All three lists now agree, and a test holds them to each
+  other and to what the code actually produces, since this is drift that
+  returns.
+
 - **Appending a page from another document silently corrupted it.**
   `pages.insert` refused a foreign page, but `pages.add` accepted one and
   copied the page dictionary alone. The content kept naming `/F1` while the

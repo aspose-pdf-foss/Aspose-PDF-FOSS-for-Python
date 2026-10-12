@@ -486,13 +486,27 @@ class Annotation:
     def generate_appearance(self, *, force: bool = False) -> bool:
         """Synthesise a normal appearance stream (``/AP /N``) for this annotation.
 
-        Builds the appearance from the annotation's geometry and colours for the
-        supported shape and text-markup subtypes (``Square``, ``Circle``,
-        ``Line``, ``Polygon``, ``PolyLine``, ``Ink``, ``Highlight``,
-        ``Underline``, ``StrikeOut``, ``Squiggly``). Returns ``True`` when the
-        annotation has an appearance after the call, ``False`` for an unsupported
-        subtype or missing geometry. An existing appearance is kept unless
-        *force* is given, in which case it is regenerated.
+        An annotation carries no picture of itself: a viewer is entitled to draw
+        one from the annotation's own entries, and entitled not to. Writing the
+        appearance is what makes it look the same everywhere, and is what
+        flattening has to have.
+
+        It is built from the annotation's geometry and colours, for fifteen
+        subtypes:
+
+        * **shapes** -- ``Square``, ``Circle``, ``Line``, ``Polygon``,
+          ``PolyLine``, ``Ink``
+        * **text markup** -- ``Highlight``, ``Underline``, ``StrikeOut``,
+          ``Squiggly``
+        * **the rest** -- ``FreeText``, ``Stamp``, ``Caret``, ``Text`` (a note
+          icon, ``Comment`` unless ``/Name`` says otherwise) and
+          ``FileAttachment`` (a pushpin, likewise)
+
+        Returns ``True`` when the annotation has an appearance after the call,
+        ``False`` for any other subtype, for a rectangle enclosing no area, or
+        when the geometry a subtype needs is missing -- a ``Line`` without its
+        ``/L``, say. An existing appearance is kept unless *force* is given, in
+        which case it is regenerated.
         """
         result = self._page._document._engine_pdf.generate_annotation_appearance(
             self._page.index, self._index, force=force
@@ -1482,8 +1496,10 @@ class AnnotationCollection:
         """Synthesise missing appearance streams for every annotation on the page.
 
         Returns the number of appearances created. Annotations that already have
-        an appearance are left untouched unless *force* is given. See
-        :meth:`Annotation.generate_appearance` for the supported subtypes.
+        an appearance are left untouched unless *force* is given, and one whose
+        subtype has no builder is skipped rather than counted. See
+        :meth:`Annotation.generate_appearance` for the fifteen subtypes that
+        have one.
         """
         return self._page._document._engine_pdf.generate_appearances(
             self._page.index, force=force

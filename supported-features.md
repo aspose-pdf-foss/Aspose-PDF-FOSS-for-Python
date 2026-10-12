@@ -2722,8 +2722,15 @@ Supported:
   rich-text markup when present — per-span size/colour/bold/italic and paragraph
   alignment; with `/Q` quadding, `/C` background and a border box), `Stamp` (a
   captioned box from `/Name` or `/Contents`, rubber-stamp red by default), and
-  `Caret` (a filled marker triangle) — via `Annotation.generate_appearance()`,
+  `Caret` (a filled marker triangle), and the two icon subtypes `Text` (a note
+  icon drawn from `/Name` — `Comment`, `Note`, `Help`, `Key` and the rest) and
+  `FileAttachment` (a pushpin by default, or the paperclip, tag or graph
+  `/Name` asks for) —
+  via `Annotation.generate_appearance()`,
   `Page.annotations.generate_appearances()`, or `Document.generate_appearances()`.
+  **Fifteen subtypes in all**, which is `appearance.SUPPORTED_SUBTYPES` and
+  what the docstrings name; a test holds the three lists to each other, since a
+  capability nobody documents is one nobody uses.
   Text-bearing subtypes register the synthesised Helvetica-family fonts they use
   in the form's `/Resources /Font`.
 - Draw border and line decorations on those appearances: dash patterns (from
