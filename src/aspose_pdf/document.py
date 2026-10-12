@@ -2749,6 +2749,139 @@ class Document:
             language=language, title=title, auto_tag=auto_tag, part=part
         )
 
+    def add_table_of_contents(
+        self,
+        *,
+        title: str | None = "Contents",
+        max_level: int = 3,
+        prefer_structure: bool = True,
+        at: int = 0,
+        size: Any = None,
+        margin: float = 72.0,
+        font_name: str = "Helvetica",
+        title_size: float = 20.0,
+        entry_size: float = 11.0,
+        indent: float = 18.0,
+        leader: str = ".",
+        links: bool = True,
+        page_numbers: bool = True,
+        tag: bool = False,
+    ) -> list[int]:
+        """Put a contents page in front of the document, and return its pages.
+
+        The headings come from the same reading :meth:`generate_outlines` does
+        -- the structure tree where the document has one, the size tiers where
+        it does not -- so a contents page and a bookmark tree say the same
+        thing. Each line is the heading, dot leaders, the page it is on, and a
+        link that lands on the heading itself rather than on the top of its
+        sheet::
+
+            with Document("report.pdf") as document:
+                document.add_table_of_contents()
+                document.save("report-with-contents.pdf")
+
+        The **page numbers account for the contents itself**. Putting it at the
+        front pushes every page it points at further back, so the numbers are
+        worked out after the pages exist, not before; a heading on a page
+        *before* *at* keeps the number it had. Where the document has page
+        labels, the label is what is shown -- a contents that says ``12`` for a
+        page the reader sees as ``xii`` is wrong in the only way that matters.
+
+        Parameters
+        ----------
+        title : str, optional
+            The heading over the list. ``None`` writes none.
+        max_level : int
+            Ignore headings deeper than this (1 to 6).
+        prefer_structure : bool
+            Read the structure tree when it has headings in it, as
+            :meth:`generate_outlines` describes.
+        at : int
+            Where the contents goes. ``0`` is in front of everything; ``1``
+            puts it after a cover page.
+        size : PageSize, str or (width, height), optional
+            The sheet to make it on. Defaults to the size of the page it goes
+            in front of, so it matches the document it belongs to.
+        margin : float
+            Points of blank around the list.
+        font_name : str
+            One of the standard 14 fonts.
+        title_size, entry_size, indent : float
+            Point sizes for the title and the lines, and how far each level is
+            indented past the one above.
+        leader : str
+            What fills the gap between a heading and its number. ``""`` leaves
+            it blank.
+        links : bool
+            Make each line clickable.
+        page_numbers : bool
+            Show the page each heading is on.
+        tag : bool
+            Mark the lines as ``/TOCI`` in the structure tree (table 333). Off
+            by default, since a document that is not otherwise tagged gains
+            nothing from one tagged page.
+
+        Returns
+        -------
+        list[int]
+            The indexes of the pages inserted, in order. **Empty** when the
+            document has no headings to list -- nothing is inserted, because a
+            contents page listing nothing is not worth a sheet of paper.
+
+        Raises
+        ------
+        PdfValidationException
+            If a size or a measurement is one a page cannot have.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine.toc import build
+
+        for label, value in (
+            ("margin", margin),
+            ("title_size", title_size),
+            ("entry_size", entry_size),
+            ("indent", indent),
+        ):
+            number = float(value)
+            if number != number or number < 0:
+                raise PdfValidationException(f"{label} is not negative: {value!r}.")
+        if entry_size <= 0:
+            raise PdfValidationException("entry_size is more than zero.")
+        if not isinstance(leader, str):
+            raise PdfValidationException("leader is a string, possibly empty.")
+        at = max(0, min(int(at), self.page_count))
+        sheet = None
+        if size is not None:
+            from aspose_pdf.pages import _coerce_page_size
+
+            chosen = _coerce_page_size(size)
+            sheet = (float(chosen.width), float(chosen.height))
+
+        self._flush_outlines()
+        pages = build(
+            self._engine_pdf,
+            self,
+            title=title,
+            max_level=max_level,
+            prefer_structure=prefer_structure,
+            at=at,
+            size=sheet,
+            margin=float(margin),
+            font_name=font_name,
+            title_size=float(title_size),
+            entry_size=float(entry_size),
+            indent=float(indent),
+            leader=leader,
+            links=links,
+            page_numbers=page_numbers,
+            tag=tag,
+        )
+        if pages and self._form is not None:
+            self._form._load_fields()
+        return pages
+
     def generate_outlines(
         self,
         *,

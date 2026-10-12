@@ -178,6 +178,10 @@ flowchart TD
 - `Document.generate_outlines()` builds the bookmark tree from the document's own headings — the
   structure tree when it is tagged, the inferred size tiers when it is not — nesting them by level
   and pointing each one at the heading itself rather than at the top of its page.
+- `Document.add_table_of_contents()` writes the same headings onto paper: a contents page indented
+  by level, with dot leaders, the page each heading is on, and links landing on the heading itself.
+  The numbers account for the contents pushing everything back, and are the pages' own labels where
+  the document has them.
 - `Permissions` gives the `/P` word names: `Permissions.denying("copy")` instead of `-20`, with
   `document.permissions.can_print` and `.allowed` to read one back. It is an `int` subclass, so it
   goes anywhere the raw number did, and it keeps the reserved bits that ORing the bit values by
@@ -402,6 +406,18 @@ with Document("report.pdf") as document:
 # Opening needs the certificate and its private key, not a password.
 with Document("report-sealed.pdf", certificate=auditor, private_key=key) as doc:
     print(doc.page_count, doc.permissions)
+```
+
+### Put a Contents Page in Front of a Report
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    pages = document.add_table_of_contents(at=1)   # after the cover
+    document.generate_outlines()                   # and bookmarks from the same headings
+    print(f"contents on page {pages[0] + 1}")
+    document.save("report-with-contents.pdf")
 ```
 
 ### Sign a Document
@@ -1041,6 +1057,7 @@ and delete workflows. 265 public types are organized by module below.
     `change_passwords(old_password, new_user_password, new_owner_password) -> Document`
   - `validate() -> bool` / `check() -> bool` / `repair() -> Document`
   - `validate_pdfa(level) -> PdfAValidationResult` / `convert_to_pdfa(level, font_lookup_directory) -> list[str]`
+  - `add_table_of_contents(title, max_level, prefer_structure, at, size, margin, font_name, title_size, entry_size, indent, leader, links, page_numbers, tag) -> list[int]`
   - `sanitize(metadata, javascript, attachments, hidden_layers, comments, links, forms) -> SanitizationReport`
   - `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, text, overwrite) -> list[Path]`
   - `fonts -> list[DocumentFont]` (name, subtype, encoding, embedded, program size, pages)

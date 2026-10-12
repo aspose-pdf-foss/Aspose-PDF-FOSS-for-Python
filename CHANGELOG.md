@@ -9,6 +9,33 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A contents page, built from the document's own headings.**
+  `generate_outlines` already turned them into bookmarks; `Document
+  .add_table_of_contents()` writes the same answer onto paper — the headings
+  down a page, indented by level, with dot leaders, the page each is on, and a
+  link that lands on the heading itself rather than on the top of its sheet.
+  - **The page numbers account for the contents.** Inserting it pushes every
+    page it points at further back, so the numbers cannot be read off the
+    document as it stands. They are not circular — how many lines there are
+    does not depend on what the numbers say — so the page count is settled
+    first, the pages are inserted, and only then is each heading's new place
+    worked out. `at=1` puts the contents after a cover, and a heading before
+    that keeps the number it had.
+  - **Page labels win over positions**: a contents saying `12` for a page the
+    reader sees as `xii` is wrong in the only way that matters.
+  - A heading too long for its line is shortened with an ellipsis rather than
+    run under its own page number; the leaders are right-aligned so they line
+    up down the page; a document with no headings gets **no page at all**.
+  - `title`, `max_level`, `prefer_structure`, `at`, `size`, `margin`,
+    `font_name`, `title_size`, `entry_size`, `indent`, `leader`, `links`,
+    `page_numbers` and `tag` are all adjustable; the sheet defaults to the size
+    of the page the contents goes in front of.
+  - `tag=True` marks the entries as `/TOCI` **inside a `/TOC`** (table 333) —
+    a row of `TOCI` at the root is not a table of contents, it is a row of
+    orphans.
+  - Checked with qpdf: every link resolves to exactly the page the line prints,
+    as an `/XYZ` at the heading's own coordinates, `--check` clean.
+
 - **SVG export can write words instead of curves.** Every glyph went out as the
   outline its font gives it — exact, and about as selectable as a photograph of
   a page: nothing could search it, copy from it or read it aloud.
