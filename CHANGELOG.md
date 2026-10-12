@@ -9,6 +9,34 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`Document.sanitize()` takes out everything that is not what the document
+  shows.** Each piece was removable on its own — `info`, `javascript`,
+  `attachments`, `flatten_layers`, the annotation collections — but there was
+  no pass that did all of them, and no way to say what had been taken.
+  - Removed by default: `/Info`, the XMP packet and the producer's private
+    `/PieceInfo` store (catalog **and** pages); the `/Names /JavaScript` tree;
+    the open action when it *is* an action; the catalog's and every page's
+    `/AA`; any action on an annotation or field that runs script, launches a
+    file or sends data away, including one chained behind a harmless action
+    through `/Next`; embedded files, from the name tree and the `/AF` entries
+    that reach them; optional content, resolved as `flatten_layers` does so a
+    hidden layer's content is **deleted**; and markup annotations, which carry
+    an author and a date.
+  - Left alone by default: links (`links=True` to remove them) and the
+    interactive form (`forms=True`). A link that opens a URL keeps working —
+    that is what a link is for — while one that launches a program loses its
+    action and stays as a rectangle.
+  - Returns a `SanitizationReport` counting what went, so a caller can state
+    what was done rather than hope. `bool(report)` is `False` when the document
+    carried none of it.
+  - **The next save is a full rewrite.** Dropping a reference does not remove
+    the object, and an appended revision keeps the unsanitized one in front of
+    it in the same file — either way the attachment's bytes and the reviewer's
+    note would still be in there, findable with any COS tool. So the live graph
+    is garbage-collected on the way out and an incremental save is refused. A
+    qpdf-written document with ten findable secrets comes back with none of
+    them, `qpdf --check` clean and rendering unchanged.
+
 - **What fonts does this document use?** `FontRepository` answered what fonts
   the *machine* has; nothing answered what a *document* draws with, though the
   document knows exactly.

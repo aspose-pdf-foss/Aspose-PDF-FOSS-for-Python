@@ -60,6 +60,7 @@ from aspose_pdf.pdfua import PdfUaValidationResult
 from aspose_pdf.pdfx import PdfXValidationResult, normalize_pdfx_standard
 from aspose_pdf.permissions import Permissions
 from aspose_pdf.recipients import ALL_PERMISSIONS, Recipient
+from aspose_pdf.sanitization import SanitizationReport
 from aspose_pdf.signature_appearance import SignatureAppearance
 
 if TYPE_CHECKING:
@@ -2247,6 +2248,106 @@ class Document:
         self._pending_signing = []
         return self
 
+    def sanitize(
+        self,
+        *,
+        metadata: bool = True,
+        javascript: bool = True,
+        attachments: bool = True,
+        hidden_layers: bool = True,
+        comments: bool = True,
+        links: bool = False,
+        forms: bool = False,
+    ) -> SanitizationReport:
+        """Take out everything the document carries that is not what it shows.
+
+        A PDF travels with more than its pages. Who wrote it and when, what
+        tool made it and what that tool kept in its own private store, scripts
+        a viewer runs the moment it opens, whole files embedded inside, layers
+        switched off but still there, comments with a reviewer's name on them.
+        Each of those is removable on its own; this is the one pass that goes
+        through all of them and says what it took::
+
+            with Document("contract.pdf") as document:
+                print(document.sanitize())
+                # removed 7 metadata entries, 1 scripts, 3 actions, 1 attachments
+                document.save("contract-clean.pdf")
+
+        What is removed, and what is left alone:
+
+        metadata
+            ``/Info`` (title, author, producer, dates), the XMP packet, and the
+            ``/PieceInfo`` an editor keeps its working data in -- on the
+            catalog and on every page.
+        javascript
+            The ``/Names /JavaScript`` tree, the open action when it *is* an
+            action, the catalog's and every page's additional actions, and any
+            action on an annotation or field that runs script, launches a file
+            or sends data away. A link that opens a URL keeps working: that is
+            what a link is for, and the annotation stays either way.
+        attachments
+            Embedded files, from the name tree and from the ``/AF`` entries
+            that reach them from the catalog and the pages.
+        hidden_layers
+            Optional content is resolved once and for all, as
+            :meth:`flatten_layers` does: content the current configuration
+            hides is **deleted**, not merely switched off.
+        comments
+            Markup annotations -- notes, highlights, stamps, ink -- each of
+            which carries an author and a date (12.5.6.2).
+        links
+            Link annotations. **Off** by default: a link is part of the
+            document's content, and a dangerous action on one is already dealt
+            with by *javascript*.
+        forms
+            The interactive form and its widgets. **Off** by default, since
+            removing it takes the fields' values with it. To keep what the
+            fields show while losing the interactivity, use :meth:`flatten`.
+
+        What this does **not** touch is the page content: text stays text and
+        images stay images. Text that must not be readable is
+        :meth:`redact_text`'s job, not this one.
+
+        Returns
+        -------
+        SanitizationReport
+            The counts of what was removed; ``bool(report)`` is ``False`` when
+            the document carried none of it.
+
+        Notes
+        -----
+        The next :meth:`save` is a **full rewrite**, not an incremental one --
+        an appended revision would keep the unsanitized one in front of it in
+        the same file, so everything removed would still be there to read. For
+        the same reason a save after this breaks any signature the document
+        carries, which is unavoidable: a signature attests to bytes that no
+        longer exist.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine.sanitize import sanitize as _sanitize
+
+        # Bookmarks are a copy taken on first access; putting them back before
+        # the pass means edits made through the collection are in the engine
+        # when it rewrites, rather than thrown away with the view.
+        self._flush_outlines()
+        report = _sanitize(
+            self._engine_pdf,
+            metadata=metadata,
+            javascript=javascript,
+            attachments=attachments,
+            hidden_layers=hidden_layers,
+            comments=comments,
+            links=links,
+            forms=forms,
+        )
+        self._engine_pdf._sanitized = True
+        # The form is a view over fields and widgets that may have just gone;
+        # the next access rebuilds it from what is actually there now.
+        self._form = None
+        return report
+
     def optimize(
         self,
         options: OptimizationOptions | None = None,
@@ -2972,16 +3073,19 @@ class Document:
         """
         engine = self._engine_pdf
         binds = engine.existing_signatures_bind()
-        if engine._redacted:
+        if engine._redacted or engine._sanitized:
+            what = "Text redaction" if engine._redacted else "Sanitizing"
             if requested:
                 raise PdfSecurityException(
-                    "Incremental save is forbidden after text redaction: "
-                    "it would preserve the removed text."
+                    f"Incremental save is forbidden after {what.lower()}: it "
+                    "would preserve what was removed in the revision it "
+                    "appends to."
                 )
             if binds:
                 logger.warning(
-                    "Text redaction requires a full rewrite; existing signatures "
-                    "will no longer verify."
+                    "%s requires a full rewrite; existing signatures will no "
+                    "longer verify.",
+                    what,
                 )
             return False
         if requested is None:

@@ -124,6 +124,7 @@ from .pdfx import (
 )
 from .permissions import Permissions
 from .recipients import Recipient
+from .sanitization import SanitizationReport
 from .signature import PdfSignature
 from .signature_appearance import SignatureAppearance
 from .stamps import (
@@ -290,6 +291,7 @@ __all__ = [
     "ResultContainer",
     "RevocationStatus",
     "Row",
+    "SanitizationReport",
     "SignatureAppearance",
     "SplitOptions",
     "Splitter",

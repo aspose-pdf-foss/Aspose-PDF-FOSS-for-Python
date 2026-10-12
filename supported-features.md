@@ -446,6 +446,54 @@ Boundaries:
 - Run highly hostile documents in an isolated worker with operating-system
   resource limits even when `PdfLoadLimits` is enabled.
 
+## Sanitization
+
+`Document.sanitize()` removes what a document carries beyond what it shows, in
+one pass, and returns a `SanitizationReport` counting it. Each of its parts was
+already removable on its own (`info`, `javascript`, `attachments`,
+`flatten_layers`, the annotation collections); what this adds is doing all of
+them together, reaching the places with no API of their own, and being able to
+state afterwards what is no longer in the file.
+
+Removed by default:
+
+- **Metadata** — `/Info` (title, author, producer, dates), the XMP `/Metadata`
+  packet, and the `/PieceInfo` an editor keeps its working data in (14.5), on
+  the catalog **and** on every page.
+- **Scripts and active actions** — the `/Names /JavaScript` tree; the open
+  action when it *is* an action (a destination only names a page, and is kept);
+  the catalog's and every page's `/AA`; and any `/A` or `/AA` on an annotation
+  or a form field whose type is one that runs something — `JavaScript`,
+  `Launch`, `SubmitForm`, `ImportData`, `Movie`, `Sound`, `Rendition`,
+  `GoTo3DView`, `RichMediaExecute`, `SetOCGState`, `Trans` — including one
+  reached through an `/Next` chain behind a harmless action.
+- **Embedded files** — the `/EmbeddedFiles` name tree and the `/AF` entries
+  that point at them from the catalog and the pages.
+- **Optional content** — resolved as `flatten_layers` does, so what the current
+  configuration hides is deleted rather than switched off.
+- **Comments** — markup annotations (`Text`, `FreeText`, `Highlight`, `Stamp`,
+  `Ink`, `Popup`, …), each carrying an author, a date and contents (12.5.6.2).
+
+Left alone unless asked for: `links=True` removes link annotations (a link is
+content, and a dangerous action on one is already handled above), and
+`forms=True` removes the interactive form with its widgets. Page content is
+never touched — text that must not be readable is `redact_text`'s job.
+
+Boundaries:
+
+- **The next save is a full rewrite, and an incremental one is refused.**
+  Dropping a reference does not remove the object: the attachment's stream and
+  the comment's dictionary stay in the document, unreachable and still written
+  out. So the live graph is garbage-collected on the way out (the same pass
+  redaction uses), and an appended revision is refused because it would keep
+  the unsanitized revision in front of it in the same file. A document that
+  carries signatures cannot survive this, for the same reason redaction cannot:
+  the bytes they attest to no longer exist.
+- Verified on a dirty document written by **qpdf/pikepdf** — page `/AA`,
+  `/PieceInfo`, a private note, a `Launch` link, an embedded file, document and
+  open scripts, XMP and `/Info` authors: ten findable secrets in, none out,
+  `qpdf --check` clean and the page rendering unchanged.
+
 ## Optimization
 
 `Document.optimize(options)` (and its alias `optimize_resources`) reduce file

@@ -8,6 +8,8 @@ from aspose_pdf.document import Document
 
 class DummyEngine:
     _redacted = False
+    # Mirrors the real engine: both flags decide how ``save`` writes.
+    _sanitized = False
 
     def save(self, path):
         # write minimal PDF bytes

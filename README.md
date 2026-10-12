@@ -125,6 +125,11 @@ flowchart TD
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
   file — which a password cannot express.
+- `Document.sanitize()` strips what a PDF carries beyond what it shows — author and producer
+  metadata, the editor's private store, scripts and the actions that run them, embedded files,
+  hidden layers, reviewer comments — in one pass, and reports what it took. The save after it is a
+  full rewrite, because dropping a reference leaves the object in the file and an appended
+  revision keeps the old one: either way the data would still be there to read.
 - `Document.fonts` says what the document actually draws with — each font's name, kind, encoding,
   whether its glyphs are in the file, what the program is and what it costs, and which pages use
   it. One entry per font, not per font dictionary, found by the same walk the PDF/A and PDF/UA
@@ -539,6 +544,18 @@ with Document("report-cjk.pdf") as document:
     # FontSubstitutionOptions(fonts={"SimSun": data}) keep it reproducible.
     document.font_substitution = FontSubstitutionOptions.system()
     document.save_page_as_image(0, "page-1.png", dpi=144)
+```
+
+### Strip a Document Before Sending It
+
+```python
+from aspose_pdf import Document
+
+with Document("contract.pdf") as document:
+    report = document.sanitize()          # add links=True, forms=True to go further
+    print(report)
+    # removed 7 metadata entries, 1 scripts, 3 actions, 1 attachments, 2 comments
+    document.save("contract-clean.pdf")   # a full rewrite: the old revision does not survive
 ```
 
 ### See What Fonts a Document Uses
@@ -1014,6 +1031,7 @@ and delete workflows. 265 public types are organized by module below.
     `change_passwords(old_password, new_user_password, new_owner_password) -> Document`
   - `validate() -> bool` / `check() -> bool` / `repair() -> Document`
   - `validate_pdfa(level) -> PdfAValidationResult` / `convert_to_pdfa(level, font_lookup_directory) -> list[str]`
+  - `sanitize(metadata, javascript, attachments, hidden_layers, comments, links, forms) -> SanitizationReport`
   - `fonts -> list[DocumentFont]` (name, subtype, encoding, embedded, program size, pages)
   - `embed_fonts(sources, directory) -> list[str]`
   - `validate_pdfua() -> PdfUaValidationResult` / `convert_to_pdfua(language, title, auto_tag) -> list[str]` /

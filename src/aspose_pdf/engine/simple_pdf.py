@@ -1834,6 +1834,11 @@ class SimplePdf:
     # The original revision remains available for lazy reads, but must never
     # be copied to an output after any successful text redaction.
     _redacted: bool = field(default=False, init=False, repr=False)
+    # Set by ``Document.sanitize``: an appended revision would carry the
+    # unsanitized one in front of it in the same file, so everything taken out
+    # would still be there to read. Same consequence as redaction, different
+    # cause, so the two are kept apart rather than one reused for both.
+    _sanitized: bool = field(default=False, init=False, repr=False)
     _raw_bytes: bytes | mmap.mmap | None = field(
         default=None, init=False, repr=False
     )
@@ -4070,9 +4075,16 @@ class SimplePdf:
             self._sync_attachments_to_cos()
             encryption = self._writer_encryption()
             self._sync_file_id_to_cos(replace=encryption is not None)
-            if self._redacted:
+            if self._redacted or self._sanitized:
                 # Include only the live graph, not replaced content, old
                 # property dictionaries or source object/xref streams.
+                #
+                # For sanitizing this is not a tidy-up but the point of it:
+                # dropping the reference to an embedded file or a comment
+                # leaves the object itself in the document, unreachable but
+                # written out all the same -- so the attachment's bytes and
+                # the reviewer's note would still be in the file, findable
+                # with any COS tool.
                 self.garbage_collect()
             writer = PdfCosWriter(
                 self._cos_doc,
@@ -4534,7 +4546,13 @@ class SimplePdf:
         follow. Redacted documents require a full rewrite. A document with
         nothing to append to is not appendable either.
         """
-        if self._redacted or self._raw_bytes is None or self._cos_doc is None or self.signing_creds:
+        if (
+            self._redacted
+            or self._sanitized
+            or self._raw_bytes is None
+            or self._cos_doc is None
+            or self.signing_creds
+        ):
             return False
         if self.encrypted:
             return False
@@ -4575,6 +4593,12 @@ class SimplePdf:
             raise PdfSecurityException(
                 "Incremental save is forbidden after text redaction: it would "
                 "retain the removed text in the original revision. Use a full save."
+            )
+        if self._sanitized:
+            raise PdfSecurityException(
+                "Incremental save is forbidden after sanitizing: the revision "
+                "it would append to still holds everything that was removed. "
+                "Use a full save."
             )
         raw = self._raw_bytes
         if raw is None:
