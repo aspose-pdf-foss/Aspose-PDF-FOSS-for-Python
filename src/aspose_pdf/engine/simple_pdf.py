@@ -18402,26 +18402,56 @@ class SimplePdf:
         finds.
 
         Each entry is the font dictionary and a phrase naming where it was
-        reached, for a message that says which font a caller has to deal with.
+        reached, for a message that says which font a caller has to deal with --
+        the **first** place it was reached, which is all a message needs.
+        :meth:`_rendering_font_occurrences` is the same walk reporting every
+        place, which is what an inventory wants.
         """
         found: list[tuple[PdfDictionary, str]] = []
-        seen_fonts: set[int] = set()
-        visited: set[int] = set()
+        seen: set[int] = set()
+        for font, _page_index, where in self._rendering_font_occurrences():
+            if id(font) in seen:
+                continue
+            seen.add(id(font))
+            found.append((font, where))
+        return found
 
-        def add_fonts(resources: Any, where: str, depth: int = 0) -> None:
+    def _rendering_font_occurrences(
+        self,
+    ) -> list[tuple[PdfDictionary, int | None, str]]:
+        """Every *place* a font dictionary is reached, not every font.
+
+        ``(font, page index or None, phrase)``: the same font may be reached
+        from several pages, and the same page may reach several fonts. A
+        ``None`` page is a font that belongs to no page -- the AcroForm's
+        default resources, whose ``/Helv`` draws field appearances wherever the
+        fields are.
+
+        See :meth:`_rendering_font_dictionaries`, which is this reduced to one
+        entry per font.
+        """
+        found: list[tuple[PdfDictionary, int | None, str]] = []
+        visited: set[tuple[int, int | None]] = set()
+
+        def add_fonts(
+            resources: Any, where: str, page_index: int | None, depth: int = 0
+        ) -> None:
             resources = self._resolve(resources)
             if not isinstance(resources, PdfDictionary) or depth > 8:
                 return
-            if id(resources) in visited:
+            # Keyed by page as well as by resource dictionary: a resource
+            # dictionary shared between pages is reached once *per page*, which
+            # is the point of recording occurrences.
+            mark = (id(resources), page_index)
+            if mark in visited:
                 return
-            visited.add(id(resources))
+            visited.add(mark)
             fonts = self._resolve(resources.mapping.get(PdfName("Font")))
             if isinstance(fonts, PdfDictionary):
                 for font_ref in fonts.mapping.values():
                     font = self._resolve(font_ref)
-                    if isinstance(font, PdfDictionary) and id(font) not in seen_fonts:
-                        seen_fonts.add(id(font))
-                        found.append((font, where))
+                    if isinstance(font, PdfDictionary):
+                        found.append((font, page_index, where))
             # A form XObject or a tiling pattern draws with resources of its own.
             for key in ("XObject", "Pattern"):
                 nested = self._resolve(resources.mapping.get(PdfName(key)))
@@ -18430,14 +18460,19 @@ class SimplePdf:
                 for entry in nested.mapping.values():
                     entry = self._resolve(entry)
                     if isinstance(entry, PdfDictionary):
-                        add_fonts(entry.mapping.get(PdfName("Resources")), where, depth + 1)
+                        add_fonts(
+                            entry.mapping.get(PdfName("Resources")),
+                            where,
+                            page_index,
+                            depth + 1,
+                        )
 
         for index in range(len(self.pages)):
             page = self._get_page_dict(index)
             if not isinstance(page, PdfDictionary):
                 continue
             where = f"page {index + 1}"
-            add_fonts(page.mapping.get(PdfName("Resources")), where)
+            add_fonts(page.mapping.get(PdfName("Resources")), where, index)
             annotations = self._resolve(page.mapping.get(PdfName("Annots")))
             if isinstance(annotations, PdfArray):
                 for annotation in annotations.items:
@@ -18454,6 +18489,7 @@ class SimplePdf:
                             add_fonts(
                                 stream.mapping.get(PdfName("Resources")),
                                 f"an annotation appearance on {where}",
+                                index,
                             )
                             for state in stream.mapping.values():
                                 state = self._resolve(state)
@@ -18461,6 +18497,7 @@ class SimplePdf:
                                     add_fonts(
                                         state.mapping.get(PdfName("Resources")),
                                         f"an annotation appearance on {where}",
+                                        index,
                                     )
 
         catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
@@ -18470,6 +18507,7 @@ class SimplePdf:
                 add_fonts(
                     acroform.mapping.get(PdfName("DR")),
                     "the form's default resources",
+                    None,
                 )
         return found
 

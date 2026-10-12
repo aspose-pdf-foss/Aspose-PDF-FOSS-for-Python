@@ -30,6 +30,7 @@ from .attachments import AF_RELATIONSHIPS, FileSpecification
 from .color import Color
 from .destinations import NamedDestinationCollection
 from .document import Document
+from .document_fonts import DocumentFont
 from .exceptions import (
     FontEmbeddingException,
     PdfResourceLimitException,
@@ -188,6 +189,7 @@ __all__ = [
     "DataSource",
     "Destination",
     "Document",
+    "DocumentFont",
     "DuplexMode",
     "Field",
     "FieldType",

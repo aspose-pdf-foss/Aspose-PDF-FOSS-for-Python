@@ -125,6 +125,10 @@ flowchart TD
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
   file — which a password cannot express.
+- `Document.fonts` says what the document actually draws with — each font's name, kind, encoding,
+  whether its glyphs are in the file, what the program is and what it costs, and which pages use
+  it. One entry per font, not per font dictionary, found by the same walk the PDF/A and PDF/UA
+  checks use.
 - `Document.font_substitution` lets the renderer draw fonts the PDF references but does not
   embed — the East Asian case, where the producer assumes the reader has the face — using font
   directories you name, programs you supply, or the machine's own fonts. A composite font's CIDs
@@ -535,6 +539,21 @@ with Document("report-cjk.pdf") as document:
     # FontSubstitutionOptions(fonts={"SimSun": data}) keep it reproducible.
     document.font_substitution = FontSubstitutionOptions.system()
     document.save_page_as_image(0, "page-1.png", dpi=144)
+```
+
+### See What Fonts a Document Uses
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    for font in document.fonts:
+        print(font)
+    # Arial (TrueType, embedded TrueType) on pages 1, 2
+    # Helvetica (Type1, not embedded) on pages 2, 3
+
+    missing = [f.name for f in document.fonts if not f.embedded]
+    weight = sum(f.stored_bytes or 0 for f in document.fonts)
 ```
 
 ### Put a Missing Font Into the Document
@@ -995,6 +1014,7 @@ and delete workflows. 265 public types are organized by module below.
     `change_passwords(old_password, new_user_password, new_owner_password) -> Document`
   - `validate() -> bool` / `check() -> bool` / `repair() -> Document`
   - `validate_pdfa(level) -> PdfAValidationResult` / `convert_to_pdfa(level, font_lookup_directory) -> list[str]`
+  - `fonts -> list[DocumentFont]` (name, subtype, encoding, embedded, program size, pages)
   - `embed_fonts(sources, directory) -> list[str]`
   - `validate_pdfua() -> PdfUaValidationResult` / `convert_to_pdfua(language, title, auto_tag) -> list[str]` /
     `auto_tag(image_alt) -> int`

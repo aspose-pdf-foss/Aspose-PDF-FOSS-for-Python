@@ -2007,6 +2007,29 @@ Supported:
     from the named font's therefore draws at the named font's spacing, which
     at the extreme runs glyphs into each other. Supply a metrically close face
     when the result has to look right.
+- **List the fonts a document uses**: `Document.fonts` gives one `DocumentFont`
+  per font -- `base_font` as the file writes it and `name` with the subset tag
+  removed, `subtype` and a composite font's `descendant_subtype`, `encoding`
+  and `has_differences`, `embedded` with `program_key`, `program_format`,
+  `program_bytes` (the program with its filters undone) and `stored_bytes`
+  (what it costs this file), `is_subset`, `is_standard_14`, `has_to_unicode`,
+  and the `page_indexes` (zero-based) and `locations` it is used at.
+  - The walk is `_rendering_font_occurrences`, the same one the PDF/A, PDF/UA
+    and PDF/X checks read, so the inventory and the conformance reports cannot
+    disagree about which fonts a document has. A font reached only through the
+    AcroForm's `/DR` or an annotation's appearance is listed with no page and a
+    location naming where it came from.
+  - **Font dictionaries are grouped into fonts**: entries agreeing on name,
+    kind, encoding and program object are one entry with the pages of all of
+    them, so a document writing its own `/Helv` on every page reports one font.
+    Two subsets of one family, and two dictionaries naming one font but
+    carrying different programs, stay separate -- each holds different glyphs.
+  - A **Type 3** font reports `embedded=True` with no `program_key`: its glyphs
+    are the content streams of `/CharProcs` (9.6.5), so nothing is missing,
+    which is the same reason the conformance checks pass over it.
+  - Reading the list does not change the document, and it is a snapshot --
+    take it again after embedding fonts or adding pages. Checked field by field
+    against an independent pikepdf/qpdf walk of the same files.
 - Discover fonts through `FontRepository` and the `FontSource` hierarchy:
   `FolderFontSource` (optionally recursive), `FileFontSource`,
   `MemoryFontSource`, and `SystemFontSource`.

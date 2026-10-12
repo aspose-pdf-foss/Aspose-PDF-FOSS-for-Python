@@ -9,6 +9,29 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **What fonts does this document use?** `FontRepository` answered what fonts
+  the *machine* has; nothing answered what a *document* draws with, though the
+  document knows exactly.
+  - `Document.fonts` lists them, one
+    [`DocumentFont`](src/aspose_pdf/document_fonts.py) each: the name with and
+    without its subset tag, the kind (and a composite font's descendant kind),
+    the encoding and whether it remaps codes, whether the glyphs are in the
+    file and under which key, what the program *is* and what it *costs*,
+    whether the text can be extracted, and which pages use it.
+  - The walk is the one the PDF/A, PDF/UA and PDF/X checks use, so the
+    inventory and the conformance reports cannot disagree about which fonts a
+    document has — including a font reached only through a form's default
+    resources, which is listed with no page and a *location* saying so.
+  - **Fonts are grouped, dictionaries are not.** A document that writes its own
+    `/Helv` on every page uses one font, not twenty. Two *subsets* of one
+    family stay apart, and so do two dictionaries that name one font but carry
+    different programs — folding either would hide a program.
+  - `program_bytes` is how big the program is with its filters undone;
+    `stored_bytes` is what it costs this file. They are different numbers and
+    answer different questions, so both are reported.
+  - Checked field by field against an independent pikepdf/qpdf walk of the same
+    files, ours and one qpdf wrote.
+
 - **A page can be taken from one document and put in another.**
   `pages.insert(i, other.pages[j])` was refused outright — moving a page
   between documents meant `extract_pages` into a scratch document, `merge` it,

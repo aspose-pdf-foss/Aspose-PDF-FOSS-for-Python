@@ -32,6 +32,7 @@ from aspose_pdf.actions import (
 from aspose_pdf.attachments import AF_RELATIONSHIPS, FileSpecification
 from aspose_pdf.color import ColorValue
 from aspose_pdf.destinations import NamedDestinationCollection
+from aspose_pdf.document_fonts import DocumentFont
 from aspose_pdf.engine import viewer_preferences as engine_viewer_prefs
 from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.simple_pdf import (
@@ -1419,6 +1420,49 @@ class Document:
         if self._engine_pdf is None:
             return
         yield from self._engine_pdf.iter_page_content_streams()
+
+    @property
+    def fonts(self) -> list[DocumentFont]:
+        """Every font this document draws with, one entry each.
+
+        The other font APIs answer what is available to *draw* with --
+        :class:`~aspose_pdf.font_repository.FontRepository` the machine's
+        fonts, :attr:`font_substitution` the ones you have made available. This
+        answers what the document itself uses::
+
+            for font in document.fonts:
+                print(font)
+            # Arial (TrueType, embedded TrueType) on pages 1, 2
+            # Helvetica (Type1, not embedded) on pages 2, 3
+
+            missing = [f for f in document.fonts if not f.embedded]
+            weight = sum(f.program_bytes or 0 for f in document.fonts)
+
+        Each :class:`~aspose_pdf.document_fonts.DocumentFont` says what the
+        font is called, what kind it is, how it is encoded, whether the
+        program is in the file and what it costs, whether the name carries a
+        subset tag, whether the text can be extracted (``has_to_unicode``),
+        and which pages use it.
+
+        The fonts found are the ones used **for rendering**, by the same walk
+        the PDF/A, PDF/UA and PDF/X checks use -- so a font reached only
+        through a form's default resources or an annotation's appearance is
+        listed too, with no page but a *location* saying where it came from.
+        Fonts that say the same thing are one entry: a document that writes
+        its own ``/Helv`` dictionary on every page uses one font, not twenty.
+        Two *subsets* of one family stay separate, since they carry different
+        glyphs.
+
+        Reading this does not change the document, and the list is a snapshot
+        -- take it again after embedding fonts or adding pages.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            return []
+        from aspose_pdf.engine.font_inventory import inventory
+
+        self._engine_pdf._ensure_cos()
+        return inventory(self._engine_pdf)
 
     @property
     def font_substitution(self) -> FontSubstitutionOptions | None:
