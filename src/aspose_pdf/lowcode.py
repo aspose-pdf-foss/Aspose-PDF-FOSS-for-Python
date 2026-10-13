@@ -26,8 +26,10 @@ from __future__ import annotations
 
 import inspect
 import io
+import math
 import os
 from collections.abc import Iterable
+from contextlib import closing, nullcontext
 from enum import Enum
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -635,7 +637,8 @@ class ImagesToPdfOptions(PluginOptions):
     300 dpi scan come out at its physical size. ``margin`` is in points and
     applies to a fixed page size only -- a page cut to its image has no room for
     one -- and ``single_document`` collects every input into one file instead of
-    one file per image.
+    one file per image. Each TIFF frame counts as one image; TIFF input requires
+    the optional ``images`` extra. ``dpi`` overrides source resolution metadata.
     """
 
     def __init__(
@@ -846,18 +849,19 @@ class ImageExtractor(PdfPlugin):
 
 
 class ImagesToPdf(PdfPlugin):
-    """Make a PDF out of JPEG or PNG inputs, one page per image.
+    """Make a PDF out of JPEG, PNG or TIFF inputs, one page per image/frame.
 
     Each page is cut to its own picture unless ``page_size`` says otherwise, in
     which case the image is centred inside that sheet and scaled down to fit
-    within the margin. By default every input becomes one page of **one**
+    within the margin. By default all images and frames become pages of one
     document; with ``single_document=False`` each image becomes a document of its
-    own.
+    own. TIFF frames retain their source order and require the ``images`` extra.
     """
 
     def process(self, options: ImagesToPdfOptions) -> ResultContainer:
         self._require_inputs(options)
         from aspose_pdf.engine.content_authoring import image_pixel_size
+        from aspose_pdf.engine.tiff_import import is_tiff, tiff_frames
 
         limits = _coerce_limits(getattr(options, "limits", None))
         # Read, then checked: ``value or default`` would turn a dpi of 0 into the
@@ -867,30 +871,54 @@ class ImagesToPdf(PdfPlugin):
             margin = float(getattr(options, "margin", 0.0))
         except (TypeError, ValueError):
             raise AsposePdfException("dpi and margin must be numbers") from None
-        if not dpi > 0:
-            raise AsposePdfException("dpi must be above zero")
-        if margin < 0:
-            raise AsposePdfException("margin cannot be negative")
+        if not math.isfinite(dpi) or not dpi > 0:
+            raise AsposePdfException("dpi must be finite and above zero")
+        if not math.isfinite(margin) or margin < 0:
+            raise AsposePdfException("margin must be finite and cannot be negative")
         requested = getattr(options, "page_size", None)
         single = bool(getattr(options, "single_document", True))
 
-        images: list[tuple[bytes, float, float]] = []
-        for source in options.inputs:
-            data = _read_source_bytes(source, limits)
-            pixel_width, pixel_height = image_pixel_size(data)
-            images.append((data, pixel_width * 72.0 / dpi, pixel_height * 72.0 / dpi))
-
         results: list[OperationResult] = []
-        batches = [images] if single else [[image] for image in images]
-        for batch in batches:
-            document = Document(limits=limits)
-            try:
-                for data, width, height in batch:
-                    self._place(document, data, width, height, requested, margin)
+        budget = _LoadBudget(limits)
+        page_count = 0
+        document: Document | None = Document(limits=limits) if single else None
+        try:
+            for source in options.inputs:
+                data = _read_source_bytes(source, limits)
+                if is_tiff(data):
+                    frames = tiff_frames(data, budget, preceding_pages=page_count)
+                    frame_context = closing(frames)
+                else:
+                    pixel_width, pixel_height = image_pixel_size(data)
+                    frames = iter(((data, pixel_width, pixel_height),))
+                    frame_context = nullcontext(frames)
+                with frame_context as images:
+                    for image_data, pixel_width, pixel_height in images:
+                        page_count += 1
+                        budget.check_pages(page_count)
+                        if document is None:
+                            document = Document(limits=limits)
+                        self._place(
+                            document,
+                            image_data,
+                            pixel_width * 72.0 / dpi,
+                            pixel_height * 72.0 / dpi,
+                            requested,
+                            margin,
+                        )
+                        del image_data
+                        if not single:
+                            buffer = io.BytesIO()
+                            document.save(buffer)
+                            results.append(OperationResult(buffer.getvalue()))
+                            document.dispose()
+                            document = None
+            if single and document is not None:
                 buffer = io.BytesIO()
                 document.save(buffer)
                 results.append(OperationResult(buffer.getvalue()))
-            finally:
+        finally:
+            if document is not None:
                 document.dispose()
         self._emit(results, options.outputs)
         return ResultContainer(results)

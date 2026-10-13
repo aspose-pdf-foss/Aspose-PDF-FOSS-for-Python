@@ -259,6 +259,7 @@ flowchart TD
   TIFF, PNG, JPEG), `PdfAConverter`, `Rotator`, `PageRemover`, `Stamper`, `FormFlattener`,
   `Encryptor` and `Decryptor` — each one a composition of the operations above, so a batch job is
   a few lines and the same code works on files, bytes or streams.
+  `ImagesToPdf` also converts multipage TIFF scans with the optional `images` extra.
 - `PdfLoadLimits` bounds input size, object counts, decoded-stream bytes, and image pixels when a
   `Document` loads untrusted PDF input, raising `PdfResourceLimitException` instead of hanging or
   silently truncating a hostile file.
@@ -282,7 +283,8 @@ Optional extras add:
 python -m pip install -e '.[images,woff2,text-layout]'
 ```
 
-- `images` — Pillow-based image support (JPX/JPEG 2000 decoding, arithmetic-coded JPEG).
+- `images` — Pillow-based image support (JPX/JPEG 2000 decoding, arithmetic-coded JPEG,
+  multipage TIFF import).
 - `woff2` — Brotli-based WOFF2 web-font decoding.
 - `text-layout` — HarfBuzz/`python-bidi`/`fonttools`-based complex-text shaping for
   `TextLayoutOptions`.
@@ -296,7 +298,8 @@ python -m pip install -e '.[images,woff2,text-layout]'
 
 ### Optional Dependencies
 
-- `Pillow` >=12.3 — enables the `images` extra (JPX/JPEG 2000 decoding, arithmetic-coded JPEG).
+- `Pillow` >=12.3 — enables the `images` extra (JPX/JPEG 2000 decoding, arithmetic-coded JPEG,
+  multipage TIFF import).
 - `Brotli` >=1.2 — enables the `woff2` extra (WOFF2 web-font decoding).
 - `uharfbuzz` >=0.37 — enables the `text-layout` extra (HarfBuzz-driven complex-text shaping).
 - `python-bidi` >=0.6 — enables the `text-layout` extra (Unicode bidi runs).

@@ -3999,13 +3999,28 @@ Supported:
   for raster codecs, the original payload for JPEG and JPEG 2000) -- the same
   reconstruction `PdfExtractor.get_next_image` performs. An input that draws no
   image contributes no result.
-- `ImagesToPdf` builds a document from JPEG and PNG inputs, one page per image.
-  Each page is cut to its own picture at `dpi` points per inch (72 is one point
+- `ImagesToPdf` builds a document from JPEG, PNG and TIFF inputs, one page per
+  image or TIFF frame, preserving input and frame order. TIFF requires the
+  optional `images` extra (Pillow); JPEG and PNG work without it. Classic TIFF
+  in either byte order and BigTIFF are accepted. Bilevel, 8-bit grayscale, RGB
+  and palette frames are decoded losslessly into PDF images; bilevel becomes
+  8-bit grayscale and palette becomes RGB. Compression support follows the
+  installed Pillow build (tested with uncompressed, LZW, Deflate, PackBits and
+  Group 4 bilevel input). TIFF orientation is applied to the pixels.
+  Each page is cut to its own picture at `dpi` pixels per inch (72 is one point
   per pixel, 300 gives a 300 dpi scan its physical size), or, with `page_size=`,
   the image is centred inside that sheet and scaled down to fit within `margin`
-  points. `single_document=False` emits one document per image instead of one
-  carrying them all. The size is read from the image's own header, so a PNG is not
-  decoded twice; raw samples carry no size and are refused.
+  points. `dpi` defaults to 72 and overrides source resolution metadata.
+  `single_document=False` emits one document per image or TIFF frame instead of
+  one carrying them all. The JPEG/PNG size is read from its own header, so a PNG
+  is not decoded twice; raw samples carry no size and are refused. TIFF is
+  decoded one frame at a time. `PdfLoadLimits` bounds input bytes, frame pixels,
+  per-frame decoded samples and codec work; the page count and total decoded
+  TIFF samples are bounded across the entire run, including separate results.
+  Pillow's own pixel safety checks also apply. An invalid directory chain or a
+  decoding failure raises `PdfValidationException`; missing Pillow or unsupported
+  TIFF modes raises `UnsupportedFeatureException`. Processing completes before
+  any configured output is written, so a failed later frame leaves outputs intact.
 - `Converter` re-expresses each input: `"html"`, `"markdown"` and `"tiff"` give
   one result per input, while `"svg"`, `"png"` and `"jpeg"` give one per page,
   none of the three having a multi-page form. `pages=` selects pages and the
@@ -4033,15 +4048,27 @@ Supported:
 
 Boundaries:
 
-- The plugin layer composes existing high-level operations; it does not add
-  new conversion or generation capabilities, and does not integrate with
-  hosted services or billing. Everything a plugin can do is reachable through
-  `Document` directly; what the layer adds is the data-source plumbing and one
-  name per workflow.
+- The plugin layer composes high-level PDF operations and adds data-source
+  plumbing and one name per workflow. TIFF frames are decoded by `ImagesToPdf`
+  before page authoring. There are no hosted services or billing integrations.
+- TIFF import currently rejects alpha, CMYK, floating-point and greater-than-8-bit
+  sample data. It does not copy TIFF metadata or ICC profiles, apply color
+  management, or run OCR; resulting pages contain raster images.
 - There is no signing plugin. Signing takes a certificate, a key, a field and an
   appearance, and wrapping that in an options object is a design rather than a
   composition -- `Document.sign` is the API for it (see
   [Security, Encryption, And Signatures](#security-encryption-and-signatures)).
+
+Convert a scanned TIFF to one PDF without extracting its frames manually:
+
+```python
+from aspose_pdf.lowcode import FileDataSource, ImagesToPdf, ImagesToPdfOptions
+
+options = ImagesToPdfOptions(dpi=300)
+options.add_input(FileDataSource("scans.tiff"))
+options.add_output(FileDataSource("scans.pdf"))
+ImagesToPdf().process(options)
+```
 
 ## Known Unsupported Compatibility Surfaces
 
