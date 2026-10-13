@@ -123,6 +123,8 @@ flowchart TD
   as a file.
   With the optional `images` extra, pages also export to WebP with lossy or lossless compression
   for website previews and thumbnails.
+  Pass `clip=(x0, y0, x1, y1)` to render or save just a detail in PDF coordinates, allocating
+  a canvas for that region instead of the whole page.
 - `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same

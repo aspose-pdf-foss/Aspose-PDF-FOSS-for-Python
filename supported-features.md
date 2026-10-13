@@ -1072,6 +1072,22 @@ Supported:
   supersampling, box-downsampling costs about as much as interpreting the
   page — it is close to the floor for pure Python, since every one of the
   `target_pixels x ss x ss x 3` source bytes has to be added.
+- **Render a selected region** with `clip=(x0, y0, x1, y1)` on `Page.render()`,
+  `Document.render_page()`, `Page.save_as_image()` or
+  `Document.save_page_as_image()`. Coordinates are points in the unrotated PDF
+  user space with a lower-left origin, like `Page.crop_box`; they are corners,
+  not a position and size. The region is intersected with the effective CropBox
+  and then rendered with the page's rotation. Corners must be ordered, finite,
+  and enclose positive area; an empty intersection raises
+  `PdfValidationException`. `None` keeps the full-page behavior. Output dimensions
+  are rounded up after applying `dpi / 72 * scale`, with axes swapped at 90/270
+  degrees. Fractional clip origins establish a new sampling grid. For example,
+  `page.save_as_image("detail.png", clip=(72, 72, 300, 220), dpi=144)` extracts a
+  detail without changing the PDF's page boxes or content. Only the selected
+  region's canvas and supersampling buffers are allocated, making high-resolution
+  previews of drawings, signatures or other details less memory-intensive. The
+  interpreter still processes page content and referenced resources; content,
+  image-decoding and raster resource limits continue to apply.
 - Render a page to a dependency-free RGB raster with `Page.render()` or
   `Document.render_page()`, then save it as PNG, TIFF, JPEG or optional WebP through
   `RasterizedPage.save()` / `Page.save_as_image()` /

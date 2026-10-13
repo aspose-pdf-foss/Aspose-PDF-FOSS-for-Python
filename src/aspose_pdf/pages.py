@@ -1027,6 +1027,7 @@ class Page:
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
+        clip: Sequence[float] | None = None,
         shape_substitute_text: bool = True,
         draw_annotations: bool = True,
         font_substitution: Any = None,
@@ -1041,6 +1042,10 @@ class Page:
 
         ``antialias`` smooths edges by supersampling (``True`` = 3x, an integer
         1-8 sets the factor, ``False`` disables it for a hard-edged raster).
+        ``clip=(x0, y0, x1, y1)`` selects an area in unrotated PDF coordinates
+        with a lower-left origin. Ordered corners and a positive intersection
+        with the effective CropBox are required. Only that intersection is
+        rasterized, with page rotation applied and page boxes preserved.
         ``shape_substitute_text`` (default on) joins complex-script runs drawn
         with a bundled substitute face; it needs the optional ``text-layout``
         extra and only affects non-embedded fonts.
@@ -1066,6 +1071,7 @@ class Page:
             scale=scale,
             background=background,
             antialias=antialias,
+            clip=clip,
             shape_substitute_text=shape_substitute_text,
             draw_annotations=draw_annotations,
             font_substitution=font_substitution,
@@ -1231,6 +1237,7 @@ class Page:
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
+        clip: Sequence[float] | None = None,
         mode: str = "rgb",
         compression: str = "deflate",
         quality: int = 85,
@@ -1245,9 +1252,14 @@ class Page:
         ``"bilevel"`` output, ``compression`` applies to TIFF (``"deflate"`` by
         default, or ``"none"``) and ``quality`` to JPEG/WebP. ``lossless`` and
         ``method`` apply to WebP, which requires the optional ``images`` extra.
+        ``clip`` selects a region as described in :meth:`render`.
         """
         return self.render(
-            dpi=dpi, scale=scale, background=background, antialias=antialias
+            dpi=dpi,
+            scale=scale,
+            background=background,
+            antialias=antialias,
+            clip=clip,
         ).save(
             path,
             mode=mode,

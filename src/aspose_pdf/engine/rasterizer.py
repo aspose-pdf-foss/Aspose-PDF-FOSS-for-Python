@@ -728,6 +728,7 @@ def render_page(
     scale: float = 1.0,
     background: Sequence[int] = (255, 255, 255),
     antialias: bool | int = True,
+    clip: Sequence[float] | None = None,
     shape_substitute_text: bool = True,
     draw_annotations: bool = True,
     font_substitution: Any = None,
@@ -738,6 +739,12 @@ def render_page(
     ``antialias`` smooths edges by supersampling: ``True`` (the default) renders
     at 3x and box-downsamples, an integer 1-8 sets the factor explicitly, and
     ``False`` (or ``1``) disables it for an exact, hard-edged raster.
+
+    ``clip`` selects ``(x0, y0, x1, y1)`` in unrotated PDF coordinates,
+    measured from the lower-left origin. It is intersected with the effective
+    CropBox before allocating the canvas; page rotation still applies. The
+    corners must be ordered and the intersection must have positive area.
+    ``None`` renders the whole visible page without changing its boxes.
 
     ``shape_substitute_text`` (default on) draws complex-script runs that fall
     back to a bundled substitute face with cursive-joined forms instead of
@@ -769,6 +776,7 @@ def render_page(
         scale=scale,
         background=background,
         antialias=antialias,
+        clip=clip,
         shape_substitute_text=shape_substitute_text,
         draw_annotations=draw_annotations,
         font_substitution=font_substitution,
@@ -787,6 +795,7 @@ class _PageRasterizer:
         scale: float,
         background: Sequence[int],
         antialias: bool | int = True,
+        clip: Sequence[float] | None = None,
         shape_substitute_text: bool = True,
         draw_annotations: bool = True,
         font_substitution: Any = None,
@@ -839,9 +848,14 @@ class _PageRasterizer:
         self.crop_box = self._normalize_box(
             crop or self.media_box, fallback=self.media_box
         )
+        if clip is not None:
+            self.crop_box = self._intersect_render_clip(clip)
         self.rotation = self._page_rotation()
-        self.crop_width = max(1e-6, self.crop_box[2] - self.crop_box[0])
-        self.crop_height = max(1e-6, self.crop_box[3] - self.crop_box[1])
+        self.crop_width = self.crop_box[2] - self.crop_box[0]
+        self.crop_height = self.crop_box[3] - self.crop_box[1]
+        if clip is None:
+            self.crop_width = max(1e-6, self.crop_width)
+            self.crop_height = max(1e-6, self.crop_height)
         if self.rotation in (90, 270):
             page_w, page_h = self.crop_height, self.crop_width
         else:
@@ -1191,6 +1205,32 @@ class _PageRasterizer:
         if x0 == x1 or y0 == y1:
             return default
         return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+    def _intersect_render_clip(
+        self, clip: Sequence[float]
+    ) -> tuple[float, float, float, float]:
+        """Validate the requested viewport and intersect it with the visible page."""
+        if (
+            not isinstance(clip, Sequence)
+            or isinstance(clip, (str, bytes, bytearray))
+            or len(clip) != 4
+        ):
+            raise PdfValidationException("clip must contain exactly four coordinates")
+        try:
+            if any(isinstance(value, bool) for value in clip):
+                raise ValueError("boolean coordinate")
+            x0, y0, x1, y1 = (float(value) for value in clip)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise PdfValidationException("clip coordinates must be finite numbers") from exc
+        if not all(math.isfinite(value) for value in (x0, y0, x1, y1)):
+            raise PdfValidationException("clip coordinates must be finite numbers")
+        if x1 <= x0 or y1 <= y0:
+            raise PdfValidationException("clip must have ordered corners and positive area")
+        cx0, cy0, cx1, cy1 = self.crop_box
+        box = (max(x0, cx0), max(y0, cy0), min(x1, cx1), min(y1, cy1))
+        if box[2] <= box[0] or box[3] <= box[1]:
+            raise PdfValidationException("clip must overlap the visible page with positive area")
+        return box
 
     def _page_rotation(self) -> int:
         if hasattr(self.pdf, "get_page_rotation"):

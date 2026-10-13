@@ -1583,6 +1583,7 @@ class Document:
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
+        clip: Sequence[float] | None = None,
         shape_substitute_text: bool = True,
         draw_annotations: bool = True,
         font_substitution: FontSubstitutionOptions | None = None,
@@ -1600,6 +1601,10 @@ class Document:
         ``draw_annotations`` (default on) composites each visible annotation's
         normal appearance over the page, the way a viewer shows it.
         ``font_substitution`` overrides :attr:`font_substitution` for this call.
+        ``clip=(x0, y0, x1, y1)`` selects an area in unrotated PDF coordinates
+        with a lower-left origin. Ordered corners and a positive intersection
+        with the effective CropBox are required. Only that intersection is
+        rasterized, with page rotation applied and page boxes preserved.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -1613,6 +1618,7 @@ class Document:
             scale=scale,
             background=background,
             antialias=antialias,
+            clip=clip,
             shape_substitute_text=shape_substitute_text,
             draw_annotations=draw_annotations,
             font_substitution=font_substitution,
@@ -1627,6 +1633,7 @@ class Document:
         scale: float = 1.0,
         background: tuple[int, int, int] = (255, 255, 255),
         antialias: bool | int = True,
+        clip: Sequence[float] | None = None,
         mode: str = "rgb",
         compression: str = "deflate",
         quality: int = 85,
@@ -1640,6 +1647,7 @@ class Document:
         ``"rgb"``, ``"gray"`` or ``"bilevel"`` output, ``compression`` applies
         to TIFF and ``quality`` to JPEG/WebP. ``lossless`` and ``method`` apply
         to WebP, which requires the optional ``images`` extra.
+        ``clip`` selects a region as described in :meth:`render_page`.
         """
         return self.render_page(
             page_index,
@@ -1647,6 +1655,7 @@ class Document:
             scale=scale,
             background=background,
             antialias=antialias,
+            clip=clip,
         ).save(
             destination,
             mode=mode,
