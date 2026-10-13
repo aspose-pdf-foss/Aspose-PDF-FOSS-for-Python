@@ -257,6 +257,20 @@ class Field:
         engine = self._engine()
         return form_value(engine._resolve, engine._load_budget, self._attribute("DV"), self._field_type)
 
+    @default_value.setter
+    def default_value(self, value: Any) -> None:
+        """Set a typed reset default; ``None`` overrides an inherited default with empty."""
+        self._set_parameter("default_value", value)
+
+    def _set_parameter(self, name: str, value: Any) -> None:
+        from aspose_pdf.engine.form_field_edit import set_parameter
+
+        engine = self._engine()
+        set_parameter(engine, self._dictionary(), self._field_type, name, value)
+        if name != "default_value":
+            engine.refresh_field_appearance(self._name)
+        self._form._load_fields()
+
     @property
     def max_length(self) -> int | None:
         """The most characters a text field takes (``/MaxLen``); ``None`` if unlimited."""
@@ -269,6 +283,11 @@ class Field:
             return int(value.value)
         return None
 
+    @max_length.setter
+    def max_length(self, value: int | None) -> None:
+        """Set the viewer input limit; ``None`` removes the local override."""
+        self._set_parameter("max_length", value)
+
     def _text_flag(self, mask: int) -> bool:
         return self._field_type == "text" and bool(self.flags & mask)
 
@@ -277,15 +296,27 @@ class Field:
         """Whether a text field takes several lines (bit 13)."""
         return self._text_flag(_MULTILINE)
 
+    @multiline.setter
+    def multiline(self, value: bool) -> None:
+        self._set_parameter("multiline", value)
+
     @property
     def password(self) -> bool:
         """Whether a text field hides what is typed (bit 14)."""
         return self._text_flag(_PASSWORD)
 
+    @password.setter
+    def password(self, value: bool) -> None:
+        self._set_parameter("password", value)
+
     @property
     def comb(self) -> bool:
         """Whether a text field spaces its characters into ``max_length`` cells (bit 25)."""
         return self._text_flag(_COMB)
+
+    @comb.setter
+    def comb(self, value: bool) -> None:
+        self._set_parameter("comb", value)
 
     @property
     def options(self) -> list[tuple[str, str]]:
@@ -313,15 +344,28 @@ class Field:
                 pairs.append((text, text))
         return pairs
 
+    @options.setter
+    def options(self, value: Iterable[str | tuple[str, str]]) -> None:
+        """Replace choices while preserving valid current and default selections."""
+        self._set_parameter("options", value)
+
     @property
     def multi_select(self) -> bool:
         """Whether a list box lets several options be selected (bit 22)."""
         return self._field_type == "listbox" and bool(self.flags & _MULTI_SELECT)
 
+    @multi_select.setter
+    def multi_select(self, value: bool) -> None:
+        self._set_parameter("multi_select", value)
+
     @property
     def editable(self) -> bool:
         """Whether a combo box takes text that is not one of its options (bit 19)."""
         return self._field_type == "combobox" and bool(self.flags & _EDIT)
+
+    @editable.setter
+    def editable(self, value: bool) -> None:
+        self._set_parameter("editable", value)
 
     @property
     def export_values(self) -> list[str]:

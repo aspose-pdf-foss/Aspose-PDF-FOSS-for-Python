@@ -224,6 +224,8 @@ flowchart TD
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content.
+  Existing fields can also change their defaults, text limits and modes, choice options,
+  multiple selection and combo-box editing through `Field` properties.
 - One annotation class per subtype — `page.annotations.add_square(...)`, `add_highlight(...)`,
   `add_line(...)`, `add_ink(...)` and the rest — with the entries each subtype is defined by named
   (`interior_color`, `quad_points`, `vertices`, `ink_list`, `opacity`, `border_width`), and
@@ -1151,6 +1153,8 @@ and delete workflows. 265 public types are organized by module below.
   `alternate_name`, `mapping_name`, `flags`, `read_only`, `required`, `no_export`, `default_value`,
   `max_length`, `multiline`, `password`, `comb`, `options`, `multi_select`, `editable`,
   `export_values`, `widgets` (`FieldWidget(page_index, rect)`), `page_index`, `rect`
+  Configuration setters include `default_value`, `max_length`, `multiline`, `password`,
+  `comb`, `options`, `multi_select` and `editable`.
 - `Annotation` — `generate_appearance(force) -> bool`, `get_property(name, default) -> Any`,
   `set_property(name, value) -> None`; properties `subtype`, `rect`, `contents`, `appearance_normal`
 - `AnnotationCollection` — `add(subtype, rect, contents, title, appearance_normal, properties) -> Annotation`,

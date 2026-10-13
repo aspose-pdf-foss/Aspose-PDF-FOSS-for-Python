@@ -232,4 +232,5 @@ def test_an_acroform_hands_the_same_attributes_down_either_way():
     root = pdf._resolve(pdf._cos_doc.trailer.mapping[PdfName("Root")])
     acro = pdf._resolve(root.mapping[PdfName("AcroForm")])
     inherited = pdf._acroform_inherited(acro)
-    assert set(inherited) == {"da", "q", "ft", "ff", "v", "rv", "opt"}
+    assert set(inherited) == {"da", "q", "ft", "ff", "v", "rv", "opt", "max_len"}
+    assert inherited["max_len"] is None

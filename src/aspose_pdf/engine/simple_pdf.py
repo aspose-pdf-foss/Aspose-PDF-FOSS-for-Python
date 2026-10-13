@@ -16089,6 +16089,33 @@ class SimplePdf:
             if not names.mapping:
                 catalog.mapping.pop(PdfName("Names"), None)
 
+    def refresh_field_appearance(self, name: str) -> None:
+        """Refresh the named field using inherited attributes, leaving siblings alone."""
+        from .form_fields import field_dictionary
+
+        self._ensure_not_disposed()
+        field = field_dictionary(self, name)
+        if field is None:
+            raise KeyError(f"Field '{name}' not found")
+        root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        acro = self._resolve(root.mapping.get(PdfName("AcroForm"))) if isinstance(root, PdfDictionary) else None
+        if not isinstance(acro, PdfDictionary):
+            return
+        inherited = self._acroform_inherited(acro)
+        for key, label in (("V", "v"), ("RV", "rv"), ("Opt", "opt")):
+            inherited[label] = field_attribute(self, field, key)
+        for key, label in (("Ff", "ff"), ("Q", "q"), ("MaxLen", "max_len")):
+            value = field_attribute(self, field, key)
+            if isinstance(value, PdfNumber):
+                inherited[label] = int(value.value)
+        ft = field_attribute(self, field, "FT")
+        if isinstance(ft, PdfName):
+            inherited["ft"] = ft.name.lstrip("/")
+        da = self._get_cos_string(field_attribute(self, field, "DA"))
+        if da:
+            inherited["da"] = da
+        self._gen_field_appearance_rec(field, inherited, acro)
+
     def set_field_value(self, name: str, value: Any) -> None:
         """Set the value of a form field by name."""
         self._ensure_not_disposed()
@@ -16258,6 +16285,7 @@ class SimplePdf:
             "v": None,
             "rv": None,
             "opt": None,
+            "max_len": None,
         }
 
     def _refresh_field_appearance(self, field_ref: Any, acro: PdfDictionary) -> None:
@@ -16354,9 +16382,12 @@ class SimplePdf:
         rv = rv_raw if rv_raw is not None else inherited.get("rv")
         opt_raw = field.mapping.get(PdfName("Opt"))
         opt = opt_raw if opt_raw is not None else inherited.get("opt")
+        length_obj = self._resolve(field.mapping.get(PdfName("MaxLen")))
+        max_len = int(length_obj.value) if isinstance(length_obj, PdfNumber) else inherited.get("max_len")
 
         child = {
-            "da": da, "q": q, "ft": ft, "ff": ff, "v": v, "rv": rv, "opt": opt
+            "da": da, "q": q, "ft": ft, "ff": ff, "v": v, "rv": rv, "opt": opt,
+            "max_len": max_len,
         }
 
         count = 0
@@ -16372,6 +16403,7 @@ class SimplePdf:
                 if self._set_widget_appearance(
                     field, ft, ff or 0, q or 0, v, da, acro, opt, rv,
                     keep_existing=keep_existing,
+                    max_length=max_len,
                 ):
                     count += 1
             except PdfResourceLimitException:
@@ -16393,6 +16425,7 @@ class SimplePdf:
         rv: Any = None,
         *,
         keep_existing: bool = False,
+        max_length: int | None = None,
     ) -> bool:
         if (
             keep_existing
@@ -16418,7 +16451,7 @@ class SimplePdf:
             return self._set_button_widget_state(widget, v, is_radio)
         if ft in ("Tx", "Ch"):
             return self._set_text_widget_appearance(
-                widget, ft, ff, q, v, da, acro, rect_n, w, h, opt, rv
+                widget, ft, ff, q, v, da, acro, rect_n, w, h, opt, rv, max_length
             )
         if ft == "Sig":
             # An unsigned signature field shows an empty box: draw only the /MK
@@ -16456,6 +16489,7 @@ class SimplePdf:
         h: float,
         opt: Any = None,
         rv: Any = None,
+        max_length: int | None = None,
     ) -> bool:
         from .field_appearance import (
             build_list_box_appearance,
@@ -16467,9 +16501,12 @@ class SimplePdf:
         font_name, size, color = parse_default_appearance(da or "/Helv 0 Tf 0 g")
         font_name = font_name or "Helv"
         multiline = ft == "Tx" and bool(ff & (1 << 12))
+        password = ft == "Tx" and bool(ff & (1 << 13))
+        if password:
+            text = "*" * len(text)
         box_content = self._field_widget_box_content(widget, w, h)
         # Rich-text fields (Ff bit 26) render their /RV styled markup.
-        if ft == "Tx" and (ff & (1 << 25)):
+        if ft == "Tx" and (ff & (1 << 25)) and not password:
             rich = self._rich_text_widget_appearance(
                 widget, size, color, q, w, h, font_name, acro, rv
             )
@@ -16523,6 +16560,12 @@ class SimplePdf:
                 quadding=q if q in (0, 1, 2) else 0,
                 multiline=multiline,
                 width_fn=width_fn,
+                comb_length=(
+                    max_length
+                    if ft == "Tx" and (ff & (1 << 24))
+                    and not (ff & ((1 << 12) | (1 << 13) | (1 << 20)))
+                    else None
+                ),
             )
         content = box_content + content
         resources = PdfDictionary(

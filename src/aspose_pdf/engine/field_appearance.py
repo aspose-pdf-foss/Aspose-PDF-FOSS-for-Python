@@ -203,6 +203,7 @@ def build_text_appearance(
     multiline: bool = False,
     padding: float = 2.0,
     width_fn: WidthFn | None = None,
+    comb_length: int | None = None,
 ) -> bytes:
     """Build a ``/Tx``-marked variable-text appearance content stream.
 
@@ -225,6 +226,23 @@ def build_text_appearance(
         ly = height - padding - fs
     else:
         ly = max(padding, (height - fs) / 2.0 + fs * 0.2)
+
+    if comb_length is not None and comb_length > 0 and not multiline:
+        line = lines[0][:comb_length]
+        cell_width = width / comb_length
+        offset = (comb_length - len(line)) * (0.5 if quadding == 1 else 1.0) if quadding else 0
+        if font_size <= 0 and line:
+            widest = max(_text_width(character, 1.0, width_fn) for character in line)
+            if widest:
+                fs = min(fs, cell_width / widest)
+                body[3] = f"/{font_name} {_fmt(fs)} Tf"
+                ly = max(padding, (height - fs) / 2.0 + fs * 0.2)
+        for index, character in enumerate(line):
+            tx = (offset + index) * cell_width + (cell_width - _text_width(character, fs, width_fn)) / 2.0
+            body.append(f"1 0 0 1 {_fmt(tx)} {_fmt(ly)} Tm")
+            body.append(f"{_pdf_literal(character)} Tj")
+        body += ["ET", "Q", "EMC"]
+        return ("\n".join(body) + "\n").encode("latin-1", "replace")
 
     for line in lines:
         tx = _quad_x(line, width, fs, quadding, padding, width_fn)

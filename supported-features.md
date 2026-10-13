@@ -2486,7 +2486,7 @@ Supported:
 - Extract text, checkbox, radio, listbox, combobox, and push-button fields.
 - **A field reports what its dictionary says**: `partial_name`,
   `alternate_name` (`/TU`, the name shown to a user) and `mapping_name`
-  (`/TM`); `flags` with `read_only`, `required` and `no_export` (the first two
+  (`/TM`); `flags` with `read_only`, `required` and `no_export` (all three
   settable, written to the field itself from the flags it inherited, so its
   siblings keep theirs); `default_value` (`/DV`); for text, `max_length`,
   `multiline`, `password` and `comb`; for choices, `options` as
@@ -2502,6 +2502,54 @@ Supported:
   pdfium and MuPDF do, and the specification places it) rather than from a
   separate widget (pdf.js, qpdf), and radio export values are on-state names
   (pdf.js, MuPDF) rather than `/Opt` texts (pdfium).
+- **Edit existing field configuration** with setters for `default_value`,
+  `max_length`, `multiline`, `password`, `comb`, `options`, `multi_select` and
+  `editable`. Changes are written on the selected field, retaining unrelated
+  flag bits and inherited sibling settings. Type, encoding, option and mode
+  validation happens before metadata is changed. Choice/default text and option
+  counts are checked against `PdfLoadLimits`.
+  `default_value` accepts the same typed selections as filling: strings for text
+  and single choices, booleans for checkboxes, declared radio on states, and
+  sequences for multiple selections. It changes `/DV` without changing `/V` or
+  the current appearance; `Form.reset()` then restores it. `None` stores an
+  explicit empty default that overrides an ancestor's `/DV`. Push buttons and
+  signatures reject defaults.
+  `max_length` is a viewer input limit from 1 to 2147483647; it does not truncate
+  stored values or add length checks to programmatic filling. Setting it to
+  `None` removes the local `/MaxLen`, exposing an inherited limit if present.
+  `comb=True` requires a positive limit and plain single-line text; it rejects
+  multiline, password, file-selection and rich-text combinations. Standard-font
+  comb appearances center characters in their cells, respect alignment and
+  auto-size, and show at most `max_length` characters. Password appearances use
+  asterisks while retaining the actual field value: this is a display setting,
+  not encryption. Multiline mode regenerates the text layout.
+  Choice `options` accept a nonempty iterable of strings or `(export, display)`
+  pairs with unique export values. Current and default selections must remain
+  valid; clear or change them before dropping their options. Reordering choices
+  preserves export values and updates selection indices and standard-font
+  appearances. Enabling/disabling `multi_select` normalizes empty and single
+  selections; disabling it with several current or default selections is refused.
+  Disabling an `editable` combo box requires both values to be listed options.
+  Display updates target the edited field's widgets, preserving other widgets'
+  appearances. They use the existing appearance generator's font/Unicode
+  limitations. Embedded CID text appearances remain baked: changes to multiline,
+  password or comb mode, and comb cell counts, raise `UnsupportedFeatureException`
+  before editing when that generator cannot rebuild the field's font.
+
+```python
+from aspose_pdf import Document
+
+with Document("application.pdf") as document:
+    notes = document.form["notes"]
+    notes.max_length = 500
+    notes.multiline = True
+    notes.default_value = "No additional comments"
+    country = document.form["country"]
+    country.options = [("NL", "Netherlands"), ("DE", "Germany"), ("BE", "Belgium")]
+    country.editable = True
+    document.save("configured.pdf")
+```
+
 - A value set on a **parent field** is the value of a kid that has none of
   its own (`/V` is inheritable, table 220); it used to read as `None`.
 - A **parent without a name** (`/T` is optional) is transparent: its kids
