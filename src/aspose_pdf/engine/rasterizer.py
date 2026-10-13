@@ -115,6 +115,9 @@ class RasterizedPage:
     height: int
     pixels: bytes
     dpi: float = 72.0
+    _limits: PdfLoadLimits | None = field(
+        default=None, repr=False, compare=False, kw_only=True
+    )
 
     def get_pixel(self, x: int, y: int) -> Color:
         """Return the RGB pixel at ``(x, y)`` with origin at the top-left."""
@@ -233,6 +236,37 @@ class RasterizedPage:
             dpi=self.dpi,
         )
 
+    def to_webp(
+        self,
+        *,
+        quality: int | float = 85,
+        lossless: bool = False,
+        method: int = 4,
+        mode: str = "rgb",
+        threshold: int = 128,
+    ) -> bytes:
+        """Encode this raster as WebP using the optional ``images`` extra.
+
+        ``quality`` is 0-100; with ``lossless=True`` it controls compression
+        effort while preserving every pixel. ``method`` is 0-6, trading encoding
+        speed for compression (default 4). Gray and bilevel content is stored as
+        RGB; use lossless output to preserve thresholded pixels exactly. Output
+        is opaque and carries no DPI metadata; choose DPI when rendering.
+        """
+        from .webp_encoder import encode
+
+        encoder_mode, samples = self._samples(mode, threshold)
+        return encode(
+            self.width,
+            self.height,
+            samples,
+            mode=encoder_mode,
+            quality=quality,
+            lossless=lossless,
+            method=method,
+            limits=self._limits,
+        )
+
     def save(
         self,
         path: str | Path,
@@ -241,13 +275,15 @@ class RasterizedPage:
         compression: str = "deflate",
         quality: int = 85,
         threshold: int = 128,
+        lossless: bool = False,
+        method: int = 4,
     ) -> Path:
         """Save the raster and return the path it was written to.
 
         The format follows the suffix: ``.png``, ``.tif``/``.tiff``,
-        ``.jpg``/``.jpeg``, or PNG when there is no suffix at all. ``mode``,
-        ``compression`` (TIFF) and ``quality`` (JPEG) are passed through to the
-        matching encoder.
+        ``.jpg``/``.jpeg``, ``.webp``, or PNG when there is no suffix at all.
+        ``compression`` applies to TIFF; ``quality`` to JPEG/WebP; ``lossless``
+        and ``method`` to WebP. WebP requires the optional ``images`` extra.
         """
         out = Path(path)
         suffix = out.suffix.lower()
@@ -261,10 +297,18 @@ class RasterizedPage:
             )
         elif suffix in (".jpg", ".jpeg"):
             data = self.to_jpeg(quality=quality, mode=mode)
+        elif suffix == ".webp":
+            data = self.to_webp(
+                quality=quality,
+                lossless=lossless,
+                method=method,
+                mode=mode,
+                threshold=threshold,
+            )
         else:
             raise PdfValidationException(
                 "Unsupported raster output format; use .png, .tif, .tiff, "
-                ".jpg, or .jpeg"
+                ".jpg, .jpeg, or .webp"
             )
         out.parent.mkdir(parents=True, exist_ok=True)
         write_file_atomically(out, data)
@@ -886,6 +930,7 @@ class _PageRasterizer:
             height=self.target_height,
             pixels=pixels,
             dpi=self.dpi,
+            _limits=self._load_limits,
         )
 
     @contextlib.contextmanager

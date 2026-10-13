@@ -1590,7 +1590,8 @@ class Document:
         """Render a page to an RGB raster image.
 
         ``page_index`` is zero-based. The result can be encoded with
-        :meth:`RasterizedPage.to_png`, :meth:`RasterizedPage.to_tiff`, or saved
+        :meth:`RasterizedPage.to_png`, :meth:`RasterizedPage.to_tiff`,
+        :meth:`RasterizedPage.to_jpeg`, :meth:`RasterizedPage.to_webp`, or saved
         directly with :meth:`RasterizedPage.save`. ``antialias`` smooths edges by
         supersampling (``True`` = 3x, an integer 1-8 sets the factor, ``False``
         disables it). ``shape_substitute_text`` (default on) joins complex-script
@@ -1630,12 +1631,15 @@ class Document:
         compression: str = "deflate",
         quality: int = 85,
         threshold: int = 128,
+        lossless: bool = False,
+        method: int = 4,
     ) -> Path:
-        """Render one page and save it as PNG, TIFF or JPEG.
+        """Render one page and save it as PNG, TIFF, JPEG or WebP.
 
         The format follows the suffix of *destination*. ``mode`` selects
         ``"rgb"``, ``"gray"`` or ``"bilevel"`` output, ``compression`` applies
-        to TIFF and ``quality`` to JPEG.
+        to TIFF and ``quality`` to JPEG/WebP. ``lossless`` and ``method`` apply
+        to WebP, which requires the optional ``images`` extra.
         """
         return self.render_page(
             page_index,
@@ -1649,6 +1653,8 @@ class Document:
             compression=compression,
             quality=quality,
             threshold=threshold,
+            lossless=lossless,
+            method=method,
         )
 
     def to_html(

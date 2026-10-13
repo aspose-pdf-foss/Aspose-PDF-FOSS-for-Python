@@ -220,7 +220,7 @@ def test_save_dispatches_on_the_suffix(tmp_path: Path, suffix: str) -> None:
 
 def test_save_rejects_an_unknown_suffix(tmp_path: Path) -> None:
     with pytest.raises(PdfValidationException, match="Unsupported raster output"):
-        _page_raster().save(tmp_path / "page.webp")
+        _page_raster().save(tmp_path / "page.gif")
 
 
 def test_unknown_colour_mode_is_rejected() -> None:

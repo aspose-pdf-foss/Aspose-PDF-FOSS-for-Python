@@ -1073,11 +1073,12 @@ Supported:
   page — it is close to the floor for pure Python, since every one of the
   `target_pixels x ss x ss x 3` source bytes has to be added.
 - Render a page to a dependency-free RGB raster with `Page.render()` or
-  `Document.render_page()`, then save it as PNG, TIFF or JPEG through
+  `Document.render_page()`, then save it as PNG, TIFF, JPEG or optional WebP through
   `RasterizedPage.save()` / `Page.save_as_image()` /
   `Document.save_page_as_image()`; the format follows the file suffix
-  (`.png`, `.tif`/`.tiff`, `.jpg`/`.jpeg`). The renderer covers common content stream
-  operators for graphics state, paths, fills/strokes, clipping, image XObjects,
+  (`.png`, `.tif`/`.tiff`, `.jpg`/`.jpeg`, `.webp`). WebP needs the `images` extra
+  and a Pillow build with WebP codec support. The renderer covers common content
+  stream operators for graphics state, paths, fills/strokes, clipping, image XObjects,
   inline `BI`/`ID`/`EI` images, form XObjects, and text. A path's interior is
   decided by the rule its operator names (8.5.3.3) -- nonzero for `f`/`B`/`W`,
   even-odd for `f*`/`B*`/`W*` -- across all of its subpaths together, so a
@@ -1209,6 +1210,23 @@ Supported:
   memory.
 - JPEG output uses the bundled encoder (`quality=`, default 85) and records the
   render resolution as the JFIF pixel density.
+- WebP output is available as `RasterizedPage.to_webp()` bytes or through the
+  same file-saving APIs with a `.webp` suffix. It defaults to lossy compression
+  at `quality=85`; `quality` accepts 0-100. With `lossless=True`, every output
+  pixel is preserved and `quality` controls compression effort. `method=0..6`
+  trades encoding speed for compression, defaulting to 4. `mode="gray"` uses
+  the same luminance conversion as PNG/TIFF; `mode="bilevel"` uses `threshold`
+  and expands black/white samples to RGB. Choose `lossless=True` for exact text
+  and line-art pixels. These modes describe pixel values: WebP stores them as
+  RGB, rather than as a single-channel or 1-bit file. Pages are opaque RGB,
+  with their configured render background. There is no animation or DPI
+  metadata; `dpi` at rendering time determines the pixel dimensions.
+  Dimensions must be at most 16383 pixels per side. Encoding checks raster
+  pixel limits and estimates working buffers against the originating document's
+  `PdfLoadLimits`; native codec memory usage depends on the Pillow/libwebp build.
+  Missing Pillow or WebP support raises `UnsupportedFeatureException`, and
+  invalid options or encoding failures raise `PdfValidationException`.
+  PNG/TIFF/JPEG export remains available without Pillow.
 - Anti-alias the raster by supersampling: `antialias=True` (the default) renders
   at 3x and box-downsamples for smooth text, fill, stroke, and image edges; an
   integer 1-8 sets the factor, and `False` (or `1`) renders hard-edged.
@@ -3937,7 +3955,8 @@ Supported:
   `move_page`, `delete_pages`), **`PdfXmpMetadata`** (`get_value`, `set_value`,
   the packet itself, and syncing either way with `/Info`), and
   **`PdfConverter`** (`do_convert` then `has_next_image`/`get_next_image`,
-  `save_as_tiff`, a `resolution`).
+  `save_as_tiff`, a `resolution`; PNG/JPEG/TIFF and optional WebP output, with
+  `quality`, `lossless` and `method` settings for WebP).
 - They add **no capability**: each is a composition of the `Document` API
   documented above. What they add is the shape, and three habits of the layer:
   - **Page numbers are 1-based**, as in the Aspose facades and as
@@ -4023,10 +4042,12 @@ Supported:
   any configured output is written, so a failed later frame leaves outputs intact.
 - `Converter` re-expresses each input: `"html"`, `"markdown"` and `"tiff"` give
   one result per input, while `"svg"`, `"png"` and `"jpeg"` give one per page,
-  none of the three having a multi-page form. `pages=` selects pages and the
-  remaining options are passed to the operation each format uses (`embed_images`,
-  `dpi`, `mode`, `compression`, `quality`). A format with no writer behind it is
-  refused when the options are constructed, not when the work starts.
+  none of the three having a multi-page form. `"webp"` also gives one result
+  per selected page with the `images` extra. `pages=` selects pages.
+  Remaining options are passed to the operation each format uses (`embed_images`,
+  `dpi`, `mode`, `compression`, `quality`, WebP `lossless` and `method`). A format
+  with no writer behind it is refused when the options are constructed, not when
+  the work starts.
 - `PdfAConverter` converts each input to a PDF/A level and collects the fonts it
   could not embed in `PdfAConverter.unembedded_fonts`, one list per input, rather
   than raising -- the file is produced either way.
@@ -4068,6 +4089,16 @@ options = ImagesToPdfOptions(dpi=300)
 options.add_input(FileDataSource("scans.tiff"))
 options.add_output(FileDataSource("scans.pdf"))
 ImagesToPdf().process(options)
+```
+
+Save a PDF page as a WebP preview, or keep its rendered pixels exactly:
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    document.pages[0].save_as_image("preview.webp", dpi=96, quality=75)
+    document.save_page_as_image(0, "page.webp", dpi=150, lossless=True, method=6)
 ```
 
 ## Known Unsupported Compatibility Surfaces

@@ -1428,8 +1428,14 @@ class PdfConverter(_BoundFacade):
         image_format: str = "png",
         quality: int = 85,
         mode: str = "rgb",
+        lossless: bool = False,
+        method: int = 4,
     ) -> bool:
-        """Render the pages named; ``get_next_image`` then hands them over."""
+        """Render pages as PNG/JPEG/TIFF or optional WebP for ``get_next_image``.
+
+        ``lossless`` and ``method`` apply to WebP only; ``quality`` applies to
+        JPEG/WebP. WebP requires the optional ``images`` extra.
+        """
         self._ensure_not_disposed()
         self._operation_start()
         try:
@@ -1444,10 +1450,16 @@ class PdfConverter(_BoundFacade):
                     self._images.append(raster.to_tiff(mode=mode))
                 elif kind == "png":
                     self._images.append(raster.to_png(mode=mode))
+                elif kind == "webp":
+                    self._images.append(
+                        raster.to_webp(
+                            quality=quality, mode=mode, lossless=lossless, method=method
+                        )
+                    )
                 else:
                     raise AsposePdfException(
                         f"Unsupported image format {image_format!r}; use png, "
-                        "jpeg or tiff"
+                        "jpeg, tiff or webp"
                     )
             return True
         except PDF_OPERATION_ERRORS as exc:

@@ -555,7 +555,7 @@ def test_every_image_format_the_converter_writes(image_format, magic):
 def test_a_format_with_no_encoder_is_a_failure():
     facade = PdfConverter()
     facade.bind_pdf(io.BytesIO(_document(1)))
-    assert facade.do_convert(image_format="webp") is False
+    assert facade.do_convert(image_format="gif") is False
     assert isinstance(facade.last_exception, Exception)
     assert facade.has_next_image() is False
 

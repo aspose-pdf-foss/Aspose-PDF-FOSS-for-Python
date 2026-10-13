@@ -1036,7 +1036,8 @@ class Page:
 
         The renderer is dependency-free and supports common page content:
         paths, fills/strokes, image XObjects, form XObjects, and embedded-font
-        text. The returned object can be encoded to PNG/TIFF or saved directly.
+        text. The returned object can be encoded to PNG/TIFF/JPEG, or to WebP
+        with the optional ``images`` extra, and saved directly.
 
         ``antialias`` smooths edges by supersampling (``True`` = 3x, an integer
         1-8 sets the factor, ``False`` disables it for a hard-edged raster).
@@ -1234,13 +1235,16 @@ class Page:
         compression: str = "deflate",
         quality: int = 85,
         threshold: int = 128,
+        lossless: bool = False,
+        method: int = 4,
     ) -> Path:
-        """Render this page and save it as PNG, TIFF or JPEG.
+        """Render this page and save it as PNG, TIFF, JPEG or WebP.
 
         The format follows the suffix (``.png``, ``.tif``/``.tiff``,
-        ``.jpg``/``.jpeg``). ``mode`` selects ``"rgb"``, ``"gray"`` or
+        ``.jpg``/``.jpeg``, ``.webp``). ``mode`` selects ``"rgb"``, ``"gray"`` or
         ``"bilevel"`` output, ``compression`` applies to TIFF (``"deflate"`` by
-        default, or ``"none"``) and ``quality`` to JPEG.
+        default, or ``"none"``) and ``quality`` to JPEG/WebP. ``lossless`` and
+        ``method`` apply to WebP, which requires the optional ``images`` extra.
         """
         return self.render(
             dpi=dpi, scale=scale, background=background, antialias=antialias
@@ -1250,6 +1254,8 @@ class Page:
             compression=compression,
             quality=quality,
             threshold=threshold,
+            lossless=lossless,
+            method=method,
         )
 
     def replace_text(

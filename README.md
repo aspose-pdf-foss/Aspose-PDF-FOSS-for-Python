@@ -121,6 +121,8 @@ flowchart TD
   shadings. Output can be RGB, greyscale, or 1-bit bilevel; TIFF is Deflate-compressed by default,
   and `Document.to_tiff()` / `save_as_tiff()` put every page into one multi-page TIFF, as bytes or
   as a file.
+  With the optional `images` extra, pages also export to WebP with lossy or lossless compression
+  for website previews and thumbnails.
 - `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
@@ -256,7 +258,7 @@ flowchart TD
 - The `aspose_pdf.lowcode` plugin layer wraps common batch workflows behind a uniform
   `DataSource`/`ResultContainer` interface: `Merger`, `Splitter` (per page, or per range),
   `Optimizer`, `TextExtractor`, `ImageExtractor`, `ImagesToPdf`, `Converter` (HTML, Markdown, SVG,
-  TIFF, PNG, JPEG), `PdfAConverter`, `Rotator`, `PageRemover`, `Stamper`, `FormFlattener`,
+  TIFF, PNG, JPEG, WebP), `PdfAConverter`, `Rotator`, `PageRemover`, `Stamper`, `FormFlattener`,
   `Encryptor` and `Decryptor` — each one a composition of the operations above, so a batch job is
   a few lines and the same code works on files, bytes or streams.
   `ImagesToPdf` also converts multipage TIFF scans with the optional `images` extra.
@@ -284,7 +286,7 @@ python -m pip install -e '.[images,woff2,text-layout]'
 ```
 
 - `images` — Pillow-based image support (JPX/JPEG 2000 decoding, arithmetic-coded JPEG,
-  multipage TIFF import).
+  multipage TIFF import, WebP export).
 - `woff2` — Brotli-based WOFF2 web-font decoding.
 - `text-layout` — HarfBuzz/`python-bidi`/`fonttools`-based complex-text shaping for
   `TextLayoutOptions`.
@@ -299,7 +301,7 @@ python -m pip install -e '.[images,woff2,text-layout]'
 ### Optional Dependencies
 
 - `Pillow` >=12.3 — enables the `images` extra (JPX/JPEG 2000 decoding, arithmetic-coded JPEG,
-  multipage TIFF import).
+  multipage TIFF import, WebP export).
 - `Brotli` >=1.2 — enables the `woff2` extra (WOFF2 web-font decoding).
 - `uharfbuzz` >=0.37 — enables the `text-layout` extra (HarfBuzz-driven complex-text shaping).
 - `python-bidi` >=0.6 — enables the `text-layout` extra (Unicode bidi runs).

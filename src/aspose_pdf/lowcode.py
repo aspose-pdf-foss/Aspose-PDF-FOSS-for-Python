@@ -661,16 +661,17 @@ class ConvertOptions(PluginOptions):
     """Options for :class:`Converter`: render or re-express each input.
 
     ``output_format`` is ``"html"``, ``"markdown"``, ``"svg"``, ``"tiff"``,
-    ``"png"`` or ``"jpeg"``. HTML, Markdown and TIFF give **one result per
-    input**; SVG, PNG and JPEG give **one per page**, since none of the three has
-    a multi-page form. ``pages`` names the pages to take (all of them when
-    omitted). The remaining arguments are passed to the operation each format
-    uses: ``embed_images`` to :meth:`~aspose_pdf.Document.to_html` /
+    ``"png"``, ``"jpeg"`` or ``"webp"``. HTML, Markdown and TIFF give **one
+    result per input**; the other formats give **one per page**. ``pages`` names
+    the pages to take (all of them when omitted). The remaining arguments are
+    passed to the operation each format uses: ``embed_images`` to
+    :meth:`~aspose_pdf.Document.to_html` /
     :meth:`~aspose_pdf.Document.to_markdown`, and ``dpi``, ``mode``,
     ``compression`` and ``quality`` to the renderer and its encoders.
+    ``lossless`` and ``method`` configure WebP, which needs the ``images`` extra.
     """
 
-    FORMATS = ("html", "markdown", "svg", "tiff", "png", "jpeg")
+    FORMATS = ("html", "markdown", "svg", "tiff", "png", "jpeg", "webp")
 
     def __init__(
         self,
@@ -682,6 +683,8 @@ class ConvertOptions(PluginOptions):
         mode: str = "rgb",
         compression: str = "deflate",
         quality: int = 85,
+        lossless: bool = False,
+        method: int = 4,
         limits: PdfLoadLimits | None = None,
     ) -> None:
         super().__init__(limits=limits)
@@ -700,6 +703,8 @@ class ConvertOptions(PluginOptions):
         self.mode = mode
         self.compression = compression
         self.quality = quality
+        self.lossless = lossless
+        self.method = method
 
 
 class RotateOptions(PluginOptions):
@@ -958,9 +963,8 @@ class ImagesToPdf(PdfPlugin):
 class Converter(PdfPlugin):
     """Re-express each input in another format -- HTML, Markdown, SVG or a raster.
 
-    HTML, Markdown and TIFF produce one result per input; SVG, PNG and JPEG
-    produce one per page, because none of those three has a multi-page form. The
-    text formats come back as text results, the rasters as bytes.
+    HTML, Markdown and TIFF produce one result per input; SVG, PNG, JPEG and WebP
+    produce one per page. Text formats come back as text results, rasters as bytes.
     """
 
     def process(self, options: ConvertOptions) -> ResultContainer:
@@ -1017,6 +1021,17 @@ class Converter(PdfPlugin):
             if output_format == "png":
                 results.append(
                     OperationResult(raster.to_png(mode=getattr(options, "mode", "rgb")))
+                )
+            elif output_format == "webp":
+                results.append(
+                    OperationResult(
+                        raster.to_webp(
+                            quality=getattr(options, "quality", 85),
+                            mode=getattr(options, "mode", "rgb"),
+                            lossless=getattr(options, "lossless", False),
+                            method=getattr(options, "method", 4),
+                        )
+                    )
                 )
             else:
                 results.append(
