@@ -685,6 +685,7 @@ class ConvertOptions(PluginOptions):
         quality: int = 85,
         lossless: bool = False,
         method: int = 4,
+        dither: bool = False,
         limits: PdfLoadLimits | None = None,
     ) -> None:
         super().__init__(limits=limits)
@@ -705,6 +706,7 @@ class ConvertOptions(PluginOptions):
         self.quality = quality
         self.lossless = lossless
         self.method = method
+        self.dither = dither
 
 
 class RotateOptions(PluginOptions):
@@ -1010,6 +1012,8 @@ class Converter(PdfPlugin):
                         dpi=getattr(options, "dpi", 72.0),
                         mode=getattr(options, "mode", "rgb"),
                         compression=getattr(options, "compression", "deflate"),
+                        threshold=getattr(options, "threshold", 128),
+                        dither=getattr(options, "dither", False),
                     )
                 )
             ]
@@ -1020,14 +1024,14 @@ class Converter(PdfPlugin):
             raster = document.render_page(index, dpi=getattr(options, "dpi", 72.0))
             if output_format == "png":
                 results.append(
-                    OperationResult(raster.to_png(mode=getattr(options, "mode", "rgb")))
+                    OperationResult(raster.to_png(mode=getattr(options, "mode", "rgb"), threshold=getattr(options, "threshold", 128), dither=getattr(options, "dither", False)))
                 )
             elif output_format == "webp":
                 results.append(
                     OperationResult(
                         raster.to_webp(
                             quality=getattr(options, "quality", 85),
-                            mode=getattr(options, "mode", "rgb"),
+                            mode=getattr(options, "mode", "rgb"), threshold=getattr(options, "threshold", 128), dither=getattr(options, "dither", False),
                             lossless=getattr(options, "lossless", False),
                             method=getattr(options, "method", 4),
                         )
@@ -1039,6 +1043,8 @@ class Converter(PdfPlugin):
                         raster.to_jpeg(
                             quality=getattr(options, "quality", 85),
                             mode=getattr(options, "mode", "rgb"),
+                            threshold=getattr(options, "threshold", 128),
+                            dither=getattr(options, "dither", False),
                         )
                     )
                 )

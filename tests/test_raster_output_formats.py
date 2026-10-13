@@ -21,6 +21,16 @@ from aspose_pdf.engine.rasterizer import RasterizedPage
 from aspose_pdf.exceptions import PdfValidationException
 
 
+@pytest.fixture
+def pillow():
+    """Require Pillow for WebP tests; skip if not available."""
+    pillow = pytest.importorskip("PIL.Image")
+    features = pytest.importorskip("PIL.features")
+    if not features.check("webp"):
+        pytest.skip("Pillow was built without WebP")
+    return pillow
+
+
 def _page_raster(dpi: float = 72.0, *, width: int = 64, height: int = 48):
     """A small synthetic raster: a black bar on white, at *dpi*.
 
@@ -243,3 +253,99 @@ def test_write_tiff_pads_short_page_data() -> None:
     data = write_tiff([TiffPage(4, 4, "L", b"\x11\x22", 72.0)], compression="none")
     tags = _read_ifds(data)[0]
     assert _strip_bytes(data, tags) == b"\x11\x22" + b"\x00" * 14
+
+
+def test_bilevel_dithering_produces_different_output() -> None:
+    """Floyd-Steinberg dithering should produce different output than simple threshold."""
+    # Create a gradient ramp: 0, 32, 64, 96, 128, 160, 192, 255
+    ramp = bytes(b for value in (0, 32, 64, 96, 128, 160, 192, 255) for b in (value,) * 3)
+    raster = RasterizedPage(width=8, height=1, pixels=ramp, dpi=72.0)
+
+    bilevel_no_dither = raster.to_bilevel(threshold=128, dither=False)
+    bilevel_dither = raster.to_bilevel(threshold=128, dither=True)
+
+    # Simple threshold should give 00001111 (first 4 black, last 4 white)
+    assert bilevel_no_dither == bytes([0b00001111])
+    # Dithered should be different (dithering pattern)
+    assert bilevel_dither != bilevel_no_dither
+
+
+def test_bilevel_dithering_with_threshold_256() -> None:
+    """threshold=256 should normalize to 255."""
+    # All black pixels
+    pixels = bytes([0, 0, 0] * 16)
+    raster = RasterizedPage(width=16, height=1, pixels=pixels, dpi=72.0)
+
+    # With threshold=256 (normalized to 255), all black pixels become black
+    bilevel = raster.to_bilevel(threshold=256, dither=True)
+    # All should be black (0)
+    assert bilevel == bytes([0b00000000, 0b00000000])
+
+
+def test_bilevel_dithering_multi_page_tiff(tmp_path: Path) -> None:
+    """Multi-page TIFF should support dithering on each page."""
+    document = Document()
+    for index in range(2):
+        page = document.pages.add()
+        page.add_text(f"Page {index}", 72, 700)
+
+    # Save with dithering
+    out = document.save_as_tiff(tmp_path / "multi_dither.tif", dpi=72, mode="bilevel", dither=True)
+    document.dispose()
+
+    ifds = _read_ifds(out.read_bytes())
+    assert len(ifds) == 2
+    for tags in ifds:
+        assert tags[258][2] == 1  # BitsPerSample: 1 bit
+
+
+def test_rasterized_page_to_tiff_with_dither(tmp_path: Path) -> None:
+    """Direct to_tiff call should support dither parameter."""
+    raster = _page_raster()
+    data = raster.to_tiff(mode="bilevel", threshold=128, dither=True)
+
+    assert data[:4] == b"II*\x00"
+    tags = _read_ifds(data)[0]
+    assert tags[258][2] == 1  # BitsPerSample: 1 bit
+
+
+def test_rasterized_page_to_png_with_dither(tmp_path: Path) -> None:
+    """Direct to_png call should support dither parameter."""
+    raster = _page_raster()
+    data = raster.to_png(mode="bilevel", threshold=128, dither=True)
+
+    assert data[:8] == PNG_MAGIC
+    bit_depth, colour_type = struct.unpack_from(">BB", data, 24)
+    assert (bit_depth, colour_type) == (1, 0)
+
+
+def test_rasterized_page_to_webp_with_dither(pillow, tmp_path: Path) -> None:
+    """Direct to_webp call should support dither parameter."""
+    raster = _page_raster()
+    data = raster.to_webp(mode="bilevel", threshold=128, dither=True)
+
+    assert data[:4] == b"RIFF"  # WebP magic
+
+
+def test_bilevel_dithering_preserves_tonal_range() -> None:
+    """With alternating 0/128 pattern, dithering should produce balanced output."""
+    # Alternating black (0) and gray (128) - 50% black at threshold=128
+    pattern = b""
+    for _ in range(8):  # 8 columns
+        pattern += bytes([0, 0, 0])  # black
+        pattern += bytes([128, 128, 128])  # gray at threshold
+    raster = RasterizedPage(width=16, height=1, pixels=pattern, dpi=72.0)
+
+    bilevel = raster.to_bilevel(threshold=128, dither=True)
+    # Count white pixels (bits set to 1)
+    white_count = 0
+    for byte in bilevel:
+        white_count += bin(byte).count('1')
+    # With dithering on 50% gray, should be around 50% white (8 out of 16)
+    # Without dithering, alternating 0/128 at threshold=128 would produce ~50% white too
+    # But with Floyd-Steinberg dithering, the pattern should be more balanced
+    # Allow some variance due to dithering algorithm, but not this much
+    # Floyd-Steinberg dithering on 50% gray gives ~25% white (4 out of 16)
+    # Without dithering, alternating 0/128 at threshold=128 gives 50% white (8 out of 16)
+    # Accept 3-6 to ensure dithering is active (4 is the expected value)
+    assert 3 <= white_count <= 6

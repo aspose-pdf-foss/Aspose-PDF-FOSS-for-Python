@@ -1244,6 +1244,7 @@ class Page:
         threshold: int = 128,
         lossless: bool = False,
         method: int = 4,
+        dither: bool = False,
     ) -> Path:
         """Render this page and save it as PNG, TIFF, JPEG or WebP.
 
@@ -1252,6 +1253,7 @@ class Page:
         ``"bilevel"`` output, ``compression`` applies to TIFF (``"deflate"`` by
         default, or ``"none"``) and ``quality`` to JPEG/WebP. ``lossless`` and
         ``method`` apply to WebP, which requires the optional ``images`` extra.
+        ``dither`` applies Floyd-Steinberg dithering when ``mode`` is ``"bilevel"``.
         ``clip`` selects a region as described in :meth:`render`.
         """
         return self.render(
@@ -1268,6 +1270,7 @@ class Page:
             threshold=threshold,
             lossless=lossless,
             method=method,
+            dither=dither,
         )
 
     def replace_text(

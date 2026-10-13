@@ -130,15 +130,21 @@ class RasterizedPage:
         """Return this raster as one 8-bit luminance byte per pixel (Rec. 601)."""
         return rgb_to_gray(self.pixels)
 
-    def to_bilevel(self, threshold: int = 128) -> bytes:
+    def to_bilevel(self, threshold: int = 128, dither: bool = False) -> bytes:
         """Return this raster as packed 1-bit rows, ``1`` = white.
 
         Pixels are thresholded on luminance -- above *threshold* is white --
-        with each row padded to a byte boundary. Thresholding is a plain cut,
-        not a dithering pass, which is what scanned-document-style output of
-        text and line art wants.
+        with each row padded to a byte boundary.
+
+        If *dither* is ``False`` (the default), a simple threshold is applied,
+        which is suitable for text and line art. If *dither* is ``True``,
+        Floyd-Steinberg error diffusion dithering is applied before thresholding,
+        which produces better results for photographs and halftone scans by
+        reducing banding and preserving tonal range.
         """
         gray = self.to_gray()
+        if dither:
+            return self._to_bilevel_floyd_steinberg(gray, threshold)
         limit = _byte(threshold)
         # Map each luminance byte to the ASCII digit of its bit, then let the
         # big-integer parser pack a whole row at C speed.
@@ -151,7 +157,64 @@ class RasterizedPage:
             out += int(row + padding, 2).to_bytes(row_bytes, "big")
         return bytes(out)
 
-    def _samples(self, mode: str, threshold: int) -> tuple[str, bytes]:
+    def _to_bilevel_floyd_steinberg(self, gray: bytes, threshold: int) -> bytes:
+        """Apply Floyd-Steinberg dithering to grayscale data before thresholding.
+
+        Floyd-Steinberg error diffusion spreads the quantization error to
+        neighboring pixels, producing a more natural-looking bilevel image.
+
+        The *threshold* is first normalized to the 0-255 range, then used to
+        determine the initial bilevel decision. The error diffusion works on
+        the actual grayscale values to preserve tonal range.
+        """
+        width = self.width
+        height = self.height
+        # Normalize threshold to 0-255 range first
+        normalized_threshold = _byte(threshold)
+        # Convert grayscale bytes to a mutable list of floats for error accumulation
+        # Use float array to avoid truncating error during propagation
+        float_pixels = [float(b) for b in gray]
+        # Error diffusion matrix for Floyd-Steinberg:
+        #      X     7/16
+        # 3/16 5/16 1/16
+        # We process left-to-right, top-to-bottom
+        for y in range(height):
+            for x in range(width):
+                old_val = float_pixels[y * width + x]
+                # Determine new bilevel value (0 or 255) based on normalized threshold
+                new_val = 255.0 if old_val >= normalized_threshold else 0.0
+                # Compute quantization error
+                error = old_val - new_val
+                # Assign the new value
+                float_pixels[y * width + x] = new_val
+                # Propagate error to neighboring pixels with accumulated floating point error
+                # Right neighbor
+                if x + 1 < width:
+                    float_pixels[y * width + x + 1] += error * 7 / 16
+                # Bottom-left neighbor
+                if y + 1 < height and x > 0:
+                    float_pixels[(y + 1) * width + x - 1] += error * 3 / 16
+                # Bottom neighbor
+                if y + 1 < height:
+                    float_pixels[(y + 1) * width + x] += error * 5 / 16
+                # Bottom-right neighbor
+                if y + 1 < height and x + 1 < width:
+                    float_pixels[(y + 1) * width + x + 1] += error * 1 / 16
+
+        # Convert back to bytes after all error propagation is complete
+        pixels = bytearray(round(v) for v in float_pixels)
+        # Now threshold the dithered pixels using the normalized threshold
+        digits = bytes(0x30 if value < normalized_threshold else 0x31 for value in range(256))
+        row_bytes = (width + 7) // 8
+        padding = b"0" * (row_bytes * 8 - width)
+        out = bytearray()
+        for y in range(height):
+            row = bytes(pixels[y * width : (y + 1) * width]).translate(digits)
+            out += int(row + padding, 2).to_bytes(row_bytes, "big")
+        return bytes(out)
+
+
+    def _samples(self, mode: str, threshold: int, dither: bool = False) -> tuple[str, bytes]:
         """Return ``(encoder mode, samples)`` for a public colour *mode*."""
         normalized = str(mode).strip().lower()
         if normalized in ("rgb", "color", "colour"):
@@ -159,19 +222,21 @@ class RasterizedPage:
         if normalized in ("gray", "grey", "grayscale", "greyscale", "l"):
             return "L", self.to_gray()
         if normalized in ("bilevel", "bw", "1"):
-            return "1", self.to_bilevel(threshold)
+            return "1", self.to_bilevel(threshold, dither)
         raise PdfValidationException(
             f"Unsupported raster colour mode {mode!r}; use 'rgb', 'gray' or 'bilevel'"
         )
 
-    def to_png(self, *, mode: str = "rgb", threshold: int = 128) -> bytes:
+    def to_png(self, *, mode: str = "rgb", threshold: int = 128, dither: bool = False) -> bytes:
         """Encode this raster as a PNG file.
 
         ``mode`` is ``"rgb"`` (the default), ``"gray"`` (8-bit luminance) or
         ``"bilevel"`` (1 bit per pixel, thresholded at *threshold*), which for
         text pages is a fraction of the size.
+
+        ``dither`` applies Floyd-Steinberg dithering when ``mode`` is ``"bilevel"``.
         """
-        encoder_mode, samples = self._samples(mode, threshold)
+        encoder_mode, samples = self._samples(mode, threshold, dither)
         if encoder_mode == "1":
             return write_png(self.width, self.height, "L", samples, bit_depth=1)
         return write_png(self.width, self.height, encoder_mode, samples)
@@ -182,14 +247,17 @@ class RasterizedPage:
         mode: str = "rgb",
         compression: str = "deflate",
         threshold: int = 128,
+        dither: bool = False,
     ) -> bytes:
         """Encode this raster as a baseline TIFF file.
 
         ``compression`` defaults to ``"deflate"``: an uncompressed A4 page at
         300 dpi is about 25 MB, which is rarely what a caller wants. Pass
         ``"none"`` for the raw strip. ``mode`` behaves as in :meth:`to_png`.
+
+        ``dither`` applies Floyd-Steinberg dithering when ``mode`` is ``"bilevel"``.
         """
-        encoder_mode, samples = self._samples(mode, threshold)
+        encoder_mode, samples = self._samples(mode, threshold, dither)
         try:
             return write_tiff(
                 [
@@ -212,6 +280,8 @@ class RasterizedPage:
         quality: int = 85,
         mode: str = "rgb",
         progressive: bool = False,
+        threshold: int = 128,
+        dither: bool = False,
     ) -> bytes:
         """Encode this raster as a JPEG file at *quality* (1-100).
 
@@ -219,8 +289,12 @@ class RasterizedPage:
         ``"bilevel"`` is rejected rather than silently producing a grey image
         with ringing around every glyph. The page DPI is written to the JFIF
         header.
+
+        ``threshold`` and ``dither`` are accepted but ignored because JPEG does not
+        support bilevel output. Pass ``"bilevel"`` only if you intend to write
+        PNG/TIFF instead.
         """
-        encoder_mode, samples = self._samples(mode, 128)
+        encoder_mode, samples = self._samples(mode, threshold, dither)
         if encoder_mode == "1":
             raise PdfValidationException(
                 "JPEG has no bilevel mode; use 'gray', or write PNG/TIFF"
@@ -244,6 +318,7 @@ class RasterizedPage:
         method: int = 4,
         mode: str = "rgb",
         threshold: int = 128,
+        dither: bool = False,
     ) -> bytes:
         """Encode this raster as WebP using the optional ``images`` extra.
 
@@ -252,10 +327,12 @@ class RasterizedPage:
         speed for compression (default 4). Gray and bilevel content is stored as
         RGB; use lossless output to preserve thresholded pixels exactly. Output
         is opaque and carries no DPI metadata; choose DPI when rendering.
+
+        ``dither`` applies Floyd-Steinberg dithering when ``mode`` is ``"bilevel"``.
         """
         from .webp_encoder import encode
 
-        encoder_mode, samples = self._samples(mode, threshold)
+        encoder_mode, samples = self._samples(mode, threshold, dither)
         return encode(
             self.width,
             self.height,
@@ -277,23 +354,25 @@ class RasterizedPage:
         threshold: int = 128,
         lossless: bool = False,
         method: int = 4,
+        dither: bool = False,
     ) -> Path:
         """Save the raster and return the path it was written to.
 
         The format follows the suffix: ``.png``, ``.tif``/``.tiff``,
         ``.jpg``/``.jpeg``, ``.webp``, or PNG when there is no suffix at all.
         ``compression`` applies to TIFF; ``quality`` to JPEG/WebP; ``lossless``
-        and ``method`` to WebP. WebP requires the optional ``images`` extra.
+        and ``method`` to WebP. ``dither`` applies to bilevel output (PNG/TIFF/WebP).
+        WebP requires the optional ``images`` extra.
         """
         out = Path(path)
         suffix = out.suffix.lower()
         if suffix in ("", ".png"):
             if suffix == "":
                 out = out.with_suffix(".png")
-            data = self.to_png(mode=mode, threshold=threshold)
+            data = self.to_png(mode=mode, threshold=threshold, dither=dither)
         elif suffix in (".tif", ".tiff"):
             data = self.to_tiff(
-                mode=mode, compression=compression, threshold=threshold
+                mode=mode, compression=compression, threshold=threshold, dither=dither
             )
         elif suffix in (".jpg", ".jpeg"):
             data = self.to_jpeg(quality=quality, mode=mode)
@@ -304,6 +383,7 @@ class RasterizedPage:
                 method=method,
                 mode=mode,
                 threshold=threshold,
+                dither=dither,
             )
         else:
             raise PdfValidationException(

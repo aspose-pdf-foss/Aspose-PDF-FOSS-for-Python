@@ -1640,6 +1640,7 @@ class Document:
         threshold: int = 128,
         lossless: bool = False,
         method: int = 4,
+        dither: bool = False,
     ) -> Path:
         """Render one page and save it as PNG, TIFF, JPEG or WebP.
 
@@ -1647,6 +1648,7 @@ class Document:
         ``"rgb"``, ``"gray"`` or ``"bilevel"`` output, ``compression`` applies
         to TIFF and ``quality`` to JPEG/WebP. ``lossless`` and ``method`` apply
         to WebP, which requires the optional ``images`` extra.
+        ``dither`` applies Floyd-Steinberg dithering when ``mode`` is ``"bilevel"``.
         ``clip`` selects a region as described in :meth:`render_page`.
         """
         return self.render_page(
@@ -1664,6 +1666,7 @@ class Document:
             threshold=threshold,
             lossless=lossless,
             method=method,
+            dither=dither,
         )
 
     def to_html(
@@ -1962,6 +1965,7 @@ class Document:
         mode: str = "rgb",
         compression: str = "deflate",
         threshold: int = 128,
+        dither: bool = False,
     ) -> bytes:
         """Render pages into the bytes of one multi-page TIFF.
 
@@ -1972,6 +1976,7 @@ class Document:
 
         ``mode`` selects ``"rgb"``, ``"gray"`` or ``"bilevel"`` output and
         ``compression`` is ``"deflate"`` (the default) or ``"none"``.
+        ``dither`` applies Floyd-Steinberg dithering when ``mode`` is ``"bilevel"``.
 
         :meth:`save_as_tiff` writes these bytes to a file. Every other export has
         both forms -- :meth:`to_html`, :meth:`to_markdown`, :meth:`Page.to_svg`,
@@ -1995,7 +2000,7 @@ class Document:
                     background=background,
                     antialias=antialias,
                 )
-                encoder_mode, samples = raster._samples(mode, threshold)
+                encoder_mode, samples = raster._samples(mode, threshold, dither)
                 yield TiffPage(
                     width=raster.width,
                     height=raster.height,
@@ -2021,6 +2026,7 @@ class Document:
         mode: str = "rgb",
         compression: str = "deflate",
         threshold: int = 128,
+        dither: bool = False,
     ) -> Path:
         """Render pages into a single multi-page TIFF file.
 
@@ -2040,6 +2046,7 @@ class Document:
             mode=mode,
             compression=compression,
             threshold=threshold,
+            dither=dither,
         )
         out = Path(destination)
         out.parent.mkdir(parents=True, exist_ok=True)

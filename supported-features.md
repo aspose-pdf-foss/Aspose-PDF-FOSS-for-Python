@@ -1215,8 +1215,10 @@ Supported:
   visible word after an invisible one lands after it rather than on top.
 - Choose the output colour form with `mode=`: `"rgb"` (default), `"gray"`
   (Rec. 601 luminance) or `"bilevel"` (1 bit per pixel, thresholded at
-  `threshold=`, default 128 -- a plain cut, not dithering). JPEG has no bilevel
-  form and rejects it rather than emitting a grey image with ringing.
+  `threshold=`, default 128). Use `dither=True` to apply Floyd-Steinberg error
+  diffusion before thresholding, which produces smoother halftone-style
+  conversions by distributing quantization error to neighboring pixels. JPEG has
+  no bilevel form and rejects it rather than emitting a grey image with ringing.
 - TIFF output is **Deflate-compressed by default** (`compression="deflate"`,
   or `"none"` for a raw strip): an uncompressed A4 page at 300 dpi is about
   25 MB. The encoder is pure Python, writes the render resolution into the

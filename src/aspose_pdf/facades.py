@@ -1430,11 +1430,15 @@ class PdfConverter(_BoundFacade):
         mode: str = "rgb",
         lossless: bool = False,
         method: int = 4,
+        threshold: int = 128,
+        dither: bool = False,
     ) -> bool:
         """Render pages as PNG/JPEG/TIFF or optional WebP for ``get_next_image``.
 
         ``lossless`` and ``method`` apply to WebP only; ``quality`` applies to
         JPEG/WebP. WebP requires the optional ``images`` extra.
+        ``mode`` can be ``"bilevel"`` for 1-bit output; use ``threshold`` and ``dither``
+        for bilevel conversion.
         """
         self._ensure_not_disposed()
         self._operation_start()
@@ -1445,15 +1449,15 @@ class PdfConverter(_BoundFacade):
             for index in self._page_indices(page_numbers):
                 raster = self.document.render_page(index, dpi=self._dpi)
                 if kind in ("jpg", "jpeg"):
-                    self._images.append(raster.to_jpeg(quality=quality, mode=mode))
+                    self._images.append(raster.to_jpeg(quality=quality, mode=mode, threshold=threshold, dither=dither))
                 elif kind in ("tif", "tiff"):
-                    self._images.append(raster.to_tiff(mode=mode))
+                    self._images.append(raster.to_tiff(mode=mode, threshold=threshold, dither=dither))
                 elif kind == "png":
-                    self._images.append(raster.to_png(mode=mode))
+                    self._images.append(raster.to_png(mode=mode, threshold=threshold, dither=dither))
                 elif kind == "webp":
                     self._images.append(
                         raster.to_webp(
-                            quality=quality, mode=mode, lossless=lossless, method=method
+                            quality=quality, mode=mode, lossless=lossless, method=method, threshold=threshold, dither=dither
                         )
                     )
                 else:
