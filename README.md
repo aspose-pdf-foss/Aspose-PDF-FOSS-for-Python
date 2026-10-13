@@ -1131,6 +1131,8 @@ and delete workflows. 265 public types are organized by module below.
   - `add_list_box(...) -> Field` / `add_combo_box(...) -> Field` /
     `add_push_button(name, page, rect, caption, read_only, required) -> Field`
   - `remove_field(name) -> Field` / `generate_appearances() -> int` / `flatten() -> None`
+  - `fill(values, strict=True) -> list[str]` / `to_dict() -> dict` /
+    `export_json(destination=None) -> bytes` / `import_json(source, strict=True) -> list[str]`
   - `export_fdf(destination) -> bytes` / `export_xfdf(destination) -> bytes` /
     `import_fdf(source) -> list[str]` / `import_xfdf(source) -> list[str]` (form data interchange)
 - `Field` — `remove() -> Field`; properties `name`, `value`, `field_type`, `partial_name`,

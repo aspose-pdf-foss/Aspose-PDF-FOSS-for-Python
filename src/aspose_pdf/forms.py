@@ -12,6 +12,7 @@ from aspose_pdf.exceptions import PdfValidationException
 
 if TYPE_CHECKING:
     from aspose_pdf.document import Document
+    from aspose_pdf.load_limits import _LoadBudget
 
 
 class FieldType(Enum):
@@ -940,7 +941,138 @@ class Form:
             **self._appearance_options(appearance),
         )
 
-    # --- form data in and out: FDF and XFDF -------------------------------------------
+    # --- form data in and out: dictionaries, JSON, FDF and XFDF ------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a snapshot of field values keyed by fully qualified names.
+
+        Checkboxes are booleans, radio buttons are state names or ``None``,
+        and multiselect list boxes always contain lists, even with zero or one
+        selection. Other values are strings or ``None``. Signature fields and
+        push buttons are omitted. Read-only and no-export fields are included;
+        this is data exchange, not a viewer's form submission.
+        """
+        self._document._ensure_not_disposed()
+        self._load_fields()
+        values: dict[str, Any] = {}
+        for field in self._fields.values():
+            if field.field_type in ("signature", "pushbutton"):
+                continue
+            value = field.value
+            if field.multi_select:
+                if isinstance(value, list):
+                    value = list(value)
+                else:
+                    value = [] if value is None else [value]
+            elif isinstance(value, list):
+                value = list(value)
+            values[field.name] = value
+        return values
+
+    def fill(self, values: Mapping[str, Any], *, strict: bool = True) -> list[str]:
+        """Fill fields from a flat mapping and return the names updated, in order.
+
+        Values are strings, booleans, ``None``, or lists/tuples of strings.
+        They must suit the field's type and choice options. ``None`` clears a
+        text field, unchecks a checkbox, or clears a radio/choice selection.
+        Names and values are validated before any field is changed. Unknown
+        names raise ``KeyError`` unless ``strict=False``; signatures and push
+        buttons are always skipped. Each update uses :attr:`Field.value`, with
+        its existing appearance-generation capabilities and limitations.
+        """
+        from aspose_pdf.load_limits import _LoadBudget
+
+        self._document._ensure_not_disposed()
+        if not isinstance(values, Mapping):
+            raise TypeError("values must be a mapping of field names to values")
+        if not isinstance(strict, bool):
+            raise TypeError("strict must be a boolean")
+        budget = _LoadBudget(self._document.load_limits)
+        budget.check(len(values), "max_container_items", "form data fields")
+        self._load_fields()
+        prepared: list[tuple[Field, Any]] = []
+        for index, (name, value) in enumerate(values.items(), 1):
+            budget.check(index, "max_container_items", "form data fields")
+            if not isinstance(name, str):
+                raise TypeError("form data field names must be strings")
+            if isinstance(value, (list, tuple)):
+                budget.check(len(value), "max_container_items", "form data values")
+                if not all(isinstance(item, str) for item in value):
+                    raise TypeError("form data lists must contain only strings")
+                value = list(value)
+            elif value is not None and not isinstance(value, (str, bool)):
+                raise TypeError(
+                    "form data values must be strings, booleans, lists or None"
+                )
+            texts = value if isinstance(value, list) else [value]
+            try:
+                for text in texts:
+                    if isinstance(text, str):
+                        text.encode("utf-16-be")
+            except UnicodeError as exc:
+                raise PdfValidationException(
+                    f"Field '{name}' contains invalid Unicode text"
+                ) from exc
+            field = self._fields.get(name)
+            if field is None:
+                if strict:
+                    raise KeyError(f"Field '{name}' not found")
+                continue
+            if field.field_type in ("signature", "pushbutton"):
+                continue
+            if field.field_type == "checkbox":
+                if value is None:
+                    value = False
+                if not isinstance(value, bool):
+                    raise TypeError(f"Checkbox '{name}' requires a boolean or None")
+            elif field.field_type == "radio":
+                if value is not None and not isinstance(value, str):
+                    raise TypeError(f"Radio field '{name}' requires a string or None")
+                if value not in (None, "Off") and value not in field.export_values:
+                    raise PdfValidationException(
+                        f"Radio field '{name}' value is not one of the options"
+                    )
+            elif field.field_type in ("listbox", "combobox"):
+                value = validate_choice_value(
+                    value,
+                    [export for export, _display in field.options],
+                    combo=field.field_type == "combobox",
+                    editable=field.editable,
+                    multiselect=field.multi_select,
+                )
+            else:
+                if value is not None and not isinstance(value, str):
+                    raise TypeError(f"Text field '{name}' requires a string or None")
+                value = "" if value is None else value
+            prepared.append((field, value))
+        try:
+            for field, value in prepared:
+                field.value = value
+        finally:
+            self._load_fields()
+        return [field.name for field, _value in prepared]
+
+    def export_json(self, destination: Any = None) -> bytes:
+        """Return UTF-8 JSON form data, optionally writing a path or binary stream.
+
+        The JSON object has the same flat schema as :meth:`to_dict`. Files are
+        replaced atomically, and short stream writes are retried.
+        """
+        from aspose_pdf.engine.form_json import to_json
+
+        return self._export(lambda _engine: to_json(self.to_dict()), destination)
+
+    def import_json(self, source: Any, *, strict: bool = True) -> list[str]:
+        """Fill from UTF-8 JSON in a path, bytes, or readable binary stream.
+
+        See :meth:`fill` for values and unknown-field handling. Duplicate keys,
+        non-finite numbers and malformed data are rejected. Input size,
+        nesting and container sizes obey ``document.load_limits``.
+        """
+        from aspose_pdf.engine.form_json import read_json
+
+        data, budget = self._read_data(source)
+        return self.fill(read_json(data, budget), strict=strict)
 
     def export_fdf(self, destination: Any = None) -> bytes:
         """The form's data as FDF (ISO 32000-1 12.7.8), written to *destination* if given.
@@ -1002,13 +1134,19 @@ class Form:
         return data
 
     def _import(self, reader: Any, source: Any) -> list[str]:
+        from aspose_pdf.engine.form_data import apply
+
+        data, budget = self._read_data(source)
+        imported = apply(self._document._engine_pdf, reader(data, budget))
+        self._load_fields()
+        return imported
+
+    def _read_data(self, source: Any) -> tuple[bytes, _LoadBudget]:
         import os
 
-        from aspose_pdf.engine.form_data import apply
         from aspose_pdf.load_limits import _LoadBudget, _read_limited
 
         self._document._ensure_not_disposed()
-        engine = self._document._engine_pdf
         budget = _LoadBudget(self._document.load_limits)
         if isinstance(source, (bytes, bytearray)):
             data = bytes(source)
@@ -1020,9 +1158,7 @@ class Form:
             data = _read_limited(source, budget)
         else:
             raise TypeError("source must be a path, bytes or a readable binary stream")
-        imported = apply(engine, reader(data, budget))
-        self._load_fields()
-        return imported
+        return data, budget
 
     def remove_field(self, name: str) -> Field:
         """Remove a field by fully qualified name and return the removed field."""

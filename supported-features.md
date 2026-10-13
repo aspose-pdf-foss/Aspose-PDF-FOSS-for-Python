@@ -2471,6 +2471,38 @@ Supported:
   and several `<value>`s stay a list (PDFBox keeps only the last, even from
   its own XFDF).
 - Set a field value by name through the `Field.value` setter.
+- **Fill forms from dictionaries and exchange JSON data**: `Form.fill(values,
+  strict=True)` accepts a flat mapping of fully qualified field names to values,
+  and returns the names updated in input order. Names and values are validated
+  before any field changes. Unknown names raise `KeyError`; `strict=False`
+  skips them. Signature fields and push buttons are always skipped.
+  `Form.to_dict()` returns a fresh snapshot, including read-only and no-export
+  fields: those flags govern viewer interaction/submission, not this exchange.
+  Checkboxes use booleans, radio buttons use their export-state names or `None`,
+  text and single-choice fields use strings or `None`, and multiselect list boxes
+  always use lists of strings, including zero or one selection. Filling with
+  `None` clears text to an empty string, unchecks checkboxes and clears radio or
+  choice selections. Choice values are checked against the field's export
+  values; editable combo boxes also accept other strings. `fill` additionally
+  accepts tuples for multiselect fields. Updates use the same value and
+  appearance path as `Field.value`, including its existing font limitations.
+  `Form.export_json(destination=None)` returns UTF-8 JSON bytes and optionally
+  writes a path atomically or a binary stream with short-write handling;
+  `Form.import_json(source, strict=True)` reads a path, bytes, `bytearray`, or a
+  binary stream and fills from the same flat schema. JSON has no wrapper,
+  metadata, flags or nested field objects. Malformed UTF-8/JSON, duplicate names
+  and non-finite constants are refused, and the document's input-byte, nesting
+  and container-size limits apply. A UTF-8 BOM is accepted.
+
+  ```python
+  with Document("form.pdf") as document:
+      document.form.fill({"person.name": "Alice", "agree": True})
+      values = document.form.to_dict()
+      document.form.export_json("values.json")
+      document.form.import_json("values.json")
+      document.save("filled.pdf")
+  ```
+
 - Create and remove AcroForm fields entirely through the public API:
   `Form.add_text_field()`, `add_checkbox()`, `add_radio_group()`,
   `add_list_box()`, `add_combo_box()`, `add_push_button()`, and
