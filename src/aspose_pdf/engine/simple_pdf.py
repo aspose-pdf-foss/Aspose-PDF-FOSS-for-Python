@@ -16142,7 +16142,9 @@ class SimplePdf:
                     field_obj.mapping[PdfName("V")] = pdf_val
                     self._update_choice_indices(field_obj, pdf_val)
                 elif field_attribute(self, field_obj, "FT") == PdfName("Ch"):
-                    field_obj.mapping.pop(PdfName("V"), None)
+                    # An explicit empty value prevents a cleared child from
+                    # reading its parent's current /V again on the next refresh.
+                    field_obj.mapping[PdfName("V")] = PdfNull()
                     field_obj.mapping.pop(PdfName("I"), None)
                 return True
 

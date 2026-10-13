@@ -2542,6 +2542,38 @@ Supported:
       document.save("filled.pdf")
   ```
 
+- **Reset a form to its template defaults from Python**: `Form.reset(fields=None,
+  strict=True)` restores all data fields from their effective `/DV` values,
+  including inherited and indirect defaults, or just an iterable of fully
+  qualified terminal field names. It returns the names reset, in form order
+  for a full reset and input order for a selection; duplicate names are reset
+  once, and an empty selection does nothing. Unknown names raise `KeyError`
+  unless `strict=False`, and a bare string is refused rather than split into
+  characters. Selection iteration is bounded by the document's container limit.
+  This enables reusing a filled template or reverting selected answers without
+  recreating fields or running a viewer's `ResetFormAction`.
+  - Fields without defaults (or with a null `/DV`) are cleared: text becomes
+    an empty string, checkboxes become unchecked, and radio/choice selections
+    are removed. Multiselect defaults stay lists even with zero or one value.
+    Names, default types, button states and choice values are checked before
+    any field is changed; malformed defaults are refused instead of being
+    converted into arbitrary text or silently dropping bad array entries.
+  - Signature fields and push buttons are skipped. Read-only and no-export
+    data fields are reset programmatically; their flags and `/DV` values are
+    preserved. Other fields keep their values, and retained `Field` instances
+    reflect the reset. Widget appearances follow the existing `Field.value`
+    update path, including its current font/rich-text limitations. Failures
+    during appearance generation or resource processing may leave earlier
+    updates applied; this is not a transactional rollback facility.
+
+  ```python
+  with Document("completed-form.pdf") as document:
+      document.form.reset(["person.name", "agree"])
+      document.save("partially-reset.pdf")
+      document.form.reset()
+      document.save("template.pdf")
+  ```
+
 - Create and remove AcroForm fields entirely through the public API:
   `Form.add_text_field()`, `add_checkbox()`, `add_radio_group()`,
   `add_list_box()`, `add_combo_box()`, `add_push_button()`, and

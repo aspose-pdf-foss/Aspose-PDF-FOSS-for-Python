@@ -1052,6 +1052,86 @@ class Form:
             self._load_fields()
         return [field.name for field, _value in prepared]
 
+    def reset(
+        self, fields: Iterable[str] | None = None, *, strict: bool = True
+    ) -> list[str]:
+        """Restore all fields, or selected fully qualified names, to their defaults.
+
+        Defaults come from ``/DV``, including inherited values. Without a
+        default, text is cleared to ``""``, checkboxes are unchecked, and
+        radio/choice selections are cleared. Signature fields and push buttons
+        are skipped. Read-only and no-export fields can be reset programmatically.
+
+        ``fields=None`` resets all data fields in form order. An iterable of
+        names resets each distinct name once, in input order; an empty iterable
+        does nothing. Unknown names raise ``KeyError`` unless ``strict=False``.
+        A bare string is refused. All names and default values are validated
+        before any update. Returns the names reset and uses :meth:`fill`'s
+        existing value/appearance path, with the same font limitations.
+        """
+        from aspose_pdf.engine.cos import PdfArray, PdfName, PdfNull, PdfString
+        from aspose_pdf.engine.form_fields import text_of
+        from aspose_pdf.load_limits import _LoadBudget
+
+        self._document._ensure_not_disposed()
+        if not isinstance(strict, bool):
+            raise TypeError("strict must be a boolean")
+        if fields is not None and (
+            isinstance(fields, (str, bytes, bytearray))
+            or not isinstance(fields, Iterable)
+        ):
+            raise TypeError("fields must be an iterable of field names or None")
+        self._load_fields()
+        budget = _LoadBudget(self._document.load_limits)
+        selected: dict[str, Field] = {}
+        for index, name in enumerate(self._fields if fields is None else fields, 1):
+            budget.check(index, "max_container_items", "form reset field names")
+            if not isinstance(name, str):
+                raise TypeError("form reset field names must be strings")
+            field = self._fields.get(name)
+            if field is None:
+                if strict:
+                    raise KeyError(f"Field '{name}' not found")
+                continue
+            if field.field_type not in ("signature", "pushbutton"):
+                selected[name] = field
+
+        values: dict[str, Any] = {}
+        engine = self._document._engine_pdf
+        for name, field in selected.items():
+            default = field._attribute("DV")
+            if default is None or isinstance(default, PdfNull):
+                value = field.default_value
+            else:
+                allowed = isinstance(default, (PdfString, PdfName))
+                if isinstance(default, PdfArray):
+                    budget.check(
+                        len(default.items), "max_container_items", "form reset default values"
+                    )
+                    allowed = field.field_type == "listbox" and field.multi_select
+                    allowed = allowed and all(
+                        isinstance(engine._resolve(item), (PdfString, PdfName))
+                        for item in default.items
+                    )
+                if not allowed:
+                    raise PdfValidationException(
+                        f"Field '{name}' has an invalid default value"
+                    )
+                if field.field_type in ("checkbox", "radio"):
+                    state = text_of(engine, default)
+                    if state != "Off" and state not in field.export_values:
+                        raise PdfValidationException(
+                            f"Field '{name}' default is not one of its button states"
+                        )
+                value = field.default_value
+            if field.multi_select:
+                if isinstance(value, list):
+                    value = list(value)
+                else:
+                    value = [] if value is None else [value]
+            values[name] = value
+        return self.fill(values)
+
     def export_json(self, destination: Any = None) -> bytes:
         """Return UTF-8 JSON form data, optionally writing a path or binary stream.
 

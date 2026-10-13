@@ -19,6 +19,7 @@ from .cos import (
     PdfArray,
     PdfDictionary,
     PdfName,
+    PdfNull,
     PdfNumber,
     PdfString,
     decode_pdf_text_string,
@@ -188,7 +189,7 @@ def form_value(resolve: Any, budget: Any, value: Any, kind: str) -> Any:
     unless the value names another state); a radio button's state name, or
     ``None`` at ``Off``; a list where several choices are selected.
     """
-    if value is None:
+    if value is None or isinstance(value, PdfNull):
         return False if kind == "checkbox" else None
     if isinstance(value, (PdfString, PdfName)):
         text = (
@@ -197,6 +198,10 @@ def form_value(resolve: Any, budget: Any, value: Any, kind: str) -> Any:
             else value.name.lstrip("/")
         )
         if kind == "checkbox":
+            # PDF name objects identify appearance states. Only Off is the
+            # unchecked state; names such as No or 0 can be valid on states.
+            if isinstance(value, PdfName):
+                return text not in ("", "Off")
             return text not in _OFF_VALUES
         if kind == "radio" and text == "Off":
             return None
