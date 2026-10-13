@@ -21,7 +21,10 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from aspose_pdf.annotations import HighlightAnnotation
 
 __all__ = [
     "RegexResult",
@@ -30,6 +33,7 @@ __all__ = [
     "TextFormattingMode",
     "TextFragment",
     "TextFragmentAbsorber",
+    "TextHighlightResult",
     "TextSearchOptions",
 ]
 
@@ -131,6 +135,35 @@ class TextFragment:
             f"TextFragment(page={self.page_index}, text={self.text!r}, "
             f"start={self.start}, end={self.end}{where})"
         )
+
+
+@dataclass(frozen=True)
+class TextHighlightResult:
+    """Highlights created and matches skipped because their geometry was uncertain.
+
+    ``annotations`` holds live annotation handles in page/match order.
+    ``skipped_fragments`` holds the matched text, page index and character
+    offsets for occurrences that could not be placed reliably. Counts include
+    only non-empty matches considered within the requested ``max_count``.
+    """
+
+    annotations: tuple[HighlightAnnotation, ...] = ()
+    skipped_fragments: tuple[TextFragment, ...] = ()
+
+    @property
+    def highlighted_count(self) -> int:
+        """The number of annotations created, one per placed match."""
+        return len(self.annotations)
+
+    @property
+    def skipped_count(self) -> int:
+        """The number of matches without reliable geometry."""
+        return len(self.skipped_fragments)
+
+    @property
+    def matched_count(self) -> int:
+        """The number of non-empty matches considered, including skipped ones."""
+        return self.highlighted_count + self.skipped_count
 
 
 # ---------------------------------------------------------------------------

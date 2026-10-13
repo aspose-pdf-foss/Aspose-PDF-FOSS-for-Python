@@ -1066,6 +1066,7 @@ and delete workflows. 265 public types are organized by module below.
     `auto_tag(image_alt) -> int`
   - `replace_text(search, replacement, page_index, case_sensitive, max_count) -> int` /
     `redact_text(search, page_index, case_sensitive, max_count, overlay, overlay_color) -> int`
+  - `highlight_text(search, page_index, case_sensitive, max_count, regex, color, opacity, contents, title) -> TextHighlightResult`
   - `render_page(page_index, dpi, scale, background, antialias, shape_substitute_text, draw_annotations, font_substitution) -> RasterizedPage` /
     `save_page_as_image(page_index, destination, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path` /
     `save_as_tiff(destination, pages, dpi, scale, background, antialias, mode, compression, threshold) -> Path` /
@@ -1095,6 +1096,7 @@ and delete workflows. 265 public types are organized by module below.
     `save_as_image(path, dpi, scale, background, antialias) -> Path`
   - `add_stamp(stamp) -> Page` — a text, image or page-number stamp over or under the page
   - `replace_text(...) -> int` / `redact_text(...) -> int`
+  - `highlight_text(...) -> TextHighlightResult` — annotations and a report of unplaceable matches
   - properties: `index`, `label`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`
   (the page may belong to another document, and is then imported with all it names),
@@ -1104,6 +1106,10 @@ and delete workflows. 265 public types are organized by module below.
   `NONE`; `label(page_index) -> str | None`, `clear()`
 
 ### Text Extraction And Editing
+
+- `Document.highlight_text()` / `Page.highlight_text()` find a phrase or regex and add
+  highlight annotations. `TextHighlightResult` reports `highlighted_count`, `skipped_count`,
+  `matched_count`, editable `annotations`, and `skipped_fragments` with text/page/offsets.
 
 - `PdfExtractor`
   - `bind_pdf(source, password, limits) -> None`

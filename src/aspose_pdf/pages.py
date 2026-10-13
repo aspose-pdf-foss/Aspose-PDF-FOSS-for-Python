@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from aspose_pdf.lists import TextList
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.tables import Table
+    from aspose_pdf.text import TextHighlightResult
     from aspose_pdf.text_block import TextBlock
     from aspose_pdf.text_layout import TextLayoutOptions
 
@@ -1294,6 +1295,35 @@ class Page:
             regex=regex,
             font=font,
             layout=layout,
+        )
+
+    def highlight_text(
+        self,
+        search: str | re.Pattern[str],
+        *,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+        color: ColorValue = (1.0, 1.0, 0.0),
+        opacity: float = 0.5,
+        contents: str = "",
+        title: str | None = None,
+    ) -> TextHighlightResult:
+        """Highlight phrase or regex matches on this page and report skips.
+
+        See :meth:`aspose_pdf.document.Document.highlight_text` for search
+        options, geometry limitations and the result's counts/annotation handles.
+        """
+        return self._document.highlight_text(
+            search,
+            page_index=self._index,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+            color=color,
+            opacity=opacity,
+            contents=contents,
+            title=title,
         )
 
     def redact_text(

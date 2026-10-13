@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     from aspose_pdf.signature import PdfSignature
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.tagged import TaggedContent
+    from aspose_pdf.text import TextHighlightResult
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.validation import CertificationLevel
     from aspose_pdf.viewer_preferences import (
@@ -2083,6 +2084,50 @@ class Document:
             regex=regex,
             font=font,
             layout=layout,
+        )
+
+    def highlight_text(
+        self,
+        search: str | re.Pattern[str],
+        *,
+        page_index: int | None = None,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+        color: ColorValue = (1.0, 1.0, 0.0),
+        opacity: float = 0.5,
+        contents: str = "",
+        title: str | None = None,
+    ) -> TextHighlightResult:
+        """Add one highlight annotation per reliably placed text match.
+
+        Search all pages or one zero-based ``page_index``. A string is literal
+        unless ``regex=True``; compiled text patterns retain their flags.
+        ``case_sensitive=False`` adds case-insensitive matching. Matches are
+        non-overlapping, and zero-width regex matches are ignored.
+        ``max_count=0`` is unlimited; otherwise it caps matches considered
+        across pages, including skipped ones, in extraction order.
+
+        The result reports live ``annotations`` and ``skipped_fragments`` with
+        page indexes and text offsets. Text without usable font metrics, text
+        assembled across separate runs, and form-XObject text may be skipped.
+        Repeated occurrences are placed only when extraction and geometry
+        agree on their count. Existing page text is preserved. The colour uses
+        the standard grey/RGB/CMYK forms; opacity is between zero and one.
+        """
+        from aspose_pdf.engine.text_highlight import highlight_text
+
+        return highlight_text(
+            self,
+            search,
+            page_index=page_index,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+            color=color,
+            opacity=opacity,
+            contents=contents,
+            title=title,
         )
 
     def redact_text(

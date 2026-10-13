@@ -15590,7 +15590,7 @@ class SimplePdf:
     def locate_text(
         self,
         page_index: int,
-        search: str,
+        search: str | re.Pattern[str],
         *,
         case_sensitive: bool = True,
         max_count: int = 0,

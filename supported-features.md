@@ -1757,6 +1757,45 @@ Supported:
   so text assembled from several runs, text inside a form XObject, or text in
   a font the page does not declare stays unplaced (`rect` is `None`) rather
   than being given a box that is not its own.
+- **Highlight search matches in one operation**: `Document.highlight_text(search,
+  page_index=None, case_sensitive=True, max_count=0, regex=False, color=(1, 1, 0),
+  opacity=0.5, contents="", title=None)` scans every page or one zero-based page
+  index; `Page.highlight_text(...)` limits the same operation to that page.
+  Strings are literal unless `regex=True`; compiled text `re.Pattern` objects
+  retain their flags, and `case_sensitive=False` adds `IGNORECASE`. Search runs
+  on each page's extracted text with non-overlapping matches; zero-width regex
+  matches are ignored. `max_count=0` means unlimited; a positive count caps
+  matches considered across pages, **including skipped matches**, in extraction
+  order. No later page is read once that count is reached.
+  - One `HighlightAnnotation` is created per reliably placed match, with all
+    its quadrilaterals converted from locator corner order into the
+    upper-left/right, lower-left/right order viewers expect. Text and content
+    streams are preserved. The colour accepts grey/RGB/CMYK, hexadecimal or
+    `Color` values, and opacity is a finite number in 0..1. `contents` and
+    `title` apply to each created annotation. Calling again adds more highlights.
+  - The returned `TextHighlightResult` exposes `annotations` (live handles),
+    `skipped_fragments` (matched text, page index, start/end offsets), and
+    `highlighted_count`, `skipped_count`, `matched_count`. It is also exported
+    from `aspose_pdf`. Geometry uses the original regex, including its context,
+    so a lookbehind selecting one of several identical words selects that
+    word's coordinates. Matches are grouped by their exact text, and only groups
+    whose extracted and trackable occurrence counts agree are placed; an
+    unmeasurable repeat is never assigned another occurrence's coordinates.
+  - The existing locator's limits apply: unknown font metrics, text in form
+    XObjects, phrases crossing separate logical runs, and regex contexts that
+    span those runs can be unplaceable. These matches are reported, without
+    guessed rectangles. Invalid arguments are rejected before annotations are
+    added; parsing/resource-limit failures propagate. If a later page fails,
+    highlights already added to earlier pages remain. Search/result collection
+    obeys the document's container limits and keeps selected-page traversal lazy.
+
+  ```python
+  with Document("input.pdf") as document:
+      result = document.highlight_text(r"\bINV-\d+\b", regex=True)
+      print(result.highlighted_count, result.skipped_count)
+      document.save("highlighted.pdf")
+  ```
+
 - **Match a shape, not only a phrase.** `replace_text` and `redact_text` take
   `regex=True`, or a compiled `re.Pattern` as the search (which needs no flag),
   so `\d{3}-\d{2}-\d{4}` finds a social security number and

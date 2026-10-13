@@ -138,6 +138,7 @@ from .stamps import (
 )
 from .tables import Cell, Row, Table
 from .tagged import StructureElement, TaggedContent
+from .text import TextHighlightResult
 from .text_block import Paragraph, TextBlock
 from .text_layout import TextLayoutOptions
 from .validation import (
@@ -310,6 +311,7 @@ __all__ = [
     "TextBlock",
     "TextExtractor",
     "TextExtractorOptions",
+    "TextHighlightResult",
     "TextLayoutOptions",
     "TextList",
     "TextStamp",

@@ -272,6 +272,9 @@ class LocatedText:
     color: tuple[float, float, float] | None = None
     """The colour the glyphs are painted in, as RGB, when it could be resolved."""
 
+    text: str = ""
+    """The exact text covered by this match, before any case folding."""
+
 
 def _bounds(quads: list[Quad]) -> tuple[float, float, float, float]:
     xs = [point[0] for quad in quads for point in quad]
@@ -329,7 +332,13 @@ def locate_text(
             segment = run.segments[_segment_of(seg_starts, start)]
             active_budget.check(len(found) + 1, "max_container_items", "located text")
             found.append(
-                LocatedText(tuple(quads), _bounds(quads), segment.font_name, segment.size)
+                LocatedText(
+                    tuple(quads),
+                    _bounds(quads),
+                    segment.font_name,
+                    segment.size,
+                    text=full[start:end],
+                )
             )
     return found
 
