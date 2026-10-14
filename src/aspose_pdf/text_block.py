@@ -75,6 +75,19 @@ def _alignment(value: Any, name: str = "alignment") -> str | None:
     return "center" if key == "centre" else key
 
 
+def _line_count(value: Any, name: str) -> int | None:
+    """Validate an optional positive, finite, whole number of lines."""
+    if value is None:
+        return None
+    try:
+        number = _measurement(value, name, allow_zero=False)
+    except OverflowError:
+        raise PdfValidationException(f"{name} must be finite") from None
+    if number != int(number):
+        raise PdfValidationException(f"{name} must be a whole number of lines")
+    return int(number)
+
+
 def _split_paragraphs(text: str) -> list[str]:
     """*text* cut into paragraphs at blank lines.
 
@@ -106,6 +119,19 @@ class Paragraph:
     ``space_before``/``space_after`` are added to the block's ``paragraph_gap``
     rather than replacing it, since the gap is about the space *between*
     paragraphs and these are about this one.
+
+    Page-breaking controls:
+
+    - ``keep_together``: move the whole paragraph rather than split it when it fits.
+    - ``widow_lines``: minimum lines before a page break within this paragraph.
+    - ``orphan_lines``: minimum lines after a page break within this paragraph.
+    - ``keep_with_next``: keep a paragraph with the start of the following one.
+
+    Line counts default to ``None`` (unrestricted). Linked paragraph chains are
+    kept whole when they fit a fresh page; long paragraphs can still split.
+    Constraints that cannot fit a fresh page are relaxed to keep text within
+    the page bounds. Spacing before a paragraph is not repeated on continuation
+    pages.
     """
 
     text: str = ""
@@ -122,8 +148,14 @@ class Paragraph:
     #: Structure type for the paragraph, or ``None`` to leave it untagged.
     #: ``"H1"``, ``"Lbl"`` and the rest of ISO 32000-1 Table 333 all work.
     tag: str | None = "P"
-    #: Keep the paragraph whole: move it to the next page rather than split it.
+    #: Keep the paragraph whole when possible; oversized paragraphs still split.
     keep_together: bool = False
+    #: Minimum lines in the fragment before a page break; None is unrestricted.
+    widow_lines: int | None = None
+    #: Minimum lines in the fragment after a page break; None is unrestricted.
+    orphan_lines: int | None = None
+    #: Keep the paragraph with the start of the next; chains move whole when possible.
+    keep_with_next: bool = False
 
     def __post_init__(self) -> None:
         self.text = "" if self.text is None else str(self.text)
@@ -147,6 +179,9 @@ class Paragraph:
         self.left_indent = _measurement(self.left_indent, "left_indent")
         self.right_indent = _measurement(self.right_indent, "right_indent")
         self.keep_together = bool(self.keep_together)
+        self.widow_lines = _line_count(self.widow_lines, "widow_lines")
+        self.orphan_lines = _line_count(self.orphan_lines, "orphan_lines")
+        self.keep_with_next = bool(self.keep_with_next)
 
 
 @dataclass

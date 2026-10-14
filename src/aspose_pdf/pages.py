@@ -916,6 +916,11 @@ class Page:
         are measured by their own advances. What it does not do is shape, so
         right-to-left and complex scripts still want that path.
 
+        Paragraphs can set ``widow_lines`` and ``orphan_lines`` for minimum
+        fragment lengths before and after page breaks, and ``keep_with_next``
+        to keep headings with following text. Impossible constraints are
+        relaxed so every line stays within the page bounds.
+
         Each paragraph is tagged with its own structure type -- ``/P`` unless it
         says otherwise -- and a paragraph continued onto the next page stays one
         element. Pass ``tag=False`` to leave the text untagged.

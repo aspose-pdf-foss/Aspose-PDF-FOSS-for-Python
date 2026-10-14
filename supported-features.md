@@ -1973,7 +1973,8 @@ Supported:
     form, and a paragraph says only where it departs from the block --
     `alignment`, `font_name`, `font_size`, `text_color`, `line_height`,
     `space_before`/`space_after`, `first_line_indent`, `left_indent`,
-    `right_indent`, `tag`, `keep_together`.
+    `right_indent`, `tag`, `keep_together`, `widow_lines`, `orphan_lines`,
+    `keep_with_next`.
   - `alignment` is `left`, `center`, `right` or **`justify`**. A justified line
     is spread to the measure exactly: pdfium reads every one of them as ending
     on the measure to the hundredth of a point. The **last line of a paragraph
@@ -1995,7 +1996,28 @@ Supported:
   - A block taller than the room left **continues onto the next page**, adding a
     page like the one it is leaving when there is none to continue onto, and
     `bottom_margin` says how much to leave at the foot. A paragraph marked
-    `keep_together` moves whole rather than splitting.
+    `keep_together` moves whole rather than splitting when possible; paragraphs
+    taller than a fresh page still split safely.
+  - **Control paragraph page breaks** with positive whole-number line counts:
+    `widow_lines` is the minimum number of lines in the fragment before a break,
+    and `orphan_lines` is the minimum in the fragment after it. Both default to
+    `None` (unrestricted). Each break is checked, including later breaks in a
+    long paragraph; a short final fragment is avoided by moving lines from the
+    preceding fragment. `keep_with_next=True` keeps a paragraph with the start
+    of the following one. Consecutive links form a chain that moves whole when
+    it fits a fresh page; long body paragraphs can continue across pages.
+    Paragraph gaps and `space_before`/`space_after` participate in this decision,
+    and spacing before a paragraph is not repeated on continuation pages.
+    Page bounds and progress take priority when a requested minimum, whole
+    paragraph, or linked group cannot fit: those impossible constraints are
+    relaxed rather than clipping, duplicating, or losing text. For example:
+
+    ```python
+    block = TextBlock(width=440)
+    block.add_paragraph("Report summary", tag="H2", keep_with_next=True)
+    block.add_paragraph(body_text, widow_lines=2, orphan_lines=2)
+    page.add_text_block(block, 72, 740)
+    ```
   - Each paragraph is tagged with its own structure type (`/P` unless `tag=`
     says otherwise, `None` to leave it untagged, `tag=False` on the call to
     leave the whole block untagged). A paragraph **continued onto the next page
@@ -2052,9 +2074,10 @@ Boundaries:
 
 - A text block's and a list's line breaking is **greedy** at whitespace, with a
   word too long for the measure broken so that nothing overflows. There is no hyphenation, no
-  Knuth-Plass paragraph optimisation, and no orphan or widow control beyond
-  `keep_together` -- a paragraph either moves whole or splits wherever the page
-  ends. Lines are not shaped either: for right-to-left or complex scripts use
+  Knuth-Plass paragraph optimisation. Paragraph page-break controls are best
+  effort when a constraint exceeds the available page height; they do not
+  rebalance an entire document or provide multiple columns. Lines are not
+  shaped either: for right-to-left or complex scripts use
   `Page.add_text(layout=TextLayoutOptions(...))`, which does shape and needs the
   `text-layout` extra. A block does not flow **around** anything, and it has one
   column. A list's marker is set in the body's font, so a bullet the font has no

@@ -208,6 +208,8 @@ flowchart TD
   tagged as its own structure element — one element even where it spans pages. It needs no
   optional dependency, the Standard-14 fonts being measured by their own metrics, while
   `Page.add_text(layout=...)` stays the shaping path for right-to-left and complex scripts.
+  Paragraphs can set `widow_lines` and `orphan_lines` to control line counts around page breaks,
+  and `keep_with_next` keeps headings with the text that follows them.
 - `Page.add_table(table, x, y)` draws a real table — `Table`, `Row`, `Cell`, column spans, per-cell
   style, text wrapped to each column with the font's own advances, headers repeated when the table
   runs onto the next page — and tags it as a nested `/Table` of `/TR` of `/TH`/`/TD`, so the result

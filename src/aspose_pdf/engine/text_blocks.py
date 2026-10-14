@@ -11,7 +11,9 @@ one into marks on a page. Three pieces, as for a table:
 * **Breaking.** Lines are placed down the page and the block carries on to the
   next one when the next line would cross the bottom margin, adding a page like
   the one it is leaving when there is none to continue onto. A paragraph marked
-  ``keep_together`` moves whole rather than splitting.
+  ``keep_together`` moves whole rather than splitting. ``widow_lines`` and
+  ``orphan_lines`` control how many lines must stay together at page breaks.
+  ``keep_with_next`` keeps a paragraph together with the following one.
 * **Drawing.** One text fragment per line, through the same builders
   :meth:`Page.add_text` uses -- plus the ``TJ`` form for a justified line.
 
@@ -24,6 +26,7 @@ the foot of the page.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,6 +67,9 @@ class _ParagraphBox:
     space_after: float = 0.0
     tag: str | None = "P"
     keep_together: bool = False
+    widow_lines: int | None = None
+    orphan_lines: int | None = None
+    keep_with_next: bool = False
 
     @property
     def height(self) -> float:
@@ -160,6 +166,9 @@ def layout(block: Any, faces: dict[str, _Face], measure: float) -> list[_Paragra
                 space_after=paragraph.space_after,
                 tag=paragraph.tag,
                 keep_together=paragraph.keep_together,
+                widow_lines=paragraph.widow_lines,
+                orphan_lines=paragraph.orphan_lines,
+                keep_with_next=paragraph.keep_with_next,
             )
         )
     return boxes
@@ -252,36 +261,156 @@ def draw(
         new_box = pdf.get_page_crop_box(current_page) or tuple(pdf.pages[current_page])
         cursor = new_box[3] - top_offset
 
+    # Prefix sums let every page break inspect a paragraph without rewrapping it.
+    heights: list[list[float]] = []
     for paragraph in boxes:
+        prefix = [0.0]
+        for line in paragraph.lines:
+            prefix.append(prefix[-1] + line.height)
+        heights.append(prefix)
+
+    chain_ends = list(range(len(boxes)))
+    chain_heights = [prefix[-1] for prefix in heights]
+    for index in range(len(boxes) - 2, -1, -1):
+        if boxes[index].keep_with_next:
+            chain_ends[index] = chain_ends[index + 1]
+            chain_heights[index] += (
+                boxes[index].space_after
+                + boxes[index + 1].space_before
+                + chain_heights[index + 1]
+            )
+
+    def next_room() -> float:
+        if current_page + 1 < len(pdf.pages):
+            next_box = pdf.get_page_crop_box(current_page + 1) or tuple(
+                pdf.pages[current_page + 1]
+            )
+        else:
+            # Automatically appended pages inherit the MediaBox.
+            next_box = tuple(pdf.pages[current_page])
+        return next_box[3] - top_offset - bottom_margin
+
+    def fitting(index: int, start: int, room: float) -> int:
+        prefix = heights[index]
+        return max(
+            0,
+            bisect_right(prefix, prefix[start] + room + 1e-9, lo=start + 1)
+            - start - 1,
+        )
+
+    def first_fragment_height(index: int, room: float) -> float:
+        paragraph = boxes[index]
+        if paragraph.keep_together and heights[index][-1] <= room + 1e-9:
+            return heights[index][-1]
+        count = min(len(paragraph.lines), paragraph.widow_lines or 1)
+        required = heights[index][count]
+        # An impossible minimum must not prevent otherwise renderable text.
+        if required > room + 1e-9:
+            required = heights[index][min(1, len(paragraph.lines))]
+        return required
+
+    anchor_page: int | None = None
+    for index, paragraph in enumerate(boxes):
         if not paragraph.lines:
             cursor -= paragraph.space_before + paragraph.space_after
             continue
         cursor -= paragraph.space_before
-        needed = (
-            paragraph.height
-            if paragraph.keep_together
-            else (paragraph.lines[0].height if paragraph.lines else 0.0)
+        room = cursor - bottom_margin
+        fresh_room = next_room()
+        protected = (
+            anchor_page == current_page
+            and first_fragment_height(index, fresh_room) <= room + 1e-9
         )
-        if cursor - needed < bottom_margin:
-            if not current and not placed:
-                raise PdfValidationException(
-                    "The first line does not fit between this position and the "
-                    "bottom margin; start higher up or lower the margin"
+
+        if paragraph.keep_with_next and chain_ends[index] > index and not protected:
+            required = chain_heights[index]
+            if required > fresh_room + 1e-9:
+                end = chain_ends[index]
+                required = (
+                    required - heights[end][-1]
+                    + first_fragment_height(end, fresh_room)
                 )
+            if (
+                required > room + 1e-9
+                and required <= fresh_room + 1e-9
+                and current
+            ):
+                start_new_page()
+
+        if (
+            paragraph.keep_together
+            and heights[index][-1] > cursor - bottom_margin + 1e-9
+            and current
+        ):
             start_new_page()
-        for line in paragraph.lines:
-            if cursor - line.height < bottom_margin:
-                if not current and not placed:
+
+        before_minimum = paragraph.widow_lines or 1
+        after_minimum = paragraph.orphan_lines or 1
+        start = 0
+        while start < len(paragraph.lines):
+            room = cursor - bottom_margin
+            fresh_room = next_room()
+            fit = fitting(index, start, room)
+            remaining = len(paragraph.lines) - start
+            if not fit:
+                if not current:
                     raise PdfValidationException(
-                        "The first line does not fit between this position and "
+                        "A text block line does not fit between this position and "
                         "the bottom margin; start higher up or lower the margin"
                     )
                 start_new_page()
-            baseline = cursor - line.height + line.height * _BASELINE_FRACTION
-            current.append((paragraph, line, baseline))
-            cursor -= line.height
-            drawn += 1
+                continue
+
+            minimum = max(before_minimum, after_minimum if start else 1)
+            count = fit
+            following = 0.0
+            if paragraph.keep_with_next and index + 1 < len(boxes):
+                following = (
+                    paragraph.space_after + boxes[index + 1].space_before
+                    + first_fragment_height(index + 1, fresh_room)
+                )
+            needed = heights[index][-1] - heights[index][start]
+            bind_next = (
+                fit == remaining
+                and following > 0
+                and needed + following > room + 1e-9
+                and paragraph.lines[-1].height + following <= fresh_room + 1e-9
+            )
+
+            if bind_next and needed + following <= fresh_room + 1e-9 and current:
+                start_new_page()
+                continue
+
+            if fit < remaining or bind_next:
+                candidate = min(fit, remaining - after_minimum)
+                if candidate >= minimum:
+                    count = candidate
+                else:
+                    fresh_fit = fitting(index, start, fresh_room)
+                    fresh_candidate = min(fresh_fit, remaining - after_minimum)
+                    if (
+                        current
+                        and (
+                            fresh_fit == remaining
+                            or fresh_candidate >= minimum
+                        )
+                    ):
+                        start_new_page()
+                        continue
+                    # The requested counts cannot fit this fresh page. Relax
+                    # them while preserving every line and the page bounds.
+
+            for line in paragraph.lines[start : start + count]:
+                baseline = cursor - line.height + line.height * _BASELINE_FRACTION
+                current.append((paragraph, line, baseline))
+                cursor -= line.height
+                drawn += 1
+            start += count
+            if start < len(paragraph.lines):
+                start_new_page()
+
         cursor -= paragraph.space_after
+        anchor_page = current_page if paragraph.keep_with_next else None
     placed.append((current_page, current))
 
     # How many marked-content sequences each paragraph has on each page, in
