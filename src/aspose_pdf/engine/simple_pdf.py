@@ -10339,7 +10339,7 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     # Text extraction
     # ---------------------------------------------------------------------------
-    def extract_page_text(self, page_index: int) -> str:
+    def extract_page_text(self, page_index: int, *, clip=None) -> str:
         """The text one page's content streams say, its line breaks kept.
 
         The single place a page's content is parsed for text: the whole
@@ -10350,6 +10350,10 @@ class SimplePdf:
         self._ensure_not_disposed()
         if page_index < 0 or page_index >= len(self.pages):
             return ""
+        if clip is not None:
+            from .text_region import extract_region
+
+            return extract_region(self, page_index, clip)
         # Through ``get_page_content``, which serves both modes: reading
         # ``page_contents`` directly meant a document opened with
         # ``open_streaming`` -- where that list is empty until something
@@ -10398,8 +10402,17 @@ class SimplePdf:
             except CONTENT_PARSER_RECOVERABLE:
                 return ""
 
-    def extract_text(self) -> str:
+    def extract_text(self, *, clip=None) -> str:
         """Extract plain text from page contents, one page per line group."""
+        if clip is not None:
+            from .text_region import validate_clip
+
+            self._ensure_not_disposed()
+            rectangle = validate_clip(clip)
+            return "\n".join(
+                self.extract_page_text(index, clip=rectangle)
+                for index in range(len(self.pages))
+            )
         if self._extracted_text is not None:
             return self._extracted_text
         # ``len(self.pages)`` is the page count; ``page_contents`` is a cache

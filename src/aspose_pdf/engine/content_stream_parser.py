@@ -1078,8 +1078,7 @@ class ContentStreamParser:
             raw = ops[0]
             self._note_glyph_widths_from_bytes(raw)
             if not self._text_suppressed():
-                self._separate_from_previous_show()
-                self._buffer.append(self._decode_bytes(raw))
+                self._emit_text(raw)
             return
 
         if op == "TJ":
@@ -1095,8 +1094,7 @@ class ContentStreamParser:
                 if isinstance(element, bytes):
                     self._note_glyph_widths_from_bytes(element)
                     if not self._text_suppressed():
-                        self._separate_from_previous_show()
-                        self._buffer.append(self._decode_bytes(element))
+                        self._emit_text(element)
                 elif isinstance(element, (int, float)):
                     # TJ numbers: thousandths of a text space unit; large negative
                     # gaps often separate words — compare to last glyph width.
@@ -1121,7 +1119,7 @@ class ContentStreamParser:
                             and not separated
                             and -adj > max(100.0, 0.3 * float(lw))
                         ):
-                            self._buffer.append(" ")
+                            self._emit_gap()
             return
 
         if op in {"'", '"'}:
@@ -1132,9 +1130,17 @@ class ContentStreamParser:
             if ops:
                 self.showed_text = True
             if ops and not self._text_suppressed():
-                self._separate_from_previous_show()
-                self._buffer.append(self._decode_bytes(ops[-1]))
+                self._emit_text(ops[-1])
             return
+
+    def _emit_text(self, raw: bytes) -> None:
+        """Append a show operand with the separators implied by its position."""
+        self._separate_from_previous_show()
+        self._buffer.append(self._decode_bytes(raw))
+
+    def _emit_gap(self) -> None:
+        """Append the word gap implied by a TJ adjustment."""
+        self._buffer.append(" ")
 
     def _begin_text_object(self) -> None:
         """``BT``: start the text matrix at the identity, and nothing else.

@@ -501,6 +501,7 @@ def _walk_show_runs(
     codec_for_name: Callable[[str | None], CidTextCodec | None] | None = None,
     metric_for_name: Callable[[str], Any] | None = None,
     base_ctm: tuple = _ID_MATRIX,
+    on_xobject: Callable[[int, str, tuple], None] | None = None,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
 ) -> list[_Run]:
@@ -839,6 +840,11 @@ def _walk_show_runs(
             nums = [v for k, v in operands if k == "num"]
             if nums:
                 rise = nums[-1]
+            broke = True
+        elif value == "Do" and on_xobject is not None:
+            name = _last_operand(operands, "name")
+            if name is not None:
+                on_xobject(tok.end, name, ctm)
             broke = True
         elif value in _NEUTRAL_OPS:
             pass  # keeps the current run open
@@ -1703,6 +1709,7 @@ def _lex(
     *,
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
+    skip_inline_images: bool = False,
 ) -> list[_Token]:
     active_budget = _resolve_load_budget(limits, budget)
     active_budget.check(
@@ -1712,6 +1719,7 @@ def _lex(
     )
     tokens: list[_Token] = []
     nesting: list[str] = []
+    inline_text: str | None = None
 
     def push_nesting(kind: str) -> None:
         depth = len(nesting) + 1
@@ -1805,6 +1813,12 @@ def _lex(
             i += 1
             continue
         _append_token(tokens, token, active_budget)
+        if skip_inline_images and token.value == "BI":
+            from .inline_image import inline_image_end
+
+            if inline_text is None:
+                inline_text = data.decode("latin-1")
+            i = inline_image_end(inline_text, i, limits=active_budget.limits)
     return tokens
 
 

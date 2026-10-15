@@ -1774,6 +1774,32 @@ Supported:
   no text. That also keeps the recovery pass away from **text hidden by optional
   content** — it does not track the `/OC` state, so a page whose every word was
   hidden used to have it extracted anyway.
+- **Extract text from a rectangular region** with
+  `Page.extract_text(clip=(x0, y0, x1, y1))`. The same keyword on
+  `Document.extract_text` and `PdfExtractor.extract_text`, and the `clip` option
+  on `TextExtractorOptions`, apply that region to each page. Coordinates must
+  be finite, ordered corners enclosing positive area, in default, unrotated PDF
+  user space with lower-left axes. They are independent of MediaBox, CropBox,
+  and page rotation: a region is not implicitly intersected with the page box.
+  Selection uses positive overlap of each glyph's axis-aligned, transformed
+  font-metric advance box (including character/word spacing and font ascent and
+  descent), not just the start of a text run; a boundary touching a box alone
+  does not select it. Zero-width glyphs are retained when their position lies
+  in the region. Thus a region can select part of a string, including encoded
+  Unicode text; multibyte code units and ligatures stay whole. Text positioning,
+  `TJ` adjustments, and invoked Form XObjects with their own fonts and placement
+  matrices are followed, including nested/repeated forms. Optional content
+  visibility is respected in each resource scope. Named-property `ActualText`
+  is returned whole when any underlying glyph is selected, since its logical
+  replacement cannot be divided reliably by glyph. The result retains content
+  order, line separators and selected explicit whitespace; it does not infer
+  reading order, recognize scanned text, or apply arbitrary graphics clipping
+  paths. Unresolved fonts, untrackable operands (including UTF-16 BOM show
+  strings), and forms depending on an inherited text state without declaring
+  their font are omitted conservatively; this mode never falls back to reading
+  raw strings. Page extraction stays lazy and does not decode unrelated pages,
+  images, or uninvoked forms. `clip=None` keeps full-page extraction unchanged;
+  extraction never edits page content or its boxes.
 - Use `TextFragmentAbsorber` and `TextAbsorber` to collect text fragments, search
   exact phrases, run regex searches, control case sensitivity, and inspect match
   offsets/page indices. A *document* is taken page by page, which is the only

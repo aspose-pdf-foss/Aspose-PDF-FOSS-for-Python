@@ -21,6 +21,7 @@ An operation that writes returns ``True`` or ``False`` and records why in
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -274,7 +275,7 @@ class PdfExtractor:
         else:
             self._bound_pdf = SimplePdf.from_bytes(source, pwd, **load_kwargs)
 
-    def extract_text(self) -> None:
+    def extract_text(self, *, clip: Sequence[float] | None = None) -> None:
         """Extract text from the bound document's pages.
 
         Each page is read through the engine's own extractor, which is where
@@ -282,14 +283,20 @@ class PdfExtractor:
         is recovered from. Repeating the parse here instead meant a document
         whose content is loaded lazily extracted nothing at all, and a page
         with a damaged content stream lost text the engine reads.
+        ``clip=(x0, y0, x1, y1)`` selects overlapping glyph bounds in unrotated
+        PDF coordinates on each page, as :meth:`Document.extract_text` does.
         """
         self._ensure_not_disposed()
+        if clip is not None:
+            from aspose_pdf.engine.text_region import validate_clip
+
+            clip = validate_clip(clip)
         self._page_texts.clear()
         self._current_index = 0
         if self._bound_pdf is None:
             return
         self._page_texts.extend(
-            self._bound_pdf.extract_page_text(index)
+            self._bound_pdf.extract_page_text(index, clip=clip)
             for index in range(len(self._bound_pdf.pages))
         )
 

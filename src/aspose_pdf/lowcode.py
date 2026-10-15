@@ -28,7 +28,7 @@ import inspect
 import io
 import math
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import closing, nullcontext
 from enum import Enum
 from pathlib import Path
@@ -436,7 +436,23 @@ class SplitOptions(PluginOptions):
 
 
 class TextExtractorOptions(PluginOptions):
-    """Options for :class:`TextExtractor`: extract text from each input."""
+    """Extract text from each input, optionally within a PDF-coordinate ``clip``.
+
+    The rectangle is applied to every page; see :meth:`Document.extract_text`.
+    """
+
+    def __init__(
+        self,
+        limits: PdfLoadLimits | None = None,
+        *,
+        clip: Sequence[float] | None = None,
+    ) -> None:
+        super().__init__(limits=limits)
+        if clip is not None:
+            from aspose_pdf.engine.text_region import validate_clip
+
+            clip = validate_clip(clip)
+        self.clip = clip
 
 
 # ---------------------------------------------------------------------------
@@ -609,7 +625,7 @@ class TextExtractor(PdfPlugin):
                 extractor.bind_pdf(
                     _read_source_bytes(source, limits), limits=limits
                 )
-                extractor.extract_text()
+                extractor.extract_text(clip=getattr(options, "clip", None))
                 results.append(OperationResult(extractor.get_text()))
             finally:
                 extractor.dispose()

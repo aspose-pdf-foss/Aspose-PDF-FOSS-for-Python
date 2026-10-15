@@ -3255,15 +3255,17 @@ class Document:
         """Alias of :meth:`dispose` (matches .NET ``Close``)."""
         self.dispose()
 
-    def extract_text(self) -> str:
+    def extract_text(self, *, clip: Sequence[float] | None = None) -> str:
         """The text of every page, in order, pages separated by a line break.
 
         Each page's own line breaks are kept; see :meth:`Page.extract_text`.
+        ``clip=(x0, y0, x1, y1)`` applies the same unrotated PDF-coordinate
+        rectangle to every page, selecting overlapping glyph bounds.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             return ""
-        return self._engine_pdf.extract_text()
+        return self._engine_pdf.extract_text(clip=clip)
 
     def _choose_incremental(self, requested: bool | None) -> bool:
         """Decide how :meth:`save` writes, honouring signatures already there.
