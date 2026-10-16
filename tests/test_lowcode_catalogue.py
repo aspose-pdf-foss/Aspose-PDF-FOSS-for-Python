@@ -180,9 +180,7 @@ def test_form_flattener_bakes_a_field_into_the_page():
 
 
 def test_form_flattener_takes_annotations_with_the_fields():
-    # Flattening is one operation in the engine, so there is no fields-only form
-    # of it -- Form.flatten() is the same call. A plugin option offering the
-    # narrower behaviour would have promised what nothing implements.
+    # The legacy default still includes annotations when no filters are given.
     document = Document()
     page = document.pages.add()
     document.form.add_text_field("name", page, (50, 700, 250, 725), value="typed")

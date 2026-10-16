@@ -1313,16 +1313,31 @@ class Form:
             )
         return 0
 
-    def flatten(self) -> None:
-        """Flatten the form's fields, making them part of the page content.
+    def flatten(
+        self,
+        fields: bool | Iterable[str] = True,
+        *,
+        annotations: bool = True,
+        pages: Iterable[int] | None = None,
+        strict: bool = True,
+    ) -> None:
+        """Bake selected fields, with the filters of :meth:`Document.flatten`.
 
-        This is :meth:`aspose_pdf.Document.flatten`, so a page's **annotations**
-        are baked in with the fields -- flattening is one operation in the engine,
-        not two. There is no fields-only form of it.
+        The legacy default includes non-widget annotations. Pass
+        ``annotations=False`` to bake only fields, optionally selected by fully
+        qualified names. ``pages`` uses zero-based indices. Widgets on other
+        pages, Hidden/NoView objects and objects without usable appearances
+        remain interactive. On a later page's failure, completed pages remain
+        flattened and this instance's field handles are refreshed.
         """
-        if self._document and self._document._engine_pdf:
-            self._document._engine_pdf.flatten()
-            self._load_fields()
+        try:
+            self._document.flatten(
+                fields=fields, annotations=annotations, pages=pages, strict=strict
+            )
+        finally:
+            # Independently constructed Form instances have their own handles.
+            if self is not self._document._form:
+                self._load_fields()
 
 
     def validate(

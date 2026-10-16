@@ -3691,19 +3691,44 @@ class Document:
         self._engine_pdf.repair()
         return self
 
-    def flatten(self) -> Document:
-        """Flatten annotations and forms.
+    def flatten(
+        self,
+        *,
+        fields: bool | Iterable[str] = True,
+        annotations: bool = True,
+        pages: Iterable[int] | None = None,
+        strict: bool = True,
+    ) -> Document:
+        """Bake selected form fields and annotations into static page content.
 
-        Supported shape and text-markup annotations without an appearance stream
-        are given a synthesised one first (see :meth:`generate_appearances`) so
-        they render into the page content rather than being dropped.
+        By default both are flattened. Set ``annotations=False`` for fields
+        only, ``fields=False`` for non-widget annotations only, or pass fully
+        qualified terminal field names in ``fields``. ``pages`` contains
+        zero-based indices; omitted means all pages. Duplicate selections are
+        ignored. Unknown field names raise ``KeyError`` unless ``strict=False``;
+        invalid selections are rejected before modifying the document.
+
+        Missing supported appearances are generated only for selected objects.
+        Hidden/NoView objects and objects without a usable normal appearance
+        or rectangle are retained, preserving viewing and printing semantics.
+        A field with widgets on other pages stays editable there. Unselected
+        appearances and the AcroForm's ``NeedAppearances`` flag are preserved.
+        An unsafe page graphics state raises ``PdfValidationException``. If a
+        later page fails, completed pages stay flattened and form collections
+        are refreshed; the failing page's annotations are retained. The whole
+        operation is not transactional. This does not execute JavaScript or
+        flatten XFA forms.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
-        self._engine_pdf.flatten()
-        if self._form is not None:
-            self._form._load_fields()
+        try:
+            self._engine_pdf.flatten(
+                fields=fields, annotations=annotations, pages=pages, strict=strict
+            )
+        finally:
+            if self._form is not None:
+                self._form._load_fields()
         return self
 
     def generate_appearances(self, *, force: bool = False) -> int:

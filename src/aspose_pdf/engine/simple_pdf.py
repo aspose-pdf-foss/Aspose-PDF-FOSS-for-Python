@@ -14696,141 +14696,18 @@ class SimplePdf:
         flag = self._resolve(acro.mapping.get(PdfName("NeedAppearances")))
         return isinstance(flag, PdfBoolean) and bool(flag.value)
 
-    def flatten(self) -> None:
-        """Flatten annotations and form fields into static page content.
+    def flatten(
+        self,
+        *,
+        fields: bool | Iterable[str] = True,
+        annotations: bool = True,
+        pages: Iterable[int] | None = None,
+        strict: bool = True,
+    ) -> None:
+        """Bake selected fields and annotations into page content."""
+        from .flatten import flatten
 
-        This process:
-        1. Synthesises appearances for supported annotations that lack one
-        2. Iterates through all pages
-        3. Retrieves the /Annots array
-        4. For each annotation with an appearance stream (/AP), appends it to
-           page content
-        5. Removes the /Annots entry and /AcroForm from the trailer
-        """
-        self._ensure_not_disposed()
-        logger.info("Flattening annotations and form fields")
-
-        if not self._cos_doc:
-            return
-
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
-
-        # Give shape/markup annotations and form fields a renderable appearance
-        # before flattening so their content is not silently dropped. A field
-        # that already has one keeps it: flattening puts the appearance the
-        # document carries onto the page (12.5.5), and rebuilding every field
-        # from its value replaced a foreign form's own drawing -- its font
-        # sizes, its /MK rotation -- with ours. Only /NeedAppearances, the
-        # document asking for appearances to be constructed (12.7.3.3), means
-        # rebuild them all.
-        self.generate_appearances()
-        self.generate_field_appearances(
-            keep_existing=not self._need_appearances_requested()
-        )
-
-        # 1. Process each page
-        for i in range(len(self.pages)):
-            page_dict = self._get_page_dict(i)
-            if not page_dict:
-                continue
-
-            annots_ref = page_dict.get(PdfName("Annots"))
-            annots = self._resolve(annots_ref)
-            if not isinstance(annots, PdfArray) or not annots.items:
-                continue
-
-            # Ensure page resources has an XObject dictionary
-            resources = self._resolve(page_dict.get(PdfName("Resources")))
-            if not isinstance(resources, PdfDictionary):
-                resources = PdfDictionary({})
-                page_dict[PdfName("Resources")] = resources
-
-            xobjects = resources.get(PdfName("XObject"))
-            if not isinstance(xobjects, PdfDictionary):
-                xobjects = PdfDictionary({})
-                resources[PdfName("XObject")] = xobjects
-
-            # Asked for, not read out of the cache: a streamed document has
-            # not filled it, and indexing it raised ``IndexError`` for every
-            # page that had an annotation to flatten. ``_set_page_content``
-            # below materialises the rest, so only the pages that are actually
-            # edited are decoded -- a document with no annotations stays lazy,
-            # as it already did.
-            new_content = bytearray(self.get_page_content(i))
-
-            for annot_ref in annots.items:
-                annot = self._resolve(annot_ref)
-                if not isinstance(annot, PdfDictionary):
-                    continue
-
-                # Only flatten if it has an appearance stream
-                ap = self._resolve(annot.get(PdfName("AP")))
-                if not isinstance(ap, PdfDictionary):
-                    continue
-
-                normal_raw = ap.get(PdfName("N"))
-                normal = self._resolve(normal_raw)
-                if isinstance(normal, PdfStream):
-                    n = normal
-                    n_resource = normal_raw
-                elif isinstance(normal, PdfDictionary):
-                    state = self._resolve(annot.get(PdfName("AS")))
-                    state_name = state if isinstance(state, PdfName) else PdfName("Off")
-                    n_resource = normal.mapping.get(state_name)
-                    n = self._resolve(n_resource)
-                    if not isinstance(n, PdfStream):
-                        n_resource = normal.mapping.get(PdfName("Off"))
-                        n = self._resolve(n_resource)
-                    if not isinstance(n, PdfStream):
-                        continue
-                else:
-                    continue
-                if not isinstance(n_resource, PdfIndirectReference):
-                    n_resource = self._cos_doc.register_object(n)
-
-                # Get annotation rectangle [llx lly urx ury]
-                rect = self._resolve(annot.get(PdfName("Rect")))
-                if not isinstance(rect, PdfArray) or len(rect.items) != 4:
-                    continue
-
-                try:
-                    coords = [float(self._resolve(c).value) for c in rect.items]
-                except (AttributeError, ValueError):
-                    continue
-
-                # Generate unique name for this XObject in this page's resources
-                xi = 0
-                while PdfName(f"FlatAnnot{xi}") in xobjects.mapping:
-                    xi += 1
-                obj_name = PdfName(f"FlatAnnot{xi}")
-
-                # Add to XObjects
-                xobjects[obj_name] = n_resource
-
-                # Position the XObject: map its (matrix-transformed) /BBox onto
-                # the annotation /Rect per ISO 32000-1 12.5.5.
-                a, b, c, d, e, f = self._flatten_appearance_matrix(n, coords)
-
-                # 'q' (save), 'cm' (concat matrix), 'Do' (draw), 'Q' (restore)
-                op = (
-                    f"\nq\n{a:g} {b:g} {c:g} {d:g} {e:g} {f:g} cm\n"
-                    f"{obj_name.name} Do\nQ\n"
-                )
-                new_content.extend(op.encode("ascii"))
-
-            self._set_page_content(i, bytes(new_content))
-
-            # Remove annotations after flattening
-            page_dict[PdfName("Annots")] = PdfArray([])
-
-        # 2. Remove AcroForm from catalog and trailer
-        root_ref = self._cos_doc.trailer.mapping.get(PdfName("Root"))
-        root = self._resolve(root_ref)
-        if isinstance(root, PdfDictionary) and PdfName("AcroForm") in root.mapping:
-            del root.mapping[PdfName("AcroForm")]
-
-        if PdfName("AcroForm") in self._cos_doc.trailer.mapping:
-            del self._cos_doc.trailer.mapping[PdfName("AcroForm")]
+        flatten(self, fields=fields, annotations=annotations, pages=pages, strict=strict)
 
     def get_form_fields(self) -> dict[str, dict[str, Any]]:
         """Extract all form fields with values and types."""

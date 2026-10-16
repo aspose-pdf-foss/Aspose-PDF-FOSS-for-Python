@@ -815,7 +815,39 @@ class PdfAConvertOptions(PluginOptions):
 
 
 class FlattenOptions(PluginOptions):
-    """Options for :class:`FormFlattener`: nothing beyond the inputs and outputs."""
+    """Select fields, non-widget annotations and zero-based pages to flatten.
+
+    Filters match :meth:`Document.flatten`. Inputs default to flattening both
+    fields and annotations. Iterable selections are stored for reuse across
+    multiple input documents; unknown names raise unless ``strict=False``.
+    """
+
+    def __init__(
+        self,
+        limits: PdfLoadLimits | None = None,
+        *,
+        fields: bool | Iterable[str] = True,
+        annotations: bool = True,
+        pages: Iterable[int] | None = None,
+        strict: bool = True,
+    ) -> None:
+        super().__init__(limits=limits)
+        from aspose_pdf.engine.flatten import _selection
+
+        # Materialize iterators once, with the same limits as the input PDFs.
+        budget = _LoadBudget(self.limits)
+        self.fields = (
+            fields if isinstance(fields, bool)
+            else _selection(fields, names=True, budget=budget)
+        )
+        if not isinstance(annotations, bool) or not isinstance(strict, bool):
+            raise TypeError("annotations and strict must be booleans")
+        self.annotations = annotations
+        self.strict = strict
+        self.pages = (
+            None if pages is None
+            else _selection(pages, names=False, budget=budget)
+        )
 
 
 class StampOptions(PluginOptions):
@@ -1170,16 +1202,16 @@ class PdfAConverter(PdfPlugin):
 
 
 class FormFlattener(PdfPlugin):
-    """Bake each input's form fields -- and its annotations -- into page content.
-
-    Annotations come with the fields: flattening is one operation in the engine,
-    and :meth:`Form.flatten` is that same operation rather than a narrower one.
-    Fields and annotations without an appearance are given a synthesised one first
-    so they are drawn rather than dropped.
-    """
+    """Bake the fields and annotations selected by :class:`FlattenOptions`."""
 
     def process(self, options: FlattenOptions) -> ResultContainer:
-        return self._transform(options, lambda document: document.flatten())
+        return self._transform(
+            options,
+            lambda document: document.flatten(
+                fields=options.fields, annotations=options.annotations,
+                pages=options.pages, strict=options.strict,
+            ),
+        )
 
 
 class Stamper(PdfPlugin):

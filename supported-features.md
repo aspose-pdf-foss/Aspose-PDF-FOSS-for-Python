@@ -250,7 +250,9 @@ Supported:
   used to read the not-yet-filled content cache and raise `IndexError` for every
   page that had an annotation to flatten, so flattening a plain streamed document
   worked and flattening a useful one did not. It asks for the pages it edits, so a
-  document with nothing to flatten stays lazy.
+  document with nothing to flatten stays lazy. Selective flattening decodes only
+  pages that actually receive baked appearances, without materializing the other
+  page content streams.
 - **Merge `Document` instances.** A merged page is *imported*: its dictionary
   is copied into this document's object graph along with everything it reaches
   -- resources above all, without which its content names fonts and images that
@@ -2855,13 +2857,57 @@ with Document("application.pdf") as document:
   `/MK` caption, background, and border. The
   AcroForm `/NeedAppearances` flag is cleared so the generated
   appearance is honoured. `flatten()` runs this automatically.
-- Flatten form fields and annotations into static page content (generating
-  missing appearances first), mapping each appearance form's `/BBox` onto the
-  widget `/Rect`.
+- **Selective flattening** through
+  `Document.flatten(*, fields=True, annotations=True, pages=None, strict=True)`
+  and `Form.flatten(fields=True, *, annotations=True, pages=None, strict=True)`.
+  The legacy no-argument calls still bake both fields and non-widget annotations.
+  Set `annotations=False` for fields only, `fields=False` for annotations only,
+  or pass an iterable of fully qualified terminal field names as `fields`.
+  `pages` is an iterable of zero-based indices, intersected with the field
+  selection; omitted means all pages. Duplicates are ignored, empty selections
+  do nothing for that category, and invalid indices/types are rejected before
+  edits. Unknown field names raise `KeyError` unless `strict=False`.
+  For example, freeze the completed part of a questionnaire while leaving the
+  remaining fields and review comments editable:
+
+  ```python
+  document.flatten(
+      fields=["applicant.name", "applicant.address"],
+      annotations=False,
+      pages=[0],
+  )
+  ```
+
+  Only selected objects get missing supported appearances generated. The
+  AcroForm's default `/DA` and `/Q` are inherited, with closer field/widget
+  attributes taking precedence. Each
+  appearance's transformed `/BBox` is mapped onto its `/Rect`, isolated from
+  the page content's existing graphics state. Unselected appearances, field
+  values and flags, actions and `/NeedAppearances` remain unchanged. Fields
+  spanning several pages retain their remaining widgets and stay editable
+  until their last widget is baked. Empty field-tree branches and removed
+  fields' calculation-order entries are pruned. Retained `Field` objects stay
+  usable; removed handles reject edits, including through independently created
+  `Form(document)` instances that invoke flattening. Hidden (`/F` bit 2) and
+  NoView (`/F` bit 6) objects stay interactive with their flags and appearances
+  intact, preserving their viewing/printing semantics. Objects with unusable rectangles,
+  missing/unsupported appearances or unresolved appearance states are retained
+  instead of being discarded. Repeating a named selection with `strict=False`
+  is a no-op once its objects have been baked. XFA and JavaScript execution are
+  not supported; static content is drawn below any annotations left interactive, so overlapping
+  selected/unselected annotations can change their relative stacking order.
+  A page whose existing graphics state cannot be safely isolated raises
+  `PdfValidationException` instead of baking misplaced appearances. Flattening
+  is not a transaction across pages: if a later page fails validation or a
+  resource limit, completed pages remain flattened, their removed widgets are
+  pruned from the field tree and calculation order, and cached `Form`/`Field`
+  handles are refreshed. The failing page retains its annotations; selected
+  appearances may already have been generated. Retry an explicit name list
+  with `strict=False` to ignore fields removed by the completed pages.
 - **Flattening keeps the appearance a form already carries.** A widget with
   its own `/AP` is flattened with that drawing (12.5.5); only a widget without
   one gets a generated appearance, and only `/NeedAppearances true` (12.7.3.3)
-  has every field rebuilt from its value. Flattening used to rebuild every
+  has selected widgets rebuilt from their values. Flattening used to rebuild every
   text and choice field first, so a form written by another producer came out
   in *our* drawing of it -- different font sizes, its `/MK` rotation lost, a
   selection bar added to a list. A MuPDF-written form flattened here now
@@ -4224,9 +4270,11 @@ Supported:
   refuses to remove every page of a document.
 - `Stamper` puts one `Stamp` -- text, image or page number, with its own opacity,
   rotation and alignment -- on the pages named.
-- `FormFlattener` bakes fields and annotations into page content. There is no
-  fields-only form of this: flattening is one operation in the engine, and
-  `Form.flatten()` is that same call.
+- `FormFlattener` bakes fields and annotations into page content, using the
+  `Document.flatten` filters supplied in `FlattenOptions(fields=True,
+  annotations=True, pages=None, strict=True)`. Both categories remain selected
+  by default. Iterable filters are materialized once for reuse across inputs;
+  `FlattenOptions(limits)` retains its positional resource-limit argument.
 - `Encryptor` applies the standard security handler (passwords, permissions,
   algorithm) and `Decryptor` removes it, given a password the document accepts.
   The removal is unconditional, because `Document.is_encrypted` reports whether a

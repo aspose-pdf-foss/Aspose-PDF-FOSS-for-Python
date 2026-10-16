@@ -227,7 +227,8 @@ flowchart TD
   `document.javascript` are the page, catalog and document-level script equivalents.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
-  page content.
+  page content. Flatten all objects or select field names and pages; `annotations=False`
+  keeps comments interactive, while `fields=False` preserves the form for later editing.
   Existing fields can also change their defaults, text limits and modes, choice options,
   multiple selection and combo-box editing through `Field` properties.
 - One annotation class per subtype — `page.annotations.add_square(...)`, `add_highlight(...)`,
@@ -1121,7 +1122,8 @@ and delete workflows. 265 public types are organized by module below.
     `to_markdown(pages, title, embed_images, markdown_format, paragraph_gap, clip_to_page) -> str` /
     `save_as_html(destination, pages, title, embed_images, split_into_pages, resources_directory, paragraph_gap, clip_to_page, overwrite) -> list[Path]` /
     `save_as_markdown(destination, pages, title, embed_images, image_directory, markdown_format, paragraph_gap, clip_to_page, overwrite) -> Path`
-  - `flatten() -> Document` / `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
+  - `flatten(fields=True, annotations=True, pages=None, strict=True) -> Document` /
+    `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
@@ -1185,7 +1187,8 @@ and delete workflows. 265 public types are organized by module below.
     `add_radio_group(name, page, options, value, read_only, required) -> Field`
   - `add_list_box(...) -> Field` / `add_combo_box(...) -> Field` /
     `add_push_button(name, page, rect, caption, read_only, required) -> Field`
-  - `remove_field(name) -> Field` / `generate_appearances() -> int` / `flatten() -> None`
+  - `remove_field(name) -> Field` / `generate_appearances() -> int` /
+    `flatten(fields=True, annotations=True, pages=None, strict=True) -> None`
   - `fill(values, strict=True) -> list[str]` / `to_dict() -> dict` /
     `export_json(destination=None) -> bytes` / `import_json(source, strict=True) -> list[str]`
   - `reset(fields=None, strict=True) -> list[str]` — restore all or selected fields to template defaults
