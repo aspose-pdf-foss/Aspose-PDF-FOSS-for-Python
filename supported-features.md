@@ -3070,6 +3070,65 @@ Supported:
 
 - Read page annotations through `Page.annotations`.
 - Add, insert, update, delete, clear, iterate, and index annotations.
+- **Export annotation review data as JSON.**
+  `Document.export_annotations_json(destination=None, pages=None, subtypes=None,
+  overwrite=True)` returns UTF-8 bytes and optionally writes the same bytes to
+  a path or writable binary stream. `Page.annotations.export_json(...)` exports
+  one page; `Page.annotations.to_list(subtypes=None)` returns fresh, deeply
+  detached dictionaries without JSON encoding. Each call reads current values;
+  editing a snapshot does not edit the PDF, and snapshots remain usable after
+  the document is disposed. No optional dependency is required.
+  - The top-level object is `{"schema_version": 1, "annotations": [...]}`.
+    Records contain `id`, zero-based `page_index` and `annotation_index` (the
+    original `/Annots` position), `subtype`, `rect`, `contents`, `author`,
+    `properties` and `links`. `contents` and `author` read `/Contents` and `/T`,
+    with an empty string when absent. A merged form widget's `/T` can be its
+    field name, as on the existing annotation property API. Rectangles and
+    geometry retain unrotated PDF coordinates, without crop or rotation
+    transforms; hidden and off-page annotations are included. Dates retain the
+    original PDF date strings, and colour component arrays remain grey, RGB
+    or CMYK as stored. PDF names become ordinary JSON strings without `/`.
+  - `properties` uses original PDF keys for the selected review metadata:
+    identification/dates (`NM`, `M`, `CreationDate`, `Subj`, `Lang`), flags and
+    state (`F`, `Name`, `Open`, `State`, `StateModel`, `RT`), colours and borders
+    (`C`, `IC`, `CA`, `BS`, `BE`, `Border`, `RD`), geometry/measurement
+    (`L`, `LE`, `LL`, `LLE`, `LLO`, `Cap`, `IT`, `CP`, `CO`, `Vertices`,
+    `InkList`, `QuadPoints`, `CL`, `Measure`, `Sy`), and text styling/overlays
+    (`DA`, `DS`, `Q`, `RC`, `OverlayText`, `Repeat`). String-valued rich text
+    (`RC`) is included; stream-valued rich text is omitted. Missing properties
+    are omitted and explicit PDF nulls remain JSON nulls. Unknown annotation
+    subtypes retain their common fields and any listed properties.
+  - `links` contains `in_reply_to`, `popup` and `parent` (the last applies to
+    popups), as IDs or null. Indirect IDs contain the object and generation
+    numbers (`object-10-0`); inline annotations use their page/array position
+    (`page-0-annotation-2`). IDs identify the source snapshot and may change
+    after a rewrite. `/NM` is retained separately and need not be unique.
+    References are never recursively embedded, so reply/popup cycles remain
+    finite. Links across pages or to filtered-out annotations retain their
+    object IDs even when the target is outside the output.
+  - `pages` is an iterable of zero-based integer indices. Order is preserved;
+    duplicate page selections are exported once. `subtypes` accepts a string,
+    `AnnotationType`, or an iterable of either; a leading `/` is accepted and
+    matching is case-sensitive. `None` includes all pages/types, including
+    popups and widgets. Empty selections produce an empty annotations array.
+    Selections are validated before reading annotation metadata. Streaming
+    export reads selected annotation dictionaries without decoding page
+    content, appearances, attachments or images. Property nesting, converted
+    item counts and selection sizes obey `PdfLoadLimits`; limit failures
+    propagate. Invalid selected annotation dictionaries/rectangles, cyclic
+    metadata and non-finite numbers are refused with clear exceptions.
+  - JSON is deterministic for unchanged input, pretty-printed with Unicode
+    preserved, a final newline and no BOM. It is fully prepared before writing.
+    File writes create parent folders and replace atomically;
+    `overwrite=False` refuses an existing path. Serialization or write failure
+    leaves an existing file intact. Streams are written from their current
+    position, short writes are retried and the caller's stream stays open;
+    stream failures can leave a prefix already written.
+  - This is a review-data export, not a lossless annotation archive or an
+    import format. Appearance streams, actions, destinations, field values,
+    embedded assets and unlisted/custom properties are excluded. It does not
+    extract the page text under a highlight, render annotations, or change the
+    source document.
 - **One class per subtype, over the one property channel.** `TextAnnotation`,
   `FreeTextAnnotation`, `SquareAnnotation`, `CircleAnnotation`, `LineAnnotation`,
   `PolygonAnnotation`, `PolyLineAnnotation`, `InkAnnotation`,

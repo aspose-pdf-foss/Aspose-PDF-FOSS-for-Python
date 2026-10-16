@@ -1670,6 +1670,65 @@ class Document:
             dither=dither,
         )
 
+    def _annotation_records(
+        self,
+        pages: Iterable[int] | None,
+        subtypes: Any,
+    ) -> list[dict[str, Any]]:
+        from aspose_pdf.engine.annotation_json import records
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return records(self._engine_pdf, pages, subtypes)
+
+    def export_annotations_json(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        subtypes: str | Iterable[str] | None = None,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return UTF-8 JSON annotation metadata, optionally writing it.
+
+        ``pages`` selects zero-based page indices in the requested order;
+        repeated indices are exported once. ``subtypes`` accepts a subtype
+        string, ``AnnotationType`` or an iterable of either. ``None`` includes
+        every annotation, including popups and form widgets; ``[]`` selects
+        none. All selection arguments are validated before reading metadata.
+
+        Schema version 1 contains an ``annotations`` array with source page
+        and annotation indices, subtype, rectangle, text, author, selected PDF
+        properties and reference IDs for replies/popups. Coordinates remain in
+        unrotated PDF space and date strings retain their original format.
+        IDs identify objects within this PDF snapshot, not across rewrites;
+        links may name annotations outside the selected output.
+
+        This is a review-data export, not a PDF backup or import format.
+        Appearance streams, actions, destinations, field values, embedded
+        assets, custom properties and stream-valued rich text are omitted.
+        Page content and appearance streams are not decoded.
+
+        Files are written atomically, creating parent folders as needed;
+        ``overwrite=False`` refuses an existing file. Binary streams are
+        written from their current position, retrying short writes, and left
+        open. The complete JSON is prepared before writing any output.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.annotation_json import to_json
+
+        self._ensure_not_disposed()
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = to_json(self._annotation_records(pages, subtypes))
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def extract_tables(
         self,
         *,

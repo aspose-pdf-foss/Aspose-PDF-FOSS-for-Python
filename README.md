@@ -110,6 +110,9 @@ flowchart TD
 - `Document.extract_tables()` / `Page.extract_tables()` return inferred text grids directly as
   `ExtractedTable` snapshots, with editable lists and CSV export for processing report data
   without parsing HTML or Markdown. Recognition is heuristic and requires regular text grids.
+- `Document.export_annotations_json()` exports comments, geometry, metadata and reply/popup
+  links for review reports and external processing, with page and subtype filters. A page's
+  `annotations.to_list()` provides editable snapshots and `annotations.export_json()` writes JSON.
 - `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
   curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. A
   Bézier is written back out as the Bézier it was, so the export stays exact at any zoom. The
@@ -706,6 +709,23 @@ with Document("input.pdf") as document:
 `TextExtractorOptions(clip=...)` apply the rectangle to every page. Selection uses
 overlapping glyph bounds; see [coverage and limitations](supported-features.md).
 
+### Export Annotations for Review
+
+```python
+from aspose_pdf import AnnotationType, Document
+
+with Document("reviewed.pdf") as document:
+    document.export_annotations_json(
+        "review/comments.json", pages=[0],
+        subtypes=[AnnotationType.TEXT, AnnotationType.HIGHLIGHT], overwrite=False,
+    )
+    for comment in document.pages[0].annotations.to_list(subtypes="Text"):
+        print(comment["author"], comment["contents"], comment["rect"])
+```
+
+JSON carries versioned review data; appearance streams, executable actions and attachments
+are omitted. See [annotation export coverage](supported-features.md#annotations) for the schema.
+
 ### Validate a Filled Form
 
 Check stored answers before delivering a completed form:
@@ -1234,7 +1254,10 @@ and delete workflows. 265 public types are organized by module below.
 - `Annotation` — `generate_appearance(force) -> bool`, `get_property(name, default) -> Any`,
   `set_property(name, value) -> None`; properties `subtype`, `rect`, `contents`, `appearance_normal`
 - `AnnotationCollection` — `add(subtype, rect, contents, title, appearance_normal, properties) -> Annotation`,
-  `insert(...)`, `delete(index) -> None`, `generate_appearances(force) -> int`
+  `insert(...)`, `delete(index) -> None`, `generate_appearances(force) -> int`,
+  `to_list(subtypes=None) -> list[dict]`, `export_json(destination=None, subtypes=None, overwrite=True) -> bytes`
+- `Document.export_annotations_json(destination=None, pages=None, subtypes=None, overwrite=True) -> bytes`
+  exports all or selected annotations to a path, binary stream or UTF-8 bytes.
 
 ### Security And Signatures
 

@@ -16,7 +16,7 @@ Replies and popups are the one thing the property channel cannot carry: they are
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from enum import Enum, IntFlag
 from typing import TYPE_CHECKING, Any
 
@@ -993,6 +993,37 @@ class AnnotationCollection:
 
     def _items(self) -> list[dict[str, Any]]:
         return self._page._document._engine_pdf.get_annotations(self._page.index)
+
+    def to_list(
+        self, *, subtypes: str | Iterable[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Return fresh JSON-compatible metadata snapshots for this page.
+
+        See :meth:`Document.export_annotations_json` for schema, filters and
+        omitted data. Every call reads current annotation values; editing the
+        result does not change the PDF.
+        """
+        return self._page._document._annotation_records([self._page.index], subtypes)
+
+    def export_json(
+        self,
+        destination: Any = None,
+        *,
+        subtypes: str | Iterable[str] | None = None,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export this page's annotations as versioned UTF-8 JSON.
+
+        ``destination`` is a path or writable binary stream, or ``None`` to
+        return bytes only. Options and schema match
+        :meth:`Document.export_annotations_json`.
+        """
+        return self._page._document.export_annotations_json(
+            destination,
+            pages=[self._page.index],
+            subtypes=subtypes,
+            overwrite=overwrite,
+        )
 
     def __len__(self) -> int:
         return len(self._items())
