@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.lists import TextList
     from aspose_pdf.stamps import Stamp
+    from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tables import Table
     from aspose_pdf.text import TextHighlightResult
     from aspose_pdf.text_block import TextBlock
@@ -1202,6 +1203,16 @@ class Page:
                 "layer must be a Layer from Document.layers"
             )
         return _LayerSection(eng, self._index, number)
+
+    def extract_tables(self, *, clip_to_page: bool = True) -> list[ExtractedTable]:
+        """Extract this page's text grids as detached table snapshots.
+
+        See :meth:`Document.extract_tables` for recognition limits and output
+        methods. Results retain this page's zero-based index in the document.
+        """
+        return self._document.extract_tables(
+            pages=[self._index], clip_to_page=clip_to_page
+        )
 
     def to_html(self, *, embed_images: bool = True) -> str:
         """Return this page's inferred structure as an HTML fragment document.

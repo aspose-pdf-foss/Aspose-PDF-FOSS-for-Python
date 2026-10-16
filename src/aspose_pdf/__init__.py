@@ -137,6 +137,7 @@ from .stamps import (
     TextStamp,
     VerticalAlignment,
 )
+from .table_extraction import ExtractedTable
 from .tables import Cell, Row, Table
 from .tagged import StructureElement, TaggedContent
 from .text import TextHighlightResult
@@ -194,6 +195,7 @@ __all__ = [
     "Document",
     "DocumentFont",
     "DuplexMode",
+    "ExtractedTable",
     "Field",
     "FieldType",
     "FieldWidget",

@@ -219,6 +219,7 @@ def page_blocks(
     include_images: bool = True,
     paragraph_gap: float | None = None,
     clip_to_page: bool = True,
+    cell_text_limit: int | None = _MAX_CELL_CHARS,
 ) -> list[Block]:
     """Infer *page_index*'s structure and return it as :class:`Block` objects.
 
@@ -227,6 +228,8 @@ def page_blocks(
     (``None``: the layout analysis's own 1.6). With *clip_to_page*, text and
     images anchored outside the page's visible area -- its crop box, within
     its media box -- are left out, as a viewer never shows them.
+    ``cell_text_limit`` bounds markup cell text; ``None`` retains every
+    decoded character for direct data extraction.
     """
     try:
         content = pdf.get_page_content(page_index)
@@ -284,7 +287,7 @@ def page_blocks(
     for column in detect_columns(tagged):
         for kind, rows in detect_tables(group_rows(column)):
             if kind == "table":
-                blocks.append(_table_block(rows, texts))
+                blocks.append(_table_block(rows, texts, cell_text_limit))
             else:
                 flow = [element for row in rows for element in row]
                 blocks.extend(
@@ -418,7 +421,11 @@ def _has_content(block: Block) -> bool:
     return bool(block.text)
 
 
-def _table_block(rows: list[list[LayoutElement]], texts: dict[int, str]) -> Block:
+def _table_block(
+    rows: list[list[LayoutElement]],
+    texts: dict[int, str],
+    cell_text_limit: int | None = _MAX_CELL_CHARS,
+) -> Block:
     """A detected grid becomes a table, laid out on its columns.
 
     Every row is padded to the table's full width: a column a row leaves blank
@@ -435,10 +442,15 @@ def _table_block(rows: list[list[LayoutElement]], texts: dict[int, str]) -> Bloc
     for row in rows:
         line = [""] * width
         row_spans = [1] * width
-        for element in sorted(row, key=lambda e: e.x):
+        ordered = sorted(row, key=lambda e: e.column)
+        for offset, element in enumerate(ordered):
             if 0 <= element.column < width:
-                line[element.column] = texts.get(id(element), "")[:_MAX_CELL_CHARS]
-                row_spans[element.column] = element.span
+                line[element.column] = texts.get(id(element), "")[:cell_text_limit]
+                # Estimated text width cannot merge across another actual cell.
+                next_column = (
+                    ordered[offset + 1].column if offset + 1 < len(ordered) else width
+                )
+                row_spans[element.column] = min(element.span, next_column - element.column)
         cells.append(line)
         spans.append(row_spans)
     return Block(kind="table", rows=cells, spans=spans)

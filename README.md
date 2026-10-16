@@ -107,6 +107,9 @@ flowchart TD
 - `Document.to_html()` and `to_markdown()` convert a document to a *flowing* one — headings,
   paragraphs, lists, tables and figures inferred by the same layout analysis `auto_tag()` uses,
   with the text decoded the way `extract_text()` decodes it. For a facsimile, export SVG instead.
+- `Document.extract_tables()` / `Page.extract_tables()` return inferred text grids directly as
+  `ExtractedTable` snapshots, with editable lists and CSV export for processing report data
+  without parsing HTML or Markdown. Recognition is heuristic and requires regular text grids.
 - `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
   curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. A
   Bézier is written back out as the Bézier it was, so the export stays exact at any zoom. The
@@ -513,6 +516,22 @@ with Document("report.pdf") as document:
     print(document.to_markdown(pages=[0], markdown_format="CommonMark"))
 ```
 
+### Extract Tables as Lists or CSV
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    for number, table in enumerate(document.extract_tables(pages=[0, 1]), 1):
+        print(table.page_index, table.to_list())  # Zero-based source page; all rows retained.
+        table.save_csv(f"tables/table-{number}.csv", overwrite=False)
+        # table.to_csv(delimiter=";") returns a string without writing a file.
+```
+
+The detector shares the HTML/Markdown export's limits: no OCR or multiline-cell reconstruction,
+and ambiguous page columns can be mistaken for tables or divide a grid. See
+[supported-features.md](supported-features.md) for the detailed extraction contract.
+
 ### Build a Table
 
 ```python
@@ -786,6 +805,7 @@ and delete workflows. 265 public types are organized by module below.
 | `DocFormat` | Target format for a save operation. |
 | `Document-document` | Pythonic wrapper for PDF document lifecycle and core operations. |
 | `Duplex` | Enum with 4 members. |
+| `ExtractedTable` | Immutable text-table snapshot with source page, rows, inferred column spans, list conversion and CSV export. |
 | `Field` | A field of an interactive form. |
 | `FieldType` | Type of form field. |
 | `FileDataSource` | A data source backed by a file on disk. |
@@ -1164,6 +1184,11 @@ and delete workflows. 265 public types are organized by module below.
 
 - `Document.extract_text(clip=None)` / `Page.extract_text(clip=None)` return text,
   optionally selecting glyphs overlapping `(x0, y0, x1, y1)` in unrotated PDF space.
+
+- `Document.extract_tables(pages=None, clip_to_page=True)` / `Page.extract_tables(clip_to_page=True)`
+  return `list[ExtractedTable]`; `pages` contains zero-based indices. Each result exposes
+  `page_index`, immutable `rows` / `column_spans`, `row_count`, `column_count`, `to_list()`,
+  `to_csv(delimiter=",")` and `save_csv(path, delimiter=",", encoding="utf-8", overwrite=True)`.
 
 - `PdfExtractor`
   - `bind_pdf(source, password, limits) -> None`

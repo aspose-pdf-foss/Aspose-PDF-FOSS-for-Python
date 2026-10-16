@@ -1549,6 +1549,55 @@ Boundaries:
   Images are embedded as data URIs through the same reconstruction
   `save_image()` performs. Markdown output is GFM, escaped only where a
   character would otherwise change the meaning.
+- **Extract text tables directly into lists and CSV.**
+  `Document.extract_tables(pages=None, clip_to_page=True)` and
+  `Page.extract_tables(clip_to_page=True)` return `list[ExtractedTable]`, using
+  the same layout analysis as HTML/Markdown without converting through either
+  format. `ExtractedTable` is importable from `aspose_pdf` and
+  `aspose_pdf.table_extraction`. Its `page_index` is zero-based; immutable
+  `rows` and `column_spans` are rectangular tuples of tuples. `to_list()`
+  returns fresh editable row lists. `row_count` includes every row, including
+  the first; `column_count` includes blank and covered columns. No header is
+  removed or invented and no values are converted to numbers. Missing cells
+  are empty strings; inferred horizontal merges put text in the first column
+  and leave covered cells empty, with the estimated span recorded at the
+  first column (ordinary and blank cells carry one). These are detached
+  snapshots that remain usable after editing or disposing the source.
+  - `pages` is an iterable of integer indices, preserving its order and
+    repetitions. `None` selects all pages and `[]` selects none. Booleans,
+    non-integers and out-of-range indices raise `PdfValidationException`
+    before any selected content stream is decoded. Tables follow each page's
+    inferred reading order. Pages remain separate: a continuing table and its
+    repeated headers are returned as separate results. Streaming documents
+    decode only selected pages and invoked Form XObjects, retaining each
+    form's resource scope and placement; images and unused forms are not
+    decoded. Existing load limits still apply and resource-limit failures
+    propagate. By default, anchors outside the effective CropBox are omitted;
+    `clip_to_page=False` includes them. This is anchor filtering, not glyph
+    clipping or an arbitrary region selector.
+  - `to_csv(delimiter=",")` returns a string with CRLF records and standard
+    double-quote escaping, including embedded delimiters and quotes. All rows
+    and blank columns are retained. A semicolon, tab or another single
+    character may be used as the delimiter; quotes, CR/LF and NUL are refused.
+    `save_csv(path, delimiter=",", encoding="utf-8", overwrite=True)` writes
+    one table atomically, creates parent folders and returns the path.
+    `encoding="utf-8-sig"` adds a BOM for spreadsheet import;
+    `overwrite=False` refuses an existing file. Conversion and encoding finish
+    before writing, and an encoding or write failure leaves the old file
+    intact. No optional dependency is needed.
+  - **Recognition limits:** this is a geometric heuristic for regular text
+    grids with at least two rows and two columns. It does not reconstruct the
+    tag tree, drawn borders, scanned tables, wrapped/multiline cells, vertical
+    merges or tables split across pages. A cell is inferred from a text object;
+    producers that put an entire row in one text object or split a cell among
+    several objects may not yield a grid. Wide gutters can divide a table into
+    page-column bands, and aligned prose can look like a table. Adjacent grids
+    with matching anchors can coalesce; single-cell leading or trailing rows
+    are treated as prose. Column spans use estimated text widths, not semantic
+    merge information. Whitespace within each cell is normalized (line breaks
+    become spaces, repeated spaces/tabs/NBSP collapse and edges are stripped).
+    Direct extraction retains all decoded cell text; it does not apply the
+    markup exports' 4096-character cell limit.
 - **Every export setting is honoured, or refused.** Figures can go to files
   instead of data URIs -- `save_as_html(resources_directory=...)` /
   `HtmlSaveOptions.resources_directory`, `save_as_markdown(image_directory=...)`

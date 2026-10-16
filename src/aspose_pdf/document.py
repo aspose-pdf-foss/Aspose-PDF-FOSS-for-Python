@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     from aspose_pdf.pages import Page, PageCollection
     from aspose_pdf.signature import PdfSignature
     from aspose_pdf.stamps import Stamp
+    from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.text import TextHighlightResult
     from aspose_pdf.text_layout import TextLayoutOptions
@@ -1668,6 +1669,55 @@ class Document:
             method=method,
             dither=dither,
         )
+
+    def extract_tables(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        clip_to_page: bool = True,
+    ) -> list[ExtractedTable]:
+        """Extract regular text grids as detached :class:`ExtractedTable` values.
+
+        ``pages`` contains zero-based indices, in the requested order; repeats
+        are retained and an empty iterable selects nothing. All indices must
+        be integers within the document. Only selected pages are decoded.
+        Tables follow the layout analyzer's reading order within each page;
+        tables on different pages remain separate, including repeated headers.
+
+        ``clip_to_page`` leaves out text anchored outside the effective crop
+        box by default. The HTML/Markdown export's geometric heuristics apply:
+        no OCR, border analysis, tag-tree reconstruction or multiline/vertical
+        merge recovery is performed. Whitespace is normalized but cell text
+        is not truncated. Use ``table.to_list()``, ``table.to_csv()`` or
+        ``table.save_csv(path)`` to consume each result.
+        """
+        from aspose_pdf.table_extraction import _page_tables
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(clip_to_page, bool):
+            raise PdfValidationException("clip_to_page must be a boolean")
+        count = self.page_count
+        if pages is None:
+            indexes = range(count)
+        else:
+            try:
+                if isinstance(pages, (str, bytes)):
+                    raise TypeError
+                indexes = list(pages)
+            except TypeError:
+                raise PdfValidationException("pages must be an iterable of integers") from None
+            for index in indexes:
+                if isinstance(index, bool) or not isinstance(index, int):
+                    raise PdfValidationException("Page indices must be integers")
+                if not 0 <= index < count:
+                    raise PdfValidationException(f"Page index out of range: {index}")
+        return [
+            table
+            for index in indexes
+            for table in _page_tables(self._engine_pdf, index, clip_to_page)
+        ]
 
     def to_html(
         self,
