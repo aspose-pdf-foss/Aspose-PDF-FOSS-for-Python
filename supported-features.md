@@ -268,6 +268,50 @@ Supported:
   used one name -- a field, an attachment -- the newcomer is renamed rather
   than replacing what is there or silently becoming the same object. The source
   document is left exactly as it was, and shares no object with the result.
+- **Split into chapters by bookmarks.**
+  `Document.split_by_bookmarks(level=1, include_preamble=True)` returns independent
+  `Document` instances, one per distinct destination page at the requested
+  outline depth (roots are level 1). Chapters are emitted in physical page order;
+  each runs from its start through the page before the next selected start, and
+  the final chapter includes the end of the PDF. Only bookmarks at that exact
+  level set boundaries. Same-page headings share one chapter; the first in
+  outline order supplies its Info `Title`. Equal titles on different pages stay
+  separate, and titles are never used as filesystem paths. The source remains
+  unchanged, including live outline edits that have not been saved.
+
+  ```python
+  with Document("manual.pdf") as document:
+      chapters = document.split_by_bookmarks(level=1)
+      try:
+          for number, chapter in enumerate(chapters, 1):
+              chapter.save(f"chapter-{number:03d}.pdf")
+      finally:
+          for chapter in chapters:
+              chapter.dispose()
+  ```
+
+  Leading pages become a separate document titled `Preamble`; opt out with
+  `include_preamble=False`. Local explicit destinations, GoTo actions and names
+  in either destination representation are resolved against the current page
+  tree and current named destinations. Headings without a target, URI/remote/
+  JavaScript actions and unresolved or invalid local targets do not start
+  chapters. If none resolve at the requested level, `PdfValidationException`
+  is raised; there is no fallback to per-page splitting.
+
+  Page contents, resources, annotations, fields and layers are imported using
+  `extract_pages`. Relevant bookmarks keep their destination views and styles;
+  children whose local parent is outside the chapter are promoted rather than
+  discarded. Other Info metadata is copied, with `Title` set to the bookmark
+  title. Outputs remain usable after the source is disposed, including for a
+  streaming source, which is not materialized as a whole. Close or dispose every
+  returned document. On import failure, partially created results are disposed
+  and the source outline model is restored. Tree depth, item counts, title sizes
+  and cycles are checked before importing chapters under `PdfLoadLimits`.
+  Splitting uses whole pages, so it cannot divide two chapters starting at
+  different positions on the same page. It neither executes bookmark actions nor
+  preserves source encryption or the validity of existing digital signatures
+  in these newly created documents. Signature fields can be imported as fields;
+  their old signatures do not authenticate the extracted chapter.
 - Run resource optimization and stream compression helpers.
 - Preserve and edit outlines/bookmarks. **A bookmark loaded from a file keeps
   the target the file held, exactly** -- its view (`/XYZ` position and zoom,
@@ -4226,6 +4270,12 @@ Supported:
   cuts a document into three. A slice is resolved against the input's own length,
   a negative index counts from the end, and a selection naming a page the document
   does not have is refused rather than trimmed.
+  `SplitOptions(bookmark_level=1, include_preamble=True)` selects chapter
+  splitting instead, following `Document.split_by_bookmarks` for every input.
+  Results keep input order and, within each input, chapter page order. This
+  mode cannot be combined with `selections`. No outputs are written if chapter
+  construction fails. The existing per-page default and positional `limits`
+  argument are unchanged.
 - `ImageExtractor` emits one result per embedded image, as a real image file (PNG
   for raster codecs, the original payload for JPEG and JPEG 2000) -- the same
   reconstruction `PdfExtractor.get_next_image` performs. An input that draws no

@@ -421,6 +421,11 @@ class SplitOptions(PluginOptions):
         SplitOptions(selections=[range(0, 3), [3, 4], slice(5, None)])
 
     A page may appear in more than one selection, or in none.
+
+    ``bookmark_level=1`` instead splits at root bookmarks; higher levels select
+    nested headings. It follows :meth:`Document.split_by_bookmarks`, including
+    a leading ``Preamble`` result unless ``include_preamble=False``. This mode
+    cannot be combined with ``selections``.
     """
 
     def __init__(
@@ -428,11 +433,20 @@ class SplitOptions(PluginOptions):
         limits: PdfLoadLimits | None = None,
         *,
         selections: Iterable[Iterable[int] | slice] | None = None,
+        bookmark_level: int | None = None,
+        include_preamble: bool = True,
     ) -> None:
         # ``limits`` stays the first positional argument, as it was when this
         # class had no __init__ of its own and inherited PluginOptions'.
         super().__init__(limits=limits)
+        from aspose_pdf.engine.bookmark_split import validate_options
+
+        validate_options(1 if bookmark_level is None else bookmark_level, include_preamble)
+        if selections is not None and bookmark_level is not None:
+            raise ValueError("selections and bookmark_level cannot be combined")
         self.selections = None if selections is None else list(selections)
+        self.bookmark_level = bookmark_level
+        self.include_preamble = include_preamble
 
 
 class TextExtractorOptions(PluginOptions):
@@ -576,14 +590,23 @@ class Optimizer(PdfPlugin):
 
 
 class Splitter(PdfPlugin):
-    """Split every input PDF into one document per page, or per selection."""
+    """Split every input PDF per page, per selection, or by bookmark level."""
 
     def process(self, options: SplitOptions) -> ResultContainer:
         self._require_inputs(options)
+        from aspose_pdf.engine.bookmark_split import (
+            split_by_bookmarks,
+            validate_options,
+        )
         from aspose_pdf.engine.simple_pdf import SimplePdf
 
         limits = _coerce_limits(getattr(options, "limits", None))
         selections = getattr(options, "selections", None)
+        bookmark_level = getattr(options, "bookmark_level", None)
+        include_preamble = getattr(options, "include_preamble", True)
+        validate_options(1 if bookmark_level is None else bookmark_level, include_preamble)
+        if selections is not None and bookmark_level is not None:
+            raise ValueError("selections and bookmark_level cannot be combined")
         results: list[OperationResult] = []
         for source in options.inputs:
             pdf = SimplePdf.from_bytes(
@@ -591,6 +614,15 @@ class Splitter(PdfPlugin):
             )
             try:
                 page_count = len(pdf.pages)
+                if bookmark_level is not None:
+                    for chapter in split_by_bookmarks(
+                        pdf, level=bookmark_level, include_preamble=include_preamble
+                    ):
+                        try:
+                            results.append(OperationResult(chapter.to_bytes()))
+                        finally:
+                            chapter.dispose()
+                    continue
                 if selections is None:
                     groups = [[index] for index in range(page_count)]
                 else:

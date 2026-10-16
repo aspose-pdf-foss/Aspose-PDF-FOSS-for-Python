@@ -3337,6 +3337,52 @@ class Document:
         result._engine_pdf = extracted
         return result
 
+    def split_by_bookmarks(
+        self,
+        level: int = 1,
+        *,
+        include_preamble: bool = True,
+    ) -> list[Document]:
+        """Return independent chapter documents using bookmarks at ``level``.
+
+        Level 1 selects root bookmarks. Local page destinations, named
+        destinations and GoTo actions are resolved as they stand now; headings,
+        external actions and unresolved targets do not start chapters. Starts
+        are sorted by page, with one output per distinct start page. The first
+        bookmark in outline order supplies the title when several share a page.
+
+        Each chapter ends before the next start, or at the end of the PDF. Pages
+        before the first start become a ``Preamble`` document unless
+        ``include_preamble=False``. No usable bookmarks at the requested level
+        raises ``PdfValidationException``. The source is unchanged.
+
+        Results follow :meth:`extract_pages`, with their Info ``Title`` set to
+        the chapter's bookmark title. Relevant nested bookmarks are retained
+        even when an ancestor points outside the chapter. Dispose every result
+        when done. Splitting imports whole pages, not parts between headings
+        on one page; it does not execute bookmark actions. These new documents
+        do not inherit encryption or preserve existing signature validity.
+        """
+        from aspose_pdf.engine.bookmark_split import split_by_bookmarks
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        result = []
+        try:
+            for engine in split_by_bookmarks(
+                self._engine_pdf, level=level, include_preamble=include_preamble,
+                outlines=None if self._outlines is None else self._outlines._items,
+            ):
+                chapter = Document(limits=self._load_limits)
+                chapter._engine_pdf = engine
+                result.append(chapter)
+        except BaseException:
+            for chapter in result:
+                chapter.dispose()
+            raise
+        return result
+
     def n_up(
         self,
         rows: int = 2,

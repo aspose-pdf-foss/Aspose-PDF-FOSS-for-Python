@@ -263,7 +263,8 @@ flowchart TD
   deduplicates images, subsets embedded TrueType and CFF fonts, and recompresses streams, all
   controlled through `OptimizationOptions`.
 - The `aspose_pdf.lowcode` plugin layer wraps common batch workflows behind a uniform
-  `DataSource`/`ResultContainer` interface: `Merger`, `Splitter` (per page, or per range),
+  `DataSource`/`ResultContainer` interface: `Merger`, `Splitter` (per page, per range,
+  or by bookmark level),
   `Optimizer`, `TextExtractor`, `ImageExtractor`, `ImagesToPdf`, `Converter` (HTML, Markdown, SVG,
   TIFF, PNG, JPEG, WebP), `PdfAConverter`, `Rotator`, `PageRemover`, `Stamper`, `FormFlattener`,
   `Encryptor` and `Decryptor` — each one a composition of the operations above, so a batch job is
@@ -892,8 +893,8 @@ and delete workflows. 265 public types are organized by module below.
 | `ResultContainer` | Holds the ordered results of a plugin operation. |
 | `RevocationStatus` | Certificate revocation outcome (OCSP/CRL). |
 | `SaveFormat` | Format for saving PDF documents. |
-| `SplitOptions` | Options for :class:`Splitter`: split the first input into single pages. |
-| `Splitter` | Split the first input PDF into one document per page. |
+| `SplitOptions` | Select per-page, page-group, or bookmark-level splitting. |
+| `Splitter` | Split every input PDF into independent output documents. |
 | `StatisticsEntry` | Entry for tracking statistics and timing information. |
 | `StreamDataSource` | A data source backed by a binary stream (e.g. ``io.BytesIO``). |
 | `StructureElement` | A mutable logical-structure element in a tagged PDF. |
@@ -1124,6 +1125,8 @@ and delete workflows. 265 public types are organized by module below.
     `save_as_markdown(destination, pages, title, embed_images, image_directory, markdown_format, paragraph_gap, clip_to_page, overwrite) -> Path`
   - `flatten(fields=True, annotations=True, pages=None, strict=True) -> Document` /
     `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
+  - `split_by_bookmarks(level=1, include_preamble=True) -> list[Document]` —
+    split chapters at local bookmarks and retain leading pages in a separate document
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
