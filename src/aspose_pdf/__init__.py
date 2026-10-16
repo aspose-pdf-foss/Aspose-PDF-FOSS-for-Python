@@ -64,6 +64,7 @@ from .forms import (
     FieldWidget,
     Form,
     FormType,
+    FormValidationIssue,
     UnsignedContent,
     UnsignedContentAbsorber,
 )
@@ -215,6 +216,7 @@ __all__ = [
     "FontSubstitutionOptions",
     "Form",
     "FormType",
+    "FormValidationIssue",
     "FreeTextAnnotation",
     "GoToAction",
     "GoToRAction",

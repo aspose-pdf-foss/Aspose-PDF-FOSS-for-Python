@@ -685,6 +685,27 @@ with Document("input.pdf") as document:
 `TextExtractorOptions(clip=...)` apply the rectangle to every page. Selection uses
 overlapping glyph bounds; see [coverage and limitations](supported-features.md).
 
+### Validate a Filled Form
+
+Check stored answers before delivering a completed form:
+
+```python
+from aspose_pdf import Document
+
+with Document("application.pdf") as document:
+    document.form.fill({"person.name": "Alice"})
+    issues = document.form.validate()
+    if issues:
+        for issue in issues:
+            print(issue.field_name, issue.code, issue.message)
+    else:
+        document.save("completed.pdf")
+```
+
+The check reports required answers, text length limits and invalid selections
+without modifying the PDF. It does not execute JavaScript or verify signatures;
+see [form validation coverage](supported-features.md#forms).
+
 ### Run a Batch Workflow With the Plugin Layer
 
 ```python
@@ -1168,6 +1189,7 @@ and delete workflows. 265 public types are organized by module below.
   - `fill(values, strict=True) -> list[str]` / `to_dict() -> dict` /
     `export_json(destination=None) -> bytes` / `import_json(source, strict=True) -> list[str]`
   - `reset(fields=None, strict=True) -> list[str]` — restore all or selected fields to template defaults
+  - `validate(fields=None, strict=True) -> list[FormValidationIssue]` — inspect stored answers without changing them
   - `export_fdf(destination) -> bytes` / `export_xfdf(destination) -> bytes` /
     `import_fdf(source) -> list[str]` / `import_xfdf(source) -> list[str]` (form data interchange)
 - `Field` — `remove() -> Field`; properties `name`, `value`, `field_type`, `partial_name`,
@@ -1176,6 +1198,8 @@ and delete workflows. 265 public types are organized by module below.
   `export_values`, `widgets` (`FieldWidget(page_index, rect)`), `page_index`, `rect`
   Configuration setters include `default_value`, `max_length`, `multiline`, `password`,
   `comb`, `options`, `multi_select` and `editable`.
+- `FormValidationIssue` — an immutable record with `field_name`, `field_type`,
+  `code` and `message`; an empty validation report means no covered value issues.
 - `Annotation` — `generate_appearance(force) -> bool`, `get_property(name, default) -> Any`,
   `set_property(name, value) -> None`; properties `subtype`, `rect`, `contents`, `appearance_normal`
 - `AnnotationCollection` — `add(subtype, rect, contents, title, appearance_normal, properties) -> Annotation`,

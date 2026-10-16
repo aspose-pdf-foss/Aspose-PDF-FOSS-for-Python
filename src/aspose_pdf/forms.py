@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from aspose_pdf.actions import FIELD_TRIGGERS, ActionCollection
 from aspose_pdf.engine.form_fields import validate_choice_value
+from aspose_pdf.engine.form_validation import FormValidationIssue
 from aspose_pdf.exceptions import PdfValidationException
 
 if TYPE_CHECKING:
@@ -1322,6 +1323,31 @@ class Form:
         if self._document and self._document._engine_pdf:
             self._document._engine_pdf.flatten()
             self._load_fields()
+
+
+    def validate(
+        self,
+        fields: Iterable[str] | None = None,
+        *,
+        strict: bool = True,
+    ) -> list[FormValidationIssue]:
+        """Check stored field values without modifying the PDF.
+
+        Return at most one immutable issue per terminal data field, in form
+        order, or in the order of distinct fully qualified names in ``fields``.
+        Unknown names raise ``KeyError`` unless ``strict=False``. Signature
+        fields and push buttons are skipped; read-only/no-export fields are not.
+
+        Codes are ``invalid_value``, ``required``, ``max_length`` and
+        ``invalid_choice``, in that precedence. Text length counts Unicode code
+        points, including whitespace. Defaults do not stand in for current
+        values. The check neither runs JavaScript nor verifies signatures,
+        appearances, or PDF conformance. Parser and resource errors propagate.
+        """
+        from aspose_pdf.engine.form_validation import validate_form_fields
+
+        self._document._ensure_not_disposed()
+        return validate_form_fields(self._document._engine_pdf, fields, strict=strict)
 
 
 class UnsignedContent:

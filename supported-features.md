@@ -2548,6 +2548,57 @@ Boundaries:
 
 Supported:
 
+- **Validate answers already stored in a form** with
+  `Form.validate(fields=None, strict=True) -> list[FormValidationIssue]`. Unlike
+  input checks in `fill`, this also inspects inconsistent values from foreign
+  PDFs, retaining raw types and choice-array entries until checked. It does not
+  change values, defaults, appearances, flags or PDF objects, and does not cause
+  an unchanged incremental save to append a revision. Page content, images and
+  appearance streams are not decoded; validation remains lazy.
+  - An immutable `FormValidationIssue`, importable from `aspose_pdf` and
+    `aspose_pdf.forms`, has `field_name` (fully qualified), `field_type`, `code`
+    and an English `message` that does not include stored values. At most one
+    issue per field is returned, with precedence `invalid_value` (unsupported
+    type/cardinality or duplicate selection), `required` (missing answer),
+    `max_length` (overlong text), then `invalid_choice` (undeclared selection).
+  - Without `fields`, terminal data fields are checked in form order. An iterable
+    of exact names, including a generator, selects fields in caller order,
+    deduplicating by first occurrence; an empty iterable does nothing. A bare
+    string, bytes, mapping or non-string name raises `TypeError`; `strict` must
+    be a boolean. Unknown names raise `KeyError`, or are skipped with
+    `strict=False`. Push buttons and signature fields are known but skipped;
+    namespace parents and unnamed widget children are not data fields.
+    Read-only/no-export fields are checked. A retained form rejects calls after
+    document disposal. Structural/parse and resource errors propagate rather
+    than becoming a clean report; `PdfLoadLimits` bounds traversal, parent
+    chains, selection iterables, metadata containers and issue accumulation.
+  - Effective `/FT`, `/Ff`, `/V`, `/MaxLen` and `/Opt` include inherited values;
+    a local null overrides inheritance. `/DV` never substitutes for the current
+    `/V`. Required text rejects absent, null, empty or Unicode whitespace-only
+    values. Positive, finite, whole `/MaxLen` values count decoded Python Unicode
+    code points, including whitespace/newlines, not bytes or grapheme clusters.
+    Unusable limits are ignored. Multiline, password and comb text use the same
+    checks; validation never truncates or adds restrictions to filling.
+  - Checkbox/radio states are checked against readable declared on states,
+    respecting the existing normal/down appearance metadata fallback. Missing,
+    null and `Off` mean no selection. Checkbox **name** states `No`, `0` and
+    `false` are selected states; legacy checkbox **strings** with those values
+    retain the reader's unchecked interpretation. Radio strings use only empty
+    and `Off` as unselected aliases. Without readable state declarations,
+    validation checks type and required status only, not appearance integrity.
+  - Choices compare exact export values, not display labels. Single-choice fields
+    accept a scalar or a zero/one-element array; multiselect list boxes also
+    accept multiple distinct selections. Wrong types/cardinality and duplicate
+    selections are reported before missing/unknown choices. Required choices
+    reject absence or an empty array; an explicitly declared empty-string export
+    counts as selected. Editable combos permit custom text, with blank custom
+    answers failing Required unless explicitly declared as exports. `/MaxLen`
+    is not applied to choice fields.
+  - This is a local value check, not a conformance certificate or a guarantee of
+    every template's business rules. It does not run JavaScript, process XFA,
+    validate signatures, audit appearances or `/I` consistency, repair data, or
+    run automatically during filling/saving. An empty list only confirms the
+    covered checks for the selected fields.
 - Read AcroForm fields through `Document.form`.
 - Iterate form fields and access fields by name.
 - Extract text, checkbox, radio, listbox, combobox, and push-button fields.
