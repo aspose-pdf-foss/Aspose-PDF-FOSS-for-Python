@@ -27,6 +27,7 @@ from .annotations import (
     quad_from_rect,
 )
 from .attachments import AF_RELATIONSHIPS, FileSpecification
+from .auto_links import AutoLinkResult
 from .color import Color
 from .destinations import NamedDestinationCollection
 from .document import Document
@@ -185,6 +186,7 @@ __all__ = [
     "AnnotationCollection",
     "AnnotationFlags",
     "AnnotationType",
+    "AutoLinkResult",
     "ByteArrayDataSource",
     "Cell",
     "CertificationLevel",

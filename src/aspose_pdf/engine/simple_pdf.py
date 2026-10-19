@@ -4996,7 +4996,14 @@ class SimplePdf:
         trailer = self._cos_doc.trailer.mapping
         enc_key = PdfName("Encrypt")
 
-        if self.encrypted and self.encryption_key:
+        # Streaming loads can retain the encrypted flag, but only protection
+        # authored in this session has new password values or CMS envelopes.
+        # Rebuilding a loaded dictionary with empty U/O would change its key.
+        if (
+            self.encrypted
+            and self.encryption_key
+            and ((self.O is not None and self.U is not None) or self._recipient_envelopes)
+        ):
             dictionary = self._encryption_dictionary()
             existing = trailer.get(enc_key)
             if (
@@ -10994,14 +11001,7 @@ class SimplePdf:
             return []
         if page_index < 0 or page_index >= len(self.pages):
             return []
-        if not hasattr(self, "_page_obj_ids") or page_index >= len(self._page_obj_ids):
-            return []
-
-        page_id = self._page_obj_ids[page_index]
-        if page_id == 0:
-            return []
-
-        page_dict = self._cos_doc.objects.get(page_id)
+        page_dict = self._get_page_dict(page_index)
         if not isinstance(page_dict, PdfDictionary):
             return []
 
@@ -11749,11 +11749,10 @@ class SimplePdf:
         self._ensure_not_disposed()
         if self._cos_doc is None:
             return
-        if page_index < 0 or page_index >= len(self._page_obj_ids):
+        if page_index < 0 or page_index >= len(self.pages):
             return
 
-        page_id = self._page_obj_ids[page_index]
-        page_dict = self._cos_doc.objects.get(page_id)
+        page_dict = self._get_page_dict(page_index)
         if not isinstance(page_dict, PdfDictionary):
             return
 

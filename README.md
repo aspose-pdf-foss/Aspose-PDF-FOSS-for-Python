@@ -729,6 +729,23 @@ The default is `False`. Untagged content is retained; filtering relies on PDF
 tags and does not guess which text is decorative. The option combines with page
 selection and `clip` and leaves the PDF unchanged.
 
+### Make Existing URLs and Email Addresses Clickable
+
+```python
+from aspose_pdf import Document
+
+with Document("input.pdf") as document:
+    result = document.auto_link(pages=[0, 1])
+    print(result.linked_count, result.skipped_count, result.existing_count)
+    document.save("linked.pdf")
+```
+
+`Page.auto_link()` processes one page. Both methods recognize HTTP(S), `www.`
+and common email addresses, preserve text and skip addresses covered by an
+existing link. `urls=False` or `emails=False` disables either kind; `max_count`
+limits addresses considered. Uncertain coordinates are reported in
+`skipped_fragments`; see [recognition and geometry limits](supported-features.md#text).
+
 ### Export Annotations for Review
 
 ```python
@@ -823,7 +840,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 265 public types are organized by module below.
+and delete workflows. 266 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1221,6 +1238,11 @@ and delete workflows. 265 public types are organized by module below.
 - `Document.highlight_text()` / `Page.highlight_text()` find a phrase or regex and add
   highlight annotations. `TextHighlightResult` reports `highlighted_count`, `skipped_count`,
   `matched_count`, editable `annotations`, and `skipped_fragments` with text/page/offsets.
+
+- `Document.auto_link(pages=None, urls=True, emails=True, max_count=0)` /
+  `Page.auto_link(urls=True, emails=True, max_count=0)` create clickable addresses.
+  `AutoLinkResult` reports `linked_count`, `skipped_count`, `existing_count`,
+  `matched_count`, live `annotations`, `skipped_fragments` and `existing_fragments`.
 
 - `Document.extract_text(pages=None, clip=None, skip_artifacts=False)` /
   `Page.extract_text(clip=None, skip_artifacts=False)` return text,

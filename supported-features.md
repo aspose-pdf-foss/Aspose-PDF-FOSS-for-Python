@@ -2023,6 +2023,64 @@ Supported:
       document.save("highlighted.pdf")
   ```
 
+- **Automatically link web and email addresses in existing page text.**
+  `Document.auto_link(pages=None, urls=True, emails=True, max_count=0)` creates
+  one invisible, borderless Link annotation per reliably located address.
+  `Page.auto_link(urls=True, emails=True, max_count=0)` applies the same operation
+  to one page. This makes addresses clickable in reports, brochures and other
+  existing PDFs without changing their text, fonts or content streams.
+  - Recognition is heuristic: explicit `http://` / `https://` URLs, bare `www.`
+    addresses (targeting HTTPS), and common ASCII dot-atom email addresses
+    with dotted domains (targeting `mailto:`). URL prefixes are case-insensitive.
+    Surrounding quotes/angle brackets, trailing prose punctuation and unmatched
+    closing brackets are excluded; balanced path parentheses are retained.
+    Unicode web hostnames become IDNA names and non-ASCII URI characters are
+    percent-encoded. Email URI delimiters inside local parts are escaped.
+    An email spelling inside a detected web URL is not linked separately,
+    including with `urls=False`. No network requests or delivery checks occur.
+  - The returned `AutoLinkResult`, exported from `aspose_pdf`, exposes live
+    `annotations`, `skipped_fragments` for uncertain geometry, and
+    `existing_fragments` for addresses covered by existing links. Counts are
+    `linked_count`, `skipped_count`, `existing_count`, and their sum,
+    `matched_count`. Fragments contain exact matched text, a zero-based page
+    index and start/end offsets in full-page extraction; placed fragments
+    also carry their rectangle and quads.
+  - `pages` accepts zero-based integer iterables, retaining order/repetitions;
+    `None` selects all and an empty iterable does nothing. `max_count=0` is
+    unlimited; a positive count caps addresses **considered**, including skips
+    and already covered addresses, across pages. Later pages are not read after
+    the cap. `urls` and `emails` must be booleans and `max_count` a non-negative
+    integer. All options/page indices are validated before edits, even with
+    disabled recognition or an empty selection; bad values raise
+    `PdfValidationException`. A generator selection is snapshotted once.
+  - Existing Link rectangles with positive overlap are preserved and the
+    candidate is skipped, regardless of the existing action's target. Touching
+    edges alone do not overlap. Repeated invocations/repeated selected pages
+    do not add overlapping links. Repeated addresses at different locations
+    can each receive a link. Non-Link annotations do not prevent linking;
+    shared annotation arrays are copied before adding this page's links.
+  - Placement reuses the text locator's font metrics, show-run decoding,
+    transformed glyph quads and whole-code-unit checks. Counts must agree
+    between extraction and geometry for each exact address, so a form or an
+    unmeasurable repeated occurrence never borrows another one's coordinates.
+    The clickable rectangle is the axis-aligned glyph bounds in unrotated PDF
+    space, independent of page rotation and CropBox. Inherited page resources,
+    contiguous show operands and supported embedded Unicode fonts work.
+  - Unknown/unmeasurable fonts, Form XObject text, logical `ActualText` without
+    corresponding glyphs, and text assembled across unrelated runs may be
+    reported as unplaced. No OCR or joining across line wraps is performed;
+    independently recognizable pieces of wrapped addresses may be detected.
+    Bare domains without `www.`, other schemes, quoted/Unicode email local
+    parts and complete RFC mailbox syntax are not supported. Legitimate URL
+    endings resembling prose punctuation are ambiguous and may be trimmed.
+  - Only selected page content is parsed; streaming remains lazy, including
+    password-protected files. Page resources can still be decoded by ordinary
+    extraction, but existing annotation appearances are not decoded for
+    overlap checks. Container, object, token and geometry limits propagate;
+    overlap comparisons also obey `max_content_tokens`. A page's new links
+    are planned and checked before insertion. An error on a later page can
+    leave earlier pages' additions in place. Saving retains the document's
+    protection and existing text; it follows the normal signature/save rules.
 - **Match a shape, not only a phrase.** `replace_text` and `redact_text` take
   `regex=True`, or a compiled `re.Pattern` as the search (which needs no flag),
   so `\d{3}-\d{2}-\d{4}` finds a social security number and

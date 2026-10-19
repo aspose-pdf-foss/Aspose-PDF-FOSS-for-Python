@@ -16,6 +16,7 @@ from aspose_pdf.paths import GraphicsPath
 from aspose_pdf.viewer_preferences import PageBoundary
 
 if TYPE_CHECKING:
+    from aspose_pdf.auto_links import AutoLinkResult
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
@@ -1413,6 +1414,17 @@ class Page:
             regex=regex,
             overlay=overlay,
             overlay_color=overlay_color,
+        )
+
+    def auto_link(
+        self, *, urls: bool = True, emails: bool = True, max_count: int = 0
+    ) -> AutoLinkResult:
+        """Link recognized addresses on this page and report skips/duplicates.
+
+        See :meth:`Document.auto_link` for recognition and geometry limits.
+        """
+        return self._document.auto_link(
+            pages=[self._index], urls=urls, emails=emails, max_count=max_count
         )
 
     def add_link(

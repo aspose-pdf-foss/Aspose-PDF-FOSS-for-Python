@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     import datetime as _datetime
 
     from aspose_pdf._pending_signatures import PendingOperation
+    from aspose_pdf.auto_links import AutoLinkResult
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.forms import Form
@@ -2216,6 +2217,35 @@ class Document:
             font=font,
             layout=layout,
         )
+
+    def auto_link(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        urls: bool = True,
+        emails: bool = True,
+        max_count: int = 0,
+    ) -> AutoLinkResult:
+        """Make recognized web and email addresses in existing text clickable.
+
+        Recognize HTTP(S), ``www.`` (using HTTPS), and common ASCII email
+        addresses (using ``mailto:``). Surrounding prose punctuation is removed
+        from targets. No network requests or text/content changes are made.
+        ``pages`` selects zero-based pages in order, including repeats.
+        ``max_count=0`` considers all addresses; a positive cap includes
+        unplaceable addresses and those overlapping existing links.
+
+        The result reports new live ``annotations``, ``skipped_fragments``
+        without reliable geometry, and ``existing_fragments`` overlapping any
+        existing Link rectangle. Repeated runs do not add overlapping links.
+        Coordinates use axis-aligned text bounds; forms, unmeasurable fonts,
+        ambiguous repetitions and wrapped addresses may remain unlinked.
+        Selected streaming page content stays lazy. Validation precedes edits;
+        errors on later pages can leave earlier pages' links in place.
+        """
+        from aspose_pdf.auto_links import _auto_link
+
+        return _auto_link(self, pages=pages, urls=urls, emails=emails, max_count=max_count)
 
     def highlight_text(
         self,
