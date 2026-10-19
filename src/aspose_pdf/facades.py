@@ -280,6 +280,7 @@ class PdfExtractor:
         *,
         page_numbers: int | Iterable[int] | None = None,
         clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
     ) -> None:
         """Extract text from all or selected pages of the bound document.
 
@@ -295,10 +296,16 @@ class PdfExtractor:
         ``[]`` selects none. The page-text cursor follows that selection.
         Results and cursor are replaced only after validation and extraction
         succeed; a failed call leaves the previous results/cursor intact.
+        ``skip_artifacts=True`` excludes explicitly marked ``/Artifact`` text,
+        including nested blocks and invoked forms, as on ``Document``.
         """
-        from aspose_pdf.engine.text_selection import page_indexes
+        from aspose_pdf.engine.text_selection import (
+            page_indexes,
+            validate_skip_artifacts,
+        )
 
         self._ensure_not_disposed()
+        skip_artifacts = validate_skip_artifacts(skip_artifacts)
         if isinstance(page_numbers, int) and not isinstance(page_numbers, bool):
             page_numbers = (page_numbers,)
         indexes = page_indexes(
@@ -315,7 +322,9 @@ class PdfExtractor:
             texts = []
         else:
             texts = [
-                self._bound_pdf.extract_page_text(index, clip=clip)
+                self._bound_pdf.extract_page_text(
+                    index, clip=clip, skip_artifacts=skip_artifacts
+                )
                 for index in (
                     range(len(self._bound_pdf.pages)) if indexes is None else indexes
                 )

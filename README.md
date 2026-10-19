@@ -716,6 +716,19 @@ decode only selected page content.
 `TextExtractorOptions(clip=...)` apply the rectangle to each selected page. Selection uses
 overlapping glyph bounds; see [coverage and limitations](supported-features.md).
 
+Pass `skip_artifacts=True` to `Document.extract_text`, `Page.extract_text`,
+`PdfExtractor.extract_text`, or `TextExtractorOptions` to omit explicitly marked
+`/Artifact` content, such as tagged headers, footers, page numbers and watermarks:
+
+```python
+with Document("input.pdf") as document:
+    print(document.extract_text(pages=[0, 1], skip_artifacts=True))
+```
+
+The default is `False`. Untagged content is retained; filtering relies on PDF
+tags and does not guess which text is decorative. The option combines with page
+selection and `clip` and leaves the PDF unchanged.
+
 ### Export Annotations for Review
 
 ```python
@@ -1209,9 +1222,11 @@ and delete workflows. 265 public types are organized by module below.
   highlight annotations. `TextHighlightResult` reports `highlighted_count`, `skipped_count`,
   `matched_count`, editable `annotations`, and `skipped_fragments` with text/page/offsets.
 
-- `Document.extract_text(pages=None, clip=None)` / `Page.extract_text(clip=None)` return text,
+- `Document.extract_text(pages=None, clip=None, skip_artifacts=False)` /
+  `Page.extract_text(clip=None, skip_artifacts=False)` return text,
   with zero-based page selection on `Document`,
-  optionally selecting glyphs overlapping `(x0, y0, x1, y1)` in unrotated PDF space.
+  optionally selecting glyphs overlapping `(x0, y0, x1, y1)` in unrotated PDF space
+  and excluding explicitly marked Artifact content.
 
 - `Document.extract_tables(pages=None, clip_to_page=True)` / `Page.extract_tables(clip_to_page=True)`
   return `list[ExtractedTable]`; `pages` contains zero-based indices. Each result exposes
@@ -1220,7 +1235,7 @@ and delete workflows. 265 public types are organized by module below.
 
 - `PdfExtractor`
   - `bind_pdf(source, password, limits) -> None`
-  - `extract_text(page_numbers=None, clip=None) -> None` (one-based selection) /
+  - `extract_text(page_numbers=None, clip=None, skip_artifacts=False) -> None` (one-based selection) /
     `get_text() -> str` / `has_next_page_text() -> bool` / `get_next_page_text() -> str`
   - `extract_image() -> None` / `has_next_image() -> bool` / `get_next_image() -> Any`
   - `extract_attachment() -> None` / `get_attachment(name) -> Any` / `get_attach_names() -> list[str]`

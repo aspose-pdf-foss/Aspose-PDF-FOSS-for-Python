@@ -517,7 +517,9 @@ class Page:
             return eng.page_contents[self._index]
         return b""
 
-    def extract_text(self, *, clip: Sequence[float] | None = None) -> str:
+    def extract_text(
+        self, *, clip: Sequence[float] | None = None, skip_artifacts: bool = False
+    ) -> str:
         """The text this page says, with the line breaks it was written in.
 
         Text-positioning operators are what separate one line from the next, so
@@ -529,12 +531,16 @@ class Page:
         origin. Characters without reliable geometry are omitted in this mode.
         The rectangle is independent of the page's CropBox and rotation; it
         does not modify the PDF. ``None`` preserves ordinary full-page extraction.
+        ``skip_artifacts=True`` omits explicitly marked ``/Artifact`` content,
+        such as tagged page numbers and watermarks. It defaults to ``False``.
         """
         self._document._ensure_not_disposed()
         engine = self._document._engine_pdf
         if engine is None:
             return ""
-        return engine.extract_page_text(self._index, clip=clip)
+        return engine.extract_page_text(
+            self._index, clip=clip, skip_artifacts=skip_artifacts
+        )
 
     def add_text(
         self,

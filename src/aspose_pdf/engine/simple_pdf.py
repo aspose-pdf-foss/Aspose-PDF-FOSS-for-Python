@@ -10339,7 +10339,9 @@ class SimplePdf:
     # ---------------------------------------------------------------------------
     # Text extraction
     # ---------------------------------------------------------------------------
-    def extract_page_text(self, page_index: int, *, clip=None) -> str:
+    def extract_page_text(
+        self, page_index: int, *, clip=None, skip_artifacts: bool = False
+    ) -> str:
         """The text one page's content streams say, its line breaks kept.
 
         The single place a page's content is parsed for text: the whole
@@ -10348,12 +10350,15 @@ class SimplePdf:
         parse-with-resources dance.
         """
         self._ensure_not_disposed()
+        from .text_selection import validate_skip_artifacts
+
+        skip_artifacts = validate_skip_artifacts(skip_artifacts)
         if page_index < 0 or page_index >= len(self.pages):
             return ""
         if clip is not None:
             from .text_region import extract_region
 
-            return extract_region(self, page_index, clip)
+            return extract_region(self, page_index, clip, skip_artifacts=skip_artifacts)
         # Through ``get_page_content``, which serves both modes: reading
         # ``page_contents`` directly meant a document opened with
         # ``open_streaming`` -- where that list is empty until something
@@ -10363,7 +10368,10 @@ class SimplePdf:
         resources = {}
         if self._cos_doc:
             try:
-                resources = self._get_page_resources(page_index) or {}
+                page = self._get_page_dict(page_index)
+                inherited = self._resolve_resources_cos(page)
+                if inherited is not None:
+                    resources = self._convert_cos_to_dict(inherited) or {}
             except PdfResourceLimitException:
                 raise
             except PDF_OPERATION_ERRORS:
@@ -10376,6 +10384,7 @@ class SimplePdf:
                 limits=self._load_limits,
                 budget=self._load_budget,
                 hidden_oc_names=self.hidden_oc_property_names(page_index),
+                skip_artifacts=skip_artifacts,
             )
 
         try:
@@ -10389,8 +10398,10 @@ class SimplePdf:
             # a page whose only text was a space returned ``'\x00\x01'``. The
             # fallback is for a stream this parser could not follow, which is
             # what ``showed_text`` tells apart.
-            if text or parser.showed_text:
+            if text or (parser.showed_text and not skip_artifacts):
                 return text
+            # Filtered recovery still follows marked scopes; it can recover a
+            # damaged body even when valid text shows occurred only in artifacts.
             return parse().best_effort_extract_text()
         except PdfResourceLimitException:
             raise
@@ -10402,21 +10413,28 @@ class SimplePdf:
             except CONTENT_PARSER_RECOVERABLE:
                 return ""
 
-    def extract_text(self, *, pages: Iterable[int] | None = None, clip=None) -> str:
+    def extract_text(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        clip=None,
+        skip_artifacts: bool = False,
+    ) -> str:
         """Extract all or selected pages, keeping one line break between pages."""
         self._ensure_not_disposed()
-        if pages is not None or clip is not None:
-            from .text_selection import page_indexes
+        from .text_selection import page_indexes, validate_skip_artifacts
 
+        skip_artifacts = validate_skip_artifacts(skip_artifacts)
+        if pages is not None or clip is not None or skip_artifacts:
             indexes = page_indexes(pages, len(self.pages), limits=self._load_limits)
             rectangle = None
             if clip is not None:
                 from .text_region import validate_clip
 
                 rectangle = validate_clip(clip)
-            # A subset or region must not replace the full-document text cache.
+            # Filtered results must not replace the default full-document text cache.
             return "\n".join(
-                self.extract_page_text(index, clip=rectangle)
+                self.extract_page_text(index, clip=rectangle, skip_artifacts=skip_artifacts)
                 for index in (range(len(self.pages)) if indexes is None else indexes)
             )
         if self._extracted_text is not None:

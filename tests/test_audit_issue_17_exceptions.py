@@ -85,8 +85,9 @@ def test_stream_decoder_ccitt_decode_error_raises_validation_exception() -> None
             StreamDecoder._decode_ccitt(raw, None)
 
 
-def test_content_stream_best_effort_tolerates_tokenizer_failure() -> None:
-    parser = ContentStreamParser.__new__(ContentStreamParser)
+@pytest.mark.parametrize("skip_artifacts", [False, True])
+def test_content_stream_best_effort_tolerates_tokenizer_failure(skip_artifacts) -> None:
+    parser = ContentStreamParser(b"", {}, skip_artifacts=skip_artifacts)
 
     def bad_tokenize():
         raise ValueError("tokenizer abort")

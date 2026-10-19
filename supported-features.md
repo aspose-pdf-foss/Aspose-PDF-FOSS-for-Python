@@ -1756,15 +1756,15 @@ Supported:
   engine, and lose both.
 - Read all extracted text at once with `PdfExtractor.get_text()`.
 - **Choose pages when extracting text.**
-  `Document.extract_text(pages=None, clip=None)` accepts an iterable of
+  `Document.extract_text(pages=None, clip=None, skip_artifacts=False)` accepts an iterable of
   zero-based integer page indices: lists, tuples, `range(...)` and generators
   retain their order and repeated entries. `pages=[2, 0, 2]` reads the third,
   first, then third page. `None` keeps the existing all-pages behavior; an
   empty iterable returns `""`. One newline separates each selected occurrence,
   including empty pages, and each page's own line breaks and whitespace are
-  retained. A subset or clipped result does not replace the cached full-text
+  retained. A selected, clipped or artifact-filtered result does not replace the cached full-text
   result. Reading text never changes the PDF or its page order.
-  - `PdfExtractor.extract_text(page_numbers=None, clip=None)` uses **one-based**
+  - `PdfExtractor.extract_text(page_numbers=None, clip=None, skip_artifacts=False)` uses **one-based**
     numbering, like the other facades. It accepts one integer or an iterable,
     retaining order and repetitions. `get_text()` joins just those results;
     `has_next_page_text()` / `get_next_page_text()` walk the same selection,
@@ -1773,7 +1773,7 @@ Supported:
     partial results from a failed run are not published. An unbound extractor
     accepts the all-pages or empty selection as empty text, but explicit page
     numbers are out of range.
-  - `TextExtractorOptions(limits=None, pages=None, clip=None)` uses **zero-based**
+  - `TextExtractorOptions(limits=None, pages=None, clip=None, skip_artifacts=False)` uses **zero-based**
     indices. `options.pages` is a tuple snapshot (or `None`), also when assigned
     later, so a generator or an externally edited list cannot change later
     inputs/runs. The first positional argument remains the resource policy.
@@ -1792,6 +1792,39 @@ Supported:
     facade binding and low-code inputs, can still decode other pages before
     extraction starts. Existing font decoding, optional-content visibility,
     damaged-stream recovery and region-extraction limits still apply.
+- **Optionally exclude explicitly marked artifacts from extracted text.**
+  `skip_artifacts=True` on `Document.extract_text`, `Page.extract_text`,
+  `PdfExtractor.extract_text`, or `TextExtractorOptions` omits `/Artifact`
+  marked-content sequences. The default is `False`, retaining artifact text.
+  This removes tagged headers, footers, page numbers, watermarks and other
+  decorative text from input for search, indexing and analysis. It follows
+  nested `BMC`/`BDC`/`EMC` scopes, named and inline property lists, escaped tag
+  names, and invoked Form XObjects, including forms called inside artifacts
+  and artifacts inside forms. Fonts and text-positioning operators inside
+  ignored scopes still affect later body text. Inherited page resources are
+  resolved for both full-page and regional extraction.
+  - The option combines with selected/repeated pages, regional `clip`,
+    streaming loads, Unicode font decoding and password-protected documents.
+    The boolean is validated before extraction, including empty selections;
+    `options.skip_artifacts` can also be assigned after construction. Invalid
+    values raise `PdfValidationException`.
+  - Named-property `ActualText` inside artifacts is omitted. An outer logical
+    replacement covering only skipped artifacts is omitted too. When a
+    replacement covers both body and artifact glyphs, it remains whole when
+    body text is selected: the logical string cannot reliably be split by
+    glyph. Inline `ActualText` retains its existing extraction limitations.
+  - Damaged-stream recovery in this mode follows recognized text-show
+    operators and marked-content scopes, including shows outside `BT`/`ET`;
+    it never revives artifacts by collecting arbitrary raw strings. This
+    conservative recovery may return less text than default recovery. An
+    unclosed artifact remains suppressed through the end of its stream.
+    Regional extraction retains its existing conservative geometry rules.
+  - Filtering uses explicit tags only: untagged headers, footers and repeated
+    text remain. It does not infer reading order, perform OCR, remove PDF
+    content or provide redaction. PDF bytes and the default text cache stay
+    unchanged. Resource limits still apply to ignored content; page resources
+    may be read or decoded before filtering. Streaming page selection still
+    avoids decoding unselected page content.
 - **Extracted images come back as real image files**: `extract_image()` /
   `get_next_image()` hand back what `save_image` would write -- PNG for raster
   codecs, the original JPEG or JPX payload where the file holds one -- rather

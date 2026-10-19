@@ -465,9 +465,11 @@ class TextExtractorOptions(PluginOptions):
         *,
         clip: Sequence[float] | None = None,
         pages: Iterable[int] | None = None,
+        skip_artifacts: bool = False,
     ) -> None:
         super().__init__(limits=limits)
         self.pages = pages
+        self.skip_artifacts = skip_artifacts
         if clip is not None:
             from aspose_pdf.engine.text_region import validate_clip
 
@@ -484,6 +486,17 @@ class TextExtractorOptions(PluginOptions):
         from aspose_pdf.engine.text_selection import page_indexes
 
         self._pages = page_indexes(values, limits=self.limits)
+
+    @property
+    def skip_artifacts(self) -> bool:
+        """Whether explicitly marked Artifact content is omitted from text."""
+        return self._skip_artifacts
+
+    @skip_artifacts.setter
+    def skip_artifacts(self, value: bool) -> None:
+        from aspose_pdf.engine.text_selection import validate_skip_artifacts
+
+        self._skip_artifacts = validate_skip_artifacts(value)
 
 
 # ---------------------------------------------------------------------------
@@ -667,9 +680,13 @@ class TextExtractor(PdfPlugin):
     def process(self, options: TextExtractorOptions) -> ResultContainer:
         self._require_inputs(options)
         limits = _coerce_limits(getattr(options, "limits", None))
-        from aspose_pdf.engine.text_selection import page_indexes
+        from aspose_pdf.engine.text_selection import (
+            page_indexes,
+            validate_skip_artifacts,
+        )
 
         pages = page_indexes(getattr(options, "pages", None), limits=limits)
+        skip_artifacts = validate_skip_artifacts(getattr(options, "skip_artifacts", False))
         page_numbers = None if pages is None else tuple(index + 1 for index in pages)
         results: list[OperationResult] = []
         for source in options.inputs:
@@ -679,7 +696,9 @@ class TextExtractor(PdfPlugin):
                     _read_source_bytes(source, limits), limits=limits
                 )
                 extractor.extract_text(
-                    page_numbers=page_numbers, clip=getattr(options, "clip", None)
+                    page_numbers=page_numbers,
+                    clip=getattr(options, "clip", None),
+                    skip_artifacts=skip_artifacts,
                 )
                 results.append(OperationResult(extractor.get_text()))
             finally:

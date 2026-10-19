@@ -60,6 +60,7 @@ class _RegionParser(ContentStreamParser):
         active_forms: frozenset[int] = frozenset(),
         font_cache: dict | None = None,
         optional_content: OptionalContent | None = None,
+        skip_artifacts: bool = False,
     ):
         self.pdf = pdf
         self.page_index = page_index
@@ -93,6 +94,7 @@ class _RegionParser(ContentStreamParser):
             pdf._convert_cos_to_dict(PdfDictionary(mapping)),
             budget=pdf._load_budget,
             hidden_oc_names=hidden,
+            skip_artifacts=skip_artifacts,
         )
         self._selected: dict[int, list[tuple[int, int]]] = {}
         self._placements: dict[int, tuple[str, tuple]] = {}
@@ -222,6 +224,7 @@ class _RegionParser(ContentStreamParser):
         if (
             self._inside_actual_text()
             and not self._oc_hidden_depth
+            and not self._artifact_depth
             and op in ("Tj", "TJ", "'", '"')
         ):
             operands = (
@@ -260,6 +263,8 @@ class _RegionParser(ContentStreamParser):
                 self._append_selected(replacement)
 
     def _show_form_xobject(self, operand: Any) -> None:
+        if self._artifact_depth:
+            return
         placement = self._placements.get(self._pos)
         if placement is None or not isinstance(self.resource_scope, PdfDictionary):
             return
@@ -311,10 +316,14 @@ class _RegionParser(ContentStreamParser):
             active_forms=self.active_forms | {id(form)},
             font_cache=self.font_cache,
             optional_content=self.optional_content,
+            skip_artifacts=self._skip_artifacts,
         )
         text = nested.extract_text()
+        if nested._skipped_artifacts:
+            self._note_skipped_artifact()
         if not text:
             return
+        self._note_visible_text()
         if self._inside_actual_text():
             if self._actual_hits:
                 self._actual_hits[-1] = True
@@ -326,11 +335,18 @@ class _RegionParser(ContentStreamParser):
         self._force_break = True
 
 
-def extract_region(pdf: Any, page_index: int, clip: Sequence[float]) -> str:
+def extract_region(
+    pdf: Any, page_index: int, clip: Sequence[float], *, skip_artifacts: bool = False
+) -> str:
     """Extract only glyphs with reliable bounds overlapping the requested area."""
     rectangle = validate_clip(clip)
     page = pdf._get_page_dict(page_index)
     resources = pdf._resolve_resources_cos(page) if page is not None else None
     return _RegionParser(
-        pdf, page_index, pdf.get_page_content(page_index), resources, rectangle
+        pdf,
+        page_index,
+        pdf.get_page_content(page_index),
+        resources,
+        rectangle,
+        skip_artifacts=skip_artifacts,
     ).extract_text()

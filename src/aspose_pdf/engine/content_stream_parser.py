@@ -11,6 +11,7 @@ import codecs
 import math
 from collections import deque
 from collections.abc import Iterator
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -20,6 +21,7 @@ from aspose_pdf.exceptions import (
 )
 from aspose_pdf.load_limits import PdfLoadLimits, _coerce_limits, _LoadBudget
 
+from .cos import decode_pdf_name
 from .pdf_matrix import (
     identity_affine_decimal,
     multiply_pdf_affine,
@@ -33,6 +35,17 @@ from .predefined_cmaps import (
     resolve_predefined_cmap_encoding,
     supported_cmap_names,
 )
+from .text_selection import validate_skip_artifacts
+
+
+@dataclass
+class _MarkedText:
+    """Logical replacement text and visible content within one marked scope."""
+
+    actual_text: str | None = None
+    visible_text: bool = False
+    skipped_artifact: bool = False
+
 
 #: How far a `Do` chain of form XObjects is followed. A form may draw another,
 #: and a malformed one may draw itself.
@@ -602,7 +615,10 @@ class ContentStreamParser:
         limits: PdfLoadLimits | None = None,
         budget: _LoadBudget | None = None,
         hidden_oc_names: frozenset[str] | None = None,
+        skip_artifacts: bool = False,
     ):
+        self._skip_artifacts = validate_skip_artifacts(skip_artifacts)
+        self._recover_text = False
         if budget is None:
             self._limits = _coerce_limits(limits)
             self._budget = _LoadBudget(self._limits)
@@ -637,7 +653,9 @@ class ContentStreamParser:
         self._embedded_encoding_codespaces: tuple[tuple[bytes, bytes], ...] = ()
         self._opaque_composite = False
         self._buffer: list[str] = []
-        self._marked_actual_text: list[str | None] = []
+        self._marked_content: list[_MarkedText] = []
+        self._artifact_depth = 0
+        self._skipped_artifacts = False
         # Names in /Resources /Properties whose optional content group the
         # document's default configuration turns off: text inside
         # ``/OC /name BDC ... EMC`` for one of them is not extracted, because a
@@ -774,7 +792,10 @@ class ContentStreamParser:
         self._last_shown_y: float | None = None
         self._last_shown_x: float | None = None
         self._force_break = False
-        self._marked_actual_text = []
+        self._marked_content = []
+        self._oc_hidden_depth = 0
+        self._artifact_depth = 0
+        self._skipped_artifacts = False
         self._gs_stack = [{"nonstroking_cs": None, "stroking_cs": None}]
         stack: list[Any] = []
 
@@ -789,12 +810,16 @@ class ContentStreamParser:
 
             if isinstance(token, str) and token in self._FIXED_OP_ARITY:
                 needed = self._FIXED_OP_ARITY[token]
-                if needed > len(stack):
-                    continue
-
-                operands = stack[-needed:] if needed else []
-                if needed:
-                    del stack[-needed:]
+                if token == "BDC":
+                    operands = self._marked_operands(stack)
+                    if operands is None:
+                        continue
+                else:
+                    if needed > len(stack):
+                        continue
+                    operands = stack[-needed:] if needed else []
+                    if needed:
+                        del stack[-needed:]
 
                 if token == "q":
                     self._check_container_items(
@@ -861,18 +886,86 @@ class ContentStreamParser:
         except UnicodeDecodeError:
             return raw.decode("latin-1", errors="replace")
 
+    def _marked_operands(self, stack: list[Any]) -> list[Any] | None:
+        """Consume BDC operands, including flattened inline property lists.
+
+        The tokenizer retains dictionary delimiters as tokens. Find their
+        matching opener so the marked-content tag is not mistaken for a value
+        inside the property list. Inline ActualText keeps its existing behavior;
+        named property lists continue to supply logical replacement text.
+        """
+        if stack and stack[-1] == ">>":
+            depth = 0
+            for index in range(len(stack) - 1, -1, -1):
+                if stack[index] == ">>":
+                    depth += 1
+                    self._check_nesting(depth, "PDF marked-content property depth")
+                elif stack[index] == "<<":
+                    depth -= 1
+                    if depth == 0:
+                        if index == 0:
+                            return None
+                        operands = [stack[index - 1], None]
+                        del stack[index - 1 :]
+                        return operands
+        # The authoring API also writes bare /Artifact BDC sequences.
+        if (
+            len(stack) == 1
+            and isinstance(stack[0], str)
+            and decode_pdf_name(stack[0]).lstrip("/") == "Artifact"
+        ):
+            return [stack.pop()]
+        if len(stack) < 2:
+            return None
+        operands = stack[-2:]
+        del stack[-2:]
+        return operands
+
+    def _note_visible_text(self) -> None:
+        if self._marked_content and not (self._oc_hidden_depth or self._artifact_depth):
+            self._marked_content[-1].visible_text = True
+
+    def _note_skipped_artifact(self) -> None:
+        self._skipped_artifacts = True
+        if self._marked_content:
+            self._marked_content[-1].skipped_artifact = True
+
     def _handle_marked_content(self, op: str, operands: list[Any]) -> None:
         if op == "EMC":
+            suppressed = bool(self._oc_hidden_depth or self._artifact_depth)
             if self._oc_hidden_depth:
                 self._oc_hidden_depth -= 1
-            if not self._marked_actual_text:
+            if self._artifact_depth:
+                self._artifact_depth -= 1
+            if not self._marked_content:
                 return
-            actual_text = self._marked_actual_text.pop()
-            if actual_text is not None and not any(
-                item is not None for item in self._marked_actual_text
+            frame = self._marked_content.pop()
+            if self._marked_content:
+                self._marked_content[-1].visible_text |= frame.visible_text
+                self._marked_content[-1].skipped_artifact |= frame.skipped_artifact
+            if (
+                frame.actual_text is not None
+                and not suppressed
+                and not self._inside_actual_text()
+                and (not frame.skipped_artifact or frame.visible_text)
             ):
-                self._buffer.append(actual_text)
+                self._buffer.append(frame.actual_text)
             return
+        self._check_nesting(len(self._marked_content) + 1, "PDF marked-content depth")
+        self._check_container_items(
+            len(self._marked_content) + 1, "PDF marked-content stack items"
+        )
+        tag = operands[0] if operands else None
+        if self._artifact_depth:
+            self._artifact_depth += 1
+        elif (
+            self._skip_artifacts
+            and isinstance(tag, str)
+            and decode_pdf_name(tag).lstrip("/") == "Artifact"
+        ):
+            self._artifact_depth = 1
+        if self._artifact_depth:
+            self._note_skipped_artifact()
         if self._oc_hidden_depth:
             self._oc_hidden_depth += 1
         elif op == "BDC" and self._hidden_oc_names and len(operands) >= 2:
@@ -895,14 +988,19 @@ class ContentStreamParser:
                     value = properties.get(property_name.lstrip("/"))
                     if isinstance(value, dict):
                         actual_text = self._decode_actual_text(value.get("ActualText"))
-        self._marked_actual_text.append(actual_text)
+        self._marked_content.append(
+            _MarkedText(actual_text=actual_text, skipped_artifact=bool(self._artifact_depth))
+        )
 
     def _inside_actual_text(self) -> bool:
-        return any(item is not None for item in self._marked_actual_text)
+        return any(frame.actual_text is not None for frame in self._marked_content)
 
     def _text_suppressed(self) -> bool:
         """True when the current run must not reach the output buffer."""
-        return self._oc_hidden_depth > 0 or self._inside_actual_text()
+        return (
+            bool(self._oc_hidden_depth or self._artifact_depth)
+            or self._inside_actual_text()
+        )
 
     def _top_gs(self) -> dict[str, str | None]:
         return self._gs_stack[-1]
@@ -938,7 +1036,21 @@ class ContentStreamParser:
         found, including those nested in arrays (useful for partially broken TJ).
         It bypasses operator arity checks and text state (BT/ET) to maximize
         recovery from malformed or complex streams.
+        With artifact filtering enabled, only recognized show operators are
+        recovered, retaining marked-content visibility instead of raw strings.
         """
+        if self._skip_artifacts:
+            # Recover recognized show operators outside BT/ET while retaining
+            # marked-content visibility. Raw-string recovery would revive artifacts.
+            self._recover_text = True
+            try:
+                return self.extract_text()
+            except PdfResourceLimitException:
+                raise
+            except CONTENT_PARSER_RECOVERABLE:
+                return ""
+            finally:
+                self._recover_text = False
         self._buffer = []
         try:
             for token in self._tokenize():
@@ -1040,7 +1152,7 @@ class ContentStreamParser:
             return
 
         # Strict mode: only process if in text object
-        if not self._in_text:
+        if not self._in_text and not self._recover_text:
             return
 
         if op == "TL":
@@ -1076,6 +1188,8 @@ class ContentStreamParser:
                 return
             self.showed_text = True
             raw = ops[0]
+            if isinstance(raw, bytes) and raw:
+                self._note_visible_text()
             self._note_glyph_widths_from_bytes(raw)
             if not self._text_suppressed():
                 self._emit_text(raw)
@@ -1092,6 +1206,8 @@ class ContentStreamParser:
 
             for element in array:
                 if isinstance(element, bytes):
+                    if element:
+                        self._note_visible_text()
                     self._note_glyph_widths_from_bytes(element)
                     if not self._text_suppressed():
                         self._emit_text(element)
@@ -1129,6 +1245,8 @@ class ContentStreamParser:
             self._pending_move = True
             if ops:
                 self.showed_text = True
+                if isinstance(ops[-1], bytes) and ops[-1]:
+                    self._note_visible_text()
             if ops and not self._text_suppressed():
                 self._emit_text(ops[-1])
             return
@@ -1749,6 +1867,8 @@ class ContentStreamParser:
         The form's own ``/Resources`` govern inside it (ISO 32000-1 8.10.1),
         falling back to the page's when it declares none.
         """
+        if self._artifact_depth or self._oc_hidden_depth:
+            return
         if self._form_depth >= _MAX_FORM_DEPTH:
             return
         name = str(operand).lstrip("/")
@@ -1768,11 +1888,20 @@ class ContentStreamParser:
             resources if isinstance(resources, dict) and resources else self._resources,
             budget=self._budget,
             hidden_oc_names=self._hidden_oc_names,
+            skip_artifacts=self._skip_artifacts,
         )
         nested._form_depth = self._form_depth + 1
         text = nested.extract_text()
+        if self._skip_artifacts:
+            self.showed_text |= nested.showed_text
+            if nested._skipped_artifacts:
+                self._note_skipped_artifact()
         if not text:
             return
+        if self._skip_artifacts:
+            self._note_visible_text()
+            if self._inside_actual_text():
+                return
         if self._buffer:
             self._buffer.append("\n")
         self._buffer.append(text)

@@ -3369,6 +3369,7 @@ class Document:
         *,
         pages: Iterable[int] | None = None,
         clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
     ) -> str:
         """The text of all or selected pages, separated by one line break.
 
@@ -3381,11 +3382,16 @@ class Document:
         rectangle to each selected page, selecting overlapping glyph bounds.
         Empty pages retain their separators, and a subset or region does not
         replace the cached full-document text.
+        ``skip_artifacts=True`` omits text in explicitly marked ``/Artifact``
+        sequences, including nested blocks and invoked forms. Untagged headers
+        and footers are ordinary text; no positional heuristic is applied.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             return ""
-        return self._engine_pdf.extract_text(pages=pages, clip=clip)
+        return self._engine_pdf.extract_text(
+            pages=pages, clip=clip, skip_artifacts=skip_artifacts
+        )
 
     def _choose_incremental(self, requested: bool | None) -> bool:
         """Decide how :meth:`save` writes, honouring signatures already there.

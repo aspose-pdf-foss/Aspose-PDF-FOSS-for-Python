@@ -1,4 +1,4 @@
-"""Validate and snapshot page selections before extracting any text."""
+"""Validate text extraction options and snapshot page selections."""
 
 from __future__ import annotations
 
@@ -6,6 +6,13 @@ from collections.abc import Iterable
 
 from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
+
+
+def validate_skip_artifacts(value: bool) -> bool:
+    """Require an explicit boolean for artifact filtering."""
+    if not isinstance(value, bool):
+        raise PdfValidationException("skip_artifacts must be a boolean")
+    return value
 
 
 def page_indexes(
