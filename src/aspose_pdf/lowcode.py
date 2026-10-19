@@ -450,9 +450,13 @@ class SplitOptions(PluginOptions):
 
 
 class TextExtractorOptions(PluginOptions):
-    """Extract text from each input, optionally within a PDF-coordinate ``clip``.
+    """Extract text from all or selected pages, optionally within a ``clip``.
 
-    The rectangle is applied to every page; see :meth:`Document.extract_text`.
+    ``pages`` contains zero-based indices, preserving order and repetitions;
+    ``None`` selects all and ``[]`` selects none. The selection is snapshotted
+    for reuse across inputs/runs, and checked against each input's page count.
+    The rectangle applies to each selected page; see
+    :meth:`Document.extract_text`.
     """
 
     def __init__(
@@ -460,13 +464,26 @@ class TextExtractorOptions(PluginOptions):
         limits: PdfLoadLimits | None = None,
         *,
         clip: Sequence[float] | None = None,
+        pages: Iterable[int] | None = None,
     ) -> None:
         super().__init__(limits=limits)
+        self.pages = pages
         if clip is not None:
             from aspose_pdf.engine.text_region import validate_clip
 
             clip = validate_clip(clip)
         self.clip = clip
+
+    @property
+    def pages(self) -> tuple[int, ...] | None:
+        """A reusable snapshot of zero-based page indices, or all pages."""
+        return self._pages
+
+    @pages.setter
+    def pages(self, values: Iterable[int] | None) -> None:
+        from aspose_pdf.engine.text_selection import page_indexes
+
+        self._pages = page_indexes(values, limits=self.limits)
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +667,10 @@ class TextExtractor(PdfPlugin):
     def process(self, options: TextExtractorOptions) -> ResultContainer:
         self._require_inputs(options)
         limits = _coerce_limits(getattr(options, "limits", None))
+        from aspose_pdf.engine.text_selection import page_indexes
+
+        pages = page_indexes(getattr(options, "pages", None), limits=limits)
+        page_numbers = None if pages is None else tuple(index + 1 for index in pages)
         results: list[OperationResult] = []
         for source in options.inputs:
             extractor = PdfExtractor()
@@ -657,7 +678,9 @@ class TextExtractor(PdfPlugin):
                 extractor.bind_pdf(
                     _read_source_bytes(source, limits), limits=limits
                 )
-                extractor.extract_text(clip=getattr(options, "clip", None))
+                extractor.extract_text(
+                    page_numbers=page_numbers, clip=getattr(options, "clip", None)
+                )
                 results.append(OperationResult(extractor.get_text()))
             finally:
                 extractor.dispose()

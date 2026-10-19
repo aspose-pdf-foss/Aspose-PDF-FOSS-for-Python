@@ -1755,6 +1755,43 @@ Supported:
   recovers from it. It used to parse the pages a second time, beside the
   engine, and lose both.
 - Read all extracted text at once with `PdfExtractor.get_text()`.
+- **Choose pages when extracting text.**
+  `Document.extract_text(pages=None, clip=None)` accepts an iterable of
+  zero-based integer page indices: lists, tuples, `range(...)` and generators
+  retain their order and repeated entries. `pages=[2, 0, 2]` reads the third,
+  first, then third page. `None` keeps the existing all-pages behavior; an
+  empty iterable returns `""`. One newline separates each selected occurrence,
+  including empty pages, and each page's own line breaks and whitespace are
+  retained. A subset or clipped result does not replace the cached full-text
+  result. Reading text never changes the PDF or its page order.
+  - `PdfExtractor.extract_text(page_numbers=None, clip=None)` uses **one-based**
+    numbering, like the other facades. It accepts one integer or an iterable,
+    retaining order and repetitions. `get_text()` joins just those results;
+    `has_next_page_text()` / `get_next_page_text()` walk the same selection,
+    including empty pages. A successful call resets the selected-page cursor.
+    Failed validation or extraction preserves the previous results and cursor;
+    partial results from a failed run are not published. An unbound extractor
+    accepts the all-pages or empty selection as empty text, but explicit page
+    numbers are out of range.
+  - `TextExtractorOptions(limits=None, pages=None, clip=None)` uses **zero-based**
+    indices. `options.pages` is a tuple snapshot (or `None`), also when assigned
+    later, so a generator or an externally edited list cannot change later
+    inputs/runs. The first positional argument remains the resource policy.
+    Every input validates the selection against its own page count; no output
+    is emitted if a later input fails. An empty selection still produces one
+    empty string result per input, including an empty PDF.
+  - Booleans, floats, strings, negative indices and out-of-range entries raise
+    `PdfValidationException` before text extraction begins for that document.
+    A bare integer is supported only by the facade. Use `range(start, stop)`
+    for ranges; slice objects and textual range expressions are not accepted.
+    Selection lengths obey `PdfLoadLimits.max_container_items`. `clip` applies
+    to each selected page and is validated even for an empty selection.
+  - Only selected pages are parsed for text; resource-limit failures on them
+    propagate. With `Document.open_streaming`, unselected page content is not
+    decoded. Selection controls text parsing; eager input loading, including
+    facade binding and low-code inputs, can still decode other pages before
+    extraction starts. Existing font decoding, optional-content visibility,
+    damaged-stream recovery and region-extraction limits still apply.
 - **Extracted images come back as real image files**: `extract_image()` /
   `get_next_image()` hand back what `save_image` would write -- PNG for raster
   codecs, the original JPEG or JPX payload where the file holds one -- rather
@@ -1872,7 +1909,7 @@ Supported:
 - **Extract text from a rectangular region** with
   `Page.extract_text(clip=(x0, y0, x1, y1))`. The same keyword on
   `Document.extract_text` and `PdfExtractor.extract_text`, and the `clip` option
-  on `TextExtractorOptions`, apply that region to each page. Coordinates must
+  on `TextExtractorOptions`, apply that region to each selected page. Coordinates must
   be finite, ordered corners enclosing positive area, in default, unrotated PDF
   user space with lower-left axes. They are independent of MediaBox, CropBox,
   and page rotation: a region is not implicitly intersected with the page box.

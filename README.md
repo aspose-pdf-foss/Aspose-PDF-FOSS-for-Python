@@ -705,8 +705,15 @@ with Document("input.pdf") as document:
     print(document.pages[0].extract_text(clip=(72, 650, 300, 750)))
 ```
 
+`Document.extract_text(pages=[2, 0, 2])` reads the third, first, then third page.
+Indices in `Document` and `TextExtractorOptions(pages=...)` start at zero;
+the facade uses `PdfExtractor.extract_text(page_numbers=[3, 1, 3])` instead.
+`None` selects all pages and `[]` selects none. Lists, ranges and generators
+preserve their order and repetitions. Use `Document.open_streaming(...)` to
+decode only selected page content.
+
 `Document.extract_text(clip=...)`, `PdfExtractor.extract_text(clip=...)`, and
-`TextExtractorOptions(clip=...)` apply the rectangle to every page. Selection uses
+`TextExtractorOptions(clip=...)` apply the rectangle to each selected page. Selection uses
 overlapping glyph bounds; see [coverage and limitations](supported-features.md).
 
 ### Export Annotations for Review
@@ -1202,7 +1209,8 @@ and delete workflows. 265 public types are organized by module below.
   highlight annotations. `TextHighlightResult` reports `highlighted_count`, `skipped_count`,
   `matched_count`, editable `annotations`, and `skipped_fragments` with text/page/offsets.
 
-- `Document.extract_text(clip=None)` / `Page.extract_text(clip=None)` return text,
+- `Document.extract_text(pages=None, clip=None)` / `Page.extract_text(clip=None)` return text,
+  with zero-based page selection on `Document`,
   optionally selecting glyphs overlapping `(x0, y0, x1, y1)` in unrotated PDF space.
 
 - `Document.extract_tables(pages=None, clip_to_page=True)` / `Page.extract_tables(clip_to_page=True)`
@@ -1212,7 +1220,8 @@ and delete workflows. 265 public types are organized by module below.
 
 - `PdfExtractor`
   - `bind_pdf(source, password, limits) -> None`
-  - `extract_text(clip=None) -> None` / `get_text() -> str` / `has_next_page_text() -> bool` / `get_next_page_text() -> str`
+  - `extract_text(page_numbers=None, clip=None) -> None` (one-based selection) /
+    `get_text() -> str` / `has_next_page_text() -> bool` / `get_next_page_text() -> str`
   - `extract_image() -> None` / `has_next_image() -> bool` / `get_next_image() -> Any`
   - `extract_attachment() -> None` / `get_attachment(name) -> Any` / `get_attach_names() -> list[str]`
 - `TextFragmentAbsorber` / `TextAbsorber` — search exact phrases and regex patterns, collecting

@@ -10402,16 +10402,22 @@ class SimplePdf:
             except CONTENT_PARSER_RECOVERABLE:
                 return ""
 
-    def extract_text(self, *, clip=None) -> str:
-        """Extract plain text from page contents, one page per line group."""
-        if clip is not None:
-            from .text_region import validate_clip
+    def extract_text(self, *, pages: Iterable[int] | None = None, clip=None) -> str:
+        """Extract all or selected pages, keeping one line break between pages."""
+        self._ensure_not_disposed()
+        if pages is not None or clip is not None:
+            from .text_selection import page_indexes
 
-            self._ensure_not_disposed()
-            rectangle = validate_clip(clip)
+            indexes = page_indexes(pages, len(self.pages), limits=self._load_limits)
+            rectangle = None
+            if clip is not None:
+                from .text_region import validate_clip
+
+                rectangle = validate_clip(clip)
+            # A subset or region must not replace the full-document text cache.
             return "\n".join(
                 self.extract_page_text(index, clip=rectangle)
-                for index in range(len(self.pages))
+                for index in (range(len(self.pages)) if indexes is None else indexes)
             )
         if self._extracted_text is not None:
             return self._extracted_text

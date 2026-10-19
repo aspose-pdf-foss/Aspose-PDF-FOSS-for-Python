@@ -21,7 +21,7 @@ An operation that writes returns ``True`` or ``False`` and records why in
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -275,8 +275,13 @@ class PdfExtractor:
         else:
             self._bound_pdf = SimplePdf.from_bytes(source, pwd, **load_kwargs)
 
-    def extract_text(self, *, clip: Sequence[float] | None = None) -> None:
-        """Extract text from the bound document's pages.
+    def extract_text(
+        self,
+        *,
+        page_numbers: int | Iterable[int] | None = None,
+        clip: Sequence[float] | None = None,
+    ) -> None:
+        """Extract text from all or selected pages of the bound document.
 
         Each page is read through the engine's own extractor, which is where
         page content is decoded on demand and a page that cannot be parsed
@@ -284,21 +289,39 @@ class PdfExtractor:
         whose content is loaded lazily extracted nothing at all, and a page
         with a damaged content stream lost text the engine reads.
         ``clip=(x0, y0, x1, y1)`` selects overlapping glyph bounds in unrotated
-        PDF coordinates on each page, as :meth:`Document.extract_text` does.
+        PDF coordinates on each selected page, as :meth:`Document.extract_text`
+        does. ``page_numbers`` uses one-based numbering: one integer or an
+        iterable, preserving order and repeats. ``None`` selects all pages and
+        ``[]`` selects none. The page-text cursor follows that selection.
+        Results and cursor are replaced only after validation and extraction
+        succeed; a failed call leaves the previous results/cursor intact.
         """
+        from aspose_pdf.engine.text_selection import page_indexes
+
         self._ensure_not_disposed()
+        if isinstance(page_numbers, int) and not isinstance(page_numbers, bool):
+            page_numbers = (page_numbers,)
+        indexes = page_indexes(
+            page_numbers,
+            0 if self._bound_pdf is None else len(self._bound_pdf.pages),
+            one_based=True,
+            limits=None if self._bound_pdf is None else self._bound_pdf._load_limits,
+        )
         if clip is not None:
             from aspose_pdf.engine.text_region import validate_clip
 
             clip = validate_clip(clip)
-        self._page_texts.clear()
-        self._current_index = 0
         if self._bound_pdf is None:
-            return
-        self._page_texts.extend(
-            self._bound_pdf.extract_page_text(index, clip=clip)
-            for index in range(len(self._bound_pdf.pages))
-        )
+            texts = []
+        else:
+            texts = [
+                self._bound_pdf.extract_page_text(index, clip=clip)
+                for index in (
+                    range(len(self._bound_pdf.pages)) if indexes is None else indexes
+                )
+            ]
+        self._page_texts = texts
+        self._current_index = 0
 
     def get_text(self) -> str:
         """Return all extracted text concatenated."""

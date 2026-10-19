@@ -3364,17 +3364,28 @@ class Document:
         """Alias of :meth:`dispose` (matches .NET ``Close``)."""
         self.dispose()
 
-    def extract_text(self, *, clip: Sequence[float] | None = None) -> str:
-        """The text of every page, in order, pages separated by a line break.
+    def extract_text(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        clip: Sequence[float] | None = None,
+    ) -> str:
+        """The text of all or selected pages, separated by one line break.
 
+        ``pages`` is an iterable of zero-based integer indices, preserving its
+        order and repetitions. ``None`` selects every page; an empty iterable
+        returns an empty string. Invalid indices are rejected before any page
+        is read. Streaming documents decode only the selected page content.
         Each page's own line breaks are kept; see :meth:`Page.extract_text`.
         ``clip=(x0, y0, x1, y1)`` applies the same unrotated PDF-coordinate
-        rectangle to every page, selecting overlapping glyph bounds.
+        rectangle to each selected page, selecting overlapping glyph bounds.
+        Empty pages retain their separators, and a subset or region does not
+        replace the cached full-document text.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             return ""
-        return self._engine_pdf.extract_text(clip=clip)
+        return self._engine_pdf.extract_text(pages=pages, clip=clip)
 
     def _choose_incremental(self, requested: bool | None) -> bool:
         """Decide how :meth:`save` writes, honouring signatures already there.
