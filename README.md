@@ -857,6 +857,25 @@ follows the shared renderer and may miss marks at the chosen resolution.
 Hidden text or other data can remain on a blank-looking page. See
 [detection details](supported-features.md#pages).
 
+### Trim White Page Margins
+
+Remove excess white space around scanned or drawn content:
+
+```python
+from aspose_pdf import Document
+
+with Document("scans.pdf") as document:
+    for page in document.pages:
+        page.auto_crop(margin=6, dpi=96)
+    document.save("trimmed.pdf")
+```
+
+`margin` is padding in PDF points. Detection uses the current visible area,
+page rotation and visible annotations; blank-looking pages stay unchanged.
+Only CropBox changes: cropped-out content remains stored in the PDF.
+Detection is approximate at the chosen DPI; dark scan borders and speckles
+count as content. See [cropping details](supported-features.md#pages).
+
 ### Apply Resource Limits for Untrusted PDF Input
 
 ```python
@@ -1271,6 +1290,8 @@ and delete workflows. 266 public types are organized by module below.
     `save_as_image(path, dpi, scale, background, antialias) -> Path`
   - `is_blank(dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> bool` —
     test the page's rendered appearance on white paper
+  - `auto_crop(margin=0, dpi=72, white_threshold=250, include_annotations=True) -> Page` —
+    trim white margins around rendered content by shrinking CropBox
   - `add_stamp(stamp) -> Page` — a text, image or page-number stamp over or under the page
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - `highlight_text(...) -> TextHighlightResult` — annotations and a report of unplaceable matches

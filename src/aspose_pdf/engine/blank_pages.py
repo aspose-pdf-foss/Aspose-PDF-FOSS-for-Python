@@ -13,6 +13,7 @@ from .text_selection import page_indexes
 
 if TYPE_CHECKING:
     from aspose_pdf.document import Document
+    from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.pages import Page
 
 
@@ -58,14 +59,19 @@ def _options(
     return _Options(dpi, white_threshold, max_ink_ratio, include_annotations)
 
 
-def _is_blank(page: Page, options: _Options) -> bool:
-    """Count pixels with any channel below the white threshold, without copies."""
-    raster = page.render(
+def _render(page: Page, options: _Options) -> RasterizedPage:
+    """Render the visible page consistently for visual inspection helpers."""
+    return page.render(
         dpi=options.dpi,
         background=(255, 255, 255),
         antialias=False,
         draw_annotations=options.include_annotations,
     )
+
+
+def _is_blank(page: Page, options: _Options) -> bool:
+    """Count pixels with any channel below the white threshold, without copies."""
+    raster = _render(page, options)
     total = raster.width * raster.height
     ink = 0
     pixels = memoryview(raster.pixels)

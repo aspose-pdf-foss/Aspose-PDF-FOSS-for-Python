@@ -857,6 +857,46 @@ Supported:
     may still be present even when the page appears blank. There is no OCR,
     automatic paper-color normalization, border removal or deskewing; detected
     pages are not automatically deleted.
+- **Automatically trim white page margins.**
+  `Page.auto_crop(margin=0, dpi=72, white_threshold=250,
+  include_annotations=True)` shrinks the current effective CropBox to the
+  rendered ink bounds and returns the same page for chaining. This reduces
+  excess white space around scanned or drawn content without moving objects.
+  - Detection uses the same white background, disabled antialiasing and RGB
+    threshold rule as `is_blank`: a pixel is ink if any channel is below the
+    threshold. All ink contributes to one bounding rectangle. Its outer pixel
+    edges are mapped back to unrotated PDF coordinates using DPI and page
+    rotation. Results are approximate at the chosen resolution; rounded raster
+    dimensions are not used to rescale the geometry.
+  - `margin` adds finite nonnegative padding in PDF points on all sides. It
+    can be positional; the other options are keyword-only. DPI must be finite
+    and positive, `white_threshold` an integer from 1 to 255, and
+    `include_annotations` a boolean. Booleans are rejected for numeric options.
+    Invalid options raise `PdfValidationException` before rendering. Padding
+    is clamped to the current visible crop: content outside it is never
+    revealed. Blank-looking pages and pages whose ink bounds cover the full
+    raster are left unchanged, including their raw or inherited CropBox.
+  - Clipping, transparency, layer visibility and font substitution follow the
+    shared renderer. Visible annotations and form appearances count by
+    default; `include_annotations=False` considers page content alone.
+    MediaBox, rotation, content streams, resources, annotations and widget
+    coordinates are preserved. Only a selected page's CropBox is written;
+    shared inherited boxes and other pages are not changed. Explicit BleedBox,
+    TrimBox and ArtBox entries are not rewritten; absent production boxes
+    continue to default to the effective CropBox under the usual PDF rules.
+  - Streaming and password-protected documents are supported. Only the chosen
+    page's content is read, without filling all-page content caches. Renderer
+    and parser resource limits apply; rendering or validation failures occur
+    before changing CropBox. Changes are in memory until the document is
+    saved, and saving to another file leaves the source file unchanged.
+    No additional runtime dependency is required.
+  - This is a finite-resolution visual heuristic with the renderer's supported
+    PDF features and limitations. Tiny or faint marks may be missed; higher
+    DPI costs more time and memory. Dark borders, speckles and colored paper
+    count as ink. There is no noise removal, border removal, OCR, paper-color
+    normalization or deskewing. Cropping changes visibility, **not stored
+    content**: hidden text, annotations, images and other cropped-out data
+    remain in the PDF. It is not redaction.
 - **Resize a page and take its drawing with it.** Setting `Page.size` changes
   the **sheet** and leaves the drawing where it was, so a smaller sheet crops it
   and a larger one pads it -- right for trimming a page, wrong for every other

@@ -1071,6 +1071,45 @@ class Page:
             include_annotations=include_annotations,
         )
 
+    def auto_crop(
+        self,
+        margin: float = 0.0,
+        *,
+        dpi: float = 72.0,
+        white_threshold: int = 250,
+        include_annotations: bool = True,
+    ) -> Page:
+        """Trim visible white margins by shrinking only this page's CropBox.
+
+        Render the current visible area on white paper at ``dpi`` without
+        antialiasing. A pixel is ink if any RGB channel is below
+        ``white_threshold`` (1-255). The outer ink pixel edges, mapped back to
+        unrotated PDF coordinates, define the new crop. ``margin`` adds a finite
+        nonnegative number of PDF points on each side, clamped to the current
+        visible area. Visible annotations count unless explicitly excluded.
+
+        Return this page for chaining. A blank-looking page is left unchanged.
+        MediaBox, rotation, content and object coordinates are preserved;
+        explicit production boxes are not rewritten. This changes visibility,
+        not the stored content: cropped-out data remains in the PDF.
+
+        Detection is approximate at the chosen DPI and shares the renderer's
+        limitations, like :meth:`is_blank`. Tiny or faint marks may be missed;
+        scan borders and dark speckles count as content. Rendering and resource
+        limit failures propagate before any CropBox is changed.
+        """
+        from aspose_pdf.engine.auto_crop import auto_crop
+
+        self._document._ensure_not_disposed()
+        auto_crop(
+            self,
+            margin,
+            dpi=dpi,
+            white_threshold=white_threshold,
+            include_annotations=include_annotations,
+        )
+        return self
+
     def render(
         self,
         *,
