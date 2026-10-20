@@ -9530,16 +9530,27 @@ class SimplePdf:
         page_index: int,
         image: AuthoredImage,
         requested_name: str | None = None,
-    ) -> str:
+    ) -> tuple[str, str]:
         xobjects = self._ensure_resource_subdict(page_index, "XObject")
         resource_name = self._unique_resource_name(xobjects, "Im", requested_name)
-        xobjects.mapping[PdfName(resource_name)] = self._register_image_xobject(image)
+        image_ref = self._register_image_xobject(image)
+        xobjects.mapping[PdfName(resource_name)] = image_ref
 
-        self.images[resource_name] = image.decoded_data
-        self._image_sizes[resource_name] = (image.width, image.height)
-        self._image_meta[resource_name] = image.meta
-        self._page_image_map.setdefault(page_index, []).append(resource_name)
-        return resource_name
+        # Resource names are local to a page; the extraction views need one
+        # key per object, including images authored on different pages.
+        key = resource_name
+        suffix = 2
+        while key in self.images:
+            key = f"{resource_name}#{suffix}"
+            suffix += 1
+        self.images[key] = image.decoded_data
+        self._image_sizes[key] = (image.width, image.height)
+        self._image_meta[key] = {
+            **image.meta,
+            "object_number": image_ref.object_number,
+        }
+        self._page_image_map.setdefault(page_index, []).append(key)
+        return resource_name, key
 
     def _register_image_xobject(self, image: AuthoredImage) -> PdfIndirectReference:
         """Register *image* as an image XObject, with its ``/SMask`` if it has one."""
@@ -9590,8 +9601,8 @@ class SimplePdf:
 
     def _find_image_xobject(
         self, page_index: int, resource_name: str
-    ) -> PdfStream | None:
-        """The image XObject a page draws as *resource_name*, if it has one."""
+    ) -> tuple[PdfStream, int | None] | None:
+        """Find an image by its public key or page resource name and its ID."""
         if self._cos_doc is None:
             return None
         page = self._get_page_dict(page_index)
@@ -9603,17 +9614,30 @@ class SimplePdf:
         xobjects = self._resolve(resources.mapping.get(PdfName("XObject")))
         if not isinstance(xobjects, PdfDictionary):
             return None
-        entry = self._resolve(xobjects.mapping.get(PdfName(str(resource_name))))
+        # Public image keys acquire suffixes when different pages or imported
+        # documents reuse a resource name. Resolve that key by object identity
+        # before trying a literal resource name, which may name another image.
+        number = self._image_meta.get(str(resource_name), {}).get("object_number")
+        ref = xobjects.mapping.get(PdfName(str(resource_name)))
+        if number is not None:
+            for candidate in xobjects.mapping.values():
+                if getattr(candidate, "object_number", None) == number:
+                    ref = candidate
+                    break
+        entry = self._resolve(ref)
         if not isinstance(entry, PdfStream):
             return None
         if self._get_name(entry.mapping.get(PdfName("Subtype"))) != "Image":
             return None
-        return entry
+        return entry, getattr(ref, "object_number", None)
 
     def replace_page_image(
         self, page_index: int, resource_name: str, data: bytes | bytearray
     ) -> bool:
         """Redefine the image a page draws as *resource_name*; ``True`` if it did.
+
+        Accept a page resource name or a document-wide image key exposed by
+        image extraction. Imported keys still identify their copied XObjects.
 
         The image XObject's *own definition* is rewritten and the page's drawing
         operations are left alone, so the new image appears exactly where the old
@@ -9632,9 +9656,10 @@ class SimplePdf:
         self._ensure_not_disposed()
         self._validate_page_index(page_index)
         self._ensure_cos()
-        target = self._find_image_xobject(page_index, resource_name)
-        if target is None:
+        found = self._find_image_xobject(page_index, resource_name)
+        if found is None:
             return False
+        target, object_number = found
 
         from .content_authoring import prepare_image
 
@@ -9655,10 +9680,17 @@ class SimplePdf:
         # not to correct a state that was observed.
         target.content_decrypted = True
 
-        name = str(resource_name)
-        self.images[name] = image.decoded_data
-        self._image_sizes[name] = (image.width, image.height)
-        self._image_meta[name] = image.meta
+        names = [
+            name
+            for name, meta in self._image_meta.items()
+            if object_number is not None and meta.get("object_number") == object_number
+        ] or [str(resource_name)]
+        for name in names:
+            self.images[name] = image.decoded_data
+            self._image_sizes[name] = (image.width, image.height)
+            self._image_meta[name] = dict(image.meta)
+            if object_number is not None:
+                self._image_meta[name]["object_number"] = object_number
         return True
 
     def hide_page_image(self, page_index: int, resource_name: str) -> bool:
@@ -9920,7 +9952,7 @@ class SimplePdf:
             limits=self._load_limits,
             budget=self._load_budget,
         )
-        resource_name = self._register_page_image(page_index, image, name)
+        resource_name, image_key = self._register_page_image(page_index, image, name)
         placement_width = image.width if width is None else width
         placement_height = image.height if height is None else height
         content = build_image_stream(
@@ -9942,7 +9974,7 @@ class SimplePdf:
             if mark is not None:
                 content = wrap_marked_content(content, mark[0], mark[1])
         self._append_content_to_page(page_index, content)
-        self._image_matrix_map[(page_index, resource_name)] = (
+        self._image_matrix_map[(page_index, image_key)] = (
             float(placement_width),
             0.0,
             0.0,
@@ -9950,7 +9982,7 @@ class SimplePdf:
             float(x),
             float(y),
         )
-        self._image_rect_map[(page_index, resource_name)] = (
+        self._image_rect_map[(page_index, image_key)] = (
             float(x),
             float(y),
             float(placement_width),
@@ -11912,7 +11944,7 @@ class SimplePdf:
         self._merge_optional_content(other, imported, whole=whole)
         self._merge_structure_tree(other, imported, copied)
         self._merge_outlines(other, imported, positions)
-        self._merge_image_views(other, positions)
+        self._merge_image_views(other, positions, imported)
         if whole:
             self._merge_attachments(other)
         self._page_cache_valid = False
@@ -12197,25 +12229,42 @@ class SimplePdf:
         element.mapping[PdfName("K")] = PdfArray(kept)
         return new_ref
 
-    def _merge_image_views(self, other: SimplePdf, positions: dict[int, int]) -> None:
+    def _merge_image_views(
+        self, other: SimplePdf, positions: dict[int, int], imported: dict[int, Any]
+    ) -> None:
         """Carry the by-name views of the images the appended pages carry.
 
         The images themselves travel in the object graph, each page keeping its
         own resource names. These are the flat, document-wide views the public
         image API reads -- keyed by a name that has to be unique across the
-        merged document, where the sources' names are not. Identical bytes keep
-        one entry, so merging a document with itself does not double its
-        images.
+        merged document, where the sources' names are not. Shared XObjects keep
+        one key; independently imported objects need separate keys even with
+        identical samples, so editing one does not change the other's views.
         """
         renamed: dict[str, str] = {}
         for name, data in other.images.items():
+            meta = dict(other._image_meta.get(name, {}))
+            source_number = meta.pop("object_number", None)
+            copied = imported.get(source_number)
+            object_number = getattr(copied, "object_number", None)
+            if object_number is not None:
+                meta["object_number"] = object_number
             key = name
             suffix = 2
-            while key in self.images and self.images[key] != data:
+            while key in self.images and (
+                self.images[key] != data
+                or (
+                    object_number is not None
+                    and self._image_meta.get(key, {}).get("object_number")
+                    != object_number
+                )
+            ):
                 key = f"{name}_{suffix}"
                 suffix += 1
             self.images[key] = data
             renamed[name] = key
+            if meta:
+                self._image_meta.setdefault(key, meta)
 
         for source_index, target_index in positions.items():
             names = other._page_image_map.get(source_index)
@@ -12224,15 +12273,13 @@ class SimplePdf:
                     renamed.get(name, name) for name in names
                 ]
 
-        for view in (
-            "_image_sizes",
-            "_image_meta",
-            "_image_matrix_map",
-            "_image_rect_map",
-        ):
+        for name, value in other._image_sizes.items():
+            self._image_sizes.setdefault(renamed.get(name, name), value)
+        for view in ("_image_matrix_map", "_image_rect_map"):
             mine = getattr(self, view)
-            for name, value in getattr(other, view).items():
-                mine.setdefault(renamed.get(name, name), value)
+            for (page, name), value in getattr(other, view).items():
+                if page in positions:
+                    mine[positions[page], renamed.get(name, name)] = value
 
     def _import_page_entries(
         self, other: SimplePdf, source: Any, new_ref: Any, imported: dict[int, Any]
@@ -12566,6 +12613,9 @@ class SimplePdf:
             meta = other.attachment_read_meta.get(name)
             if meta:
                 self.attachment_read_meta[unique] = dict(meta)
+            meta = other.attachment_meta.get(name)
+            if meta:
+                self.attachment_meta[unique] = dict(meta)
 
     # ---------------------------------------------------------------------------
     # Attachments

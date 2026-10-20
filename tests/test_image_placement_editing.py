@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import struct
 import zlib
+from contextlib import nullcontext
 
 import pytest
 
@@ -387,3 +388,22 @@ def test_an_image_in_an_encrypted_document_is_replaced_readably():
     reopened = Document(io.BytesIO(out.getvalue()), password="user")
     assert _colours(reopened)["red"] == 80 * 80
     assert _only_placement(reopened).image_data == bytes([255, 0, 0]) * 16
+
+
+@pytest.mark.parametrize("reload_document", [False, True])
+def test_engine_resource_name_updates_only_the_matching_public_image_view(
+    reload_document,
+):
+    with Document() as authored:
+        for color in ((255, 0, 0), (0, 0, 255)):
+            authored.pages.add().add_image(_png(color), *IMAGE_BOX)
+        with (
+            _reloaded(authored) if reload_document else nullcontext(authored)
+        ) as document:
+            assert document._engine_pdf.replace_page_image(
+                1, "Im1", _png((0, 255, 0))
+            ) is True
+            absorber = ImagePlacementAbsorber()
+            absorber.visit(document)
+            by_page = {p.page_index: p.image_data for p in absorber.image_placements}
+            assert by_page == {0: b"\xff\x00\x00" * 16, 1: b"\x00\xff\x00" * 16}

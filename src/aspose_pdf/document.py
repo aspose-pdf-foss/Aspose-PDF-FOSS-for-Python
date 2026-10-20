@@ -3493,6 +3493,48 @@ class Document:
         result._engine_pdf = extracted
         return result
 
+    def interleave(
+        self,
+        other: Document,
+        *,
+        reverse_other: bool = False,
+        strict: bool = True,
+    ) -> Document:
+        """Return a new document alternating this document's pages with *other*.
+
+        Use ``fronts.interleave(backs, reverse_other=True)`` for two scanner
+        passes whose back sides were scanned in reverse order. The first
+        source keeps its order. With ``strict=True`` the page counts must
+        match; ``strict=False`` appends the unmatched tail in its chosen order.
+        No blank pages are inserted, and neither input is edited or disposed.
+
+        Page resources, annotations, form fields, labels, layers, attachments
+        and bookmarks follow the shared page importer. Local destinations stay
+        attached to their pages. The result keeps this document's Info metadata
+        and resource limits and the higher PDF version. It is independent of
+        both inputs and starts without encryption; existing signatures cannot
+        retain their validity in an assembled document. Dispose it when done.
+        """
+        from aspose_pdf.engine.interleave import interleave
+
+        self._ensure_not_disposed()
+        if not isinstance(other, Document):
+            raise TypeError("other must be a Document")
+        other._ensure_not_disposed()
+        if self._engine_pdf is None or other._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        engine = interleave(
+            self._engine_pdf,
+            other._engine_pdf,
+            reverse_other=reverse_other,
+            strict=strict,
+            first_outlines=None if self._outlines is None else self._outlines._items,
+            second_outlines=None if other._outlines is None else other._outlines._items,
+        )
+        result = Document(limits=self._load_limits)
+        result._engine_pdf = engine
+        return result
+
     def split_by_bookmarks(
         self,
         level: int = 1,

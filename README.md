@@ -814,6 +814,24 @@ with PdfFileEditor() as editor:
         raise RuntimeError(editor.last_exception)
 ```
 
+### Assemble Duplex Scans
+
+Scan fronts and backs separately, then alternate their pages:
+
+```python
+from aspose_pdf import Document
+
+with Document("fronts.pdf") as fronts, Document("backs.pdf") as backs:
+    with fronts.interleave(backs, reverse_other=True) as assembled:
+        assembled.save("duplex.pdf")
+```
+
+Use `reverse_other=True` when the back-side scan runs from last sheet to first;
+the default keeps both inputs' order. Page counts must match by default.
+`strict=False` retains unmatched pages at the end without inserting blanks.
+The inputs stay unchanged; the new document keeps page resources, annotations,
+fields, labels and bookmark targets. See [assembly details](supported-features.md#documents).
+
 ### Apply Resource Limits for Untrusted PDF Input
 
 ```python
@@ -1204,6 +1222,8 @@ and delete workflows. 266 public types are organized by module below.
     `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `split_by_bookmarks(level=1, include_preamble=True) -> list[Document]` —
     split chapters at local bookmarks and retain leading pages in a separate document
+  - `interleave(other, reverse_other=False, strict=True) -> Document` — alternate
+    front/back scans into a new document, optionally reversing the back-side order
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`

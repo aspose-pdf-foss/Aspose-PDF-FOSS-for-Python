@@ -268,6 +268,62 @@ Supported:
   used one name -- a field, an attachment -- the newcomer is renamed rather
   than replacing what is there or silently becoming the same object. The source
   document is left exactly as it was, and shares no object with the result.
+- **Assemble separately scanned fronts and backs into one document.**
+  `fronts.interleave(backs, reverse_other=False, strict=True)` returns an
+  independent `Document` in the order `F0, B0, F1, B1, ...`. With
+  `reverse_other=True`, only the second source is reversed first: three pages
+  per input become `F0, B2, F1, B1, F2, B0`. This handles scanners that deliver
+  the back-side pass in reverse sheet order without manual page extraction.
+  - Page counts must be equal by default. `strict=False` retains the longer
+    input's unmatched tail in its chosen order: three fronts and two reversed
+    backs become `F0, B1, F1, B0, F2`. No blank pages are invented and no input
+    page is dropped. Existing blank scanned sides are retained. Two empty
+    inputs produce an empty result; with `strict=False`, one empty input
+    produces a copy of the other's pages in the requested order.
+  - `backs` must be a live `Document`; open paths/bytes and password-protected
+    inputs with `Document(...)` first. Both flags require booleans, and invalid
+    options or unequal counts in strict mode fail before reading page streams.
+    Invalid flags/counts raise `PdfValidationException`; an invalid second
+    input type raises `TypeError` and a disposed input is rejected. Passing the
+    same document twice produces two independent sets of copied pages.
+  - Each input is imported as one batch using the shared page importer, then
+    the copied pages are reordered by reference. Resources, fonts, images,
+    boxes, rotation, annotations, fields, layers, page labels, structure page
+    references, bookmarks and embedded files travel with them. Local links and
+    bookmark destinations continue to name their own source's copied page;
+    URI/remote actions retain their targets. Field and attachment name clashes
+    follow the importer's renaming rules. Imported image placements remain
+    editable through `replace()` and `hide()` when resource names collide;
+    independent image objects stay independently editable even with identical
+    samples. Embedded files retain loaded metadata and current edits to MIME
+    type, description, dates and relationship, plus explicitly configured
+    in-memory compression choices.
+    Label values move with their pages;
+    unlabelled pages receive blank labels when the other input has labels.
+    Outline and logical structure tree order is retained from the input trees;
+    the method does not reconstruct an interleaved logical reading order.
+  - The first source supplies Info metadata and `PdfLoadLimits`; the result
+    uses the higher input PDF version and a fresh resource budget. Combined
+    page/container limits are checked before import; imported objects, page
+    contents, bookmark depth/counts and label arrays are bounded. Input parser
+    limits and import failures propagate. On failure, partial output is
+    disposed and input outline models are restored. Input documents, live
+    bookmark edits and source files remain unchanged.
+  - Streaming inputs work without filling their all-page content cache, but
+    this operation copies **every** page and requires reading every source
+    page's content and reached resources. The output remains usable after both
+    inputs close. It is a new, unencrypted document; encrypt the result
+    explicitly if required. Imported signature fields do not preserve the
+    validity of signatures from the source files. Close or dispose the result.
+    Missing sides in the middle, automatic sheet matching, blank-side
+    detection, deskewing and automatic back-side rotation are not performed.
+
+  ```python
+  with Document("fronts.pdf") as fronts, Document("backs.pdf") as backs:
+      with fronts.interleave(backs, reverse_other=True) as assembled:
+          assembled.save("duplex.pdf")
+  ```
+
 - **Split into chapters by bookmarks.**
   `Document.split_by_bookmarks(level=1, include_preamble=True)` returns independent
   `Document` instances, one per distinct destination page at the requested
