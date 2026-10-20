@@ -3515,6 +3515,52 @@ class Document:
             include_annotations=include_annotations,
         )
 
+    def find_duplicate_pages(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        dpi: float = 72.0,
+        include_annotations: bool = True,
+    ) -> list[list[int]]:
+        """Find groups of pages with identical rendered views without editing them.
+
+        Each group contains at least two distinct zero-based page indices,
+        including the first occurrence. Groups and their members follow first
+        occurrence in the selection. ``pages=None`` selects all pages; explicit
+        indices are validated in full and deduplicated before rendering. Fewer
+        than two distinct pages returns ``[]`` without rendering.
+
+        Pages match when their raster dimensions and every RGB pixel match at
+        ``dpi`` on white paper, with antialiasing disabled. CropBox, rotation,
+        layer visibility and font substitution follow :meth:`Page.render
+        <aspose_pdf.pages.Page.render>`. Visible annotations and form appearances
+        count unless ``include_annotations=False``. No text extraction or OCR
+        is required. DPI must be finite and positive; flags must be booleans.
+
+        SHA-256 selects candidates, and a new render of a group's first page
+        confirms pixel equality. At most two completed rasters are held at
+        once, with compact fingerprints for earlier pages. Streaming inputs
+        read only selected pages without filling all-page content caches;
+        candidate verification can read and render reference pages again.
+        Rendering errors and resource limits propagate without a partial list.
+
+        Equality is specific to this renderer and resolution. Tiny differences
+        may be missed; different physical sizes can round to the same raster
+        dimensions. Scan noise, color changes and other visible pixel changes
+        remain differences. There is no fuzzy matching, rescaling, automatic
+        rotation alignment or margin removal. Hidden text, form values and
+        other stored data may differ even when the visible pages match.
+        """
+        from aspose_pdf.engine.duplicate_pages import find_duplicate_pages
+
+        self._ensure_not_disposed()
+        return find_duplicate_pages(
+            self,
+            pages=pages,
+            dpi=dpi,
+            include_annotations=include_annotations,
+        )
+
     def extract_pages(self, selection: Iterable[int] | slice) -> Document:
         """Return an independent document containing selected pages in order.
 

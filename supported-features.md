@@ -911,6 +911,52 @@ Supported:
     may still be present even when the page appears blank. There is no OCR,
     automatic paper-color normalization, border removal or deskewing; detected
     pages are not automatically deleted.
+- **Find visually duplicate pages.**
+  `Document.find_duplicate_pages(pages=None, dpi=72,
+  include_annotations=True)` returns groups such as `[[0, 3], [1, 4, 7]]`.
+  This helps identify repeated scans or repeated page views when PDF streams,
+  resource names or invisible OCR text differ. It does not edit or delete pages.
+  - A group contains at least two distinct zero-based indices, including the
+    first occurrence. Groups are ordered by their first member's occurrence
+    in the selection; members retain selection order. Unique pages are omitted.
+    Explicit selections may be generators, and repeated indices are included
+    once rather than compared with themselves. `pages=None` selects all pages;
+    empty documents and selections with fewer than two distinct pages return
+    `[]` without rendering. All indices and options are validated first,
+    including on empty input. Invalid indices, nonpositive or nonfinite DPI,
+    numeric booleans and nonboolean flags raise `PdfValidationException`.
+  - Pages match when rendered on white paper with antialiasing disabled at the
+    selected DPI, with equal raster width, height and every RGB pixel. There
+    is no near-white threshold, greyscale conversion or noise tolerance.
+    CropBox, rotation, clipping, transparency, layer visibility and font
+    substitution follow the shared renderer. Box origins and raw rotation
+    values need not agree if the final views do. Visible annotations and form
+    appearances count by default; `include_annotations=False` excludes them.
+  - SHA-256 fingerprints select candidates, then a new render of the group's
+    first page confirms dimensions and pixels. Hash collisions cannot by
+    themselves merge different page views. Compact fingerprints and indices
+    are retained for earlier pages, with at most two completed RGB rasters
+    held at once; normal renderer working buffers are additional. Streaming
+    and password-protected sources are supported. Only selected page content
+    is read, without filling all-page content caches. Candidate verification
+    can read and render a reference page again, adding decoding work.
+  - The document's resource limits apply to selection size, content decoding,
+    images and rendering, including repeated verification work. A rendering,
+    decoding or resource-limit failure propagates without returning partial
+    groups. Page data, boxes, annotations, form values, metadata, source
+    protection and source files are unchanged. Results are recomputed on each
+    call, so subsequent page edits and layer visibility changes are observed.
+    No additional dependency or text layer is required.
+  - Equality is **specific to the renderer and chosen resolution**, with its
+    supported PDF features and limitations. Tiny or faint differences may be
+    missed; different physical dimensions can round up to the same raster
+    dimensions. Higher DPI can distinguish finer differences at greater cost.
+    Scan noise, compression artifacts, colors, positions and other pixel
+    changes remain differences. There is no fuzzy similarity matching,
+    automatic rotation alignment, rescaling, deskewing or margin removal.
+    Matching views can still contain different invisible text, form data,
+    annotation contents or other stored information; this is not proof of
+    byte-identical documents or interchangeable page data.
 - **Automatically trim white page margins.**
   `Page.auto_crop(margin=0, dpi=72, white_threshold=250,
   include_annotations=True)` shrinks the current effective CropBox to the

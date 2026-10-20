@@ -880,6 +880,25 @@ follows the shared renderer and may miss marks at the chosen resolution.
 Hidden text or other data can remain on a blank-looking page. See
 [detection details](supported-features.md#pages).
 
+### Find Visually Duplicate Pages
+
+Locate repeated scans or page views even when their PDF content differs:
+
+```python
+from aspose_pdf import Document
+
+with Document("batch.pdf") as document:
+    groups = document.find_duplicate_pages(dpi=96)
+    print(groups)  # For example: [[0, 3], [1, 4, 7]]; zero-based indices.
+```
+
+Each group includes its first occurrence. Pages must have equal raster
+dimensions and identical RGB pixels at the chosen DPI. Visible annotations
+count by default; `include_annotations=False` compares page content alone.
+Use `pages=[0, 3, 7]` to inspect a subset. The document is unchanged.
+This detects exact rendered matches; noisy scans can differ, and hidden data
+can differ on matching pages. See [comparison details](supported-features.md#pages).
+
 ### Trim White Page Margins
 
 Remove excess white space around scanned or drawn content:
@@ -1295,6 +1314,8 @@ and delete workflows. 266 public types are organized by module below.
     front/back scans into a new document, optionally reversing the back-side order
   - `find_blank_pages(pages=None, dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> list[int]` —
     find visually blank pages without modifying the document
+  - `find_duplicate_pages(pages=None, dpi=72, include_annotations=True) -> list[list[int]]` —
+    group pages with identical rendered views without deleting them
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
