@@ -818,6 +818,45 @@ Supported:
   and structure tree. The page-label rule is `merge`'s: a document with no
   labels of its own contributes empty ones rather than numbers it never had.
 - Delete pages by index and clear all pages.
+- **Find visually blank pages, including scanned sides.**
+  `Page.is_blank(dpi=72, white_threshold=250, max_ink_ratio=0,
+  include_annotations=True)` returns a boolean;
+  `Document.find_blank_pages(pages=None, ...)` returns zero-based blank-page
+  indices without modifying or deleting any page. This helps locate blank
+  scanner passes before choosing which pages to retain.
+  - Each selected page is rendered on white paper without antialiasing. A
+    pixel counts as ink if **any** RGB channel is below `white_threshold`.
+    The page is blank when `ink_pixels / total_pixels <= max_ink_ratio`,
+    including equality. Defaults allow near-white paper and zero darker pixels;
+    a nonzero ratio explicitly tolerates speckles or other small marks.
+    Thresholds are integers from 1 to 255; the ink ratio is a finite number in
+    0-1, and DPI must be finite and positive. Flags require actual booleans.
+    Invalid options raise `PdfValidationException`, including on empty inputs.
+  - Detection uses the current CropBox, page rotation, clipping, transparency,
+    layer visibility and the document's font substitution setting. It counts
+    visible annotations and form appearances by default; set
+    `include_annotations=False` to inspect content alone. White scans, white
+    paint, invisible OCR text and content on hidden layers can look blank
+    despite nonempty content streams or extractable text. Content outside the
+    visible crop does not count. A colored paper background can count as ink.
+  - `pages=None` selects all pages; an empty iterable selects none. Explicit
+    indices must be nonnegative integers in range, with booleans rejected.
+    The complete selection is validated before any page renders, and repeated
+    indices are checked once, preserving the first occurrence's order. Empty
+    documents return `[]`. Disposed documents and stale page indices fail.
+  - Streaming and password-protected inputs are supported. Only selected page
+    content is read, and one raster is held at a time; all-page content caches
+    are not filled. Normal renderer/parser resource limits still apply,
+    including raster dimensions, decoding and selection size. Rendering errors
+    propagate without returning a partial match list. Page data, boxes,
+    metadata and source files are unchanged.
+  - This is a **visual heuristic**, with the shared renderer's supported PDF
+    features and limitations. A raster at finite DPI can miss tiny or faint
+    marks; higher DPI costs more time and memory. Unsupported content may not
+    render faithfully. Hidden text, form values, annotations and other data
+    may still be present even when the page appears blank. There is no OCR,
+    automatic paper-color normalization, border removal or deskewing; detected
+    pages are not automatically deleted.
 - **Resize a page and take its drawing with it.** Setting `Page.size` changes
   the **sheet** and leaves the drawing where it was, so a smaller sheet crops it
   and a larger one pads it -- right for trimming a page, wrong for every other

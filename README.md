@@ -832,6 +832,31 @@ the default keeps both inputs' order. Page counts must match by default.
 The inputs stay unchanged; the new document keeps page resources, annotations,
 fields, labels and bookmark targets. See [assembly details](supported-features.md#documents).
 
+### Find Visually Blank Pages
+
+Find blank scanned sides from their rendered appearance:
+
+```python
+from aspose_pdf import Document
+
+with Document("scans.pdf") as document:
+    blank_pages = document.find_blank_pages()
+    print(blank_pages)  # Zero-based page indices; the document is unchanged.
+    print(document.pages[0].is_blank())
+
+    # Explicitly tolerate a small amount of scan noise.
+    tolerant_matches = document.find_blank_pages(
+        white_threshold=245, max_ink_ratio=0.0005, dpi=96
+    )
+```
+
+The default checks at 72 DPI, treats RGB channels of 250 or more as white,
+and tolerates no darker pixels. Visible annotations count by default;
+`include_annotations=False` checks page content alone. This visual heuristic
+follows the shared renderer and may miss marks at the chosen resolution.
+Hidden text or other data can remain on a blank-looking page. See
+[detection details](supported-features.md#pages).
+
 ### Apply Resource Limits for Untrusted PDF Input
 
 ```python
@@ -1224,6 +1249,8 @@ and delete workflows. 266 public types are organized by module below.
     split chapters at local bookmarks and retain leading pages in a separate document
   - `interleave(other, reverse_other=False, strict=True) -> Document` — alternate
     front/back scans into a new document, optionally reversing the back-side order
+  - `find_blank_pages(pages=None, dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> list[int]` —
+    find visually blank pages without modifying the document
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
@@ -1242,6 +1269,8 @@ and delete workflows. 266 public types are organized by module below.
     `draw_line(x1, y1, x2, y2, stroke_color, line_width, tag, alt, actual_text) -> Page`
   - `render(dpi, scale, background, antialias) -> RasterizedPage` /
     `save_as_image(path, dpi, scale, background, antialias) -> Path`
+  - `is_blank(dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> bool` —
+    test the page's rendered appearance on white paper
   - `add_stamp(stamp) -> Page` — a text, image or page-number stamp over or under the page
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - `highlight_text(...) -> TextHighlightResult` — annotations and a report of unplaceable matches

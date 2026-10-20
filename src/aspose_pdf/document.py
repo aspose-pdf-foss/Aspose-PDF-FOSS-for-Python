@@ -3479,6 +3479,42 @@ class Document:
         if self._outlines is not None and self._engine_pdf is not None:
             self._engine_pdf._outlines_data = self._outlines._to_list()
 
+    def find_blank_pages(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        dpi: float = 72.0,
+        white_threshold: int = 250,
+        max_ink_ratio: float = 0.0,
+        include_annotations: bool = True,
+    ) -> list[int]:
+        """Find visually blank pages without changing this document.
+
+        Return zero-based indices in the selected order, ignoring repeats.
+        ``pages=None`` checks all pages; an empty iterable checks none. All
+        indices and options are validated before rendering. Streaming inputs
+        read only selected pages, and each raster is released before the next.
+
+        Detection uses :meth:`Page.is_blank <aspose_pdf.pages.Page.is_blank>`:
+        at the chosen DPI, a pixel counts as ink if any RGB channel is below
+        ``white_threshold``; an ink fraction at most ``max_ink_ratio`` is blank.
+        Defaults are 72 DPI, threshold 250, zero tolerated ink, with visible
+        annotations included. The renderer's limitations and finite resolution
+        apply; hidden text or data may still exist on a blank-looking page.
+        Rendering errors and resource limits propagate without a partial list.
+        """
+        from aspose_pdf.engine.blank_pages import find_blank_pages
+
+        self._ensure_not_disposed()
+        return find_blank_pages(
+            self,
+            pages=pages,
+            dpi=dpi,
+            white_threshold=white_threshold,
+            max_ink_ratio=max_ink_ratio,
+            include_annotations=include_annotations,
+        )
+
     def extract_pages(self, selection: Iterable[int] | slice) -> Document:
         """Return an independent document containing selected pages in order.
 

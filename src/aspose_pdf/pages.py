@@ -1038,6 +1038,39 @@ class Page:
             raise TypeError("Page visitor must provide a callable visit(page) method.")
         visit(self)
 
+    def is_blank(
+        self,
+        *,
+        dpi: float = 72.0,
+        white_threshold: int = 250,
+        max_ink_ratio: float = 0.0,
+        include_annotations: bool = True,
+    ) -> bool:
+        """Whether this page renders blank on white paper at the chosen DPI.
+
+        A pixel is ink if any RGB channel is below ``white_threshold`` (1-255).
+        The page is blank if the ink fraction is at most ``max_ink_ratio``
+        (0-1). Defaults tolerate near-white paper and no darker pixels. Increase
+        the ratio explicitly to tolerate scan noise. Visible annotations count
+        unless ``include_annotations=False``. CropBox, rotation and layer
+        visibility follow :meth:`render`; antialiasing is disabled.
+
+        This is a visual heuristic at a finite resolution, with the shared
+        renderer's limitations. Hidden data can remain on a blank-looking page.
+        Nothing is removed or modified; render errors and resource limits
+        propagate. Higher DPI can reveal smaller marks at a higher cost.
+        """
+        from aspose_pdf.engine.blank_pages import is_blank
+
+        self._document._ensure_not_disposed()
+        return is_blank(
+            self,
+            dpi=dpi,
+            white_threshold=white_threshold,
+            max_ink_ratio=max_ink_ratio,
+            include_annotations=include_annotations,
+        )
+
     def render(
         self,
         *,
