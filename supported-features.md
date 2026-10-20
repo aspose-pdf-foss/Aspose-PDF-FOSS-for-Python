@@ -368,6 +368,60 @@ Supported:
   preserves source encryption or the validity of existing digital signatures
   in these newly created documents. Signature fields can be imported as fields;
   their old signatures do not authenticate the extracted chapter.
+- **Split batches at text or regex markers.**
+  `Document.split_by_text(pattern, regex=False, case_sensitive=True,
+  include_preamble=True)` returns independent `Document` instances in physical
+  page order. This separates invoices, reports or other batches with repeated
+  start headings without requiring bookmarks or a page-number list.
+  - Every page whose extracted text matches starts a new part. It runs through
+    the page before the next match, or the end of the PDF. Matching pages stay
+    in their parts, consecutive matching pages form one-page parts, and
+    multiple occurrences on one page make only one boundary. Leading pages
+    form a separate part by default; `include_preamble=False` omits only those
+    pages. With the default, no pages are dropped or duplicated. No matches,
+    including an empty source, raises `PdfValidationException` before importing
+    anything, as with a missing boundary in `split_by_bookmarks`.
+  - A nonempty string is a literal substring unless `regex=True`. A compiled
+    `re.Pattern[str]` always enables regex matching and retains its flags;
+    compiled byte patterns are rejected. `case_sensitive=False` adds
+    `re.IGNORECASE` using Python's semantics. Matching uses `re.search` on
+    each complete page text separately. Zero-width matches such as `^` count;
+    empty patterns are rejected. Use inline flags such as `(?m)` for line
+    anchors or `(?s)` for a dot matching line breaks. Flags must be booleans;
+    invalid types raise `TypeError`, empty patterns `ValueError`, invalid
+    regex syntax `re.error`, and invalid Unicode `PdfValidationException`.
+    Validation and regex compilation precede page reads, even on empty input.
+  - Search uses ordinary `Page.extract_text()` semantics, including decoded
+    Unicode text, adjacent text operators, invoked Form XObjects, original
+    line breaks and invisible OCR text. Hidden-layer text is skipped as in
+    ordinary extraction. Annotations, widget values, metadata and bookmarks
+    are not search inputs. No OCR is performed; image-only scans need an
+    existing text layer. Matches cannot cross pages. There is no whitespace
+    normalization, automatic reading-order reconstruction, geometric heading
+    detection or splitting inside a page. Extraction limitations still apply.
+    Python's regular expression engine does not provide an execution timeout.
+  - All pages are scanned for boundaries before any result is imported.
+    Streaming and password-protected sources are supported; scanning reads one
+    page at a time without filling the whole-document text or page-content
+    caches. Existing extraction and import resource limits apply, and pattern
+    size and page count are checked under `PdfLoadLimits`. This returns an
+    in-memory list of imported documents, not a streaming output iterator;
+    the shared importer may materialize image resource views.
+  - Parts use the shared page importer, preserving page geometry, rotation,
+    resources, annotations, relevant form fields, labels and layers. Local
+    links within a part are remapped; links to excluded pages have a null page
+    target, following `extract_pages`. Relevant bookmarks retain their views,
+    styles and current destinations, including live unsaved edits; children of
+    parents pointing outside a part are promoted. Typed bookmark destinations
+    are available immediately. Source Info metadata and PDF version are
+    retained; matches are not used as titles or filesystem paths. Document
+    attachments are omitted, as for `extract_pages`.
+  - The source, its current outline model and source files remain unchanged.
+    Results survive source disposal and are editable independently. Dispose
+    every returned document. On extraction, validation or import failure no
+    partial list is returned; already created parts are disposed and the source
+    outline model is restored. New parts are unencrypted and do not preserve
+    the validity of existing digital signatures. No extra dependency is needed.
 - Run resource optimization and stream compression helpers.
 - Preserve and edit outlines/bookmarks. **A bookmark loaded from a file keeps
   the target the file held, exactly** -- its view (`/XYZ` position and zoom,

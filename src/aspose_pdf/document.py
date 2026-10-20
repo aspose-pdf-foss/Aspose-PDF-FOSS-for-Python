@@ -3617,6 +3617,66 @@ class Document:
             raise
         return result
 
+    def split_by_text(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        include_preamble: bool = True,
+    ) -> list[Document]:
+        """Return independent parts starting at pages whose extracted text matches.
+
+        A string is a literal substring unless ``regex=True``. Compiled text
+        regular expressions always use regex matching and keep their flags;
+        ``case_sensitive=False`` adds ``re.IGNORECASE``. Matching is a search
+        anywhere in each page's extracted text, with Python's regex semantics.
+        Zero-width regex matches count. Patterns cannot be empty.
+
+        A matching page starts a new part, ending before the next matching
+        page or at the end of the PDF. Multiple matches on one page give one
+        boundary. Leading pages become a separate part unless
+        ``include_preamble=False``. No matches, including an empty document,
+        raises ``PdfValidationException``. Pages are never split internally.
+
+        Uses ordinary text extraction, including its line breaks, hidden OCR
+        text and limitations; image-only scans need an existing text layer.
+        Matches cannot span pages. Annotations and form values are not searched.
+        Streaming inputs are scanned one page at a time without filling the
+        full-document text or content caches. Python's regex engine has no
+        execution timeout; use patterns appropriate for the input.
+
+        Results follow :meth:`extract_pages`, retaining source Info metadata
+        and relevant bookmarks, including live edits and children whose parents
+        point outside the part. Neither the source nor its files are changed.
+        Dispose each returned document when done. Partial results are disposed
+        on failure. New parts do not inherit source encryption or retain the
+        validity of existing digital signatures.
+        """
+        from aspose_pdf.engine.text_split import split_by_text
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        result = []
+        try:
+            for engine in split_by_text(
+                self._engine_pdf,
+                pattern,
+                regex=regex,
+                case_sensitive=case_sensitive,
+                include_preamble=include_preamble,
+                outlines=None if self._outlines is None else self._outlines._items,
+            ):
+                part = Document(limits=self._load_limits)
+                part._engine_pdf = engine
+                result.append(part)
+        except BaseException:
+            for part in result:
+                part.dispose()
+            raise
+        return result
+
     def n_up(
         self,
         rows: int = 2,

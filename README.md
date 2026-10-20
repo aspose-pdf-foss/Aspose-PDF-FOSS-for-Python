@@ -832,6 +832,29 @@ the default keeps both inputs' order. Page counts must match by default.
 The inputs stay unchanged; the new document keeps page resources, annotations,
 fields, labels and bookmark targets. See [assembly details](supported-features.md#documents).
 
+### Split at Text Markers
+
+Separate a batch of invoices or reports at pages containing a heading:
+
+```python
+from aspose_pdf import Document
+
+with Document("batch.pdf") as document:
+    parts = document.split_by_text(r"(?m)^Invoice\s+\d+", regex=True)
+    try:
+        for number, part in enumerate(parts, 1):
+            part.save(f"part-{number:03d}.pdf")
+    finally:
+        for part in parts:
+            part.dispose()
+```
+
+Strings are literal substrings by default; compiled text regexes also work.
+Each matching page starts a part, with preceding pages kept separately unless
+`include_preamble=False`. No matches raises `PdfValidationException`.
+Matching uses extracted text, with optional `case_sensitive=False`; image-only
+scans need a text layer. See [splitting details](supported-features.md#documents).
+
 ### Find Visually Blank Pages
 
 Find blank scanned sides from their rendered appearance:
@@ -1266,6 +1289,8 @@ and delete workflows. 266 public types are organized by module below.
     `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `split_by_bookmarks(level=1, include_preamble=True) -> list[Document]` —
     split chapters at local bookmarks and retain leading pages in a separate document
+  - `split_by_text(pattern, regex=False, case_sensitive=True, include_preamble=True) -> list[Document]` —
+    split a batch at pages containing a literal or regular expression match
   - `interleave(other, reverse_other=False, strict=True) -> Document` — alternate
     front/back scans into a new document, optionally reversing the back-side order
   - `find_blank_pages(pages=None, dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> list[int]` —
