@@ -1983,6 +1983,64 @@ Boundaries:
 
 Supported:
 
+- **Extract positioned words without searching for each word again.**
+  `Document.extract_words(pages=None, clip=None, skip_artifacts=False)` and
+  `Page.extract_words(clip=None, skip_artifacts=False)` return a list of
+  detached `TextWord` snapshots. This supports indexing, region analysis and
+  custom annotation placement without converting through HTML or Markdown.
+  - Each result contains `text`, its original zero-based `page_index`,
+    `rect=(x0, y0, x1, y1)` (also `bbox`) and a four-point `quad`. Coordinates
+    are PDF points in unrotated user space with a lower-left origin, independent
+    of page rotation, MediaBox/CropBox origin and visible cropping. The quad
+    transforms the font-metric word box through text and graphics matrices;
+    `rect` is its axis-aligned enclosure. Reflection can reverse quad winding.
+    These are advance/ascent/descent bounds, not glyph ink outlines. Character
+    and word spacing, horizontal scaling, text rise, kerning and measured
+    font changes contribute to the geometry. Simple and composite fonts use
+    the shared geometry engine, including supported vertical CID metrics.
+  - Words are maximal sequences of decoded non-whitespace characters within
+    a measured text run. Adjacent `Tj`/`TJ` operands can form one word, while
+    explicit whitespace, inferred word gaps, line/run boundaries, marked-content
+    boundaries and invoked Form XObjects separate words. Punctuation stays
+    attached. Results follow content-stream order, with forms visited where
+    invoked; there is no reading-order sorting, column reconstruction,
+    language-specific segmentation or dehyphenation. A glyph mapping to several
+    Unicode characters contributes its complete glyph-unit extent; bounds can
+    overlap when one code unit maps to several words.
+  - `clip` is a finite, ordered positive-area rectangle. It selects **whole
+    words** whose axis-aligned bounds overlap it, keeping their complete text
+    and original bounds. An ordinary boundary touch is excluded; zero-advance
+    units retain the shared geometry engine's positional behavior. The clip
+    is independent of page boxes and rotation and does not crop the PDF. This
+    differs from `extract_text(clip=...)`, which selects individual glyph units.
+  - Positioned text in invoked, transformed and nested Form XObjects uses
+    each form's resource scope and matrix. Hidden layers are omitted;
+    invisible OCR text is retained because this is text extraction rather than
+    visual detection. `skip_artifacts=True` omits explicit `/Artifact` scopes,
+    including inside forms. Annotations, widget values and images are not
+    searched or OCRed. Images and unused forms are not decoded.
+  - Unresolved fonts, lost pen geometry, unsupported or malformed code units
+    and nonfinite placements are omitted rather than assigned guessed boxes.
+    An untrackable segment can invalidate its whole logical run, following the
+    shared locator's conservative behavior. Content-stream `/ActualText`
+    replacement spans, named or inline, are omitted because their logical words
+    cannot reliably be assigned to individual glyphs. Structure-tree logical
+    replacements are not reconstructed. Thus the result can contain fewer
+    words than plain text extraction; it is not an OCR or accessibility reader.
+  - `pages=None` selects all pages; explicit zero-based selections preserve
+    order and repetitions. Empty documents or selections return `[]`. All
+    indices, clip options and the boolean artifact flag are validated before
+    content is decoded. Streaming and password-protected sources are supported;
+    only selected page streams and invoked forms are decoded, without filling
+    full-document text or page-content caches or changing the text cursor.
+    Parser, geometry, nesting, selection, result-count and word-text size
+    limits apply under `PdfLoadLimits`; failures return no partial result.
+  - Snapshots are frozen, with immutable tuple coordinates, and remain usable
+    after source edits or disposal. A `TextWord` constructed from coordinate
+    lists snapshots them and validates a nonempty whitespace-free word,
+    nonnegative integer page index, four finite quad points and a matching
+    finite bounding rectangle. Extraction does not alter page data, forms,
+    metadata, protection or source files. No extra dependency is required.
 - Extract text from page content streams with `PdfExtractor`, which reads each
   page **through the engine's own extractor**: content is decoded on demand,
   so a document whose pages are loaded lazily is read rather than coming back

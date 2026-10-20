@@ -141,7 +141,7 @@ from .stamps import (
 from .table_extraction import ExtractedTable
 from .tables import Cell, Row, Table
 from .tagged import StructureElement, TaggedContent
-from .text import TextHighlightResult
+from .text import TextHighlightResult, TextWord
 from .text_block import Paragraph, TextBlock
 from .text_layout import TextLayoutOptions
 from .validation import (
@@ -321,6 +321,7 @@ __all__ = [
     "TextLayoutOptions",
     "TextList",
     "TextStamp",
+    "TextWord",
     "TrustStatus",
     "URIAction",
     "UnderlineAnnotation",

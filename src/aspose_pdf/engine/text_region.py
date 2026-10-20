@@ -125,6 +125,7 @@ class _RegionParser(ContentStreamParser):
             geometry = _char_geometry(run, infos, budget=self._budget)
             if geometry is None:
                 continue
+            self._record_run(run, infos, starts, geometry)
             for segment, (kind, text, units), start in zip(run.segments, infos, starts):
                 if segment.token is None:
                     continue
@@ -152,6 +153,9 @@ class _RegionParser(ContentStreamParser):
                     "region text operands",
                 )
                 self._selected[segment.token.start] = selected
+
+    def _record_run(self, run, infos, starts, geometry) -> None:
+        """Allow structured extraction to retain the same measured glyph units."""
 
     def _overlaps(self, matrix: tuple, geometry: tuple) -> bool:
         x0, x1, y0, y1, _key = geometry
@@ -306,7 +310,7 @@ class _RegionParser(ContentStreamParser):
         resources = self.pdf._resolve(form.mapping.get(PdfName("Resources")))
         if not isinstance(resources, PdfDictionary) or not resources.mapping:
             resources = self.resource_scope
-        nested = _RegionParser(
+        nested = type(self)(
             self.pdf,
             self.page_index,
             self.pdf._decode_cos_stream(form, reference),
@@ -328,11 +332,15 @@ class _RegionParser(ContentStreamParser):
             if self._actual_hits:
                 self._actual_hits[-1] = True
             return
+        self._merge_form(nested)
         if self._buffer:
             self._buffer.append("\n")
         self._buffer.append(text)
         self._last_shown_y = self._last_shown_x = None
         self._force_break = True
+
+    def _merge_form(self, nested: _RegionParser) -> None:
+        """Allow structured extraction to consume an invoked form's results."""
 
 
 def extract_region(

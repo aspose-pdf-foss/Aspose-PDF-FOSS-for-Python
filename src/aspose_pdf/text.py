@@ -18,6 +18,7 @@ Supports three search modes:
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ __all__ = [
     "TextFragmentAbsorber",
     "TextHighlightResult",
     "TextSearchOptions",
+    "TextWord",
 ]
 
 
@@ -71,6 +73,73 @@ class TextExtractionOptions:
 # ---------------------------------------------------------------------------
 # TextFragment
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class TextWord:
+    """A detached positioned word in unrotated PDF coordinates, in points.
+
+    ``page_index`` is zero-based. ``rect`` (also ``bbox``) encloses ``quad``
+    as ``(x0, y0, x1, y1)`` with a lower-left origin. The quad is the affine
+    transform of the font-metric word box, in text-corner order; a reflection
+    can reverse its winding. These are advance/ascent/descent bounds rather
+    than outlines of visible glyph ink. Extracted results contain only words
+    with finite, reliable geometry and remain usable after source disposal.
+    """
+
+    page_index: int
+    text: str
+    rect: tuple[float, float, float, float]
+    quad: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        from aspose_pdf.exceptions import PdfValidationException
+
+        if (
+            isinstance(self.page_index, bool)
+            or not isinstance(self.page_index, int)
+            or self.page_index < 0
+        ):
+            raise PdfValidationException("page_index must be a non-negative integer")
+        if (
+            not isinstance(self.text, str)
+            or not self.text
+            or any(c.isspace() for c in self.text)
+        ):
+            raise PdfValidationException("text must be a nonempty word without whitespace")
+        try:
+            rect = tuple(self.rect)
+            quad = tuple(tuple(point) for point in self.quad)
+            if (
+                len(rect) != 4
+                or len(quad) != 4
+                or any(len(point) != 2 for point in quad)
+            ):
+                raise ValueError("invalid coordinate count")
+            if any(isinstance(value, bool) for value in rect) or any(
+                isinstance(value, bool) for point in quad for value in point
+            ):
+                raise ValueError("boolean coordinate")
+            rect = tuple(float(value) for value in rect)
+            quad = tuple(tuple(float(value) for value in point) for point in quad)
+            if not all(math.isfinite(value) for value in rect) or not all(
+                math.isfinite(value) for point in quad for value in point
+            ):
+                raise ValueError("nonfinite coordinate")
+            xs, ys = zip(*quad)
+            if rect != (min(xs), min(ys), max(xs), max(ys)):
+                raise ValueError("rect does not enclose quad exactly")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise PdfValidationException(
+                "rect and quad must describe finite word bounds"
+            ) from exc
+        object.__setattr__(self, "rect", rect)
+        object.__setattr__(self, "quad", quad)
+
+    @property
+    def bbox(self) -> tuple[float, float, float, float]:
+        """Alias of :attr:`rect` for coordinate-based data processing."""
+        return self.rect
 
 
 @dataclass

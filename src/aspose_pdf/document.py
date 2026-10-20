@@ -79,7 +79,7 @@ if TYPE_CHECKING:
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tagged import TaggedContent
-    from aspose_pdf.text import TextHighlightResult
+    from aspose_pdf.text import TextHighlightResult, TextWord
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.validation import CertificationLevel
     from aspose_pdf.viewer_preferences import (
@@ -3421,6 +3421,48 @@ class Document:
             return ""
         return self._engine_pdf.extract_text(
             pages=pages, clip=clip, skip_artifacts=skip_artifacts
+        )
+
+    def extract_words(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+    ) -> list[TextWord]:
+        """Return detached positioned words from selected pages in content order.
+
+        Results contain ``text``, zero-based ``page_index``, ``rect`` (also
+        ``bbox``) and ``quad``. Coordinates are PDF points in unrotated user
+        space, independent of CropBox and page rotation. Bounds use font
+        advances, ascent and descent rather than visible glyph ink.
+
+        Words are non-whitespace sequences within a measured text run.
+        Adjacent show operands and font changes can form one word; line/run,
+        marked-content and Form XObject boundaries separate words. Punctuation
+        stays attached; no language-specific segmentation or reading-order
+        reconstruction is performed. Hidden layers are omitted. Invisible OCR
+        text counts, and ``skip_artifacts=True`` omits marked artifacts.
+
+        ``clip`` selects whole words whose axis-aligned rectangles overlap
+        the region, retaining their full text and bounds. It does not crop
+        words or implicitly intersect the page boxes. Unknown/unmeasurable
+        runs and logical /ActualText replacement spans are omitted rather than
+        assigned invented coordinates. Images and widget values are not OCRed.
+
+        ``pages`` preserves order and repetitions; all indices and options are
+        validated before content is decoded. Streaming inputs read selected
+        page streams and invoked forms, without filling full-document caches
+        or decoding images and unused forms. Resource limits propagate without
+        a partial result. Results survive source edits and disposal.
+        """
+        from aspose_pdf.engine.word_extraction import extract_words
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return extract_words(
+            self, pages=pages, clip=clip, skip_artifacts=skip_artifacts
         )
 
     def _choose_incremental(self, requested: bool | None) -> bool:

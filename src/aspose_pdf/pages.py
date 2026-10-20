@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tables import Table
-    from aspose_pdf.text import TextHighlightResult
+    from aspose_pdf.text import TextHighlightResult, TextWord
     from aspose_pdf.text_block import TextBlock
     from aspose_pdf.text_layout import TextLayoutOptions
 
@@ -541,6 +541,22 @@ class Page:
             return ""
         return engine.extract_page_text(
             self._index, clip=clip, skip_artifacts=skip_artifacts
+        )
+
+    def extract_words(
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+    ) -> list[TextWord]:
+        """Return this page's words and PDF-coordinate bounds as frozen snapshots.
+
+        See :meth:`Document.extract_words` for word boundaries and positioning
+        limits. ``clip`` selects whole words with overlapping bounding boxes.
+        Results retain this page's original zero-based document index.
+        """
+        return self._document.extract_words(
+            pages=[self._index], clip=clip, skip_artifacts=skip_artifacts
         )
 
     def add_text(

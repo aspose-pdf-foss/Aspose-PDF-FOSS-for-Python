@@ -832,6 +832,29 @@ the default keeps both inputs' order. Page counts must match by default.
 The inputs stay unchanged; the new document keeps page resources, annotations,
 fields, labels and bookmark targets. See [assembly details](supported-features.md#documents).
 
+### Extract Words with Coordinates
+
+Read positioned words for region analysis, indexing or custom highlights:
+
+```python
+from aspose_pdf import Document
+
+with Document("input.pdf") as document:
+    for word in document.pages[0].extract_words():
+        print(word.text, word.bbox, word.page_index)
+
+    selected = document.extract_words(
+        pages=[0, 2], clip=(72, 650, 300, 750), skip_artifacts=True
+    )
+```
+
+Each `TextWord` is an immutable snapshot with `text`, zero-based `page_index`,
+`rect` (also `bbox`) and `quad`. Coordinates are unrotated PDF points with a
+lower-left origin. The region selects whole overlapping words. Bounds use
+font metrics; unmeasurable runs and content-stream `/ActualText` replacement
+spans are omitted. No OCR or language-specific word segmentation is performed.
+See [word extraction details](supported-features.md#text).
+
 ### Split at Text Markers
 
 Separate a batch of invoices or reports at pages containing a heading:
@@ -944,7 +967,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 266 public types are organized by module below.
+and delete workflows. 267 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1093,6 +1116,7 @@ and delete workflows. 266 public types are organized by module below.
 | `TextExtractorOptions` | Options for :class:`TextExtractor`: extract text from each input. |
 | `TextFormattingMode` | Text formatting mode for text extraction. |
 | `TextFragment` | A text fragment found inside a PDF page. |
+| `TextWord` | An immutable positioned word with a page index, bounding box and quadrilateral. |
 | `TextFragmentAbsorber-text` | Absorbs text fragments from a PDF page or document. |
 | `TextFragmentCollection` | A mutable ordered collection of :class:`TextFragment` objects. |
 | `TextLayoutOptions` | Configure complex-text shaping and line layout for ``Page.add_text``. |
@@ -1365,6 +1389,11 @@ and delete workflows. 266 public types are organized by module below.
   with zero-based page selection on `Document`,
   optionally selecting glyphs overlapping `(x0, y0, x1, y1)` in unrotated PDF space
   and excluding explicitly marked Artifact content.
+
+- `Document.extract_words(pages=None, clip=None, skip_artifacts=False)` /
+  `Page.extract_words(clip=None, skip_artifacts=False)` return immutable `TextWord`
+  snapshots with text, page index, `rect`/`bbox` and `quad`. A region selects
+  whole overlapping words in unrotated PDF coordinates.
 
 - `Document.extract_tables(pages=None, clip_to_page=True)` / `Page.extract_tables(clip_to_page=True)`
   return `list[ExtractedTable]`; `pages` contains zero-based indices. Each result exposes
