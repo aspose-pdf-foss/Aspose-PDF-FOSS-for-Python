@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -1706,7 +1706,8 @@ class Document:
         IDs identify objects within this PDF snapshot, not across rewrites;
         links may name annotations outside the selected output.
 
-        This is a review-data export, not a PDF backup or import format.
+        Supported review annotations can be appended to a PDF using
+        :meth:`import_annotations_json`. This is not a lossless PDF backup.
         Appearance streams, actions, destinations, field values, embedded
         assets, custom properties and stream-valued rich text are omitted.
         Page content and appearance streams are not decoded.
@@ -1729,6 +1730,45 @@ class Document:
             else:
                 write_files([(Path(destination), data)], overwrite)
         return data
+
+    def import_annotations_json(
+        self,
+        source: str | Path | bytes | bytearray | BinaryIO,
+        *,
+        page_map: Mapping[int, int] | None = None,
+    ) -> int:
+        """Append version 1 JSON review annotations and return the number added.
+
+        Accept UTF-8 bytes, a path or a readable binary stream. Streams are
+        read from their current position and left open. ``page_map`` maps
+        zero-based source page indices to existing destination pages; every
+        used source page must be mapped. Without it, page indices are retained.
+        Input order is retained within each page; ``annotation_index`` is
+        informational. Existing annotations are preserved and repeat imports
+        append duplicates.
+
+        Supported subtypes are Text, FreeText, Line, Square, Circle, Polygon,
+        PolyLine, Highlight, Underline, Squiggly, StrikeOut, Stamp, Caret, Ink,
+        Popup and Redact. Widgets, links, media and unknown subtypes are refused
+        because the export omits data needed to recreate them. Supported review
+        properties recover their PDF name/string types; nonstandard dictionary
+        entries are refused. Appearances are not archived or generated; call
+        ``page.annotations.generate_appearances()`` when needed.
+
+        Replies and popups are linked to newly imported IDs only. Links to IDs
+        outside the input are omitted; internal popup pairs are completed in
+        both directions. Conflicting popup links, cross-page popups and reply
+        cycles are refused. All JSON, property, page and relationship checks
+        finish before any annotation is added. Malformed/unsupported data and
+        resource-limit failures leave annotations unchanged. Limits follow
+        :attr:`load_limits`. Redact imports markup; it does not redact content.
+        """
+        from aspose_pdf.engine.annotation_import import import_json
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return import_json(self._engine_pdf, source, page_map=page_map)
 
     def extract_tables(
         self,

@@ -113,6 +113,8 @@ flowchart TD
 - `Document.export_annotations_json()` exports comments, geometry, metadata and reply/popup
   links for review reports and external processing, with page and subtype filters. A page's
   `annotations.to_list()` provides editable snapshots and `annotations.export_json()` writes JSON.
+  `Document.import_annotations_json()` and `Page.annotations.import_json()` append supported
+  review annotations from that JSON, restoring properties and reply/popup links.
 - `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
   curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. A
   Bézier is written back out as the Bézier it was, so the export stays exact at any zoom. The
@@ -746,7 +748,7 @@ existing link. `urls=False` or `emails=False` disables either kind; `max_count`
 limits addresses considered. Uncertain coordinates are reported in
 `skipped_fragments`; see [recognition and geometry limits](supported-features.md#text).
 
-### Export Annotations for Review
+### Exchange Annotations for Review
 
 ```python
 from aspose_pdf import AnnotationType, Document
@@ -761,7 +763,21 @@ with Document("reviewed.pdf") as document:
 ```
 
 JSON carries versioned review data; appearance streams, executable actions and attachments
-are omitted. See [annotation export coverage](supported-features.md#annotations) for the schema.
+are omitted. Import reviewed JSON into a clean copy of the same document:
+
+```python
+with Document("clean-copy.pdf") as document:
+    added = document.import_annotations_json("review/comments.json")
+    print(f"Imported {added} annotations")
+    document.save("review-restored.pdf")
+```
+
+Import appends to existing annotations; importing again adds another copy. Use
+`page_map={0: 2}` to move source page 0's comments onto destination page 2, or
+`page.annotations.import_json(source)` to import one source page onto a specific page.
+Widgets, links, media and unknown subtypes are refused because their required data
+is absent from the export. Links to records outside the JSON are omitted.
+See [annotation exchange coverage](supported-features.md#annotations) for the schema and limits.
 
 ### Validate a Filled Form
 
@@ -1446,9 +1462,12 @@ and delete workflows. 267 public types are organized by module below.
   `set_property(name, value) -> None`; properties `subtype`, `rect`, `contents`, `appearance_normal`
 - `AnnotationCollection` — `add(subtype, rect, contents, title, appearance_normal, properties) -> Annotation`,
   `insert(...)`, `delete(index) -> None`, `generate_appearances(force) -> int`,
-  `to_list(subtypes=None) -> list[dict]`, `export_json(destination=None, subtypes=None, overwrite=True) -> bytes`
+  `to_list(subtypes=None) -> list[dict]`, `export_json(destination=None, subtypes=None, overwrite=True) -> bytes`,
+  `import_json(source) -> int`
 - `Document.export_annotations_json(destination=None, pages=None, subtypes=None, overwrite=True) -> bytes`
   exports all or selected annotations to a path, binary stream or UTF-8 bytes.
+- `Document.import_annotations_json(source, page_map=None) -> int` appends supported review
+  annotations from a path, UTF-8 bytes or readable binary stream; returns the number added.
 
 ### Security And Signatures
 

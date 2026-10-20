@@ -21,7 +21,9 @@ def to_json(values: dict[str, Any]) -> bytes:
         ) from exc
 
 
-def _check_limits(text: str, budget: _LoadBudget) -> None:
+def _check_limits(
+    text: str, budget: _LoadBudget, context: str = "JSON form data"
+) -> None:
     """Bound container allocation before the standard JSON decoder runs.
 
     Only structural delimiters outside strings matter here; the decoder
@@ -44,13 +46,13 @@ def _check_limits(text: str, budget: _LoadBudget) -> None:
         if counts and char not in "}]" and (counts[-1] == 0 or char == ","):
             counts[-1] += 1
             budget.check(
-                counts[-1], "max_container_items", "JSON form data container items"
+                counts[-1], "max_container_items", f"{context} container items"
             )
         if char == '"':
             quoted = True
         elif char in "[{":
             counts.append(0)
-            budget.check(len(counts), "max_nesting_depth", "JSON form data nesting")
+            budget.check(len(counts), "max_nesting_depth", f"{context} nesting")
         elif char in "]}" and counts:
             counts.pop()
 

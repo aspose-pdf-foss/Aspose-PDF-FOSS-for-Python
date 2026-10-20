@@ -1,4 +1,4 @@
-"""Read-only annotation metadata snapshots for review and JSON export."""
+"""Annotation metadata snapshots and versioned JSON review export."""
 
 from __future__ import annotations
 

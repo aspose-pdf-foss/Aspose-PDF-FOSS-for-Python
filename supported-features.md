@@ -3545,11 +3545,73 @@ Supported:
     leaves an existing file intact. Streams are written from their current
     position, short writes are retried and the caller's stream stays open;
     stream failures can leave a prefix already written.
-  - This is a review-data export, not a lossless annotation archive or an
-    import format. Appearance streams, actions, destinations, field values,
+  - This is a review-data exchange format, not a lossless annotation archive.
+    Appearance streams, actions, destinations, field values,
     embedded assets and unlisted/custom properties are excluded. It does not
     extract the page text under a highlight, render annotations, or change the
     source document.
+- **Import annotation review data from JSON.**
+  `Document.import_annotations_json(source, page_map=None) -> int` appends
+  supported annotations from the version 1 export schema and returns the count.
+  `source` accepts UTF-8 bytes/bytearray, a path, or a readable binary stream.
+  A UTF-8 BOM is accepted; streams are read from their current position and
+  remain open. No optional dependency is required.
+  - Supported subtypes: `Text`, `FreeText`, `Line`, `Square`, `Circle`,
+    `Polygon`, `PolyLine`, `Highlight`, `Underline`, `Squiggly`, `StrikeOut`,
+    `Stamp`, `Caret`, `Ink`, `Popup`, `Redact`. Other subtypes, including widgets,
+    links, attachments, multimedia and unknown/vendor types, reject the entire
+    import: the export omits data necessary to recreate them. Filter the source
+    export when those subtypes are present. A `Redact` record adds annotation
+    markup only; it does not remove page content.
+  - Every record must contain exactly the exported fields. IDs must be unique,
+    non-empty strings; their text has no special meaning in the destination.
+    `annotation_index` is informational: annotations are appended in input
+    order within each page, existing annotations are preserved, and importing
+    the same file twice adds duplicates. There is no merge, update, replacement,
+    deduplication or automatic page creation.
+  - Without `page_map`, zero-based source page indices must already exist in
+    the destination. An explicit mapping must cover every source page used in
+    the JSON; values must be valid destination indices. Several source pages
+    may map to one destination. `Page.annotations.import_json(source) -> int`
+    retargets all records to that page, but accepts only a single source page
+    index (or an empty annotations array). Coordinates remain in unrotated PDF
+    space, without scaling or crop/rotation transforms.
+  - All listed review property keys are recognized. Standard PDF names are
+    reconstructed in `Name`, `IT`, `RT`, `CP`, `Sy`, `LE`, border dictionaries
+    and measurement dictionaries; text values, including `State` and
+    `StateModel`, remain strings. Explicit property nulls are retained.
+    Geometry, colours, numeric and boolean shapes are checked. Lines, polygons,
+    polylines, ink and text markup require their defining geometry. Unlisted
+    keys and nonstandard nested dictionary entries are refused, including
+    actions, appearances and embedded assets.
+    Supported `BS` entries are `Type/W/S/D`, `BE` entries are `S/I`.
+    `Measure` supports rectilinear (`RL`) entries `Type/Subtype/R/CYX/O` and
+    `X/Y/D/A/T/S` number-format arrays. Number-format entries are
+    `Type/U/C/F/D/FD/RT/RD/PS/SS/O`; geospatial and custom measurement dictionaries
+    are unsupported. Name/string distinctions in arbitrary vendor data cannot
+    be recovered from the export's plain JSON strings.
+  - Internal reply links use newly allocated annotation references, including
+    replies across pages. Internal popup links are completed in both directions;
+    popup and parent must land on the same page. Links to IDs outside the input
+    are omitted, never resolved against pre-existing destination objects.
+    Self-links, conflicting popup assignments, non-markup reply targets and
+    cyclic reply chains reject the import.
+  - Invalid UTF-8/JSON, duplicate keys at any depth, unknown schema versions,
+    unknown/missing record fields and non-finite numbers are rejected.
+    Input bytes, nesting, per-container and total converted item counts,
+    string bytes, page-map size, destination annotation counts and newly
+    allocated object counts/IDs obey `PdfLoadLimits`.
+    The whole input, all properties, page targets and relationships are
+    checked before mutation. Validation and limit failures leave existing
+    annotations unchanged; a failed commit rolls back new objects/page arrays.
+    Streaming import reads destination page metadata without decoding page
+    contents or appearance streams, and survives a subsequent full PDF save.
+  - Appearance streams, original object IDs and external resources are not
+    restored. Import does not generate appearances automatically; use
+    `page.annotations.generate_appearances()` for the renderer's supported
+    subtypes when needed. A custom stamp or resource-dependent FreeText can
+    differ visually from its source; this feature restores supported review
+    data, not exact original rendering or a complete PDF backup.
 - **One class per subtype, over the one property channel.** `TextAnnotation`,
   `FreeTextAnnotation`, `SquareAnnotation`, `CircleAnnotation`, `LineAnnotation`,
   `PolygonAnnotation`, `PolyLineAnnotation`, `InkAnnotation`,

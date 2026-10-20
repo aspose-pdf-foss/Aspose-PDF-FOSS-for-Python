@@ -1025,6 +1025,21 @@ class AnnotationCollection:
             overwrite=overwrite,
         )
 
+    def import_json(self, source: Any) -> int:
+        """Append a single source page's JSON annotations onto this page.
+
+        The source page index may differ from this page's index. Empty input
+        imports nothing; records spanning several source pages are refused.
+        Schema, supported subtypes, validation and return value match
+        :meth:`Document.import_annotations_json`.
+        """
+        from aspose_pdf.engine.annotation_import import import_json
+
+        self._page._document._ensure_not_disposed()
+        return import_json(
+            self._page._document._engine_pdf, source, target_page=self._page.index
+        )
+
     def __len__(self) -> int:
         return len(self._items())
 
