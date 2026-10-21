@@ -118,6 +118,9 @@ flowchart TD
 - `Document.validate_links()` reports broken local links, bookmark targets and named
   destinations before sharing a PDF. `Page.validate_links()` checks one page's links;
   neither method changes the document or opens external addresses.
+- `Document.export_bookmarks_json()` / `import_bookmarks_json()` exchange an editable
+  bookmark tree, including styles and destination views. Import appends or replaces
+  the tree and can remap local pages when transferring it to another PDF.
 - `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
   curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. A
   Bézier is written back out as the Bézier it was, so the export stays exact at any zoom. The
@@ -751,6 +754,29 @@ existing link. `urls=False` or `emails=False` disables either kind; `max_count`
 limits addresses considered. Uncertain coordinates are reported in
 `skipped_fragments`; see [recognition and geometry limits](supported-features.md#text).
 
+### Exchange Bookmarks as JSON
+
+```python
+from aspose_pdf import Document
+
+with Document("manual.pdf") as document:
+    document.export_bookmarks_json("bookmarks.json")
+
+with Document("updated-manual.pdf") as document:
+    added = document.import_bookmarks_json("bookmarks.json", replace=True)
+    print(f"Imported {added} bookmarks")
+    document.save("with-bookmarks.pdf")
+```
+
+The versioned JSON preserves hierarchy, ordering, titles, styles, open state and
+supported targets. Page indices start at zero. Import appends by default;
+`replace=True` replaces the whole tree, and an empty replacement clears it.
+`page_map={0: 2, 1: 3}` remaps explicit local targets and must cover every source
+page used. Named local targets are exported as explicit page views by default;
+`resolve_named_destinations=False` retains their names without copying definitions.
+See [bookmark exchange coverage](supported-features.md#documents) for the schema,
+supported actions and validation limits.
+
 ### Check Internal Links
 
 ```python
@@ -1370,6 +1396,9 @@ and delete workflows. 268 public types are organized by module below.
     `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `split_by_bookmarks(level=1, include_preamble=True) -> list[Document]` —
     split chapters at local bookmarks and retain leading pages in a separate document
+  - `export_bookmarks_json(destination=None, resolve_named_destinations=True, overwrite=True) -> bytes` /
+    `import_bookmarks_json(source, replace=False, page_map=None) -> int` — exchange a
+    versioned bookmark tree, preserving supported targets and styles
   - `split_by_text(pattern, regex=False, case_sensitive=True, include_preamble=True) -> list[Document]` —
     split a batch at pages containing a literal or regular expression match
   - `interleave(other, reverse_other=False, strict=True) -> Document` — alternate

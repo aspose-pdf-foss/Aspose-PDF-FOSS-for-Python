@@ -443,6 +443,86 @@ Supported:
   destination *name*: `OutlineItem(destination="chapter-2")` writes the name
   itself, so the bookmark follows whatever that name is later pointed at, and
   `OutlineItem.destination_name` reads the name a bookmark targets.
+- **Import and export bookmarks as editable JSON.**
+  `Document.export_bookmarks_json(destination=None,
+  resolve_named_destinations=True, overwrite=True) -> bytes` exports the current
+  in-memory tree, including unsaved edits. `Document.import_bookmarks_json(source,
+  replace=False, page_map=None) -> int` validates and imports a whole tree and
+  returns its total number of nodes (roots and descendants). No extra dependency
+  is required. Both APIs operate on bookmark metadata without decoding page
+  content or appearance streams, including for streaming/encrypted documents.
+  - The top-level object is `{"schema_version": 1, "bookmarks": [...]}`.
+    Every node has exactly `title`, `target`, `is_bold`, `is_italic`, `color`,
+    `open`, `children`. Children are arrays in sibling order. Titles are Unicode;
+    flags are booleans, and `color` is null or three finite RGB components in
+    0..1. Duplicate titles are retained. `target=null` represents a targetless
+    heading. `open` matters for parents; the PDF format has no open-state entry
+    on a leaf, so a leaf reloads with `open=False` after PDF serialization.
+  - Supported target shapes (all fields listed are required):
+    - Local page: `{"kind":"page","page_index":0,"view":"XYZ",
+      "parameters":[0,700,null]}`. Indices are zero-based; the eight view names
+      and exact parameter counts are `Fit/FitB` (0), `XYZ` (3),
+      `FitH/FitBH/FitV/FitBV` (1), `FitR` (4). Parameters are finite numbers;
+      null is allowed except for FitR, XYZ zoom is non-negative, and FitR
+      bounds increase. Coordinates retain unrotated PDF space without scaling.
+    - Name: `{"kind":"named","name":"chapter-2",
+      "representation":"string"}`; representation is `string` or `name`.
+      String names use Latin-1 to preserve original PDF name-tree bytes;
+      PDF-name values are nonempty and omit the leading slash.
+    - GoTo action: `{"kind":"goto","destination":...}`, containing a
+      page or named destination. The action distinction is retained.
+    - URI action: `{"kind":"uri","uri":"https://example.org",
+      "is_map":null}`; `is_map` is null (absent) or a boolean.
+    - Remote GoToR: `{"kind":"remote","file":"other.pdf",
+      "destination":...,"new_window":null}`. The destination is a page shape
+      whose `page_index` is a remote page number (0..2147483647), or a name
+      shape. It is never resolved/remapped against this PDF. `new_window` is
+      null (absent) or a boolean; file specifications must be plain strings.
+    - Named action: `{"kind":"named_action","name":"NextPage"}`.
+  - Export resolves local names to explicit page views by default, using both
+    destination representations and their normal lookup precedence. This makes
+    a transferred tree independent of the source destination table. Undefined
+    names or malformed/deleted/stale explicit targets reject export. With
+    `resolve_named_destinations=False`, names (including unresolved ones) and
+    their name/string representation are retained. Destination definitions are
+    never included; retained names resolve against the destination document.
+    Export uses current page references and fresh name definitions, without
+    changing the live collection, engine outline model or name cache.
+  - Import appends roots by default; repeated imports add duplicates.
+    `replace=True` replaces all roots, and an empty bookmarks array clears
+    the tree. Existing live `OutlineCollection` handles remain usable.
+    `page_map` maps every explicit local source page used to an existing
+    destination page; several source pages may map to one. All mapping entries
+    must contain non-negative integer indices and valid destination values.
+    Names and remote pages are not remapped. Pages are not created; a nonempty
+    import requires at least one page. Imported local targets use destination
+    page references immediately, so they follow later page insertions.
+  - The complete input, new targets/styles and combined tree are checked before
+    committing any live-tree change. Malformed data, missing/unknown fields,
+    duplicate JSON keys, unsupported versions/targets, non-finite values, cycles,
+    repeated tree nodes and limit failures leave bookmarks unchanged. Imports
+    never execute actions or access URLs/remote files. Unknown actions, scripts,
+    launches, Next chains, custom action entries, embedded/file-specification
+    resources and unlisted PDF bookmark metadata are outside this exchange
+    format; export refuses unsupported targets before writing output.
+    Existing unsupported actions are preserved when new roots are appended.
+  - Input paths, UTF-8 bytes/bytearray and readable binary streams are accepted;
+    a UTF-8 BOM is allowed. Streams are read at their current position and left
+    open. Export returns deterministic pretty-printed UTF-8 bytes with Unicode
+    and a final newline, without a BOM. File writes create parent directories
+    and replace atomically; `overwrite=False` refuses existing paths. Short
+    stream writes are retried; caller streams stay open and a write failure can
+    leave a prefix. All JSON is prepared before writing output.
+  - Input size, JSON containers/cumulative values, text bytes, tree/JSON nesting,
+    page index/mapping sizes, combined node/stack counts and projected new PDF
+    object counts/IDs obey `PdfLoadLimits`. Existing outline object slots are
+    accounted for when projecting allocations on save.
+    JSON wrapper objects count towards nesting, so its nesting bound can be
+    reached before the same tree's PDF/bookmark depth bound. Export and import
+    apply the same JSON structural limits. PDF save/load uses the engine's
+    numeric precision, which can round values and normalize formatting (for
+    example `700.0` to `700`). This is supported-data exchange, not an exact PDF
+    backup or an audit of raw outline entries discarded by the loader.
 - **A bookmark's colour and its open state.** `OutlineItem.color` is the `/C`
   entry -- three **DeviceRGB** numbers, which is what Table 153 types it as, so
   it is the one colour in the package that takes no grey and no ink; it reads the

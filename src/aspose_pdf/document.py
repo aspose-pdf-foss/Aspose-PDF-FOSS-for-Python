@@ -1309,6 +1309,80 @@ class Document:
             self._outlines = OutlineCollection._from_list(data)
         return self._outlines
 
+    def export_bookmarks_json(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        resolve_named_destinations: bool = True,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return version 1 UTF-8 JSON for the current bookmark tree.
+
+        Preserve hierarchy/order, titles, bold/italic flags, RGB colour, open
+        state and supported targets: all eight local views, named destinations,
+        GoTo, URI, GoToR and Named actions. Local names resolve to explicit page
+        views by default for transfer between documents. Set
+        ``resolve_named_destinations=False`` to retain names and their PDF
+        name/string representation; destination definitions are not archived.
+
+        Read unsaved edits and current page identities without decoding page
+        content. Unsupported/malformed targets, missing explicit pages and
+        cycles are refused before output. Scripts, launches, custom action
+        entries and Next chains are outside this exchange format.
+
+        Return deterministic pretty-printed bytes with Unicode and a final
+        newline. Optionally write a path atomically (creating parent folders),
+        or write a binary stream from its current position and leave it open.
+        ``overwrite=False`` refuses an existing file. Limits follow
+        :attr:`load_limits`. This is not a complete PDF bookmark backup.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.bookmark_json import export_json
+
+        self._ensure_not_disposed()
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        data = export_json(self, resolve_named_destinations)
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
+    def import_bookmarks_json(
+        self,
+        source: str | Path | bytes | bytearray | BinaryIO,
+        *,
+        replace: bool = False,
+        page_map: Mapping[int, int] | None = None,
+    ) -> int:
+        """Import a complete JSON bookmark tree and return the added node count.
+
+        Accept UTF-8 bytes, a path or a readable binary stream (left open).
+        Append root entries by default; ``replace=True`` replaces the entire
+        tree, including clearing it for an empty bookmarks array. Existing
+        live collection handles remain usable. A nonempty import requires at
+        least one document page. ``page_map`` maps every explicit local source
+        page to an existing destination page; names and remote pages are not
+        remapped. Indices are zero-based, coordinates are not transformed.
+
+        All JSON, target, style, page-map and combined-tree checks finish
+        before the live tree is changed. Duplicate keys, unsupported versions,
+        non-finite numbers and unknown/missing fields are refused. Invalid
+        input and limit failures leave bookmarks unchanged. Retained names
+        resolve against destination definitions, which this import does not
+        create. It neither executes actions nor accesses URLs or remote files.
+        """
+        from aspose_pdf.engine.bookmark_json import import_json
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return import_json(self, source, replace, page_map)
+
     @property
     def permissions(self) -> Permissions:
         """What a reader may do with this document: the ``/P`` word, with names.
@@ -3601,6 +3675,15 @@ class Document:
         """
         if self._outlines is not None and self._engine_pdf is not None:
             self._engine_pdf._outlines_data = self._outlines._to_list()
+            if not self._outlines._items and self._engine_pdf._cos_doc is not None:
+                from aspose_pdf.engine.cos import PdfDictionary, PdfName
+
+                cos = self._engine_pdf._cos_doc
+                catalog = self._engine_pdf._resolve(
+                    cos.trailer.mapping.get(PdfName("Root"))
+                )
+                if isinstance(catalog, PdfDictionary):
+                    catalog.mapping.pop(PdfName("Outlines"), None)
 
     def find_blank_pages(
         self,
