@@ -865,6 +865,23 @@ def render_page(
     return renderer.render()
 
 
+def _page_view(
+    pdf: Any, page_index: int
+) -> tuple[
+    tuple[float, float, float, float], tuple[float, float, float, float], int
+]:
+    """Read visible page geometry without decoding its content or allocating pixels."""
+    media = _PageRasterizer._normalize_box(pdf.pages[page_index])
+    crop = pdf.get_page_crop_box(page_index) if hasattr(pdf, "get_page_crop_box") else None
+    crop = _PageRasterizer._normalize_box(crop or media, fallback=media)
+    rotation = (
+        int(pdf.get_page_rotation(page_index)) % 360
+        if hasattr(pdf, "get_page_rotation")
+        else 0
+    )
+    return media, crop, rotation
+
+
 class _PageRasterizer:
     def __init__(
         self,
@@ -921,16 +938,9 @@ class _PageRasterizer:
         # the drawing code uses self.width/height as the (supersampled) canvas
         # bounds, while the returned raster is the target resolution.
         self.point_scale = base_scale * self._ss
-        self.media_box = self._normalize_box(pdf.pages[page_index])
-        crop = None
-        if hasattr(pdf, "get_page_crop_box"):
-            crop = pdf.get_page_crop_box(page_index)
-        self.crop_box = self._normalize_box(
-            crop or self.media_box, fallback=self.media_box
-        )
+        self.media_box, self.crop_box, self.rotation = _page_view(pdf, page_index)
         if clip is not None:
             self.crop_box = self._intersect_render_clip(clip)
-        self.rotation = self._page_rotation()
         self.crop_width = self.crop_box[2] - self.crop_box[0]
         self.crop_height = self.crop_box[3] - self.crop_box[1]
         if clip is None:
@@ -1254,8 +1264,9 @@ class _PageRasterizer:
                 o += 3
         return bytes(out)
 
+    @staticmethod
     def _normalize_box(
-        self, box: Any, *, fallback: tuple[float, float, float, float] | None = None
+        box: Any, *, fallback: tuple[float, float, float, float] | None = None
     ) -> tuple[float, float, float, float]:
         """A page box with its corners ordered, or *fallback* when it has no area.
 
@@ -1311,11 +1322,6 @@ class _PageRasterizer:
         if box[2] <= box[0] or box[3] <= box[1]:
             raise PdfValidationException("clip must overlap the visible page with positive area")
         return box
-
-    def _page_rotation(self) -> int:
-        if hasattr(self.pdf, "get_page_rotation"):
-            return int(self.pdf.get_page_rotation(self.page_index)) % 360
-        return 0
 
     def _page_content(self) -> bytes:
         if hasattr(self.pdf, "get_page_content"):

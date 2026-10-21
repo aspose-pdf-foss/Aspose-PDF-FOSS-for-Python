@@ -139,6 +139,9 @@ flowchart TD
   for website previews and thumbnails.
   Pass `clip=(x0, y0, x1, y1)` to render or save just a detail in PDF coordinates, allocating
   a canvas for that region instead of the whole page.
+- `Document.render_contact_sheet()` / `save_contact_sheet()` create a numbered grid of
+  page thumbnails for a quick document overview or review preview. Select pages, set the
+  grid and thumbnail dimensions, and save as PNG, TIFF, JPEG or optional WebP.
 - `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
@@ -407,6 +410,18 @@ from aspose_pdf import Document
 with Document() as document:
     document.load_from("input.pdf")
     document.pages[0].save_as_image("page-1.png", dpi=144)
+```
+
+Create a contact sheet to inspect several pages at once:
+
+```python
+with Document("input.pdf") as document:
+    document.save_contact_sheet(
+        "overview.png",
+        pages=[0, 2, 4],              # zero-based indices, in this order
+        columns=3,
+        thumbnail_size=(160, 220),   # pixel bounds; page proportions are preserved
+    )
 ```
 
 <details>
@@ -1388,6 +1403,8 @@ and delete workflows. 268 public types are organized by module below.
     `save_page_as_image(page_index, destination, dpi, scale, background, antialias, mode, compression, quality, threshold) -> Path` /
     `save_as_tiff(destination, pages, dpi, scale, background, antialias, mode, compression, threshold) -> Path` /
     `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, overwrite) -> list[Path]`
+  - `render_contact_sheet(pages, columns, thumbnail_size, margin, spacing, labels, background, page_background, label_color, antialias, include_annotations) -> RasterizedPage` /
+    `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
   - `to_html(pages, title, embed_images, paragraph_gap, clip_to_page) -> str` /
     `to_markdown(pages, title, embed_images, markdown_format, paragraph_gap, clip_to_page) -> str` /
     `save_as_html(destination, pages, title, embed_images, split_into_pages, resources_directory, paragraph_gap, clip_to_page, overwrite) -> list[Path]` /

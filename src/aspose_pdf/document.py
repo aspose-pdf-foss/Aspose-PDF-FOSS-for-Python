@@ -1746,6 +1746,124 @@ class Document:
             dither=dither,
         )
 
+    def render_contact_sheet(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        columns: int = 4,
+        thumbnail_size: tuple[int, int] = (160, 220),
+        margin: int = 12,
+        spacing: int = 12,
+        labels: bool = True,
+        background: tuple[int, int, int] = (240, 240, 240),
+        page_background: tuple[int, int, int] = (255, 255, 255),
+        label_color: tuple[int, int, int] = (0, 0, 0),
+        antialias: bool | int = True,
+        include_annotations: bool = True,
+    ) -> RasterizedPage:
+        """Render a page overview as one RGB image without changing the PDF.
+
+        ``pages`` selects zero-based indices; ``None`` selects all pages.
+        Order and repeated indices are preserved. An empty selection raises
+        ``PdfValidationException``. ``columns`` is the maximum number of cells
+        per row; fewer selected pages produce fewer columns.
+
+        ``thumbnail_size=(width, height)``, ``margin`` and ``spacing`` are
+        integer pixels. Each visible CropBox, with page rotation applied, is
+        fitted and centered inside its thumbnail rectangle without stretching.
+        ``labels=True`` adds 22 pixels below each rectangle for its one-based
+        source page number, drawn with built-in 14-pixel decimal digits. Custom
+        PDF page labels are not used. A rectangle too narrow for its number is
+        rejected; ``labels=False`` removes the label band.
+
+        ``background``, ``page_background`` and ``label_color`` are RGB byte
+        triples for the sheet, page paper and digits. ``antialias`` follows
+        :meth:`render_page` (boolean or integer 1-8). Visible annotation
+        appearances are included unless ``include_annotations=False``.
+        The document's font substitution setting applies to thumbnails.
+
+        Final sheet and supersampled thumbnail dimensions are checked against
+        ``load_limits.max_raster_pixels`` before allocating the sheet. Pages
+        are rendered one at a time at their fitted scale; unselected content
+        is not read. Rendering coverage and limitations match ``render_page``.
+        The returned ``RasterizedPage`` uses 72 DPI metadata; layout sizes are
+        pixels and are independent of source page DPI.
+        """
+        from aspose_pdf.engine.contact_sheet import render_contact_sheet
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return render_contact_sheet(
+            self,
+            pages=pages,
+            columns=columns,
+            thumbnail_size=thumbnail_size,
+            margin=margin,
+            spacing=spacing,
+            labels=labels,
+            background=background,
+            page_background=page_background,
+            label_color=label_color,
+            antialias=antialias,
+            include_annotations=include_annotations,
+        )
+
+    def save_contact_sheet(
+        self,
+        destination: str | Path,
+        *,
+        pages: Iterable[int] | None = None,
+        columns: int = 4,
+        thumbnail_size: tuple[int, int] = (160, 220),
+        margin: int = 12,
+        spacing: int = 12,
+        labels: bool = True,
+        background: tuple[int, int, int] = (240, 240, 240),
+        page_background: tuple[int, int, int] = (255, 255, 255),
+        label_color: tuple[int, int, int] = (0, 0, 0),
+        antialias: bool | int = True,
+        include_annotations: bool = True,
+        mode: str = "rgb",
+        compression: str = "deflate",
+        quality: int = 85,
+        threshold: int = 128,
+        lossless: bool = False,
+        method: int = 4,
+        dither: bool = False,
+    ) -> Path:
+        """Save a contact sheet as PNG, TIFF, JPEG or optional WebP.
+
+        Layout options follow :meth:`render_contact_sheet`. Encoding options
+        follow :meth:`RasterizedPage.save`; the destination suffix chooses the
+        format, with ``.png`` added when absent. PNG, TIFF and JPEG need no
+        optional dependencies; WebP requires the ``images`` extra. The encoded
+        file replaces the destination atomically, after successful rendering
+        and encoding. Return the resulting path.
+        """
+        return self.render_contact_sheet(
+            pages=pages,
+            columns=columns,
+            thumbnail_size=thumbnail_size,
+            margin=margin,
+            spacing=spacing,
+            labels=labels,
+            background=background,
+            page_background=page_background,
+            label_color=label_color,
+            antialias=antialias,
+            include_annotations=include_annotations,
+        ).save(
+            destination,
+            mode=mode,
+            compression=compression,
+            quality=quality,
+            threshold=threshold,
+            lossless=lossless,
+            method=method,
+            dither=dither,
+        )
+
     def _annotation_records(
         self,
         pages: Iterable[int] | None,

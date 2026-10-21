@@ -1449,6 +1449,48 @@ Supported:
   previews of drawings, signatures or other details less memory-intensive. The
   interpreter still processes page content and referenced resources; content,
   image-decoding and raster resource limits continue to apply.
+- **Contact sheets**: `Document.render_contact_sheet()` returns a single RGB
+  `RasterizedPage` with a row-major grid of page thumbnails;
+  `Document.save_contact_sheet(destination, ...)` saves it as PNG, TIFF, JPEG or
+  optional WebP. This provides document overviews, scan inspection and review
+  previews without a separate imaging library for PNG/TIFF/JPEG.
+  - `pages=None` selects all pages; an iterable selects zero-based indices,
+    preserving their order and repetitions. Empty selections/documents raise
+    `PdfValidationException`. The entire selection is checked before rendering.
+  - `columns=4` is the maximum number of columns; fewer selected pages reduce
+    the column count. Rows run left to right, then top to bottom. An incomplete
+    last row retains empty cells in the sheet background.
+  - `thumbnail_size=(160, 220)` is the bounding rectangle in integer pixels,
+    excluding labels. Each effective CropBox, with page rotation applied, is
+    fitted and centered inside it without stretching, with dimensions rounded
+    up as in `render_page()`. Small pages may be enlarged. `margin=12` surrounds
+    the grid; `spacing=12` separates cells, both in nonnegative integer pixels.
+  - `labels=True` adds a 22-pixel band beneath each thumbnail rectangle. It shows
+    the one-based source page position with built-in 14-pixel decimal digits,
+    independent of fonts and optional dependencies. PDF page labels such as
+    `iii` or `A-1` are not used. A label needs `12 * digit_count - 2` pixels of
+    width; narrower rectangles are rejected. `labels=False` removes the band.
+  - RGB byte triples `background=(240, 240, 240)`,
+    `page_background=(255, 255, 255)` and `label_color=(0, 0, 0)` control the sheet,
+    page paper and numbers. `antialias=True` means 3x supersampling, `False`
+    disables it and integers 1-8 select the factor. `include_annotations=True`
+    draws visible annotation appearances, including generated appearances;
+    `False` draws page content alone. Document font substitution applies.
+  - The PDF is not edited. Only selected page contents are decoded, including
+    on streaming documents. Geometry for every selected page, final sheet pixels
+    and each supersampled thumbnail's pixels are checked before allocating the
+    sheet; page selection count obeys `max_container_items`, and the sheet and
+    individual thumbnails obey `max_raster_pixels`. Thumbnails are rendered at
+    their fitted scale and copied one at a time, rather than rendering large
+    full-resolution pages or retaining all thumbnails. The final RGB sheet is
+    held in memory; split large overviews with `pages=`. Content/image decoding
+    limits still apply, and rendering coverage matches `render_page()`.
+  - The result has 72 DPI metadata; layout uses pixels, independent of source
+    page resolution. `save_contact_sheet()` forwards `mode`, `compression`,
+    `quality`, `threshold`, `dither`, `lossless` and `method` to
+    `RasterizedPage.save()`. The suffix chooses the format; an absent suffix adds
+    `.png`. Parent folders are created, and output is replaced atomically only
+    after successful rendering and encoding. WebP requires the `images` extra.
 - Render a page to a dependency-free RGB raster with `Page.render()` or
   `Document.render_page()`, then save it as PNG, TIFF, JPEG or optional WebP through
   `RasterizedPage.save()` / `Page.save_as_image()` /
