@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
+    from aspose_pdf.link_validation import LinkValidationIssue
     from aspose_pdf.lists import TextList
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.table_extraction import ExtractedTable
@@ -1532,6 +1533,18 @@ class Page:
         if eng is None:
             raise AsposePdfException("No document loaded")
         eng.add_link(self._index, tuple(rect), target)
+
+    def validate_links(self) -> list[LinkValidationIssue]:
+        """Check this page's link annotations, resolving names as needed.
+
+        Bookmark and standalone destination-definition diagnostics are omitted.
+        Source locations retain this page's document index. See
+        :meth:`Document.validate_links` for checked targets and limitations.
+        """
+        return self._document.validate_links(
+            pages=[self._index], include_outlines=False,
+            include_named_destinations=False,
+        )
 
 
 class PageCollection:

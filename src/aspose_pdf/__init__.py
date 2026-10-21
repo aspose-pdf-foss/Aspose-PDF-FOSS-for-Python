@@ -89,6 +89,7 @@ from .interactive import (
     URIAction,
     XYZDestination,
 )
+from .link_validation import LinkValidationIssue
 from .lists import ListItem, TextList
 from .load_limits import PdfLoadLimits
 from .lowcode import (
@@ -233,6 +234,7 @@ __all__ = [
     "LaunchAction",
     "LineAnnotation",
     "LinkAnnotation",
+    "LinkValidationIssue",
     "ListItem",
     "MarkupAnnotation",
     "MemoryFontSource",

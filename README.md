@@ -115,6 +115,9 @@ flowchart TD
   `annotations.to_list()` provides editable snapshots and `annotations.export_json()` writes JSON.
   `Document.import_annotations_json()` and `Page.annotations.import_json()` append supported
   review annotations from that JSON, restoring properties and reply/popup links.
+- `Document.validate_links()` reports broken local links, bookmark targets and named
+  destinations before sharing a PDF. `Page.validate_links()` checks one page's links;
+  neither method changes the document or opens external addresses.
 - `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
   curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. A
   Bézier is written back out as the Bézier it was, so the export stays exact at any zoom. The
@@ -748,6 +751,24 @@ existing link. `urls=False` or `emails=False` disables either kind; `max_count`
 limits addresses considered. Uncertain coordinates are reported in
 `skipped_fragments`; see [recognition and geometry limits](supported-features.md#text).
 
+### Check Internal Links
+
+```python
+from aspose_pdf import Document
+
+with Document("manual.pdf") as document:
+    for issue in document.validate_links():
+        print(issue.source, issue.page_index, issue.annotation_index,
+              issue.outline_path, issue.code, issue.message)
+```
+
+The report finds missing names/pages, malformed destinations and action chains,
+and cycles. Page and annotation indices start at zero. Use `pages=[0, 2]` to select
+link sources; bookmark and destination-definition checks remain enabled unless
+`include_outlines=False` or `include_named_destinations=False` is passed.
+External target reachability and full PDF conformance are outside these checks.
+See [navigation validation coverage](supported-features.md#annotations).
+
 ### Exchange Annotations for Review
 
 ```python
@@ -983,7 +1004,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 267 public types are organized by module below.
+and delete workflows. 268 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1161,6 +1182,7 @@ and delete workflows. 267 public types are organized by module below.
 | `Annotation` | Live view over a single annotation on a page. |
 | `AnnotationCollection` | Mutable sequence-like wrapper over page annotations. |
 | `LinkAnnotation` | Concrete annotation type kept for compatibility with tests/API. |
+| `LinkValidationIssue` | Immutable local-navigation diagnostic with source location and issue code. |
 | `MarkupAnnotation` | Base class for markup annotations. |
 | `PDF3DAnnotation` | Minimal annotation wrapper for prerelease imports. |
 | `PDF3DArtwork` | Container for 3D content and named views. |
@@ -1468,6 +1490,10 @@ and delete workflows. 267 public types are organized by module below.
   exports all or selected annotations to a path, binary stream or UTF-8 bytes.
 - `Document.import_annotations_json(source, page_map=None) -> int` appends supported review
   annotations from a path, UTF-8 bytes or readable binary stream; returns the number added.
+- `Document.validate_links(pages=None, include_outlines=True, include_named_destinations=True)` /
+  `Page.validate_links()` return `list[LinkValidationIssue]` without editing the PDF.
+  Issues expose `source`, `code`, `message`, `page_index`, `annotation_index`,
+  `outline_path`, `destination_name` and `target_path`.
 
 ### Security And Signatures
 

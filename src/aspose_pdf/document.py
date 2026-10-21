@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.forms import Form
     from aspose_pdf.interactive import Action, Destination
+    from aspose_pdf.link_validation import LinkValidationIssue
     from aspose_pdf.optimization import OptimizationOptions
     from aspose_pdf.page_labels import PageLabelCollection
     from aspose_pdf.pages import Page, PageCollection
@@ -1769,6 +1770,46 @@ class Document:
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
         return import_json(self._engine_pdf, source, page_map=page_map)
+
+    def validate_links(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        include_outlines: bool = True,
+        include_named_destinations: bool = True,
+    ) -> list[LinkValidationIssue]:
+        """Report broken local navigation without changing the document.
+
+        Inspect Link annotations on zero-based ``pages`` (all by default),
+        then bookmarks in preorder and named destination definitions. Repeated
+        page selections are checked once, retaining their first occurrence.
+        Both flags must be booleans; selection/options are validated before
+        metadata reads. ``pages=[]`` still checks the enabled global sources.
+
+        Return detached immutable :class:`LinkValidationIssue` values for
+        missing targets, undefined names, missing/stale page references,
+        invalid destinations/actions, conflicting Link Dest/A entries, cycles and
+        malformed navigation containers. Check all eight standard destination
+        views with their exact arities; only XYZ and FitH/V/BH/BV parameters
+        may be null. XYZ zoom must be non-negative and FitR bounds increasing.
+        Name lookup follows each source name/string representation's priority.
+
+        Read current page identities and unsaved bookmark edits, including
+        action Next chains. URI, remote-file, JavaScript and other non-GoTo
+        actions are not executed or checked for reachability; their Next chains
+        are still inspected. No page content or appearance stream is decoded.
+        Parser/resource failures propagate under :attr:`load_limits`.
+
+        This checks navigation targets, not full PDF conformance, link geometry,
+        accessibility or exhaustive bookmark/name-tree structural correctness.
+        A targetless bookmark is valid. No repairs are made.
+        """
+        from aspose_pdf.engine.link_validation import validate
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return validate(self, pages, include_outlines, include_named_destinations)
 
     def extract_tables(
         self,

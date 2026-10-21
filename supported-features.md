@@ -3491,6 +3491,70 @@ Supported:
 
 - Read page annotations through `Page.annotations`.
 - Add, insert, update, delete, clear, iterate, and index annotations.
+- **Validate local navigation targets without editing the PDF.**
+  `Document.validate_links(pages=None, include_outlines=True,
+  include_named_destinations=True) -> list[LinkValidationIssue]` checks Link
+  annotations, current bookmark targets and named destination definitions.
+  `Page.validate_links()` checks only that page's Link annotations, resolving
+  names as needed. No optional dependency or network access is needed.
+  - Issues are frozen, detached values available from `aspose_pdf` and
+    `aspose_pdf.link_validation`. `source` is `annotation`, `outline` or
+    `named_destination`; `page_index`/`annotation_index` are zero-based, and
+    `outline_path` is a tuple of zero-based sibling indices from the root.
+    `destination_name` identifies a referenced name or a definition being
+    checked; byte-string names use Latin-1 as in `NamedDestinationCollection`.
+    `target_path` identifies `Dest`, `A.D`, an action's `Next` position, or a
+    definition container (`Dests` versus `Names.Dests`). Unrelated fields are
+    `None`. Every issue has a stable `code` and an English `message`.
+  - Codes: `missing_target` (a Link or GoTo without a target),
+    `missing_named_destination`, `missing_page` (not in the current page tree,
+    including stale generations), `invalid_destination`, `invalid_action`,
+    `conflicting_targets` (both `Dest` and `A` on a Link), `cyclic_reference`,
+    `invalid_structure` (malformed navigation containers).
+    An annotation can produce several issues, and an invalid definition may
+    be reported both at its sources and at the definition. Shared action nodes
+    within one source are checked once; cycles are still reported.
+  - Local explicit destinations require a page reference with its current
+    generation, one of the eight standard view names, and the exact parameter
+    count: `Fit`/`FitB` (0), `XYZ` (3), `FitH`/`FitBH`/`FitV`/`FitBV` (1),
+    `FitR` (4). Parameters must be finite numbers; null is allowed except in
+    `FitR`. XYZ zoom must be non-negative and FitR bounds must increase.
+    A numeric local page index, unknown view, truncated/extra parameters or
+    wrong scalar type is reported. The check is stricter than permissive
+    destination readers that fill omitted optional parameters.
+  - Both the legacy catalog `Dests` dictionary and `Names/Dests` tree are read
+    fresh. String targets prefer byte-string tree keys; name targets prefer
+    legacy name keys, with fallback to the other representation. Non-Latin-1
+    name fallback uses UTF-8 rather than replacing characters. Destination
+    dictionaries, indirect values and named aliases are followed with cycle
+    and depth checks. The check also diagnoses odd/mistyped name arrays,
+    duplicate/out-of-order keys, invalid child containers and repeated tree
+    nodes. Full name-tree `Limits`/range validation is not implemented.
+  - Action dictionaries with `S=GoTo` have their `D` checked. `Next`
+    dictionaries/arrays are traversed, including after nonlocal actions.
+    URI, GoToR/GoToE, Named, JavaScript and other non-GoTo targets are neither
+    executed nor checked for reachability. Additional actions (`AA`), catalog
+    OpenAction, form-widget triggers and other non-Link annotations are outside
+    this API. It does not verify link rectangles, appearances or accessibility.
+  - Bookmarks use the current in-memory model, including unsaved edits and
+    targets retained by the loader. A targetless heading is valid. Raw outline
+    tree conformance, entries the loader discarded, and the simultaneous
+    `Dest`/`A` conflict discarded by bookmark loading are outside this check.
+    Current page references, rather than stale cached page indices, decide
+    whether loaded targets still exist after page edits.
+  - `pages` accepts an iterable of zero-based indices; order is retained and
+    duplicates are checked once. Options and selections are validated before
+    metadata reads. `pages=[]` skips page annotations while retaining enabled
+    global checks; disabling both flags then returns an empty report directly.
+    Report order is selected pages/annotation order, bookmark preorder, then
+    definitions in file traversal order and name-tree structural diagnostics.
+  - Metadata traversal work, page index/selection sizes, array/stack/issue
+    counts, name lengths and graph depths obey `PdfLoadLimits`. Resource and
+    parser failures propagate, rather than turning into a clean report.
+    Streaming and password-protected documents are supported without decoding
+    content or appearance streams. The PDF, live bookmark handles and named
+    destination cache remain unchanged. An empty report confirms only these
+    local navigation checks; it is not a PDF conformance certification.
 - **Export annotation review data as JSON.**
   `Document.export_annotations_json(destination=None, pages=None, subtypes=None,
   overwrite=True)` returns UTF-8 bytes and optionally writes the same bytes to
