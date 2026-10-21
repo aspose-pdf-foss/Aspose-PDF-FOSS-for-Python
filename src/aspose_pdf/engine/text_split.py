@@ -101,7 +101,7 @@ def split_by_text(
         yield result
 
 
-def _check_result(pdf: SimplePdf) -> None:
+def _check_result(pdf: SimplePdf, *, context: str = "text split") -> None:
     """Apply the source policy to the newly allocated graph and decoded content."""
     budget, objects = pdf._load_budget, pdf._cos_doc.objects
     budget.check_pages(len(pdf.pages))
@@ -109,13 +109,13 @@ def _check_result(pdf: SimplePdf) -> None:
     budget.check_object_id(max(objects, default=0))
     for obj in objects.values():
         if isinstance(obj, PdfStream):
-            budget.check(len(obj.content), "max_object_bytes", "text split stream")
+            budget.check(len(obj.content), "max_object_bytes", f"{context} stream")
     total = 0
     for content in pdf.page_contents:
-        budget.check(len(content), "max_content_stream_bytes", "text split content")
-        budget.check(len(content), "max_decoded_stream_bytes", "text split content")
+        budget.check(len(content), "max_content_stream_bytes", f"{context} content")
+        budget.check(len(content), "max_decoded_stream_bytes", f"{context} content")
         total += len(content)
-    budget.check(total, "max_total_decoded_bytes", "text split content")
+    budget.check(total, "max_total_decoded_bytes", f"{context} content")
 
 
 def _refresh_targets(pdf: SimplePdf) -> None:

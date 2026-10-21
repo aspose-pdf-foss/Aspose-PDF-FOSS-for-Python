@@ -147,6 +147,9 @@ flowchart TD
   Color and area tolerances help review revised documents and scanned pages.
 - `Document.export_attachments_zip()` packages embedded files for download or handoff,
   with safe unique archive names, optional selection and a metadata manifest.
+- `Document.split_by_blank_pages()` separates scan batches at visibly blank pages,
+  optionally keeping the separators. It works on image-only scans without OCR and
+  returns independent PDFs with the original page content and resources.
 - `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
@@ -961,6 +964,29 @@ Each matching page starts a part, with preceding pages kept separately unless
 Matching uses extracted text, with optional `case_sensitive=False`; image-only
 scans need a text layer. See [splitting details](supported-features.md#documents).
 
+### Split a Scan Batch at Blank Pages
+
+```python
+from aspose_pdf import Document
+
+with Document("batch.pdf") as document:
+    parts = document.split_by_blank_pages()
+    try:
+        for number, part in enumerate(parts, 1):
+            part.save(f"part-{number:03d}.pdf")
+    finally:
+        for part in parts:
+            part.dispose()
+```
+
+Blank separator pages are excluded by default. With `keep_separators=True`, they
+stay at the end of the preceding part, with leading blanks in the first part.
+Consecutive separators do not create extra parts. Blank detection supports the
+same `dpi`, `white_threshold`, `max_ink_ratio` and `include_annotations` options
+as `find_blank_pages()`. An entirely blank batch produces no parts by default,
+or one copy when keeping separators. The source PDF is unchanged. See
+[splitting details](supported-features.md#documents).
+
 ### Find Visually Blank Pages
 
 Find blank scanned sides from their rendered appearance:
@@ -1463,6 +1489,8 @@ and delete workflows. 269 public types are organized by module below.
     versioned bookmark tree, preserving supported targets and styles
   - `split_by_text(pattern, regex=False, case_sensitive=True, include_preamble=True) -> list[Document]` —
     split a batch at pages containing a literal or regular expression match
+  - `split_by_blank_pages(keep_separators=False, dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> list[Document]` —
+    separate scan batches using visibly blank separator pages
   - `interleave(other, reverse_other=False, strict=True) -> Document` — alternate
     front/back scans into a new document, optionally reversing the back-side order
   - `find_blank_pages(pages=None, dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> list[int]` —

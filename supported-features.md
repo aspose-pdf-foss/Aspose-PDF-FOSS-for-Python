@@ -422,6 +422,59 @@ Supported:
     partial list is returned; already created parts are disposed and the source
     outline model is restored. New parts are unencrypted and do not preserve
     the validity of existing digital signatures. No extra dependency is needed.
+- **Split scans at blank separator pages.**
+  `Document.split_by_blank_pages(keep_separators=False, dpi=72,
+  white_threshold=250, max_ink_ratio=0, include_annotations=True)` returns an
+  ordered list of independent `Document` instances without editing the input.
+  It works with image-only scans, without OCR, text headings or bookmarks.
+  - By default, every nonblank run becomes one part and blank separator pages
+    are omitted from outputs. Leading/trailing blanks are omitted too;
+    consecutive blank pages create one boundary, with no empty or blank-only
+    parts. For example, content A / blank / blank / content B becomes two
+    one-page parts. With `keep_separators=True`, each separating blank run
+    stays at the end of the preceding part, leading blanks stay in the first
+    part and trailing blanks in the last. Every input page then appears exactly
+    once in source order.
+  - Empty documents return `[]`. Entirely blank documents return `[]` by
+    default or one complete copy with `keep_separators=True`. A nonempty
+    document without separators returns one independent copy. No generated
+    part has zero pages, and pages are never divided internally.
+  - Detection is shared with `find_blank_pages()`: pages render on white paper
+    at finite positive `dpi`, without antialiasing. A pixel counts as ink if
+    any RGB channel is below integer `white_threshold` (1-255). An ink fraction
+    at most `max_ink_ratio` (0-1) counts as blank. Defaults are 72 DPI, threshold
+    250 and zero tolerated ink. Visible annotation/form appearances count
+    unless `include_annotations=False`. CropBox, rotation, layer visibility and
+    font substitution follow the renderer. Flags require actual booleans;
+    invalid detection arguments raise `PdfValidationException`, even on empty
+    input. Disposed documents are rejected.
+  - Page count is checked against `max_pages` and `max_container_items` before
+    rendering. Every page is classified before importing any output, with only
+    one completed detection raster held at a time. Streaming page content and
+    full-document text caches remain lazy; content, decoding and raster limits
+    still apply. Import uses the source policy for page/object counts, object
+    slots, stream sizes and decoded page content. Results are an in-memory list
+    of imported PDFs; the shared importer may materialize image resource views.
+  - Parts retain source Info metadata and PDF version, page content/resources,
+    page boxes, rotation, labels, annotations, relevant form fields, layers and
+    imported structure tags through the same importer as `extract_pages()`.
+    Bookmarks retain supported targets/styles and unsaved edits; children of
+    excluded parents are promoted. Bookmarks targeting discarded separators
+    are omitted when they have no retained children. Local links within a part
+    are remapped; links to omitted pages have null page targets, as with
+    `extract_pages()`. Document-level attachments are omitted. New parts are
+    unencrypted; source signatures do not authenticate them.
+  - Results survive source disposal and can be edited independently. Dispose
+    each returned document when done. Source files, page data, metadata,
+    protection and the current outline model are unchanged. A rendering,
+    validation or import failure returns no partial list: created parts are
+    disposed and the original outline model is restored.
+  - Blankness is a visual heuristic at the chosen resolution, with the
+    renderer's supported features and limitations. Tiny/faint marks can be
+    missed, while scan borders/noise can prevent separation. Higher DPI costs
+    more time and memory. Hidden text and other data can exist on blank-looking
+    pages. Keeping a page preserves its original content, including hidden
+    data; splitting does not erase anything from the source PDF.
 - Run resource optimization and stream compression helpers.
 - Preserve and edit outlines/bookmarks. **A bookmark loaded from a file keeps
   the target the file held, exactly** -- its view (`/XYZ` position and zoom,

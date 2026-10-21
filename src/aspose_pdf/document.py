@@ -4183,6 +4183,75 @@ class Document:
             raise
         return result
 
+    def split_by_blank_pages(
+        self,
+        *,
+        keep_separators: bool = False,
+        dpi: float = 72.0,
+        white_threshold: int = 250,
+        max_ink_ratio: float = 0.0,
+        include_annotations: bool = True,
+    ) -> list[Document]:
+        """Split a scan batch into independent parts using visibly blank pages.
+
+        With ``keep_separators=False`` (default), discard blank pages from the
+        outputs and return each nonblank run as one part. Leading, trailing
+        and consecutive blank pages do not create empty or blank-only parts.
+        With ``keep_separators=True``, attach each separating blank run to the
+        preceding part, keeping leading blanks in the first part. Every source
+        page then appears exactly once. An entirely blank document returns []
+        by default, or one full copy when keeping separators; an empty document
+        always returns []. A document without blank pages returns one copy.
+
+        Detection follows :meth:`find_blank_pages`: white paper, antialiasing
+        disabled, finite positive ``dpi``, byte ``white_threshold`` (1-255) and
+        tolerated ink fraction ``max_ink_ratio`` (0-1). Visible annotations and
+        form appearances count unless ``include_annotations=False``. CropBox,
+        rotation, layer visibility and font substitution follow the renderer.
+        Image-only scans work without OCR. Tiny or faint marks, scan borders
+        and unsupported graphics are subject to the renderer's limitations.
+        Blank-looking pages can still contain hidden text or other data.
+
+        Options and page-count limits are checked first. All pages are scanned
+        one at a time before any part is imported, without filling all-page
+        content/text caches. Results follow :meth:`extract_pages`: retain Info
+        metadata, page resources, boxes, labels, annotations, fields, layers,
+        tags and relevant bookmarks, including live edits and promoted children
+        of excluded parents. Local links are remapped by the page importer;
+        targets outside a part cannot remain valid local page targets.
+        Document-level attachments are not copied. Parts are independent,
+        inherit resource limits, and start without source encryption or valid
+        source signatures. Dispose every returned document when done.
+
+        Neither the source nor its files are edited. Rendering/import errors
+        propagate, with partial results disposed and the source outline model
+        restored. This operation copies whole pages; it does not erase data
+        from the original PDF or clear hidden data on pages retained in outputs.
+        """
+        from aspose_pdf.engine.blank_split import split_by_blank_pages
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        result = []
+        try:
+            for engine in split_by_blank_pages(
+                self,
+                keep_separators=keep_separators,
+                dpi=dpi,
+                white_threshold=white_threshold,
+                max_ink_ratio=max_ink_ratio,
+                include_annotations=include_annotations,
+            ):
+                part = Document(limits=self._load_limits)
+                part._engine_pdf = engine
+                result.append(part)
+        except BaseException:
+            for part in result:
+                part.dispose()
+            raise
+        return result
+
     def n_up(
         self,
         rows: int = 2,
