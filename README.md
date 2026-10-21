@@ -142,6 +142,9 @@ flowchart TD
 - `Document.render_contact_sheet()` / `save_contact_sheet()` create a numbered grid of
   page thumbnails for a quick document overview or review preview. Select pages, set the
   grid and thumbnail dimensions, and save as PNG, TIFF, JPEG or optional WebP.
+- `Document.compare_visual()` compares PDF page views with pixel counts, difference
+  ratios and bounding boxes, plus optional images highlighting changes in red.
+  Color and area tolerances help review revised documents and scanned pages.
 - `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
@@ -1000,6 +1003,28 @@ Use `pages=[0, 3, 7]` to inspect a subset. The document is unchanged.
 This detects exact rendered matches; noisy scans can differ, and hidden data
 can differ on matching pages. See [comparison details](supported-features.md#pages).
 
+### Compare PDF Page Views
+
+```python
+from aspose_pdf import Document
+
+with Document("before.pdf") as before, Document("after.pdf") as after:
+    results = before.compare_visual(after, dpi=96, include_diff_images=True)
+    for pair, result in enumerate(results):
+        if not result.matches:
+            print(result.page_index, result.other_page_index,
+                  result.difference_ratio, result.bbox)
+            result.diff_image.save(f"diff-{pair + 1}.png")
+```
+
+Pages are paired in order, with missing pages reported when counts differ.
+Use `pages=` and `other_pages=` to select each side independently.
+Defaults require equal raster dimensions and identical RGB pixels. For scan
+noise, explicitly allow color differences with `tolerance=3` and a changed
+area with `max_diff_ratio=0.001`. Neither PDF is edited. This compares rendered
+appearance at the chosen DPI, so hidden content and unsupported drawing can
+differ even when views match. See [comparison details](supported-features.md#pages).
+
 ### Trim White Page Margins
 
 Remove excess white space around scanned or drawn content:
@@ -1045,7 +1070,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 268 public types are organized by module below.
+and delete workflows. 269 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1136,6 +1161,7 @@ and delete workflows. 268 public types are organized by module below.
 | `Page` | A page of a PDF document. |
 | `PageCollection` | A collection to manage PDF pages within a Document. |
 | `PageInfo` | Class with 1 property. |
+| `PageVisualComparison` | Immutable page-pair comparison with changed pixels, ratio, bounds, match status and optional difference image. |
 | `Paragraph` | One paragraph of a text block: what it says, and how it differs from the block. |
 | `PdfAConversionResult` | Result of a PDF/A conversion operation. |
 | `PdfAValidateOptions-pdfa` | Container for PDF/A validation settings. |
@@ -1405,6 +1431,7 @@ and delete workflows. 268 public types are organized by module below.
     `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, overwrite) -> list[Path]`
   - `render_contact_sheet(pages, columns, thumbnail_size, margin, spacing, labels, background, page_background, label_color, antialias, include_annotations) -> RasterizedPage` /
     `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
+  - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images) -> list[PageVisualComparison]`
   - `to_html(pages, title, embed_images, paragraph_gap, clip_to_page) -> str` /
     `to_markdown(pages, title, embed_images, markdown_format, paragraph_gap, clip_to_page) -> str` /
     `save_as_html(destination, pages, title, embed_images, split_into_pages, resources_directory, paragraph_gap, clip_to_page, overwrite) -> list[Path]` /

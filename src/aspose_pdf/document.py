@@ -88,6 +88,7 @@ if TYPE_CHECKING:
         PageMode,
         ViewerPreferences,
     )
+    from aspose_pdf.visual_comparison import PageVisualComparison
     from aspose_pdf.xmp import XmpPacket
 
 logger = logging.getLogger(__name__)
@@ -3883,6 +3884,75 @@ class Document:
             pages=pages,
             dpi=dpi,
             include_annotations=include_annotations,
+        )
+
+    def compare_visual(
+        self,
+        other: Document,
+        *,
+        pages: Iterable[int] | None = None,
+        other_pages: Iterable[int] | None = None,
+        dpi: float = 72.0,
+        tolerance: int = 0,
+        max_diff_ratio: float = 0.0,
+        include_annotations: bool = True,
+        include_diff_images: bool = False,
+    ) -> list[PageVisualComparison]:
+        """Compare rendered page pairs and optionally retain red difference images.
+
+        ``other`` must be an open ``Document``. ``pages`` and ``other_pages``
+        independently select zero-based indices in their respective documents;
+        ``None`` means all pages on that side. Order and repetitions are kept.
+        Selections are paired by position; a shorter side produces missing-page
+        results with a ``None`` index and size. Two empty selections return [].
+
+        Pages render on white paper at finite positive ``dpi``, without
+        antialiasing, using each document's font substitution, CropBox, rotation
+        and layer visibility. Visible annotations and form appearances count
+        unless ``include_annotations=False``. Views align at the top-left
+        without scaling, alignment correction, deskewing or page matching.
+
+        A pixel changes when any RGB channel differs by more than ``tolerance``
+        (integer 0-255). Pixels covered by only one page always change. The
+        difference ratio divides changed pixels by the union of page areas.
+        ``matches`` requires both pages, equal raster dimensions and a ratio
+        at most ``max_diff_ratio`` (0-1). Default tolerances require exact
+        rendered equality. Bounding boxes use top-left pixel coordinates with
+        exclusive upper bounds; metadata and hidden content are not compared.
+
+        ``include_diff_images=True`` attaches a ``RasterizedPage`` to every
+        result: changes are red over pale grayscale context. Images enclose
+        both views, with white padding outside both pages. Save them through
+        ``result.diff_image.save(path)``. Without this flag, only metrics are
+        retained. Reports and images outlive the source documents.
+
+        Both selections, geometry and comparison canvas limits are checked
+        before rendering. The stricter enabled resource limits apply to shared
+        work and output images; retained images also share a cumulative
+        ``max_raster_pixels`` allowance. Selected pages render one pair at a
+        time; streaming content remains lazy. Errors propagate without partial
+        results, and neither PDF is edited. Equality depends on the renderer's
+        coverage and resolution; tiny differences or unsupported drawing may
+        be missed, and different physical sizes can round to the same raster.
+        """
+        from aspose_pdf.engine.visual_comparison import compare_visual
+
+        self._ensure_not_disposed()
+        if not isinstance(other, Document):
+            raise PdfValidationException("other must be a Document")
+        other._ensure_not_disposed()
+        if self._engine_pdf is None or other._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return compare_visual(
+            self,
+            other,
+            pages=pages,
+            other_pages=other_pages,
+            dpi=dpi,
+            tolerance=tolerance,
+            max_diff_ratio=max_diff_ratio,
+            include_annotations=include_annotations,
+            include_diff_images=include_diff_images,
         )
 
     def extract_pages(self, selection: Iterable[int] | slice) -> Document:

@@ -1037,6 +1037,70 @@ Supported:
     Matching views can still contain different invisible text, form data,
     annotation contents or other stored information; this is not proof of
     byte-identical documents or interchangeable page data.
+- **Compare PDF page views.** `Document.compare_visual(other, pages=None,
+  other_pages=None, dpi=72, tolerance=0, max_diff_ratio=0,
+  include_annotations=True, include_diff_images=False)` returns an ordered
+  `list[PageVisualComparison]`. This supports revision reviews, scan checks and
+  raster regression checks without a text layer or additional dependency.
+  - `other` is an open `Document`. The two page selectors are independent:
+    `None` means all pages in that document; explicit iterables contain
+    zero-based indices, keeping order and repetitions. Entries are paired by
+    position, without automatic page matching. The shorter selection produces
+    missing-page results on its remaining pairs, with `None` indices/sizes.
+    Two empty selections return `[]`; one empty selection reports every page
+    on the other side as missing. All options and both full selections are
+    validated, even for empty inputs. Invalid arguments raise
+    `PdfValidationException`; disposed documents are rejected.
+  - Each page renders on white paper with antialiasing disabled at finite
+    positive `dpi`. CropBox, rotation, layer visibility and each document's
+    font substitution follow the shared renderer. Visible annotations and
+    form appearances count unless `include_annotations=False`. Views align at
+    the top-left, without rescaling, deskewing, margin removal or registration.
+  - A common pixel changes when any RGB channel differs by **more than**
+    `tolerance`, an integer from 0 to 255. Pixels covered by only one page
+    always change, even if white or within the color tolerance. Each result
+    contains source `page_index`/`other_page_index`, pixel `size`/`other_size`,
+    `changed_pixels`, `total_pixels`, `difference_ratio`, `bbox`, `matches` and
+    optional `diff_image`. `total_pixels` is the union of the two page
+    rectangles, excluding padding outside both. `difference_ratio` is changed
+    pixels divided by that union. `bbox=(x0, y0, x1, y1)` uses a top-left pixel
+    origin with exclusive upper bounds; `None` means no changed pixels.
+  - `matches` requires both pages, equal raster dimensions, and a difference
+    ratio at most `max_diff_ratio` (a finite number from 0 to 1). The default
+    requires exact rendered equality. Missing/differently sized pages never
+    match, even with a ratio allowance of 1. Changes allowed by the area allowance
+    still appear in metrics, bounding boxes and images; only `matches` uses it.
+    Color-tolerated pixels are excluded from the changed count and mask.
+  - With `include_diff_images=True`, every result includes a detached RGB
+    `RasterizedPage` at the chosen DPI, enclosing both views. Changed pixels
+    are red, unchanged pixels show pale grayscale context from the right page
+    where present (otherwise the left), and padding outside both is white.
+    `result.diff_image.save(path)` writes PNG, TIFF, JPEG or optional WebP;
+    encoding options and WebP dependencies follow `RasterizedPage.save()`.
+    Without the flag, only compact metrics are retained. Reports and images
+    remain usable after both documents close.
+  - Both selectors, every selected page's geometry and enclosing comparison
+    canvas are checked before rendering. Shared work uses the stricter enabled
+    limits from the two documents. `max_container_items` bounds selections and
+    result count; `max_raster_pixels` bounds each enclosing canvas and, when
+    images are requested, the cumulative pixels in all retained images. This
+    prevents a collection of individually small images from bypassing the
+    limit. Use subsets or metrics alone for large comparisons. Output encoders
+    inherit the combined limits; content/image decoding retains each source's
+    own limits. Errors propagate without partial results.
+  - Selected pages render one pair at a time, with at most two completed page
+    rasters held at once, plus renderer work buffers and requested output
+    images. Streaming documents decode selected page content without filling
+    all-page caches. Password-protected documents are supported after opening
+    them normally. Comparison does not edit page data, boxes, annotations,
+    form values, metadata, protection or files, and subsequent calls observe
+    edits and layer visibility changes.
+  - Equality is specific to the renderer's coverage and chosen resolution.
+    Tiny changes may be missed, unsupported graphics may not draw, and
+    different physical dimensions can round to the same raster dimensions.
+    Hidden text, metadata, annotation contents and other stored data can differ
+    when page views match. This is not byte, semantic, text or signature
+    comparison, OCR, perceptual matching, or proof that PDFs are interchangeable.
 - **Automatically trim white page margins.**
   `Page.auto_crop(margin=0, dpi=72, white_threshold=250,
   include_annotations=True)` shrinks the current effective CropBox to the

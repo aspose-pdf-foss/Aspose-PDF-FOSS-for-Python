@@ -164,6 +164,7 @@ from .viewer_preferences import (
     ReadingDirection,
     ViewerPreferences,
 )
+from .visual_comparison import PageVisualComparison
 from .visualization import RasterizedPage
 from .xmp import (
     NamespaceProvider,
@@ -260,6 +261,7 @@ __all__ = [
     "PageNumberStamp",
     "PageSize",
     "PageStamp",
+    "PageVisualComparison",
     "Paragraph",
     "PdfAValidateOptions",
     "PdfAValidationResult",
