@@ -145,6 +145,8 @@ flowchart TD
 - `Document.compare_visual()` compares PDF page views with pixel counts, difference
   ratios and bounding boxes, plus optional images highlighting changes in red.
   Color and area tolerances help review revised documents and scanned pages.
+- `Document.export_attachments_zip()` packages embedded files for download or handoff,
+  with safe unique archive names, optional selection and a metadata manifest.
 - `Document.encrypt_for_recipients()` seals a document for certificate holders instead of a
   shared password (the `/Adobe.PubSec` handler), and `Document(path, certificate=..., private_key=...)`
   opens one. Each recipient gets its own permissions — one may print, another only read the same
@@ -1003,6 +1005,22 @@ Use `pages=[0, 3, 7]` to inspect a subset. The document is unchanged.
 This detects exact rendered matches; noisy scans can differ, and hidden data
 can differ on matching pages. See [comparison details](supported-features.md#pages).
 
+### Export PDF Attachments as ZIP
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    document.export_attachments_zip("attachments.zip", include_manifest=True)
+    selected = document.export_attachments_zip(names=["data.csv", "notes.txt"])
+```
+
+The method returns ZIP bytes and optionally writes a file or binary stream.
+It preserves attachment contents, flattens paths into safe basenames, and renames
+collisions without losing files. The optional `manifest.json` maps archive names
+back to original PDF names and metadata. The PDF is unchanged; only document-level
+embedded files are included. See [ZIP export details](supported-features.md#attachments).
+
 ### Compare PDF Page Views
 
 ```python
@@ -1454,6 +1472,7 @@ and delete workflows. 269 public types are organized by module below.
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
+  - `export_attachments_zip(destination=None, names=None, compression="deflate", compresslevel=6, include_manifest=False, overwrite=True) -> bytes`
   - properties: `pages`, `page_labels`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
     `is_pdfua_compliant`, `font_substitution`, `page_mode`, `page_layout`, `open_action`,

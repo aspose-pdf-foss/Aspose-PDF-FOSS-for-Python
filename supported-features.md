@@ -4017,6 +4017,68 @@ Boundaries:
 
 Supported:
 
+- **Export attachments as ZIP** with
+  `Document.export_attachments_zip(destination=None, names=None,
+  compression="deflate", compresslevel=6, include_manifest=False, overwrite=True)`.
+  Returns ZIP bytes and optionally writes a path or binary stream, for bulk
+  download, handoff or external processing without extracting individual files.
+  The standard-library ZIP implementation needs no optional dependency.
+  - `names=None` includes document-level embedded files sorted by original PDF
+    name. A string selects one exact name; an iterable selects names in its
+    order, deduplicating exact repeats. Unknown names raise `KeyError`. Empty
+    selections or documents produce valid empty ZIPs (or an empty manifest
+    when requested). All selection entries and options are validated before
+    compression; invalid argument types raise `PdfValidationException`.
+  - Archive entries are flat regular files. Both slash styles are stripped to
+    the final basename; names are normalized to Unicode NFC, control/format
+    characters and line separators and `<>:"/\|?*` are replaced by `_`, and
+    leading/trailing ASCII dots and spaces are removed. Empty basenames become
+    `attachment`. Windows device names such as `CON`, `NUL` and `COM1` are
+    prefixed with `_`. Names are shortened to at most 240 UTF-8 bytes without
+    splitting characters, retaining an extension where practical (extensions
+    may also be shortened for oversized names).
+  - Collisions after sanitizing, normalization, shortening or Unicode case
+    folding receive `_2`, `_3`, etc. before the extension, in selection order.
+    Generated names are checked against all names already allocated. Original
+    payload bytes are unchanged; nothing is extracted or executed, and
+    symlinks, directory entries and executable permission bits are not emitted.
+  - `compression` accepts case-insensitive `"deflate"` (default) or `"stored"`.
+    `compresslevel` is an integer 0-9; it is validated but unused for stored
+    output. Fixed ZIP timestamps (1980-01-01) and regular-file permissions
+    (`0644`) make repeated exports of unchanged selections byte-identical in
+    the same runtime. Compressed bytes may vary across zlib/Python versions.
+    PDF creation/modification dates are carried in the manifest, not ZIP dates.
+  - `include_manifest=True` appends `manifest.json`, reserving that member name
+    case-insensitively so a colliding attachment is renamed. Schema version 1
+    has `schema_version: 1` and an `attachments` array, one record per selected
+    original attachment: `name`, `archive_name`, `size`, `mime_type`,
+    `description`, `relationship`, `creation_date` and `mod_date`. Dates use
+    ISO 8601 strings with offsets when available; absent/unparseable dates and
+    absent metadata use JSON null. Metadata follows the typed attachment read
+    model, with in-memory edits taking precedence. This is an informational
+    mapping, not a lossless Filespec backup or an archive-import format.
+  - Resource checks apply to exports of in-memory authored attachments as well
+    as loaded files: `max_container_items` bounds selection entries (including
+    repeated names) and ZIP entries (including the manifest); `max_object_bytes`
+    bounds input text and serialized manifest bytes; `max_decoded_stream_bytes`
+    bounds each selected payload and the manifest; `max_total_decoded_bytes`
+    bounds their combined size for this export. Already decoded input bytes
+    are not charged twice to the document's decoding budget. Archive growth,
+    including its central directory, is checked before buffer writes against
+    `max_codec_work_bytes`. These bounds can be adjusted through `load_limits`.
+  - The complete archive is built in memory before writing the destination.
+    Paths get missing parent directories and atomic replacement;
+    `overwrite=False` refuses an existing file. Binary streams are written
+    from their current position, retry short writes and remain open. Validation
+    or compression errors do not touch either destination type; an actual
+    stream-write failure can leave partial output. Filesystem staging failures
+    preserve an existing destination and remove the temporary file.
+  - Export does not edit the PDF, attachment names/bytes/metadata or source
+    protection, and subsequent calls observe attachment edits. No page content
+    is read, including on streaming inputs. Attachment payloads themselves are
+    already decoded during document loading, as in the existing attachment
+    reader. Password-protected PDFs are supported after opening them normally.
+
 - **Change one attachment without re-supplying the rest** with
   `Document.update_attachment(name, ...)`: an argument left out is left alone,
   so editing a description keeps the MIME type, dates and relationship the file
@@ -4053,6 +4115,12 @@ Supported:
 
 Boundaries:
 
+- ZIP export covers the document-level `attachments` mapping; file-attachment
+  annotations and associated files not surfaced there are not collected
+  separately. It exports plaintext attachment payloads after opening an
+  encrypted PDF; the produced ZIP has no password or encryption. The ZIP is
+  buffered in memory together with existing payloads and an optional manifest,
+  rather than streamed directly to the destination.
 - The typed `FileSpecification` is a snapshot, not a live handle: it is read
   back from the document, copies mutable `bytearray` contents at construction,
   and changing one does not change the file. Attachments are mutated through

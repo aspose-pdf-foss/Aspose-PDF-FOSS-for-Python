@@ -514,6 +514,72 @@ class Document:
         self._engine_pdf.attachment_read_meta.pop(name, None)
         return self
 
+    def export_attachments_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        names: str | Iterable[str] | None = None,
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return embedded-file payloads as ZIP bytes, optionally writing them.
+
+        ``names=None`` selects all document-level attachments sorted by their
+        original names. A string selects one exact PDF attachment name; an
+        iterable preserves selection order and includes repeated names once.
+        Unknown names raise ``KeyError``. An empty selection produces a valid
+        empty ZIP. File-attachment annotations are not included.
+
+        ZIP members use flat basenames, with both slash styles removed. Unsafe
+        characters and controls are replaced, leading/trailing dots and spaces
+        removed, Windows device names prefixed, and UTF-8 names shortened to
+        240 bytes. Empty names become ``attachment``. Case-insensitive Unicode
+        collisions receive ``_2``, ``_3``, etc. before the extension. Payloads
+        are unchanged; no attachment is extracted to the filesystem.
+
+        ``compression`` is ``"deflate"`` (default) or ``"stored"``;
+        ``compresslevel`` is an integer from 0 to 9, ignored for stored output.
+        Archive timestamps and permissions are fixed for deterministic output
+        in the same runtime. ``include_manifest=True`` appends ``manifest.json``
+        with schema version 1 and original/archive names, sizes, MIME types,
+        descriptions, dates as ISO 8601 strings or null, and relationships.
+        The manifest name is reserved, so an attachment of that name is renamed.
+
+        Selections, entries, text, per-file and cumulative payload sizes obey
+        ``load_limits``. Manifest size is bounded by ``max_object_bytes``;
+        archive growth by ``max_codec_work_bytes``. ZIP bytes are built in
+        memory before any destination is written. Files are replaced atomically
+        with parent directories created; ``overwrite=False`` refuses existing
+        files. Binary streams are written at their current position, retry
+        short writes and remain open. A stream failure can leave partial bytes.
+        Neither the PDF nor its attachment mapping is changed; page content is
+        not decoded, including on streaming documents. PDF attachment payloads
+        are already loaded by the document's attachment reader.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.attachment_zip import export_zip
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = export_zip(
+            self,
+            names=names,
+            compression=compression,
+            compresslevel=compresslevel,
+            include_manifest=include_manifest,
+        )
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def update_attachment(
         self,
         name: str,
