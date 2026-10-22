@@ -145,6 +145,8 @@ flowchart TD
 - `Document.compare_visual()` compares PDF page views with pixel counts, difference
   ratios and bounding boxes, plus optional images highlighting changes in red.
   Color and area tolerances help review revised documents and scanned pages.
+- `Document.compare_text()` reviews extracted text changes page by page, with
+  unified diffs and optional case, whitespace and tagged-artifact filtering.
 - `Document.export_attachments_zip()` packages embedded files for download or handoff,
   with safe unique archive names, optional selection and a metadata manifest.
 - `Document.split_by_blank_pages()` separates scan batches at visibly blank pages,
@@ -1047,6 +1049,26 @@ collisions without losing files. The optional `manifest.json` maps archive names
 back to original PDF names and metadata. The PDF is unchanged; only document-level
 embedded files are included. See [ZIP export details](supported-features.md#attachments).
 
+### Compare PDF Text Revisions
+
+```python
+from aspose_pdf import Document
+
+with Document("before.pdf") as before, Document("after.pdf") as after:
+    for result in before.compare_text(after, ignore_whitespace=True):
+        if not result.matches:
+            print(result.unified_diff)
+```
+
+Pages are paired in order; use `pages=` and `other_pages=` for independent
+selections. Missing pages are reported explicitly. Reports retain the original
+extracted strings, while matching and diffs use the requested normalization.
+Use `case_sensitive=False` for Unicode case folding or `skip_artifacts=True`
+to omit explicitly tagged artifacts such as page numbers. Extraction needs a
+text layer and follows its reading-order limitations. It does not compare
+graphics, metadata or form values. Neither PDF is edited. See
+[text comparison details](supported-features.md#text).
+
 ### Compare PDF Page Views
 
 ```python
@@ -1114,7 +1136,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 269 public types are organized by module below.
+and delete workflows. 270 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1205,6 +1227,7 @@ and delete workflows. 269 public types are organized by module below.
 | `Page` | A page of a PDF document. |
 | `PageCollection` | A collection to manage PDF pages within a Document. |
 | `PageInfo` | Class with 1 property. |
+| `PageTextComparison` | Immutable page-pair text report with original strings, match status and a normalized unified diff. |
 | `PageVisualComparison` | Immutable page-pair comparison with changed pixels, ratio, bounds, match status and optional difference image. |
 | `Paragraph` | One paragraph of a text block: what it says, and how it differs from the block. |
 | `PdfAConversionResult` | Result of a PDF/A conversion operation. |
@@ -1476,6 +1499,8 @@ and delete workflows. 269 public types are organized by module below.
   - `render_contact_sheet(pages, columns, thumbnail_size, margin, spacing, labels, background, page_background, label_color, antialias, include_annotations) -> RasterizedPage` /
     `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
   - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images) -> list[PageVisualComparison]`
+  - `compare_text(other, pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False, skip_artifacts=False) -> list[PageTextComparison]` —
+    review extracted page text revisions with normalized unified diffs
   - `to_html(pages, title, embed_images, paragraph_gap, clip_to_page) -> str` /
     `to_markdown(pages, title, embed_images, markdown_format, paragraph_gap, clip_to_page) -> str` /
     `save_as_html(destination, pages, title, embed_images, split_into_pages, resources_directory, paragraph_gap, clip_to_page, overwrite) -> list[Path]` /

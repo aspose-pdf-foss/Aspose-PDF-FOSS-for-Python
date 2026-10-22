@@ -81,6 +81,7 @@ if TYPE_CHECKING:
     from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tagged import TaggedContent
     from aspose_pdf.text import TextHighlightResult, TextWord
+    from aspose_pdf.text_comparison import PageTextComparison
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.validation import CertificationLevel
     from aspose_pdf.viewer_preferences import (
@@ -3950,6 +3951,64 @@ class Document:
             pages=pages,
             dpi=dpi,
             include_annotations=include_annotations,
+        )
+
+    def compare_text(
+        self,
+        other: Document,
+        *,
+        pages: Iterable[int] | None = None,
+        other_pages: Iterable[int] | None = None,
+        case_sensitive: bool = True,
+        ignore_whitespace: bool = False,
+        skip_artifacts: bool = False,
+    ) -> list[PageTextComparison]:
+        """Compare extracted page text and return detached per-pair reports.
+
+        Select pages independently with zero-based iterables; order and repeats
+        are retained. ``None`` means all pages. Pages are paired by position,
+        without automatic alignment. Unpaired pages have a missing index/text
+        on the other side and never match, even against blank pages. Two empty
+        selections return []. Both selectors and all flags are validated first.
+
+        Defaults compare exact extracted strings. ``ignore_whitespace=True``
+        collapses Unicode whitespace runs to a single space and strips leading
+        and trailing whitespace; word boundaries remain significant.
+        ``case_sensitive=False`` applies Unicode case folding. Original text
+        remains in each report; ``unified_diff`` describes the normalized text
+        with three lines of context. Missing blank pages have headers alone.
+        ``skip_artifacts=True`` omits explicitly marked Artifact text.
+
+        Uses ordinary full-page text extraction, including hidden OCR text and
+        its reading-order/font limitations. Images need an existing text layer;
+        appearance, metadata, annotations and form values are not compared.
+        CropBox and rotation do not clip or reorder extraction. This is not OCR
+        or a semantic comparison and does not establish PDF equivalence.
+
+        Extracts one pair at a time without filling full-document text/content
+        caches. Reports retain original strings and diffs and survive document
+        disposal. Shared work uses the stricter enabled source limits for pair
+        count, string/diff UTF-8 sizes and cumulative retained report bytes;
+        content decoding keeps each source's own limits. Line diff matching can
+        be expensive for repetitive text; use page subsets for large inputs.
+        Errors propagate without a partial list. Neither document is edited.
+        """
+        from aspose_pdf.engine.text_comparison import compare_text
+
+        self._ensure_not_disposed()
+        if not isinstance(other, Document):
+            raise PdfValidationException("other must be a Document")
+        other._ensure_not_disposed()
+        if self._engine_pdf is None or other._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return compare_text(
+            self,
+            other,
+            pages=pages,
+            other_pages=other_pages,
+            case_sensitive=case_sensitive,
+            ignore_whitespace=ignore_whitespace,
+            skip_artifacts=skip_artifacts,
         )
 
     def compare_visual(

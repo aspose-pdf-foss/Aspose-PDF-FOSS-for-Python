@@ -59,6 +59,19 @@ def _coerce_limits(limits: PdfLoadLimits | None) -> PdfLoadLimits:
     return limits
 
 
+def _combined_limits(left: PdfLoadLimits, right: PdfLoadLimits) -> PdfLoadLimits:
+    """Keep the stricter enabled policy for work shared by two documents."""
+    values = {}
+    for item in fields(PdfLoadLimits):
+        enabled = [
+            value
+            for value in (getattr(left, item.name), getattr(right, item.name))
+            if value is not None
+        ]
+        values[item.name] = min(enabled) if enabled else None
+    return PdfLoadLimits(**values)
+
+
 def _read_limited(stream, budget: _LoadBudget) -> bytes:
     """Read a binary stream without crossing the configured input limit."""
     limit = budget.limits.max_input_bytes

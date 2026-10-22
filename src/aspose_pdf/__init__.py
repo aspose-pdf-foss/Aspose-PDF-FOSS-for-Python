@@ -144,6 +144,7 @@ from .tables import Cell, Row, Table
 from .tagged import StructureElement, TaggedContent
 from .text import TextHighlightResult, TextWord
 from .text_block import Paragraph, TextBlock
+from .text_comparison import PageTextComparison
 from .text_layout import TextLayoutOptions
 from .validation import (
     CertificationLevel,
@@ -261,6 +262,7 @@ __all__ = [
     "PageNumberStamp",
     "PageSize",
     "PageStamp",
+    "PageTextComparison",
     "PageVisualComparison",
     "Paragraph",
     "PdfAValidateOptions",

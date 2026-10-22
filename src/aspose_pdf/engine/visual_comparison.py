@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
-from dataclasses import fields
 from itertools import zip_longest
 from typing import TYPE_CHECKING
 
 from aspose_pdf.exceptions import PdfValidationException
-from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
+from aspose_pdf.load_limits import PdfLoadLimits, _combined_limits, _LoadBudget
 from aspose_pdf.visual_comparison import PageVisualComparison
 
 from .blank_pages import _number, _options, _render
@@ -18,19 +17,6 @@ from .text_selection import page_indexes
 
 if TYPE_CHECKING:
     from aspose_pdf.document import Document
-
-
-def _combined_limits(left: PdfLoadLimits, right: PdfLoadLimits) -> PdfLoadLimits:
-    """Keep the stricter enabled limit for shared work and retained images."""
-    values = {}
-    for item in fields(PdfLoadLimits):
-        enabled = [
-            value
-            for value in (getattr(left, item.name), getattr(right, item.name))
-            if value is not None
-        ]
-        values[item.name] = min(enabled) if enabled else None
-    return PdfLoadLimits(**values)
 
 
 def _size(document: Document, index: int | None, dpi: float) -> tuple[int, int] | None:

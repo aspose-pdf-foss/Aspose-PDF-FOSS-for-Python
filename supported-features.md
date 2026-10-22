@@ -2222,6 +2222,62 @@ Boundaries:
 
 Supported:
 
+- **Compare extracted text revisions.** `Document.compare_text(other,
+  pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False,
+  skip_artifacts=False)` returns an ordered `list[PageTextComparison]` for
+  reviewing text changes without differences in colors or drawing positions.
+  - `other` must be an open `Document`. Selectors independently accept
+    zero-based page indices, preserving order and repetitions; `None` means
+    every page. Selected pages are paired by position, without searching for
+    matching pages or aligning insertions. The shorter side produces missing
+    pages for the remaining pairs. Two empty selections return `[]`. Both
+    full selectors and all flags are validated before extraction, even on
+    empty documents. Invalid arguments raise `PdfValidationException`;
+    disposed documents are rejected.
+  - Frozen `PageTextComparison` reports contain `page_index`,
+    `other_page_index`, original extracted `text`/`other_text`, `matches` and
+    `unified_diff`. A missing page has a `None` index and text, distinct from
+    an existing blank page's empty string. Missing pages never match. Reports
+    hold no document/page objects and remain usable after source disposal.
+  - Exact string equality is the default. `ignore_whitespace=True` collapses
+    Unicode whitespace runs to one ordinary space and strips leading/trailing
+    whitespace. It preserves word boundaries: `a b` still differs from `ab`.
+    `case_sensitive=False` applies Unicode case folding after whitespace
+    handling, including expansions such as `Straße` to `strasse`. There is no
+    Unicode canonical normalization, fuzzy or semantic matching. Flags require
+    actual booleans. Original report strings are never normalized in place.
+  - `unified_diff` compares those same normalized strings with three context
+    lines, using `page-N` and `other-page-N` headers with one-based page
+    numbers, or `missing` for an absent side. It is empty for matches. When
+    only page presence differs and normalized text is empty, it contains
+    headers alone. Diff lines split on LF; a missing final LF is marked with
+    `\ No newline at end of text`. Diffs are line based, not positioned
+    glyph/word changes, and use the standard library's matching heuristics.
+  - Extraction follows `Page.extract_text()`, including its content order,
+    font decoding, line breaks, hidden-layer filtering and invisible OCR text.
+    `skip_artifacts=True` omits explicitly marked Artifact text, including
+    invoked forms; untagged headers remain ordinary text. Image-only pages
+    without text layers compare as empty strings. CropBox and rotation do
+    not clip or reorder extraction. Graphics, metadata, annotation contents,
+    field values and appearances are not compared. This is not OCR, visual
+    comparison or proof that PDFs are equivalent.
+  - Pages are extracted one pair at a time, without populating whole-document
+    text/content caches or changing extraction cursors. Selected streaming
+    content is decoded lazily. Open password-protected PDFs normally first.
+    Calls observe unsaved edits and current layer visibility, and do not edit
+    source page data, metadata, encryption or files.
+  - Shared work uses the stricter enabled limit from each source:
+    `max_pages` bounds pair count, `max_container_items` bounds selections,
+    reports and combined normalized input line count per diff,
+    `max_object_bytes` bounds
+    original/normalized strings and each diff in UTF-8 bytes, and
+    `max_total_decoded_bytes` bounds the cumulative original strings plus
+    diffs retained by this call. Original source decoding retains its own
+    policy. No partial result is returned on extraction/validation errors.
+    Reports retain text in memory; line matching can be expensive for
+    repetitive input, so use subsets for large comparisons. No new dependency
+    is required.
+
 - **Extract positioned words without searching for each word again.**
   `Document.extract_words(pages=None, clip=None, skip_artifacts=False)` and
   `Page.extract_words(clip=None, skip_artifacts=False)` return a list of
