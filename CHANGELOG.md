@@ -9,6 +9,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Inventory PDF links for audits and content migrations.**
+  `Document.extract_links(pages=None)` and `Page.extract_links()` return
+  detached source coordinates, URI/local/remote targets and action-chain
+  diagnostics. Relative URIs use the catalog base; named destinations resolve
+  to current pages. Review teams can locate references needing updates without
+  opening each link. No target is executed, fetched or opened, and no page
+  content or image decoding is required.
+
 - **Find low-resolution image placements.**
   `Document.find_low_resolution_images(min_dpi=150, pages=None)` reports image
   locations, pixel dimensions and effective DPI for each weak placement,

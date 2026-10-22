@@ -90,6 +90,7 @@ from .interactive import (
     URIAction,
     XYZDestination,
 )
+from .link_extraction import ExtractedLink
 from .link_validation import LinkValidationIssue
 from .lists import ListItem, TextList
 from .load_limits import PdfLoadLimits
@@ -201,6 +202,7 @@ __all__ = [
     "Document",
     "DocumentFont",
     "DuplexMode",
+    "ExtractedLink",
     "ExtractedTable",
     "Field",
     "FieldType",

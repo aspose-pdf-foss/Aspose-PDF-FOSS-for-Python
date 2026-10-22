@@ -118,6 +118,8 @@ flowchart TD
 - `Document.validate_links()` reports broken local links, bookmark targets and named
   destinations before sharing a PDF. `Page.validate_links()` checks one page's links;
   neither method changes the document or opens external addresses.
+- `Document.extract_links()` inventories link URLs, local/remote targets and
+  coordinates for audits and content migrations without opening the links.
 - `Document.export_bookmarks_json()` / `import_bookmarks_json()` exchange an editable
   bookmark tree, including styles and destination views. Import appends or replaces
   the tree and can remap local pages when transferring it to another PDF.
@@ -828,6 +830,27 @@ page used. Named local targets are exported as explicit page views by default;
 See [bookmark exchange coverage](supported-features.md#documents) for the schema,
 supported actions and validation limits.
 
+### Inventory PDF Links
+
+```python
+from aspose_pdf import Document
+
+with Document("manual.pdf") as document:
+    for link in document.extract_links(pages=[0, 2]):
+        print(link.page_index + 1, link.rect, link.action_type,
+              link.resolved_uri, link.target_page_index, link.file, link.issues)
+```
+
+Audit outbound URLs, locate internal navigation and prepare link migrations
+without clicking through the PDF. `Page.extract_links()` inspects one page.
+Reports include direct targets and action chains, retain invalid targets with
+diagnostic codes, and remain usable after the document is closed. Source page
+and annotation indices are zero-based. Relative URLs use the catalog URI Base
+when present; remote file paths are reported as declared. No links are opened,
+files fetched or page content decoded. This inventories Link annotations,
+including hidden ones; bookmarks and URLs written only as page text are outside
+its scope. See [link inventory details](supported-features.md#annotations).
+
 ### Check Internal Links
 
 ```python
@@ -1217,7 +1240,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 271 public types are organized by module below.
+and delete workflows. 272 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1399,6 +1422,7 @@ and delete workflows. 271 public types are organized by module below.
 | `AnnotationCollection` | Mutable sequence-like wrapper over page annotations. |
 | `LinkAnnotation` | Concrete annotation type kept for compatibility with tests/API. |
 | `LinkValidationIssue` | Immutable local-navigation diagnostic with source location and issue code. |
+| `ExtractedLink` | Detached link target/action with source coordinates, URL or destination and diagnostic codes. |
 | `MarkupAnnotation` | Base class for markup annotations. |
 | `PDF3DAnnotation` | Minimal annotation wrapper for prerelease imports. |
 | `PDF3DArtwork` | Container for 3D content and named views. |
@@ -1723,6 +1747,8 @@ and delete workflows. 271 public types are organized by module below.
   exports all or selected annotations to a path, binary stream or UTF-8 bytes.
 - `Document.import_annotations_json(source, page_map=None) -> int` appends supported review
   annotations from a path, UTF-8 bytes or readable binary stream; returns the number added.
+- `Document.extract_links(pages=None)` / `Page.extract_links()` return
+  `list[ExtractedLink]` for link auditing, navigation review and content migrations.
 - `Document.validate_links(pages=None, include_outlines=True, include_named_destinations=True)` /
   `Page.validate_links()` return `list[LinkValidationIssue]` without editing the PDF.
   Issues expose `source`, `code`, `message`, `page_index`, `annotation_index`,

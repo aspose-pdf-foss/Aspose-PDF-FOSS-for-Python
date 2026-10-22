@@ -4000,6 +4000,72 @@ Supported:
 
 - Read page annotations through `Page.annotations`.
 - Add, insert, update, delete, clear, iterate, and index annotations.
+- **Inventory PDF link targets without following them.**
+  `Document.extract_links(pages=None) -> list[ExtractedLink]` and
+  `Page.extract_links()` expose outbound URLs, local navigation and remote
+  file targets with source coordinates. Content and publishing teams can audit
+  references, prepare link migrations and locate items needing review without
+  manually opening every link. No optional dependency or network is needed.
+  - All pages are selected by default. Explicit selections contain zero-based
+    indices and are fully validated before metadata reads. First-selected
+    order is retained and repeated pages are inspected once. Records follow
+    annotation order, direct `Dest` before `A`, then action `Next` preorder.
+    Empty selections/documents or pages without Link annotations return `[]`.
+    Identical URLs, reused annotations and shared actions retain every source
+    occurrence. A shared action is reported for each chain path; a cycle
+    produces a diagnostic record instead of recursing forever.
+  - `ExtractedLink` is frozen and detached, available from `aspose_pdf` and
+    `aspose_pdf.link_extraction`. It contains zero-based `page_index` and
+    `annotation_index`, normalized `rect=(x0,y0,x1,y1)`, `action_type`,
+    `action_path`, `uri`, `resolved_uri`, `destination`, `destination_name`,
+    `file`, `named_action` and a tuple of `issues`. Unrelated fields are `None`.
+    `action_path` is `Dest`, `A`, `A.Next[0]`, etc.; a targetless annotation
+    uses `Dest/A`. One annotation may produce several records. Rectangles use
+    unrotated page user coordinates before cropping, without UserUnit scaling.
+    Invalid rectangles become `None` while retaining the target. Results and
+    their typed destination values remain usable after disposal.
+  - `URI` actions preserve raw URL spelling in `uri`. `resolved_uri` applies
+    the catalog `/URI /Base` with standard URL joining when present, otherwise
+    retaining the raw URI, which may be relative. Mail/email, custom schemes,
+    fragments, queries and Unicode strings are retained without executing,
+    fetching or checking network reachability. PDF string decoding follows
+    the existing BOM-aware UTF-16/UTF-8 and Latin-1 fallback helper. This is
+    not exhaustive URI syntax validation.
+  - Direct `Dest` and `GoTo` resolve explicit targets, named aliases,
+    destination dictionaries and indirect values to immutable `Destination`
+    objects. `target_page_index` returns the local destination page, otherwise
+    `None`. Both name-tree and legacy names are read using source name/string
+    lookup priority; byte-string destination names use Latin-1 for a reversible
+    representation, independently of URL/file text decoding. Resolution uses
+    current page identities and generations, including unsaved page edits.
+    All eight standard views use the same exact arity/parameter validation as
+    `validate_links()`; unresolved or malformed targets retain diagnostics.
+  - `GoToR` exposes its declared `file` and either a typed destination whose
+    page is a remote zero-based number or a remote `destination_name`, without
+    looking that name up locally. `Launch` and `SubmitForm` expose common
+    string/file-dictionary targets; file dictionaries prefer `/UF` over `/F`.
+    Paths remain as declared, without filesystem lookup or normalization.
+    `Named` exposes `named_action`. Other actions, including JavaScript and
+    GoToE, retain their PDF action type without executable payloads or target
+    details. Their `Next` chains are still inventoried.
+  - Stable issue codes include `missing_target`, `missing_page`,
+    `missing_named_destination`, `invalid_destination`, `invalid_action`,
+    `conflicting_targets`, `cyclic_reference`, `invalid_structure`,
+    `invalid_rect`, `invalid_uri`, `invalid_uri_base` and `invalid_file`.
+    Errors in one target/action do not hide valid sibling targets. Malformed
+    annotation arrays/entries raise `PdfParseException`, because a complete
+    inventory cannot reliably identify their links. Parser and resource-limit
+    failures propagate. Selections, page indices, references, name trees,
+    action nesting/work, strings and total report text/result growth are
+    bounded by `load_limits`.
+  - The PDF, annotations, extraction cursors and page/image caches are not
+    edited. Page content, appearance, image and script streams are not decoded,
+    including with streaming/encrypted input. This inventories Link annotations
+    even when hidden; visibility, clickable QuadPoints, AA/additional actions,
+    bookmarks, catalog actions, widgets, plain-text URLs, platform-specific
+    launch dictionaries and GoToE embedded-file targets are outside its scope.
+    A declared file/URL is not verified to exist. Use `validate_links()` for
+    wider local navigation diagnostics, including bookmarks and definitions.
 - **Validate local navigation targets without editing the PDF.**
   `Document.validate_links(pages=None, include_outlines=True,
   include_named_destinations=True) -> list[LinkValidationIssue]` checks Link

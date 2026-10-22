@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     from aspose_pdf.forms import Form
     from aspose_pdf.image_resolution import ImageResolutionIssue
     from aspose_pdf.interactive import Action, Destination
+    from aspose_pdf.link_extraction import ExtractedLink
     from aspose_pdf.link_validation import LinkValidationIssue
     from aspose_pdf.optimization import OptimizationOptions
     from aspose_pdf.page_labels import PageLabelCollection
@@ -2195,6 +2196,45 @@ class Document:
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
         return import_json(self._engine_pdf, source, page_map=page_map)
+
+    def extract_links(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+    ) -> list[ExtractedLink]:
+        """Inventory Link annotation targets without executing or fetching them.
+
+        ``pages`` selects zero-based source pages; None means all pages.
+        Repeated selections are inspected once in first-selected order. Results
+        follow annotation order, direct Dest before A, then action Next preorder.
+        Every target/action has a detached immutable ``ExtractedLink`` with its
+        source page, annotation index, normalized rectangle and action path.
+        Reused targets and shared actions retain each occurrence.
+
+        URI actions expose raw and base-resolved URLs; GoTo targets resolve
+        named destinations and current local page identities into typed views.
+        GoToR retains remote file/page/name metadata; Launch and SubmitForm
+        expose common file specifications (UF before F), and Named retains its
+        action name. Other action types retain their type without executable
+        payloads. Invalid link geometry/targets/actions appear with issue codes
+        rather than being silently skipped. Malformed annotation containers
+        raise exceptions because their links cannot be inventoried reliably.
+
+        Only Link annotations and their primary action chains are inspected,
+        including hidden annotations. Bookmarks, AA actions, plain-text URLs,
+        appearance streams, QuadPoints, platform-specific launch dictionaries,
+        embedded-file GoToE targets and network reachability are not inspected.
+        Rectangles use unrotated page user coordinates before cropping, with
+        no UserUnit conversion. No content/image stream decoding, text
+        extraction, filesystem lookup or network access occurs. Reads and
+        result growth obey load_limits; the document remains unchanged.
+        """
+        from aspose_pdf.engine.link_extraction import extract
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return extract(self, pages)
 
     def validate_links(
         self,
