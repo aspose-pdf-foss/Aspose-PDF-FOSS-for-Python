@@ -1814,6 +1814,65 @@ class Document:
             dither=dither,
         )
 
+    def rasterized_copy(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        dpi: float = 150.0,
+        background: Sequence[int] = (255, 255, 255),
+        antialias: bool | int = True,
+        include_annotations: bool = True,
+    ) -> Document:
+        """Return an independent image-only PDF of the selected visible pages.
+
+        ``pages`` uses zero-based indices, preserving order and repeats;
+        ``None`` selects all pages. An empty selection returns a new empty
+        document. All options, indices, page geometry and planned output limits
+        are validated before any page renders or an output document is built.
+
+        Pages render at finite positive ``dpi`` (default 150), on the RGB byte
+        triple ``background``. ``antialias`` is a boolean (True = 3x) or an
+        integer factor 1-8. Visible annotations and form appearances count
+        unless ``include_annotations=False``. The source's font substitution
+        and layer visibility apply, with the renderer's coverage/limitations.
+
+        Each result page has one opaque 8-bit RGB image. Storage is lossless,
+        using Flate when smaller and allowed by the compression-ratio policy.
+        CropBox and rotation are baked into the image; the displayed physical
+        size is retained, with a new zero-origin MediaBox and zero rotation.
+        Pixel dimensions round up at the selected DPI; image placement uses
+        the original displayed size rather than enlarging it to those pixels.
+
+        Only rendered appearance is copied. Text/OCR layers, vector paths,
+        annotations, fields, links, outlines, labels, tags, scripts, attachments
+        and original metadata are not transferred as objects. New documents
+        start without encryption or valid source signatures. Text is no longer
+        searchable/selectable; images may be larger and less sharp when zoomed.
+        This is not OCR or a guarantee that unsupported PDF graphics render.
+
+        Source content/files are unchanged, and streaming sources read only
+        selected pages without filling whole-document text/content caches.
+        One completed source raster is held at a time; the result retains all
+        image samples and compressed streams in memory. It inherits resource
+        limits, including page/object counts, per-image/supersampled pixels,
+        sample/content sizes and cumulative decoded output bytes. Compression
+        buffers are bounded conservatively. Failures dispose partial results.
+        The result survives source disposal; dispose it when done.
+        """
+        from aspose_pdf.engine.rasterized_copy import rasterized_copy
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return rasterized_copy(
+            self,
+            pages=pages,
+            dpi=dpi,
+            background=background,
+            antialias=antialias,
+            include_annotations=include_annotations,
+        )
+
     def render_contact_sheet(
         self,
         *,

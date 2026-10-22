@@ -4222,9 +4222,11 @@ class _PageRasterizer:
         meta = self._image_meta_from_stream(stream)
         fallback_meta = (getattr(self.pdf, "_image_meta", {}) or {}).get(name)
         if fallback_meta:
+            # An absent COS Filter explicitly means raw samples; cached codec
+            # metadata must not override that declaration.
             meta = {
                 **fallback_meta,
-                **{k: v for k, v in meta.items() if v is not None},
+                **{k: v for k, v in meta.items() if v is not None or k == "filter"},
             }
         alpha_map = self._image_alpha_map(stream, data, meta)
         self._paint_image_pixels(meta, data, self.state.ctm, alpha_map)
@@ -5045,7 +5047,10 @@ def _decode_image_to_rgb(
     )
     filt = str(meta.get("filter") or "").lstrip("/")
     sniff = ext_from_magic(data)
-    if filt in ("DCTDecode", "DCT") or sniff == "jpg":
+    # COS filter metadata distinguishes samples from encoded JPEG data. Raw
+    # pixels can begin with FF D8 FF too; magic sniffing is only a fallback
+    # for legacy image views that do not supply any filter metadata.
+    if filt in ("DCTDecode", "DCT") or (sniff == "jpg" and "filter" not in meta):
         from .dct import decode as decode_jpeg
 
         decoded = decode_jpeg(data, limits=resolved_limits)
@@ -5064,7 +5069,7 @@ def _decode_image_to_rgb(
         elif decoded.mode == "CMYK":
             pixels = cmyk_to_rgb(pixels)
         return (decoded.width, decoded.height, pixels)
-    if sniff == "jp2":
+    if sniff == "jp2" and (filt == "JPXDecode" or "filter" not in meta):
         # A JPEG 2000 codestream still in its compressed form: the stream
         # decoder hands undecodable filters back as their raw bytes, and those
         # bytes painted as samples are a page of noise. Decode here, or draw

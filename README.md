@@ -142,6 +142,8 @@ flowchart TD
 - `Document.render_contact_sheet()` / `save_contact_sheet()` create a numbered grid of
   page thumbnails for a quick document overview or review preview. Select pages, set the
   grid and thumbnail dimensions, and save as PNG, TIFF, JPEG or optional WebP.
+- `Document.rasterized_copy()` creates a fresh image-only PDF of selected page
+  views for static handoffs, with configurable DPI and annotation rendering.
 - `Document.compare_visual()` compares PDF page views with pixel counts, difference
   ratios and bounding boxes, plus optional images highlighting changes in red.
   Color and area tolerances help review revised documents and scanned pages.
@@ -412,6 +414,25 @@ empty document.
 ## Additional Examples
 
 More real, runnable examples from the project's own documentation are collected below.
+
+### Create an Image-Only PDF Copy
+
+```python
+from aspose_pdf import Document
+
+with Document("input.pdf") as source:
+    with source.rasterized_copy(dpi=150) as copy:
+        copy.save("static-copy.pdf")
+```
+
+Use `pages=[2, 0, 2]` to select and reorder zero-based pages, including repeats.
+Each page becomes one losslessly stored RGB image at its original displayed
+physical size, with CropBox and rotation baked in. Visible annotations and
+form appearances are included unless `include_annotations=False`.
+The source is unchanged; original text, interactive objects, attachments and
+metadata are not transferred. Text is no longer searchable/selectable, and
+appearance follows the built-in renderer's coverage at the chosen resolution.
+See [rasterized copy details](supported-features.md#pages).
 
 ### Render a Page to an Image
 
@@ -1516,6 +1537,8 @@ and delete workflows. 270 public types are organized by module below.
     `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, overwrite) -> list[Path]`
   - `render_contact_sheet(pages, columns, thumbnail_size, margin, spacing, labels, background, page_background, label_color, antialias, include_annotations) -> RasterizedPage` /
     `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
+  - `rasterized_copy(pages=None, dpi=150, background=(255, 255, 255), antialias=True, include_annotations=True) -> Document` —
+    create an independent image-only PDF from selected visible page views
   - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images, ignore_regions=None) -> list[PageVisualComparison]`
   - `compare_text(other, pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False, skip_artifacts=False) -> list[PageTextComparison]` —
     review extracted page text revisions with normalized unified diffs

@@ -1597,6 +1597,62 @@ Supported:
   previews of drawings, signatures or other details less memory-intensive. The
   interpreter still processes page content and referenced resources; content,
   image-decoding and raster resource limits continue to apply.
+- **Create rasterized PDF copies.** `Document.rasterized_copy(pages=None,
+  dpi=150, background=(255, 255, 255), antialias=True,
+  include_annotations=True)` returns an independent image-only `Document`.
+  This supports static handoffs and viewing workflows that need page pictures
+  instead of the original fonts, vector paths and interactive objects.
+  - `pages=None` selects all pages; explicit iterables contain zero-based
+    indices, preserving order and repetitions. Empty selections and documents
+    return a new empty document. Every option, index, selected page's geometry
+    and planned output budget is checked before rendering or creating output.
+    Invalid options raise `PdfValidationException`; disposed sources are rejected.
+  - `dpi` is a finite positive number, default 150. Output dimensions round up
+    as in the renderer, including its minimum page extent of 0.000001 point.
+    `background` is three RGB byte integers. `antialias=True` means 3x
+    supersampling, `False` disables it and integers 1-8 select the factor.
+    Flags require booleans and numeric options reject booleans/strings.
+    Visible annotation and form appearances count unless
+    `include_annotations=False`. Current layer visibility and the source's
+    font substitution settings follow ordinary `render_page()` behavior.
+  - Each output page contains exactly one opaque 8-bit DeviceRGB image of
+    the rendered view. The effective CropBox and rotation are baked into it;
+    its new MediaBox starts at zero, rotation is zero and the displayed
+    physical width/height are retained (swapped for 90/270 degrees). Image
+    placement uses the physical dimensions, not rounded pixel dimensions
+    converted back to points. PDF number serialization follows the ordinary
+    six-decimal precision. Re-rendering can resample pixels at other DPI/zoom.
+  - Samples are stored losslessly, with Flate compression when smaller and
+    allowed by `max_compression_ratio`; otherwise the image is unfiltered.
+    There is no intermediate PNG encode/decode or new dependency. This does
+    not preserve vector sharpness, add OCR, manage color or reconstruct data
+    that the renderer does not support. Higher DPI costs more time and memory;
+    resulting PDFs can be larger than the source.
+  - Only rendered appearance is transferred. Text and invisible OCR layers,
+    vector paths, live annotations, fields, links, bookmarks, named
+    destinations, custom labels, structure tags, optional-content groups,
+    scripts, attachments, original Info/XMP metadata, encryption and source
+    signatures are not copied as objects. Visible text becomes pixels and is
+    no longer searchable/selectable. New copies start unencrypted and do not
+    carry original signature validity. Visible data in the pixels remains.
+  - Copies survive source disposal and can be saved or edited independently.
+    Source content, metadata, protection, files, text caches, extraction cursor
+    and unsaved outline model are unchanged. Streaming inputs decode selected
+    page content only, without filling full-document content/text caches.
+    One completed source raster is held at a time; the result retains all
+    RGB sample buffers and stored image streams in memory. Every failure
+    disposes the partial result and returns no document.
+  - Results inherit the source's `PdfLoadLimits`. Preflight checks selected
+    count against `max_pages`/`max_container_items`, output object counts and
+    slots against `max_objects`, supersampled working pixels against
+    `max_raster_pixels`, and each image against `max_image_pixels`.
+    `max_object_bytes` and `max_decoded_stream_bytes` bound RGB sample buffers
+    and page content; `max_content_stream_bytes` bounds each placement stream.
+    `max_total_decoded_bytes` bounds the sum of output RGB samples and placement
+    content. Compression working buffers are checked conservatively using
+    twice each RGB buffer plus 512 KiB against `max_codec_work_bytes`.
+    Source content/image decoding keeps its ordinary policy and can still
+    fail during rendering. Use subsets for large documents.
 - **Contact sheets**: `Document.render_contact_sheet()` returns a single RGB
   `RasterizedPage` with a row-major grid of page thumbnails;
   `Document.save_contact_sheet(destination, ...)` saves it as PNG, TIFF, JPEG or
