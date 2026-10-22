@@ -3256,6 +3256,77 @@ Boundaries:
 
 Supported:
 
+- **Export image assets as ZIP.** `Document.export_images_zip(destination=None,
+  pages=None, compression="deflate", compresslevel=6, include_manifest=False,
+  overwrite=True)` returns ZIP bytes and optionally writes a file or binary
+  stream. This reduces manual extraction and packaging when reusing photos,
+  illustrations or scans, migrating content, or handing assets to another team.
+  - `pages=None` selects all pages; explicit iterables contain zero-based
+    indices. First-selected page order is retained, repeated pages are visited
+    once, and resources are ordered by their name paths. Shared image objects
+    produce one file with multiple manifest occurrences; distinct objects
+    with identical bytes/pixels remain separate. Empty selections or pages
+    without image resources produce valid empty archives.
+  - The inventory scans inherited page `/Resources /XObject` dictionaries and
+    nested Form XObjects with explicit resources. Each resource dictionary is
+    scanned once per selected page, so shared/cyclic Form graphs terminate;
+    an aliased Form resource dictionary records its first traversal path.
+    Page and Form content streams are not parsed. Consequently unused,
+    hidden and cropped-out resource images can be exported, and resource paths
+    do not describe visible placements or placement counts. Inline images,
+    annotation appearances, standalone soft-mask streams and unattached legacy
+    image mappings are excluded. This is not page rendering, OCR or redaction.
+  - JPEG and JPEG 2000 image payloads are kept unchanged after decryption and
+    removal of outer stream filters. They use `.jpg`, `.jp2`, or `.j2k` for
+    bare JPEG 2000 codestreams. Their signatures and declared geometry are
+    checked, without validating the full encoded image or recompressing it.
+    Remaining supported samples become real PNG files using the existing
+    Gray/RGB/CMYK/Indexed conversion and Decode rules; converted color spaces
+    follow the existing image export helpers. Sample depths 1/2/4/8/16 are
+    supported for PNG reconstruction. Incorrect sample lengths, bad dimensions,
+    malformed streams and unsupported reconstruction raise exceptions instead
+    of being skipped or exported as mislabeled binary data.
+  - PNG files represent the image's own samples, without compositing separate
+    soft/color-key masks, stencil paint colors, placement transforms or page
+    clipping. Native JPEG/JPX payloads likewise retain encoded colors rather
+    than applying PDF Decode, masks or other page context. Transparent logos
+    or other context-dependent images can therefore differ from their page
+    appearance. The original source PDF retains that context.
+  - Members have generated flat names `image-0001.png`, etc.; PDF resource
+    names never become archive paths, preventing traversal and naming
+    collisions. `include_manifest=True` appends ASCII-escaped `manifest.json`
+    with `schema_version: 1` and an `images` array. Records contain
+    `archive_name`, encoded file `size`, declared `width`/`height`,
+    `bits_per_component`, terminal `source_filter`, `has_soft_mask`, and
+    `occurrences` containing zero-based `page_index` and `resource_path`
+    arrays of original PDF names. Occurrences follow selected-page/path order.
+  - `compression` accepts `"deflate"` or `"stored"`; `compresslevel` is an
+    integer 0-9 and is ignored for stored output. Flags require booleans.
+    Complete page selections and export flags are validated even for empty
+    inputs; disposed documents are rejected. ZIP timestamps are fixed to
+    1980-01-01, permissions to regular 0644 files, and ordering is stable for
+    deterministic exports in the same runtime.
+  - Limits apply to selected pages (`max_pages`, `max_container_items`),
+    resource entries/visits, occurrence path components and archive entry
+    count (`max_container_items`), and Form depth (`max_nesting_depth`).
+    Names obey `max_object_bytes`; declared image dimensions obey
+    `max_image_pixels`. Decoding and conversion keep stream, filter-chain,
+    compression-ratio, sample-size and working-buffer limits. Each encoded
+    file obeys `max_object_bytes`/`max_decoded_stream_bytes`; cumulative encoded
+    files plus the manifest obey `max_total_decoded_bytes`, and the manifest
+    also obeys per-object/decoded limits. Full archive growth, including ZIP
+    headers and central directory, is bounded by `max_codec_work_bytes`.
+  - Images are reconstructed and added one at a time, without hydrating the
+    complete image cache, changing image extraction cursors or loading whole-
+    document page/text content. Streaming inputs read selected resources and
+    images only. Existing encryption credentials apply after opening the PDF;
+    source content, metadata, attachments, protection and files are unchanged.
+    The complete archive is held in memory and built before any destination
+    write. Files create parent folders and replace atomically;
+    `overwrite=False` refuses existing files. Streams remain open, write at
+    their current position and retry short writes; an I/O failure can leave a
+    partial stream. No optional imaging dependency is required for the core
+    export paths. Use page subsets to limit archive size.
 - **One rule brings a sample of any depth onto 0..255.** The rounded linear
   rescale, `round(value * 255 / (2**depth - 1))`, which ISO 15948 (PNG) 10.4
   calls the most accurate way to reduce a sample's depth; the shortcuts it also

@@ -152,6 +152,8 @@ flowchart TD
   unified diffs and optional case, whitespace and tagged-artifact filtering.
 - `Document.export_attachments_zip()` packages embedded files for download or handoff,
   with safe unique archive names, optional selection and a metadata manifest.
+- `Document.export_images_zip()` collects reusable images from selected pages
+  into one ZIP, with an optional manifest linking assets back to their pages.
 - `Document.split_by_blank_pages()` separates scan batches at visibly blank pages,
   optionally keeping the separators. It works on image-only scans without OCR and
   returns independent PDFs with the original page content and resources.
@@ -1055,6 +1057,26 @@ Use `pages=[0, 3, 7]` to inspect a subset. The document is unchanged.
 This detects exact rendered matches; noisy scans can differ, and hidden data
 can differ on matching pages. See [comparison details](supported-features.md#pages).
 
+### Export PDF Images as ZIP
+
+```python
+from aspose_pdf import Document
+
+with Document("catalog.pdf") as document:
+    document.export_images_zip("images.zip", include_manifest=True)
+    selected = document.export_images_zip(pages=[2, 0])
+```
+
+Export photos, illustrations and scanned images in one step for reuse, content
+migration or downstream processing. Shared image objects are exported once;
+JPEG/JPEG 2000 keep their encoded payloads and other supported samples become
+PNG. Generated filenames are safe to unpack, and the optional manifest maps
+files to zero-based pages and resource paths. Export scans page and nested
+Form resources, including unused or hidden assets; it does not render pages,
+apply placement/clipping or combine transparency masks. Inline images and
+annotation appearances are excluded. The source is unchanged. See
+[image ZIP details](supported-features.md#images).
+
 ### Export PDF Attachments as ZIP
 
 ```python
@@ -1567,6 +1589,8 @@ and delete workflows. 270 public types are organized by module below.
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
   - `export_attachments_zip(destination=None, names=None, compression="deflate", compresslevel=6, include_manifest=False, overwrite=True) -> bytes`
+  - `export_images_zip(destination=None, pages=None, compression="deflate", compresslevel=6, include_manifest=False, overwrite=True) -> bytes` —
+    package reusable image assets with optional page provenance
   - properties: `pages`, `page_labels`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
     `is_pdfua_compliant`, `font_substitution`, `page_mode`, `page_layout`, `open_action`,

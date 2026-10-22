@@ -515,6 +515,73 @@ class Document:
         self._engine_pdf.attachment_read_meta.pop(name, None)
         return self
 
+    def export_images_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return selected page image resources as ZIP bytes, optionally saving them.
+
+        ``pages`` uses zero-based indices; ``None`` selects all pages. Selected
+        order is retained, but repeated pages and shared image objects export
+        once. Distinct image objects with identical pixels remain distinct.
+        Page resources and nested Form resources are scanned without reading
+        page/Form content. Unused, hidden and cropped-out resource images can
+        be included; this is an asset inventory, not a visible-placement list.
+        Inline images, annotation appearances, separate soft-mask streams and
+        unattached legacy image mappings are not separately exported.
+
+        Members have generated flat names ``image-0001.png``, etc., in selected
+        page/resource-path order. JPEG and JPEG 2000 retain encoded payloads
+        after decoding any outer filters; other supported samples become PNG.
+        Original masks, placement transforms, clipping and PDF Decode effects
+        on encoded JPEG/JPX files are not composited into those files.
+        Rendering/OCR is not performed. Invalid image data or unsupported
+        reconstruction propagates an exception instead of skipping an image.
+
+        ``include_manifest=True`` appends a versioned ``manifest.json`` mapping
+        files to zero-based page indices and resource-name paths, with declared
+        dimensions, sample depth, source filter, soft-mask presence and sizes.
+        ``compression`` is ``"deflate"`` or ``"stored"``; ``compresslevel`` is
+        an integer 0-9. ZIP metadata is fixed for deterministic output in the
+        same runtime. Empty selections produce valid empty archives.
+
+        Selection, graph traversal, image decoding, encoded files, manifest and
+        archive growth obey resource limits. Images are reconstructed one at a
+        time without populating the source image cache or extraction cursor.
+        Streaming page content remains lazy. The archive is held in memory and
+        fully built before writing a destination. File replacement is atomic;
+        ``overwrite=False`` refuses existing files. Binary streams receive bytes
+        at their current position, retry short writes and remain open; a stream
+        failure can leave partial output. The source document is not edited.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.image_zip import export_zip
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = export_zip(
+            self,
+            pages=pages,
+            compression=compression,
+            compresslevel=compresslevel,
+            include_manifest=include_manifest,
+        )
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def export_attachments_zip(
         self,
         destination: str | Path | BinaryIO | None = None,
