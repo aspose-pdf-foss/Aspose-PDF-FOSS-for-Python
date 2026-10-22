@@ -145,6 +145,7 @@ flowchart TD
 - `Document.compare_visual()` compares PDF page views with pixel counts, difference
   ratios and bounding boxes, plus optional images highlighting changes in red.
   Color and area tolerances help review revised documents and scanned pages.
+  Use `ignore_regions` to exclude changing dates, headers or page numbers.
 - `Document.compare_text()` reviews extracted text changes page by page, with
   unified diffs and optional case, whitespace and tagged-artifact filtering.
 - `Document.export_attachments_zip()` packages embedded files for download or handoff,
@@ -1091,6 +1092,23 @@ area with `max_diff_ratio=0.001`. Neither PDF is edited. This compares rendered
 appearance at the chosen DPI, so hidden content and unsupported drawing can
 differ even when views match. See [comparison details](supported-features.md#pages).
 
+Exclude changing headers, dates or page numbers with `ignore_regions`:
+
+```python
+with Document("before.pdf") as before, Document("after.pdf") as after:
+    results = before.compare_visual(
+        after, ignore_regions=[(0, 0, 612, 36)], include_diff_images=True,
+    )
+```
+
+Rectangles use `(left, top, right, bottom)` in PDF points (1/72 inch), measured
+from the top-left of the displayed page after cropping and rotation. The same
+regions apply to both views and every selected pair, independently of DPI.
+Ignored pixels are excluded from counts, difference ratios and bounds; their
+union is reported as `ignored_pixels` and shown in light blue on diff images.
+Regions do not hide missing pages or unequal raster sizes and do not remove
+data from either PDF.
+
 ### Trim White Page Margins
 
 Remove excess white space around scanned or drawn content:
@@ -1228,7 +1246,7 @@ and delete workflows. 270 public types are organized by module below.
 | `PageCollection` | A collection to manage PDF pages within a Document. |
 | `PageInfo` | Class with 1 property. |
 | `PageTextComparison` | Immutable page-pair text report with original strings, match status and a normalized unified diff. |
-| `PageVisualComparison` | Immutable page-pair comparison with changed pixels, ratio, bounds, match status and optional difference image. |
+| `PageVisualComparison` | Immutable page-pair comparison with changed/ignored pixel counts, ratio, bounds, match status and optional difference image. |
 | `Paragraph` | One paragraph of a text block: what it says, and how it differs from the block. |
 | `PdfAConversionResult` | Result of a PDF/A conversion operation. |
 | `PdfAValidateOptions-pdfa` | Container for PDF/A validation settings. |
@@ -1498,7 +1516,7 @@ and delete workflows. 270 public types are organized by module below.
     `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, overwrite) -> list[Path]`
   - `render_contact_sheet(pages, columns, thumbnail_size, margin, spacing, labels, background, page_background, label_color, antialias, include_annotations) -> RasterizedPage` /
     `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
-  - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images) -> list[PageVisualComparison]`
+  - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images, ignore_regions=None) -> list[PageVisualComparison]`
   - `compare_text(other, pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False, skip_artifacts=False) -> list[PageTextComparison]` —
     review extracted page text revisions with normalized unified diffs
   - `to_html(pages, title, embed_images, paragraph_gap, clip_to_page) -> str` /

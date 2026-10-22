@@ -1092,9 +1092,10 @@ Supported:
     byte-identical documents or interchangeable page data.
 - **Compare PDF page views.** `Document.compare_visual(other, pages=None,
   other_pages=None, dpi=72, tolerance=0, max_diff_ratio=0,
-  include_annotations=True, include_diff_images=False)` returns an ordered
-  `list[PageVisualComparison]`. This supports revision reviews, scan checks and
-  raster regression checks without a text layer or additional dependency.
+  include_annotations=True, include_diff_images=False, ignore_regions=None)`
+  returns an ordered `list[PageVisualComparison]`. This supports revision
+  reviews, scan checks and raster regression checks without a text layer or
+  additional dependency.
   - `other` is an open `Document`. The two page selectors are independent:
     `None` means all pages in that document; explicit iterables contain
     zero-based indices, keeping order and repetitions. Entries are paired by
@@ -1110,14 +1111,41 @@ Supported:
     form appearances count unless `include_annotations=False`. Views align at
     the top-left, without rescaling, deskewing, margin removal or registration.
   - A common pixel changes when any RGB channel differs by **more than**
-    `tolerance`, an integer from 0 to 255. Pixels covered by only one page
-    always change, even if white or within the color tolerance. Each result
-    contains source `page_index`/`other_page_index`, pixel `size`/`other_size`,
-    `changed_pixels`, `total_pixels`, `difference_ratio`, `bbox`, `matches` and
-    optional `diff_image`. `total_pixels` is the union of the two page
-    rectangles, excluding padding outside both. `difference_ratio` is changed
-    pixels divided by that union. `bbox=(x0, y0, x1, y1)` uses a top-left pixel
+    `tolerance`, an integer from 0 to 255. Nonignored pixels covered by only
+    one page always change, even if white or within the color tolerance. Each
+    result contains source `page_index`/`other_page_index`, pixel `size`/`other_size`,
+    `changed_pixels`, `ignored_pixels`, `total_pixels`, `difference_ratio`,
+    `bbox`, `matches` and optional `diff_image`. `total_pixels` is the union of
+    the two page rectangles, excluding ignored pixels and padding outside both.
+    `difference_ratio` is changed pixels divided by that remaining area.
+    `bbox=(x0, y0, x1, y1)` uses a top-left pixel
     origin with exclusive upper bounds; `None` means no changed pixels.
+  - **Ignore changing regions.** `ignore_regions` is an optional iterable of
+    four-coordinate sequences `(x0, y0, x1, y1)`, such as headers, dates or
+    page numbers to exclude during revision reviews. Coordinates are finite
+    real numbers in PDF points (1/72 inch), measured right/down from the
+    **top-left of the displayed comparison canvas**, after CropBox and page
+    rotation. These are not lower-left unrotated PDF user-space boxes or
+    pixel coordinates. One list applies to every selected pair and both views;
+    the method does not infer corresponding areas or scale rectangles to page
+    dimensions. Different per-page rules require separate calls/selections.
+  - Rectangles require ordered corners and positive area; booleans, numeric
+    strings and nonfinite coordinates are rejected. Outer generators are
+    consumed once and snapshotted before reading geometry/rendering, even for
+    empty selections. `None`/empty iterables preserve ordinary comparison.
+    Bounds can extend outside the canvas and are clipped. Scaled lower bounds
+    round down and upper bounds round up, excluding every pixel touched by
+    the rectangle at the chosen DPI. Tiny exclusions can therefore cover a
+    larger area than requested at low resolution. Overlaps, nested regions
+    and duplicates count only once; regions outside both pages count zero.
+  - Ignored pixels do not contribute to `changed_pixels`, `total_pixels`,
+    `difference_ratio` or `bbox`. `ignored_pixels` counts their union within
+    either page, and `total_pixels + ignored_pixels` is the original covered
+    union. When all covered pixels are ignored, total/changed pixels and the
+    ratio are zero and `bbox` is `None`. Such a pair matches only when both
+    pages exist with equal raster dimensions; masks cannot conceal missing
+    pages or size changes. Rendering still processes full pages: this is not
+    redaction, removal of source data or a way to skip malformed input.
   - `matches` requires both pages, equal raster dimensions, and a difference
     ratio at most `max_diff_ratio` (a finite number from 0 to 1). The default
     requires exact rendered equality. Missing/differently sized pages never
@@ -1127,19 +1155,22 @@ Supported:
   - With `include_diff_images=True`, every result includes a detached RGB
     `RasterizedPage` at the chosen DPI, enclosing both views. Changed pixels
     are red, unchanged pixels show pale grayscale context from the right page
-    where present (otherwise the left), and padding outside both is white.
+    where present (otherwise the left), ignored pixels are solid light blue
+    (RGB 192, 224, 255), and padding outside both is white.
     `result.diff_image.save(path)` writes PNG, TIFF, JPEG or optional WebP;
     encoding options and WebP dependencies follow `RasterizedPage.save()`.
     Without the flag, only compact metrics are retained. Reports and images
     remain usable after both documents close.
-  - Both selectors, every selected page's geometry and enclosing comparison
-    canvas are checked before rendering. Shared work uses the stricter enabled
-    limits from the two documents. `max_container_items` bounds selections and
-    result count; `max_raster_pixels` bounds each enclosing canvas and, when
-    images are requested, the cumulative pixels in all retained images. This
-    prevents a collection of individually small images from bypassing the
-    limit. Use subsets or metrics alone for large comparisons. Output encoders
-    inherit the combined limits; content/image decoding retains each source's
+  - Both selectors, all ignore rectangles, every selected page's geometry and
+    enclosing comparison canvas are checked before rendering. Shared work uses
+    the stricter enabled limits from the two documents. `max_container_items` bounds selections,
+    ignore rectangle count and result count; `max_raster_pixels` bounds each
+    enclosing canvas and, when images are requested, the cumulative pixels in
+    all retained images. This prevents a collection of individually small images from bypassing the
+    limit. Exclusions do not reduce these full-canvas budgets. Masks use merged
+    row spans rather than a full-page pixel mask. Use subsets or metrics alone
+    for large comparisons. Output encoders inherit the combined limits;
+    content/image decoding retains each source's
     own limits. Errors propagate without partial results.
   - Selected pages render one pair at a time, with at most two completed page
     rasters held at once, plus renderer work buffers and requested output

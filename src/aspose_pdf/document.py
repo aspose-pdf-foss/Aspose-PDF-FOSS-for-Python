@@ -4022,6 +4022,7 @@ class Document:
         max_diff_ratio: float = 0.0,
         include_annotations: bool = True,
         include_diff_images: bool = False,
+        ignore_regions: Iterable[Sequence[float]] | None = None,
     ) -> list[PageVisualComparison]:
         """Compare rendered page pairs and optionally retain red difference images.
 
@@ -4038,23 +4039,37 @@ class Document:
         without scaling, alignment correction, deskewing or page matching.
 
         A pixel changes when any RGB channel differs by more than ``tolerance``
-        (integer 0-255). Pixels covered by only one page always change. The
-        difference ratio divides changed pixels by the union of page areas.
+        (integer 0-255). Nonignored pixels covered by only one page always
+        change. The difference ratio divides changed pixels by the union of
+        page areas after removing ignored pixels.
         ``matches`` requires both pages, equal raster dimensions and a ratio
         at most ``max_diff_ratio`` (0-1). Default tolerances require exact
         rendered equality. Bounding boxes use top-left pixel coordinates with
         exclusive upper bounds; metadata and hidden content are not compared.
 
+        ``ignore_regions`` is an iterable of ``(x0, y0, x1, y1)`` rectangles in
+        PDF points (1/72 inch), measured right/down from the top-left of the
+        displayed comparison canvas, after CropBox and rotation. The same
+        rectangles apply to every pair and both sides; they are independent of
+        DPI, not unrotated PDF user-space boxes. Finite real coordinates must
+        enclose positive area. Negative/off-canvas bounds are clipped. Pixels
+        touched by a region are ignored, rounding its bounds outward. Overlaps
+        count once. Exclusions affect metrics, bounds and match status, and
+        ``ignored_pixels`` reports their union within the page areas. An all-
+        ignored pair has zero total/ratio and matches only if both pages exist
+        with equal raster dimensions. Neither PDF's content is removed.
+
         ``include_diff_images=True`` attaches a ``RasterizedPage`` to every
         result: changes are red over pale grayscale context. Images enclose
-        both views, with white padding outside both pages. Save them through
+        both views, with ignored areas in light blue and white padding outside
+        both pages. Save them through
         ``result.diff_image.save(path)``. Without this flag, only metrics are
         retained. Reports and images outlive the source documents.
 
-        Both selections, geometry and comparison canvas limits are checked
-        before rendering. The stricter enabled resource limits apply to shared
-        work and output images; retained images also share a cumulative
-        ``max_raster_pixels`` allowance. Selected pages render one pair at a
+        Both selections, ignore regions, geometry and comparison canvas limits
+        are checked before rendering. The stricter enabled resource limits
+        apply to shared work and output images; retained images also share a
+        cumulative ``max_raster_pixels`` allowance. Selected pages render one pair at a
         time; streaming content remains lazy. Errors propagate without partial
         results, and neither PDF is edited. Equality depends on the renderer's
         coverage and resolution; tiny differences or unsupported drawing may
@@ -4078,6 +4093,7 @@ class Document:
             max_diff_ratio=max_diff_ratio,
             include_annotations=include_annotations,
             include_diff_images=include_diff_images,
+            ignore_regions=ignore_regions,
         )
 
     def extract_pages(self, selection: Iterable[int] | slice) -> Document:
