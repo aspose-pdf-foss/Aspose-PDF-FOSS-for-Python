@@ -3256,6 +3256,62 @@ Boundaries:
 
 Supported:
 
+- **Find image placements with low effective DPI.**
+  `Document.find_low_resolution_images(min_dpi=150, pages=None)` returns
+  immutable `ImageResolutionIssue` reports to help review teams locate weak
+  photos, illustrations or scans before printing or publishing. This supports
+  automated resolution checks and targeted asset replacement, reducing manual
+  inspection and avoidable document rework. It does not modify the PDF.
+  - The threshold must be a finite positive number. A placement is reported
+    when either image axis is strictly below it; equality passes. `pages=None`
+    scans all pages; explicit zero-based selections preserve order and repeats.
+    Empty documents or selections return an empty list. All options and the
+    complete selection are validated before content is inspected.
+  - Inspection follows actual `Do` paints through inherited page resources
+    and invoked nested Form XObjects, composing `cm` and Form `/Matrix`
+    transforms and respecting `q`/`Q`. Forms without resources use page
+    resources, including when nested (the legacy fallback described in the
+    [PDF Reference](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.4.pdf),
+    section 3.7.2). Inline `BI` images are included, with dictionary abbreviations
+    expanded. Reusing an image or form at different scales creates separate
+    findings in content order. Unused resources are not scanned.
+  - DPI equals the declared pixel count times 72 divided by the transformed
+    image-axis length and page `/UserUnit`. It uses both image axes rather
+    than an axis-aligned bounding box, including rotation, reflection, shear
+    and nonuniform scaling. Page `/Rotate` does not change physical resolution.
+    Decimal transform composition and axis calculations avoid false findings
+    at exact thresholds. Singular transforms have no painted area and are
+    skipped. Nonfinite or unrepresentable numeric results raise exceptions.
+  - Reports contain zero-based `page_index` and `placement_index`, a tuple
+    `resource_path`, `pixel_width`, `pixel_height`, `dpi_x`, `dpi_y`, `bbox`,
+    and `is_inline`. `effective_dpi` is the lower axis DPI; `image_name` is the
+    last resource name, or `None` for inline images. `placement_index` counts
+    all image paints on that page, including acceptable and singular paints.
+    Resource paths contain original names without their PDF name prefix,
+    from outer forms through the image; inline paths contain enclosing forms
+    only. `bbox` is `(x, y, width, height)` in unrotated page user coordinates,
+    before clipping/cropping, and is not multiplied by UserUnit. Reports are
+    detached and remain usable after the document is closed.
+  - Image sample streams are never decoded, so codecs, Pillow and other
+    optional imaging packages are unnecessary. The check uses declared image
+    dimensions, not embedded DPI metadata, and does not validate encoded image
+    pixels. Selected page content and invoked forms are read under resource
+    limits; other page content, image caches and extraction cursors remain
+    untouched, including with streaming and encrypted input. Form recursion,
+    repeated invocation work, tokens, decoded content, pixel declarations,
+    selection sizes and result paths are bounded. Malformed invoked resources,
+    geometry, unbalanced graphics state and cyclic Form calls raise errors
+    rather than silently omitting findings.
+  - This is a geometric resolution inspection, not a visibility, sharpness,
+    OCR or certified preflight check. Opacity, optional-content visibility,
+    clipping paths, crop boxes, Form bounding boxes and overlaps are not
+    evaluated, so hidden or off-page paints can appear. Annotation appearances,
+    tiling patterns, Type 3 glyph content and separate soft/explicit masks are
+    not independently scanned. Upsampled or already blurry assets can pass a
+    DPI threshold. Inline stream boundaries use the shared parser: unfiltered
+    sample lengths or explicit lengths are preferred; otherwise the parser
+    searches for a delimited `EI`, which encoded samples can imitate.
+
 - **Export image assets as ZIP.** `Document.export_images_zip(destination=None,
   pages=None, compression="deflate", compresslevel=6, include_manifest=False,
   overwrite=True)` returns ZIP bytes and optionally writes a file or binary

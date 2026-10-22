@@ -69,6 +69,7 @@ from .forms import (
     UnsignedContent,
     UnsignedContentAbsorber,
 )
+from .image_resolution import ImageResolutionIssue
 from .interactive import (
     Action,
     Destination,
@@ -230,6 +231,7 @@ __all__ = [
     "GraphicsPath",
     "HighlightAnnotation",
     "HorizontalAlignment",
+    "ImageResolutionIssue",
     "ImageStamp",
     "InkAnnotation",
     "JavaScriptAction",

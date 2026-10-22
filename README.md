@@ -154,6 +154,8 @@ flowchart TD
   with safe unique archive names, optional selection and a metadata manifest.
 - `Document.export_images_zip()` collects reusable images from selected pages
   into one ZIP, with an optional manifest linking assets back to their pages.
+- `Document.find_low_resolution_images()` flags image placements below a DPI
+  threshold so teams can replace weak assets before printing or publishing.
 - `Document.split_by_blank_pages()` separates scan batches at visibly blank pages,
   optionally keeping the separators. It works on image-only scans without OCR and
   returns independent PDFs with the original page content and resources.
@@ -1057,6 +1059,24 @@ Use `pages=[0, 3, 7]` to inspect a subset. The document is unchanged.
 This detects exact rendered matches; noisy scans can differ, and hidden data
 can differ on matching pages. See [comparison details](supported-features.md#pages).
 
+### Find Images with Low Effective DPI
+
+```python
+from aspose_pdf import Document
+
+with Document("catalog.pdf") as document:
+    for issue in document.find_low_resolution_images(min_dpi=150):
+        print(issue.page_index + 1, issue.image_name,
+              issue.dpi_x, issue.dpi_y, issue.bbox)
+```
+
+Find each placement below the threshold on either image axis, including reused
+images, inline images and nested forms, without decoding image pixels. Reports
+use zero-based page indices; `pages=[2, 0]` selects a subset. Rotation, shear and
+page UserUnit affect the calculation correctly. Hidden or clipped-out paints
+can be reported; this checks resolution rather than image sharpness or print
+certification. See [resolution details](supported-features.md#images).
+
 ### Export PDF Images as ZIP
 
 ```python
@@ -1197,7 +1217,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 270 public types are organized by module below.
+and delete workflows. 271 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1252,6 +1272,7 @@ and delete workflows. 270 public types are organized by module below.
 | `HtmlSaveOptions` | Options for saving PDF documents as HTML. |
 | `ImagePlacement-images` | Represent an image placed on a PDF page. |
 | `ImagePlacementAbsorber-images` | Absorber to collect image placements from PDF pages. |
+| `ImageResolutionIssue` | Immutable location, pixel dimensions and effective DPI for a low-resolution image paint. |
 | `IncorrectCMapUsageException` | Raised when there is an incorrect usage of CMap. |
 | `InvalidFormTypeOperationException` | Exception thrown when an invalid form type operation is attempted. |
 | `InvalidOperationException` | Raised when a graphics element is attached to the wrong parent. |
@@ -1591,6 +1612,8 @@ and delete workflows. 270 public types are organized by module below.
   - `export_attachments_zip(destination=None, names=None, compression="deflate", compresslevel=6, include_manifest=False, overwrite=True) -> bytes`
   - `export_images_zip(destination=None, pages=None, compression="deflate", compresslevel=6, include_manifest=False, overwrite=True) -> bytes` —
     package reusable image assets with optional page provenance
+  - `find_low_resolution_images(min_dpi=150, pages=None) -> list[ImageResolutionIssue]` —
+    locate image placements below the requested effective DPI before delivery
   - properties: `pages`, `page_labels`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
     `is_pdfua_compliant`, `font_substitution`, `page_mode`, `page_layout`, `open_action`,

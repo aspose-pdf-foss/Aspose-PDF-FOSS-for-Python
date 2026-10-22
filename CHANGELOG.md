@@ -9,6 +9,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Find low-resolution image placements.**
+  `Document.find_low_resolution_images(min_dpi=150, pages=None)` reports image
+  locations, pixel dimensions and effective DPI for each weak placement,
+  including inline images and nested forms. Rotation, shear, reuse and page
+  UserUnit are accounted for without decoding image samples. Teams can locate
+  assets that need replacement before print or publication and automate
+  resolution checks. This does not assess sharpness or certify print quality.
+
 - **A contents page, built from the document's own headings.**
   `generate_outlines` already turned them into bookmarks; `Document
   .add_table_of_contents()` writes the same answer onto paper — the headings

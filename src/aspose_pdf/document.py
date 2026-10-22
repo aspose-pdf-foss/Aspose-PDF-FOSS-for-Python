@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.forms import Form
+    from aspose_pdf.image_resolution import ImageResolutionIssue
     from aspose_pdf.interactive import Action, Destination
     from aspose_pdf.link_validation import LinkValidationIssue
     from aspose_pdf.optimization import OptimizationOptions
@@ -514,6 +515,44 @@ class Document:
         # a fresh add fully supersedes it.
         self._engine_pdf.attachment_read_meta.pop(name, None)
         return self
+
+    def find_low_resolution_images(
+        self,
+        min_dpi: float = 150,
+        *,
+        pages: Iterable[int] | None = None,
+    ) -> list[ImageResolutionIssue]:
+        """Find image placements whose effective DPI is below ``min_dpi``.
+
+        The finite, positive threshold applies to either image axis; equality
+        passes. ``pages`` contains zero-based indices, retaining order and
+        repeats; None scans all pages. Each image paint produces its own
+        immutable ``ImageResolutionIssue``, in page/content order, even when
+        the same image or form is reused at different sizes.
+
+        Image XObjects, inline images and invoked nested forms are inspected.
+        DPI uses declared pixel dimensions, composed transforms and page
+        UserUnit, including rotation, reflection and shear. Singular transforms
+        have no painted area and are skipped. Findings locate full images in
+        unrotated page user coordinates. Clipping, crop boxes, opacity, optional
+        content visibility and overlap are not evaluated; hidden or off-page
+        paints may be reported. Unused resources, annotation appearances,
+        patterns, Type 3 glyph content and separate mask images are not scanned.
+
+        This is a resolution check, not a sharpness or print certification
+        check: already blurry or upscaled images can have sufficient DPI.
+        No image pixels are decoded and no optional imaging dependency is
+        required. Only selected page content and invoked forms are read, under
+        resource limits, without modifying the source or extraction cursors.
+        Malformed geometry, missing invoked resources and cyclic form calls
+        raise exceptions rather than silently omitting findings.
+        """
+        from aspose_pdf.engine.image_resolution import find_low_resolution_images
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return find_low_resolution_images(self, min_dpi, pages)
 
     def export_images_zip(
         self,
