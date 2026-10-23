@@ -48,8 +48,9 @@ class FormValidationIssue:
 class _Reader:
     """Bound metadata reads and memoize complete parent chains for this call."""
 
-    def __init__(self, pdf: Any):
+    def __init__(self, pdf: Any, *, attributes: tuple[str, ...] = _ATTRIBUTES):
         self.pdf = pdf
+        self.attributes = attributes
         self.budget = pdf._load_budget
         self.parents: dict[int, tuple[dict[str, Any], int]] = {}
 
@@ -75,6 +76,15 @@ class _Reader:
             )
             return value.name.lstrip("/")
         return None
+
+    def field_name(self, prefix: str, partial: str) -> str:
+        """Bound a fully qualified name before retaining it in the field index."""
+        self.budget.check(
+            len(prefix) + len(partial) + 1,
+            "max_object_bytes",
+            "form validation field name",
+        )
+        return f"{prefix}.{partial}" if prefix else partial
 
     def inherited(self, entry: PdfDictionary) -> dict[str, Any]:
         chain: list[PdfDictionary] = []
@@ -107,7 +117,7 @@ class _Reader:
         )
         for node in reversed(chain):
             attributes = dict(attributes)
-            for key in _ATTRIBUTES:
+            for key in self.attributes:
                 if PdfName(key) in node.mapping:
                     attributes[key] = self.resolve(node.mapping[PdfName(key)])
             depth += 1
@@ -134,17 +144,25 @@ def _kind(attributes: dict) -> str:
     return "signature" if value == "/Sig" else "text"
 
 
-def _field_index(reader: _Reader) -> dict[str, tuple[PdfDictionary, dict, str]]:
+def _field_index(
+    reader: _Reader, *, strict: bool = False,
+) -> dict[str, tuple[PdfDictionary, dict, str]]:
     pdf, budget = reader.pdf, reader.budget
     if pdf._cos_doc is None:
         return {}
     root = reader.resolve(pdf._cos_doc.trailer.mapping.get(PdfName("Root")))
+    if strict and (not isinstance(root, PdfDictionary) or isinstance(root, PdfStream)):
+        raise PdfParseException("Invalid form catalog dictionary")
     acro = (
         reader.resolve(root.mapping.get(PdfName("AcroForm")))
         if isinstance(root, PdfDictionary)
         else None
     )
-    if not isinstance(acro, PdfDictionary):
+    if acro is None or isinstance(acro, PdfNull):
+        return {}
+    if not isinstance(acro, PdfDictionary) or (strict and isinstance(acro, PdfStream)):
+        if strict:
+            raise PdfParseException("Invalid AcroForm dictionary")
         return {}
     roots = reader.array(acro.mapping.get(PdfName("Fields")), "form validation roots")
     stack = [(ref, "", {}, None, 1) for ref in reversed(roots)]
@@ -156,6 +174,8 @@ def _field_index(reader: _Reader) -> dict[str, tuple[PdfDictionary, dict, str]]:
         budget.check(depth, "max_nesting_depth", "form validation field depth")
         entry = reader.resolve(reference)
         if not isinstance(entry, PdfDictionary) or isinstance(entry, PdfStream):
+            if strict:
+                raise PdfParseException("Each form field must be a dictionary")
             continue
         key = id(entry)
         if key in seen:
@@ -169,15 +189,12 @@ def _field_index(reader: _Reader) -> dict[str, tuple[PdfDictionary, dict, str]]:
         attributes = dict(inherited)
         attributes.update(reader.inherited(entry))
         title = reader.resolve(entry.mapping.get(PdfName("T")))
+        if strict and title is not None and not isinstance(title, (PdfString, PdfNull)):
+            raise PdfParseException("Form field names must be PDF text strings")
         name = prefix
         if isinstance(title, PdfString):
             partial = reader.text(title)
-            budget.check(
-                len(prefix) + len(partial) + 1,
-                "max_object_bytes",
-                "form validation field name",
-            )
-            name = f"{prefix}.{partial}" if prefix else partial
+            name = reader.field_name(prefix, partial)
             if named_parent is not None:
                 nonterminal.add(named_parent)
             named_parent = key

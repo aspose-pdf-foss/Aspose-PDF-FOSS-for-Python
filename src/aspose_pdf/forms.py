@@ -1177,6 +1177,60 @@ class Form:
             values[name] = value
         return self.fill(values)
 
+    def to_schema(self) -> dict[str, Any]:
+        """Return a detached, versioned description of this AcroForm template.
+
+        Schema version 1 contains ``schema_version`` and a ``fields`` array in
+        form order, including signature fields and push buttons. Every entry
+        reports fully qualified and partial names, alternate/mapping names,
+        field type, flags, read-only/required/no-export status, typed defaults,
+        text length/multiline/password/comb settings, choice export/display
+        pairs, button on-state values, multiselect and editable-combo flags.
+
+        Inheritable rules come from the nearest ancestor. Current answers,
+        signature contents, actions and appearance streams are not exported.
+        Text defaults are strings or None; checkboxes are booleans, radio and
+        single-choice defaults are strings or None, multiselect defaults are
+        always lists. Signature/button defaults are None. Returned dictionaries
+        and lists are independent of the document and later schema calls.
+
+        This is a metadata inventory, not a JSON Schema standard document or
+        complete business-rule validation. It does not run JavaScript, process
+        XFA, verify signatures or decode page/image/appearance streams. Parser
+        and resource-limit errors and malformed supported metadata propagate.
+        """
+        from aspose_pdf.engine.form_schema import schema
+
+        self._document._ensure_not_disposed()
+        return schema(self._document._engine_pdf)
+
+    def export_schema(self, destination: Any = None, *, overwrite: bool = True) -> bytes:
+        """Return UTF-8 schema JSON, optionally writing a path or binary stream.
+
+        The schema is :meth:`to_schema`'s metadata inventory, with version 1.
+        Encoding finishes before any destination is touched. Paths are written
+        atomically, creating parent folders; ``overwrite=False`` refuses an
+        existing file. Streams are written from their current position with
+        short-write handling and left open. The returned bytes match the output.
+        """
+        from pathlib import Path
+
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.form_schema import to_json
+        from aspose_pdf.engine.stream_output import write_all
+        from aspose_pdf.load_limits import _LoadBudget
+
+        self._document._ensure_not_disposed()
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = to_json(self.to_schema(), _LoadBudget(self._document.load_limits))
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def export_json(self, destination: Any = None) -> bytes:
         """Return UTF-8 JSON form data, optionally writing a path or binary stream.
 

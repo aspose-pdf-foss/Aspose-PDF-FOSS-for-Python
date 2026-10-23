@@ -9,6 +9,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Describe PDF form templates for reusable filling interfaces.**
+  `Form.to_schema()` and `Form.export_schema()` expose field types, labels,
+  effective constraints, choice options and typed defaults without exporting
+  current answers. Applications can inspect templates and build form workflows
+  with less custom PDF metadata handling, including streaming/encrypted inputs.
+
 - **Extract PDF structure for indexing and data pipelines.**
   `Document.extract_blocks()` and `Page.extract_blocks()` return immutable
   headings, paragraphs, lists and tables with original page indices and

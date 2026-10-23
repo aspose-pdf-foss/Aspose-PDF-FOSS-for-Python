@@ -114,6 +114,9 @@ flowchart TD
   lists and tables with page indices and position anchors. `export_blocks_json()` delivers the
   same structure as versioned UTF-8 JSON for indexing and data pipelines. Figure PNGs are opt-in;
   recognition follows the HTML/Markdown heuristics and does not perform OCR.
+- `Form.to_schema()` and `Form.export_schema()` describe reusable form templates, including
+  field types, labels, required/read-only flags, text constraints, choice options and defaults.
+  Applications can build filling interfaces and inspect templates without exporting current answers.
 - `Document.export_annotations_json()` exports comments, geometry, metadata and reply/popup
   links for review reports and external processing, with page and subtype filters. A page's
   `annotations.to_list()` provides editable snapshots and `annotations.export_json()` writes JSON.
@@ -1818,6 +1821,8 @@ and delete workflows. 273 public types are organized by module below.
     `flatten(fields=True, annotations=True, pages=None, strict=True) -> None`
   - `fill(values, strict=True) -> list[str]` / `to_dict() -> dict` /
     `export_json(destination=None) -> bytes` / `import_json(source, strict=True) -> list[str]`
+  - `to_schema() -> dict` / `export_schema(destination=None, overwrite=True) -> bytes` —
+    versioned template descriptions with field types, effective constraints, choices and defaults.
   - `reset(fields=None, strict=True) -> list[str]` — restore all or selected fields to template defaults
   - `validate(fields=None, strict=True) -> list[FormValidationIssue]` — inspect stored answers without changing them
   - `export_fdf(destination) -> bytes` / `export_xfdf(destination) -> bytes` /

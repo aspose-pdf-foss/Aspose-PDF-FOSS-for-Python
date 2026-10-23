@@ -3854,6 +3854,59 @@ with Document("application.pdf") as document:
       document.save("filled.pdf")
   ```
 
+- **Describe reusable form templates for filling interfaces and integrations.**
+  `Form.to_schema()` returns independent dictionaries/lists describing AcroForm
+  fields, and `Form.export_schema(destination=None, overwrite=True)` returns the
+  same description as deterministic UTF-8 JSON bytes with a trailing newline.
+  Version 1 is `{"schema_version": 1, "fields": [...]}`; fields follow terminal
+  field-tree order, including read-only/no-export fields, push buttons and
+  signatures. Parent/grouping nodes are not listed as separate input fields.
+  - Every field includes `name` (fully qualified), `partial_name`,
+    `alternate_name`, `mapping_name`, `field_type`, `flags`, `read_only`,
+    `required`, `no_export`, `default_value`, `max_length`, `multiline`,
+    `password`, `comb`, `options`, `export_values`, `multi_select` and `editable`.
+    Names containing dots remain fully qualified strings rather than nested JSON.
+    Missing alternate/mapping names and inapplicable maximum lengths are `null`;
+    inapplicable flags are `false`, and option/state arrays are empty.
+  - Types are `text`, `checkbox`, `radio`, `listbox`, `combobox`, `pushbutton`
+    and `signature`. Effective types, flags, defaults, text maximum lengths and
+    choice options come from the nearest ancestor defining them. Text properties
+    describe character limits and multiline/password/comb modes. Choice `options`
+    preserve order and duplicate values, with `export_value` and `display_text`
+    in each entry; `editable` identifies free-text combo boxes. Checkbox/radio
+    `export_values` follow the existing per-widget on-state semantics, including
+    widget order and repeated state names; no appearance stream is decoded.
+  - Defaults come from `/DV`, including inherited/indirect values, never current
+    `/V` answers. Text defaults are strings or `null`, checkboxes are booleans,
+    radio and single-choice defaults are strings or `null`, and multiselect
+    defaults are always string arrays, including zero or one selection. Without
+    a default, checkboxes are false, multiselect lists are empty, and other data
+    fields are null. Push buttons and signatures always have null defaults.
+    Current answers, signature contents, actions and embedded assets are omitted.
+  - The export is a versioned metadata inventory, not a standard JSON Schema
+    document or a complete validator. It does not run JavaScript, process XFA,
+    verify signatures, infer business rules or validate defaults against all
+    constraints. Malformed supported metadata is rejected; parser and resource
+    errors propagate. Unsupported field types fail explicitly. Snapshots remain
+    usable after editing or disposing the document and do not edit the PDF.
+  - Files are written atomically, creating parent directories as needed;
+    `overwrite=False` refuses existing files. Binary streams are written from
+    their current position, retrying short writes, and left open. Schema reading
+    and encoding finish before any destination is touched. Streaming and
+    encrypted PDFs are supported without decoding page/image/appearance streams.
+    Traversal, option/default arrays, metadata text and JSON output growth obey
+    `PdfLoadLimits`; JSON escaping is performed in bounded pieces. The cumulative
+    metadata array work (including reused options) uses `max_container_items`,
+    and text work (including expanded field names) uses `max_total_decoded_bytes`.
+
+  ```python
+  with Document("application-form.pdf") as document:
+      schema = document.form.to_schema()
+      for field in schema["fields"]:
+          print(field["name"], field["field_type"], field["required"])
+      document.form.export_schema("application-form-schema.json")
+  ```
+
 - **Reset a form to its template defaults from Python**: `Form.reset(fields=None,
   strict=True)` restores all data fields from their effective `/DV` values,
   including inherited and indirect defaults, or just an iterable of fully
