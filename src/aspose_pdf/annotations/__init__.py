@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 from aspose_pdf.engine.cos import AnnotationName as Name
 
 if TYPE_CHECKING:
+    import datetime as _datetime
+
     from aspose_pdf.pages import Page
 
 __all__ = [
@@ -1114,6 +1116,33 @@ class AnnotationCollection:
         if index >= len(self):
             index = len(self) - 1
         return self[index]
+
+    def remove_matching(
+        self,
+        *,
+        authors: str | Iterable[str] | None = None,
+        before: _datetime.datetime | _datetime.date | str | None = None,
+        after: _datetime.datetime | _datetime.date | str | None = None,
+        date_field: str = "modified",
+        subtypes: str | Iterable[str] | None = None,
+        case_sensitive: bool = True,
+        dry_run: bool = False,
+    ) -> int:
+        """Remove this page's matching annotations or preview their count.
+
+        See Document.remove_annotations() for filters, default review subtypes,
+        date handling, popup/reply repair, dry-run semantics and boundaries.
+        """
+        return self._page._document.remove_annotations(
+            pages=[self._page.index],
+            authors=authors,
+            before=before,
+            after=after,
+            date_field=date_field,
+            subtypes=subtypes,
+            case_sensitive=case_sensitive,
+            dry_run=dry_run,
+        )
 
     def delete(self, index: int) -> None:
         items = self._items()

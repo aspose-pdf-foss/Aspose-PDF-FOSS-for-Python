@@ -2098,6 +2098,75 @@ class Document:
             dither=dither,
         )
 
+    def remove_annotations(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        authors: str | Iterable[str] | None = None,
+        before: _datetime.datetime | _datetime.date | str | None = None,
+        after: _datetime.datetime | _datetime.date | str | None = None,
+        date_field: str = "modified",
+        subtypes: str | Iterable[str] | None = None,
+        case_sensitive: bool = True,
+        dry_run: bool = False,
+    ) -> int:
+        """Remove matching review annotations and return removed occurrence count.
+
+        Combine filters with AND; ``authors`` accepts one exact author or an
+        iterable of alternatives. None disables that filter; an empty author
+        string matches an unset/empty author and an empty iterable matches none.
+        ``case_sensitive=False`` uses Unicode casefolding, without trimming.
+        ``pages`` uses zero-based indices; repeated pages are inspected once.
+
+        ``before`` and ``after`` are exclusive date bounds, accepting datetime,
+        date, ISO strings or PDF date strings. Dates mean midnight; naive values
+        and PDF dates without zones use UTC. PDF dates may omit trailing fields,
+        defaulting month/day to 1 and time to zero. ``date_field`` selects
+        ``modified`` (/M) or ``created`` (/CreationDate), without fallback.
+        Missing, invalid or non-string annotation dates do not match date
+        filters. Authors that are not PDF text strings do not match authors.
+
+        Default subtypes are Text, FreeText, Line, Square, Circle, Polygon,
+        PolyLine, Highlight, Underline, Squiggly, StrikeOut, Stamp, Caret, Ink
+        and Redact. Explicit subtypes can select other kinds, but Widget is
+        refused: use the form API. Links and file attachments are preserved by
+        default. Removing Redact markup does not apply redaction.
+
+        Owned popups on selected pages are removed with their matched owner,
+        even if the popup itself does not match. Count includes those popups.
+        Surviving replies are preserved, detaching IRT/RT when their parent is
+        no longer attached anywhere; incoming Popup links are repaired too.
+        References to shared targets remain while those targets stay attached.
+        Metadata on other pages is inspected for these repairs. A deletion
+        that would orphan a popup outside the selection is refused atomically.
+
+        ``dry_run=True`` performs the same validation/planning and returns the
+        count without edits. All validation and relationship planning precede
+        mutation, under resource limits. Content, appearances and embedded
+        assets are not decoded; streaming inputs stay lazy. Annotation arrays
+        are replaced rather than editing shared arrays in place. Other PDF
+        data is preserved. Changes remain in memory until saved. This is not
+        physical erasure, tag-tree repair or a secure sanitization operation;
+        detached object bytes or unrelated references can remain in the PDF.
+        Reacquire annotation views after removal because indices may shift.
+        """
+        from aspose_pdf.engine.annotation_cleanup import remove
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return remove(
+            self,
+            pages=pages,
+            authors=authors,
+            before=before,
+            after=after,
+            date_field=date_field,
+            subtypes=subtypes,
+            case_sensitive=case_sensitive,
+            dry_run=dry_run,
+        )
+
     def _annotation_records(
         self,
         pages: Iterable[int] | None,

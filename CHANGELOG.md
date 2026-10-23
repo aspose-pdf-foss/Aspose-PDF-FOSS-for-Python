@@ -9,6 +9,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Clean up annotations by author and date.**
+  `Document.remove_annotations()` and `page.annotations.remove_matching()`
+  filter review markup by author, date range, subtype and page, with a dry-run
+  count before editing. Teams can clear superseded review rounds before
+  handoff while retaining unrelated feedback, links and forms by default.
+  Removal plans include owned popups and repairs to surviving reply links,
+  are validated before mutation, and do not decode page or appearance streams.
+
 - **Measure visible content without editing the PDF.**
   `Page.get_content_bounds()` and `Document.get_content_bounds(pages=None)`
   return visible ink bounds in page coordinates, with `None` for blank-looking

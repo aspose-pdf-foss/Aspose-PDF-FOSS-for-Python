@@ -4051,6 +4051,78 @@ Supported:
 
 - Read page annotations through `Page.annotations`.
 - Add, insert, update, delete, clear, iterate, and index annotations.
+- **Clean up review annotations by author and date.**
+  `Document.remove_annotations(pages=None, authors=None, before=None,
+  after=None, date_field="modified", subtypes=None, case_sensitive=True,
+  dry_run=False) -> int` removes matching annotation occurrences and returns
+  their count. `page.annotations.remove_matching()` accepts the same filters,
+  without `pages`. This helps teams remove outdated review rounds or a
+  specific reviewer's superseded notes before handoff, reducing manual cleanup
+  while retaining other reviewers' comments and normal document navigation.
+  - Pages use zero-based indices; None selects all and repeats are inspected
+    once. An empty page/author/subtype selection matches nothing. Authors
+    accept one string or an iterable of alternatives; None disables author
+    filtering. Exact matching is case-sensitive by default; false uses Unicode
+    casefolding. Names are not trimmed. An empty string matches unset/empty
+    authors; non-string annotation author values do not match an author filter.
+    Author strings use the existing PDF text-string decoder, including Unicode.
+    Author alternatives combine with OR; different filters combine with AND.
+  - `before` and `after` are exclusive bounds: equal timestamps are retained.
+    Accept datetime/date objects, ISO date/datetime strings or PDF date strings.
+    Dates mean midnight. Naive datetimes and PDF dates without a zone use UTC;
+    aware values normalize to UTC. If both bounds are supplied, after must be
+    earlier than before. `date_field="modified"` reads `/M`; `"created"`
+    reads `/CreationDate`, without falling back to another field.
+  - Annotation dates must be complete recognizable PDF date strings, with an
+    optional `D:` prefix and valid calendar/time/zone components; trailing junk
+    is refused. Omitted trailing components use the existing parser's defaults:
+    month/day 1, time zero. Missing, empty, malformed, non-string or UTC-
+    unrepresentable dates are preserved when a date filter is active. Date
+    properties are not inspected when no date filter is requested. This filters
+    declared metadata, not a verified history of who edited the document.
+  - Default review types: Text, FreeText, Line, Square, Circle, Polygon,
+    PolyLine, Highlight, Underline, Squiggly, StrikeOut, Stamp, Caret, Ink and
+    Redact. Links, Widget fields, file attachment icons and unknown types are
+    preserved by default. Explicit subtype strings, `AnnotationType` values
+    or iterables can select other kinds; an explicit Widget request is refused
+    because fields require the form API. Selecting Redact removes markup and
+    does not redact underlying content. No filters removes all default review
+    types on the selected pages, plus their owned popups.
+  - Owned Popup annotations on selected pages are removed with matched owners,
+    even if popup metadata does not independently match. Either an owner's
+    `/Popup` or a popup's `/Parent` can establish ownership. Counts include
+    popups and count attached occurrences, not unique COS objects. Explicit
+    Popup removal keeps its owner and clears a surviving incoming Popup link
+    when that popup object is no longer attached anywhere.
+  - Surviving replies are kept; `/IRT` and `/RT` are detached only if their
+    target is no longer attached to any page. Shared targets still attached
+    elsewhere retain relationships. Arrays are replaced per selected page,
+    so a shared direct/indirect Annots array is not modified in place. Other
+    pages' annotation metadata is scanned when removals are planned to find
+    shared objects and repair incoming reply/popup references; those references
+    can therefore change on unselected pages. Other annotations are not removed
+    from unselected pages. If this would orphan an unselected popup, the whole
+    operation is refused; including its page allows it to be removed with its
+    selected owner. No-match calls skip the global relationship scan.
+  - `dry_run=True` performs the same filtering, validation and relationship
+    planning, returning the count without changes. The complete options and
+    selection are validated even for empty selections. All page metadata and
+    repairs are prepared before mutation; commit failures roll back annotation
+    arrays and repaired mappings. Malformed arrays/entries, missing/cyclic
+    indirect references, conflicting popup ownership, invalid options and scope
+    conflicts raise exceptions before removals. Generator lengths, metadata work, reference depth, strings,
+    page selection and array sizes obey `load_limits`.
+  - Page content, appearance, rich-text and embedded asset streams are not
+    decoded. Streaming/password-protected input remains lazy; page/text/image
+    extraction cursors are unchanged. Content streams, boxes, metadata,
+    protection, forms and embedded assets are otherwise preserved. Changes
+    remain in memory until saved; saving another path keeps the source file.
+    Reacquire annotation views after removal because their indices may shift.
+    No optional dependency or network access is required.
+  - This does not physically erase detached COS objects, prior revisions or
+    embedded asset bytes, and does not rewrite tagged structure trees, document
+    actions or arbitrary custom references to annotations. It is review cleanup,
+    not secure sanitization, redaction or full PDF conformance repair.
 - **Inventory PDF link targets without following them.**
   `Document.extract_links(pages=None) -> list[ExtractedLink]` and
   `Page.extract_links()` expose outbound URLs, local navigation and remote

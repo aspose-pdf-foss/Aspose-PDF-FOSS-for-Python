@@ -115,6 +115,8 @@ flowchart TD
   `annotations.to_list()` provides editable snapshots and `annotations.export_json()` writes JSON.
   `Document.import_annotations_json()` and `Page.annotations.import_json()` append supported
   review annotations from that JSON, restoring properties and reply/popup links.
+- `Document.remove_annotations()` filters review cleanup by author, date, subtype
+  and page, with a dry run count before removing old or superseded comments.
 - `Document.validate_links()` reports broken local links, bookmark targets and named
   destinations before sharing a PDF. `Page.validate_links()` checks one page's links;
   neither method changes the document or opens external addresses.
@@ -871,6 +873,33 @@ link sources; bookmark and destination-definition checks remain enabled unless
 `include_outlines=False` or `include_named_destinations=False` is passed.
 External target reachability and full PDF conformance are outside these checks.
 See [navigation validation coverage](supported-features.md#annotations).
+
+### Clean Up Review Annotations by Author or Date
+
+```python
+from aspose_pdf import Document
+
+with Document("reviewed.pdf") as document:
+    filters = {"authors": ["Alice"], "before": "2026-01-01"}
+    print(document.remove_annotations(**filters, dry_run=True))
+    removed = document.remove_annotations(**filters)
+    document.save("cleaned.pdf")
+```
+
+Remove a previous review round or one reviewer's outdated notes before handoff.
+Filters combine with AND; author alternatives combine with OR. Date bounds are
+exclusive and default to modification dates; `date_field="created"` selects
+creation dates. Datetimes, dates, ISO strings and PDF date strings are accepted;
+naive dates/times use UTC. Missing or malformed annotation dates are preserved
+when filtering by date. `case_sensitive=False` enables Unicode author casefolding.
+
+Default cleanup preserves links, widgets, file attachment icons and unknown
+subtypes. Owned popups count as removals; surviving replies are retained and
+detached from deleted parents. `page.annotations.remove_matching()` applies the
+same filters to one page. `dry_run=True` plans and validates without editing.
+Changes are in memory until saved. This removes review markup rather than
+physically erasing PDF objects or applying redactions. See
+[cleanup details](supported-features.md#annotations).
 
 ### Exchange Annotations for Review
 
@@ -1773,6 +1802,9 @@ and delete workflows. 272 public types are organized by module below.
   `import_json(source) -> int`
 - `Document.export_annotations_json(destination=None, pages=None, subtypes=None, overwrite=True) -> bytes`
   exports all or selected annotations to a path, binary stream or UTF-8 bytes.
+- `Document.remove_annotations(pages=None, authors=None, before=None, after=None, date_field="modified", subtypes=None, case_sensitive=True, dry_run=False) -> int` /
+  `AnnotationCollection.remove_matching(...) -> int` remove selected review annotations
+  by metadata or return the planned count without edits.
 - `Document.import_annotations_json(source, page_map=None) -> int` appends supported review
   annotations from a path, UTF-8 bytes or readable binary stream; returns the number added.
 - `Document.extract_links(pages=None)` / `Page.extract_links()` return
