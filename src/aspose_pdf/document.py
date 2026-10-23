@@ -4076,6 +4076,48 @@ class Document:
                 if isinstance(catalog, PdfDictionary):
                     catalog.mapping.pop(PdfName("Outlines"), None)
 
+    def get_content_bounds(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        dpi: float = 72.0,
+        white_threshold: int = 250,
+        include_annotations: bool = True,
+    ) -> dict[int, tuple[float, float, float, float] | None]:
+        """Measure visible content on selected pages without modifying the PDF.
+
+        Return a dictionary keyed by zero-based source page indices, in
+        first-selected order; repeated pages are measured once. None selects
+        all pages, and an empty selection/document returns an empty dictionary.
+        Blank-looking pages retain a None value. Other values are detached
+        ``(x0, y0, x1, y1)`` tuples in unrotated PDF page user coordinates.
+
+        Options and the complete selection are validated before any rendering,
+        even for an empty selection. Detection follows Page.get_content_bounds():
+        white paper, no antialiasing, current CropBox/rotation/layer visibility,
+        and optional visible annotation/widget appearances. At finite DPI it
+        is approximate and may miss faint or tiny marks. Stored hidden content
+        is not inventoried and no OCR is performed.
+
+        Selected pages render one at a time; streaming inputs do not populate
+        all-page content caches. Render, parser and resource-limit failures
+        propagate without a partial dictionary. Boxes, content, annotations,
+        metadata and extraction cursors remain unchanged. No optional imaging
+        dependency is required.
+        """
+        from aspose_pdf.engine.content_bounds import document_bounds
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return document_bounds(
+            self,
+            pages=pages,
+            dpi=dpi,
+            white_threshold=white_threshold,
+            include_annotations=include_annotations,
+        )
+
     def find_blank_pages(
         self,
         *,

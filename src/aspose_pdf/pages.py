@@ -1089,6 +1089,45 @@ class Page:
             include_annotations=include_annotations,
         )
 
+    def get_content_bounds(
+        self,
+        *,
+        dpi: float = 72.0,
+        white_threshold: int = 250,
+        include_annotations: bool = True,
+    ) -> tuple[float, float, float, float] | None:
+        """Measure visible ink without modifying this page or its boxes.
+
+        Return ``(x0, y0, x1, y1)`` in unrotated PDF user coordinates with a
+        lower-left origin, clamped to the effective CropBox. Return None when
+        no ink is found. A full-bleed page returns its visible box. The tuple
+        is detached and remains usable after the document is closed.
+
+        Render on white paper without antialiasing at finite positive ``dpi``.
+        A pixel is ink if any RGB channel is strictly below the integer
+        ``white_threshold`` (1-255). Visible annotation and widget appearances
+        count unless ``include_annotations=False``. Rotation, clipping, layer
+        visibility and font substitution follow render(). Pixel edges are
+        mapped back using DPI, not rounded raster dimensions. Coordinates are
+        page user units; UserUnit is not applied separately by this helper.
+
+        This is a visual heuristic, not exact object geometry or OCR. Tiny or
+        faint marks may be missed; dark speckles and scan borders count as ink.
+        Cropped-out or invisible stored data is not measured. Higher DPI costs
+        more time and memory. Only this page is rendered, under resource limits;
+        parser/render failures propagate. No page box, content, annotation or
+        extraction cursor is changed. See auto_crop() to apply a crop later.
+        """
+        from aspose_pdf.engine.content_bounds import page_bounds
+
+        self._document._ensure_not_disposed()
+        return page_bounds(
+            self,
+            dpi=dpi,
+            white_threshold=white_threshold,
+            include_annotations=include_annotations,
+        )
+
     def auto_crop(
         self,
         margin: float = 0.0,

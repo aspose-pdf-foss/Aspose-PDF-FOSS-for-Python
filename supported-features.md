@@ -1185,6 +1185,57 @@ Supported:
     Hidden text, metadata, annotation contents and other stored data can differ
     when page views match. This is not byte, semantic, text or signature
     comparison, OCR, perceptual matching, or proof that PDFs are interchangeable.
+- **Measure visible content without cropping.**
+  `Page.get_content_bounds(dpi=72, white_threshold=250,
+  include_annotations=True)` returns `(x0, y0, x1, y1)` around rendered ink,
+  or `None` for a visually blank page. `Document.get_content_bounds(pages=None,
+  dpi=72, white_threshold=250, include_annotations=True)` returns a dictionary
+  from zero-based page indices to those bounds, retaining blank entries as
+  `None`. This lets processing teams review white margins, preview crop regions
+  and prepare consistent document layouts before committing page edits.
+  - Document selections retain first-selected order and measure repeated
+    pages once. None selects all pages; an empty selection or document returns
+    `{}`. All options and the complete selection are validated before any page
+    is rendered, including for empty selections. DPI must be finite/positive,
+    the threshold an integer from 1 to 255, and the annotation flag a boolean;
+    booleans and strings are rejected for numeric options.
+  - Detection renders the current visible CropBox on white paper without
+    antialiasing. A pixel counts as ink if any RGB channel is strictly below
+    `white_threshold`. All ink contributes to one bounding rectangle. Its
+    outer pixel edges map back using DPI and page rotation, without stretching
+    to rounded raster dimensions, and are clamped to the current visible crop.
+    A full-raster ink extent returns that visible crop, rather than `None`.
+  - Returned coordinates use the unrotated page's lower-left user space,
+    including nonzero/negative origins and inherited boxes/rotation. They
+    follow the shared renderer's normalization, intersection and degenerate
+    page-box fallback. `/UserUnit` is not multiplied into the results; the
+    current renderer samples in raw page user units rather than applying a
+    separate physical UserUnit scale. These are content coordinates, not
+    top-left raster pixel coordinates or an exact physical print measurement.
+  - Clipping, transparent content, layer visibility, font substitution and
+    Form XObjects follow the renderer. Visible annotation/widget appearances
+    count by default; `include_annotations=False` excludes them. Subsequent
+    calls observe content, annotation, crop and layer visibility edits. No OCR
+    or text extraction is required, so image-only scans are supported.
+  - Measuring does not change CropBox, MediaBox, production boxes, content,
+    annotations, widget coordinates/values, metadata, protection or extraction
+    cursors. No inherited box is materialized or rewritten. Tuples and result
+    dictionaries are detached and remain usable after disposal; changing the
+    returned dictionary does not edit the PDF. Use `auto_crop()` separately to
+    apply trimming after inspecting bounds.
+  - Selected pages render one at a time and each raster is released before
+    the next page. Streaming/password-protected documents are supported
+    without populating all-page content caches or reading unselected page
+    content. Selection/result sizes and rendering/parsing/decoding follow
+    resource limits; failures propagate without a partial dictionary or edits.
+    No additional dependency is required.
+  - This is a finite-resolution visual heuristic with the shared renderer's
+    supported features and limitations, not exact object geometry or a stored
+    content inventory. Tiny/faint marks can be missed; higher DPI costs more
+    time and memory. Dark speckles, scan borders and colored paper count as
+    ink. There is no noise removal, deskewing, paper-color normalization or
+    recovery of cropped-out/invisible data. A blank result does not prove
+    that a page contains no stored text or images.
 - **Automatically trim white page margins.**
   `Page.auto_crop(margin=0, dpi=72, white_threshold=250,
   include_annotations=True)` shrinks the current effective CropBox to the

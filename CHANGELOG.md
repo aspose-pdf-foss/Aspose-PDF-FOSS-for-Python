@@ -9,6 +9,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Measure visible content without editing the PDF.**
+  `Page.get_content_bounds()` and `Document.get_content_bounds(pages=None)`
+  return visible ink bounds in page coordinates, with `None` for blank-looking
+  pages. Processing teams can inspect white margins and prepare crop or layout
+  decisions before changing documents. Measurement follows the current page
+  view, supports scans and optional annotation appearances, and reads selected
+  streaming pages one at a time without changing page boxes or content.
+
 - **Inventory PDF links for audits and content migrations.**
   `Document.extract_links(pages=None)` and `Page.extract_links()` return
   detached source coordinates, URI/local/remote targets and action-chain

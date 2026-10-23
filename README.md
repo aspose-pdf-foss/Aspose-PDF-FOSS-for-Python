@@ -146,6 +146,9 @@ flowchart TD
   grid and thumbnail dimensions, and save as PNG, TIFF, JPEG or optional WebP.
 - `Document.rasterized_copy()` creates a fresh image-only PDF of selected page
   views for static handoffs, with configurable DPI and annotation rendering.
+- `Page.get_content_bounds()` / `Document.get_content_bounds()` measure visible
+  content for crop previews, white-margin checks and layout preparation without
+  changing page boxes or content.
 - `Document.compare_visual()` compares PDF page views with pixel counts, difference
   ratios and bounding boxes, plus optional images highlighting changes in red.
   Color and area tolerances help review revised documents and scanned pages.
@@ -1195,6 +1198,27 @@ union is reported as `ignored_pixels` and shown in light blue on diff images.
 Regions do not hide missing pages or unequal raster sizes and do not remove
 data from either PDF.
 
+### Measure Visible Content Without Cropping
+
+```python
+from aspose_pdf import Document
+
+with Document("scans.pdf") as document:
+    for page_index, bounds in document.get_content_bounds(dpi=96).items():
+        if bounds is not None:
+            x0, y0, x1, y1 = bounds
+            print(page_index + 1, x1 - x0, y1 - y0)
+    first_page_bounds = document.pages[0].get_content_bounds()
+```
+
+Use measurements to review white margins and prepare crop or alignment decisions
+before changing the PDF. Bounds are `(x0, y0, x1, y1)` in unrotated page user
+coordinates, within the current CropBox; visually blank pages return `None`.
+The document method returns a dictionary keyed by zero-based page indices;
+`pages=[2, 0]` selects a subset. Visible annotations count unless
+`include_annotations=False`. Detection is approximate at the chosen DPI and
+shares the renderer's limits. See [content bounds details](supported-features.md#pages).
+
 ### Trim White Page Margins
 
 Remove excess white space around scanned or drawn content:
@@ -1628,6 +1652,8 @@ and delete workflows. 272 public types are organized by module below.
     front/back scans into a new document, optionally reversing the back-side order
   - `find_blank_pages(pages=None, dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> list[int]` —
     find visually blank pages without modifying the document
+  - `get_content_bounds(pages=None, dpi=72, white_threshold=250, include_annotations=True) -> dict[int, tuple[float, float, float, float] | None]` —
+    measure visible content per selected page without cropping
   - `find_duplicate_pages(pages=None, dpi=72, include_annotations=True) -> list[list[int]]` —
     group pages with identical rendered views without deleting them
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
@@ -1657,6 +1683,8 @@ and delete workflows. 272 public types are organized by module below.
     test the page's rendered appearance on white paper
   - `auto_crop(margin=0, dpi=72, white_threshold=250, include_annotations=True) -> Page` —
     trim white margins around rendered content by shrinking CropBox
+  - `get_content_bounds(dpi=72, white_threshold=250, include_annotations=True) -> tuple[float, float, float, float] | None` —
+    measure visible content without changing page boxes
   - `add_stamp(stamp) -> Page` — a text, image or page-number stamp over or under the page
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - `highlight_text(...) -> TextHighlightResult` — annotations and a report of unplaceable matches
