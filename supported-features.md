@@ -4529,6 +4529,78 @@ Boundaries:
 
 Supported:
 
+- **Import attachments from ZIP** with
+  `Document.import_attachments_zip(source, names=None, on_conflict="error",
+  use_manifest=True, compress=True)`. Bulk-embed supporting documents from
+  an archive to assemble a single PDF delivery package, without extracting
+  temporary files or adding a dependency. The return value is the number of
+  imported archive members, including replacements.
+  - `source` accepts a filesystem path, `bytes`, `bytearray` or binary stream.
+    Streams are read from their current position and remain open; non-seekable
+    streams and short reads are supported. ZIP input is buffered in memory.
+    `names=None` selects files in archive order. A string selects one exact
+    archive member name; an iterable preserves selection order and includes
+    exact repeats once. Directory entries are ignored. Missing files or
+    directory selections raise `KeyError`; an empty selection imports nothing.
+  - Without a manifest, member paths are flattened and sanitized using the
+    portable filename rules of ZIP export below. Neither relative/absolute
+    paths nor executable permission bits cause filesystem extraction or
+    execution. ZIP timestamps, permissions and MIME guesses are not imported.
+    `compress` sets PDF embedded-stream compression on save independently of
+    the ZIP member's compression method.
+  - With the default `use_manifest=True`, an exact root `manifest.json` is
+    reserved as the version-one manifest produced by `export_attachments_zip`.
+    Its complete mapping must describe every non-directory, non-manifest member
+    exactly once, with matching sizes and unique original/archive names.
+    Original PDF attachment names, MIME types, descriptions, ISO 8601 dates
+    (including offsets) and valid associated-file relationships are restored.
+    Manifest names are PDF names and can contain paths; they never become
+    filesystem paths. Original names are restored without filename sanitizing.
+    Invalid JSON, duplicate keys, unknown/missing fields, unsupported schema
+    versions, invalid metadata types/dates/relationships or incomplete mappings
+    are rejected, even for an empty selection. `use_manifest=False` treats
+    `manifest.json` as an ordinary file, allowing arbitrary archives that use
+    that filename. PDF serialization retains its normal date precision of
+    whole seconds and whole-minute timezone offsets.
+  - `on_conflict` handles **exact, case-sensitive PDF name** collisions with
+    existing attachments and earlier selected members, including collisions
+    after sanitizing: `"error"` rejects the whole import (default), `"skip"`
+    keeps the existing file, `"replace"` replaces bytes and all metadata, and
+    `"rename"` finds an unused `_2`, `_3`, etc. suffix before the extension.
+    Generated portable names remain within 240 UTF-8 bytes; manifest names
+    preserve their original spelling with the added suffix. Each processed
+    member counts once, so several replacements of one name count separately.
+  - Stored and deflated, single-disk ZIPs with classic central directories
+    are supported, including local ZIP64 size fields and data descriptors.
+    ZIP64 central directories, encrypted members, symlinks, devices, FIFOs,
+    duplicate/NUL-containing archive names, directories carrying data and
+    malformed or overlapping member structures are rejected. Central and local
+    header checks cover all entries; actual decompression, exact size, deflate
+    end-of-stream and CRC checks cover the manifest and selected, non-skipped
+    attachments. Unselected or skipped payloads are not decompressed or CRC
+    checked. An unrelated `manifest.json` requires `use_manifest=False`.
+  - `load_limits` applies to import: `max_input_bytes` and
+    `max_codec_work_bytes` bound buffering (the stricter enabled limit wins);
+    the latter also bounds archive bytes plus cumulative decoded/staged bytes.
+    `max_container_items` bounds actual central entries **before** allocation
+    by the ZIP parser, explicit selection entries including repeats, resulting
+    attachment count and manifest containers. `max_object_bytes` bounds entry
+    names/metadata and decoded manifest size; `max_nesting_depth` bounds JSON
+    structure before parsing. Each decoded file/manifest obeys
+    `max_decoded_stream_bytes` and `max_compression_ratio`; their cumulative
+    size obeys `max_total_decoded_bytes`. Deflate output is read in bounded
+    chunks and cannot exceed the declared size. Disabled limits use `None`.
+    These are per-import accounting limits, not a bound on total process RSS.
+  - All validation, name planning and payload staging finish before attachment
+    mappings change. A conflict, malformed late member, CRC error or exceeded
+    limit leaves existing bytes and metadata intact. Replacements clear stale
+    parsed metadata. The document's attachment mapping retains its identity.
+    No PDF page content is decoded, including on streaming documents; existing
+    pages, metadata and protection state remain unchanged by import. Changes
+    are persisted by normal `save`. Invalid archives and options raise
+    `PdfValidationException`; exceeded limits raise
+    `PdfResourceLimitException`. Filesystem/input-stream errors propagate.
+
 - **Export attachments as ZIP** with
   `Document.export_attachments_zip(destination=None, names=None,
   compression="deflate", compresslevel=6, include_manifest=False, overwrite=True)`.
@@ -4568,7 +4640,8 @@ Supported:
     ISO 8601 strings with offsets when available; absent/unparseable dates and
     absent metadata use JSON null. Metadata follows the typed attachment read
     model, with in-memory edits taking precedence. This is an informational
-    mapping, not a lossless Filespec backup or an archive-import format.
+    mapping, also accepted by `import_attachments_zip`; it is not a lossless
+    Filespec backup.
   - Resource checks apply to exports of in-memory authored attachments as well
     as loaded files: `max_container_items` bounds selection entries (including
     repeated names) and ZIP entries (including the manifest); `max_object_bytes`

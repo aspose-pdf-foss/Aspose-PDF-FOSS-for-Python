@@ -1168,6 +1168,23 @@ collisions without losing files. The optional `manifest.json` maps archive names
 back to original PDF names and metadata. The PDF is unchanged; only document-level
 embedded files are included. See [ZIP export details](supported-features.md#attachments).
 
+### Import ZIP Files as PDF Attachments
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    imported = document.import_attachments_zip("supporting-files.zip", on_conflict="rename")
+    document.save("delivery-package.pdf")
+```
+
+Embed a batch of supporting documents without extracting temporary files.
+Input can also be ZIP bytes or a binary stream; `names=` selects exact archive
+members. The default restores names and metadata from the ZIP export manifest;
+use `use_manifest=False` for an unrelated `manifest.json`. Conflicts can fail,
+skip, replace or rename. Selected payloads are validated before attachments
+change. See [ZIP import limits and formats](supported-features.md#attachments).
+
 ### Compare PDF Text Revisions
 
 ```python
@@ -1689,6 +1706,7 @@ and delete workflows. 272 public types are organized by module below.
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`
   - `export_attachments_zip(destination=None, names=None, compression="deflate", compresslevel=6, include_manifest=False, overwrite=True) -> bytes`
+  - `import_attachments_zip(source, names=None, on_conflict="error", use_manifest=True, compress=True) -> int`
   - `export_images_zip(destination=None, pages=None, compression="deflate", compresslevel=6, include_manifest=False, overwrite=True) -> bytes` —
     package reusable image assets with optional page provenance
   - `find_low_resolution_images(min_dpi=150, pages=None) -> list[ImageResolutionIssue]` —

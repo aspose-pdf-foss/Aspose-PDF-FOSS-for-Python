@@ -688,6 +688,66 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    def import_attachments_zip(
+        self,
+        source: str | Path | bytes | bytearray | BinaryIO,
+        *,
+        names: str | Iterable[str] | None = None,
+        on_conflict: str = "error",
+        use_manifest: bool = True,
+        compress: bool = True,
+    ) -> int:
+        """Import selected ZIP members as document-level embedded files.
+
+        Accepts a path, ZIP bytes or a binary stream read from its current
+        position and left open. Returns the number of imported members,
+        including replacements. ``names=None`` imports ordinary files in ZIP
+        order; a string selects one exact archive name and an iterable selects
+        names in its order, deduplicating repeats. Unknown names raise
+        ``KeyError``. Directories are ignored; nothing is extracted to disk.
+
+        By default, a root ``manifest.json`` must use the version-one format
+        produced by :meth:`export_attachments_zip`. It is consumed as metadata,
+        restoring original PDF names, MIME types, descriptions, dates and
+        associated-file relationships. Set ``use_manifest=False`` to import
+        it as an ordinary attachment. Without a manifest, names use the same
+        portable flat-basename rules as ZIP export; ZIP timestamps and file
+        permissions are not imported.
+
+        ``on_conflict`` handles exact PDF name collisions with existing files
+        or earlier selected members: ``"error"`` (default), ``"skip"``,
+        ``"replace"`` or ``"rename"`` (``_2``, ``_3``, ... before the extension).
+        Replacements replace metadata as well as content. ``compress`` controls
+        PDF embedded-stream compression on save, independently of ZIP storage.
+
+        Stored and deflated single-disk archives with classic central
+        directories are supported; ZIP64 central directories, encrypted files,
+        symlinks, special files and duplicate archive names are rejected.
+        Structural checks cover the whole archive. CRC and decompression checks
+        cover the manifest and selected, non-skipped files. All checks and
+        staging finish before any attachment changes; page content stays lazy.
+
+        ``load_limits`` bounds input and working bytes, entry/selection/result
+        counts, metadata text/JSON nesting, per-file and total decoded sizes and
+        compression ratios. The archive and imported bytes are buffered in
+        memory. Invalid archives/options raise ``PdfValidationException``;
+        filesystem and input-stream errors propagate. Changes reach the PDF
+        when it is saved normally.
+        """
+        from aspose_pdf.engine.attachment_zip_import import import_zip
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return import_zip(
+            self,
+            source,
+            names=names,
+            on_conflict=on_conflict,
+            use_manifest=use_manifest,
+            compress=compress,
+        )
+
     def update_attachment(
         self,
         name: str,
