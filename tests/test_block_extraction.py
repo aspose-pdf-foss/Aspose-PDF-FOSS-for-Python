@@ -13,9 +13,9 @@ import pytest
 from aspose_pdf import (
     Document,
     ExtractedBlock,
+    PageStamp,
     PdfLoadLimits,
     PdfResourceLimitException,
-    PageStamp,
     RasterizedPage,
 )
 from aspose_pdf.block_extraction import ExtractedBlock as ModuleBlock
