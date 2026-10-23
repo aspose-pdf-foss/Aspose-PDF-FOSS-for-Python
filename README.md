@@ -110,6 +110,10 @@ flowchart TD
 - `Document.extract_tables()` / `Page.extract_tables()` return inferred text grids directly as
   `ExtractedTable` snapshots, with editable lists and CSV export for processing report data
   without parsing HTML or Markdown. Recognition is heuristic and requires regular text grids.
+- `Document.extract_blocks()` / `Page.extract_blocks()` return immutable headings, paragraphs,
+  lists and tables with page indices and position anchors. `export_blocks_json()` delivers the
+  same structure as versioned UTF-8 JSON for indexing and data pipelines. Figure PNGs are opt-in;
+  recognition follows the HTML/Markdown heuristics and does not perform OCR.
 - `Document.export_annotations_json()` exports comments, geometry, metadata and reply/popup
   links for review reports and external processing, with page and subtype filters. A page's
   `annotations.to_list()` provides editable snapshots and `annotations.export_json()` writes JSON.
@@ -1310,7 +1314,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 272 public types are organized by module below.
+and delete workflows. 273 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1332,6 +1336,7 @@ and delete workflows. 272 public types are organized by module below.
 | `DocFormat` | Target format for a save operation. |
 | `Document-document` | Pythonic wrapper for PDF document lifecycle and core operations. |
 | `Duplex` | Enum with 4 members. |
+| `ExtractedBlock` | Immutable heading, paragraph, list, table or figure snapshot with source page, position anchor and JSON-ready data. |
 | `ExtractedTable` | Immutable text-table snapshot with source page, rows, inferred column spans, list conversion and CSV export. |
 | `Field` | A field of an interactive form. |
 | `FieldType` | Type of form field. |
@@ -1769,6 +1774,19 @@ and delete workflows. 272 public types are organized by module below.
   return `list[ExtractedTable]`; `pages` contains zero-based indices. Each result exposes
   `page_index`, immutable `rows` / `column_spans`, `row_count`, `column_count`, `to_list()`,
   `to_csv(delimiter=",")` and `save_csv(path, delimiter=",", encoding="utf-8", overwrite=True)`.
+
+- `Document.extract_blocks(pages=None, include_images=False, paragraph_gap=None, clip_to_page=True)` /
+  `Page.extract_blocks(...)` return `list[ExtractedBlock]` with immutable structure data,
+  original page indices and unrotated PDF position anchors.
+  `Document.export_blocks_json(destination=None, ..., overwrite=True)` / `Page.export_blocks_json(...)`
+  return versioned UTF-8 JSON bytes and optionally write a path or binary stream.
+
+  ```python
+  with Document("report.pdf") as document:
+      for block in document.extract_blocks(pages=[0]):
+          print(block.page_index, block.kind, block.text, block.rows)
+      document.export_blocks_json("report-structure.json")
+  ```
 
 - `PdfExtractor`
   - `bind_pdf(source, password, limits) -> None`

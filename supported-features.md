@@ -2161,6 +2161,58 @@ Boundaries:
   Images are embedded as data URIs through the same reconstruction
   `save_image()` performs. Markdown output is GFM, escaped only where a
   character would otherwise change the meaning.
+- **Extract layout blocks directly into snapshots and JSON.**
+  `Document.extract_blocks(pages=None, include_images=False, paragraph_gap=None,
+  clip_to_page=True)` and `Page.extract_blocks(...)` return `list[ExtractedBlock]`.
+  `ExtractedBlock` is importable from `aspose_pdf` and `aspose_pdf.block_extraction`.
+  No HTML/Markdown conversion or page rasterization is involved; recognition
+  reuses their layout analysis. The immutable snapshots remain usable after
+  source edits and disposal.
+  - Every snapshot exposes zero-based `page_index`, `kind` (`heading`,
+    `paragraph`, `list`, `table`, or opt-in `figure`), `x`, `y`, `text`, `level`,
+    `items`, `rows`, `column_spans`, `ordered`, `alt` and `image`. Text blocks
+    carry normalized text; headings have inferred levels, with zero elsewhere.
+    Lists have marker-free item tuples and an ordered/unordered flag. Tables
+    carry untruncated rectangular tuples of cells and horizontal column spans,
+    following `ExtractedTable`'s blank/covered-cell rules. Unused fields have
+    empty/zero/false defaults; `image` defaults to `None`.
+  - Anchors are in unrotated PDF user space with a lower-left origin: the first
+    text element's baseline origin for text, lists and tables, and the center
+    of the image placement for a figure. They are not bounding boxes or glyph
+    ink bounds. Page rotation does not change this coordinate system.
+  - `pages` preserves requested order and repetitions; `None` selects all
+    pages, and an empty iterable selects none. Invalid indices and options
+    fail before decoding any page. Streaming inputs read only selected content
+    streams and invoked forms, retaining form resource scopes and transformed
+    anchors. Images and unused forms are not decoded by default.
+    `include_images=True` includes image XObject figures with reconstructed PNG bytes and
+    alternate text (falling back to the resource name). Reconstruction follows
+    the HTML/Markdown export's existing image support and failure behavior.
+  - `paragraph_gap` is a finite positive baseline gap in font-size units,
+    defaulting to the analyzer's 1.6. `clip_to_page=True` filters elements whose
+    anchors fall outside the effective CropBox, rather than clipping glyphs.
+    Normal parser/decoder limits apply; page selections, result counts and
+    retained text/image bytes also obey `PdfLoadLimits`. Table cell counts
+    are bounded before padding sparse grids. The JSON byte buffer is bounded
+    by `max_codec_work_bytes` while escaping text and encoding images.
+  - `Document.export_blocks_json(destination=None, ..., overwrite=True)` and
+    `Page.export_blocks_json(...)` return deterministic UTF-8 bytes with a
+    trailing newline. Version 1 is `{"schema_version": 1, "blocks": [...]}`;
+    every block has the fields listed above, with tuples represented as arrays,
+    absent images as `null`, and PNG bytes as `data:image/png;base64,...`.
+    `block.to_dict()` returns an independent dictionary in the same format.
+    Original page indices remain in subsets; empty pages contribute no blocks.
+    All extraction options are shared with `extract_blocks`.
+  - Paths are written atomically, creating parent folders, and
+    `overwrite=False` refuses existing files. Binary streams are written from
+    their current position, retrying short writes, and left open. JSON is
+    prepared before any output is touched; resource and encoding failures
+    propagate without writing partial JSON. No PDF metadata or content is edited.
+  - **Recognition limits:** structure is inferred from geometry, not reconstructed
+    from the document's tag tree. Heading levels follow font size, reading order
+    and paragraph boundaries are heuristic, list nesting is flat, and tables
+    require a regular text grid. There is no OCR, exact bounding-box recovery,
+    cross-page table joining or preservation of all typographic/layout details.
 - **Extract text tables directly into lists and CSV.**
   `Document.extract_tables(pages=None, clip_to_page=True)` and
   `Page.extract_tables(clip_to_page=True)` return `list[ExtractedTable]`, using

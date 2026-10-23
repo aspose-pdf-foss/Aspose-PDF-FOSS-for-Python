@@ -68,6 +68,7 @@ if TYPE_CHECKING:
 
     from aspose_pdf._pending_signatures import PendingOperation
     from aspose_pdf.auto_links import AutoLinkResult
+    from aspose_pdf.block_extraction import ExtractedBlock
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
     from aspose_pdf.forms import Form
@@ -2453,6 +2454,79 @@ class Document:
             for index in indexes
             for table in _page_tables(self._engine_pdf, index, clip_to_page)
         ]
+
+    def extract_blocks(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        include_images: bool = False,
+        paragraph_gap: float | None = None,
+        clip_to_page: bool = True,
+    ) -> list[ExtractedBlock]:
+        """Return immutable layout blocks with original page indices and anchors.
+
+        Headings, paragraphs, lists and tables follow the same inferred reading
+        order as HTML/Markdown. Table cells are not truncated. ``include_images``
+        adds figures with PNG bytes; otherwise figures and image decoding are
+        omitted. No markup conversion, OCR or page rasterization is performed.
+
+        ``pages`` accepts zero-based indices, preserving order and repetitions.
+        All options and indices are validated before decoding; streaming inputs
+        read only selected pages and invoked forms. Empty selections return [].
+        ``paragraph_gap`` is a finite positive baseline gap in font sizes, or
+        None for the analyzer's default. ``clip_to_page`` filters anchors outside
+        the effective CropBox. Anchors are in unrotated PDF coordinates, not
+        bounding boxes. Snapshots survive source edits and disposal.
+        """
+        from aspose_pdf.block_extraction import extract_blocks
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return extract_blocks(self, pages, include_images, paragraph_gap, clip_to_page)
+
+    def export_blocks_json(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        include_images: bool = False,
+        paragraph_gap: float | None = None,
+        clip_to_page: bool = True,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return versioned UTF-8 block JSON, optionally writing a file or stream.
+
+        Schema version 1 contains ``schema_version`` and a flat ``blocks`` list.
+        Each entry is :meth:`ExtractedBlock.to_dict`: original ``page_index``,
+        ``kind``, ``x``/``y`` anchor, ``text``, ``level``, ``items``, ``rows``,
+        ``column_spans``, ``ordered``, ``alt`` and ``image``. Images are PNG data
+        URIs when requested, otherwise null. Empty pages contribute no entries.
+        Recognition and selection options match :meth:`extract_blocks`.
+
+        The complete JSON is prepared before writing. Paths are written
+        atomically, creating parent folders; ``overwrite=False`` refuses an
+        existing path. Binary streams are written from their current position,
+        retrying short writes, and left open. The returned bytes equal the
+        written payload. Exporting never changes the source PDF.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.block_extraction import to_json
+
+        self._ensure_not_disposed()
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        blocks = self.extract_blocks(
+            pages=pages, include_images=include_images,
+            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page,
+        )
+        data = to_json(blocks, _LoadBudget(self.load_limits))
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
 
     def to_html(
         self,

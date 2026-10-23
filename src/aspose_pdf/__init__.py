@@ -28,6 +28,7 @@ from .annotations import (
 )
 from .attachments import AF_RELATIONSHIPS, FileSpecification
 from .auto_links import AutoLinkResult
+from .block_extraction import ExtractedBlock
 from .color import Color
 from .destinations import NamedDestinationCollection
 from .document import Document
@@ -202,6 +203,7 @@ __all__ = [
     "Document",
     "DocumentFont",
     "DuplexMode",
+    "ExtractedBlock",
     "ExtractedLink",
     "ExtractedTable",
     "Field",

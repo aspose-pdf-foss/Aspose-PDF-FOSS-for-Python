@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from aspose_pdf.actions import PAGE_TRIGGERS, ActionCollection
 from aspose_pdf.annotations import AnnotationCollection
@@ -17,6 +17,7 @@ from aspose_pdf.viewer_preferences import PageBoundary
 
 if TYPE_CHECKING:
     from aspose_pdf.auto_links import AutoLinkResult
+    from aspose_pdf.block_extraction import ExtractedBlock
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
@@ -1348,6 +1349,27 @@ class Page:
         """
         return self._document.extract_tables(
             pages=[self._index], clip_to_page=clip_to_page
+        )
+
+    def extract_blocks(
+        self, *, include_images: bool = False, paragraph_gap: float | None = None,
+        clip_to_page: bool = True,
+    ) -> list[ExtractedBlock]:
+        """Return this page's detached structure; see Document.extract_blocks."""
+        return self._document.extract_blocks(
+            pages=[self._index], include_images=include_images,
+            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page,
+        )
+
+    def export_blocks_json(
+        self, destination: str | Path | BinaryIO | None = None, *, include_images: bool = False,
+        paragraph_gap: float | None = None, clip_to_page: bool = True,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export this page with its original index; see Document.export_blocks_json."""
+        return self._document.export_blocks_json(
+            destination, pages=[self._index], include_images=include_images,
+            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page, overwrite=overwrite,
         )
 
     def to_html(self, *, embed_images: bool = True) -> str:

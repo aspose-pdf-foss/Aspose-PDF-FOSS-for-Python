@@ -287,7 +287,7 @@ def page_blocks(
     for column in detect_columns(tagged):
         for kind, rows in detect_tables(group_rows(column)):
             if kind == "table":
-                blocks.append(_table_block(rows, texts, cell_text_limit))
+                blocks.append(_table_block(rows, texts, cell_text_limit, budget=budget))
             else:
                 flow = [element for row in rows for element in row]
                 blocks.extend(
@@ -425,6 +425,8 @@ def _table_block(
     rows: list[list[LayoutElement]],
     texts: dict[int, str],
     cell_text_limit: int | None = _MAX_CELL_CHARS,
+    *,
+    budget: Any = None,
 ) -> Block:
     """A detected grid becomes a table, laid out on its columns.
 
@@ -437,6 +439,8 @@ def _table_block(
     width = max(
         (cell.column + cell.span for row in rows for cell in row), default=0
     )
+    if budget is not None:
+        budget.check(width * len(rows), "max_container_items", "export table cells")
     cells: list[list[str]] = []
     spans: list[list[int]] = []
     for row in rows:
@@ -453,7 +457,8 @@ def _table_block(
                 row_spans[element.column] = min(element.span, next_column - element.column)
         cells.append(line)
         spans.append(row_spans)
-    return Block(kind="table", rows=cells, spans=spans)
+    anchor = rows[0][0]
+    return Block(kind="table", rows=cells, spans=spans, x=anchor.x, y=anchor.y)
 
 
 def _flow_blocks(
@@ -467,11 +472,13 @@ def _flow_blocks(
     blocks: list[Block] = []
     pending_list: list[str] = []
     pending_ordered = False
+    list_anchor = (0.0, 0.0)
 
     def flush_list() -> None:
         if pending_list:
             blocks.append(
-                Block(kind="list", items=list(pending_list), ordered=pending_ordered)
+                Block(kind="list", items=list(pending_list), ordered=pending_ordered,
+                      x=list_anchor[0], y=list_anchor[1])
             )
             pending_list.clear()
 
@@ -495,6 +502,8 @@ def _flow_blocks(
             kind = list_marker(group[0].text_head)
             if pending_list and (kind == "ol") != pending_ordered:
                 flush_list()  # the list changed kind: start a new one
+            if not pending_list:
+                list_anchor = (group[0].x, group[0].y)
             pending_ordered = kind == "ol"
             pending_list.append(_strip_marker(text, kind))
             continue
@@ -544,6 +553,8 @@ def _figure_block(pdf: Any, source: _ContentSource, element: LayoutElement) -> B
         kind="figure",
         alt=element.alt or name,
         image=_figure_png(pdf, source, name) if name else None,
+        x=element.x,
+        y=element.y,
     )
 
 

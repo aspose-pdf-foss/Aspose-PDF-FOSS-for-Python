@@ -9,6 +9,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Extract PDF structure for indexing and data pipelines.**
+  `Document.extract_blocks()` and `Page.extract_blocks()` return immutable
+  headings, paragraphs, lists and tables with original page indices and
+  position anchors. `export_blocks_json()` provides versioned UTF-8 JSON to
+  bytes, files or binary streams, with opt-in figure PNGs. Applications can
+  consume document structure directly without parsing generated markup.
+
 - **Clean up annotations by author and date.**
   `Document.remove_annotations()` and `page.annotations.remove_matching()`
   filter review markup by author, date range, subtype and page, with a dry-run
