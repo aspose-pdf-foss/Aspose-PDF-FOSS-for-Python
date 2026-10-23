@@ -13,7 +13,7 @@ from aspose_pdf.load_limits import _LoadBudget
 from .blank_pages import _number
 from .contact_sheet import _integer, _rgb
 from .content_authoring import AuthoredImage, build_image_stream
-from .rasterizer import RasterizedPage, _page_view
+from .rasterizer import RasterizedPage, _page_view, _raster_mode
 from .text_selection import page_indexes
 
 if TYPE_CHECKING:
@@ -40,22 +40,24 @@ def _geometry(document: Document, index: int, dpi: float):
 
 
 def _append_image(
-    pdf: SimplePdf, raster: RasterizedPage, width: float, height: float, content: bytes
+    pdf: SimplePdf, raster: RasterizedPage, width: float, height: float, content: bytes,
+    mode: str = "rgb", threshold: int = 128, dither: bool = False,
 ) -> None:
     """Register lossless samples directly, avoiding a PNG encode/decode round trip."""
-    compressed = zlib.compress(raster.pixels)
+    encoder_mode, samples = raster._samples(mode, threshold, dither)
+    compressed = zlib.compress(samples)
     ratio = pdf._load_limits.max_compression_ratio
-    use_flate = len(compressed) < len(raster.pixels) and (
-        ratio is None or len(raster.pixels) <= len(compressed) * ratio
+    use_flate = len(compressed) < len(samples) and (
+        ratio is None or len(samples) <= len(compressed) * ratio
     )
     image = AuthoredImage(
-        stream_data=compressed if use_flate else raster.pixels,
-        decoded_data=raster.pixels,
+        stream_data=compressed if use_flate else samples,
+        decoded_data=samples,
         width=raster.width,
         height=raster.height,
-        bits_per_component=8,
-        color_space="DeviceRGB",
-        components=3,
+        bits_per_component=1 if encoder_mode == "1" else 8,
+        color_space="DeviceRGB" if encoder_mode == "RGB" else "DeviceGray",
+        components=3 if encoder_mode == "RGB" else 1,
         filter_name="FlateDecode" if use_flate else None,
     )
     index = len(pdf.pages)
@@ -73,6 +75,9 @@ def rasterized_copy(
     background: Sequence[int] = (255, 255, 255),
     antialias: bool | int = True,
     include_annotations: bool = True,
+    mode: str = "rgb",
+    threshold: int = 128,
+    dither: bool = False,
 ) -> Document:
     """Preflight every selected output, then render and store one page at a time."""
     from aspose_pdf.document import Document
@@ -89,6 +94,14 @@ def rasterized_copy(
             raise PdfValidationException("antialias must be a factor between 1 and 8")
     if not isinstance(include_annotations, bool):
         raise PdfValidationException("include_annotations must be a boolean")
+    if not isinstance(mode, str):
+        raise PdfValidationException("mode must be a raster color-mode string")
+    mode = _raster_mode(mode)
+    threshold = _integer(threshold, "threshold", 0)
+    if threshold > 255:
+        raise PdfValidationException("threshold must be an integer from 0 to 255")
+    if not isinstance(dither, bool):
+        raise PdfValidationException("dither must be a boolean")
     budget = _LoadBudget(document.load_limits)
     selection = page_indexes(pages, document.page_count, limits=budget.limits)
     selection = range(document.page_count) if selection is None else selection
@@ -106,11 +119,22 @@ def rasterized_copy(
             pixels_w * factor, pixels_h * factor, "rasterized-copy supersampled page"
         )
         budget.check_image_pixels(pixels_w, pixels_h, "rasterized-copy image")
-        samples = pixels_w * pixels_h * 3
-        budget.check(samples, "max_object_bytes", "rasterized-copy RGB samples")
-        budget.check(samples, "max_decoded_stream_bytes", "rasterized-copy RGB samples")
+        pixels = pixels_w * pixels_h
+        samples = (
+            pixels * 3 if mode == "rgb" else pixels if mode == "gray"
+            else ((pixels_w + 7) // 8) * pixels_h
+        )
+        budget.check(samples, "max_object_bytes", f"rasterized-copy {mode} samples")
+        budget.check(samples, "max_decoded_stream_bytes", f"rasterized-copy {mode} samples")
+        work = samples * 2 + 512 * 1024
+        if mode == "gray":
+            work += pixels * 3
+        elif mode == "bilevel":
+            # Include RGB input, grayscale conversion and packed output.
+            # Dithering retains only two double rows plus row-allocation slack.
+            work += pixels * 5 + pixels_w * (32 if dither else 3)
         budget.check(
-            samples * 2 + 512 * 1024,
+            work,
             "max_codec_work_bytes",
             "rasterized-copy compression buffers",
         )
@@ -139,7 +163,7 @@ def rasterized_copy(
                 antialias=antialias,
                 draw_annotations=include_annotations,
             )
-            _append_image(result._engine_pdf, raster, width, height, content)
+            _append_image(result._engine_pdf, raster, width, height, content, mode, threshold, dither)
             del raster
     except BaseException:
         result.dispose()

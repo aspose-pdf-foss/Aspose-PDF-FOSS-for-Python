@@ -15,6 +15,7 @@ import math
 import re
 import struct
 import time
+from array import array
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -133,7 +134,7 @@ class RasterizedPage:
     def to_bilevel(self, threshold: int = 128, dither: bool = False) -> bytes:
         """Return this raster as packed 1-bit rows, ``1`` = white.
 
-        Pixels are thresholded on luminance -- above *threshold* is white --
+        Pixels are thresholded on luminance -- at or above *threshold* is white --
         with each row padded to a byte boundary.
 
         If *dither* is ``False`` (the default), a simple threshold is applied,
@@ -158,74 +159,46 @@ class RasterizedPage:
         return bytes(out)
 
     def _to_bilevel_floyd_steinberg(self, gray: bytes, threshold: int) -> bytes:
-        """Apply Floyd-Steinberg dithering to grayscale data before thresholding.
-
-        Floyd-Steinberg error diffusion spreads the quantization error to
-        neighboring pixels, producing a more natural-looking bilevel image.
-
-        The *threshold* is first normalized to the 0-255 range, then used to
-        determine the initial bilevel decision. The error diffusion works on
-        the actual grayscale values to preserve tonal range.
-        """
+        """Diffuse errors with two rows of doubles instead of a full float image."""
         width = self.width
         height = self.height
-        # Normalize threshold to 0-255 range first
         normalized_threshold = _byte(threshold)
-        # Convert grayscale bytes to a mutable list of floats for error accumulation
-        # Use float array to avoid truncating error during propagation
-        float_pixels = [float(b) for b in gray]
-        # Error diffusion matrix for Floyd-Steinberg:
-        #      X     7/16
-        # 3/16 5/16 1/16
-        # We process left-to-right, top-to-bottom
-        for y in range(height):
-            for x in range(width):
-                old_val = float_pixels[y * width + x]
-                # Determine new bilevel value (0 or 255) based on normalized threshold
-                new_val = 255.0 if old_val >= normalized_threshold else 0.0
-                # Compute quantization error
-                error = old_val - new_val
-                # Assign the new value
-                float_pixels[y * width + x] = new_val
-                # Propagate error to neighboring pixels with accumulated floating point error
-                # Right neighbor
-                if x + 1 < width:
-                    float_pixels[y * width + x + 1] += error * 7 / 16
-                # Bottom-left neighbor
-                if y + 1 < height and x > 0:
-                    float_pixels[(y + 1) * width + x - 1] += error * 3 / 16
-                # Bottom neighbor
-                if y + 1 < height:
-                    float_pixels[(y + 1) * width + x] += error * 5 / 16
-                # Bottom-right neighbor
-                if y + 1 < height and x + 1 < width:
-                    float_pixels[(y + 1) * width + x + 1] += error * 1 / 16
-
-        # Convert back to bytes after all error propagation is complete
-        pixels = bytearray(round(v) for v in float_pixels)
-        # Now threshold the dithered pixels using the normalized threshold
-        digits = bytes(0x30 if value < normalized_threshold else 0x31 for value in range(256))
         row_bytes = (width + 7) // 8
-        padding = b"0" * (row_bytes * 8 - width)
-        out = bytearray()
+        out = bytearray(row_bytes * height)
+        current = array("d", (float(value) for value in gray[:width]))
+        # Initialize each next row from grayscale so additions preserve the
+        # full-image algorithm's floating-point operation order.
         for y in range(height):
-            row = bytes(pixels[y * width : (y + 1) * width]).translate(digits)
-            out += int(row + padding, 2).to_bytes(row_bytes, "big")
+            following = (
+                array("d", (float(value) for value in gray[(y + 1) * width:(y + 2) * width]))
+                if y + 1 < height else None
+            )
+            for x in range(width):
+                old_val = current[x]
+                new_val = 255.0 if old_val >= normalized_threshold else 0.0
+                if new_val >= normalized_threshold:
+                    out[y * row_bytes + x // 8] |= 0x80 >> (x % 8)
+                error = old_val - new_val
+                if x + 1 < width:
+                    current[x + 1] += error * 7 / 16
+                if following is not None:
+                    if x > 0:
+                        following[x - 1] += error * 3 / 16
+                    following[x] += error * 5 / 16
+                    if x + 1 < width:
+                        following[x + 1] += error * 1 / 16
+            current = following
         return bytes(out)
 
 
     def _samples(self, mode: str, threshold: int, dither: bool = False) -> tuple[str, bytes]:
         """Return ``(encoder mode, samples)`` for a public colour *mode*."""
-        normalized = str(mode).strip().lower()
-        if normalized in ("rgb", "color", "colour"):
+        normalized = _raster_mode(mode)
+        if normalized == "rgb":
             return "RGB", self.pixels
-        if normalized in ("gray", "grey", "grayscale", "greyscale", "l"):
+        if normalized == "gray":
             return "L", self.to_gray()
-        if normalized in ("bilevel", "bw", "1"):
-            return "1", self.to_bilevel(threshold, dither)
-        raise PdfValidationException(
-            f"Unsupported raster colour mode {mode!r}; use 'rgb', 'gray' or 'bilevel'"
-        )
+        return "1", self.to_bilevel(threshold, dither)
 
     def to_png(self, *, mode: str = "rgb", threshold: int = 128, dither: bool = False) -> bytes:
         """Encode this raster as a PNG file.
@@ -5200,6 +5173,20 @@ def _coerce_rgb(value: Sequence[int]) -> Color:
     if len(value) < 3:
         raise PdfValidationException("background must contain three RGB components")
     return (_byte(value[0]), _byte(value[1]), _byte(value[2]))
+
+
+def _raster_mode(mode: str) -> str:
+    """Normalize public raster color modes without allocating pixel samples."""
+    normalized = str(mode).strip().lower()
+    if normalized in ("rgb", "color", "colour"):
+        return "rgb"
+    if normalized in ("gray", "grey", "grayscale", "greyscale", "l"):
+        return "gray"
+    if normalized in ("bilevel", "bw", "1"):
+        return "bilevel"
+    raise PdfValidationException(
+        f"Unsupported raster colour mode {mode!r}; use 'rgb', 'gray' or 'bilevel'"
+    )
 
 
 def _byte(value: float | int) -> int:

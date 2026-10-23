@@ -9,6 +9,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Create grayscale and black-and-white PDF copies.**
+  `Document.rasterized_copy(mode="gray" | "bilevel")` prepares static documents
+  for scan processing, sharing and monochrome printing, with adjustable
+  threshold and optional dithering. Converted samples are stored directly as
+  8-bit grayscale or packed 1-bit images, with resource-aware output planning.
+
 - **Describe PDF form templates for reusable filling interfaces.**
   `Form.to_schema()` and `Form.export_schema()` expose field types, labels,
   effective constraints, choice options and typed defaults without exporting

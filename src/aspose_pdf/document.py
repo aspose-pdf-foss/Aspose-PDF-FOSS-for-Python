@@ -1990,6 +1990,9 @@ class Document:
         background: Sequence[int] = (255, 255, 255),
         antialias: bool | int = True,
         include_annotations: bool = True,
+        mode: str = "rgb",
+        threshold: int = 128,
+        dither: bool = False,
     ) -> Document:
         """Return an independent image-only PDF of the selected visible pages.
 
@@ -2004,8 +2007,16 @@ class Document:
         unless ``include_annotations=False``. The source's font substitution
         and layer visibility apply, with the renderer's coverage/limitations.
 
-        Each result page has one opaque 8-bit RGB image. Storage is lossless,
-        using Flate when smaller and allowed by the compression-ratio policy.
+        ``mode`` is ``"rgb"`` (default, 8-bit DeviceRGB), ``"gray"`` (8-bit
+        DeviceGray) or ``"bilevel"`` (1-bit DeviceGray). Color-mode aliases
+        match raster image exports. Gray uses Rec. 601 luminance. Bilevel uses
+        integer ``threshold`` from 0 to 255 (default 128); values below it are
+        black and values at or above it are white. ``dither=True`` applies
+        Floyd-Steinberg error diffusion for bilevel output. Threshold/dither
+        are validated for every mode but only affect bilevel conversion.
+
+        Each result page has one opaque image. Converted samples are stored
+        losslessly, using Flate when smaller and allowed by the compression-ratio policy.
         CropBox and rotation are baked into the image; the displayed physical
         size is retained, with a new zero-origin MediaBox and zero rotation.
         Pixel dimensions round up at the selected DPI; image placement uses
@@ -2039,6 +2050,9 @@ class Document:
             background=background,
             antialias=antialias,
             include_annotations=include_annotations,
+            mode=mode,
+            threshold=threshold,
+            dither=dither,
         )
 
     def render_contact_sheet(

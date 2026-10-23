@@ -154,7 +154,8 @@ flowchart TD
   page thumbnails for a quick document overview or review preview. Select pages, set the
   grid and thumbnail dimensions, and save as PNG, TIFF, JPEG or optional WebP.
 - `Document.rasterized_copy()` creates a fresh image-only PDF of selected page
-  views for static handoffs, with configurable DPI and annotation rendering.
+  views for static handoffs, with configurable DPI, RGB/gray/bilevel modes,
+  optional black-and-white dithering and annotation rendering.
 - `Page.get_content_bounds()` / `Document.get_content_bounds()` measure visible
   content for crop previews, white-margin checks and layout preparation without
   changing page boxes or content.
@@ -444,9 +445,20 @@ with Document("input.pdf") as source:
 ```
 
 Use `pages=[2, 0, 2]` to select and reorder zero-based pages, including repeats.
-Each page becomes one losslessly stored RGB image at its original displayed
+Each page becomes one losslessly stored image at its original displayed
 physical size, with CropBox and rotation baked in. Visible annotations and
 form appearances are included unless `include_annotations=False`.
+The default `mode="rgb"` preserves color; `mode="gray"` stores 8-bit luminance,
+and `mode="bilevel"` stores packed 1-bit black-and-white pixels. Bilevel output
+supports `threshold=128` (integers 0–255) and `dither=True` for halftone scans.
+These modes reduce sample storage; the final file size depends on its content.
+
+```python
+with Document("scan.pdf") as source:
+    with source.rasterized_copy(mode="bilevel", dpi=150, threshold=128) as copy:
+        copy.save("black-and-white.pdf")
+```
+
 The source is unchanged; original text, interactive objects, attachments and
 metadata are not transferred. Text is no longer searchable/selectable, and
 appearance follows the built-in renderer's coverage at the chosen resolution.
@@ -1682,7 +1694,7 @@ and delete workflows. 273 public types are organized by module below.
     `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, overwrite) -> list[Path]`
   - `render_contact_sheet(pages, columns, thumbnail_size, margin, spacing, labels, background, page_background, label_color, antialias, include_annotations) -> RasterizedPage` /
     `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
-  - `rasterized_copy(pages=None, dpi=150, background=(255, 255, 255), antialias=True, include_annotations=True) -> Document` —
+  - `rasterized_copy(pages=None, dpi=150, background=(255, 255, 255), antialias=True, include_annotations=True, mode="rgb", threshold=128, dither=False) -> Document` —
     create an independent image-only PDF from selected visible page views
   - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images, ignore_regions=None) -> list[PageVisualComparison]`
   - `compare_text(other, pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False, skip_artifacts=False) -> list[PageTextComparison]` —

@@ -1650,7 +1650,8 @@ Supported:
   image-decoding and raster resource limits continue to apply.
 - **Create rasterized PDF copies.** `Document.rasterized_copy(pages=None,
   dpi=150, background=(255, 255, 255), antialias=True,
-  include_annotations=True)` returns an independent image-only `Document`.
+  include_annotations=True, mode="rgb", threshold=128, dither=False)` returns
+  an independent image-only `Document`.
   This supports static handoffs and viewing workflows that need page pictures
   instead of the original fonts, vector paths and interactive objects.
   - `pages=None` selects all pages; explicit iterables contain zero-based
@@ -1666,7 +1667,20 @@ Supported:
     Visible annotation and form appearances count unless
     `include_annotations=False`. Current layer visibility and the source's
     font substitution settings follow ordinary `render_page()` behavior.
-  - Each output page contains exactly one opaque 8-bit DeviceRGB image of
+  - `mode` selects `"rgb"` (the default, 8-bit DeviceRGB), `"gray"` (8-bit
+    DeviceGray) or `"bilevel"` (1-bit DeviceGray). It must be a string.
+    Aliases match image exports:
+    `color`/`colour`, `grey`/`grayscale`/`greyscale`/`L`, and `bw`/`1`, ignoring
+    case and surrounding whitespace. Gray conversion uses Rec. 601 luminance.
+    Bilevel output uses integer `threshold` from 0 to 255: luminance below it
+    becomes black, while equality and higher values become white. Default is
+    128; `dither=True` applies Floyd-Steinberg error diffusion. Threshold and
+    dithering are validated even on empty inputs and in other modes, where
+    they have no effect. Bits are packed by row, MSB first, with zero padding
+    past the image width; zero is black and one is white, without inversion.
+    Dithering keeps two rows of floating-point state rather than a full-page
+    float buffer, retaining the same output as the existing raster encoders.
+  - Each output page contains exactly one opaque image of
     the rendered view. The effective CropBox and rotation are baked into it;
     its new MediaBox starts at zero, rotation is zero and the displayed
     physical width/height are retained (swapped for 90/270 degrees). Image
@@ -1691,17 +1705,21 @@ Supported:
     and unsaved outline model are unchanged. Streaming inputs decode selected
     page content only, without filling full-document content/text caches.
     One completed source raster is held at a time; the result retains all
-    RGB sample buffers and stored image streams in memory. Every failure
+    converted sample buffers and stored image streams in memory. Every failure
     disposes the partial result and returns no document.
   - Results inherit the source's `PdfLoadLimits`. Preflight checks selected
     count against `max_pages`/`max_container_items`, output object counts and
     slots against `max_objects`, supersampled working pixels against
     `max_raster_pixels`, and each image against `max_image_pixels`.
-    `max_object_bytes` and `max_decoded_stream_bytes` bound RGB sample buffers
+    `max_object_bytes` and `max_decoded_stream_bytes` bound converted sample buffers
     and page content; `max_content_stream_bytes` bounds each placement stream.
-    `max_total_decoded_bytes` bounds the sum of output RGB samples and placement
-    content. Compression working buffers are checked conservatively using
-    twice each RGB buffer plus 512 KiB against `max_codec_work_bytes`.
+    `max_total_decoded_bytes` bounds the sum of converted output samples and
+    placement content. Bilevel sizes include byte padding for each row. The
+    renderer still works in RGB; `max_codec_work_bytes` conservatively bounds
+    RGB input, grayscale/bilevel conversion and compression buffers, with an
+    allowance of 512 KiB for codec state. Color reduction lowers retained sample
+    storage but may lose faint text or color distinctions; dithering can increase
+    compressed size. Final PDF size reduction is not guaranteed.
     Source content/image decoding keeps its ordinary policy and can still
     fail during rendering. Use subsets for large documents.
 - **Contact sheets**: `Document.render_contact_sheet()` returns a single RGB
