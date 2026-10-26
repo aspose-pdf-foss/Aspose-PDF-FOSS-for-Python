@@ -622,6 +622,57 @@ Supported:
     `/XYZ` destination resolving to the right page object and the heading's own
     coordinate, with the open state carried in the sign of `/Count`; and the
     tree reads back identically after a qpdf rewrite.
+- **Create bookmarks from text patterns.**
+  `Document.generate_outlines_from_text(pattern, pages=None, regex=False,
+  case_sensitive=True, title_group=0, replace=True, max_count=0, clip=None,
+  exclude_regions=None, skip_artifacts=False)` returns the number of created
+  `OutlineItem` entries. It finds section numbers, chapter labels, invoice IDs
+  or other text without heading tags or font-size heuristics.
+  - A nonempty string is literal by default; `regex=True` interprets it as a
+    Python regex. Compiled **text** regexes always retain their flags.
+    `case_sensitive=False` adds `IGNORECASE`; `True` does not strip flags from
+    compiled patterns. Line anchors and cross-line matching require the usual
+    `MULTILINE`/`DOTALL` flags. Matches never cross page boundaries.
+  - Each non-overlapping regex/literal match produces one root bookmark to its
+    original page, using a fit-to-page destination. There is no inferred
+    hierarchy, exact match-coordinate target or automatic deduplication.
+    Targets refer to page objects, so later insertion of pages before a matched
+    page does not redirect its bookmark when saved.
+    `title_group` is 0 for the whole match, a capture number, or a capture name.
+    Missing optional captures, empty captures and whitespace-only titles are
+    skipped. Title whitespace is collapsed to one space, retaining the matched
+    case and Unicode. Zero-width matches with empty titles are skipped; a
+    lookahead with a nonempty selected capture can still create a bookmark.
+  - `pages` contains zero-based indices, preserving order and repetitions.
+    `None` selects all pages; `[]` selects none. `clip`, `exclude_regions` and
+    `skip_artifacts` have the same meaning as plain-text extraction, including
+    geometry/ActualText limitations when filtering by region. Optional-content
+    visibility and ordinary decoded text semantics apply. Scanned images,
+    annotations and widget values are not searched or OCRed.
+  - `max_count=0` has no user cap; positive integers stop after that many
+    created titles and avoid reading later pages. Every option, rectangle,
+    capture reference and selected page index is validated before content is
+    parsed, even with no selected pages. Invalid options and regex syntax raise
+    `PdfValidationException`. Python's regex engine has no execution timeout.
+  - `replace=True` replaces the tree, including clearing it on zero matches.
+    `replace=False` appends roots, preserving existing items, children, styles,
+    actions, named targets and live edits. A successful call preserves a
+    previously exposed `OutlineCollection` object. Plans are completed and
+    checked before editing the tree; extraction, validation and resource
+    failures preserve the previous outline model. Save to persist the result.
+  - Streaming inputs decode requested page content without filling
+    full-document text/content caches or moving text cursors. Resource
+    conversion follows ordinary text extraction and may decode unused Form
+    resources on selected pages; nonempty region filters use the selective
+    region parser and its conservative geometry rules.
+    PDF page content and layout remain unchanged. `max_container_items` bounds
+    page selections, considered matches (including skipped empty matches), and
+    the resulting tree including retained descendants. `max_object_bytes`
+    bounds patterns (including literal escaping), per-page extracted text and
+    encoded titles, including Unicode byte-order marks;
+    `max_total_decoded_bytes` bounds retained generated title bytes. The
+    projected PDF object count/slots obey `max_objects`, reusing existing
+    outline slots where possible. Other source decoding limits still apply.
 - **A contents page, from the same headings.**
   `Document.add_table_of_contents()` writes them onto paper rather than into
   the bookmark tree: each heading on a line of its own, indented by level, with

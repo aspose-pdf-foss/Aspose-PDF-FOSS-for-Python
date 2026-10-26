@@ -231,6 +231,9 @@ flowchart TD
 - `Document.generate_outlines()` builds the bookmark tree from the document's own headings — the
   structure tree when it is tagged, the inferred size tiers when it is not — nesting them by level
   and pointing each one at the heading itself rather than at the top of its page.
+- `Document.generate_outlines_from_text()` creates page bookmarks from literal
+  or regex matches, including capture groups for titles, without requiring
+  heading tags or different font sizes.
 - `Document.add_table_of_contents()` writes the same headings onto paper: a contents page indented
   by level, with dot leaders, the page each heading is on, and links landing on the heading itself.
   The numbers account for the contents pushing everything back, and are the pages' own labels where
@@ -523,6 +526,27 @@ with Document("report.pdf") as document:
     print(f"contents on page {pages[0] + 1}")
     document.save("report-with-contents.pdf")
 ```
+
+### Create Bookmarks from Section Numbers or Invoice Labels
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as document:
+    count = document.generate_outlines_from_text(
+        r"(?m)^Chapter \d+: (?P<title>[^\n]+)$",
+        regex=True,
+        title_group="title",
+        replace=False,
+    )
+    document.save("report-with-bookmarks.pdf")
+```
+
+Each match creates a flat bookmark to its page. Strings are literal by default;
+compiled text regexes keep their flags. `pages`, `clip`, `exclude_regions` and
+`skip_artifacts` select the source text, and `max_count` caps created entries.
+`replace=True` (the default) replaces the tree, even when no titles match;
+`replace=False` appends. All matches and limits are checked before outline edits.
 
 ### Sign a Document
 
@@ -1728,6 +1752,8 @@ and delete workflows. 273 public types are organized by module below.
     versioned bookmark tree, preserving supported targets and styles
   - `split_by_text(pattern, regex=False, case_sensitive=True, include_preamble=True) -> list[Document]` —
     split a batch at pages containing a literal or regular expression match
+  - `generate_outlines_from_text(pattern, pages=None, regex=False, case_sensitive=True, title_group=0, replace=True, max_count=0, clip=None, exclude_regions=None, skip_artifacts=False) -> int` —
+    create flat page bookmarks from extracted text matches and optional capture titles
   - `split_by_blank_pages(keep_separators=False, dpi=72, white_threshold=250, max_ink_ratio=0, include_annotations=True) -> list[Document]` —
     separate scan batches using visibly blank separator pages
   - `interleave(other, reverse_other=False, strict=True) -> Document` — alternate

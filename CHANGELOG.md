@@ -9,6 +9,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Create navigation bookmarks from text patterns.**
+  `Document.generate_outlines_from_text()` turns literal or regex matches into
+  page bookmarks, with capture groups for titles and reusable text filters.
+  Reports and document batches can gain navigation without manual bookmark
+  entry or heading styles; validation or extraction failures preserve the
+  existing tree.
+
 - **Exclude headers, footers and sidebars from extracted text.**
   `exclude_regions` on page/document extraction, the facade and low-code text
   workflows removes overlapping glyphs without editing the PDF. Rectangles

@@ -3954,6 +3954,63 @@ class Document:
             created += 1
         return created
 
+    def generate_outlines_from_text(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        title_group: int | str = 0,
+        replace: bool = True,
+        max_count: int = 0,
+        clip: Sequence[float] | None = None,
+        exclude_regions: Iterable[Sequence[float]] | None = None,
+        skip_artifacts: bool = False,
+    ) -> int:
+        """Create a flat bookmark list from matches in extracted page text.
+
+        A string is literal unless ``regex=True``; a compiled text regex always
+        keeps its flags. ``case_sensitive=False`` adds case-insensitive matching.
+        Python regex semantics apply, including explicit multiline/DOTALL flags;
+        matches never cross page boundaries. No font-size or heading tags are
+        required. Images and field values are not OCRed or searched.
+
+        Each match creates one bookmark landing on its page with a fit-to-page
+        destination. ``title_group`` is a capture number/name (default 0, the
+        whole match). Unmatched, empty or whitespace-only groups are skipped;
+        title whitespace is collapsed to single spaces. Repeated matches are
+        retained. There is no inferred hierarchy or exact text-position target.
+        Targets refer to page objects so inserting pages before a matched page
+        does not redirect its bookmark when the document is saved.
+
+        ``pages`` accepts zero-based indices, preserving order and repetitions.
+        ``clip``, ``exclude_regions`` and ``skip_artifacts`` follow
+        :meth:`extract_text`. All options/indices are validated before reading
+        selected pages. Streaming inputs read selected page content without
+        filling full-document text/content caches. Page resource decoding follows
+        ordinary extraction and can include unused forms. ``max_count=0`` has
+        no user cap; a positive cap stops after that many created bookmarks.
+        Source resource limits still apply, including matches, titles and the
+        projected outline object count. Python regex matching has no timeout.
+
+        ``replace=True`` replaces the tree, including clearing it when no titles
+        match. ``False`` appends at the root, preserving existing items/targets.
+        The complete plan is checked before any outline edit; failures preserve
+        live edits and the previous tree. Returns the created bookmark count.
+        Page content is unchanged; save the document to persist the bookmarks.
+        """
+        from aspose_pdf.engine.text_outlines import generate_outlines_from_text
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return generate_outlines_from_text(
+            self, pattern, pages=pages, regex=regex, case_sensitive=case_sensitive,
+            title_group=title_group, replace=replace, max_count=max_count, clip=clip,
+            exclude_regions=exclude_regions, skip_artifacts=skip_artifacts,
+        )
+
     def auto_tag(
         self,
         image_alt: str | Callable[[str], str] | None = "Image",
