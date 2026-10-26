@@ -1982,6 +1982,84 @@ class Document:
             dither=dither,
         )
 
+    def export_pages_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        image_format: str = "png",
+        dpi: float = 72.0,
+        background: Sequence[int] = (255, 255, 255),
+        antialias: bool | int = True,
+        include_annotations: bool = True,
+        mode: str = "rgb",
+        threshold: int = 128,
+        dither: bool = False,
+        quality: int | float = 85,
+        lossless: bool = False,
+        method: int = 4,
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return rendered page images in a ZIP, optionally saving the archive.
+
+        ``pages`` uses zero-based indices, retaining order and repeats; ``None``
+        selects all pages. Members are named ``page-0001.png``, etc., by output
+        position. ``image_format`` is PNG, JPEG (also ``jpg``) or optional WebP.
+        Rendering honors visible CropBox, rotation, layers and normal annotation
+        appearances, unless ``include_annotations=False``. Color modes and
+        encoding options follow :class:`RasterizedPage`; JPEG rejects bilevel.
+        PNG/JPEG need no optional dependency; WebP requires the ``images`` extra.
+
+        ``include_manifest=True`` appends versioned ``manifest.json`` with the
+        source page index, pixel dimensions and encoded size for every file.
+        ZIP compression is ``deflate`` or ``stored``, with level 0-9 and fixed
+        timestamps/permissions. Empty selections produce valid empty archives.
+
+        All options, selected geometry and planned raster budgets are checked
+        before rendering. One raster is encoded at a time; the archive is held
+        in memory and completed before writing. File replacement is atomic and
+        ``overwrite=False`` refuses existing files. Binary streams receive bytes
+        at their current position, retry short writes and remain open; an I/O
+        failure can leave partial stream output. Source PDF objects are not
+        edited, and unselected streaming page content is not loaded. Rendering
+        and encoding limitations remain those of the existing renderer/codecs.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.page_zip import export_zip
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = export_zip(
+            self,
+            pages=pages,
+            image_format=image_format,
+            dpi=dpi,
+            background=background,
+            antialias=antialias,
+            include_annotations=include_annotations,
+            mode=mode,
+            threshold=threshold,
+            dither=dither,
+            quality=quality,
+            lossless=lossless,
+            method=method,
+            compression=compression,
+            compresslevel=compresslevel,
+            include_manifest=include_manifest,
+        )
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def rasterized_copy(
         self,
         *,

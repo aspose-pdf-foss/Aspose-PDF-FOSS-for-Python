@@ -9,6 +9,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Download rendered PDF pages as one image archive.**
+  `Document.export_pages_zip()` packages selected views as PNG, JPEG or optional
+  WebP, with configurable resolution/color and an optional page manifest.
+  Teams can share previews or feed image workflows without managing individual
+  export files; processing completes before the destination is written.
+
 - **Generate filled PDFs from a reusable template and a batch of records.**
   `FormFiller` and `FormFillerOptions` create independent results with optional
   field flattening, preserving template values omitted by a record. Teams can

@@ -1699,6 +1699,61 @@ Supported:
   previews of drawings, signatures or other details less memory-intensive. The
   interpreter still processes page content and referenced resources; content,
   image-decoding and raster resource limits continue to apply.
+- **Export rendered pages as ZIP.** `Document.export_pages_zip(destination=None,
+  pages=None, image_format="png", dpi=72, background=(255, 255, 255),
+  antialias=True, include_annotations=True, mode="rgb", threshold=128,
+  dither=False, quality=85, lossless=False, method=4, compression="deflate",
+  compresslevel=6, include_manifest=False, overwrite=True)` returns ZIP bytes
+  and optionally writes a file or binary stream.
+  - Page selection uses zero-based indices, preserving order and repetitions;
+    `None` selects all pages. Generated flat names `page-0001.png`, etc. follow
+    output position, including repeated source pages. Empty documents or
+    selections produce valid empty archives, or a manifest with an empty list.
+  - `image_format` accepts `png`, `jpeg`/`jpg` and `webp`, ignoring case,
+    surrounding whitespace and leading dots. PNG and JPEG use built-in codecs.
+    WebP requires the optional `images` extra with WebP support; unavailable
+    support is reported before rendering nonempty selections.
+  - Rendering follows `render_page()`: effective CropBox, rotation, current
+    layer visibility, source font substitution and normal annotation/widget
+    appearances. `include_annotations=False` excludes those appearances.
+    DPI is a finite positive number; default is 72. RGB background channels
+    are integers 0-255. `antialias=True` means 3x supersampling, `False` disables
+    it and integers 1-8 select the factor. Pixel dimensions round up.
+  - `mode` accepts RGB, gray and bilevel modes and their ordinary raster aliases.
+    Gray uses Rec. 601 luminance. Bilevel PNG/WebP honors integer `threshold`
+    0-255 and optional Floyd-Steinberg `dither`; JPEG rejects bilevel. JPEG
+    `quality` is an integer 1-100; WebP accepts finite numbers 0-100, boolean
+    `lossless` and integer `method` 0-6. WebP stores gray/bilevel samples as RGB;
+    lossless mode preserves their pixels. PNG ignores quality; quality is still
+    validated as a finite number 0-100. All flags/options are checked even for
+    empty selections and when the current format does not use them.
+  - `include_manifest=True` adds `manifest.json` with `schema_version: 1`,
+    normalized `image_format` and `mode`, `dpi`, and a `pages` array. Every record
+    contains `archive_name`, zero-based `page_index`, pixel `width`/`height` and
+    encoded `size` in bytes. ZIP compression is `deflate` or `stored`, with
+    integer `compresslevel` 0-9. Fixed timestamps (1980-01-01) and regular-file
+    permissions give deterministic archives in the same runtime/codecs.
+  - All indices, selected page geometry, format dimension bounds and planned
+    raster/encoding limits are checked before rendering. Selection count obeys
+    `max_pages`; selection iteration and ZIP entry count, including the manifest,
+    obey `max_container_items`. Supersampled pixels obey `max_raster_pixels`,
+    image pixels obey `max_image_pixels`. Each RGB raster and encoded image
+    obeys `max_object_bytes`/`max_decoded_stream_bytes`; a single RGB raster and
+    the total encoded files plus manifest obey `max_total_decoded_bytes`.
+    Estimated conversion/encoding work and complete ZIP growth, including its
+    central directory, are separately bounded by `max_codec_work_bytes`.
+    Source content and image decoding retain their normal resource policies.
+  - One raster is encoded and released at a time. Streaming documents read only
+    selected page content and keep full-document content/text caches lazy.
+    The complete archive remains in memory and is built before destination
+    writes. File replacement is atomic; `overwrite=False` refuses existing
+    paths. Streams are written at their current position, support short writes
+    and stay open; a stream I/O failure can leave partial bytes.
+  - Source content, metadata, protection and files are not edited. Output is
+    opaque page imagery in an unencrypted ZIP; PDF text, links, fields,
+    attachments, metadata and signatures are not transferred as live objects.
+    Visible text becomes pixels without OCR. Coverage and color behavior follow
+    the existing renderer/codecs; higher DPI increases time and memory.
 - **Create rasterized PDF copies.** `Document.rasterized_copy(pages=None,
   dpi=150, background=(255, 255, 255), antialias=True,
   include_annotations=True, mode="rgb", threshold=128, dither=False)` returns

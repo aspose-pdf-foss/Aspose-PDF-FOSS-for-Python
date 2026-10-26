@@ -156,6 +156,8 @@ flowchart TD
 - `Document.rasterized_copy()` creates a fresh image-only PDF of selected page
   views for static handoffs, with configurable DPI, RGB/gray/bilevel modes,
   optional black-and-white dithering and annotation rendering.
+- `Document.export_pages_zip()` packages rendered page images in one download,
+  with PNG/JPEG or optional WebP, page selection and a provenance manifest.
 - `Page.get_content_bounds()` / `Document.get_content_bounds()` measure visible
   content for crop previews, white-margin checks and layout preparation without
   changing page boxes or content.
@@ -466,6 +468,30 @@ The source is unchanged; original text, interactive objects, attachments and
 metadata are not transferred. Text is no longer searchable/selectable, and
 appearance follows the built-in renderer's coverage at the chosen resolution.
 See [rasterized copy details](supported-features.md#pages).
+
+### Export Rendered Pages as ZIP
+
+```python
+from aspose_pdf import Document
+
+with Document("input.pdf") as document:
+    document.export_pages_zip(
+        "previews.zip",
+        pages=[0, 2, 3],
+        image_format="png",
+        dpi=144,
+        include_manifest=True,
+    )
+```
+
+Each selected view becomes `page-0001.png`, `page-0002.png`, and so on, in
+selection order, including repeated pages. The optional `manifest.json` maps
+files to zero-based source page indices and pixel dimensions. Use
+`image_format="jpeg"` with `quality=85` for JPEG or `image_format="webp"` with
+the optional `images` extra. `mode="gray"` or `mode="bilevel"` reduces color;
+JPEG supports RGB and gray. The method returns ZIP bytes and can also write a
+file or binary stream. See [page archive details](supported-features.md#pages)
+for rendering options, limits and output behavior.
 
 ### Render a Page to an Image
 
@@ -1784,6 +1810,8 @@ and delete workflows. 275 public types are organized by module below.
     `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
   - `rasterized_copy(pages=None, dpi=150, background=(255, 255, 255), antialias=True, include_annotations=True, mode="rgb", threshold=128, dither=False) -> Document` —
     create an independent image-only PDF from selected visible page views
+  - `export_pages_zip(destination=None, pages=None, image_format="png", dpi=72, ..., include_manifest=False, overwrite=True) -> bytes` —
+    package selected rendered page views as image files with optional source-page metadata
   - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images, ignore_regions=None) -> list[PageVisualComparison]`
   - `compare_text(other, pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False, skip_artifacts=False) -> list[PageTextComparison]` —
     review extracted page text revisions with normalized unified diffs
