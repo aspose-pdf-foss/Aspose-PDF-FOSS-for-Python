@@ -9,6 +9,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Generate filled PDFs from a reusable template and a batch of records.**
+  `FormFiller` and `FormFillerOptions` create independent results with optional
+  field flattening, preserving template values omitted by a record. Teams can
+  prepare repeatable document batches without carrying answers between rows;
+  processing finishes before configured outputs are written.
+
 - **Update link URLs across a document.**
   `Document.replace_link_urls()` and `Page.replace_link_urls()` support
   literal/regex migrations, page selection and dry-run counts while retaining

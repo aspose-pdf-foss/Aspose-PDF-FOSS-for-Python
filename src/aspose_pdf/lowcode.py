@@ -28,7 +28,7 @@ import inspect
 import io
 import math
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import closing, nullcontext
 from enum import Enum
 from pathlib import Path
@@ -37,7 +37,7 @@ from typing import Any, BinaryIO
 from aspose_pdf.document import Document
 from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.stream_output import write_all as _write_all
-from aspose_pdf.exceptions import AsposePdfException
+from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 from aspose_pdf.facades import PdfExtractor
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
@@ -59,6 +59,8 @@ __all__ = [
     "Encryptor",
     "FileDataSource",
     "FlattenOptions",
+    "FormFiller",
+    "FormFillerOptions",
     "FormFlattener",
     "ImageExtractor",
     "ImageExtractorOptions",
@@ -512,6 +514,46 @@ class TextExtractorOptions(PluginOptions):
         from aspose_pdf.engine.text_selection import validate_skip_artifacts
 
         self._skip_artifacts = validate_skip_artifacts(value)
+
+
+class FormFillerOptions(PluginOptions):
+    """Fill every input PDF template once per immutable field-value record.
+
+    ``records`` accepts an iterable of flat mappings with :meth:`Form.fill`
+    values, including a generator. Records, names and list values are copied
+    and validated before input reads, also on later assignment. ``strict``
+    controls unknown field names; signature fields and push buttons are skipped.
+    ``flatten=True`` bakes fields using ``Document.flatten(annotations=False)``.
+    ``password`` opens password-protected templates. Normal save/encryption and
+    appearance-generation rules apply. Results are ordered by input, then record.
+    """
+
+    def __init__(
+        self,
+        records: Iterable[Mapping[str, Any]],
+        *,
+        strict: bool = True,
+        flatten: bool = False,
+        password: str | None = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> None:
+        from aspose_pdf.engine.form_batch import validate_options
+
+        super().__init__(limits=limits)
+        validate_options(strict, flatten, password)
+        self.strict, self.flatten, self.password = strict, flatten, password
+        self.records = records
+
+    @property
+    def records(self) -> tuple[Mapping[str, Any], ...]:
+        """A reusable tuple of read-only mappings with immutable field values."""
+        return self._records
+
+    @records.setter
+    def records(self, values: Iterable[Mapping[str, Any]]) -> None:
+        from aspose_pdf.engine.form_batch import snapshot_records
+
+        self._records = snapshot_records(values, self.limits)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1294,6 +1336,84 @@ class PdfAConverter(PdfPlugin):
             )
 
         return self._transform(options, convert)
+
+
+class FormFiller(PdfPlugin):
+    """Generate an independent filled PDF for every template/record pair.
+
+    Each input is read once and reopened from its original bytes per record,
+    so omitted values retain the template's answers without carrying data from
+    previous rows. Current form filling, choice validation and optional field
+    flattening are reused. No JavaScript or business-rule validation is run.
+
+    All results are produced before configured outputs are written; processing
+    failures close working documents and emit no partial batch. File/stream
+    output failures follow ordinary DataSource semantics. The returned PDFs
+    are retained in memory under the batch byte policy; use smaller batches
+    for large templates. Streams are read from their current position and left
+    open. Duplicate output file paths/stream objects are refused before work.
+    """
+
+    def process(self, options: FormFillerOptions) -> ResultContainer:
+        from aspose_pdf.engine.form_batch import (
+            OutputBuffer,
+            check_document,
+            snapshot_records,
+            snapshot_streams,
+            validate_options,
+        )
+
+        if not isinstance(options, FormFillerOptions):
+            raise TypeError("options must be FormFillerOptions")
+        self._require_inputs(options)
+        limits = _coerce_limits(options.limits)
+        strict, flatten, password = options.strict, options.flatten, options.password
+        validate_options(strict, flatten, password)
+        records, retained = snapshot_records(options.records, limits)
+        inputs, outputs = tuple(options.inputs), tuple(options.outputs)
+        if not all(isinstance(source, DataSource) for source in (*inputs, *outputs)):
+            raise TypeError("inputs and outputs must contain DataSource objects")
+        budget = _LoadBudget(limits)
+        budget.check(len(inputs), "max_container_items", "form batch templates")
+        count = len(inputs) * len(records)
+        budget.check(count, "max_container_items", "form batch result count")
+        if len(outputs) > count:
+            raise AsposePdfException("More output data sources were provided than results were produced")
+        destinations = set()
+        for output in outputs:
+            if isinstance(output, FileDataSource):
+                identity = ("file", os.path.normcase(str(output.path.resolve())))
+            elif isinstance(output, StreamDataSource):
+                identity = ("stream", id(output.stream))
+            else:
+                identity = ("source", id(output))
+            if identity in destinations:
+                raise PdfValidationException("Form batch outputs must have distinct destinations")
+            destinations.add(identity)
+        if not records:
+            return ResultContainer()
+        results = []
+        total_pages = 0
+        for source in inputs:
+            data = _read_source_bytes(source, limits)
+            for index, values in enumerate(records):
+                with Document(limits=limits) as document:
+                    document.load_from(data, password=password)
+                    if index == 0:
+                        total_pages += document.page_count * len(records)
+                        budget.check_pages(total_pages)
+                    original_streams = snapshot_streams(document)
+                    document.form.fill(values, strict=strict)
+                    if flatten:
+                        document.flatten(annotations=False)
+                    check_document(document, original_streams)
+                    with OutputBuffer(budget, retained) as output:
+                        document.save(output)
+                        payload = output.getvalue()
+                    retained += len(payload)
+                    results.append(OperationResult(payload))
+        self._emit(results, outputs)
+        return ResultContainer(results)
 
 
 class FormFlattener(PdfPlugin):

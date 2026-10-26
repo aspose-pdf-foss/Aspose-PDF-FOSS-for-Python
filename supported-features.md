@@ -3962,6 +3962,54 @@ with Document("application.pdf") as document:
       document.save("filled.pdf")
   ```
 
+- **Fill batches from reusable templates.** `FormFiller` and
+  `FormFillerOptions(records, strict=True, flatten=False, password=None,
+  limits=None)` are available from `aspose_pdf` and `aspose_pdf.lowcode`.
+  Add PDF template data sources to the options; `FormFiller.process()` returns
+  a `ResultContainer` of binary `OperationResult` PDFs in template order,
+  then record order. Each template is read once and reopened from its original
+  bytes for every row. Omitted fields retain template answers, without carrying
+  previous rows' data. There is no page-only import or rasterization; ordinary
+  PDF load/save behavior retains the template's document content and metadata.
+  - Records are flat mappings of fully qualified names with the same string,
+    boolean, null and multiselect list/tuple values as `Form.fill()`. Unknown
+    names raise `KeyError`; `strict=False` skips them. Signature and push-button
+    values are skipped. Required/maximum-length business-rule checks and
+    JavaScript are not run automatically. Type/choice and appearance behavior
+    follows `Form.fill()`; this does not add fonts, shaping or validation rules.
+  - `records` accepts generators and is snapshotted on construction and later
+    assignment as a tuple of read-only mappings, with list values stored as
+    tuples. Later caller changes cannot affect another input/run. The property
+    can be reassigned; failed assignments retain the old records. Options and
+    record budgets are checked again at processing, including a changed policy.
+    Records and processing flags are fixed for the duration of each run.
+  - `flatten=False` preserves interactive fields. `True` calls
+    `Document.flatten(fields=True, annotations=False)` on each filled copy,
+    retaining links and unrelated annotation types. Normal flattening rules
+    apply to hidden widgets, unsupported/missing appearances and signatures.
+    `password` opens standard password-protected templates; ordinary save,
+    encryption, permission and signature behavior still applies. No signing or
+    certificate-based opening API is added by this plugin.
+  - Results are completed before configured outputs are emitted, pairing
+    outputs by position as in other low-code plugins. Fewer outputs are allowed
+    because remaining PDFs stay in the returned container. Too many outputs,
+    duplicate resolved file paths, duplicate stream objects, or reusing the
+    same other output data-source object are rejected before reading inputs.
+    Processing/validation/appearance/save failures close working documents and
+    write no partial batch. Output I/O failures follow ordinary DataSource
+    semantics; previously written outputs are not rolled back as a group.
+  - Empty records produce no results and do not read template sources; at least
+    one input is still required. Inputs may be files, bytes or binary streams;
+    streams are read from their current position and left open. Reusing a
+    consumed stream requires rewinding it. Source bytes are not filled in place;
+    configured output targets have their normal replacement semantics.
+  - Record/container iteration, total record field/list items, result count,
+    text sizes, source PDFs and generated object/stream sizes obey resource
+    limits. `max_pages` bounds all output pages across the run. Each output PDF
+    obeys `max_input_bytes`; record text plus all retained output bytes obey
+    `max_total_decoded_bytes`. Work uses one open PDF at a time but retains all
+    serialized results; split large workloads into smaller batches. Serialization
+    still builds a PDF in memory before writing to the bounded output buffer.
 - **Describe reusable form templates for filling interfaces and integrations.**
   `Form.to_schema()` returns independent dictionaries/lists describing AcroForm
   fields, and `Form.export_schema(destination=None, overwrite=True)` returns the
@@ -6006,7 +6054,7 @@ Supported:
 - Run common workflows through a plugin layer in `aspose_pdf.lowcode`:
   `Merger`, `Splitter`, `Optimizer`, `TextExtractor`, `ImageExtractor`,
   `ImagesToPdf`, `Converter`, `PdfAConverter`, `Rotator`, `PageRemover`,
-  `Stamper`, `FormFlattener`, `Encryptor` and `Decryptor` -- one class per
+  `Stamper`, `FormFiller`, `FormFlattener`, `Encryptor` and `Decryptor` -- one class per
   workflow, each with its own options object, and every one of them a composition
   of operations documented elsewhere in this file. The four generic members of the
   `Plugin` enum now each name real classes: `EXTRACTOR` (`TextExtractor`,
@@ -6091,6 +6139,10 @@ Supported:
   annotations=True, pages=None, strict=True)`. Both categories remain selected
   by default. Iterable filters are materialized once for reuse across inputs;
   `FlattenOptions(limits)` retains its positional resource-limit argument.
+- `FormFiller` creates one independently filled PDF per template/record pair,
+  with optional field-only flattening, password opening, reusable record
+  snapshots and processing completed before output emission. See
+  [Forms](#forms) for field types, batch ordering, limits and boundaries.
 - `Encryptor` applies the standard security handler (passwords, permissions,
   algorithm) and `Decryptor` removes it, given a password the document accepts.
   The removal is unconditional, because `Document.is_encrypted` reports whether a

@@ -318,7 +318,7 @@ flowchart TD
   `DataSource`/`ResultContainer` interface: `Merger`, `Splitter` (per page, per range,
   or by bookmark level),
   `Optimizer`, `TextExtractor`, `ImageExtractor`, `ImagesToPdf`, `Converter` (HTML, Markdown, SVG,
-  TIFF, PNG, JPEG, WebP), `PdfAConverter`, `Rotator`, `PageRemover`, `Stamper`, `FormFlattener`,
+  TIFF, PNG, JPEG, WebP), `PdfAConverter`, `Rotator`, `PageRemover`, `Stamper`, `FormFiller`, `FormFlattener`,
   `Encryptor` and `Decryptor` — each one a composition of the operations above, so a batch job is
   a few lines and the same code works on files, bytes or streams.
   `ImagesToPdf` also converts multipage TIFF scans with the optional `images` extra.
@@ -1012,6 +1012,31 @@ Widgets, links, media and unknown subtypes are refused because their required da
 is absent from the export. Links to records outside the JSON are omitted.
 See [annotation exchange coverage](supported-features.md#annotations) for the schema and limits.
 
+### Fill a Batch of Forms From One Template
+
+```python
+from aspose_pdf import FileDataSource, FormFiller, FormFillerOptions
+
+options = FormFillerOptions(
+    [
+        {"person.name": "Alice", "agree": True},
+        {"person.name": "Bob", "agree": False},
+    ],
+    flatten=True,
+).add_input(FileDataSource("template.pdf"))
+
+for index, result in enumerate(FormFiller().process(options), 1):
+    result.save(f"filled-{index}.pdf")
+```
+
+Every record starts from the original template; omitted fields keep its values.
+`flatten=True` bakes form fields while retaining other annotations. The default
+keeps fields editable. Records follow `Form.fill()` types and strict field-name
+handling; generators and mutable lists are snapshotted for reuse. Multiple
+templates produce results in input order, then record order. All PDFs are
+prepared before configured outputs are written, and results are retained in
+memory under resource limits. `password=` opens protected templates.
+
 ### Validate a Filled Form
 
 Check stored answers before delivering a completed form:
@@ -1390,7 +1415,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 273 public types are organized by module below.
+and delete workflows. 275 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1435,6 +1460,8 @@ and delete workflows. 273 public types are organized by module below.
 | `FontSource` | Base class for external font providers. |
 | `FontSubstitutionOptions` | Font sources the renderer may substitute from. |
 | `Form` | Represents an interactive form (AcroForm) within a PDF document. |
+| `FormFiller` | Creates independently filled PDFs from templates and a batch of records. |
+| `FormFillerOptions` | Reusable records, field filling options and data sources for a form batch. |
 | `FormType` | Type of PDF form. |
 | `GoToAction` | Jump to a destination within this document. |
 | `GoToRAction` | Jump to a destination in another (remote) PDF file. |
@@ -1889,6 +1916,10 @@ and delete workflows. 273 public types are organized by module below.
     contract this legacy facade keeps.
 
 ### Forms And Annotations
+
+- `FormFillerOptions(records, strict=True, flatten=False, password=None, limits=None)` /
+  `FormFiller.process(options) -> ResultContainer` generate independent filled PDFs
+  for each template/record pair. Add template data sources and optional paired outputs.
 
 - `Form`
   - `add_text_field(name, page, rect, value, font_size, multiline, alignment, read_only, required) -> Field`
