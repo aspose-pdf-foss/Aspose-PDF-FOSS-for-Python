@@ -9,6 +9,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Update link URLs across a document.**
+  `Document.replace_link_urls()` and `Page.replace_link_urls()` support
+  literal/regex migrations, page selection and dry-run counts while retaining
+  link appearance and other action data. Plans are checked before editing,
+  helping maintain published PDF links without recreating the document.
+
 - **Create navigation bookmarks from text patterns.**
   `Document.generate_outlines_from_text()` turns literal or regex matches into
   page bookmarks, with capture groups for titles and reusable text filters.

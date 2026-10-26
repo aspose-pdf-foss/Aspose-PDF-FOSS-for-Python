@@ -1614,6 +1614,21 @@ class Page:
         """
         return self._document.extract_links(pages=[self._index])
 
+    def replace_link_urls(
+        self,
+        search: str | re.Pattern[str],
+        replacement: str,
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        dry_run: bool = False,
+    ) -> int:
+        """Replace primary Link URI URLs on this page; see Document.replace_link_urls."""
+        return self._document.replace_link_urls(
+            search, replacement, pages=[self._index], regex=regex,
+            case_sensitive=case_sensitive, dry_run=dry_run,
+        )
+
     def validate_links(self) -> list[LinkValidationIssue]:
         """Check this page's link annotations, resolving names as needed.
 

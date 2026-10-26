@@ -4402,6 +4402,65 @@ Supported:
     launch dictionaries and GoToE embedded-file targets are outside its scope.
     A declared file/URL is not verified to exist. Use `validate_links()` for
     wider local navigation diagnostics, including bookmarks and definitions.
+- **Replace URLs in Link annotations.**
+  `Document.replace_link_urls(search, replacement, pages=None, regex=False,
+  case_sensitive=True, dry_run=False) -> int` and
+  `Page.replace_link_urls(search, replacement, regex=False, case_sensitive=True,
+  dry_run=False)` update primary `/A` actions with `/S /URI`. This supports
+  domain migrations, protocol upgrades and removal of obsolete URL components.
+  - Nonempty string searches are literal substrings by default. `regex=True`
+    interprets a string as a Python regex; a compiled **text** regex retains
+    its flags. `case_sensitive=False` adds `IGNORECASE`. All non-overlapping
+    matches within each URL are replaced. Regex replacements accept Python
+    numbered/named backreferences; literal replacements preserve backslashes.
+    Search and replacement syntax/types/Unicode are validated before metadata
+    reads, even with no pages or matching links. Python regex has no timeout.
+  - Matching uses the stored URL without applying catalog `/URI /Base`,
+    normalizing schemes/hosts, percent encoding or checking URI syntax or
+    reachability. Relative URLs, fragments, queries, custom schemes, `mailto:`
+    and Unicode URLs retain their spelling outside matched substrings. Empty
+    replacements can remove a component, but an empty resulting URL is refused.
+    PDF URL strings use BOM-aware Unicode decoding and the existing Latin-1
+    fallback; malformed BOM-encoded text is rejected.
+  - `pages` contains zero-based indices; None selects all and `[]` selects
+    none. Repetitions are inspected once in first-selected order. The return
+    value counts distinct changed annotation dictionaries, not replacement
+    occurrences or unique URL strings. No-op substitutions are not counted.
+    When all matches leave a URL unchanged, its original string bytes and
+    encoding are retained without allocating a newly encoded URL.
+    Hidden/invisible Link annotations are included. `dry_run=True` performs
+    the same plan and validation but writes nothing and returns the same count.
+  - Annotation identity, rectangle, border, color, flags, descriptions,
+    appearance references and unrelated entries are retained. Each changed
+    primary action is copied, retaining fields such as `IsMap` and `Next`,
+    without changing the original action or shared URI string. This isolates
+    changes from unselected links, bookmark actions and AA actions sharing the
+    original. An annotation dictionary itself shared with an unselected page
+    is refused, including in dry runs, to preserve page selection and existing
+    popup/tag references. Selecting all its page occurrences changes it once.
+  - Only primary Link URI actions are edited. Internal destinations, other
+    primary action kinds, action `Next` chains, AA actions, bookmarks, widgets,
+    catalog URI Base, visible page text and metadata URLs are outside scope.
+    `extract_links()` can inventory broader action chains. No action is
+    executed, URL fetched, page rendered, or content/image/appearance/script
+    stream decoded. Streaming/encrypted sources are supported. Full-text and
+    page-content caches/cursors are not filled or reset.
+  - All selected page/annotation metadata and resulting URLs are checked before
+    edits. If changes are planned, other pages' annotation metadata is also
+    inspected to detect shared annotation dictionaries. Invalid annotation
+    containers, missing/cyclic references, malformed primary actions or URI
+    strings raise `PdfParseException`; invalid options or empty resulting URLs
+    raise `PdfValidationException`. A failure preserves prior annotations.
+  - Resource policies bound selections, metadata work, reference depth,
+    substitution counts, source/search/replacement strings and resulting PDF
+    URL string sizes (including Unicode byte-order marks). Retained new URL
+    bytes obey `max_total_decoded_bytes`. Regex capture expansion uses a
+    conservative `max_codec_work_bytes` preflight before expanding templates.
+    Each changed annotation receives a new indirect primary action, keeping
+    annotation identity and avoiding deeper inline embedding. Projected object
+    counts and allocation slots obey `max_objects`, including dry runs; failed
+    registration/assignment removes allocated copies and restores annotations.
+    Save to persist the edits.
 - **Validate local navigation targets without editing the PDF.**
   `Document.validate_links(pages=None, include_outlines=True,
   include_named_destinations=True) -> list[LinkValidationIssue]` checks Link

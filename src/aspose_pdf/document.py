@@ -2380,6 +2380,53 @@ class Document:
             raise AsposePdfException("No document loaded")
         return extract(self, pages)
 
+    def replace_link_urls(
+        self,
+        search: str | re.Pattern[str],
+        replacement: str,
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        dry_run: bool = False,
+    ) -> int:
+        """Replace stored URLs in primary URI actions of Link annotations.
+
+        Strings match literal substrings unless ``regex=True``; compiled text
+        regexes retain their flags. ``case_sensitive=False`` adds IGNORECASE.
+        All occurrences are replaced in each URL. Regex replacement strings
+        support Python backreferences; literal replacements stay literal.
+
+        ``pages`` contains zero-based indices; None selects all and repeats are
+        inspected once. Return the number of distinct changed annotations,
+        excluding no-op replacements. ``dry_run=True`` performs the same plan
+        and checks without edits. Empty resulting URLs are rejected. Options,
+        page indices, metadata and resource limits are checked before mutation;
+        any failure preserves the previous annotations.
+
+        Matching uses the stored URI spelling, without applying the catalog URI
+        Base, URL normalization or network requests. Relative/custom-scheme and
+        Unicode URIs are supported. Geometry, styling and other action fields
+        are retained; shared actions are copied for each changed annotation.
+        A matching annotation shared with an unselected page is refused to
+        avoid changing it outside the requested selection.
+
+        This edits primary /A URI actions only. Action Next chains, bookmarks,
+        AA actions, widgets, catalog URI Base and plain page text are untouched.
+        Page content, images, appearances and scripts are never decoded. Save
+        to persist the edits. This is not URI validation or reachability checking;
+        Python's regex engine has no execution timeout.
+        """
+        from aspose_pdf.engine.link_urls import replace_link_urls
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return replace_link_urls(
+            self, search, replacement, pages=pages, regex=regex,
+            case_sensitive=case_sensitive, dry_run=dry_run,
+        )
+
     def validate_links(
         self,
         *,

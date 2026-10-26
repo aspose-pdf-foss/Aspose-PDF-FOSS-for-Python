@@ -915,6 +915,27 @@ files fetched or page content decoded. This inventories Link annotations,
 including hidden ones; bookmarks and URLs written only as page text are outside
 its scope. See [link inventory details](supported-features.md#annotations).
 
+### Update URLs Across a PDF
+
+```python
+from aspose_pdf import Document
+
+with Document("manual.pdf") as document:
+    affected = document.replace_link_urls(
+        "https://old.example/", "https://new.example/", dry_run=True,
+    )
+    document.replace_link_urls("https://old.example/", "https://new.example/")
+    document.save("manual-with-updated-links.pdf")
+```
+
+The returned count is changed Link annotations, excluding no-op replacements.
+Use `pages=[0, 2]` or `Page.replace_link_urls()` to select pages. Strings replace
+literal substrings; `regex=True` or a compiled text regex supports capture-based
+replacement templates. Matching uses stored URLs, including relative or custom
+schemes. Only primary URI actions are edited; page text, bookmark URLs and
+action chains remain unchanged. The complete plan is checked before edits,
+with no page rendering, content decoding or network access.
+
 ### Check Internal Links
 
 ```python
@@ -1815,6 +1836,10 @@ and delete workflows. 273 public types are organized by module below.
   `Page.auto_link(urls=True, emails=True, max_count=0)` create clickable addresses.
   `AutoLinkResult` reports `linked_count`, `skipped_count`, `existing_count`,
   `matched_count`, live `annotations`, `skipped_fragments` and `existing_fragments`.
+
+- `Document.replace_link_urls(search, replacement, pages=None, regex=False, case_sensitive=True, dry_run=False)` /
+  `Page.replace_link_urls(search, replacement, regex=False, case_sensitive=True, dry_run=False)`
+  return the number of changed Link annotations, replacing primary URI URLs.
 
 - `Document.extract_text(pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` /
   `Page.extract_text(clip=None, skip_artifacts=False, exclude_regions=None)` return text,
