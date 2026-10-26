@@ -2380,6 +2380,52 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    def export_annotations_xfdf(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        subtypes: str | Iterable[str] | None = None,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return UTF-8 XFDF review annotations, optionally writing the same bytes.
+
+        Page/subtype filters match :meth:`export_annotations_json`. Supported
+        review types include notes, free text, line/shape/ink/text markup,
+        stamps, carets and redaction annotations. Other types are skipped.
+        Popups are nested under their selected owners; orphan or filtered-out
+        popups are omitted. Reply links point only to selected annotations.
+
+        Geometry stays in unrotated PDF coordinates. Common metadata, colors,
+        basic borders and type-specific geometry are mapped to XFDF. Existing
+        names are retained when unique, with deterministic fallback names for
+        missing/duplicate names. Rich text, appearances, actions, field values,
+        embedded assets and unsupported properties are omitted. This export
+        does not apply redactions or add XFDF import support.
+
+        XML characters and exported geometry are validated under resource
+        limits. No page content, appearance or asset streams are decoded.
+        Output is completed before writing. File replacement is atomic and
+        ``overwrite=False`` refuses existing paths. Binary streams receive data
+        at their current position, retry short writes and remain open; stream
+        failures may leave a partial prefix. The source PDF is not edited.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.annotation_xfdf import export
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = export(self, pages, subtypes)
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def import_annotations_json(
         self,
         source: str | Path | bytes | bytearray | BinaryIO,

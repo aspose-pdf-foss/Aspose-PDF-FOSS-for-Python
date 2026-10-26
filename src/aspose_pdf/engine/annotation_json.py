@@ -190,7 +190,11 @@ class _Reader:
 
 
 def records(
-    pdf: Any, pages: Iterable[int] | None, subtypes: Any
+    pdf: Any,
+    pages: Iterable[int] | None,
+    subtypes: Any,
+    *,
+    property_names: tuple[str, ...] = _PROPERTIES,
 ) -> list[dict[str, Any]]:
     """Snapshot selected annotations without traversing appearances or page content."""
     budget = _LoadBudget(pdf._load_limits)
@@ -244,7 +248,7 @@ def records(
                     "Annotation Rect must contain four finite numbers"
                 )
             properties = {}
-            for key in _PROPERTIES:
+            for key in property_names:
                 raw = obj.mapping.get(PdfName(key))
                 if raw is None:
                     continue

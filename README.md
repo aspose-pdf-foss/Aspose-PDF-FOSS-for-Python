@@ -122,6 +122,8 @@ flowchart TD
   `annotations.to_list()` provides editable snapshots and `annotations.export_json()` writes JSON.
   `Document.import_annotations_json()` and `Page.annotations.import_json()` append supported
   review annotations from that JSON, restoring properties and reply/popup links.
+- `Document.export_annotations_xfdf()` and `Page.annotations.export_xfdf()` export
+  review comments, markup geometry and reply threads for XFDF exchange workflows.
 - `Document.remove_annotations()` filters review cleanup by author, date, subtype
   and page, with a dry run count before removing old or superseded comments.
 - `Document.validate_links()` reports broken local links, bookmark targets and named
@@ -1037,6 +1039,27 @@ Import appends to existing annotations; importing again adds another copy. Use
 Widgets, links, media and unknown subtypes are refused because their required data
 is absent from the export. Links to records outside the JSON are omitted.
 See [annotation exchange coverage](supported-features.md#annotations) for the schema and limits.
+
+### Export Review Comments as XFDF
+
+```python
+from aspose_pdf import AnnotationType, Document
+
+with Document("reviewed.pdf") as document:
+    document.export_annotations_xfdf(
+        "review/comments.xfdf",
+        pages=[0, 2],
+        subtypes=[AnnotationType.TEXT, AnnotationType.HIGHLIGHT],
+    )
+    page_xfdf = document.pages[0].annotations.export_xfdf()
+```
+
+The methods return UTF-8 XML bytes and can also write a file or binary stream.
+Export includes supported review types, metadata and geometry, with popup windows
+nested under selected comments. Names stay unique and replies reference selected
+targets. Other annotation types, rich text, appearance streams and embedded assets
+are omitted. XFDF import is not provided. See
+[XFDF coverage](supported-features.md#annotations) for supported properties and limits.
 
 ### Fill a Batch of Forms From One Template
 
@@ -1978,9 +2001,13 @@ and delete workflows. 275 public types are organized by module below.
 - `AnnotationCollection` — `add(subtype, rect, contents, title, appearance_normal, properties) -> Annotation`,
   `insert(...)`, `delete(index) -> None`, `generate_appearances(force) -> int`,
   `to_list(subtypes=None) -> list[dict]`, `export_json(destination=None, subtypes=None, overwrite=True) -> bytes`,
+  `export_xfdf(destination=None, subtypes=None, overwrite=True) -> bytes`,
   `import_json(source) -> int`
 - `Document.export_annotations_json(destination=None, pages=None, subtypes=None, overwrite=True) -> bytes`
   exports all or selected annotations to a path, binary stream or UTF-8 bytes.
+- `Document.export_annotations_xfdf(destination=None, pages=None, subtypes=None, overwrite=True) -> bytes` /
+  `Page.annotations.export_xfdf(destination=None, subtypes=None, overwrite=True) -> bytes`
+  exports supported review comments and markup as UTF-8 XFDF, optionally writing a path or stream.
 - `Document.remove_annotations(pages=None, authors=None, before=None, after=None, date_field="modified", subtypes=None, case_sensitive=True, dry_run=False) -> int` /
   `AnnotationCollection.remove_matching(...) -> int` remove selected review annotations
   by metadata or return the planned count without edits.

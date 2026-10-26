@@ -4687,6 +4687,71 @@ Supported:
     embedded assets and unlisted/custom properties are excluded. It does not
     extract the page text under a highlight, render annotations, or change the
     source document.
+- **Export review annotations as XFDF.**
+  `Document.export_annotations_xfdf(destination=None, pages=None, subtypes=None,
+  overwrite=True)` returns UTF-8 XML bytes and optionally writes the same bytes.
+  `Page.annotations.export_xfdf(destination=None, subtypes=None, overwrite=True)`
+  exports a single page, retaining its source page index. No extra dependency
+  or external application is required.
+  - This is a defined review subset using the `http://ns.adobe.com/xfdf/`
+    namespace, XML 1.0 declaration and `xml:space="preserve"`, with an `annots`
+    collection. Supported PDF subtypes are Text, FreeText, Line, Square, Circle,
+    Polygon, PolyLine, Highlight, Underline, Squiggly, StrikeOut, Stamp, Caret,
+    Ink, Popup and Redact. Widgets, links, file attachments, media and unknown
+    subtypes are skipped, including when requested explicitly.
+  - Filters match JSON export: zero-based page indices, first occurrence of
+    repeated pages, selected page/annotation order, and a case-sensitive subtype
+    string, `AnnotationType` or iterable, with optional leading `/`. Empty
+    selections produce valid XFDF with an empty `annots` collection. All
+    selections are checked before reading annotation metadata.
+  - Every exported comment has `page`, `rect` and unique `name`; `/T` maps to
+    `title`, `/Contents` to literal `contents`, `/M` and `/CreationDate` retain
+    PDF date strings, and `/Subj` maps to `subject`. Unrotated PDF coordinates
+    are preserved, including hidden/off-page comments, without CropBox/rotation
+    transforms. Plain text, Unicode, whitespace and XML-sensitive characters
+    are preserved through escaping; XML 1.0 forbidden characters are rejected.
+  - Existing nonempty `/NM` names are retained when unique. Missing or duplicate
+    names receive deterministic `xfdf-` identifiers derived from source object
+    IDs/positions, avoiding existing names. Source `/NM` entries are not changed;
+    generated names may change after a PDF rewrite. Selected reply targets use
+    these names in `inreplyto`, with `replyType` when present. References to
+    targets outside the selection are omitted. Selected reply cycles, replies
+    involving popups and repeated annotation objects are rejected.
+  - Selected popup windows are nested under selected owners, accepting either
+    PDF relationship direction. Orphan or filtered-out popups are omitted.
+    Conflicting ownership, multiple popups per owner, wrong target types and
+    popup/parent links crossing pages are rejected. Export does not repair or
+    mutate source relationships.
+  - `/C` and `/IC` map to RGB hex colors; gray is expanded and CMYK uses a simple
+    unprofiled conversion. Empty color arrays omit the attribute. `/CA` maps to
+    opacity, and the ten standard annotation flag bits map to comma-separated
+    names. `/BS` maps basic width, style and dash arrays; `/RD` maps `fringe`.
+    Notes carry icon, open/state/model properties. Stamps carry icon/rotation.
+  - Line geometry uses `start`/`end`, with the first `/LE` entry as `head` and
+    the second as `tail`. Text markup retains QuadPoints in `coords`; polygons
+    and polylines use `vertices`, and ink uses `inklist`/`gesture` point lists.
+    FreeText carries literal `defaultappearance`/`defaultstyle`, justification
+    and rotation. Redact exports review geometry only; no redaction is applied.
+    Malformed exported property types, non-finite numbers and incomplete
+    required geometry raise `PdfValidationException`.
+  - This subset does not transfer appearance streams, rich text, embedded
+    assets, actions/destinations, form values, document file/ID bindings,
+    measurement dictionaries, callouts, cloud/legacy borders, line captions or
+    leader geometry, caret symbols, redaction overlays, or unlisted properties.
+    Source markup may render differently when a receiving viewer generates
+    appearances. XFDF import and lossless annotation backup are not provided.
+  - Streaming and password-protected PDFs are supported. Only selected
+    annotation dictionaries and mapped properties are read; page content,
+    appearance, image and attachment streams remain undecoded. Source files,
+    annotation values, metadata, protection and text/content caches are unchanged.
+  - Selection, metadata traversal, XML node/attribute counts and nesting obey
+    `PdfLoadLimits`. Raw UTF-8 strings obey `max_object_bytes`; complete escaped
+    XML obeys `max_input_bytes`, `max_total_decoded_bytes` and
+    `max_codec_work_bytes`. XML is escaped in bounded chunks and fully prepared
+    in memory before writing. File writes create parent folders and replace
+    atomically; `overwrite=False` refuses existing paths. Binary streams receive
+    bytes at their current position, retry short writes and remain open; I/O
+    failures may leave partial stream bytes.
 - **Import annotation review data from JSON.**
   `Document.import_annotations_json(source, page_map=None) -> int` appends
   supported annotations from the version 1 export schema and returns the count.

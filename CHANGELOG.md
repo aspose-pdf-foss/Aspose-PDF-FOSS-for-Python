@@ -9,6 +9,11 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Share PDF review comments through XFDF.**
+  Document and page exports carry supported annotations, markup geometry,
+  authors, dates and reply threads with page/type filters. Teams can hand off
+  review data without copying the full PDF or manually re-entering comments.
+
 - **Download rendered PDF pages as one image archive.**
   `Document.export_pages_zip()` packages selected views as PNG, JPEG or optional
   WebP, with configurable resolution/color and an optional page manifest.

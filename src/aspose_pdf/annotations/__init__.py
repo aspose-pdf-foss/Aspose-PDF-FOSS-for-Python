@@ -1027,6 +1027,25 @@ class AnnotationCollection:
             overwrite=overwrite,
         )
 
+    def export_xfdf(
+        self,
+        destination: Any = None,
+        *,
+        subtypes: str | Iterable[str] | None = None,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export this page's supported review annotations as UTF-8 XFDF.
+
+        Options, supported properties and output behavior match
+        :meth:`Document.export_annotations_xfdf`. Source page indices are kept.
+        """
+        return self._page._document.export_annotations_xfdf(
+            destination,
+            pages=[self._page.index],
+            subtypes=subtypes,
+            overwrite=overwrite,
+        )
+
     def import_json(self, source: Any) -> int:
         """Append a single source page's JSON annotations onto this page.
 
