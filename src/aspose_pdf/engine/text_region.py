@@ -1,12 +1,13 @@
-"""Extract positioned glyphs inside a rectangle without changing PDF content."""
+"""Filter positioned glyphs by rectangles without changing PDF content."""
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
 
 from .content_stream_parser import _MAX_FORM_DEPTH, ContentStreamParser
 from .cos import PdfArray, PdfDictionary, PdfName, PdfStream
@@ -38,6 +39,33 @@ def validate_clip(clip: Sequence[float]) -> tuple[float, float, float, float]:
     return box
 
 
+def validate_exclude_regions(
+    regions: Iterable[Sequence[float]] | None,
+    *,
+    limits: PdfLoadLimits | None = None,
+) -> tuple[tuple[float, float, float, float], ...]:
+    """Snapshot a bounded iterable of positive-area exclusion rectangles."""
+    if regions is None:
+        return ()
+    if isinstance(regions, (str, bytes, bytearray, Mapping)):
+        raise PdfValidationException("exclude_regions must be an iterable of rectangles")
+    try:
+        iterator = iter(regions)
+    except TypeError:
+        raise PdfValidationException(
+            "exclude_regions must be an iterable of rectangles"
+        ) from None
+    budget = _LoadBudget(limits)
+    rectangles = []
+    for position, region in enumerate(iterator):
+        budget.check(position + 1, "max_container_items", "text exclusion rectangles")
+        try:
+            rectangles.append(validate_clip(region))
+        except PdfValidationException as exc:
+            raise PdfValidationException(f"exclude_regions[{position}]: {exc}") from exc
+    return tuple(rectangles)
+
+
 class _PositionedBytes(bytes):
     """A parser operand retaining its byte offset in the source stream."""
 
@@ -61,11 +89,15 @@ class _RegionParser(ContentStreamParser):
         font_cache: dict | None = None,
         optional_content: OptionalContent | None = None,
         skip_artifacts: bool = False,
+        exclude_regions: tuple = (),
+        region_work: list[int] | None = None,
     ):
         self.pdf = pdf
         self.page_index = page_index
         self.resource_scope = resources
         self.clip = clip
+        self.exclude_regions = exclude_regions
+        self.region_work = [0] if region_work is None else region_work
         self.active_forms = active_forms
         self.font_cache = {} if font_cache is None else font_cache
         self.optional_content = (
@@ -99,6 +131,9 @@ class _RegionParser(ContentStreamParser):
         self._selected: dict[int, list[tuple[int, int]]] = {}
         self._placements: dict[int, tuple[str, tuple]] = {}
         self._actual_hits: list[bool] = []
+        self._actual_excluded: list[bool] = []
+        self._excluded_operands: set[int] = set()
+        self._had_excluded = False
         self._pending_region_gap = False
 
         def placed(end: int, name: str, matrix: tuple) -> None:
@@ -139,7 +174,11 @@ class _RegionParser(ContentStreamParser):
                 selected = []
                 character = start
                 for offset, length, value in units:
-                    if value and self._overlaps(run.origin_trm, geometry[character]):
+                    bounds = self._glyph_bounds(run.origin_trm, geometry[character]) if value else None
+                    excluded = self._is_excluded(bounds)
+                    if excluded:
+                        self._excluded_operands.add(segment.token.start)
+                    if bounds is not None and not excluded and self._bounds_overlap(bounds, self.clip):
                         self._budget.check(
                             len(selected) + 1,
                             "max_container_items",
@@ -157,7 +196,8 @@ class _RegionParser(ContentStreamParser):
     def _record_run(self, run, infos, starts, geometry) -> None:
         """Allow structured extraction to retain the same measured glyph units."""
 
-    def _overlaps(self, matrix: tuple, geometry: tuple) -> bool:
+    @staticmethod
+    def _glyph_bounds(matrix: tuple, geometry: tuple) -> tuple | None:
         x0, x1, y0, y1, _key = geometry
         points = [
             _apply(matrix, x, y) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
@@ -165,8 +205,13 @@ class _RegionParser(ContentStreamParser):
         xs, ys = zip(*points)
         left, bottom, right, top = min(xs), min(ys), max(xs), max(ys)
         if not all(math.isfinite(v) for v in (left, bottom, right, top)):
-            return False
-        rx0, ry0, rx1, ry1 = self.clip
+            return None
+        return left, bottom, right, top
+
+    @staticmethod
+    def _bounds_overlap(bounds: tuple, rectangle: tuple) -> bool:
+        left, bottom, right, top = bounds
+        rx0, ry0, rx1, ry1 = rectangle
         # Ignore roundoff at shared edges of adjacent glyphs and the rectangle.
         epsilon = 1e-7
         if left == right:
@@ -177,6 +222,18 @@ class _RegionParser(ContentStreamParser):
             and bottom < ry1 - epsilon
             and top > ry0 + epsilon
         )
+
+    def _is_excluded(self, bounds: tuple | None) -> bool:
+        if bounds is None:
+            return False
+        for rectangle in self.exclude_regions:
+            self.region_work[0] += 1
+            self._budget.check(
+                self.region_work[0], "max_content_tokens", "text exclusion comparisons"
+            )
+            if self._bounds_overlap(bounds, rectangle):
+                return True
+        return False
 
     def _read_string(self) -> bytes:
         offset = self._pos
@@ -202,8 +259,29 @@ class _RegionParser(ContentStreamParser):
         if not selected:
             return ""
         # Select complete code units so ligatures and multibyte CIDs stay intact.
-        data = b"".join(raw[offset : offset + length] for offset, length in selected)
-        return self._decode_bytes(data)
+        if not self.exclude_regions:
+            data = b"".join(raw[offset : offset + length] for offset, length in selected)
+            return self._decode_bytes(data)
+        # Separate retained pieces instead of inventing a word across an omission.
+        pieces = []
+        units = iter(selected)
+        start, length = next(units)
+        end = start + length
+        for offset, length in units:
+            if offset != end:
+                pieces.append(self._decode_bytes(raw[start:end]))
+                start = offset
+            end = offset + length
+        pieces.append(self._decode_bytes(raw[start:end]))
+        output = [pieces[0]]
+        previous = pieces[0]
+        for piece in pieces[1:]:
+            if previous and piece and not previous[-1].isspace() and not piece[0].isspace():
+                output.append(" ")
+            output.append(piece)
+            if piece:
+                previous = piece
+        return "".join(output)
 
     def _append_selected(self, text: str) -> None:
         if not text:
@@ -213,13 +291,27 @@ class _RegionParser(ContentStreamParser):
             self._pending_region_gap
             and self._buffer
             and not self._buffer[-1].endswith((" ", "\n"))
+            and (not self.exclude_regions or not text[0].isspace())
         ):
             self._buffer.append(" ")
         self._pending_region_gap = False
         self._buffer.append(text)
 
     def _emit_text(self, raw: bytes) -> None:
+        if self.exclude_regions:
+            if not raw:
+                return
+            if getattr(raw, "offset", -1) in self._excluded_operands:
+                self._had_excluded = True
+            selected = self._selected.get(getattr(raw, "offset", -1), ())
+            if not selected:
+                self._pending_region_gap = True
+                return
+            if selected[0][0] > 0:
+                self._pending_region_gap = True
         self._append_selected(self._selected_text(raw))
+        if self.exclude_regions and selected[-1][0] + selected[-1][1] < len(raw):
+            self._pending_region_gap = True
 
     def _emit_gap(self) -> None:
         self._pending_region_gap = True
@@ -239,6 +331,14 @@ class _RegionParser(ContentStreamParser):
             ):
                 if self._actual_hits:
                     self._actual_hits[-1] = True
+            if any(
+                isinstance(raw, bytes)
+                and getattr(raw, "offset", -1) in self._excluded_operands
+                for raw in operands
+            ):
+                self._had_excluded = True
+                if self._actual_excluded:
+                    self._actual_excluded[-1] = True
         super()._handle_operator(op, ops)
 
     def _handle_marked_content(self, op: str, operands: list[Any]) -> None:
@@ -255,16 +355,22 @@ class _RegionParser(ContentStreamParser):
             )
             super()._handle_marked_content(op, operands)
             self._actual_hits.append(False)
+            self._actual_excluded.append(False)
             return
         hit = self._actual_hits.pop() if self._actual_hits else False
+        excluded = self._actual_excluded.pop() if self._actual_excluded else False
         if hit and self._actual_hits:
             self._actual_hits[-1] = True
+        if excluded and self._actual_excluded:
+            self._actual_excluded[-1] = True
         before = len(self._buffer)
         super()._handle_marked_content(op, operands)
         if len(self._buffer) > before:
             replacement = self._buffer.pop()
-            if hit:
+            if hit and not excluded:
                 self._append_selected(replacement)
+            elif excluded:
+                self._pending_region_gap = True
 
     def _show_form_xobject(self, operand: Any) -> None:
         if self._artifact_depth:
@@ -321,11 +427,19 @@ class _RegionParser(ContentStreamParser):
             font_cache=self.font_cache,
             optional_content=self.optional_content,
             skip_artifacts=self._skip_artifacts,
+            exclude_regions=self.exclude_regions,
+            region_work=self.region_work,
         )
         text = nested.extract_text()
+        if nested._had_excluded:
+            self._had_excluded = True
+            if self._actual_excluded:
+                self._actual_excluded[-1] = True
         if nested._skipped_artifacts:
             self._note_skipped_artifact()
         if not text:
+            if nested._had_excluded:
+                self._pending_region_gap = True
             return
         self._note_visible_text()
         if self._inside_actual_text():
@@ -344,10 +458,11 @@ class _RegionParser(ContentStreamParser):
 
 
 def extract_region(
-    pdf: Any, page_index: int, clip: Sequence[float], *, skip_artifacts: bool = False
+    pdf: Any, page_index: int, clip: Sequence[float] | None, *,
+    skip_artifacts: bool = False, exclude_regions: tuple = (),
 ) -> str:
     """Extract only glyphs with reliable bounds overlapping the requested area."""
-    rectangle = validate_clip(clip)
+    rectangle = (-math.inf, -math.inf, math.inf, math.inf) if clip is None else validate_clip(clip)
     page = pdf._get_page_dict(page_index)
     resources = pdf._resolve_resources_cos(page) if page is not None else None
     return _RegionParser(
@@ -357,4 +472,5 @@ def extract_region(
         resources,
         rectangle,
         skip_artifacts=skip_artifacts,
+        exclude_regions=exclude_regions,
     ).extract_text()

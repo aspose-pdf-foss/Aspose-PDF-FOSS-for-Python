@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -522,7 +522,8 @@ class Page:
         return b""
 
     def extract_text(
-        self, *, clip: Sequence[float] | None = None, skip_artifacts: bool = False
+        self, *, clip: Sequence[float] | None = None, skip_artifacts: bool = False,
+        exclude_regions: Iterable[Sequence[float]] | None = None,
     ) -> str:
         """The text this page says, with the line breaks it was written in.
 
@@ -537,13 +538,23 @@ class Page:
         does not modify the PDF. ``None`` preserves ordinary full-page extraction.
         ``skip_artifacts=True`` omits explicitly marked ``/Artifact`` content,
         such as tagged page numbers and watermarks. It defaults to ``False``.
+        ``exclude_regions`` is an iterable of rectangles in the same coordinate
+        space, removing any overlapping glyphs, including untagged headers and
+        footers. Exclusions take priority over ``clip``. All rectangles are
+        validated before decoding; ``None`` and empty iterables do not filter.
+        Gaps between retained pieces are separated to avoid merging words.
+        Logical /ActualText replacements are omitted whole when any underlying
+        glyph is excluded. Unmeasurable text is omitted conservatively, without
+        raw-string recovery, as with ``clip``. This only filters returned text;
+        it is not PDF redaction and never changes the document.
         """
         self._document._ensure_not_disposed()
         engine = self._document._engine_pdf
         if engine is None:
             return ""
         return engine.extract_page_text(
-            self._index, clip=clip, skip_artifacts=skip_artifacts
+            self._index, clip=clip, skip_artifacts=skip_artifacts,
+            exclude_regions=exclude_regions,
         )
 
     def extract_words(

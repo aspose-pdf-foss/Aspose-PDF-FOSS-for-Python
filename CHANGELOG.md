@@ -9,6 +9,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Exclude headers, footers and sidebars from extracted text.**
+  `exclude_regions` on page/document extraction, the facade and low-code text
+  workflows removes overlapping glyphs without editing the PDF. Rectangles
+  combine with page selection, inclusion clips and marked-artifact filtering,
+  helping indexing and document pipelines avoid repeated page decoration.
+
 - **Create grayscale and black-and-white PDF copies.**
   `Document.rasterized_copy(mode="gray" | "bilevel")` prepares static documents
   for scan processing, sharing and monochrome printing, with adjustable

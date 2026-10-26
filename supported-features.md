@@ -2552,7 +2552,7 @@ Supported:
   engine, and lose both.
 - Read all extracted text at once with `PdfExtractor.get_text()`.
 - **Choose pages when extracting text.**
-  `Document.extract_text(pages=None, clip=None, skip_artifacts=False)` accepts an iterable of
+  `Document.extract_text(pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` accepts an iterable of
   zero-based integer page indices: lists, tuples, `range(...)` and generators
   retain their order and repeated entries. `pages=[2, 0, 2]` reads the third,
   first, then third page. `None` keeps the existing all-pages behavior; an
@@ -2560,7 +2560,7 @@ Supported:
   including empty pages, and each page's own line breaks and whitespace are
   retained. A selected, clipped or artifact-filtered result does not replace the cached full-text
   result. Reading text never changes the PDF or its page order.
-  - `PdfExtractor.extract_text(page_numbers=None, clip=None, skip_artifacts=False)` uses **one-based**
+  - `PdfExtractor.extract_text(page_numbers=None, clip=None, skip_artifacts=False, exclude_regions=None)` uses **one-based**
     numbering, like the other facades. It accepts one integer or an iterable,
     retaining order and repetitions. `get_text()` joins just those results;
     `has_next_page_text()` / `get_next_page_text()` walk the same selection,
@@ -2569,7 +2569,7 @@ Supported:
     partial results from a failed run are not published. An unbound extractor
     accepts the all-pages or empty selection as empty text, but explicit page
     numbers are out of range.
-  - `TextExtractorOptions(limits=None, pages=None, clip=None, skip_artifacts=False)` uses **zero-based**
+  - `TextExtractorOptions(limits=None, pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` uses **zero-based**
     indices. `options.pages` is a tuple snapshot (or `None`), also when assigned
     later, so a generator or an externally edited list cannot change later
     inputs/runs. The first positional argument remains the resource policy.
@@ -2761,6 +2761,45 @@ Supported:
   raw strings. Page extraction stays lazy and does not decode unrelated pages,
   images, or uninvoked forms. `clip=None` keeps full-page extraction unchanged;
   extraction never edits page content or its boxes.
+- **Exclude text in rectangles.** `exclude_regions` on `Page.extract_text`,
+  `Document.extract_text`, `PdfExtractor.extract_text` and `TextExtractorOptions`
+  omits glyphs overlapping any supplied rectangle, for untagged headers,
+  footers, page numbers or sidebars. It accepts an iterable of
+  `(x0, y0, x1, y1)` rectangles with the same finite, ordered, positive-area
+  validation and unrotated PDF-coordinate semantics as `clip`. The same
+  rectangles apply to each selected page; use per-page extraction for different
+  page layouts. Exclusions take priority over inclusion in `clip` and combine
+  with `skip_artifacts`. Overlapping/duplicate rectangles are allowed.
+  - Positive overlap of a transformed glyph's font-metric bounding box excludes
+    its entire code unit, including multibyte CIDs and ligatures. Merely touching
+    an edge does not exclude it; zero-width glyphs use the same inclusive
+    horizontal-position test as `clip`. Retained pieces separated by omitted
+    glyphs/operands receive a space unless whitespace or a line break already
+    separates them. Original retained whitespace and content order remain.
+  - A named-property `/ActualText` replacement is indivisible: if any of its
+    underlying glyphs intersects an exclusion, the entire logical replacement
+    is omitted, including nested scopes and invoked forms. Otherwise the
+    existing `clip` rule applies: one selected glyph includes the replacement.
+  - Nonempty exclusions use the region extractor's conservative geometry and
+    decoding rules, including transformed/nested/repeated Form XObjects, font
+    scopes, layer visibility and marked artifacts. Unmeasurable text is omitted,
+    without raw-string recovery. There is no OCR, reading-order reconstruction
+    or arbitrary graphics clipping. This filters returned plain text only; it
+    does not redact the PDF or alter other extraction APIs.
+  - `None` or an empty iterable preserves ordinary extraction and its cached
+    full-text result. Filtered results never replace that cache or move its
+    cursor. Streaming documents decode only selected page content and invoked
+    forms, avoiding images and uninvoked forms. Empty selected pages retain
+    their separators. Every rectangle is validated before any selected page is
+    parsed, including requests with no pages. Invalid rectangles raise
+    `PdfValidationException`. Facade failures preserve previous results/cursor;
+    low-code failures do not emit partial batch output.
+  - Exclusion iterables are snapshotted; `TextExtractorOptions.exclude_regions`
+    is an immutable tuple of tuples, also on later assignment, so generators or
+    mutable caller lists cannot change subsequent inputs/runs. Region counts
+    obey `max_container_items`; glyph/rectangle comparisons per page, including
+    its invoked forms, obey `max_content_tokens`. Other source parsing and
+    resource limits continue to apply and failures propagate.
 - Use `TextFragmentAbsorber` and `TextAbsorber` to collect text fragments, search
   exact phrases, run regex searches, control case sensitivity, and inspect match
   offsets/page indices. A *document* is taken page by page, which is the only

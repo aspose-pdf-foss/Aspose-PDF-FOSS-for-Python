@@ -4163,6 +4163,7 @@ class Document:
         pages: Iterable[int] | None = None,
         clip: Sequence[float] | None = None,
         skip_artifacts: bool = False,
+        exclude_regions: Iterable[Sequence[float]] | None = None,
     ) -> str:
         """The text of all or selected pages, separated by one line break.
 
@@ -4173,6 +4174,13 @@ class Document:
         Each page's own line breaks are kept; see :meth:`Page.extract_text`.
         ``clip=(x0, y0, x1, y1)`` applies the same unrotated PDF-coordinate
         rectangle to each selected page, selecting overlapping glyph bounds.
+        ``exclude_regions`` omits glyphs overlapping any of its rectangles in
+        the same coordinates, including untagged headers, footers or sidebars.
+        It combines with ``clip``; exclusions take priority. ``None`` or an
+        empty iterable leaves ordinary extraction unchanged. Geometry must be
+        reliable, and complete code units/ligatures are retained or omitted.
+        A logical /ActualText span is omitted whole if any underlying glyph is
+        excluded. See :meth:`Page.extract_text` for limits and gap handling.
         Empty pages retain their separators, and a subset or region does not
         replace the cached full-document text.
         ``skip_artifacts=True`` omits text in explicitly marked ``/Artifact``
@@ -4183,7 +4191,8 @@ class Document:
         if self._engine_pdf is None:
             return ""
         return self._engine_pdf.extract_text(
-            pages=pages, clip=clip, skip_artifacts=skip_artifacts
+            pages=pages, clip=clip, skip_artifacts=skip_artifacts,
+            exclude_regions=exclude_regions,
         )
 
     def extract_words(

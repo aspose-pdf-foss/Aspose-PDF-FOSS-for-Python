@@ -455,7 +455,9 @@ class TextExtractorOptions(PluginOptions):
     ``pages`` contains zero-based indices, preserving order and repetitions;
     ``None`` selects all and ``[]`` selects none. The selection is snapshotted
     for reuse across inputs/runs, and checked against each input's page count.
-    The rectangle applies to each selected page; see
+    ``exclude_regions`` snapshots rectangles to omit from each selected page,
+    including later assignment and reuse across inputs. The rectangles apply
+    in unrotated PDF coordinates and combine with ``clip``; see
     :meth:`Document.extract_text`.
     """
 
@@ -466,15 +468,28 @@ class TextExtractorOptions(PluginOptions):
         clip: Sequence[float] | None = None,
         pages: Iterable[int] | None = None,
         skip_artifacts: bool = False,
+        exclude_regions: Iterable[Sequence[float]] | None = None,
     ) -> None:
         super().__init__(limits=limits)
         self.pages = pages
         self.skip_artifacts = skip_artifacts
+        self.exclude_regions = exclude_regions
         if clip is not None:
             from aspose_pdf.engine.text_region import validate_clip
 
             clip = validate_clip(clip)
         self.clip = clip
+
+    @property
+    def exclude_regions(self) -> tuple[tuple[float, float, float, float], ...]:
+        """An immutable snapshot of excluded PDF-coordinate rectangles."""
+        return self._exclude_regions
+
+    @exclude_regions.setter
+    def exclude_regions(self, regions: Iterable[Sequence[float]] | None) -> None:
+        from aspose_pdf.engine.text_region import validate_exclude_regions
+
+        self._exclude_regions = validate_exclude_regions(regions, limits=self.limits)
 
     @property
     def pages(self) -> tuple[int, ...] | None:
@@ -687,6 +702,11 @@ class TextExtractor(PdfPlugin):
 
         pages = page_indexes(getattr(options, "pages", None), limits=limits)
         skip_artifacts = validate_skip_artifacts(getattr(options, "skip_artifacts", False))
+        from aspose_pdf.engine.text_region import validate_exclude_regions
+
+        exclusions = validate_exclude_regions(
+            getattr(options, "exclude_regions", None), limits=limits,
+        )
         page_numbers = None if pages is None else tuple(index + 1 for index in pages)
         results: list[OperationResult] = []
         for source in options.inputs:
@@ -699,6 +719,7 @@ class TextExtractor(PdfPlugin):
                     page_numbers=page_numbers,
                     clip=getattr(options, "clip", None),
                     skip_artifacts=skip_artifacts,
+                    exclude_regions=exclusions,
                 )
                 results.append(OperationResult(extractor.get_text()))
             finally:

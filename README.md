@@ -814,6 +814,22 @@ The default is `False`. Untagged content is retained; filtering relies on PDF
 tags and does not guess which text is decorative. The option combines with page
 selection and `clip` and leaves the PDF unchanged.
 
+To omit untagged headers, footers or sidebars, pass `exclude_regions` to the
+same four APIs. Rectangles use unrotated PDF coordinates and apply to each
+selected page; exclusions take priority over `clip`:
+
+```python
+with Document("report.pdf") as document:
+    text = document.extract_text(
+        exclude_regions=[(0, 760, 612, 842), (0, 0, 612, 65)],
+        skip_artifacts=True,
+    )
+```
+
+Overlapping glyphs are omitted, with separators between retained pieces.
+Nonempty exclusions require measurable text, like `clip`; they do not perform
+OCR or redact the PDF. `None` and empty iterables preserve ordinary extraction.
+
 ### Make Existing URLs and Email Addresses Clickable
 
 ```python
@@ -1774,11 +1790,11 @@ and delete workflows. 273 public types are organized by module below.
   `AutoLinkResult` reports `linked_count`, `skipped_count`, `existing_count`,
   `matched_count`, live `annotations`, `skipped_fragments` and `existing_fragments`.
 
-- `Document.extract_text(pages=None, clip=None, skip_artifacts=False)` /
-  `Page.extract_text(clip=None, skip_artifacts=False)` return text,
+- `Document.extract_text(pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` /
+  `Page.extract_text(clip=None, skip_artifacts=False, exclude_regions=None)` return text,
   with zero-based page selection on `Document`,
   optionally selecting glyphs overlapping `(x0, y0, x1, y1)` in unrotated PDF space
-  and excluding explicitly marked Artifact content.
+  and excluding rectangular regions or explicitly marked Artifact content.
 
 - `Document.extract_words(pages=None, clip=None, skip_artifacts=False)` /
   `Page.extract_words(clip=None, skip_artifacts=False)` return immutable `TextWord`
@@ -1805,7 +1821,7 @@ and delete workflows. 273 public types are organized by module below.
 
 - `PdfExtractor`
   - `bind_pdf(source, password, limits) -> None`
-  - `extract_text(page_numbers=None, clip=None, skip_artifacts=False) -> None` (one-based selection) /
+  - `extract_text(page_numbers=None, clip=None, skip_artifacts=False, exclude_regions=None) -> None` (one-based selection) /
     `get_text() -> str` / `has_next_page_text() -> bool` / `get_next_page_text() -> str`
   - `extract_image() -> None` / `has_next_image() -> bool` / `get_next_image() -> Any`
   - `extract_attachment() -> None` / `get_attachment(name) -> Any` / `get_attach_names() -> list[str]`

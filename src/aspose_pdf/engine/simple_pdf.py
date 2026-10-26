@@ -10379,7 +10379,8 @@ class SimplePdf:
     # Text extraction
     # ---------------------------------------------------------------------------
     def extract_page_text(
-        self, page_index: int, *, clip=None, skip_artifacts: bool = False
+        self, page_index: int, *, clip=None, skip_artifacts: bool = False,
+        exclude_regions=None,
     ) -> str:
         """The text one page's content streams say, its line breaks kept.
 
@@ -10392,12 +10393,18 @@ class SimplePdf:
         from .text_selection import validate_skip_artifacts
 
         skip_artifacts = validate_skip_artifacts(skip_artifacts)
+        from .text_region import validate_exclude_regions
+
+        exclusions = validate_exclude_regions(exclude_regions, limits=self._load_limits)
         if page_index < 0 or page_index >= len(self.pages):
             return ""
-        if clip is not None:
+        if clip is not None or exclusions:
             from .text_region import extract_region
 
-            return extract_region(self, page_index, clip, skip_artifacts=skip_artifacts)
+            return extract_region(
+                self, page_index, clip, skip_artifacts=skip_artifacts,
+                exclude_regions=exclusions,
+            )
         # Through ``get_page_content``, which serves both modes: reading
         # ``page_contents`` directly meant a document opened with
         # ``open_streaming`` -- where that list is empty until something
@@ -10458,13 +10465,17 @@ class SimplePdf:
         pages: Iterable[int] | None = None,
         clip=None,
         skip_artifacts: bool = False,
+        exclude_regions=None,
     ) -> str:
         """Extract all or selected pages, keeping one line break between pages."""
         self._ensure_not_disposed()
         from .text_selection import page_indexes, validate_skip_artifacts
 
         skip_artifacts = validate_skip_artifacts(skip_artifacts)
-        if pages is not None or clip is not None or skip_artifacts:
+        from .text_region import validate_exclude_regions
+
+        exclusions = validate_exclude_regions(exclude_regions, limits=self._load_limits)
+        if pages is not None or clip is not None or skip_artifacts or exclusions:
             indexes = page_indexes(pages, len(self.pages), limits=self._load_limits)
             rectangle = None
             if clip is not None:
@@ -10473,7 +10484,10 @@ class SimplePdf:
                 rectangle = validate_clip(clip)
             # Filtered results must not replace the default full-document text cache.
             return "\n".join(
-                self.extract_page_text(index, clip=rectangle, skip_artifacts=skip_artifacts)
+                self.extract_page_text(
+                    index, clip=rectangle, skip_artifacts=skip_artifacts,
+                    exclude_regions=exclusions,
+                )
                 for index in (range(len(self.pages)) if indexes is None else indexes)
             )
         if self._extracted_text is not None:

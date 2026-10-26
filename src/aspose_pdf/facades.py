@@ -281,6 +281,7 @@ class PdfExtractor:
         page_numbers: int | Iterable[int] | None = None,
         clip: Sequence[float] | None = None,
         skip_artifacts: bool = False,
+        exclude_regions: Iterable[Sequence[float]] | None = None,
     ) -> None:
         """Extract text from all or selected pages of the bound document.
 
@@ -298,6 +299,8 @@ class PdfExtractor:
         succeed; a failed call leaves the previous results/cursor intact.
         ``skip_artifacts=True`` excludes explicitly marked ``/Artifact`` text,
         including nested blocks and invoked forms, as on ``Document``.
+        ``exclude_regions`` removes overlapping glyphs from each selected page,
+        using the same PDF-coordinate rectangles as ``Document.extract_text``.
         """
         from aspose_pdf.engine.text_selection import (
             page_indexes,
@@ -306,6 +309,12 @@ class PdfExtractor:
 
         self._ensure_not_disposed()
         skip_artifacts = validate_skip_artifacts(skip_artifacts)
+        from aspose_pdf.engine.text_region import validate_exclude_regions
+
+        exclusions = validate_exclude_regions(
+            exclude_regions,
+            limits=None if self._bound_pdf is None else self._bound_pdf._load_limits,
+        )
         if isinstance(page_numbers, int) and not isinstance(page_numbers, bool):
             page_numbers = (page_numbers,)
         indexes = page_indexes(
@@ -323,7 +332,8 @@ class PdfExtractor:
         else:
             texts = [
                 self._bound_pdf.extract_page_text(
-                    index, clip=clip, skip_artifacts=skip_artifacts
+                    index, clip=clip, skip_artifacts=skip_artifacts,
+                    exclude_regions=exclusions,
                 )
                 for index in (
                     range(len(self._bound_pdf.pages)) if indexes is None else indexes
