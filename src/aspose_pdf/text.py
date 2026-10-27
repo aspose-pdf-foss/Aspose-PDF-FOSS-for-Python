@@ -25,7 +25,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from aspose_pdf.annotations import HighlightAnnotation
+    from aspose_pdf.annotations import (
+        HighlightAnnotation,
+        SquigglyAnnotation,
+        StrikeOutAnnotation,
+        UnderlineAnnotation,
+    )
 
 __all__ = [
     "RegexResult",
@@ -35,6 +40,7 @@ __all__ = [
     "TextFragment",
     "TextFragmentAbsorber",
     "TextHighlightResult",
+    "TextMarkupResult",
     "TextSearchOptions",
     "TextWord",
 ]
@@ -207,8 +213,8 @@ class TextFragment:
 
 
 @dataclass(frozen=True)
-class TextHighlightResult:
-    """Highlights created and matches skipped because their geometry was uncertain.
+class TextMarkupResult:
+    """Text annotations created and matches skipped due to uncertain geometry.
 
     ``annotations`` holds live annotation handles in page/match order.
     ``skipped_fragments`` holds the matched text, page index and character
@@ -216,11 +222,14 @@ class TextHighlightResult:
     only non-empty matches considered within the requested ``max_count``.
     """
 
-    annotations: tuple[HighlightAnnotation, ...] = ()
+    annotations: tuple[
+        HighlightAnnotation | UnderlineAnnotation | StrikeOutAnnotation | SquigglyAnnotation,
+        ...,
+    ] = ()
     skipped_fragments: tuple[TextFragment, ...] = ()
 
     @property
-    def highlighted_count(self) -> int:
+    def marked_count(self) -> int:
         """The number of annotations created, one per placed match."""
         return len(self.annotations)
 
@@ -232,7 +241,19 @@ class TextHighlightResult:
     @property
     def matched_count(self) -> int:
         """The number of non-empty matches considered, including skipped ones."""
-        return self.highlighted_count + self.skipped_count
+        return self.marked_count + self.skipped_count
+
+
+@dataclass(frozen=True)
+class TextHighlightResult(TextMarkupResult):
+    """Highlights created and matches skipped because their geometry was uncertain."""
+
+    annotations: tuple[HighlightAnnotation, ...] = ()
+
+    @property
+    def highlighted_count(self) -> int:
+        """The number of highlight annotations created."""
+        return self.marked_count
 
 
 # ---------------------------------------------------------------------------

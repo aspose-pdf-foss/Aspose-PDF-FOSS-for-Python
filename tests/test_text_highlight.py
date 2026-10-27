@@ -1,4 +1,4 @@
-"""Search-driven highlights preserve text and report unplaceable matches."""
+"""Search-driven text markup preserves text and reports unplaceable matches."""
 
 from __future__ import annotations
 
@@ -12,7 +12,11 @@ from aspose_pdf import (
     Document,
     HighlightAnnotation,
     PdfLoadLimits,
+    SquigglyAnnotation,
+    StrikeOutAnnotation,
     TextHighlightResult,
+    TextMarkupResult,
+    UnderlineAnnotation,
 )
 from aspose_pdf.annotations import quad_from_rect
 from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
@@ -22,6 +26,13 @@ from aspose_pdf.exceptions import (
     PdfValidationException,
 )
 from aspose_pdf.text import TextFragmentAbsorber
+
+MARKUP_STYLES = [
+    ("highlight", HighlightAnnotation, (1.0, 1.0, 0.0)),
+    ("underline", UnderlineAnnotation, (0.0, 0.0, 0.0)),
+    ("strike_out", StrikeOutAnnotation, (0.0, 0.0, 0.0)),
+    ("squiggly", SquigglyAnnotation, (0.0, 0.0, 0.0)),
+]
 
 
 @pytest.fixture
@@ -337,3 +348,168 @@ def test_page_selection_does_not_read_other_streaming_page_content(
         monkeypatch.setattr(reopened._engine_pdf, "get_page_content", selected_only)
         result = reopened.highlight_text("world", page_index=1)
         assert result.highlighted_count == 1 and accessed
+
+
+@pytest.mark.parametrize("kind, annotation_class, default_color", MARKUP_STYLES)
+@pytest.mark.parametrize("on_disk", [False, True])
+def test_markup_styles_survive_round_trips_without_changing_text(
+    document, tmp_path, kind, annotation_class, default_color, on_disk
+):
+    original_text = document.extract_text()
+    original_content = [page.content for page in document.pages]
+    result = document.markup_text(
+        "world", kind=kind, contents="Review <&> Привет", title="Reviewer"
+    )
+    assert type(result) is TextMarkupResult
+    assert (result.marked_count, result.skipped_count, result.matched_count) == (3, 0, 3)
+    assert [len(page.annotations) for page in document.pages] == [2, 1]
+    assert [page.content for page in document.pages] == original_content
+    assert document.extract_text() == original_text
+    for annotation in result.annotations:
+        assert isinstance(annotation, annotation_class)
+        assert annotation.color == default_color
+        assert annotation.opacity == 0.5
+        assert annotation.contents == "Review <&> Привет"
+        assert annotation.title == "Reviewer"
+    if on_disk:
+        source = tmp_path / f"{kind}.pdf"
+        document.save(source)
+    else:
+        with io.BytesIO() as stream:
+            document.save(stream)
+            source = stream.getvalue()
+    with Document(source) as reopened:
+        assert reopened.extract_text() == original_text
+        actual = [annotation for page in reopened.pages for annotation in page.annotations]
+        assert len(actual) == result.marked_count
+        for expected, annotation in zip(result.annotations, actual):
+            assert isinstance(annotation, annotation_class)
+            assert annotation.get_property("QuadPoints") == pytest.approx(
+                expected.get_property("QuadPoints"), rel=0, abs=1e-6
+            )
+            assert annotation.color == expected.color
+            assert annotation.opacity == expected.opacity
+            assert annotation.contents == expected.contents
+            assert annotation.title == expected.title
+
+
+@pytest.mark.parametrize("kind", ["underline", "strike_out", "squiggly"])
+def test_markup_page_search_keeps_regex_context_and_live_annotation_handles(
+    document, kind
+):
+    first = document.pages[0].markup_text(r"(?<=Hello )world", kind=kind, regex=True)
+    last = document.pages[0].markup_text(
+        re.compile(r"world$", re.MULTILINE), kind=kind
+    )
+    assert (first.marked_count, first.skipped_count) == (1, 0)
+    assert (
+        first.annotations[0].quad_points[0][1][0]
+        < last.annotations[0].quad_points[0][0][0]
+    )
+    first.annotations[0].contents = "Updated review"
+    assert document.pages[0].annotations[0].contents == "Updated review"
+    assert len(document.pages[1].annotations) == 0
+
+
+@pytest.mark.parametrize("kind", ["underline", "strike_out", "squiggly"])
+def test_markup_case_matching_and_max_count_across_pages(document, kind):
+    result = document.markup_text("hello", kind=kind, case_sensitive=False, max_count=2)
+    assert (result.marked_count, result.matched_count) == (2, 2)
+    assert [len(page.annotations) for page in document.pages] == [1, 1]
+
+
+@pytest.mark.parametrize("kind", ["underline", "strike_out", "squiggly"])
+@pytest.mark.parametrize("color", ["#ff0000", Color.gray(0.25), Color.cmyk(1, 0, 0, 0)])
+def test_markup_styles_render_and_respect_annotation_visibility(kind, color):
+    with Document() as document:
+        page = document.pages.add(size=(200, 100))
+        page.add_text("Review this", 20, 50, font_size=20)
+        before = page.render(dpi=72, antialias=False).pixels
+        result = page.markup_text("Review", kind=kind, color=color, opacity=0.75)
+        assert result.marked_count == 1 and result.annotations[0].opacity == 0.75
+        assert page.render(dpi=72, antialias=False).pixels != before
+        assert (
+            page.render(dpi=72, antialias=False, draw_annotations=False).pixels
+            == before
+        )
+
+
+@pytest.mark.parametrize("kind", [None, 1, [], "", "Underline", "redact", "strikeout"])
+def test_invalid_markup_kind_is_rejected_before_adding_annotations(document, kind):
+    error = PdfValidationException if isinstance(kind, str) else TypeError
+    with pytest.raises(error, match="kind must be"):
+        document.markup_text("world", kind=kind)
+    assert all(len(page.annotations) == 0 for page in document.pages)
+
+
+@pytest.mark.parametrize("kind", ["underline", "strike_out", "squiggly"])
+def test_markup_skips_unknown_geometry_and_counts_skips_toward_limit(kind):
+    with _with_content(
+        b"BT /Nosuch 12 Tf 72 700 Td (Unknown) Tj ET "
+        b"BT /F1 12 Tf 72 650 Td (Known) Tj ET"
+    ) as document:
+        skipped = document.markup_text(
+            r"Unknown|Known", kind=kind, regex=True, max_count=1
+        )
+        assert (
+            skipped.marked_count, skipped.skipped_count, skipped.matched_count
+        ) == (0, 1, 1)
+        assert skipped.skipped_fragments[0].text == "Unknown"
+        assert len(document.pages[0].annotations) == 0
+        result = document.markup_text(r"Unknown|Known", kind=kind, regex=True)
+        assert (
+            result.marked_count, result.skipped_count, result.matched_count
+        ) == (1, 1, 2)
+
+
+@pytest.mark.parametrize("kind", ["underline", "strike_out", "squiggly"])
+def test_rotated_markup_uses_the_same_match_quadrilaterals_as_highlighting(kind):
+    with _with_content(
+        b"q 0 1 -1 0 400 0 cm BT /F1 12 Tf 72 200 Td (Turned) Tj ET Q"
+    ) as document:
+        highlight = document.highlight_text("Turned").annotations[0]
+        result = document.markup_text("Turned", kind=kind)
+        assert result.marked_count == 1
+        assert result.annotations[0].quad_points == highlight.quad_points
+
+
+@pytest.mark.parametrize("kind", ["underline", "strike_out", "squiggly"])
+def test_markup_selected_page_stays_lazy(document, tmp_path, monkeypatch, kind):
+    path = tmp_path / "source.pdf"
+    document.save(path)
+    with Document.open_streaming(path) as reopened:
+        original = reopened._engine_pdf.get_page_content
+        accessed = []
+
+        def selected_only(index):
+            assert index == 1
+            accessed.append(index)
+            return original(index)
+
+        monkeypatch.setattr(reopened._engine_pdf, "get_page_content", selected_only)
+        result = reopened.markup_text("world", kind=kind, page_index=1)
+        assert result.marked_count == 1 and accessed
+
+
+@pytest.mark.parametrize("kind", ["underline", "strike_out", "squiggly"])
+def test_markup_resource_limits_apply_before_adding_page_annotations(kind):
+    with Document(limits=PdfLoadLimits(max_container_items=16)) as document:
+        document.pages.add().add_text(" ".join(["one"] * 17), 72, 700)
+        with pytest.raises(PdfResourceLimitException, match="max_container_items"):
+            document.markup_text("one", kind=kind)
+        assert len(document.pages[0].annotations) == 0
+
+
+def test_markup_empty_results_defaults_and_disposed_documents(document):
+    assert document.markup_text("missing") == TextMarkupResult()
+    annotation = document.markup_text("Hello").annotations[0]
+    assert isinstance(annotation, HighlightAnnotation)
+    assert annotation.color == (1.0, 1.0, 0.0)
+    with Document() as empty:
+        assert empty.markup_text("Hello", kind="underline") == TextMarkupResult()
+    page = document.pages[0]
+    document.dispose()
+    with pytest.raises(AsposePdfException, match="disposed"):
+        document.markup_text("Hello", kind="underline")
+    with pytest.raises(AsposePdfException, match="disposed"):
+        page.markup_text("Hello", kind="underline")

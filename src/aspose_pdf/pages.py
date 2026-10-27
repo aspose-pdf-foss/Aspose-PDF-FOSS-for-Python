@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tables import Table
-    from aspose_pdf.text import TextHighlightResult, TextWord
+    from aspose_pdf.text import TextHighlightResult, TextMarkupResult, TextWord
     from aspose_pdf.text_block import TextBlock
     from aspose_pdf.text_layout import TextLayoutOptions
 
@@ -1506,6 +1506,37 @@ class Page:
             regex=regex,
             font=font,
             layout=layout,
+        )
+
+    def markup_text(
+        self,
+        search: str | re.Pattern[str],
+        *,
+        kind: str = "highlight",
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+        color: ColorValue | None = None,
+        opacity: float = 0.5,
+        contents: str = "",
+        title: str | None = None,
+    ) -> TextMarkupResult:
+        """Mark phrase or regex matches on this page and report skipped matches.
+
+        See :meth:`aspose_pdf.document.Document.markup_text` for styles,
+        defaults, search options and geometry limitations.
+        """
+        return self._document.markup_text(
+            search,
+            kind=kind,
+            page_index=self._index,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+            color=color,
+            opacity=opacity,
+            contents=contents,
+            title=title,
         )
 
     def highlight_text(

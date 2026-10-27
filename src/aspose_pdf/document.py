@@ -83,7 +83,7 @@ if TYPE_CHECKING:
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tagged import TaggedContent
-    from aspose_pdf.text import TextHighlightResult, TextWord
+    from aspose_pdf.text import TextHighlightResult, TextMarkupResult, TextWord
     from aspose_pdf.text_comparison import PageTextComparison
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.validation import CertificationLevel
@@ -3180,6 +3180,45 @@ class Document:
         from aspose_pdf.auto_links import _auto_link
 
         return _auto_link(self, pages=pages, urls=urls, emails=emails, max_count=max_count)
+
+    def markup_text(
+        self,
+        search: str | re.Pattern[str],
+        *,
+        kind: str = "highlight",
+        page_index: int | None = None,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+        color: ColorValue | None = None,
+        opacity: float = 0.5,
+        contents: str = "",
+        title: str | None = None,
+    ) -> TextMarkupResult:
+        """Highlight, underline, strike out or wave-underline matching text.
+
+        ``kind`` is ``"highlight"``, ``"underline"``, ``"strike_out"`` or
+        ``"squiggly"``. ``color=None`` chooses yellow for highlights and black
+        for the other styles. Search options, geometry limits and partial
+        failure behavior match :meth:`highlight_text`; page text is preserved.
+        The result contains live annotation handles, skipped fragments and
+        ``marked_count``, ``skipped_count`` and ``matched_count``.
+        """
+        from aspose_pdf.engine.text_highlight import markup_text
+
+        return markup_text(
+            self,
+            search,
+            kind=kind,
+            page_index=page_index,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+            color=color,
+            opacity=opacity,
+            contents=contents,
+            title=title,
+        )
 
     def highlight_text(
         self,

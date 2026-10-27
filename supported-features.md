@@ -3027,6 +3027,35 @@ Supported:
       document.save("highlighted.pdf")
   ```
 
+- **Underline, strike out or wave-underline search matches** with
+  `Document.markup_text(search, kind="underline")` or
+  `Page.markup_text(search, kind="strike_out")`. The supported styles are
+  `"highlight"` (the default), `"underline"`, `"strike_out"` and `"squiggly"`.
+  This shares the literal/regex search, case sensitivity, `max_count`, document
+  `page_index`, geometry checks, selected-page laziness and partial-failure
+  behavior of `highlight_text` above. It creates ordinary editable PDF text
+  annotations and preserves the original text and page content streams.
+  - `color=None` chooses yellow for highlights and black for the other styles;
+    explicit colours accept the same grey/RGB/CMYK, hex and `Color` values.
+    `opacity=0.5`, `contents=""` and `title=None` have the same meaning as in
+    `highlight_text`. Unsupported styles, including redaction, are refused
+    before annotations are added.
+  - The returned `TextMarkupResult`, also exported from `aspose_pdf`, exposes
+    live `annotations`, `skipped_fragments`, `marked_count`, `skipped_count` and
+    `matched_count`. Uncertain geometry is reported as skipped rather than
+    guessed. `highlight_text` continues to return `TextHighlightResult` with
+    its existing `highlighted_count` property.
+
+  ```python
+  with Document("input.pdf") as document:
+      result = document.markup_text(
+          r"\bINV-\d+\b", kind="underline", regex=True,
+          color="#0066cc", contents="Verify invoice", title="Reviewer",
+      )
+      print(result.marked_count, result.skipped_count)
+      document.save("reviewed.pdf")
+  ```
+
 - **Automatically link web and email addresses in existing page text.**
   `Document.auto_link(pages=None, urls=True, emails=True, max_count=0)` creates
   one invisible, borderless Link annotation per reliably located address.
