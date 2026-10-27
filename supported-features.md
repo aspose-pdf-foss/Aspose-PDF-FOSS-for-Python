@@ -268,6 +268,38 @@ Supported:
   used one name -- a field, an attachment -- the newcomer is renamed rather
   than replacing what is there or silently becoming the same object. The source
   document is left exactly as it was, and shares no object with the result.
+  - **Create a navigable section for each input** with
+    `target.merge(*sources, create_bookmarks=True)`. Each non-empty source gets
+    one root bookmark to its first imported page, and its existing bookmark
+    hierarchy becomes the section's children. Page targets, destination views,
+    external actions, title styles and nested bookmarks are retained. Existing
+    target bookmarks remain at the root; pages already in the target receive
+    no new section. New section targets use page references and follow later
+    insertions or deletions before their pages.
+  - Automatic section titles use the source filename without its extension,
+    then a non-blank PDF `Title`, then `"Document N"` in input order. Pass
+    `bookmark_titles=["Invoices", "Receipts"]` to override them. Explicit titles
+    require `create_bookmarks=True` and exactly one non-blank Unicode string
+    per input, including empty inputs. Duplicate titles are allowed. Empty
+    inputs receive no new section; any existing non-page bookmarks they import
+    remain at the root. Repeated sources produce independent sections.
+  - The default `create_bookmarks=False` keeps the existing flat bookmark merge.
+    With sections enabled, option/title validation and bookmark count, depth,
+    text and cycle checks run before any pages are imported, under the target's
+    resource policy. Title iterables are bounded and snapshotted. Merging the
+    target into itself in this mode is refused. Later import failures may leave
+    earlier inputs merged; source bookmark views are restored even on failure.
+
+    ```python
+    with Document("invoices.pdf") as invoices, Document("receipts.pdf") as receipts:
+        with Document() as combined:
+            combined.merge(
+                invoices, receipts, create_bookmarks=True,
+                bookmark_titles=["Invoices", "Receipts"],
+            )
+            combined.save("accounting-pack.pdf")
+    ```
+
 - **Assemble separately scanned fronts and backs into one document.**
   `fronts.interleave(backs, reverse_other=False, strict=True)` returns an
   independent `Document` in the order `F0, B0, F1, B1, ...`. With
@@ -6289,6 +6321,25 @@ Supported:
   results is rejected before any output is written.
 - `Merger` concatenates all inputs; `Optimizer` compresses and garbage-collects
   each input; `TextExtractor` returns extracted text per input.
+- `MergeOptions(create_bookmarks=True, bookmark_titles=None)` enables source
+  sections in `Merger`, with the grouping and target-preservation behavior of
+  `Document.merge` above. Automatic titles prefer `FileDataSource.path` stems
+  or explicitly named `StreamDataSource` stems, then the PDF `Title`, then
+  `"Document N"`. The positional `limits` argument remains supported. Custom
+  titles are snapshotted at construction and checked again, including their
+  count, before inputs are read. Invalid inputs or bookmark failures do not
+  write partial output. Caller-owned streams stay open.
+
+  ```python
+  from aspose_pdf import FileDataSource, MergeOptions, Merger
+
+  options = MergeOptions(create_bookmarks=True)
+  options.add_input(FileDataSource("invoices.pdf"))
+  options.add_input(FileDataSource("receipts.pdf"))
+  options.add_output(FileDataSource("accounting-pack.pdf"))
+  Merger().process(options)
+  ```
+
 - `Splitter` emits one document per page from every input, preserving input and
   page order -- or, with `SplitOptions(selections=[...])`, one document per
   **selection**: each entry is what `Document.extract_pages` takes, an iterable of

@@ -5237,17 +5237,64 @@ class Document:
             resolved += 1
         return resolved
 
-    def merge(self, *documents: Document) -> Document:
-        """Merge the supplied documents into this one."""
+    def merge(
+        self,
+        *documents: Document,
+        create_bookmarks: bool = False,
+        bookmark_titles: Iterable[str] | None = None,
+    ) -> Document:
+        """Merge supplied documents, optionally creating a section for each input.
+
+        ``create_bookmarks=True`` adds a bookmark to each non-empty input's
+        first imported page and nests its existing bookmarks underneath.
+        ``bookmark_titles`` supplies one non-blank title per input, including
+        empty inputs, and requires ``create_bookmarks=True``. Otherwise titles
+        use the source filename stem, PDF Title, or ``"Document N"`` in input
+        order. Empty inputs receive no new section; existing target bookmarks
+        stay at the root. The target's existing pages receive no new section.
+
+        Options, titles and resulting bookmark count/depth are checked before
+        importing pages. Later import failures can leave earlier inputs merged.
+        Sources remain independent; merging this document into itself with
+        section bookmarks is refused. The default keeps flat bookmark merging.
+        """
+        from aspose_pdf.engine import merge_bookmarks
+
         self._ensure_not_disposed()
+        titles = merge_bookmarks.snapshot_titles(
+            create_bookmarks, bookmark_titles, self.load_limits, count=len(documents)
+        )
+        if create_bookmarks:
+            for doc in documents:
+                if not isinstance(doc, Document):
+                    raise TypeError("All items to merge must be Document instances")
+                doc._ensure_not_disposed()
+                if doc is self:
+                    raise PdfValidationException(
+                        "Cannot create section bookmarks when merging a document into itself"
+                    )
+            titles = merge_bookmarks.plan(self, documents, titles)
         if self._engine_pdf is None:
             self._engine_pdf = SimplePdf()
 
-        for doc in documents:
+        for index, doc in enumerate(documents):
             if not isinstance(doc, Document):
                 raise TypeError("All items to merge must be Document instances")
             if doc._engine_pdf is not None:
-                self._import_pages_from(doc)
+                if create_bookmarks:
+                    first_page = self.page_count
+                    previous_roots = len(
+                        self._outlines
+                        if self._outlines is not None
+                        else self._engine_pdf._outlines_data
+                    )
+                    merge_bookmarks.import_source(self, doc)
+                    if doc.page_count:
+                        merge_bookmarks.group_imported(
+                            self, titles[index], first_page, previous_roots
+                        )
+                else:
+                    self._import_pages_from(doc)
         return self
 
     def _import_pages_from(

@@ -389,7 +389,30 @@ class PluginOptions:
 
 
 class MergeOptions(PluginOptions):
-    """Options for :class:`Merger`: concatenate all inputs in order."""
+    """Concatenate inputs, optionally grouping bookmarks by source document.
+
+    With ``create_bookmarks=True``, each non-empty input gets a section
+    pointing to its first page, with its original bookmarks nested beneath it.
+    ``bookmark_titles`` overrides automatic titles with one non-blank string
+    per input. Otherwise file stems or named-stream stems take precedence over
+    the PDF Title and the ``"Document N"`` fallback. Titles are snapshotted at
+    construction and validated again before inputs are read.
+    """
+
+    def __init__(
+        self,
+        limits: PdfLoadLimits | None = None,
+        *,
+        create_bookmarks: bool = False,
+        bookmark_titles: Iterable[str] | None = None,
+    ) -> None:
+        from aspose_pdf.engine.merge_bookmarks import snapshot_titles
+
+        super().__init__(limits=limits)
+        self.bookmark_titles = snapshot_titles(
+            create_bookmarks, bookmark_titles, self.limits
+        )
+        self.create_bookmarks = create_bookmarks
 
 
 class OptimizeOptions(PluginOptions):
@@ -621,20 +644,46 @@ class Merger(PdfPlugin):
     """Concatenate every input PDF into a single document."""
 
     def process(self, options: MergeOptions) -> ResultContainer:
+        from aspose_pdf.engine.merge_bookmarks import default_title, snapshot_titles
+
         self._require_inputs(options)
         limits = _coerce_limits(getattr(options, "limits", None))
+        create_bookmarks = getattr(options, "create_bookmarks", False)
+        titles = snapshot_titles(
+            create_bookmarks,
+            getattr(options, "bookmark_titles", None),
+            limits,
+            count=len(options.inputs),
+        )
+        if create_bookmarks:
+            _LoadBudget(limits).check(
+                len(options.inputs), "max_container_items", "merge bookmark inputs"
+            )
+        inputs, outputs = tuple(options.inputs), tuple(options.outputs)
+        source_names = tuple(
+            source.path if isinstance(source, FileDataSource)
+            else source.name if isinstance(source, StreamDataSource) else None
+            for source in inputs
+        ) if create_bookmarks and titles is None else ()
         base = Document(limits=limits)
         loaded: list[Document] = []
         try:
-            for source in options.inputs:
+            for source in inputs:
                 doc = Document(limits=limits)
-                doc.load_from(_read_source_bytes(source, limits))
                 loaded.append(doc)
-            base.merge(*loaded)
+                doc.load_from(_read_source_bytes(source, limits))
+            if create_bookmarks and titles is None:
+                titles = tuple(
+                    default_title(doc, index + 1, source_name)
+                    for index, (doc, source_name) in enumerate(zip(loaded, source_names))
+                )
+            base.merge(
+                *loaded, create_bookmarks=create_bookmarks, bookmark_titles=titles
+            )
             buffer = io.BytesIO()
             base.save(buffer)
             result = OperationResult(buffer.getvalue())
-            self._emit([result] * max(len(options.outputs), 1), options.outputs)
+            self._emit([result] * max(len(outputs), 1), outputs)
             return ResultContainer([result])
         finally:
             base.dispose()
