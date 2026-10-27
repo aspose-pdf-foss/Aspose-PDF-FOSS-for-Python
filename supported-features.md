@@ -4916,7 +4916,8 @@ Supported:
     measurement dictionaries, callouts, cloud/legacy borders, line captions or
     leader geometry, caret symbols, redaction overlays, or unlisted properties.
     Source markup may render differently when a receiving viewer generates
-    appearances. XFDF import and lossless annotation backup are not provided.
+    appearances. Supported review data can be imported as described below;
+    lossless annotation backup is not provided.
   - Streaming and password-protected PDFs are supported. Only selected
     annotation dictionaries and mapped properties are read; page content,
     appearance, image and attachment streams remain undecoded. Source files,
@@ -4929,6 +4930,64 @@ Supported:
     atomically; `overwrite=False` refuses existing paths. Binary streams receive
     bytes at their current position, retry short writes and remain open; I/O
     failures may leave partial stream bytes.
+- **Import review annotations from XFDF.**
+  `Document.import_annotations_xfdf(source, page_map=None) -> int` appends the
+  exporter's review subset and returns the number added, including nested
+  popups. `source` accepts bytes/bytearray, a path or a readable binary stream.
+  Streams start at their current position and remain open. UTF-8 with or without
+  a BOM and UTF-16 inputs are supported. Elements may use the official XFDF
+  namespace, including namespace prefixes, or consistently omit a namespace.
+  No optional dependency is required.
+  - Supported types are Text, FreeText, Line, Square, Circle, Polygon, PolyLine,
+    Highlight, Underline, Squiggly, StrikeOut, Stamp, Caret, Ink and Redact, with
+    popups nested beneath their owners. The metadata and geometry exported
+    above are restored: plain contents, author, names, dates, subject, RGB hex
+    colours, opacity, flags, basic borders, fringe, icons, states, line endings,
+    QuadPoints, vertices, ink strokes, FreeText appearance/style strings,
+    justification and FreeText/Stamp rotation. Export's RGB conversion and
+    omitted properties cannot be reversed. Redact imports markup only.
+  - Source pages use zero-based indices. `page_map` has the same validation and
+    remapping rules as JSON import below. `Page.annotations.import_xfdf(source)`
+    retargets one source page's annotations to that page and rejects input
+    spanning multiple source pages. No pages are created. Coordinates retain
+    unrotated PDF values without scaling or crop/rotation transformations.
+  - Existing annotations are retained, input order is preserved within each
+    page, and repeated imports append duplicates. Nested popups follow their
+    owners in that order. Provided names must be non-empty and unique in the
+    input and are stored as `/NM`; missing names are allowed. Reply names resolve
+    against this input only, including forward and cross-page references.
+    Unresolved names are omitted and never bind to pre-existing annotations or
+    generated internal IDs. Reply cycles, self-links and replies involving
+    popups are refused. A nested popup inherits an omitted page from its owner;
+    an explicit page must match the owner's source page, even if remapping
+    would put both on one destination. Multiple popups per owner are refused.
+  - XML must contain one `xfdf` root and one `annots` container. Optional `f`
+    and `ids` metadata is ignored: file bindings are not checked, and external
+    resources are never opened. Form fields, rich text, appearances, actions,
+    embedded assets and other unlisted types/properties are refused rather than
+    partially imported. Duplicate attributes, unsupported namespaces, repeated
+    value elements, malformed XML, non-finite numbers and incomplete required
+    geometry are rejected. DOCTYPE and entity declarations are refused,
+    including in UTF-16 XML; ordinary XML escaping/character references work.
+  - Parsing, property conversion, page checks and relationship validation finish
+    before annotation attachment, using the JSON importer's shared atomic
+    commit/rollback. Validation and resource-limit failures preserve existing
+    annotations. Input bytes, XML items/depth, string and cumulative text bytes,
+    coordinate arrays, page maps and new PDF objects obey `PdfLoadLimits`.
+    Import reads destination metadata without decoding page content or
+    appearance streams and supports streaming/encrypted PDFs. Appearances are
+    not generated automatically; call `page.annotations.generate_appearances()`
+    when needed. Review data is restored, without a guarantee of identical
+    rendering for resource-dependent FreeText or custom stamps.
+
+  ```python
+  with Document("report.pdf") as document:
+      added = document.import_annotations_xfdf("review.xfdf")
+      document.generate_appearances()
+      document.save("reviewed.pdf")
+      print(added)
+  ```
+
 - **Import annotation review data from JSON.**
   `Document.import_annotations_json(source, page_map=None) -> int` appends
   supported annotations from the version 1 export schema and returns the count.
@@ -4959,7 +5018,8 @@ Supported:
     reconstructed in `Name`, `IT`, `RT`, `CP`, `Sy`, `LE`, border dictionaries
     and measurement dictionaries; text values, including `State` and
     `StateModel`, remain strings. Explicit property nulls are retained.
-    Geometry, colours, numeric and boolean shapes are checked. Lines, polygons,
+    Geometry, colours, numeric and boolean shapes are checked; `Rotate` is
+    retained as a number, including FreeText/Stamp rotation. Lines, polygons,
     polylines, ink and text markup require their defining geometry. Unlisted
     keys and nonstandard nested dictionary entries are refused, including
     actions, appearances and embedded assets.

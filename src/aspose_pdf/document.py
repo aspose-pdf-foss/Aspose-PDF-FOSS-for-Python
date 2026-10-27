@@ -2401,7 +2401,8 @@ class Document:
         names are retained when unique, with deterministic fallback names for
         missing/duplicate names. Rich text, appearances, actions, field values,
         embedded assets and unsupported properties are omitted. This export
-        does not apply redactions or add XFDF import support.
+        does not apply redactions; supported review data can be restored with
+        :meth:`import_annotations_xfdf`.
 
         XML characters and exported geometry are validated under resource
         limits. No page content, appearance or asset streams are decoded.
@@ -2464,6 +2465,34 @@ class Document:
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
         return import_json(self._engine_pdf, source, page_map=page_map)
+
+    def import_annotations_xfdf(
+        self,
+        source: str | Path | bytes | bytearray | BinaryIO,
+        *,
+        page_map: Mapping[int, int] | None = None,
+    ) -> int:
+        """Append supported XFDF review annotations and return the number added.
+
+        Accept a path, bytes or a readable binary stream, with the page mapping,
+        append-only behavior and atomic validation of :meth:`import_annotations_json`.
+        The subset matches :meth:`export_annotations_xfdf`, including nested
+        popups, named replies, basic styles and geometry. Missing names are
+        allowed; provided names must be unique. Replies resolve only against
+        names in this input. File/ID metadata never loads external resources.
+
+        Unsupported annotation types, properties, rich text, form values,
+        DOCTYPE and entity declarations are refused. XML text and geometry are
+        bounded by :attr:`load_limits`. Streams remain open and page content
+        is not decoded. Appearances are not generated automatically. Redact
+        imports review markup and does not remove content.
+        """
+        from aspose_pdf.engine.annotation_xfdf_import import import_xfdf
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return import_xfdf(self._engine_pdf, source, page_map=page_map)
 
     def extract_links(
         self,

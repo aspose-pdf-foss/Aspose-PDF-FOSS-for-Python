@@ -58,6 +58,7 @@ _PROPERTIES = (
     "RD",
     "RT",
     "Repeat",
+    "Rotate",
     "State",
     "StateModel",
     "Subj",

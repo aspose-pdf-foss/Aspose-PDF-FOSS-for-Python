@@ -1061,6 +1061,20 @@ class AnnotationCollection:
             self._page._document._engine_pdf, source, target_page=self._page.index
         )
 
+    def import_xfdf(self, source: Any) -> int:
+        """Append one source page's XFDF review annotations onto this page.
+
+        Source indices may differ from this page, but multiple source pages
+        are refused. Supported properties and validation match
+        :meth:`Document.import_annotations_xfdf`.
+        """
+        from aspose_pdf.engine.annotation_xfdf_import import import_xfdf
+
+        self._page._document._ensure_not_disposed()
+        return import_xfdf(
+            self._page._document._engine_pdf, source, target_page=self._page.index
+        )
+
     def __len__(self) -> int:
         return len(self._items())
 

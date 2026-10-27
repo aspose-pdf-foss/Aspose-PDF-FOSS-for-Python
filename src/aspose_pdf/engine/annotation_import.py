@@ -35,7 +35,7 @@ _TEXT = frozenset(
     "CreationDate DA DS Lang M NM OverlayText RC State StateModel Subj".split()
 )
 _NAMES = frozenset("CP IT Name RT Sy".split())
-_NUMBERS = frozenset("LL LLE LLO".split())
+_NUMBERS = frozenset("LL LLE LLO Rotate".split())
 _BOOLS = frozenset("Cap Open Repeat".split())
 
 
@@ -303,6 +303,24 @@ def import_json(
     """Prepare a complete import before attaching new objects to target pages."""
     budget = _LoadBudget(pdf._load_limits)
     payload = _read(source, budget)
+    return import_records(
+        pdf,
+        payload["annotations"],
+        page_map=page_map,
+        target_page=target_page,
+        budget=budget,
+    )
+
+
+def import_records(
+    pdf: Any,
+    records: list[dict[str, Any]],
+    *,
+    page_map: Any = None,
+    target_page: int | None = None,
+    budget: _LoadBudget,
+) -> int:
+    """Share property, relationship and atomic attachment checks across formats."""
     count = pdf.page_count
     mapping = _page_map(page_map, count, budget)
     if target_page is not None:
@@ -311,7 +329,8 @@ def import_json(
             _fail(f"destination page is out of range: {target_page}")
     entries: dict[str, tuple[int, PdfDictionary, dict[str, Any]]] = {}
     source_pages = set()
-    for record in payload["annotations"]:
+    for index, record in enumerate(records, 1):
+        budget.check(index, "max_container_items", "annotation import records")
         if not isinstance(record, dict) or set(record) != _FIELDS:
             _fail("each annotation must contain exactly the version 1 record fields")
         identity = record["id"]
