@@ -4189,6 +4189,59 @@ with Document("application.pdf") as document:
     `max_total_decoded_bytes`. Work uses one open PDF at a time but retains all
     serialized results; split large workloads into smaller batches. Serialization
     still builds a PDF in memory before writing to the bounded output buffer.
+- **Fill template batches directly from CSV.**
+  `FormFillerOptions.from_csv(source, encoding="utf-8-sig", delimiter=",",
+  field_map=None, checkbox_fields=None, checkbox_values=None, strict=True,
+  flatten=False, password=None, limits=None)` reads a path, bytes, bytearray or
+  readable binary stream and returns ordinary reusable `FormFillerOptions`.
+  One data record becomes one field-value mapping and produces one PDF per
+  template through `FormFiller`. CSV parsing and immutable record snapshots
+  finish before the method returns; no template is read or PDF output written
+  while preparing the CSV data. No additional dependencies are required.
+  - Headers are fully qualified PDF field names by default. `field_map` is a
+    non-empty mapping from CSV column names to PDF field names: only mapped
+    columns are included, and unselected columns are ignored. Selected column
+    names must exist; duplicate headers, blank names and multiple columns
+    targeting one field are refused. Names are case-sensitive and retain their
+    whitespace. Fields omitted from the mapping keep their template values.
+  - Cells remain exact strings, including leading zeros, formula-like text,
+    surrounding spaces and empty strings. Numbers, dates, nulls and multiselect
+    arrays are not inferred. `checkbox_fields` explicitly selects target PDF
+    field names after mapping. Their cells alone become booleans: true/1/yes/y/on
+    mean true; false/0/no/n/off/empty mean false, ignoring case and surrounding
+    whitespace. Unrecognized checkbox values raise with the field and CSV line.
+    `checkbox_values={"X": True, "": False}` replaces the accepted-value table;
+    custom keys use the same normalization and must remain unique.
+  - UTF-8 with or without a BOM is accepted by default. Other text encodings
+    and single-character delimiters, including semicolon and tab, are explicit
+    options. Standard double-quoted fields, doubled quotes and embedded
+    newlines are supported. Blank records are skipped; a record of empty cells
+    is retained. All data rows must have exactly the header's column count.
+    A header is required; header-only CSV produces no records and does not
+    cause template reads when processed. Strings passed as `source` are paths,
+    not CSV content. Streams start at their current position and stay open,
+    including on parse failures; text streams are refused.
+  - Invalid encodings, malformed quoting, inconsistent row widths and invalid
+    conversion options raise clear exceptions. Input bytes, decoded text,
+    option text, cells and container counts obey the supplied resource policy;
+    a structural scan bounds wide rows before allocating CSV containers. The
+    standard-library `csv.field_size_limit()` also applies and is never changed
+    by the library. Existing batch ordering, strict field lookup, flattening,
+    password handling, retained-output limits and failure behavior apply.
+
+  ```python
+  from aspose_pdf import FileDataSource, FormFiller, FormFillerOptions
+
+  options = FormFillerOptions.from_csv(
+      "customers.csv",
+      field_map={"Name": "customer_name", "Approved": "approved"},
+      checkbox_fields=["approved"],
+  )
+  options.add_input(FileDataSource("template.pdf"))
+  for index, result in enumerate(FormFiller().process(options), 1):
+      result.save(f"customer-{index:04d}.pdf")
+  ```
+
 - **Describe reusable form templates for filling interfaces and integrations.**
   `Form.to_schema()` returns independent dictionaries/lists describing AcroForm
   fields, and `Form.export_schema(destination=None, overwrite=True)` returns the
@@ -6404,7 +6457,9 @@ Supported:
   `FlattenOptions(limits)` retains its positional resource-limit argument.
 - `FormFiller` creates one independently filled PDF per template/record pair,
   with optional field-only flattening, password opening, reusable record
-  snapshots and processing completed before output emission. See
+  snapshots and processing completed before output emission.
+  `FormFillerOptions.from_csv()` prepares these records directly from CSV,
+  with column mapping and explicit checkbox conversion. See
   [Forms](#forms) for field types, batch ordering, limits and boundaries.
 - `Encryptor` applies the standard security handler (passwords, permissions,
   algorithm) and `Decryptor` removes it, given a password the document accepts.

@@ -567,6 +567,57 @@ class FormFillerOptions(PluginOptions):
         self.strict, self.flatten, self.password = strict, flatten, password
         self.records = records
 
+    @classmethod
+    def from_csv(
+        cls,
+        source: str | Path | bytes | bytearray | BinaryIO,
+        *,
+        encoding: str = "utf-8-sig",
+        delimiter: str = ",",
+        field_map: Mapping[str, str] | None = None,
+        checkbox_fields: Iterable[str] | None = None,
+        checkbox_values: Mapping[str, bool] | None = None,
+        strict: bool = True,
+        flatten: bool = False,
+        password: str | None = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> FormFillerOptions:
+        """Build reusable batch records from a CSV path, bytes or binary stream.
+
+        CSV headers are field names unless ``field_map`` selects and renames
+        columns. Other columns are then ignored. ``checkbox_fields`` lists PDF
+        field names whose cells are converted to booleans; other cells remain
+        exact strings. Default checkbox values are true/1/yes/y/on and
+        false/0/no/n/off/empty, ignoring case and surrounding whitespace.
+        ``checkbox_values`` replaces that table with an explicit text-to-bool
+        mapping. Unrecognized values raise instead of guessing.
+
+        Blank records are skipped; empty cells are retained. Duplicate/blank
+        headers, missing mapped columns, unequal row widths and malformed CSV
+        are refused. CSV parsing and snapshotting complete before returning,
+        without reading any PDF template. Binary streams are consumed from
+        their current position and left open. The existing batch options and
+        resource limits apply; no optional dependencies are needed.
+        """
+        from aspose_pdf.engine.form_csv import records
+
+        resolved_limits = _coerce_limits(limits)
+        return cls(
+            records(
+                source,
+                encoding=encoding,
+                delimiter=delimiter,
+                field_map=field_map,
+                checkbox_fields=checkbox_fields,
+                checkbox_values=checkbox_values,
+                limits=resolved_limits,
+            ),
+            strict=strict,
+            flatten=flatten,
+            password=password,
+            limits=resolved_limits,
+        )
+
     @property
     def records(self) -> tuple[Mapping[str, Any], ...]:
         """A reusable tuple of read-only mappings with immutable field values."""
