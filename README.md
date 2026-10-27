@@ -158,6 +158,8 @@ flowchart TD
 - `Document.rasterized_copy()` creates a fresh image-only PDF of selected page
   views for static handoffs, with configurable DPI, RGB/gray/bilevel modes,
   optional black-and-white dithering and annotation rendering.
+- `Document.split_spreads()` turns selected scanned spreads into individual
+  page views, with reading order, split position and gutter controls.
 - `Document.export_pages_zip()` packages rendered page images in one download,
   with PNG/JPEG or optional WebP, page selection and a provenance manifest.
 - `Page.get_content_bounds()` / `Document.get_content_bounds()` measure visible
@@ -470,6 +472,28 @@ The source is unchanged; original text, interactive objects, attachments and
 metadata are not transferred. Text is no longer searchable/selectable, and
 appearance follows the built-in renderer's coverage at the chosen resolution.
 See [rasterized copy details](supported-features.md#pages).
+
+### Split Spreads Into Individual Pages
+
+```python
+from aspose_pdf import Document
+
+with Document("spreads.pdf") as source:
+    with source.split_spreads(layout="horizontal") as pages:
+        pages.save("single-pages.pdf")
+```
+
+`horizontal` splits the displayed view left then right; `vertical` splits top
+then bottom. Use `reverse=True` to reverse each pair, `split_ratio=0.5` to set
+the cut from the left/top, and `gutter=6` to omit a centered strip. `pages=[1, 2]`
+splits only those zero-based pages, retaining covers and other pages in source
+order. Rotation and the visible CropBox are respected.
+
+The result preserves text, vectors and image resources without rasterizing.
+This is cropping: hidden content remains in each half. Selected form fields
+become static appearances by default; other pages' fields stay editable. See
+[spread splitting details](supported-features.md#pages) for annotations,
+navigation, numeric precision and resource limits.
 
 ### Export Rendered Pages as ZIP
 
@@ -1833,6 +1857,8 @@ and delete workflows. 275 public types are organized by module below.
     `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
   - `rasterized_copy(pages=None, dpi=150, background=(255, 255, 255), antialias=True, include_annotations=True, mode="rgb", threshold=128, dither=False) -> Document` —
     create an independent image-only PDF from selected visible page views
+  - `split_spreads(pages=None, layout="horizontal", reverse=False, split_ratio=0.5, gutter=0, flatten_fields=True) -> Document` —
+    replace selected spreads with two cropped pages in an independent document
   - `export_pages_zip(destination=None, pages=None, image_format="png", dpi=72, ..., include_manifest=False, overwrite=True) -> bytes` —
     package selected rendered page views as image files with optional source-page metadata
   - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images, ignore_regions=None) -> list[PageVisualComparison]`

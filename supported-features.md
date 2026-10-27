@@ -1754,6 +1754,69 @@ Supported:
     attachments, metadata and signatures are not transferred as live objects.
     Visible text becomes pixels without OCR. Coverage and color behavior follow
     the existing renderer/codecs; higher DPI increases time and memory.
+- **Split spreads into individual pages.** `Document.split_spreads(pages=None,
+  layout="horizontal", reverse=False, split_ratio=0.5, gutter=0,
+  flatten_fields=True)` returns an independent `Document` suitable for scan and
+  book preparation. No rasterization or new dependency is required.
+  - `pages` selects zero-based source indices to split; unselected pages are
+    retained once in source order. Repeated selections split a page once and
+    selection order does not reorder the document. `None` splits all pages,
+    `[]` copies the document, and an empty source returns an empty document.
+    Invalid indices/options and every selected page's geometry are checked
+    before importing output pages.
+  - `layout="horizontal"` splits the displayed view left/right, and
+    `"vertical"` splits top/bottom. `reverse=True` reverses each resulting pair.
+    Effective CropBox and inherited page rotation determine that view, including
+    nonzero page origins and quarter-turn rotations. The original rotation and
+    coordinate space are retained on each half.
+  - `split_ratio` is a finite number strictly between 0 and 1, locating the cut
+    from the displayed left/top. `gutter` is a finite non-negative width centered
+    on the cut, measured in page coordinate units. With the usual UserUnit of
+    1 these are PDF points; changing UserUnit does not rescale this parameter.
+    Both regions must retain positive area. No automatic spread detection,
+    skew correction or content-aware seam finding is performed.
+  - Each split half sets MediaBox, CropBox, BleedBox, TrimBox and ArtBox to its
+    region, without translating or scaling content. Box coordinates use the
+    writer's six-decimal precision before returning, so live and saved geometry
+    agree. Regions that collapse at this precision are rejected. Text, vector
+    paths, fonts and image resources remain in the PDF. Cropping does not delete
+    the other half's hidden drawing, text, fields' data or resources; extraction
+    without an explicit clip may still return the whole spread. This is not
+    redaction, sanitization or OCR.
+  - Non-widget annotations are copied onto both halves with their original
+    geometry. Rectangles are not trimmed and comments outside a half's visible
+    region remain in its metadata. New annotation objects have their own page
+    references; local reply and popup links are reconnected within the copied
+    page. Invalid annotation arrays/entries, missing subtypes/rectangles and
+    repeated annotation objects are rejected. Other annotation actions and
+    resources retain ordinary page-copy behavior.
+  - Selected form widgets are flattened using existing appearance generation
+    before making the second half. They become static drawings on those pages;
+    fields on unselected pages remain interactive. Setting `flatten_fields=False`
+    with selected widgets raises `UnsupportedFeatureException`. Widgets that
+    remain after flattening, including hidden/no-view or unsupported/missing
+    appearances, also raise instead of being silently omitted or duplicated.
+    A failure discards the working result and leaves the source untouched.
+  - Info metadata, attachments, layers, field configuration and page-bound
+    resources follow whole-document import behavior. Each half receives the
+    original page-label value. Local links and bookmarks retain valid page
+    references; a destination to a split page continues to point to its first
+    output half, with its original coordinates/view. Destinations are not
+    classified by which half contains their coordinates. New half-page
+    structure associations are not rebuilt; this is not an accessibility
+    remapping or conformance certification workflow.
+  - Results are independent of source lifetime, start unencrypted and cannot
+    preserve source signature validity. Original files, fields, protection and
+    unsaved outline edits are not modified. Streaming sources are supported
+    under normal whole-document import rules: all retained pages are read,
+    without filling source full-document content/text caches; image views may
+    be materialized by the shared importer.
+  - Selection iteration, output page count, label arrays, annotation arrays,
+    allocated objects/slots, copied streams, page content and generated
+    appearances obey `PdfLoadLimits`. Unfiltered stream sizes and their total
+    also obey decoded-stream and total-decoded byte limits. Output pages and
+    representable geometry are preflighted; later import, flattening or copy
+    failures dispose the partial result before returning any document.
 - **Create rasterized PDF copies.** `Document.rasterized_copy(pages=None,
   dpi=150, background=(255, 255, 255), antialias=True,
   include_annotations=True, mode="rgb", threshold=128, dither=False)` returns

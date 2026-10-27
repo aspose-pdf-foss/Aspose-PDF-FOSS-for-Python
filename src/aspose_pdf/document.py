@@ -4811,6 +4811,63 @@ class Document:
         result._engine_pdf = extracted
         return result
 
+    def split_spreads(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        layout: str = "horizontal",
+        reverse: bool = False,
+        split_ratio: float = 0.5,
+        gutter: float = 0.0,
+        flatten_fields: bool = True,
+    ) -> Document:
+        """Return a new PDF with each selected spread replaced by two page views.
+
+        ``pages`` selects zero-based source pages to split; other pages stay in
+        source order. Repeats are split once and an empty selection copies the
+        document. ``layout='horizontal'`` reads left then right in the displayed
+        view; ``'vertical'`` reads top then bottom. ``reverse=True`` reverses
+        each pair. CropBox and rotation determine the displayed view.
+
+        ``split_ratio`` positions the cut from the left/top, strictly between
+        zero and one. ``gutter`` removes a centered strip in page coordinate
+        units; it must leave two positive regions. Both halves retain source
+        coordinates and rotation, with all page boxes set to their regions.
+
+        Content, fonts and images are copied without rasterization. Cropping
+        does not remove hidden text/drawing or perform redaction. Non-widget
+        annotations are copied to both halves with independent local reply and
+        popup links; their geometry is not moved or trimmed. Selected form
+        widgets are flattened before splitting by default; unsupported/hidden
+        widgets or ``flatten_fields=False`` with widgets raise an exception.
+        Fields on unselected pages remain interactive.
+
+        Info metadata, attachments, layers, labels and destinations follow the
+        shared page importer. Each half inherits its source label. Destinations
+        to split pages retain the first output half and their existing view
+        coordinates. New half-page structure associations are not rebuilt.
+        Results are independent, unencrypted and cannot retain source signature
+        validity. The source PDF and live outline edits are not changed. Source
+        and output resource limits apply; failures dispose the partial result.
+        """
+        from aspose_pdf.engine.spread_split import split_spreads
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        engine = split_spreads(
+            self,
+            pages=pages,
+            layout=layout,
+            reverse=reverse,
+            split_ratio=split_ratio,
+            gutter=gutter,
+            flatten_fields=flatten_fields,
+        )
+        result = Document(limits=self._load_limits)
+        result._engine_pdf = engine
+        return result
+
     def interleave(
         self,
         other: Document,

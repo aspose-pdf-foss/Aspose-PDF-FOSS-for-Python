@@ -9,6 +9,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Turn scanned spreads into individual PDF pages.**
+  `Document.split_spreads()` supports selected spreads, both reading axes,
+  reversed reading order, an adjustable split and a central gutter. Teams can
+  prepare scans for reading and distribution while keeping covers, text and
+  vector/image content in an independent document.
+
 - **Share PDF review comments through XFDF.**
   Document and page exports carry supported annotations, markup geometry,
   authors, dates and reply threads with page/type filters. Teams can hand off
