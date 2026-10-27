@@ -1268,6 +1268,61 @@ Supported:
     Hidden text, metadata, annotation contents and other stored data can differ
     when page views match. This is not byte, semantic, text or signature
     comparison, OCR, perceptual matching, or proof that PDFs are interchangeable.
+- **Share a standalone HTML comparison report.**
+  `Document.export_comparison_html(other, destination=None, *, pages=None,
+  other_pages=None, mode="both", dpi=72, tolerance=0, max_diff_ratio=0,
+  include_annotations=True, include_diff_images=True, ignore_regions=None,
+  case_sensitive=True, ignore_whitespace=False, skip_artifacts=False,
+  title="PDF comparison", left_label="Original", right_label="Revised",
+  overwrite=True)` returns UTF-8 HTML bytes and optionally writes the same
+  report to a path or binary stream. Reviewers can open and share this single
+  file offline; CSS and PNG difference images are embedded, with no scripts,
+  remote assets or additional dependencies.
+  - `mode="both"` combines the existing text and visual checks; `"text"` only
+    extracts text and `"visual"` only renders pages. Comparison settings keep
+    their existing meanings and validation. `include_diff_images=False`
+    omits previews while preserving visual metrics. Text differences use a
+    colored unified diff; visual previews use the same red changes, pale
+    grayscale context and blue ignored areas as `compare_visual()`.
+  - The report includes totals, a linked page summary and per-pair results
+    with visual dimensions, changed/ignored pixel counts, difference ratio
+    and bounding box. Matching pairs are collapsed; changed, missing and
+    tolerated/normalized pairs are expanded. Differences allowed by
+    `max_diff_ratio` are labeled **Within tolerance** and text matches after
+    normalization are labeled **Normalized text match**, rather than implying
+    exact source equality. A combined pair matches only when both checks do.
+  - Selectors are zero-based, preserve order and repetitions, and pair by
+    position, with missing tails reported explicitly. Displayed page numbers
+    are one-based. `None` selects all pages; two empty selections produce an
+    empty report. There is no automatic page alignment. Titles, source labels and
+    extracted text are escaped, and the report restricts browser resources
+    through its content security policy. Source labels are caller-supplied
+    display text rather than inferred filenames.
+  - All options, selections and selected visual geometries are validated
+    before page processing. Pages are compared and their previews encoded
+    one pair at a time, without retaining completed raster images or reading
+    unselected streaming page content. Shared work uses the stricter enabled
+    source limits: `max_raster_pixels` bounds each canvas and cumulative
+    preview pixels, `max_codec_work_bytes` bounds PNG encoding work,
+    `max_object_bytes` bounds labels and individual base64 image payloads,
+    and `max_input_bytes`/`max_total_decoded_bytes` bound the entire HTML,
+    including base64 expansion. `max_container_items` also bounds report
+    fragments. Use selected pages, lower DPI or omit images for large reports.
+  - The complete report is prepared before output. Parent directories are
+    created as needed, file replacement is atomic, and `overwrite=False`
+    refuses an existing path. Binary streams receive complete bytes at their
+    current position, retry short writes and stay open; stream write failures
+    can leave a partial prefix. Comparison/validation failures write nothing.
+    Neither source document nor its file is edited. The report inherits the
+    text extractor and renderer's coverage and resolution limitations; it
+    does not perform OCR or prove semantic, byte or signature equivalence.
+
+  ```python
+  with Document("before.pdf") as before, Document("after.pdf") as after:
+      before.export_comparison_html(
+          after, "comparison.html", left_label="Before", right_label="After", dpi=96
+      )
+  ```
 - **Measure visible content without cropping.**
   `Page.get_content_bounds(dpi=72, white_threshold=250,
   include_annotations=True)` returns `(x0, y0, x1, y1)` around rendered ink,

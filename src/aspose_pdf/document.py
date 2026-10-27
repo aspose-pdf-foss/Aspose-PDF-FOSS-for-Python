@@ -4865,6 +4865,74 @@ class Document:
             ignore_regions=ignore_regions,
         )
 
+    def export_comparison_html(
+        self,
+        other: Document,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        other_pages: Iterable[int] | None = None,
+        mode: str = "both",
+        dpi: float = 72.0,
+        tolerance: int = 0,
+        max_diff_ratio: float = 0.0,
+        include_annotations: bool = True,
+        include_diff_images: bool = True,
+        ignore_regions: Iterable[Sequence[float]] | None = None,
+        case_sensitive: bool = True,
+        ignore_whitespace: bool = False,
+        skip_artifacts: bool = False,
+        title: str = "PDF comparison",
+        left_label: str = "Original",
+        right_label: str = "Revised",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return an offline UTF-8 HTML comparison report, optionally writing it.
+
+        ``mode`` selects ``"both"``, ``"text"`` or ``"visual"`` comparisons.
+        Page selections and settings follow :meth:`compare_text` and
+        :meth:`compare_visual`. The report includes a page summary, per-pair
+        metrics, text diffs and optional embedded PNG difference images. It
+        needs no scripts, external assets or optional dependencies. Matching
+        pairs are collapsed; differences and tolerated changes are expanded.
+
+        Source text and labels are escaped. Both selections and all geometry
+        are checked before rendering; one pair is processed at a time. Shared
+        work, cumulative preview pixels and complete HTML bytes obey the
+        stricter source resource limits. Neither document is edited.
+
+        Output is prepared before writing. Files are replaced atomically;
+        ``overwrite=False`` refuses existing paths. Binary streams receive
+        bytes at their current position, retry short writes and remain open.
+        Stream failures may leave a partial prefix.
+        """
+        from aspose_pdf._export_files import check_targets, write_files
+        from aspose_pdf.engine.comparison_html import export
+
+        self._ensure_not_disposed()
+        if not isinstance(other, Document):
+            raise PdfValidationException("other must be a Document")
+        other._ensure_not_disposed()
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        if destination is not None and not hasattr(destination, "write"):
+            check_targets([Path(destination)], overwrite)
+        data = export(
+            self, other, pages=pages, other_pages=other_pages, mode=mode,
+            dpi=dpi, tolerance=tolerance, max_diff_ratio=max_diff_ratio,
+            include_annotations=include_annotations,
+            include_diff_images=include_diff_images, ignore_regions=ignore_regions,
+            case_sensitive=case_sensitive, ignore_whitespace=ignore_whitespace,
+            skip_artifacts=skip_artifacts, title=title, left_label=left_label,
+            right_label=right_label,
+        )
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def extract_pages(self, selection: Iterable[int] | slice) -> Document:
         """Return an independent document containing selected pages in order.
 
