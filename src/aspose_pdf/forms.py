@@ -273,6 +273,32 @@ class Field:
         self._form._load_fields()
 
     @property
+    def alignment(self) -> str | None:
+        """Effective ``left``, ``center`` or ``right`` text alignment (``/Q``).
+
+        Text and choice fields inherit from the nearest field ancestor, then
+        the AcroForm default; absent settings mean left. Other types return
+        ``None``. Explicit rich-text paragraph styles can override this default.
+        """
+        from aspose_pdf.engine.form_fields import field_quadding
+
+        if self._field_type not in ("text", "listbox", "combobox"):
+            return None
+        return ("left", "center", "right")[
+            field_quadding(self._engine(), self._dictionary())
+        ]
+
+    @alignment.setter
+    def alignment(self, value: str | int | None) -> None:
+        """Set alignment and refresh this field's widgets without changing values.
+
+        Accepts the same names and numbers (0, 1, 2) as form factories.
+        ``None`` clears local overrides and restores inherited alignment.
+        Changes requiring a CID appearance rebuild are refused before editing.
+        """
+        self._set_parameter("alignment", value)
+
+    @property
     def max_length(self) -> int | None:
         """The most characters a text field takes (``/MaxLen``); ``None`` if unlimited."""
         from aspose_pdf.engine.cos import PdfNumber
@@ -620,22 +646,9 @@ class Form:
 
     @staticmethod
     def _alignment_value(alignment: str | int) -> int:
-        if isinstance(alignment, str):
-            values = {
-                "left": 0,
-                "center": 1,
-                "centre": 1,
-                "right": 2,
-            }
-            try:
-                return values[alignment.lower()]
-            except KeyError as exc:
-                raise PdfValidationException(
-                    "alignment must be 'left', 'center', or 'right'"
-                ) from exc
-        if isinstance(alignment, bool) or alignment not in (0, 1, 2):
-            raise PdfValidationException("alignment must be 0, 1, or 2")
-        return int(alignment)
+        from aspose_pdf.engine.form_fields import alignment_value
+
+        return alignment_value(alignment)
 
     @staticmethod
     def _default_appearance(font_size: float, text_color: Any = None) -> str:

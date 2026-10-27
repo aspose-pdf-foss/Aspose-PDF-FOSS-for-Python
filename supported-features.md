@@ -4082,7 +4082,7 @@ Supported:
   check boxes and radio buttons, `export_values` -- each widget's on state;
   and `widgets` (`FieldWidget(page_index, rect)`), with `page_index` and
   `rect` for the first. Inheritable attributes (`/FT`, `/Ff`, `/V`, `/DV`,
-  `/MaxLen`, `/Opt`) are taken from the nearest ancestor that has them; a
+  `/MaxLen`, `/Opt`, `/Q`) are taken from the nearest ancestor that has them; a
   widget is on the page whose `/Annots` lists it, whatever its `/P` says (none
   if no page does), and a rectangle's corners are put in order. Compared with pdf.js, pdfium, qpdf and
   MuPDF over fields this library, MuPDF and hand-built structures wrote: 210
@@ -4091,8 +4091,8 @@ Supported:
   separate widget (pdf.js, qpdf), and radio export values are on-state names
   (pdf.js, MuPDF) rather than `/Opt` texts (pdfium).
 - **Edit existing field configuration** with setters for `default_value`,
-  `max_length`, `multiline`, `password`, `comb`, `options`, `multi_select` and
-  `editable`. Changes are written on the selected field, retaining unrelated
+  `alignment`, `max_length`, `multiline`, `password`, `comb`, `options`,
+  `multi_select` and `editable`. Changes are written on the selected field, retaining unrelated
   flag bits and inherited sibling settings. Type, encoding, option and mode
   validation happens before metadata is changed. Choice/default text and option
   counts are checked against `PdfLoadLimits`.
@@ -4102,6 +4102,21 @@ Supported:
   the current appearance; `Form.reset()` then restores it. `None` stores an
   explicit empty default that overrides an ancestor's `/DV`. Push buttons and
   signatures reject defaults.
+  `Field.alignment` reports `"left"`, `"center"` or `"right"` for text, list-box
+  and combo-box fields, including fields loaded from existing PDFs. Assign a
+  name (case insensitive, with `"centre"` also accepted) or `0`/`1`/`2` to set
+  `/Q` locally and redraw that field's widgets. Assign `None` to remove local
+  overrides and restore the nearest ancestor's `/Q`, then the AcroForm default,
+  then left alignment. Conflicting `/Q` overrides on the field's separate
+  unnamed widgets are cleared so every widget follows the setting. Other
+  fields return `None` and reject alignment edits. Values, defaults, options,
+  flags, rectangles, styling and unrelated fields' appearances are preserved.
+  Alignment uses the existing single-line, multiline, password, comb and choice
+  layouts, and remains visible after saving or flattening. Rich-text paragraph
+  styles can override the field's default alignment. Invalid settings and edits
+  requiring an unsupported embedded CID appearance rebuild are refused before
+  metadata or appearances change. Unchanged effective alignment does not require
+  a CID rebuild.
   `max_length` is a viewer input limit from 1 to 2147483647; it does not truncate
   stored values or add length checks to programmatic filling. Setting it to
   `None` removes the local `/MaxLen`, exposing an inherited limit if present.
@@ -4131,10 +4146,12 @@ with Document("application.pdf") as document:
     notes = document.form["notes"]
     notes.max_length = 500
     notes.multiline = True
+    notes.alignment = "left"
     notes.default_value = "No additional comments"
     country = document.form["country"]
     country.options = [("NL", "Netherlands"), ("DE", "Germany"), ("BE", "Belgium")]
     country.editable = True
+    country.alignment = "center"
     document.save("configured.pdf")
 ```
 

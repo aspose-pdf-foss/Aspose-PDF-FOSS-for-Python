@@ -87,7 +87,12 @@ from .encryption import (
 )
 from .file_output import write_file_atomically
 from .filters import StreamDecoder
-from .form_fields import field_attribute, form_value, validate_choice_value
+from .form_fields import (
+    field_attribute,
+    field_quadding,
+    form_value,
+    validate_choice_value,
+)
 from .incremental_update import IncrementalUpdate
 from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
 from .pdf_parser_cos import PdfCosParser, pdf_header_offset, pdf_header_version
@@ -16081,7 +16086,8 @@ class SimplePdf:
         inherited = self._acroform_inherited(acro)
         for key, label in (("V", "v"), ("RV", "rv"), ("Opt", "opt")):
             inherited[label] = field_attribute(self, field, key)
-        for key, label in (("Ff", "ff"), ("Q", "q"), ("MaxLen", "max_len")):
+        inherited["q"] = field_quadding(self, field)
+        for key, label in (("Ff", "ff"), ("MaxLen", "max_len")):
             value = field_attribute(self, field, key)
             if isinstance(value, PdfNumber):
                 inherited[label] = int(value.value)
@@ -16256,7 +16262,7 @@ class SimplePdf:
         """
         return {
             "da": self._get_cos_string(acro.mapping.get(PdfName("DA"))) or None,
-            "q": None,
+            "q": field_quadding(self, acro),
             "ft": None,
             "ff": 0,
             "v": None,

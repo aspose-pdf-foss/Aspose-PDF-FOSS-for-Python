@@ -26,8 +26,10 @@ from .cos import (
 )
 
 __all__ = [
+    "alignment_value",
     "field_attribute",
     "field_dictionary",
+    "field_quadding",
     "field_widgets",
     "form_value",
     "on_states",
@@ -37,6 +39,21 @@ __all__ = [
 ]
 
 _MAX_ANCESTORS = 64
+
+
+def alignment_value(alignment: str | int) -> int:
+    """Normalize the alignment names and numbers accepted by form factories."""
+    if isinstance(alignment, str):
+        values = {"left": 0, "center": 1, "centre": 1, "right": 2}
+        try:
+            return values[alignment.lower()]
+        except KeyError as exc:
+            raise PdfValidationException(
+                "alignment must be 'left', 'center', or 'right'"
+            ) from exc
+    if isinstance(alignment, bool) or alignment not in (0, 1, 2):
+        raise PdfValidationException("alignment must be 0, 1, or 2")
+    return int(alignment)
 
 
 def validate_choice_value(
@@ -96,6 +113,23 @@ def field_attribute(pdf: Any, field: PdfDictionary, key: str) -> Any:
             return pdf._resolve(node.mapping[name])
         node = pdf._resolve(node.mapping.get(PdfName("Parent")))
     return None
+
+
+def field_quadding(pdf: Any, field: PdfDictionary) -> int:
+    """Read inherited ``/Q``, falling back to the AcroForm default and then left."""
+    value = field_attribute(pdf, field, "Q")
+    if value is None:
+        root = pdf._resolve(pdf._cos_doc.trailer.mapping.get(PdfName("Root")))
+        acro = (
+            pdf._resolve(root.mapping.get(PdfName("AcroForm")))
+            if isinstance(root, PdfDictionary)
+            else None
+        )
+        if isinstance(acro, PdfDictionary):
+            value = pdf._resolve(acro.mapping.get(PdfName("Q")))
+    if isinstance(value, PdfNumber) and value.value in (0, 1, 2):
+        return int(value.value)
+    return 0
 
 
 def text_of(pdf: Any, value: Any) -> str | None:

@@ -8,7 +8,15 @@ from typing import Any
 from aspose_pdf.exceptions import PdfValidationException, UnsupportedFeatureException
 
 from .cos import PdfArray, PdfDictionary, PdfName, PdfNull, PdfNumber, PdfString
-from .form_fields import field_attribute, form_value, on_states, validate_choice_value
+from .form_fields import (
+    alignment_value,
+    field_attribute,
+    field_quadding,
+    form_value,
+    on_states,
+    validate_choice_value,
+    widget_dictionaries,
+)
 
 _FLAGS = {
     "multiline": ("text", 1 << 12),
@@ -134,7 +142,7 @@ def _check_text_appearance_font(pdf: Any, field: PdfDictionary) -> None:
         font.mapping.get(PdfName("Subtype"))
     ) == PdfName("Type0"):
         raise UnsupportedFeatureException(
-            "Text mode changes cannot rebuild an embedded CID field appearance"
+            "Layout changes cannot rebuild an embedded CID field appearance"
         )
 
 
@@ -155,6 +163,12 @@ def set_parameter(
             raise TypeError(f"{parameter} must be a boolean")
         flags = flags | mask if value else flags & ~mask
         changes[PdfName("Ff")] = PdfNumber(flags)
+    elif parameter == "alignment":
+        if kind not in ("text", "listbox", "combobox"):
+            raise PdfValidationException("alignment applies only to text and choice fields")
+        changes[PdfName("Q")] = (
+            None if value is None else PdfNumber(alignment_value(value))
+        )
     elif parameter == "max_length":
         if kind != "text":
             raise PdfValidationException("max_length applies only to text fields")
@@ -263,6 +277,24 @@ def set_parameter(
     if text_mode_changed or (parameter == "max_length" and flags & (1 << 24)):
         _check_text_appearance_font(pdf, field)
 
+    widgets = []
+    if parameter == "alignment":
+        widgets = [
+            widget
+            for widget in widget_dictionaries(pdf, field)
+            if widget is not field and PdfName("T") not in widget.mapping
+        ]
+        staged = PdfDictionary(dict(field.mapping))
+        setting = changes[PdfName("Q")]
+        if setting is None:
+            staged.mapping.pop(PdfName("Q"), None)
+        else:
+            staged.mapping[PdfName("Q")] = setting
+        resulting_alignment = field_quadding(pdf, staged)
+        for target in widgets or [field]:
+            if field_quadding(pdf, target) != resulting_alignment:
+                _check_text_appearance_font(pdf, target)
+
     for key, item in changes.items():
         if item is None:
             field.mapping.pop(key, None)
@@ -270,3 +302,5 @@ def set_parameter(
             field.mapping[key] = item
     if kind in ("listbox", "combobox") and PdfName("V") in changes:
         pdf._update_choice_indices(field, changes[PdfName("V")])
+    for widget in widgets:
+        widget.mapping.pop(PdfName("Q"), None)
