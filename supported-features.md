@@ -1123,6 +1123,36 @@ Supported:
   and structure tree. The page-label rule is `merge`'s: a document with no
   labels of its own contributes empty ones rather than numbers it never had.
 - Delete pages by index and clear all pages.
+- **Select pages using familiar range expressions.**
+  `parse_page_range("1-3,7,10-", page_count)` (exported from `aspose_pdf`)
+  returns a tuple of zero-based indices for text extraction, page rendering
+  exports, comparisons and other APIs with a `pages` argument. Comma-separated
+  numbers select individual pages; ranges include both endpoints; a missing
+  end means the last page of that document. Input order and repeated pages
+  are preserved, and whitespace around items and hyphens is ignored.
+  Expressions use **one-based** page numbers by default; `one_based=False`
+  explicitly interprets them as zero-based. The result is always zero-based;
+  add one to each index for facades expecting one-based page numbers.
+  `Document.extract_pages("1-3,7,10-")` accepts a one-based expression directly,
+  while existing integer selections and slices retain their zero-based meaning.
+  Empty items, descending ranges, unsupported syntax and pages outside the
+  document are rejected, including every non-empty selection on an empty PDF.
+  Parsing reads no PDF content. `limits=` bounds expression bytes and the total
+  expanded selection, counting repeated pages; direct extraction uses the
+  document's resource limits.
+
+  ```python
+  from aspose_pdf import Document, parse_page_range
+
+  with Document("report.pdf") as document:
+      pages = parse_page_range("1-3,7-", document.page_count,
+                               limits=document.load_limits)
+      text = document.extract_text(pages=pages)
+      document.export_pages_zip("previews.zip", pages=pages)
+      with document.extract_pages("1-3,7-") as selected:
+          selected.save("selected.pdf")
+  ```
+
 - **Find visually blank pages, including scanned sides.**
   `Page.is_blank(dpi=72, white_threshold=250, max_ink_ratio=0,
   include_annotations=True)` returns a boolean;
@@ -6654,8 +6684,11 @@ Supported:
 - `Splitter` emits one document per page from every input, preserving input and
   page order -- or, with `SplitOptions(selections=[...])`, one document per
   **selection**: each entry is what `Document.extract_pages` takes, an iterable of
-  0-based page indexes or a `slice`, so `[range(0, 3), [3, 4], slice(5, None)]`
-  cuts a document into three. A slice is resolved against the input's own length,
+  0-based page indexes, a `slice`, or a **one-based** range string.
+  Both `[range(0, 3), [3, 4], slice(5, None)]` and `["1-3", "4-5", "6-"]`
+  cut a document into three. A slice or open-ended string range is resolved
+  against each input's own length; string expansion obeys the plugin's limits.
+  For integer selections,
   a negative index counts from the end, and a selection naming a page the document
   does not have is refused rather than trimmed.
   `SplitOptions(pages_per_part=N)` instead produces consecutive batches of at

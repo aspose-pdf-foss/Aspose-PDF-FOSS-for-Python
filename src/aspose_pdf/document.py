@@ -4933,14 +4933,23 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
-    def extract_pages(self, selection: Iterable[int] | slice) -> Document:
+    def extract_pages(self, selection: Iterable[int] | slice | str) -> Document:
         """Return an independent document containing selected pages in order.
 
-        *selection* is a zero-based iterable of page indexes or a slice. Page
-        resources, annotations, fields, layers, and bookmarks that belong to
+        *selection* is a zero-based iterable of page indexes or a slice, or a
+        one-based range string such as ``"1-3,7,10-"``. String ranges include
+        both endpoints; an omitted end selects through the last page. Order
+        and repeated pages are retained. Page resources, annotations, fields,
+        layers, and bookmarks that belong to
         those pages travel with them. An empty selection is invalid.
         """
         self._ensure_not_disposed()
+        if isinstance(selection, str):
+            from aspose_pdf.page_ranges import parse_page_range
+
+            selection = parse_page_range(
+                selection, self.page_count, limits=self._load_limits
+            )
         self._flush_outlines()
         extracted = self._engine_pdf.extract_pages(selection)
         result = Document(limits=self._load_limits)

@@ -119,6 +119,7 @@ from .lowcode import (
 from .optimization import OptimizationOptions
 from .outlines import OutlineCollection, OutlineItem
 from .page_labels import NumberingStyle, PageLabel, PageLabelCollection
+from .page_ranges import parse_page_range
 from .page_size import PageSize
 from .pages import Page, PageCollection
 from .paths import GraphicsPath
@@ -359,6 +360,7 @@ __all__ = [
     "XmpProperty",
     "XmpStruct",
     "__version__",
+    "parse_page_range",
     "parse_xmp",
     "quad_from_rect",
     "serialize_xmp",

@@ -259,14 +259,24 @@ def _validate_split_options(
         )
 
 
-def _resolve_selection(selection: Iterable[int] | slice, page_count: int) -> list[int]:
+def _resolve_selection(
+    selection: Iterable[int] | slice | str,
+    page_count: int,
+    *,
+    limits: PdfLoadLimits | None = None,
+) -> list[int]:
     """One of :class:`SplitOptions`'s selections as a plain list of page indexes.
 
     A ``slice`` is resolved against the document's own length, so
     ``slice(5, None)`` means "page six onward" however long the input turns out
     to be, and a negative index counts from the end as it does everywhere else.
+    A range string uses one-based numbers and resolves open ends per input.
     """
-    if isinstance(selection, slice):
+    if isinstance(selection, str):
+        from aspose_pdf.page_ranges import parse_page_range
+
+        indexes = list(parse_page_range(selection, page_count, limits=limits))
+    elif isinstance(selection, slice):
         indexes = list(range(page_count))[selection]
     else:
         indexes = [
@@ -460,8 +470,8 @@ class SplitOptions(PluginOptions):
     By default every page of every input becomes a document of its own.
     *selections* splits into groups instead: each entry is what
     :meth:`~aspose_pdf.Document.extract_pages` takes -- an iterable of 0-based
-    page indexes, or a ``slice`` -- and becomes one output document, in the order
-    given::
+    page indexes, a ``slice``, or a one-based range string such as ``"1-3,7-"``
+    -- and becomes one output document, in the order given::
 
         SplitOptions(selections=[range(0, 3), [3, 4], slice(5, None)])
 
@@ -481,7 +491,7 @@ class SplitOptions(PluginOptions):
         self,
         limits: PdfLoadLimits | None = None,
         *,
-        selections: Iterable[Iterable[int] | slice] | None = None,
+        selections: Iterable[Iterable[int] | slice | str] | None = None,
         bookmark_level: int | None = None,
         include_preamble: bool = True,
         pages_per_part: int | None = None,
@@ -849,7 +859,7 @@ class Splitter(PdfPlugin):
                     groups = [[index] for index in range(page_count)]
                 else:
                     groups = [
-                        _resolve_selection(selection, page_count)
+                        _resolve_selection(selection, page_count, limits=limits)
                         for selection in selections
                     ]
                 for group in groups:
