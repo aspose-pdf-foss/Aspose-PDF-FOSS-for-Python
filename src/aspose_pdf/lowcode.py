@@ -935,8 +935,10 @@ class ImagesToPdfOptions(PluginOptions):
     300 dpi scan come out at its physical size. ``margin`` is in points and
     applies to a fixed page size only -- a page cut to its image has no room for
     one -- and ``single_document`` collects every input into one file instead of
-    one file per image. Each TIFF frame counts as one image; TIFF input requires
-    the optional ``images`` extra. ``dpi`` overrides source resolution metadata.
+    one file per image. Each TIFF frame counts as one image. TIFF and static
+    WebP/BMP/GIF inputs require the optional ``images`` extra; WebP also needs
+    Pillow's WebP codec. Animated GIF/WebP inputs are refused.
+    ``dpi`` overrides source resolution metadata.
     """
 
     def __init__(
@@ -1186,18 +1188,20 @@ class ImageExtractor(PdfPlugin):
 
 
 class ImagesToPdf(PdfPlugin):
-    """Make a PDF out of JPEG, PNG or TIFF inputs, one page per image/frame.
+    """Make PDFs from JPEG/PNG/TIFF and static WebP/BMP/GIF images.
 
     Each page is cut to its own picture unless ``page_size`` says otherwise, in
     which case the image is centred inside that sheet and scaled down to fit
     within the margin. By default all images and frames become pages of one
     document; with ``single_document=False`` each image becomes a document of its
-    own. TIFF frames retain their source order and require the ``images`` extra.
+    own. TIFF frames retain their source order. TIFF and WebP/BMP/GIF require
+    the ``images`` extra; animated WebP/GIF inputs are refused.
     """
 
     def process(self, options: ImagesToPdfOptions) -> ResultContainer:
         self._require_inputs(options)
         from aspose_pdf.engine.content_authoring import image_pixel_size
+        from aspose_pdf.engine.image_import import pillow_image_format, static_image
         from aspose_pdf.engine.tiff_import import is_tiff, tiff_frames
 
         limits = _coerce_limits(getattr(options, "limits", None))
@@ -1225,6 +1229,11 @@ class ImagesToPdf(PdfPlugin):
                 if is_tiff(data):
                     frames = tiff_frames(data, budget, preceding_pages=page_count)
                     frame_context = closing(frames)
+                elif pillow_image_format(data) is not None:
+                    frames = iter(
+                        (static_image(data, budget, preceding_pages=page_count),)
+                    )
+                    frame_context = nullcontext(frames)
                 else:
                     pixel_width, pixel_height = image_pixel_size(data)
                     frames = iter(((data, pixel_width, pixel_height),))

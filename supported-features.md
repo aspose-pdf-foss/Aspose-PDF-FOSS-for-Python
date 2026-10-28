@@ -6738,10 +6738,21 @@ Supported:
   for raster codecs, the original payload for JPEG and JPEG 2000) -- the same
   reconstruction `PdfExtractor.get_next_image` performs. An input that draws no
   image contributes no result.
-- `ImagesToPdf` builds a document from JPEG, PNG and TIFF inputs, one page per
-  image or TIFF frame, preserving input and frame order. TIFF requires the
-  optional `images` extra (Pillow); JPEG and PNG work without it. Classic TIFF
-  in either byte order and BigTIFF are accepted. Bilevel, 8-bit grayscale, RGB
+- `ImagesToPdf` builds a document from JPEG, PNG, TIFF and **static WebP, BMP
+  and GIF** inputs, one page per image or TIFF frame, preserving input and
+  frame order. TIFF, WebP, BMP and GIF require the optional `images` extra
+  (Pillow); WebP additionally requires a Pillow build with WebP support.
+  JPEG and PNG work without it. Inputs are recognized by their signatures,
+  regardless of the filename. Static WebP/BMP/GIF pixels are normalized to
+  lossless 8-bit RGBA PNG before PDF authoring: palette colors, GIF palette
+  transparency, WebP alpha and BMP alpha bitfields recognized by Pillow are
+  preserved. Opaque pixels remain opaque; unsupported BMP alpha conventions
+  follow Pillow's decoding. Both lossy and lossless WebP bitstreams are read;
+  decoded pixels are not subjected to another lossy encoding.
+  Animated GIF/WebP inputs raise `UnsupportedFeatureException` before pixel
+  decoding; the importer does not silently select their first frame.
+  Classic TIFF in either byte order and BigTIFF are accepted.
+  Bilevel, 8-bit grayscale, RGB
   and palette frames are decoded losslessly into PDF images; bilevel becomes
   8-bit grayscale and palette becomes RGB. Compression support follows the
   installed Pillow build (tested with uncompressed, LZW, Deflate, PackBits and
@@ -6755,11 +6766,18 @@ Supported:
   is not decoded twice; raw samples carry no size and are refused. TIFF is
   decoded one frame at a time. `PdfLoadLimits` bounds input bytes, frame pixels,
   per-frame decoded samples and codec work; the page count and total decoded
-  TIFF samples are bounded across the entire run, including separate results.
+  TIFF and WebP/BMP/GIF samples are bounded across the entire run, including
+  separate results. The static formats' dimensions and container structure are
+  checked before opening Pillow; GIF frame extents and WebP canvas/bitstream
+  dimensions are checked together. Static decoded samples are budgeted as RGBA
+  (four bytes per pixel), with space for PNG scanline filter bytes and a
+  conservative working-buffer estimate. Native codec allocations depend on
+  the installed Pillow build.
   Pillow's own pixel safety checks also apply. An invalid directory chain or a
-  decoding failure raises `PdfValidationException`; missing Pillow or unsupported
-  TIFF modes raises `UnsupportedFeatureException`. Processing completes before
-  any configured output is written, so a failed later frame leaves outputs intact.
+  decoding failure raises `PdfValidationException`; missing Pillow, unsupported
+  TIFF modes or an unavailable WebP codec raise `UnsupportedFeatureException`.
+  Processing completes before any configured output is written, so a failed
+  later image or frame leaves outputs intact.
 - `Converter` re-expresses each input: `"html"`, `"markdown"` and `"tiff"` give
   one result per input, while `"svg"`, `"png"` and `"jpeg"` give one per page,
   none of the three having a multi-page form. `"webp"` also gives one result
@@ -6803,6 +6821,12 @@ Boundaries:
 - TIFF import currently rejects alpha, CMYK, floating-point and greater-than-8-bit
   sample data. It does not copy TIFF metadata or ICC profiles, apply color
   management, or run OCR; resulting pages contain raster images.
+- Static WebP/BMP/GIF import is available through `ImagesToPdf`; `Page.add_image`
+  continues to accept JPEG, PNG and explicit raw samples. These new imports do
+  not copy source metadata, preserve an animation timeline, apply ICC color
+  management or infer rotation from EXIF. Existing DPI and fixed-page sizing
+  options apply to them. Their compressed payloads are decoded and re-encoded
+  for PDF embedding rather than retained as embedded WebP/BMP/GIF files.
 - There is no signing plugin. Signing takes a certificate, a key, a field and an
   appearance, and wrapping that in an options object is a design rather than a
   composition -- `Document.sign` is the API for it (see
