@@ -4677,6 +4677,51 @@ class Document:
             include_annotations=include_annotations,
         )
 
+    def remove_blank_pages(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        dpi: float = 72.0,
+        white_threshold: int = 250,
+        max_ink_ratio: float = 0.0,
+        include_annotations: bool = True,
+        dry_run: bool = False,
+    ) -> list[int]:
+        """Remove visually blank pages and return their original zero-based indices.
+
+        Selection, detection settings and result order follow
+        :meth:`find_blank_pages`. Every selected page is inspected before any
+        deletion. Rendering, option or selection failures leave pages intact.
+        ``dry_run=True`` reports the same candidates without editing anything.
+
+        An empty document or a selection with no blank pages returns ``[]``.
+        Removing every page raises ``PdfValidationException`` before mutation;
+        a dry run can still report all pages as candidates. Pages are deleted
+        in descending index order, retaining the order of remaining pages.
+        Page label ranges follow normal page deletion. Bookmarks on retained
+        pages keep their destination views; bookmarks on removed pages become
+        targetless headings and retain their children, titles and styles.
+
+        Detection is the same finite-resolution visual heuristic as
+        :meth:`find_blank_pages`, including annotation visibility. A page that
+        looks blank can still store hidden data. Deletion does not securely
+        erase PDF objects or previous revisions. Source files are changed only
+        on an explicit save. Returned indices always refer to the document
+        before this call, including for unordered or repeated selections.
+        """
+        from aspose_pdf.engine.blank_pages import remove_blank_pages
+
+        self._ensure_not_disposed()
+        return remove_blank_pages(
+            self,
+            pages=pages,
+            dpi=dpi,
+            white_threshold=white_threshold,
+            max_ink_ratio=max_ink_ratio,
+            include_annotations=include_annotations,
+            dry_run=dry_run,
+        )
+
     def find_duplicate_pages(
         self,
         *,

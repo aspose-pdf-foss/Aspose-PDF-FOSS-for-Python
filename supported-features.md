@@ -1220,7 +1220,43 @@ Supported:
     render faithfully. Hidden text, form values, annotations and other data
     may still be present even when the page appears blank. There is no OCR,
     automatic paper-color normalization, border removal or deskewing; detected
-    pages are not automatically deleted.
+    pages are not automatically deleted by detection.
+- **Remove visually blank pages in one operation.**
+  `Document.remove_blank_pages(pages=None, dpi=72, white_threshold=250,
+  max_ink_ratio=0, include_annotations=True, dry_run=False)` edits the open
+  document and returns the removed pages' **original zero-based indices**.
+  It shares `find_blank_pages`'s selection, rendering and threshold rules.
+  Results retain selection order, with repeats reported once; deletion runs
+  in descending index order so the surviving pages retain their original order.
+  Every selected page is inspected before any deletion. Invalid options,
+  selections, rendering failures and inspection limits leave all pages intact.
+  Empty documents, empty selections and selections without matches return `[]`.
+  `dry_run=True` reports candidates without changing page count, navigation or
+  text caches. Removing every page is refused with `PdfValidationException`
+  before mutation, including a one-page blank PDF; a dry run can still list
+  all pages. `dry_run` must be an actual boolean.
+
+  ```python
+  with Document("scans.pdf") as document:
+      candidates = document.remove_blank_pages(dry_run=True)
+      removed = document.remove_blank_pages()
+      document.save("cleaned.pdf")
+  ```
+
+  Bookmark targets are planned before deletion. Bookmarks on retained pages
+  keep their destination views and names; bookmarks on removed pages become
+  headings without a jump, retaining titles, styles and children. Existing live
+  bookmark objects are updated in place. Page label ranges follow normal page
+  deletion, including renumbering within ranges; metadata and attachments stay
+  with the document. Local annotation links follow ordinary page deletion:
+  retained targets follow their pages, and links to removed pages lose their
+  local target. Extracted-text caches are cleared after successful removal.
+  Streaming sources render only selected pages without filling all-page content
+  caches. Source files change only when explicitly saved. Deletion uses the
+  existing page-editing path; it is not a transactional rewrite of the document.
+  Detection remains a visual heuristic: blank-looking pages can store invisible
+  text or other data. Removing them is not secure erasure of unreferenced
+  objects, form data or earlier PDF revisions.
 - **Find visually duplicate pages.**
   `Document.find_duplicate_pages(pages=None, dpi=72,
   include_annotations=True)` returns groups such as `[[0, 3], [1, 4, 7]]`.
