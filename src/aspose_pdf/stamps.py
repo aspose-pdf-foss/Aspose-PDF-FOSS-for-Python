@@ -228,6 +228,10 @@ class TextStamp(Stamp):
     def _text(self, page_index: int, page_count: int) -> str:
         return str(self.value)
 
+    def _text_for_page(self, pdf: Any, page_index: int) -> str:
+        """Resolve text with document context before measuring or encoding it."""
+        return self._text(page_index, len(pdf.pages))
+
     def _validate(self) -> None:
         super()._validate()
         if float(self.font_size) <= 0.0:
@@ -258,7 +262,7 @@ class TextStamp(Stamp):
 
         self._validate()
         size = float(self.font_size)
-        text = self._text(page_index, len(pdf.pages))
+        text = self._text_for_page(pdf, page_index)
         authored = prepare_authored_font(self.font, limits=pdf._load_limits)
         encoded = authored.encode(text)
         widths = authored.cid_widths()
@@ -313,7 +317,7 @@ class TextStamp(Stamp):
         self._validate()
         face = str(self.font_name).lstrip("/")
         size = float(self.font_size)
-        text = self._text(page_index, len(pdf.pages))
+        text = self._text_for_page(pdf, page_index)
         encoding = StandardFonts.get_default_encoding(face)
         codes = encode_with_base_encoding(text, encoding)
         if codes is None:
@@ -354,13 +358,34 @@ class TextStamp(Stamp):
         return bytes(content), (max(width, 1e-6), max(height, 1e-6)), resources
 
 
+class _PageNumberValues(dict[str, Any]):
+    """Read labels only when a format field requests them, once per page."""
+
+    def __init__(self, page_index, page_count, starting_number, pdf=None):
+        super().__init__(page=int(starting_number) + page_index, total=page_count)
+        self.page_index = page_index
+        self.pdf = pdf
+
+    def __missing__(self, key):
+        if key != "label":
+            raise KeyError(key)
+        label = None if self.pdf is None else self.pdf.page_label(self.page_index)
+        self[key] = value = str(self.page_index + 1) if label is None else label
+        return value
+
+
 @dataclass
 class PageNumberStamp(TextStamp):
     """A text stamp whose text is the page's number.
 
     *value* is a format string: ``{page}`` is the page's number counting from
     :attr:`starting_number`, and ``{total}`` is how many pages the document
-    has. Each page gets its own form, because each says something different.
+    has. ``{label}`` is the PDF's current page label (such as ``iv`` or ``A-3``),
+    falling back to its one-based position when labels are absent. An explicit
+    empty label stays empty. ``starting_number`` only affects ``{page}``.
+    Labels are resolved when applying the stamp and never change the PDF's
+    label ranges. Each page gets its own form, because each can say something
+    different. Font encoding follows :class:`TextStamp`.
     """
 
     value: str = "{page}"
@@ -388,13 +413,17 @@ class PageNumberStamp(TextStamp):
             "Bottom": "Footer",
         }.get(VerticalAlignment(self.vertical_alignment).value, "Watermark")
 
-    def _text(self, page_index: int, page_count: int) -> str:
-        number = int(self.starting_number) + page_index
+    def _text_for_page(self, pdf: Any, page_index: int) -> str:
+        return self._text(page_index, len(pdf.pages), pdf=pdf)
+
+    def _text(self, page_index: int, page_count: int, *, pdf: Any = None) -> str:
         try:
-            return str(self.value).format(page=number, total=page_count)
-        except (IndexError, KeyError) as error:
+            return str(self.value).format_map(
+                _PageNumberValues(page_index, page_count, self.starting_number, pdf)
+            )
+        except (IndexError, KeyError, ValueError) as error:
             raise PdfValidationException(
-                "a page number format may only name {page} and {total}"
+                "a page number format must use valid {page}, {total} and {label} fields"
             ) from error
 
     def _reusable(self) -> bool:

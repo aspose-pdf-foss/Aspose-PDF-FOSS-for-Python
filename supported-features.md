@@ -1720,6 +1720,21 @@ Supported:
   is as wide as its text and as tall as the face's own bounds, so a descender
   is never clipped by the form's `/BBox`. Text a standard font's encoding
   cannot write is refused rather than drawn as something else.
+  - **Stamp PDF page labels.** `PageNumberStamp("Page {label} of {total}")`
+    prints the current label shown by a PDF viewer, including Roman numerals,
+    letter numbering, prefixes and restarted ranges. Without `/PageLabels`,
+    `{label}` falls back to the page's one-based position; an explicitly empty
+    label remains empty. `starting_number` continues to affect only `{page}`.
+    Labels are resolved for the actual destination page at application time,
+    including selected/reordered pages and reused stamps on different documents;
+    stamping does not modify label ranges. `{label}` is a string and supports
+    string formatting such as `{label:>8}`; numeric formatting such as
+    `{page:03d}` remains available. Labels containing braces are inserted as
+    literal text. Templates without a label field do not read label metadata.
+    This also works through `PdfFileStamp.add_page_number()` and the low-code
+    `Stamper`. The usual text-stamp font coverage applies: use `font=` for labels
+    outside a standard font's encoding. Stamps retain their usual placement,
+    opacity, background and pagination-artifact behavior.
 - **The standard fonts' own metrics** (`engine/std_metrics.py`): advance widths
   and face bounds for all fourteen, indexed by the code this library writes for
   each face (`WinAnsiEncoding`, or the font's built-in encoding for `Symbol`

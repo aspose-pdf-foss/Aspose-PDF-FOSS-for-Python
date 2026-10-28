@@ -1238,7 +1238,11 @@ class PdfFileStamp(_BoundFacade):
         page_numbers: Any = None,
         **options: Any,
     ) -> bool:
-        """Number the pages named; *template* takes ``{page}`` and ``{total}``."""
+        """Number pages with ``{page}``, ``{total}`` and the PDF's ``{label}``.
+
+        Labels fall back to one-based page positions when the PDF has none;
+        ``starting_number`` only changes ``{page}``.
+        """
         from aspose_pdf.stamps import PageNumberStamp
 
         indent = -float(margin) if str(options.get("vertical_alignment", "Bottom")) == "Top" else float(margin)
