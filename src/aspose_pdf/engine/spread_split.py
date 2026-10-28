@@ -63,6 +63,12 @@ def _halves(pdf, index, layout, ratio, gutter):
             (0, 0, displayed_width, displayed_height - after),
         )
 
+    return _map_regions(x0, y0, width, height, turn, regions)
+
+
+def _map_regions(x0, y0, width, height, turn, regions):
+    """Map displayed rectangles to boxes at the writer's numeric precision."""
+
     def to_pdf(x, y):
         if turn == 90:
             return x0 + width - y, y0 + x
@@ -88,15 +94,17 @@ def _halves(pdf, index, layout, ratio, gutter):
     return boxes
 
 
-def _annotations(pdf, index):
+def _annotations(pdf, index, *, context="spread"):
     page = pdf._get_page_dict(index)
     value = pdf._resolve(page.mapping.get(PdfName("Annots")))
     if value is None or isinstance(value, PdfNull):
         return []
     if not isinstance(value, PdfArray):
-        raise PdfValidationException("Spread page Annots must be an array")
+        raise PdfValidationException(
+            f"{context.capitalize()} page Annots must be an array"
+        )
     pdf._load_budget.check(
-        len(value.items), "max_container_items", "spread annotations"
+        len(value.items), "max_container_items", f"{context} annotations"
     )
     entries = []
     seen = set()
@@ -105,22 +113,28 @@ def _annotations(pdf, index):
         if not isinstance(annotation, PdfDictionary) or isinstance(
             annotation, PdfStream
         ):
-            raise PdfValidationException("Spread annotations must be dictionaries")
+            raise PdfValidationException(
+                f"{context.capitalize()} annotations must be dictionaries"
+            )
         if id(annotation) in seen:
-            raise PdfValidationException("Spread page repeats an annotation object")
+            raise PdfValidationException(
+                f"{context.capitalize()} page repeats an annotation object"
+            )
         subtype = pdf._resolve(annotation.mapping.get(PdfName("Subtype")))
         if not isinstance(subtype, PdfName) or not subtype.name.lstrip("/"):
-            raise PdfValidationException("Spread annotation Subtype must be a PDF name")
+            raise PdfValidationException(
+                f"{context.capitalize()} annotation Subtype must be a PDF name"
+            )
         rectangle = pdf._resolve(annotation.mapping.get(PdfName("Rect")))
         if not isinstance(rectangle, PdfArray) or len(rectangle.items) != 4:
             raise PdfValidationException(
-                "Spread annotation Rect must contain four finite numbers"
+                f"{context.capitalize()} annotation Rect must contain four finite numbers"
             )
         for coordinate in rectangle.items:
             coordinate = pdf._resolve(coordinate)
             if not isinstance(coordinate, PdfNumber):
                 raise PdfValidationException(
-                    "Spread annotation Rect must contain four finite numbers"
+                    f"{context.capitalize()} annotation Rect must contain four finite numbers"
                 )
             _number(coordinate.value, "annotation rectangle coordinate")
         seen.add(id(annotation))
@@ -134,6 +148,8 @@ def _is_widget(pdf, annotation):
 
 def _copy_annotations(pdf, entries, target_index):
     """Clone annotation identities and reconnect the copied page's local threads."""
+    if not entries:
+        return
     page = pdf._get_page_dict(target_index)
     page_reference = pdf._cos_doc.reference(pdf._page_reference_numbers()[target_index])
     copies = {}
@@ -158,9 +174,9 @@ def _set_boxes(pdf, index, box):
         pdf.set_page_box(index, name, box)
 
 
-def _check(pdf):
+def _check(pdf, *, context="spread"):
     """Bound copied content and newly generated unfiltered appearance streams."""
-    _check_result(pdf, context="spread split")
+    _check_result(pdf, context=f"{context} split")
     total = 0
     for value in pdf._cos_doc.objects.values():
         if not isinstance(value, PdfStream):
@@ -173,11 +189,11 @@ def _check(pdf):
         ):
             size = len(value.content)
             pdf._load_budget.check(
-                size, "max_decoded_stream_bytes", "spread unfiltered stream bytes"
+                size, "max_decoded_stream_bytes", f"{context} unfiltered stream bytes"
             )
             total += size
     pdf._load_budget.check(
-        total, "max_total_decoded_bytes", "spread retained unfiltered streams"
+        total, "max_total_decoded_bytes", f"{context} retained unfiltered streams"
     )
     return total
 
@@ -209,6 +225,13 @@ def split_spreads(
     for index in sorted(selected):
         boxes = _halves(source, index, layout, split_ratio, gutter)
         plan[index] = list(reversed(boxes)) if reverse else boxes
+    return _split_pages(document, plan, budget, flatten_fields=flatten_fields)
+
+
+def _split_pages(document, plan, budget, *, context="spread", flatten_fields=True):
+    """Import once, append independent cropped copies, then reorder once."""
+    source = document._engine_pdf
+    count = document.page_count
     result = SimplePdf()
     result._load_limits, result._load_budget = document.load_limits, budget
     result.metadata = dict(source.metadata)
@@ -223,65 +246,76 @@ def split_spreads(
         with_widgets = [
             index
             for index in plan
-            if any(_is_widget(result, entry) for entry in _annotations(result, index))
+            if any(
+                _is_widget(result, entry)
+                for entry in _annotations(result, index, context=context)
+            )
         ]
         if with_widgets:
             if not flatten_fields:
                 raise UnsupportedFeatureException(
-                    "Spread pages with form widgets require flatten_fields=True"
+                    f"{context.capitalize()} pages with form widgets require flatten_fields=True"
                 )
             flatten(result, fields=True, annotations=False, pages=with_widgets)
-        retained = _check(result)
+        retained = _check(result, context=context)
         extra = {}
         for index, boxes in plan.items():
-            entries = _annotations(result, index)
+            entries = _annotations(result, index, context=context)
             if any(_is_widget(result, entry) for entry in entries):
                 raise UnsupportedFeatureException(
-                    "A spread widget could not be flattened; prepare its visible appearance before splitting"
+                    f"A {context} widget could not be flattened; prepare its visible appearance before splitting"
                 )
-            budget.check_objects(len(result._cos_doc.objects) + 2 + len(entries))
-            budget.check_object_id(
-                max(result._cos_doc.objects, default=0) + 2 + len(entries)
-            )
             original = result._get_page_dict(index)
-            target = len(result.pages)
             content = result.get_page_content(index)
-            retained += len(content)
-            budget.check(
-                retained,
-                "max_total_decoded_bytes",
-                "spread retained unfiltered streams",
-            )
-            result.insert(
-                target,
-                (result.pages[index], content),
-                _source=original,
-            )
-            result._get_page_dict(target).mapping.pop(PdfName("StructParents"), None)
-            _copy_annotations(result, entries, target)
-            _set_boxes(result, index, boxes[0])
-            _set_boxes(result, target, boxes[1])
-            if index in result._page_image_map:
-                result._page_image_map[target] = list(result._page_image_map[index])
-            for name in ("_image_matrix_map", "_image_rect_map"):
-                mapping = getattr(result, name)
-                mapping.update(
-                    {
-                        (target, image): value
-                        for (page, image), value in list(mapping.items())
-                        if page == index
-                    }
+            targets = []
+            for box in boxes[1:]:
+                budget.check_objects(len(result._cos_doc.objects) + 2 + len(entries))
+                budget.check_object_id(
+                    max(result._cos_doc.objects, default=0) + 2 + len(entries)
                 )
-            extra[index] = target
+                target = len(result.pages)
+                retained += len(content)
+                budget.check(
+                    retained,
+                    "max_total_decoded_bytes",
+                    f"{context} retained unfiltered streams",
+                )
+                result.insert(
+                    target,
+                    (result.pages[index], content),
+                    _source=original,
+                )
+                result._get_page_dict(target).mapping.pop(
+                    PdfName("StructParents"), None
+                )
+                _copy_annotations(result, entries, target)
+                _set_boxes(result, target, box)
+                if index in result._page_image_map:
+                    result._page_image_map[target] = list(result._page_image_map[index])
+                for name in ("_image_matrix_map", "_image_rect_map"):
+                    mapping = getattr(result, name)
+                    mapping.update(
+                        {
+                            (target, image): value
+                            for (page, image), value in list(mapping.items())
+                            if page == index
+                        }
+                    )
+                targets.append(target)
+            _set_boxes(result, index, boxes[0])
+            extra[index] = targets
         if labels is not None:
-            values = [*labels, *(labels[index] for index in plan)]
+            values = [
+                *labels,
+                *(labels[index] for index, targets in extra.items() for _ in targets),
+            ]
             ranges = page_labels.ranges_from_values(values)
-            budget.check(2 * len(ranges), "max_container_items", "spread page labels")
+            budget.check(
+                2 * len(ranges), "max_container_items", f"{context} page labels"
+            )
             result.set_page_label_ranges(ranges)
         order = [
-            page
-            for index in range(count)
-            for page in ([index, extra[index]] if index in extra else [index])
+            page for index in range(count) for page in [index, *extra.get(index, ())]
         ]
         if order:
             _order_pages(result, order)
@@ -289,7 +323,7 @@ def split_spreads(
             result._inject_outlines_to_cos(result._outlines_data)
         result._sync_metadata_to_cos()
         result._sync_attachments_to_cos()
-        _check(result)
+        _check(result, context=context)
     except BaseException:
         result.dispose()
         raise

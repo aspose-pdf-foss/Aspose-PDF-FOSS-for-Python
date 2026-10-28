@@ -1954,6 +1954,60 @@ Supported:
     also obey decoded-stream and total-decoded byte limits. Output pages and
     representable geometry are preflighted; later import, flattening or copy
     failures dispose the partial result before returning any document.
+- **Split page grids into separate pages.**
+  `Document.split_grid(rows=2, columns=2, pages=None, order="row", gutter=0,
+  flatten_fields=True)` returns an independent PDF in which each selected page
+  becomes `rows * columns` cropped pages. This supports separating scanned
+  multi-page layouts and reusing sections of larger PDF sheets without
+  rasterizing their text or graphics.
+
+  ```python
+  with Document("sheets.pdf") as document:
+      with document.split_grid(2, 3, order="row") as pages:
+          pages.save("individual-pages.pdf")
+  ```
+
+  - `rows` and `columns` must be positive integers. `order="row"` reads across
+    the top row first, then subsequent rows; `"column"` reads down the left
+    column first. Grid cells divide the displayed CropBox, accounting for
+    inherited quarter-turn rotation and nonzero page origins. Every tile
+    retains the source rotation and coordinate space.
+  - A finite non-negative `gutter` leaves equal gaps between adjacent cells.
+    Cell widths are `(displayed_width - gutter * (columns - 1)) / columns`,
+    with the analogous formula for heights. Units are page coordinates, usually
+    PDF points; `/UserUnit` does not rescale the argument. Cells must have positive
+    area and remain positive at the writer's six-decimal coordinate precision.
+    All selected geometry is checked before importing pages.
+  - `pages` contains zero-based source indices. Unselected pages remain once in
+    source order, each selected page's tiles stay together, and repeats select a
+    page once. Selection order does not reorder source pages. `None` selects all,
+    `[]` returns an independent copy, and an empty source returns an empty PDF.
+    A 1-by-1 grid produces one cropped view of each selected page.
+  - Content and resource handling follow `split_spreads`: all five page boxes
+    are set to the tile, without translating or scaling content. Text, vector
+    graphics and images remain available. Cropping hides the rest of the source
+    page rather than removing it; unclipped text extraction may still read it.
+    This is not redaction, sanitization, OCR or automatic layout detection.
+  - Non-widget annotations are copied onto every tile with independent local
+    reply/popup links and unchanged geometry; comments outside a tile remain in
+    its metadata. Selected form widgets are flattened by default, while fields
+    on unselected pages remain interactive. `flatten_fields=False` with selected
+    widgets, or widgets that cannot be visibly flattened, raises
+    `UnsupportedFeatureException` instead of losing or duplicating live fields.
+  - Info metadata, attachments, layers and page labels follow whole-document
+    import. Every tile receives its source label. Bookmarks and local links to
+    a tiled page keep pointing to its first output tile with their original view
+    coordinates; targets are not classified by cell. New tile structure
+    associations are not rebuilt, so this is not accessibility remapping or
+    conformance certification. Results start unencrypted and cannot preserve
+    source signature validity.
+  - Output counts, selection iteration, annotation/label arrays, allocated
+    objects, copied streams and generated appearances obey `PdfLoadLimits`.
+    Options and complete geometry are preflighted; later failures dispose the
+    working result. Source files, live outline edits, fields and protection stay
+    unchanged. Results outlive the source. Streaming inputs follow ordinary
+    whole-document import rules without filling source all-page content/text
+    caches; image views may be materialized by the shared importer.
 - **Create rasterized PDF copies.** `Document.rasterized_copy(pages=None,
   dpi=150, background=(255, 255, 255), antialias=True,
   include_annotations=True, mode="rgb", threshold=128, dither=False)` returns

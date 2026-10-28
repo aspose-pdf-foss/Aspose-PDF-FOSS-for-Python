@@ -5004,6 +5004,61 @@ class Document:
         result._engine_pdf = engine
         return result
 
+    def split_grid(
+        self,
+        rows: int = 2,
+        columns: int = 2,
+        *,
+        pages: Iterable[int] | None = None,
+        order: str = "row",
+        gutter: float = 0.0,
+        flatten_fields: bool = True,
+    ) -> Document:
+        """Return a new PDF with selected pages replaced by a uniform tile grid.
+
+        Positive integer ``rows`` and ``columns`` divide the displayed CropBox,
+        respecting page rotation. ``order='row'`` reads left to right, top row
+        first; ``'column'`` reads top to bottom, left column first. A nonnegative
+        ``gutter`` leaves equal gaps between cells, in page coordinate units.
+        Unselected pages retain source order; repeats split a page once, ``[]``
+        copies the PDF and an empty source returns an empty document.
+
+        Tiles keep source coordinates, rotation and vector/text/image content,
+        with all page boxes set to the cell at PDF writer precision. Cropping
+        hides content rather than erasing it; this does not perform redaction.
+        Non-widget annotations are independently copied with unchanged geometry.
+        Selected widgets are flattened by default; unsupported/hidden widgets,
+        or ``flatten_fields=False`` with widgets, raise before returning output.
+
+        Metadata, attachments, labels, layers, links and bookmarks follow
+        :meth:`split_spreads`. Each tile keeps its source label. Destinations
+        to a tiled page point to its first tile, with their original views.
+        Tile-specific structure associations are not rebuilt. The result is
+        independent and unencrypted; source signatures cannot remain valid.
+
+        All options, selections, output counts and cell geometry are checked
+        before import. Source and output resource limits apply, streaming
+        source caches stay lazy, and failures dispose the partial output.
+        Neither the source PDF nor its files or live outline edits are changed.
+        """
+        from aspose_pdf.engine.grid_split import split_grid
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        engine = split_grid(
+            self,
+            rows,
+            columns,
+            pages=pages,
+            order=order,
+            gutter=gutter,
+            flatten_fields=flatten_fields,
+        )
+        result = Document(limits=self._load_limits)
+        result._engine_pdf = engine
+        return result
+
     def interleave(
         self,
         other: Document,
