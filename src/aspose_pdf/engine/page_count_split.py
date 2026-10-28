@@ -42,6 +42,7 @@ def split_every(
     roots = pdf._outlines_data if outlines is None else outlines
     snapshot, _starts = _snapshot(pdf, roots, 1)
     for start in range(0, count, pages_per_part):
+        pdf._ensure_not_disposed()
         stop = min(start + pages_per_part, count)
         original = pdf._outlines_data
         try:
@@ -56,3 +57,4 @@ def split_every(
             result.dispose()
             raise
         yield result
+        del result

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import gc
 import io
-from contextlib import ExitStack, contextmanager
+import weakref
+from contextlib import ExitStack, closing, contextmanager
 
 import pytest
 
@@ -63,9 +65,9 @@ def _texts(document):
 
 
 @contextmanager
-def _parts(document, size=2):
+def _parts(document, size=2, *, method="split_every"):
     with ExitStack() as stack:
-        parts = document.split_every(size)
+        parts = list(getattr(document, method)(size))
         for part in parts:
             stack.enter_context(part)
         yield parts
@@ -75,12 +77,13 @@ def _parts(document, size=2):
     "size,counts",
     [(1, [1] * 6), (2, [2, 2, 2]), (4, [4, 2]), (6, [6]), (20, [6]), (10**100, [6])],
 )
+@pytest.mark.parametrize("method", ["split_every", "iter_split_every"])
 def test_fixed_size_parts_keep_order_tail_metadata_and_independence(
-    source, size, counts, tmp_path
+    source, size, counts, tmp_path, method
 ):
     before = _bytes(source)
     model = source._engine_pdf._outlines_data
-    with _parts(source, size) as parts:
+    with _parts(source, size, method=method) as parts:
         assert [part.page_count for part in parts] == counts
         assert [text for part in parts for text in _texts(part)] == _texts(source)
         assert all(part is not source for part in parts)
@@ -163,8 +166,9 @@ def test_no_text_extraction_or_rendering_is_needed(source, monkeypatch):
 
 
 @pytest.mark.parametrize("encrypted", [False, True])
+@pytest.mark.parametrize("method", ["split_every", "iter_split_every"])
 def test_streaming_parts_keep_resources_and_remain_usable_after_source_closes(
-    source, tmp_path, encrypted, monkeypatch
+    source, tmp_path, encrypted, monkeypatch, method
 ):
     source.version = "2.0"
     source.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ROMAN_LOWERCASE)
@@ -210,7 +214,7 @@ def test_streaming_parts_keep_resources_and_remain_usable_after_source_closes(
 
         monkeypatch.setattr(engine, "get_page_content", read)
         monkeypatch.setattr(engine, "extract_pages", extract)
-        parts = loaded.split_every(2)
+        parts = list(getattr(loaded, method)(2))
         assert set(reads) == set(range(6))
         assert engine.page_contents == [] and engine._extracted_text is None
         assert loaded.is_encrypted == encrypted
@@ -444,3 +448,207 @@ def test_lowcode_serialization_failure_disposes_parts_without_writing_outputs(
     for part in parts:
         with pytest.raises(AsposePdfException, match="disposed"):
             part._ensure_not_disposed()
+
+
+def test_iterator_imports_only_requested_batches_and_restores_live_outlines(
+    source, monkeypatch
+):
+    source.outlines.add(OutlineItem("Live edit", 1))
+    engine = source._engine_pdf
+    model = engine._outlines_data
+    original = engine.extract_pages
+    selections = []
+
+    def extract(selection):
+        selections.append(tuple(selection))
+        return original(selection)
+
+    monkeypatch.setattr(engine, "extract_pages", extract)
+    parts = source.iter_split_every(2)
+    assert selections == []
+    with closing(parts):
+        with next(parts) as first:
+            assert selections == [(0, 1)]
+            assert _texts(first) == ["PAGE 0", "PAGE 1"]
+            assert first.outlines[0].title == "Live edit"
+            assert engine._outlines_data is model
+        with next(parts) as second:
+            assert selections == [(0, 1), (2, 3)]
+            assert _texts(second) == ["PAGE 2", "PAGE 3"]
+            assert engine._outlines_data is model
+    assert selections == [(0, 1), (2, 3)]
+    assert engine._outlines_data is model
+    assert source.outlines[0].title == "Live edit"
+    assert source.page_count == 6
+
+
+def test_iterator_releases_consumed_results_before_importing_the_next(source, monkeypatch):
+    original = source._engine_pdf.extract_pages
+    references = []
+
+    def extract(selection):
+        gc.collect()
+        assert all(reference() is None for reference in references)
+        result = original(selection)
+        references.append(weakref.ref(result))
+        return result
+
+    monkeypatch.setattr(source._engine_pdf, "extract_pages", extract)
+    for part in source.iter_split_every(1):
+        with part:
+            assert part.page_count == 1
+        del part
+    gc.collect()
+    assert len(references) == source.page_count
+    assert all(reference() is None for reference in references)
+
+
+def test_closing_iterator_keeps_yielded_parts_usable_after_source_closes(source, tmp_path):
+    parts = source.iter_split_every(2)
+    with next(parts) as first:
+        parts.close()
+        source.dispose()
+        assert _texts(first) == ["PAGE 0", "PAGE 1"]
+        path = tmp_path / "first.pdf"
+        first.save(path)
+        with Document(path) as reopened:
+            assert _texts(reopened) == _texts(first)
+        with pytest.raises(StopIteration):
+            next(parts)
+
+
+@pytest.mark.parametrize("error", [PdfValidationException, KeyboardInterrupt])
+def test_iterator_failure_preserves_yielded_parts_and_restores_source(
+    source, monkeypatch, error
+):
+    source.outlines.add(OutlineItem("Live edit", 1))
+    engine = source._engine_pdf
+    original = engine.extract_pages
+    model = engine._outlines_data
+    imports = []
+
+    def extract(selection):
+        if imports:
+            raise error("Later import failed")
+        imports.append(tuple(selection))
+        return original(selection)
+
+    monkeypatch.setattr(engine, "extract_pages", extract)
+    parts = source.iter_split_every(2)
+    with next(parts) as first:
+        with pytest.raises(error, match="Later import failed"):
+            next(parts)
+        assert _texts(first) == ["PAGE 0", "PAGE 1"]
+        assert engine._outlines_data is model
+        assert source.outlines[0].title == "Live edit"
+        with pytest.raises(StopIteration):
+            next(parts)
+
+
+def test_disposing_source_between_batches_stops_before_another_import(source, monkeypatch):
+    engine = source._engine_pdf
+    original = engine.extract_pages
+    imports = []
+
+    def extract(selection):
+        imports.append(tuple(selection))
+        return original(selection)
+
+    monkeypatch.setattr(engine, "extract_pages", extract)
+    parts = source.iter_split_every(2)
+    with next(parts) as first:
+        source.dispose()
+        with pytest.raises(AsposePdfException, match="disposed"):
+            next(parts)
+        assert imports == [(0, 1)]
+        assert _texts(first) == ["PAGE 0", "PAGE 1"]
+
+
+@pytest.mark.parametrize("size,error", [(0, ValueError), (True, TypeError), ("2", TypeError)])
+def test_iterator_validates_size_on_first_next_before_import(source, monkeypatch, size, error):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid sizes must fail before importing")
+
+    monkeypatch.setattr(source._engine_pdf, "extract_pages", forbidden)
+    parts = source.iter_split_every(size)
+    with pytest.raises(error, match="pages_per_part"):
+        next(parts)
+
+
+def test_iterator_validates_empty_and_disposed_sources():
+    with Document() as empty:
+        assert list(empty.iter_split_every(2)) == []
+        with pytest.raises(ValueError, match="pages_per_part"):
+            next(empty.iter_split_every(0))
+    with pytest.raises(AsposePdfException, match="disposed"):
+        next(empty.iter_split_every(2))
+
+
+def test_streaming_iterator_leaves_unrequested_content_unread(source, tmp_path, monkeypatch):
+    path = tmp_path / "batch.pdf"
+    source.save(path)
+    with Document.open_streaming(path) as streamed:
+        engine = streamed._engine_pdf
+        original = engine.get_page_content
+        reads = []
+
+        def read(index):
+            assert index < 2, "Future batches must not be read"
+            reads.append(index)
+            return original(index)
+
+        monkeypatch.setattr(engine, "get_page_content", read)
+        parts = streamed.iter_split_every(2)
+        assert reads == []
+        with closing(parts), next(parts) as first:
+            assert set(reads) == {0, 1}
+            assert _texts(first) == ["PAGE 0", "PAGE 1"]
+        assert engine.page_contents == []
+        assert engine._extracted_text is None
+
+
+def test_iterator_rejects_and_disposes_failed_result_without_closing_previous_part(
+    source, monkeypatch
+):
+    import aspose_pdf.engine.page_count_split as split_module
+
+    original = split_module._check_result
+    checked = []
+
+    def check(result, **options):
+        checked.append(result)
+        if len(checked) == 2:
+            raise PdfResourceLimitException("Result exceeds limits")
+        return original(result, **options)
+
+    monkeypatch.setattr(split_module, "_check_result", check)
+    parts = source.iter_split_every(2)
+    with next(parts) as first:
+        with pytest.raises(PdfResourceLimitException, match="exceeds limits"):
+            next(parts)
+        assert _texts(first) == ["PAGE 0", "PAGE 1"]
+        with pytest.raises(AsposePdfException, match="disposed"):
+            checked[1]._ensure_not_disposed()
+
+
+def test_iterator_disposes_unclaimed_engine_when_document_wrapping_fails(source, monkeypatch):
+    import aspose_pdf.document as document_module
+
+    original = source._engine_pdf.extract_pages
+    created = []
+
+    def extract(selection):
+        result = original(selection)
+        created.append(result)
+        return result
+
+    def fail(**options):
+        raise RuntimeError("Cannot wrap result")
+
+    monkeypatch.setattr(source._engine_pdf, "extract_pages", extract)
+    monkeypatch.setattr(document_module, "Document", fail)
+    with pytest.raises(RuntimeError, match="Cannot wrap result"):
+        next(source.iter_split_every(2))
+    assert len(created) == 1
+    with pytest.raises(AsposePdfException, match="disposed"):
+        created[0]._ensure_not_disposed()

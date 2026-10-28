@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -5110,6 +5111,45 @@ class Document:
         result._engine_pdf = engine
         return result
 
+    def iter_split_every(self, pages_per_part: int) -> Generator[Document, None, None]:
+        """Yield independent fixed-size page batches as they are requested.
+
+        Parts have the same content, metadata and resource policy as
+        :meth:`split_every`, including a shorter final batch. Empty documents
+        yield no parts. The size must be a positive integer; validation and
+        planning occur on the first iteration, before importing any pages.
+
+        No part is imported until requested, and previous parts are not
+        accumulated. Keep the source open and unmodified until iteration ends.
+        Each yielded document belongs to the caller: close or dispose it when
+        done. Yielded parts remain usable after the iterator or source closes,
+        or if a later import fails. Closing the iterator does not dispose them.
+
+        The source outline model is restored before every yield, including
+        early termination and failures. Use ``contextlib.closing`` when
+        stopping iteration early to release the iterator's references promptly.
+        """
+        from aspose_pdf.engine.page_count_split import split_every
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        with closing(split_every(
+            self._engine_pdf,
+            pages_per_part,
+            outlines=None if self._outlines is None else self._outlines._items,
+        )) as engines:
+            for engine in engines:
+                try:
+                    part = Document(limits=self._load_limits)
+                    part._engine_pdf = engine
+                except BaseException:
+                    engine.dispose()
+                    raise
+                del engine
+                yield part
+                del part
+
     def split_every(self, pages_per_part: int) -> list[Document]:
         """Return independent documents containing at most ``pages_per_part`` pages.
 
@@ -5131,21 +5171,11 @@ class Document:
         Dispose every returned document when done. Partial results are disposed
         and the source outline model is restored if splitting fails.
         """
-        from aspose_pdf.engine.page_count_split import split_every
-
-        self._ensure_not_disposed()
-        if self._engine_pdf is None:
-            raise AsposePdfException("No document loaded")
         result = []
         try:
-            for engine in split_every(
-                self._engine_pdf,
-                pages_per_part,
-                outlines=None if self._outlines is None else self._outlines._items,
-            ):
-                part = Document(limits=self._load_limits)
-                part._engine_pdf = engine
-                result.append(part)
+            with closing(self.iter_split_every(pages_per_part)) as parts:
+                for part in parts:
+                    result.append(part)
         except BaseException:
             for part in result:
                 part.dispose()

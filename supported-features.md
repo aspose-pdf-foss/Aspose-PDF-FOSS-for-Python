@@ -391,6 +391,35 @@ Supported:
   each document when done. On failure, partial results are disposed and the
   source outline model is restored.
 
+  **Process batches lazily** with `Document.iter_split_every(pages_per_part)`.
+  It returns a generator with the same page grouping, metadata, bookmark and
+  resource-limit rules. Creating the iterator imports no parts; validation and
+  planning run on the first `next()`, and each subsequent request imports only
+  its own batch. Empty documents yield no parts. The iterator does not accumulate
+  completed outputs, so saving and disposing each part avoids holding all split
+  documents in memory. The source graph and bookmark plan still remain in memory;
+  this is not a constant-memory parser for the entire input.
+
+  ```python
+  from contextlib import closing
+  from aspose_pdf import Document
+
+  with Document.open_streaming("batch.pdf") as document:
+      with closing(document.iter_split_every(10)) as parts:
+          for number, part in enumerate(parts, 1):
+              with part:
+                  part.save(f"part-{number:03d}.pdf")
+  ```
+
+  Keep the source open and unmodified until iteration finishes. Every yielded
+  `Document` belongs to the caller and remains usable after closing the iterator
+  or the source, or after a later batch fails. Close or dispose each yielded part.
+  `iterator.close()` releases its traversal state without closing the source or
+  the parts already delivered; `contextlib.closing` is useful when stopping early.
+  An invalid result is disposed before the error propagates. The source outline
+  model is restored before every yield and on import failure. `split_every()`
+  retains its list return type and disposes all partial results if splitting fails.
+
 - **Split into chapters by bookmarks.**
   `Document.split_by_bookmarks(level=1, include_preamble=True)` returns independent
   `Document` instances, one per distinct destination page at the requested
