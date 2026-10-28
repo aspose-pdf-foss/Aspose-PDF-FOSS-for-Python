@@ -356,6 +356,41 @@ Supported:
           assembled.save("duplex.pdf")
   ```
 
+- **Split into fixed-size page batches.**
+  `Document.split_every(pages_per_part)` returns independent `Document` instances
+  containing consecutive groups of at most that many pages. The size must be a
+  positive integer; booleans, strings and floats are refused. Parts preserve page
+  order, every page appears exactly once, and the last part can be shorter.
+  Blank pages count normally. An empty PDF returns `[]`; a size at least as large
+  as the PDF returns one independent copy. No text extraction, rendering, OCR or
+  separator pages are needed.
+
+  ```python
+  with Document("batch.pdf") as document:
+      parts = document.split_every(10)
+      try:
+          for number, part in enumerate(parts, 1):
+              part.save(f"part-{number:03d}.pdf")
+      finally:
+          for part in parts:
+              part.dispose()
+  ```
+
+  Parts follow `extract_pages`: retain Info metadata, page contents/resources,
+  boxes and rotation, labels, annotations, form fields, layers and tags. Relevant
+  bookmarks retain styles and destination views, including unsaved outline edits;
+  children whose parents target other parts are promoted. Local links are remapped
+  within each part, and destinations outside it cannot remain valid local targets.
+  Document attachments are not copied. New parts do not inherit encryption or
+  preserve the validity of existing signatures. They remain editable after the
+  source closes, and neither the source nor its files are changed.
+  Options, source page count, part count, selection sizes and outline validity
+  are checked before importing. Each result inherits the source `PdfLoadLimits`
+  and has its own decoding budget. Streaming inputs stay lazy while pages are
+  imported one part at a time. The returned list retains every part; dispose
+  each document when done. On failure, partial results are disposed and the
+  source outline model is restored.
+
 - **Split into chapters by bookmarks.**
   `Document.split_by_bookmarks(level=1, include_preamble=True)` returns independent
   `Document` instances, one per distinct destination page at the requested
@@ -6547,6 +6582,14 @@ Supported:
   cuts a document into three. A slice is resolved against the input's own length,
   a negative index counts from the end, and a selection naming a page the document
   does not have is refused rather than trimmed.
+  `SplitOptions(pages_per_part=N)` instead produces consecutive batches of at
+  most N pages, with a shorter final batch, following `Document.split_every`.
+  Grouping restarts for every input PDF; results keep input order and page order.
+  `pages_per_part` must be a positive integer. It cannot be combined with either
+  `selections` or `bookmark_level`, including when options are modified after
+  construction. The fixed-size mode also bounds the cumulative number of results
+  across inputs using `max_container_items`. Input/import/serialization failures
+  write no outputs.
   `SplitOptions(bookmark_level=1, include_preamble=True)` selects chapter
   splitting instead, following `Document.split_by_bookmarks` for every input.
   Results keep input order and, within each input, chapter page order. This

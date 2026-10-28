@@ -5046,6 +5046,48 @@ class Document:
         result._engine_pdf = engine
         return result
 
+    def split_every(self, pages_per_part: int) -> list[Document]:
+        """Return independent documents containing at most ``pages_per_part`` pages.
+
+        The size must be a positive integer. Parts retain source page order,
+        with a shorter final part when necessary. Every page appears once;
+        blank pages count normally. Empty documents return an empty list.
+        A size at least as large as the PDF produces one independent copy.
+
+        Results follow :meth:`extract_pages`: retain Info metadata, resources,
+        page geometry, labels, annotations, form fields, layers and tags.
+        Relevant bookmarks retain live edits and destination views; children
+        of excluded parents are promoted. Document attachments are not copied,
+        and new parts do not inherit source encryption or signature validity.
+
+        No text extraction or rendering is needed. Streaming sources remain
+        lazy while whole pages are imported one part at a time. Options and
+        result/selection limits are checked before importing; each part inherits
+        the source resource policy. The source and its files are unchanged.
+        Dispose every returned document when done. Partial results are disposed
+        and the source outline model is restored if splitting fails.
+        """
+        from aspose_pdf.engine.page_count_split import split_every
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        result = []
+        try:
+            for engine in split_every(
+                self._engine_pdf,
+                pages_per_part,
+                outlines=None if self._outlines is None else self._outlines._items,
+            ):
+                part = Document(limits=self._load_limits)
+                part._engine_pdf = engine
+                result.append(part)
+        except BaseException:
+            for part in result:
+                part.dispose()
+            raise
+        return result
+
     def split_by_bookmarks(
         self,
         level: int = 1,

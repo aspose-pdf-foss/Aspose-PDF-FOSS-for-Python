@@ -239,6 +239,26 @@ def _read_source_bytes(source: DataSource, limits: PdfLoadLimits) -> bytes:
     return payload
 
 
+def _validate_split_options(
+    selections: Any,
+    bookmark_level: int | None,
+    include_preamble: bool,
+    pages_per_part: int | None,
+) -> None:
+    """Validate split modes before consuming selections or reading any inputs."""
+    from aspose_pdf.engine.bookmark_split import validate_options
+    from aspose_pdf.engine.page_count_split import validate_pages_per_part
+
+    validate_options(1 if bookmark_level is None else bookmark_level, include_preamble)
+    if pages_per_part is not None:
+        validate_pages_per_part(pages_per_part)
+    modes = selections, bookmark_level, pages_per_part
+    if sum(value is not None for value in modes) > 1:
+        raise ValueError(
+            "selections, bookmark_level and pages_per_part cannot be combined"
+        )
+
+
 def _resolve_selection(selection: Iterable[int] | slice, page_count: int) -> list[int]:
     """One of :class:`SplitOptions`'s selections as a plain list of page indexes.
 
@@ -437,7 +457,7 @@ class OptimizeOptions(PluginOptions):
 class SplitOptions(PluginOptions):
     """Options for :class:`Splitter`.
 
-    Without *selections* every page of every input becomes a document of its own.
+    By default every page of every input becomes a document of its own.
     *selections* splits into groups instead: each entry is what
     :meth:`~aspose_pdf.Document.extract_pages` takes -- an iterable of 0-based
     page indexes, or a ``slice`` -- and becomes one output document, in the order
@@ -450,7 +470,11 @@ class SplitOptions(PluginOptions):
     ``bookmark_level=1`` instead splits at root bookmarks; higher levels select
     nested headings. It follows :meth:`Document.split_by_bookmarks`, including
     a leading ``Preamble`` result unless ``include_preamble=False``. This mode
-    cannot be combined with ``selections``.
+    cannot be combined with ``selections`` or ``pages_per_part``.
+
+    ``pages_per_part=N`` instead groups consecutive pages in parts of at most
+    N pages, retaining a shorter last part. It follows :meth:`Document.split_every`
+    for each input independently and cannot be combined with either other mode.
     """
 
     def __init__(
@@ -460,18 +484,18 @@ class SplitOptions(PluginOptions):
         selections: Iterable[Iterable[int] | slice] | None = None,
         bookmark_level: int | None = None,
         include_preamble: bool = True,
+        pages_per_part: int | None = None,
     ) -> None:
         # ``limits`` stays the first positional argument, as it was when this
         # class had no __init__ of its own and inherited PluginOptions'.
         super().__init__(limits=limits)
-        from aspose_pdf.engine.bookmark_split import validate_options
-
-        validate_options(1 if bookmark_level is None else bookmark_level, include_preamble)
-        if selections is not None and bookmark_level is not None:
-            raise ValueError("selections and bookmark_level cannot be combined")
+        _validate_split_options(
+            selections, bookmark_level, include_preamble, pages_per_part
+        )
         self.selections = None if selections is None else list(selections)
         self.bookmark_level = bookmark_level
         self.include_preamble = include_preamble
+        self.pages_per_part = pages_per_part
 
 
 class TextExtractorOptions(PluginOptions):
@@ -777,23 +801,23 @@ class Optimizer(PdfPlugin):
 
 
 class Splitter(PdfPlugin):
-    """Split every input PDF per page, per selection, or by bookmark level."""
+    """Split every input per page, per fixed-size group, per selection or by bookmarks."""
 
     def process(self, options: SplitOptions) -> ResultContainer:
         self._require_inputs(options)
-        from aspose_pdf.engine.bookmark_split import (
-            split_by_bookmarks,
-            validate_options,
-        )
+        from aspose_pdf.engine.bookmark_split import split_by_bookmarks
+        from aspose_pdf.engine.page_count_split import split_every
         from aspose_pdf.engine.simple_pdf import SimplePdf
 
         limits = _coerce_limits(getattr(options, "limits", None))
         selections = getattr(options, "selections", None)
         bookmark_level = getattr(options, "bookmark_level", None)
         include_preamble = getattr(options, "include_preamble", True)
-        validate_options(1 if bookmark_level is None else bookmark_level, include_preamble)
-        if selections is not None and bookmark_level is not None:
-            raise ValueError("selections and bookmark_level cannot be combined")
+        pages_per_part = getattr(options, "pages_per_part", None)
+        _validate_split_options(
+            selections, bookmark_level, include_preamble, pages_per_part
+        )
+        budget = _LoadBudget(limits)
         results: list[OperationResult] = []
         for source in options.inputs:
             pdf = SimplePdf.from_bytes(
@@ -801,14 +825,25 @@ class Splitter(PdfPlugin):
             )
             try:
                 page_count = len(pdf.pages)
-                if bookmark_level is not None:
-                    for chapter in split_by_bookmarks(
-                        pdf, level=bookmark_level, include_preamble=include_preamble
-                    ):
+                if bookmark_level is not None or pages_per_part is not None:
+                    parts = (
+                        split_by_bookmarks(
+                            pdf, level=bookmark_level, include_preamble=include_preamble
+                        )
+                        if bookmark_level is not None
+                        else split_every(pdf, pages_per_part)
+                    )
+                    for part in parts:
                         try:
-                            results.append(OperationResult(chapter.to_bytes()))
+                            if pages_per_part is not None:
+                                budget.check(
+                                    len(results) + 1,
+                                    "max_container_items",
+                                    "page-count split results",
+                                )
+                            results.append(OperationResult(part.to_bytes()))
                         finally:
-                            chapter.dispose()
+                            part.dispose()
                     continue
                 if selections is None:
                     groups = [[index] for index in range(page_count)]
