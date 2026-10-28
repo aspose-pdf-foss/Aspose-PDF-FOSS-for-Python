@@ -4482,6 +4482,52 @@ with Document("application.pdf") as document:
     `max_total_decoded_bytes`. Work uses one open PDF at a time but retains all
     serialized results; split large workloads into smaller batches. Serialization
     still builds a PDF in memory before writing to the bounded output buffer.
+- **Export form answers to CSV.**
+  `Form.export_csv(destination=None, fields=None, delimiter=",",
+  encoding="utf-8", overwrite=True)` returns bytes with one field-name header
+  and one record of current values. Defaults follow `Form.to_dict()`: fully
+  qualified names in form order, including read-only and no-export fields;
+  signatures and push buttons are omitted. `fields=["code", "person.name"]`
+  selects and orders columns; generators are accepted, bare strings and
+  mappings are refused, duplicate names raise `PdfValidationException` and
+  unknown or non-data fields raise `KeyError`. Empty selections and forms
+  with no exportable fields return `b""`, including with a BOM encoding.
+  - Text retains its stored spelling, including leading zeros and formula-like
+    strings. Radio and single-choice fields use their stored export values.
+    Checkboxes become lowercase `true`/`false`; `None` becomes an empty cell.
+    Multiselect fields become compact JSON arrays inside a CSV cell, preserving
+    order and distinguishing `[]`, `["r"]` and `["r","Blue"]`. CSV quoting
+    preserves commas, delimiters, double quotes and embedded CR/LF characters.
+    Header and data records end in CRLF.
+  - The default encoding is UTF-8. `encoding="utf-8-sig"` emits one leading BOM
+    for spreadsheet applications; UTF-16 and other supported text encodings
+    are also accepted. The delimiter is a single character other than quote,
+    CR, LF or NUL; semicolon and tab are supported. Field types are not carried
+    by CSV, and `None` and empty text cannot be distinguished. The existing CSV
+    batch importer can reuse filled scalar columns with explicit `checkbox_fields`.
+    For re-import, JSON array cells need decoding before filling multiselect
+    fields; empty radio or non-editable choice cells need conversion to `None`.
+  - Files are replaced atomically after encoding completes, with parent folders
+    created as needed. `overwrite=False` refuses existing files. Binary streams
+    receive data at their current position, retry short writes and remain open;
+    an I/O failure can leave a stream prefix. Invalid options, field selections,
+    values, encoding or resource limits write no output. Field counts, list
+    sizes, cell text, quoted record lengths and encoded output obey the document's
+    `PdfLoadLimits`; character and byte bounds both apply. Encoding is incremental,
+    including BOM/state handling, while the complete result is prepared in memory
+    before writing. Export reads form metadata without decoding page content,
+    supports streaming and encrypted sources, and does not edit the PDF.
+
+  ```python
+  with Document("filled.pdf") as document:
+      document.form.export_csv(
+          "answers.csv",
+          fields=["person.name", "agree", "country"],
+          delimiter=";",
+          encoding="utf-8-sig",
+      )
+  ```
+
 - **Fill template batches directly from CSV.**
   `FormFillerOptions.from_csv(source, encoding="utf-8-sig", delimiter=",",
   field_map=None, checkbox_fields=None, checkbox_values=None, strict=True,

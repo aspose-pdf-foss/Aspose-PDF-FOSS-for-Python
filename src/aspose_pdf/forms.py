@@ -999,7 +999,7 @@ class Form:
             **self._appearance_options(appearance),
         )
 
-    # --- form data in and out: dictionaries, JSON, FDF and XFDF ------------------------
+    # --- form data in and out: dictionaries, CSV, JSON, FDF and XFDF -------------------
 
     def to_dict(self) -> dict[str, Any]:
         """Return a snapshot of field values keyed by fully qualified names.
@@ -1237,6 +1237,61 @@ class Form:
         if not isinstance(overwrite, bool):
             raise PdfValidationException("overwrite must be a boolean")
         data = to_json(self.to_schema(), _LoadBudget(self._document.load_limits))
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
+    def export_csv(
+        self,
+        destination: Any = None,
+        *,
+        fields: Iterable[str] | None = None,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return CSV bytes with field-name headers and one row of current answers.
+
+        ``fields=None`` exports data fields in form order, matching
+        :meth:`to_dict`: read-only and no-export fields are included, and
+        signatures and push buttons are omitted. An iterable of fully qualified
+        names selects and orders columns; unknown names raise ``KeyError`` and
+        duplicates are refused. An empty selection or form returns ``b""``.
+
+        Text, radio and single-choice values keep their stored spelling;
+        ``None`` becomes an empty cell, checkboxes use ``true``/``false``, and
+        multiselect values become compact JSON arrays inside a cell, including
+        ``[]`` for no selection. Standard CSV quoting preserves delimiters,
+        double quotes and embedded newlines. Records use CRLF. ``delimiter``
+        is one character; ``encoding="utf-8-sig"`` adds a spreadsheet BOM.
+        CSV does not retain PDF field types or distinguish None from empty text.
+
+        Encoding completes before writing a path or binary stream. Paths are
+        replaced atomically, creating parent folders; ``overwrite=False``
+        refuses existing paths. Streams receive bytes at their current position,
+        retry short writes and remain open. Text and output sizes obey the
+        document's resource limits. No form data or page content is modified.
+        """
+        from pathlib import Path
+
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.form_csv_export import to_csv
+        from aspose_pdf.engine.stream_output import write_all
+        from aspose_pdf.load_limits import _LoadBudget
+
+        self._document._ensure_not_disposed()
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = to_csv(
+            self.to_dict(),
+            fields=fields,
+            delimiter=delimiter,
+            encoding=encoding,
+            budget=_LoadBudget(self._document.load_limits),
+        )
         if destination is not None:
             if hasattr(destination, "write"):
                 write_all(destination, data)
