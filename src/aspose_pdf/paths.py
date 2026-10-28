@@ -43,7 +43,7 @@ def _number(value: object, name: str) -> float:
         raise PdfValidationException(f"{name} must be a number.")
     try:
         number = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise PdfValidationException(f"{name} must be a number.") from None
     if not math.isfinite(number):
         raise PdfValidationException(f"{name} must be finite.")
@@ -54,10 +54,11 @@ class GraphicsPath:
     """A path made of subpaths, to be filled, stroked or clipped with.
 
     The builders return the path, so calls chain. Every one of them needs a
-    current point except :meth:`move_to`, :meth:`rect`, :meth:`ellipse`,
-    :meth:`circle`, :meth:`polygon` and :meth:`polyline`, which start a subpath
-    of their own: a path that begins with :meth:`line_to` is refused rather than
-    written as a content stream whose first operator has nothing to draw from.
+    current point except :meth:`move_to`, :meth:`rect`, :meth:`rounded_rect`,
+    :meth:`ellipse`, :meth:`circle`, :meth:`polygon` and :meth:`polyline`, which
+    start a subpath of their own: a path that begins with :meth:`line_to` is
+    refused rather than written as a content stream whose first operator has
+    nothing to draw from.
     """
 
     __slots__ = ("_current", "_ops", "_start")
@@ -89,7 +90,8 @@ class GraphicsPath:
         if self._current is None:
             raise PdfValidationException(
                 f"{what} continues a subpath, so the path has to start somewhere: "
-                "call move_to (or rect, ellipse, circle, polygon, polyline) first."
+                "call move_to (or rect, rounded_rect, ellipse, circle, polygon, "
+                "polyline) first."
             )
         return self._current
 
@@ -179,6 +181,60 @@ class GraphicsPath:
         self._current = (values[0], values[1])
         self._start = self._current
         return self
+
+    def rounded_rect(
+        self, x: float, y: float, width: float, height: float, radius: float
+    ) -> GraphicsPath:
+        """Add a closed rectangle with circular corners as its own subpath.
+
+        Width and height must be positive, and the radius non-negative. All
+        inputs and the resulting bounds must be finite. A large radius is
+        clamped to half the smaller side; zero uses :meth:`rect` directly.
+        Corners use the same four-cubic approximation as :meth:`ellipse`.
+
+        Positive-radius paths run counterclockwise from ``(x + radius, y)``
+        using the clamped radius. Closing returns the current point there.
+        Invalid geometry leaves any existing path unchanged.
+        """
+        left, bottom = _number(x, "x"), _number(y, "y")
+        w, h = _number(width, "width"), _number(height, "height")
+        r = _number(radius, "radius")
+        if w <= 0 or h <= 0:
+            raise PdfValidationException(
+                "A rounded rectangle needs a width and a height above zero."
+            )
+        if r < 0:
+            raise PdfValidationException(
+                "A rounded rectangle radius must be non-negative."
+            )
+        right, top = left + w, bottom + h
+        if (
+            not math.isfinite(right)
+            or not math.isfinite(top)
+            or right <= left
+            or top <= bottom
+        ):
+            raise PdfValidationException(
+                "Rounded rectangle bounds must be finite and distinct."
+            )
+        r = min(r, w / 2.0, h / 2.0)
+        if r == 0:
+            return self.rect(left, bottom, w, h)
+        offset = r * _KAPPA
+        self.move_to(left + r, bottom)
+        self.line_to(right - r, bottom)
+        self.curve_to(
+            right - r + offset, bottom, right, bottom + r - offset, right, bottom + r
+        )
+        self.line_to(right, top - r)
+        self.curve_to(right, top - r + offset, right - r + offset, top, right - r, top)
+        self.line_to(left + r, top)
+        self.curve_to(left + r - offset, top, left, top - r + offset, left, top - r)
+        self.line_to(left, bottom + r)
+        self.curve_to(
+            left, bottom + r - offset, left + r - offset, bottom, left + r, bottom
+        )
+        return self.close()
 
     def ellipse(self, x: float, y: float, width: float, height: float) -> GraphicsPath:
         """Add the ellipse inscribed in the box ``(x, y, width, height)``.

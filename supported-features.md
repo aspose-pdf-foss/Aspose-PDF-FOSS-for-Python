@@ -1618,13 +1618,35 @@ Supported:
 - Read decoded page content bytes through `Page.content`.
 - **Draw paths** with `Page.draw_path()` and a `GraphicsPath`: `move_to`,
   `line_to`, `curve_to` (cubic), `quadratic_to` (written as the cubic that draws
-  the same curve, not an approximation of it), `close`, `rect`, `ellipse`,
-  `circle`, `polygon` and `polyline`. The builders chain, and one that continues a
-  subpath -- a line, a curve, a close -- is refused on a path that has not been
-  started, rather than writing an operator with nothing to draw from. An ellipse
+  the same curve, not an approximation of it), `close`, `rect`, `rounded_rect`,
+  `ellipse`, `circle`, `polygon` and `polyline`. The builders chain, and one that
+  continues a subpath -- a line, a curve, a close -- is refused on a path that
+  has not been started, rather than writing an operator with nothing to draw
+  from. An ellipse
   is four Bézier curves, since PDF has no arc operator; the control points are
   4/3·(√2−1) of the way along each side, which meets the circle at both ends and
   the midpoint and is about 0.027% of the radius out in between.
+  - **Rounded rectangles.**
+    `GraphicsPath.rounded_rect(x, y, width, height, radius)` adds a closed
+    subpath with circular corners for panels, badges and rounded clipping masks.
+    It returns the path for chaining and needs no existing current point.
+    Width and height must be positive, the radius non-negative, and all inputs
+    and resulting bounds finite. Geometry is validated before adding segments;
+    invalid values raise `PdfValidationException` without changing the path.
+    A radius larger than half the smaller side is clamped to that value; zero
+    writes the same rectangle as `rect()`. Positive radii use four cubic corner
+    arcs with the same approximation as `ellipse()`, with counterclockwise
+    winding like a positive-width/height `rect()`. The closed path's current
+    point is `(x + clamped_radius, y)`, or `(x, y)` for a zero radius.
+    Drawing, stroking, transforms, transparency and `Page.graphics(clip=...)`
+    use the existing vector path pipeline, without rasterization or new
+    dependencies.
+
+    ```python
+    panel = GraphicsPath().rounded_rect(40, 600, 300, 120, 16)
+    page.draw_path(panel, fill_color="#eef4ff", stroke_color="#336699", line_width=1)
+    ```
+
   - The paint: `stroke_color` and `fill_color` (grey, RGB or CMYK; `None` leaves
     that half out, and neither is refused), `even_odd` for the even-odd fill rule
     of 8.5.3.3, `line_width`, `line_cap` (`"butt"`/`"round"`/`"square"`),
