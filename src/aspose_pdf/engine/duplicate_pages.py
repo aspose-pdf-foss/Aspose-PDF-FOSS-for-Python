@@ -6,6 +6,8 @@ from collections.abc import Iterable
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
+from aspose_pdf.exceptions import PdfValidationException
+
 from .blank_pages import _Options, _options, _render
 from .text_selection import page_indexes
 
@@ -65,3 +67,32 @@ def find_duplicate_pages(
         # A subsequent render must not retain this page's pixel buffer.
         del raster
     return [group for group in groups if len(group) > 1]
+
+
+def remove_duplicate_pages(
+    document: Document,
+    *,
+    pages: Iterable[int] | None = None,
+    keep: str = "first",
+    dpi: float = 72.0,
+    include_annotations: bool = True,
+    dry_run: bool = False,
+) -> list[int]:
+    """Inspect all candidates, then remove duplicates in reverse document order."""
+    from .page_cleanup import remove_pages
+
+    if not isinstance(keep, str) or keep not in ("first", "last"):
+        raise PdfValidationException("keep must be 'first' or 'last'")
+    if not isinstance(dry_run, bool):
+        raise PdfValidationException("dry_run must be a boolean")
+    groups = find_duplicate_pages(
+        document, pages=pages, dpi=dpi, include_annotations=include_annotations,
+    )
+    found = sorted(
+        index
+        for group in groups
+        for index in (group[1:] if keep == "first" else group[:-1])
+    )
+    if not dry_run and found:
+        remove_pages(document, found)
+    return found

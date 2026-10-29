@@ -4884,6 +4884,55 @@ class Document:
             include_annotations=include_annotations,
         )
 
+    def remove_duplicate_pages(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        keep: str = "first",
+        dpi: float = 72.0,
+        include_annotations: bool = True,
+        dry_run: bool = False,
+    ) -> list[int]:
+        """Remove visually duplicate pages and return their original indices.
+
+        Detection follows :meth:`find_duplicate_pages`. ``keep="first"``
+        retains the first member of each group in selection order;
+        ``keep="last"`` retains the last. With ``pages=None``, this is document
+        order. Only selected pages are compared. Repeated indices count once,
+        unselected pages are retained, and surviving pages keep document order.
+        Results are sorted original zero-based indices, before any deletion.
+
+        Every comparison finishes before deletion starts. Invalid options,
+        selections, rendering failures and inspection limits leave pages intact.
+        ``dry_run=True`` returns the same candidates without editing pages,
+        navigation or text caches. ``dry_run`` must be a boolean. Empty inputs
+        and selections without duplicates return ``[]``. At least one member
+        of each group is retained, including for entirely blank documents.
+
+        Page labels follow ordinary deletion. Retained bookmark targets keep
+        their destination views; bookmarks on removed pages become targetless
+        headings with their titles, styles and children intact. Live bookmark
+        objects are updated in place. Local links to removed pages lose their
+        target. Text caches are cleared after removal. Streaming sources read
+        selected page content only, and files change only on explicit save.
+
+        Equality is specific to the renderer and DPI, and visually identical
+        pages can contain different hidden text, form values or other data.
+        Deletion uses ordinary page editing and does not securely erase stored
+        objects or previous revisions. It is not a transactional rewrite.
+        """
+        from aspose_pdf.engine.duplicate_pages import remove_duplicate_pages
+
+        self._ensure_not_disposed()
+        return remove_duplicate_pages(
+            self,
+            pages=pages,
+            keep=keep,
+            dpi=dpi,
+            include_annotations=include_annotations,
+            dry_run=dry_run,
+        )
+
     def compare_text(
         self,
         other: Document,

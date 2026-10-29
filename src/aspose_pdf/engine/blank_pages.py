@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from bisect import bisect_left
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -142,8 +141,7 @@ def remove_blank_pages(
     dry_run: bool = False,
 ) -> list[int]:
     """Plan detection and bookmark targets before deleting pages in reverse order."""
-    from .bookmark_split import _snapshot
-    from .text_split import _refresh_targets
+    from .page_cleanup import remove_pages
 
     if not isinstance(dry_run, bool):
         raise PdfValidationException("dry_run must be a boolean")
@@ -157,42 +155,5 @@ def remove_blank_pages(
     )
     if dry_run or not found:
         return found
-    if len(found) == document.page_count:
-        raise PdfValidationException("Removing every page would leave an empty document")
-
-    pdf = document._engine_pdf
-    # Validate label metadata before deletion can change the page list.
-    pdf.page_label_ranges()
-    roots = pdf._outlines_data if document._outlines is None else document._outlines._items
-    outlines, _starts = _snapshot(pdf, roots, 1) if roots else ([], {})
-    removed = set(found)
-    descending = sorted(removed, reverse=True)
-    ascending = descending[::-1]
-    stack = list(outlines)
-    while stack:
-        item = stack.pop()
-        index = item["page_index"]
-        if index in removed:
-            item.update(page_index=None, target=None, loaded_target=None)
-        elif index is not None:
-            item["page_index"] = index - bisect_left(ascending, index)
-        stack.extend(item["children"])
-
-    live = []
-    if document._outlines is not None:
-        pending = list(zip(document._outlines._items, outlines, strict=True))
-        while pending:
-            item, entry = pending.pop()
-            live.append((item, entry))
-            pending.extend(zip(item.children, entry["children"], strict=True))
-    for index in descending:
-        document.pages.delete(index)
-    pdf._outlines_data = outlines
-    _refresh_targets(pdf)
-    for item, entry in live:
-        item._page_index = entry["page_index"]
-        item._destination = entry.get("target")
-        item._loaded_target = entry.get("loaded_target")
-    pdf.free_memory()
-    pdf._page_text_cursor = 0
+    remove_pages(document, found)
     return found

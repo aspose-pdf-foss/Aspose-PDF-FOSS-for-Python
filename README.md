@@ -1292,6 +1292,17 @@ Use `pages=[0, 3, 7]` to inspect a subset. The document is unchanged.
 This detects exact rendered matches; noisy scans can differ, and hidden data
 can differ on matching pages. See [comparison details](supported-features.md#pages).
 
+Remove repeated page views while retaining one selected copy per group:
+
+```python
+with Document("batch.pdf") as document:
+    removed = document.remove_duplicate_pages(keep="first")
+    document.save("deduplicated.pdf")
+```
+
+Use `dry_run=True` to preview removal or `keep="last"` to retain the last selected
+copy. Returned indices refer to the original document and are sorted ascending.
+
 ### Find Images with Low Effective DPI
 
 ```python
@@ -1889,6 +1900,8 @@ and delete workflows. 275 public types are organized by module below.
     measure visible content per selected page without cropping
   - `find_duplicate_pages(pages=None, dpi=72, include_annotations=True) -> list[list[int]]` —
     group pages with identical rendered views without deleting them
+  - `remove_duplicate_pages(pages=None, keep="first", dpi=72, include_annotations=True, dry_run=False) -> list[int]` —
+    remove repeated page views and return their original indices
   - `iter_pages() -> Iterator[Page]` / `iter_page_content_streams() -> Generator[bytes, None, None]`
   - `sync_metadata(direction) -> Document` /
     `add_attachment(name, content, mime, description, creation_date, mod_date, compress) -> Document`

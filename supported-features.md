@@ -1303,6 +1303,44 @@ Supported:
     Matching views can still contain different invisible text, form data,
     annotation contents or other stored information; this is not proof of
     byte-identical documents or interchangeable page data.
+- **Remove repeated page views in one operation.**
+  `Document.remove_duplicate_pages(pages=None, keep="first", dpi=72,
+  include_annotations=True, dry_run=False)` removes visually duplicate pages
+  from the open document and returns their original zero-based indices in
+  ascending document order. This streamlines cleanup of repeated scans and
+  assembled reports without manually deleting each detected copy.
+  - Detection uses `find_duplicate_pages`'s exact rendered comparison, resource
+    limits and bounded raster memory. `keep="first"` retains the first selected
+    member of each group; `keep="last"` retains the last. By default selection
+    follows document order. Explicit selections can be generators, and repeated
+    indices count once. Unselected pages are retained; surviving pages keep
+    their original document order. A nonempty document always retains at least
+    one page, even if every selected page is blank or visually identical.
+  - All options, selections and comparisons finish before deletion begins.
+    Invalid options, rendering errors and inspection limits leave pages intact.
+    `keep` must be `"first"` or `"last"`, and `dry_run` must be a boolean.
+    `dry_run=True` reports the same candidates without editing pages, navigation
+    or text caches. Empty inputs and selections without duplicates return `[]`.
+  - Bookmark and page-label handling follows `remove_blank_pages`: retained
+    bookmarks keep their destination views and names, bookmarks on removed
+    copies become targetless headings with styles and children preserved, and
+    live outline objects are updated in place. Local links to removed copies
+    lose their target. These targets are not redirected to the retained copy.
+    Text caches are cleared after removal; metadata and attachments are retained.
+    Streaming and encrypted inputs are supported, with only selected page
+    content rendered. Source files change only on explicit save. Deletion uses
+    ordinary page editing rather than a transactional rewrite.
+  - Visual equality depends on the renderer and DPI. Matching pages can contain
+    different hidden text, form values, annotation contents or other stored data;
+    select the retained copies accordingly. Removal does not securely erase
+    unreferenced PDF objects or data in earlier revisions.
+
+  ```python
+  with Document("batch.pdf") as document:
+      candidates = document.remove_duplicate_pages(dry_run=True)
+      removed = document.remove_duplicate_pages(keep="first")
+      document.save("deduplicated.pdf")
+  ```
 - **Compare PDF page views.** `Document.compare_visual(other, pages=None,
   other_pages=None, dpi=72, tolerance=0, max_diff_ratio=0,
   include_annotations=True, include_diff_images=False, ignore_regions=None)`
