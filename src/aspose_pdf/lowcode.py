@@ -939,6 +939,11 @@ class ImagesToPdfOptions(PluginOptions):
     WebP/BMP/GIF inputs require the optional ``images`` extra; WebP also needs
     Pillow's WebP codec. Animated GIF/WebP inputs are refused.
     ``dpi`` overrides source resolution metadata.
+    ``auto_orient=True`` applies all eight JPEG EXIF orientations, including
+    reflections, when placing the original JPEG bytes without recompression.
+    The default is ``False``. It affects JPEG only; TIFF already applies its
+    own orientation. Missing JPEG orientation means upright; malformed EXIF
+    raises :class:`~aspose_pdf.exceptions.PdfValidationException` when enabled.
     """
 
     def __init__(
@@ -948,6 +953,7 @@ class ImagesToPdfOptions(PluginOptions):
         dpi: float = 72.0,
         margin: float = 0.0,
         single_document: bool = True,
+        auto_orient: bool = False,
         limits: PdfLoadLimits | None = None,
     ) -> None:
         super().__init__(limits=limits)
@@ -955,6 +961,7 @@ class ImagesToPdfOptions(PluginOptions):
         self.dpi = dpi
         self.margin = margin
         self.single_document = single_document
+        self.auto_orient = auto_orient
 
 
 class ConvertOptions(PluginOptions):
@@ -1196,15 +1203,21 @@ class ImagesToPdf(PdfPlugin):
     document; with ``single_document=False`` each image becomes a document of its
     own. TIFF frames retain their source order. TIFF and WebP/BMP/GIF require
     the ``images`` extra; animated WebP/GIF inputs are refused.
+    Set ``auto_orient=True`` to honor JPEG EXIF rotation and reflection without
+    recompressing the JPEG or requiring Pillow.
     """
 
     def process(self, options: ImagesToPdfOptions) -> ResultContainer:
         self._require_inputs(options)
         from aspose_pdf.engine.content_authoring import image_pixel_size
         from aspose_pdf.engine.image_import import pillow_image_format, static_image
+        from aspose_pdf.engine.jpeg_orientation import jpeg_orientation
         from aspose_pdf.engine.tiff_import import is_tiff, tiff_frames
 
         limits = _coerce_limits(getattr(options, "limits", None))
+        auto_orient = getattr(options, "auto_orient", False)
+        if not isinstance(auto_orient, bool):
+            raise PdfValidationException("auto_orient must be a boolean")
         # Read, then checked: ``value or default`` would turn a dpi of 0 into the
         # default instead of refusing it.
         try:
@@ -1226,6 +1239,7 @@ class ImagesToPdf(PdfPlugin):
         try:
             for source in options.inputs:
                 data = _read_source_bytes(source, limits)
+                orientation = jpeg_orientation(data, budget) if auto_orient else 1
                 if is_tiff(data):
                     frames = tiff_frames(data, budget, preceding_pages=page_count)
                     frame_context = closing(frames)
@@ -1251,6 +1265,7 @@ class ImagesToPdf(PdfPlugin):
                             pixel_height * 72.0 / dpi,
                             requested,
                             margin,
+                            orientation,
                         )
                         del image_data
                         if not single:
@@ -1277,28 +1292,34 @@ class ImagesToPdf(PdfPlugin):
         height: float,
         requested: Any,
         margin: float,
+        orientation: int = 1,
     ) -> None:
         """Add one page carrying one image, sized the way the options ask."""
+        if orientation >= 5:
+            width, height = height, width
         if requested is None:
             page = document.pages.add(size=(width, height))
-            page.add_image(data, 0, 0, width, height)
-            return
-        page = document.pages.add(size=requested)
-        box_width = page.size.width - 2 * margin
-        box_height = page.size.height - 2 * margin
-        if box_width <= 0 or box_height <= 0:
-            raise AsposePdfException(
-                "The margin leaves no room for the image on this page size"
-            )
-        scale = min(box_width / width, box_height / height, 1.0)
-        drawn_width, drawn_height = width * scale, height * scale
-        page.add_image(
-            data,
-            margin + (box_width - drawn_width) / 2.0,
-            margin + (box_height - drawn_height) / 2.0,
-            drawn_width,
-            drawn_height,
-        )
+            x = y = 0.0
+        else:
+            page = document.pages.add(size=requested)
+            box_width = page.size.width - 2 * margin
+            box_height = page.size.height - 2 * margin
+            if box_width <= 0 or box_height <= 0:
+                raise AsposePdfException(
+                    "The margin leaves no room for the image on this page size"
+                )
+            scale = min(box_width / width, box_height / height, 1.0)
+            width, height = width * scale, height * scale
+            x = margin + (box_width - width) / 2.0
+            y = margin + (box_height - height) / 2.0
+        if orientation == 1:
+            page.add_image(data, x, y, width, height)
+        else:
+            from aspose_pdf.engine.jpeg_orientation import orientation_matrix
+
+            matrix = orientation_matrix(orientation, x, y, width, height)
+            with page.graphics(transform=matrix):
+                page.add_image(data, 0, 0, 1, 1)
 
 
 class Converter(PdfPlugin):

@@ -6946,6 +6946,23 @@ Supported:
   per pixel, 300 gives a 300 dpi scan its physical size), or, with `page_size=`,
   the image is centred inside that sheet and scaled down to fit within `margin`
   points. `dpi` defaults to 72 and overrides source resolution metadata.
+  `ImagesToPdfOptions(auto_orient=True)` applies JPEG EXIF Orientation values
+  1–8, including mirrored orientations, using PDF placement transforms.
+  Orientations 5–8 swap the image's width and height before image-sized page
+  creation or fitting inside a fixed page. Margins, DPI and centring use those
+  oriented bounds. The JPEG bytes are embedded unchanged, without decoding or
+  recompression, and this option does not require Pillow. The default is
+  `False`, preserving existing JPEG placement. Other formats are unaffected;
+  TIFF continues to apply its own orientation during decoding.
+  Only the primary image's Orientation in classic little- or big-endian EXIF
+  IFD0 is read, before the first JPEG image scan. A missing tag means upright;
+  thumbnail orientation and unrelated APP1 metadata such as XMP are ignored.
+  With the option enabled, malformed JPEG headers or EXIF directory bounds,
+  invalid Orientation values/types, duplicate Orientation tags and multiple
+  EXIF segments raise `PdfValidationException`. Header scanning, metadata size
+  and directory entries obey `PdfLoadLimits`; no linked directories or image
+  pixels are decoded to determine orientation. `auto_orient` must be a boolean,
+  including if options are edited after construction.
   `single_document=False` emits one document per image or TIFF frame instead of
   one carrying them all. The JPEG/PNG size is read from its own header, so a PNG
   is not decoded twice; raw samples carry no size and are refused. TIFF is
@@ -7025,6 +7042,18 @@ from aspose_pdf.lowcode import FileDataSource, ImagesToPdf, ImagesToPdfOptions
 options = ImagesToPdfOptions(dpi=300)
 options.add_input(FileDataSource("scans.tiff"))
 options.add_output(FileDataSource("scans.pdf"))
+ImagesToPdf().process(options)
+```
+
+Import camera photos using their EXIF rotation and reflection without another
+lossy JPEG encoding:
+
+```python
+from aspose_pdf.lowcode import FileDataSource, ImagesToPdf, ImagesToPdfOptions
+
+options = ImagesToPdfOptions(auto_orient=True)
+options.add_input(FileDataSource("photo.jpg"))
+options.add_output(FileDataSource("photo.pdf"))
 ImagesToPdf().process(options)
 ```
 
