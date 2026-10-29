@@ -1,4 +1,4 @@
-"""Optional static image decoding for the low-code image-to-PDF plugin."""
+"""Optional static image decoding for page authoring and image-to-PDF import."""
 
 from __future__ import annotations
 

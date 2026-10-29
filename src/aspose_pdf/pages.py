@@ -646,7 +646,13 @@ class Page:
         actual_text: str | None = None,
         artifact: bool | str | None = None,
     ) -> str:
-        """Place an image on this page and return its resource name."""
+        """Place an image on this page and return its resource name.
+
+        JPEG, PNG and explicit raw samples work without optional dependencies.
+        Static BMP, GIF and WebP require the ``images`` extra; transparency is
+        preserved, and animated inputs are rejected. Omitted display dimensions
+        default to the corresponding pixel dimensions in PDF points.
+        """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is None:

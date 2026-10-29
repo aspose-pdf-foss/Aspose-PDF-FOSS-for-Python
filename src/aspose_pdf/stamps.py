@@ -507,6 +507,9 @@ class PageStamp(Stamp):
 class ImageStamp(Stamp):
     """An image, scaled to the box it is given.
 
+    Accepts JPEG and PNG, plus static BMP/GIF/WebP with the ``images`` extra.
+    Image transparency is preserved; animated inputs are rejected.
+
     Without *width* and *height* the image is one point per pixel, which is
     what :meth:`Page.add_image <aspose_pdf.pages.Page.add_image>` does; giving
     one of the two keeps the image's proportions and derives the other.

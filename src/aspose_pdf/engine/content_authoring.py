@@ -856,7 +856,12 @@ def prepare_image(
     limits: PdfLoadLimits | None = None,
     budget: _LoadBudget | None = None,
 ) -> AuthoredImage:
-    """Prepare raw/JPEG/PNG bytes for a PDF image XObject."""
+    """Prepare raw samples or an encoded image for a PDF image XObject.
+
+    Static BMP/GIF/WebP inputs use the optional ``images`` extra. Explicit
+    raw dimensions retain their meaning for data starting with those formats'
+    signatures; JPEG and PNG keep their existing signature-based handling.
+    """
 
     resolved_limits = _coerce_limits(limits)
     if budget is None:
@@ -877,6 +882,12 @@ def prepare_image(
         return _prepare_jpeg(payload, active_budget)
     if payload.startswith(_PNG_MAGIC):
         return _prepare_png(payload, active_budget)
+    if pixel_width is None and pixel_height is None:
+        from .image_import import pillow_image_format, static_image
+
+        if pillow_image_format(payload) is not None:
+            png, _width, _height = static_image(payload, active_budget)
+            return _prepare_png(png, active_budget)
     return _prepare_raw(
         payload,
         pixel_width=pixel_width,

@@ -1805,7 +1805,8 @@ Supported:
   until the block ends.
 - Append simple authored content to a page: positioned Standard-14 text or
   embedded Unicode text with `Page.add_text()`, raw/JPEG/PNG image XObjects
-  with `Page.add_image()`, rectangles with `Page.draw_rectangle()`, and lines
+  and static BMP/GIF/WebP with the optional `images` extra through
+  `Page.add_image()`, rectangles with `Page.draw_rectangle()`, and lines
   with `Page.draw_line()`. Pass `font=` as a `FontDescriptor`, bytes,
   bytearray, string/path to author Unicode through a subset Type0/CID font;
   the writer emits two-byte codes, `/ToUnicode`, `/W`, and a CID-to-glyph map.
@@ -4149,6 +4150,20 @@ Supported:
   image's own bit depth, so a 16-bit pixel sharing only the key's high byte
   stays opaque. A fully opaque PNG gets no mask. Push-button icons are placed
   the same way.
+- **Place and stamp static BMP, GIF and WebP assets directly.**
+  `Page.add_image()` and `ImageStamp` accept bytes, bytearrays and file paths
+  using the optional `images` extra (Pillow; WebP also needs its WebP codec).
+  Format detection uses the file content rather than its extension. Users can
+  reuse existing photos and logos without first converting them to PNG.
+  Source pixel dimensions determine the default display size; explicit sizes,
+  stamp alignment, scaling and opacity keep their existing behavior.
+  Transparency is preserved as a PDF soft mask, including GIF palette
+  transparency and supported BMP alpha bitfields. Fully opaque assets get no
+  soft mask. Input size, image dimensions, decoded bytes and working memory
+  are bounded by the document's `PdfLoadLimits`; animated or malformed inputs
+  raise library exceptions. Explicit raw dimensions still identify raw samples
+  whose bytes happen to begin with a BMP/GIF/WebP signature. JPEG, PNG and raw
+  samples continue to work without Pillow.
 - **Every embedded file is an associated file.** The catalog carries an `/AF`
   array naming each attachment's file specification, which is what says the
   embedded file belongs to this document — ISO 19005-3 6.8 and ISO 19005-4 6.9
@@ -4285,12 +4300,13 @@ Boundaries:
   filter leaves the compressed bytes in the stream, and painting those as if
   they were samples produces a page of noise; the renderer decodes the
   codestream itself or leaves the area untouched.
-- `Page.add_image()` accepts raw samples, JPEG, and **PNG** at every bit depth
+- `Page.add_image()` accepts raw samples, JPEG, static BMP/GIF/WebP with the
+  `images` extra, and **PNG** at every bit depth
   and colour type ISO 15948 allows — 1/2/4/8/16 bits, greyscale, truecolour,
   palette and their alpha forms — progressive or **Adam7 interlaced**. Samples
   are normalised to 8 bits by the same rescale as everything else (below;
-  palette indices are looked up rather than scaled) and an alpha channel is
-  dropped.
+  palette indices are looked up rather than scaled), with transparency retained
+  as a soft mask.
   PNG input bytes, dimensions, filtered output, compression ratio, and working
   memory are bounded before large decode allocations. The JPEG encoder has
   optimized Huffman tables and baseline or progressive output; baseline RGB
@@ -7078,11 +7094,11 @@ Boundaries:
 - TIFF import currently rejects alpha, CMYK, floating-point and greater-than-8-bit
   sample data. It does not copy TIFF metadata or ICC profiles, apply color
   management, or run OCR; resulting pages contain raster images.
-- Static WebP/BMP/GIF import is available through `ImagesToPdf`; `Page.add_image`
-  continues to accept JPEG, PNG and explicit raw samples. These new imports do
+- Static WebP/BMP/GIF import is available through `ImagesToPdf`,
+  `Page.add_image()` and `ImageStamp`. These imports do
   not copy source metadata, preserve an animation timeline, apply ICC color
-  management or infer rotation from EXIF. Existing DPI and fixed-page sizing
-  options apply to them. Their compressed payloads are decoded and re-encoded
+  management or infer rotation from EXIF. `ImagesToPdf`'s DPI and fixed-page
+  sizing options apply to these formats. Their compressed payloads are decoded and re-encoded
   for PDF embedding rather than retained as embedded WebP/BMP/GIF files.
 - There is no signing plugin. Signing takes a certificate, a key, a field and an
   appearance, and wrapping that in an options object is a design rather than a
