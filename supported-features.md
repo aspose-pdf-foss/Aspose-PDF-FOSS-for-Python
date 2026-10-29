@@ -6945,7 +6945,32 @@ Supported:
   Each page is cut to its own picture at `dpi` pixels per inch (72 is one point
   per pixel, 300 gives a 300 dpi scan its physical size), or, with `page_size=`,
   the image is centred inside that sheet and scaled down to fit within `margin`
-  points. `dpi` defaults to 72 and overrides source resolution metadata.
+  points. A numeric `dpi` defaults to 72 and overrides source resolution metadata.
+  `ImagesToPdfOptions(dpi="auto")` instead reads each image's physical resolution,
+  retaining separate X/Y values. JPEG uses valid primary-image EXIF X/YResolution
+  before JFIF density; PNG uses `pHYs` before the first `IDAT`; Windows BMP
+  headers use pixels per metre; static WebP uses EXIF resolution. Each TIFF
+  frame uses its own X/YResolution and ResolutionUnit. Inches and centimetres
+  are converted to DPI, and pixels per metre use a factor of 0.0254.
+  - The whole pair falls back to 72 DPI if either axis is missing, nonpositive
+    or nonfinite, a rational denominator is zero, or units specify only an
+    aspect ratio or are unknown. JPEG tries JFIF when EXIF has no usable pair.
+    Missing EXIF/TIFF ResolutionUnit is treated as inches when both axes exist.
+    GIF and BMP headers without supported absolute density use the fallback.
+    Relative pixel aspect ratios do not specify a physical page size.
+  - Image-sized pages and fixed-page fitting use these physical dimensions.
+    JPEG EXIF rotation remains controlled by `auto_orient`; orientations 5–8
+    exchange the physical axes after applying the source X/Y DPI. TIFF axes
+    follow its already-applied orientation. This also works with separate
+    output documents and mixed-resolution, multi-frame inputs.
+  - Metadata inspection stays bounded by `PdfLoadLimits` and does not require
+    Pillow for JPEG/PNG. WebP accepts classic TIFF EXIF data with or without
+    the `Exif` prefix. Malformed EXIF offsets or tag types, invalid PNG/WebP chunk bounds,
+    duplicate EXIF resolution tags, duplicate PNG/WebP metadata chunks and
+    an invalid PNG `pHYs` CRC raise
+    `PdfValidationException` before configured outputs are written. Invalid
+    numeric densities use the fallback described above. JPEG image data stays
+    compressed and unchanged.
   `ImagesToPdfOptions(auto_orient=True)` applies JPEG EXIF Orientation values
   1–8, including mirrored orientations, using PDF placement transforms.
   Orientations 5–8 swap the image's width and height before image-sized page
@@ -7054,6 +7079,18 @@ from aspose_pdf.lowcode import FileDataSource, ImagesToPdf, ImagesToPdfOptions
 options = ImagesToPdfOptions(auto_orient=True)
 options.add_input(FileDataSource("photo.jpg"))
 options.add_output(FileDataSource("photo.pdf"))
+ImagesToPdf().process(options)
+```
+
+Keep the physical sizes of scans with different source resolutions:
+
+```python
+from aspose_pdf.lowcode import FileDataSource, ImagesToPdf, ImagesToPdfOptions
+
+options = ImagesToPdfOptions(dpi="auto", auto_orient=True)
+options.add_input(FileDataSource("scans.tiff"))
+options.add_input(FileDataSource("photo.jpg"))
+options.add_output(FileDataSource("scans-and-photo.pdf"))
 ImagesToPdf().process(options)
 ```
 

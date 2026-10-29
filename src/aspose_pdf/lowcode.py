@@ -32,7 +32,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from contextlib import closing, nullcontext
 from enum import Enum
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Literal
 
 from aspose_pdf.document import Document
 from aspose_pdf.engine.file_output import write_file_atomically
@@ -938,7 +938,10 @@ class ImagesToPdfOptions(PluginOptions):
     one file per image. Each TIFF frame counts as one image. TIFF and static
     WebP/BMP/GIF inputs require the optional ``images`` extra; WebP also needs
     Pillow's WebP codec. Animated GIF/WebP inputs are refused.
-    ``dpi`` overrides source resolution metadata.
+    A numeric ``dpi`` overrides source resolution metadata. ``dpi="auto"``
+    uses each image/frame's absolute X/Y resolution, falling back to 72 DPI
+    when no usable pair exists. Inch/cm units and PNG/BMP pixels per metre
+    are supported. JPEG EXIF takes priority over JFIF; GIF uses the fallback.
     ``auto_orient=True`` applies all eight JPEG EXIF orientations, including
     reflections, when placing the original JPEG bytes without recompression.
     The default is ``False``. It affects JPEG only; TIFF already applies its
@@ -950,7 +953,7 @@ class ImagesToPdfOptions(PluginOptions):
         self,
         *,
         page_size: Any = None,
-        dpi: float = 72.0,
+        dpi: float | Literal["auto"] = 72.0,
         margin: float = 0.0,
         single_document: bool = True,
         auto_orient: bool = False,
@@ -1211,7 +1214,11 @@ class ImagesToPdf(PdfPlugin):
         self._require_inputs(options)
         from aspose_pdf.engine.content_authoring import image_pixel_size
         from aspose_pdf.engine.image_import import pillow_image_format, static_image
-        from aspose_pdf.engine.jpeg_orientation import jpeg_orientation
+        from aspose_pdf.engine.image_import_resolution import (
+            DEFAULT_RESOLUTION,
+            image_resolution,
+        )
+        from aspose_pdf.engine.jpeg_orientation import jpeg_metadata
         from aspose_pdf.engine.tiff_import import is_tiff, tiff_frames
 
         limits = _coerce_limits(getattr(options, "limits", None))
@@ -1220,8 +1227,10 @@ class ImagesToPdf(PdfPlugin):
             raise PdfValidationException("auto_orient must be a boolean")
         # Read, then checked: ``value or default`` would turn a dpi of 0 into the
         # default instead of refusing it.
+        dpi_option = getattr(options, "dpi", 72.0)
+        auto_resolution = isinstance(dpi_option, str) and dpi_option == "auto"
         try:
-            dpi = float(getattr(options, "dpi", 72.0))
+            dpi = 72.0 if auto_resolution else float(dpi_option)
             margin = float(getattr(options, "margin", 0.0))
         except (TypeError, ValueError):
             raise AsposePdfException("dpi and margin must be numbers") from None
@@ -1239,30 +1248,43 @@ class ImagesToPdf(PdfPlugin):
         try:
             for source in options.inputs:
                 data = _read_source_bytes(source, limits)
-                orientation = jpeg_orientation(data, budget) if auto_orient else 1
+                orientation = 1
+                resolution = DEFAULT_RESOLUTION
+                if data.startswith(b"\xff\xd8") and (auto_orient or auto_resolution):
+                    orientation, metadata_resolution = jpeg_metadata(
+                        data, budget, read_orientation=auto_orient,
+                        read_resolution=auto_resolution,
+                    )
+                    resolution = metadata_resolution or DEFAULT_RESOLUTION
+                elif auto_resolution and not is_tiff(data):
+                    resolution = image_resolution(data, budget)
                 if is_tiff(data):
-                    frames = tiff_frames(data, budget, preceding_pages=page_count)
+                    frames = tiff_frames(
+                        data, budget, preceding_pages=page_count,
+                        read_resolution=auto_resolution,
+                    )
                     frame_context = closing(frames)
                 elif pillow_image_format(data) is not None:
                     frames = iter(
-                        (static_image(data, budget, preceding_pages=page_count),)
+                        ((*static_image(data, budget, preceding_pages=page_count), resolution),)
                     )
                     frame_context = nullcontext(frames)
                 else:
                     pixel_width, pixel_height = image_pixel_size(data)
-                    frames = iter(((data, pixel_width, pixel_height),))
+                    frames = iter(((data, pixel_width, pixel_height, resolution),))
                     frame_context = nullcontext(frames)
                 with frame_context as images:
-                    for image_data, pixel_width, pixel_height in images:
+                    for image_data, pixel_width, pixel_height, source_resolution in images:
                         page_count += 1
                         budget.check_pages(page_count)
                         if document is None:
                             document = Document(limits=limits)
+                        x_dpi, y_dpi = source_resolution if auto_resolution else (dpi, dpi)
                         self._place(
                             document,
                             image_data,
-                            pixel_width * 72.0 / dpi,
-                            pixel_height * 72.0 / dpi,
+                            pixel_width * 72.0 / x_dpi,
+                            pixel_height * 72.0 / y_dpi,
                             requested,
                             margin,
                             orientation,

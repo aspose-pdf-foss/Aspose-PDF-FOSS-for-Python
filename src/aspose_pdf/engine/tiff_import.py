@@ -14,6 +14,7 @@ from aspose_pdf.exceptions import (
 from aspose_pdf.load_limits import _LoadBudget
 
 from .image_export import write_png
+from .image_import_resolution import DEFAULT_RESOLUTION, resolution_pair
 
 _TIFF_MAGIC = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
 
@@ -24,13 +25,19 @@ def is_tiff(data: bytes) -> bool:
 
 
 def tiff_frames(
-    data: bytes, budget: _LoadBudget, *, preceding_pages: int = 0
-) -> Iterator[tuple[bytes, int, int]]:
+    data: bytes,
+    budget: _LoadBudget,
+    *,
+    preceding_pages: int = 0,
+    read_resolution: bool = False,
+) -> Iterator[tuple[bytes, int, int, tuple[float, float]]]:
     """Yield lossless PNG frames, checking allocations before decoding pixels.
 
     Pillow is needed only for TIFF. Bilevel and palette images are expanded to
     eight-bit grayscale and RGB respectively; other supported modes are L/RGB.
     The caller places each yielded frame before requesting the next one.
+    The final tuple item is the oriented X/Y DPI pair, or 72 DPI when metadata
+    is not requested or cannot specify an absolute physical size.
     """
     try:
         from PIL import Image
@@ -72,6 +79,18 @@ def tiff_frames(
                             "supported modes are bilevel, 8-bit grayscale, RGB and palette."
                         )
                     width, height = image.size
+                    resolution = DEFAULT_RESOLUTION
+                    if read_resolution:
+                        resolution = (
+                            resolution_pair(
+                                image.tag_v2.get(282),
+                                image.tag_v2.get(283),
+                                image.tag_v2.get(296, 2),
+                            )
+                            or DEFAULT_RESOLUTION
+                        )
+                        if image.tag_v2.get(274, 1) in (5, 6, 7, 8):
+                            resolution = resolution[::-1]
                     if width <= 0 or height <= 0:
                         raise PdfValidationException(
                             "TIFF dimensions must be positive."
@@ -110,7 +129,7 @@ def tiff_frames(
                         )
                     encoded = write_png(width, height, target, samples)
                     del samples
-                    yield encoded, width, height
+                    yield encoded, width, height, resolution
                     del encoded
                     if not next_offset:
                         return
