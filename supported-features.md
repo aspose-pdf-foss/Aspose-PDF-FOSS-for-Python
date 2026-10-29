@@ -5203,6 +5203,63 @@ Supported:
     embedded assets and unlisted/custom properties are excluded. It does not
     extract the page text under a highlight, render annotations, or change the
     source document.
+- **Export annotation review reports as CSV.**
+  `Document.export_annotations_csv(destination=None, pages=None, subtypes=None,
+  delimiter=",", encoding="utf-8", overwrite=True)` returns CSV bytes with
+  a header and one row per annotation occurrence. A single-page report is
+  available as `Page.annotations.export_csv(...)`, with the same formatting,
+  subtype filters and output options. No optional dependency is required.
+  - Columns, in order: `page_number`, `annotation_index`, `id`, `subtype`,
+    `author`, `subject`, `contents`, `created`, `modified`, `in_reply_to`,
+    `popup`, `parent`. **Page numbers are one-based** for review in a spreadsheet;
+    `annotation_index` retains the original zero-based `/Annots` position.
+    A page report keeps that page's number in the source PDF. `pages` input
+    remains zero-based and follows JSON export: selection order is retained,
+    repeated pages are included once, and annotation order is unchanged.
+  - Subtype selection matches JSON: strings, `AnnotationType` values or iterables
+    of either, optional leading `/`, and case-sensitive matching. By default
+    all annotation types are included, including popups, widgets and unknown
+    types. Widget `/T` can be a field name rather than a reviewer name; field
+    values are excluded. Empty selections and documents yield a header-only CSV.
+  - `subject` reads `/Subj`, `created` reads `/CreationDate`, and `modified`
+    reads `/M`. Date strings keep their original spelling and time zones;
+    missing/null optional values become empty cells. Unicode, literal quotes,
+    delimiters and embedded CR/LF text are preserved through standard CSV
+    quoting. Records end in CRLF. Snapshot IDs and reference columns match JSON
+    export: replies and popups can refer to annotations outside the selected
+    rows. IDs may change after a PDF rewrite and are not persistent review IDs.
+  - UTF-8 is the default; `encoding="utf-8-sig"` emits one BOM for spreadsheet
+    applications, with UTF-16 and other supported text encodings also available.
+    The delimiter is one character other than quote, CR, LF or NUL; semicolon
+    and tab are supported. Values are exported as stored, without changing
+    numeric-looking or formula-like text or converting dates into Excel dates.
+  - The export reads only common annotation metadata, reply/popup references
+    and the three report properties above. Unused style/geometry properties,
+    rich text, appearances, actions, embedded assets and form values are not
+    exported; page content and asset streams are not decoded. Base annotation
+    dictionaries and rectangles are validated by the shared metadata reader.
+    Streaming and password-protected PDFs are supported. The source is unchanged.
+  - Selections, metadata traversal, column counts, cell text, quoted record
+    lengths and encoded output obey `PdfLoadLimits`. Annotation snapshots are
+    consumed one at a time; output limits stop iteration before reading more
+    records. The finished CSV bytes are prepared in memory before any write.
+    Invalid inputs, encoding failures and resource errors write no output.
+    File replacement is atomic, with parent folders created as needed;
+    `overwrite=False` refuses existing files. Binary streams receive data at
+    their current position, retry short writes and remain open; an I/O failure
+    can leave a stream prefix. This is a report rather than an annotation import
+    format: styling, full geometry and assets cannot be restored from its rows.
+
+  ```python
+  with Document("reviewed.pdf") as document:
+      document.export_annotations_csv(
+          "review.csv",
+          subtypes=["Text", "Highlight", "FreeText"],
+          delimiter=";",
+          encoding="utf-8-sig",
+      )
+  ```
+
 - **Export review annotations as XFDF.**
   `Document.export_annotations_xfdf(destination=None, pages=None, subtypes=None,
   overwrite=True)` returns UTF-8 XML bytes and optionally writes the same bytes.

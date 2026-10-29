@@ -2381,6 +2381,54 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    def export_annotations_csv(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        subtypes: str | Iterable[str] | None = None,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return a CSV review report with one row per selected annotation.
+
+        Filters and snapshot IDs match :meth:`export_annotations_json`,
+        including popups/widgets by default. Columns are ``page_number``
+        (one-based), ``annotation_index`` (zero-based), ``id``, ``subtype``,
+        ``author``, ``subject``, ``contents``, ``created``, ``modified``,
+        ``in_reply_to``, ``popup`` and ``parent``. Dates retain their stored
+        PDF spelling; absent text and references become empty cells. Reply
+        and popup references keep source IDs even outside the selected rows.
+
+        Empty selections produce a header-only report. CSV quoting preserves
+        Unicode, double quotes, delimiters and embedded newlines, with CRLF
+        records. ``encoding="utf-8-sig"`` adds a spreadsheet BOM; semicolon,
+        tab and other valid single-character delimiters are supported.
+
+        Metadata, cell text and encoded output obey resource limits. Page
+        content, appearance streams, field values and embedded assets are not
+        decoded or exported. All CSV is prepared before writing. Paths are
+        replaced atomically, creating parent folders; ``overwrite=False``
+        refuses existing files. Binary streams receive bytes at their current
+        position with short-write handling and remain open. The PDF is unchanged.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.annotation_csv import export
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = export(self, pages, subtypes, delimiter=delimiter, encoding=encoding)
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def export_annotations_xfdf(
         self,
         destination: str | Path | BinaryIO | None = None,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import codecs
-import csv
 import json
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -11,26 +9,8 @@ from typing import Any
 from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.load_limits import _LoadBudget
 
+from .csv_export import CsvWriter
 from .form_csv import _text
-
-
-class _Output:
-    def __init__(self, encoding: str, budget: _LoadBudget):
-        self.encoder = codecs.getincrementalencoder(encoding)(errors="strict")
-        self.budget = budget
-        self.data = bytearray()
-
-    def append(self, text: str, *, final: bool = False) -> None:
-        data = self.encoder.encode(text, final=final)
-        size = len(self.data) + len(data)
-        self.budget.check(size, "max_decoded_stream_bytes", "CSV form output bytes")
-        self.budget.check(size, "max_total_decoded_bytes", "CSV form output bytes")
-        self.data.extend(data)
-
-    def write(self, text: str) -> int:
-        for offset in range(0, len(text), 65536):
-            self.append(text[offset : offset + 65536])
-        return len(text)
 
 
 def _cell(value: Any, budget: _LoadBudget) -> str:
@@ -70,22 +50,7 @@ def to_csv(
     budget: _LoadBudget,
 ) -> bytes:
     """Encode one header and one record, keeping column and form value order."""
-    if not isinstance(encoding, str):
-        raise TypeError("encoding must be a string")
-    try:
-        "".encode(encoding)
-        output = _Output(encoding, budget)
-    except (LookupError, UnicodeError, ValueError, TypeError) as exc:
-        raise PdfValidationException(
-            "encoding must name a supported text encoding"
-        ) from exc
-    if not isinstance(delimiter, str):
-        raise TypeError("delimiter must be a string")
-    if len(delimiter) != 1 or delimiter in '\r\n"\x00':
-        raise PdfValidationException(
-            "delimiter must be one character other than a quote, newline or NUL"
-        )
-    _text(delimiter, budget, "CSV delimiter")
+    writer = CsvWriter(delimiter, encoding, budget, context="CSV form")
     if fields is None:
         selected = values
     else:
@@ -108,24 +73,6 @@ def to_csv(
 
     header = list(selected)
     row = [_cell(value, budget) for value in selected.values()]
-    total = 0
-    writer = csv.writer(output, delimiter=delimiter, lineterminator="\r\n")
-    try:
-        for record in (header, row):
-            characters = len(record) - 1 + 2
-            for value in record:
-                total += _text(value, budget, "CSV cell")
-                budget.check(total, "max_total_decoded_bytes", "CSV form cell text")
-                quoted = any(char in value for char in (delimiter, '"', "\r", "\n"))
-                quoted = quoted or (len(record) == 1 and not value)
-                characters += len(value) + value.count('"') + 2 * quoted
-                budget.check(
-                    characters, "max_decoded_stream_bytes", "CSV record characters"
-                )
-            writer.writerow(record)
-        output.append("", final=True)
-    except (UnicodeError, LookupError, ValueError, TypeError, csv.Error) as exc:
-        raise PdfValidationException(
-            f"Form values cannot be encoded as CSV using {encoding!r}"
-        ) from exc
-    return bytes(output.data)
+    writer.writerow(header)
+    writer.writerow(row)
+    return writer.finish()

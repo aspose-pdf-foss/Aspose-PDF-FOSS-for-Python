@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from aspose_pdf.engine.cos import (
@@ -190,21 +190,21 @@ class _Reader:
         return self.value(raw)
 
 
-def records(
+def iter_records(
     pdf: Any,
     pages: Iterable[int] | None,
     subtypes: Any,
     *,
     property_names: tuple[str, ...] = _PROPERTIES,
-) -> list[dict[str, Any]]:
-    """Snapshot selected annotations without traversing appearances or page content."""
+) -> Iterator[dict[str, Any]]:
+    """Yield annotation snapshots without traversing appearances or page content."""
     budget = _LoadBudget(pdf._load_limits)
     selected = _pages(pages, pdf.page_count, budget)
     wanted = _subtypes(subtypes, budget)
     if wanted == set():
-        return []
+        return
     reader = _Reader(pdf, budget)
-    result: list[dict[str, Any]] = []
+    record_count = 0
     for page_index in selected:
         page = pdf._get_page_dict(page_index)
         if not isinstance(page, PdfDictionary):
@@ -274,25 +274,34 @@ def records(
                     if target is not None
                     else None
                 )
-            result.append(
-                {
-                    "id": _object_id(ref)
-                    if isinstance(ref, PdfIndirectReference)
-                    else direct_ids[id(obj)],
-                    "page_index": page_index,
-                    "annotation_index": index,
-                    "subtype": subtype_name,
-                    "rect": rect,
-                    "contents": reader.text(obj, "Contents"),
-                    "author": reader.text(obj, "T"),
-                    "properties": properties,
-                    "links": links,
-                }
-            )
+            record_count += 1
             budget.check(
-                len(result), "max_container_items", "annotation export records"
+                record_count, "max_container_items", "annotation export records"
             )
-    return result
+            yield {
+                "id": _object_id(ref)
+                if isinstance(ref, PdfIndirectReference)
+                else direct_ids[id(obj)],
+                "page_index": page_index,
+                "annotation_index": index,
+                "subtype": subtype_name,
+                "rect": rect,
+                "contents": reader.text(obj, "Contents"),
+                "author": reader.text(obj, "T"),
+                "properties": properties,
+                "links": links,
+            }
+
+
+def records(
+    pdf: Any,
+    pages: Iterable[int] | None,
+    subtypes: Any,
+    *,
+    property_names: tuple[str, ...] = _PROPERTIES,
+) -> list[dict[str, Any]]:
+    """Snapshot selected annotations without traversing appearances or page content."""
+    return list(iter_records(pdf, pages, subtypes, property_names=property_names))
 
 
 def to_json(annotations: list[dict[str, Any]]) -> bytes:

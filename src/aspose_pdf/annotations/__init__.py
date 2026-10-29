@@ -1027,6 +1027,29 @@ class AnnotationCollection:
             overwrite=overwrite,
         )
 
+    def export_csv(
+        self,
+        destination: Any = None,
+        *,
+        subtypes: str | Iterable[str] | None = None,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export this page's annotation review report as CSV.
+
+        Options and columns match :meth:`Document.export_annotations_csv`.
+        Page numbers retain their one-based position in the source document.
+        """
+        return self._page._document.export_annotations_csv(
+            destination,
+            pages=[self._page.index],
+            subtypes=subtypes,
+            delimiter=delimiter,
+            encoding=encoding,
+            overwrite=overwrite,
+        )
+
     def export_xfdf(
         self,
         destination: Any = None,
