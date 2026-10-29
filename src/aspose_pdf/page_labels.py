@@ -165,5 +165,28 @@ class PageLabelCollection(MutableMapping[int, PageLabel]):
         """The label of page *page_index*, or ``None`` when the document has none."""
         return self._engine().page_label(self._page_index(page_index))
 
+    def find_pages(self, label: str) -> list[int]:
+        """Return all zero-based page indices whose label exactly equals *label*.
+
+        Results follow page order and include duplicates across restarted or
+        prefix-only ranges. Matching is case-sensitive and keeps whitespace
+        and Unicode unchanged. Empty strings match empty labels. No match, an
+        empty document or absent page labels returns ``[]``; viewer fallback
+        page positions are not labels. An existing empty tree still supplies
+        the default decimal labels, just as :meth:`label` does.
+
+        Only current label metadata is inspected, including unsaved edits;
+        page content is not decoded or rendered. Results are independent lists.
+        Document page/tree limits, UTF-8 query size, comparison work and result
+        counts obey :class:`~aspose_pdf.PdfLoadLimits`. Invalid Unicode queries
+        and resource-limit failures raise without returning partial results.
+        """
+        engine = self._engine()
+        if not isinstance(label, str):
+            raise TypeError("label must be a string")
+        return engine_labels.find_pages(
+            engine.page_label_ranges(), len(engine.pages), label, engine._load_budget
+        )
+
     def __repr__(self) -> str:
         return f"PageLabelCollection({dict(self.items())!r})"

@@ -29,6 +29,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf.load_limits import _LoadBudget
+
 from .cos import (
     PdfArray,
     PdfDictionary,
@@ -42,6 +45,7 @@ from .cos import (
 __all__ = [
     "NO_LABEL",
     "LabelRange",
+    "find_pages",
     "format_label",
     "label_at",
     "label_values",
@@ -226,6 +230,92 @@ def label_at(ranges: list[tuple[int, LabelRange]], page: int) -> str:
         return format_label(_DEFAULT, page + 1)
     key, label = covering
     return format_label(label, label.start + page - key)
+
+
+def find_pages(
+    ranges: list[tuple[int, LabelRange]] | None,
+    count: int,
+    text: str,
+    budget: _LoadBudget,
+) -> list[int]:
+    """Find exact labels by range without expanding every page's label text."""
+    budget.check_pages(count)
+    budget.check(len(text), "max_object_bytes", "page label query bytes")
+    size = 0
+    try:
+        for offset in range(0, len(text), 16384):
+            size += len(text[offset : offset + 16384].encode("utf-8"))
+            budget.check(size, "max_object_bytes", "page label query bytes")
+    except UnicodeError as exc:
+        raise PdfValidationException("label must contain valid Unicode") from exc
+    if ranges is None or count == 0:
+        return []
+    budget.check(len(ranges), "max_container_items", "page label search ranges")
+    result: list[int] = []
+    work = 0
+
+    def collect(first: int, stop: int, key: int, label: LabelRange) -> None:
+        nonlocal work
+        work += len(text) + len(label.prefix)
+        budget.check(work, "max_codec_work_bytes", "page label search comparisons")
+        if not text.startswith(label.prefix):
+            return
+        suffix = text[len(label.prefix):]
+        low = label.start + first - key
+        high = label.start + stop - 1 - key
+        if label.style not in STYLES:
+            matches = range(first, stop) if not suffix else range(0)
+        elif label.style != "D" and not suffix:
+            matches = range(first, min(stop, first + max(0, 1 - low)))
+        else:
+            number = _number_for_text(label.style, suffix, low, high)
+            matches = () if number is None else (first + number - low,)
+        budget.check(len(result) + len(matches), "max_container_items", "page label matches")
+        result.extend(matches)
+
+    first = key = 0
+    label = _DEFAULT
+    for next_key, next_label in ranges:
+        stop = min(max(next_key, 0), count)
+        if stop > first:
+            collect(first, stop, key, label)
+        if next_key >= count:
+            return result
+        first, key, label = stop, next_key, next_label
+    if first < count:
+        collect(first, count, key, label)
+    return result
+
+
+def _number_for_text(style: str, text: str, low: int, high: int) -> int | None:
+    """Invert a candidate, then use the existing formatter to require canonical text."""
+    if not text:
+        return None
+    if style == "D":
+        if len(text) > max(len(str(low)), len(str(high))):
+            return None
+        try:
+            number = int(text)
+        except ValueError:
+            return None
+    elif style in ("R", "r"):
+        values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+        number = previous = 0
+        for character in reversed(text.upper()):
+            value = values.get(character)
+            if value is None:
+                return None
+            number += -value if value < previous else value
+            previous = max(previous, value)
+    else:
+        first = "A" if style == "A" else "a"
+        index = ord(text[0]) - ord(first)
+        if not 0 <= index < 26 or any(character != text[0] for character in text):
+            return None
+        number = (len(text) - 1) * 26 + index + 1
+    if not low <= number <= high:
+        return None
+    return number if format_label(LabelRange(style=style), number) == text else None
 
 
 def label_values(ranges: list[tuple[int, LabelRange]], count: int) -> list[LabelValue]:

@@ -1629,6 +1629,36 @@ Supported:
   merged or extracted from other documents keep the labels they had there, and
   pages from a document without labels get empty ones, exactly as qpdf's
   `--pages` does. Every case was compared page by page with the references.
+- **Find pages by their label.** `Document.page_labels.find_pages(label)`
+  returns every matching zero-based page index, in document order. It supports
+  Roman, decimal and repeated-letter numbering, Unicode prefixes, restarted
+  numbering and prefix-only ranges. Identical labels can identify several
+  pages, including when different prefix/number combinations produce the same
+  text. Matching is exact and case-sensitive, without trimming whitespace or
+  normalizing Unicode. `""` matches empty labels; no match, an empty document
+  or absent `/PageLabels` returns `[]`. An existing empty label tree and pages
+  before the first range retain the same default decimal labels as `Page.label`.
+  - Lookup reads the current label tree once, including unsaved range edits
+    and page insertions/deletions. It uses metadata only, without reading text,
+    decoding page streams or rendering. Streaming and password-protected PDFs
+    are supported, and the source PDF, page order, text cache and text cursor
+    stay unchanged. Returned lists are independent of later source edits.
+  - Ranges are matched without generating a label string for every page;
+    large initial Roman or letter numbers do not allocate enormous irrelevant
+    strings. The query must be a string with valid Unicode. `PdfLoadLimits`
+    bounds page/tree sizes, UTF-8 query bytes, comparison work and returned
+    indices. Failures return no partial result. Number formatting and malformed
+    tree conventions match the existing label reader described above.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("book.pdf") as document:
+      indices = document.page_labels.find_pages("A-12")
+      if indices:
+          with document.extract_pages(indices) as selected:
+              selected.save("appendix-pages.pdf")
+  ```
 - **How the document asks to be opened and shown** (ISO 32000-1 tables 28 and
   150). `Document.page_mode` (`PageMode`: the bookmarks, thumbnails, layers or
   attachments panel, full screen, or nothing), `Document.page_layout`
