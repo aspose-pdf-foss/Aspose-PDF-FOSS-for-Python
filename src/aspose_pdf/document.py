@@ -4757,6 +4757,62 @@ class Document:
             include_annotations=include_annotations,
         )
 
+    def auto_crop(
+        self,
+        margin: float = 0.0,
+        *,
+        pages: Iterable[int] | None = None,
+        uniform: bool = False,
+        dpi: float = 72.0,
+        white_threshold: int = 250,
+        include_annotations: bool = True,
+        dry_run: bool = False,
+    ) -> dict[int, tuple[float, float, float, float]]:
+        """Trim selected pages individually or apply one shared visible frame.
+
+        Return changed CropBoxes as detached ``(x0, y0, x1, y1)`` tuples keyed
+        by original zero-based page index, in first-selected order. ``None``
+        selects all pages; repeated indices count once. Empty documents,
+        selections or plans return ``{}``. ``dry_run=True`` returns the same
+        plan without writing any page boxes.
+
+        By default each page follows :meth:`Page.auto_crop
+        <aspose_pdf.pages.Page.auto_crop>`, with blank-looking and full-bleed
+        pages left unchanged. ``uniform=True`` unions all detected ink bounds
+        in displayed coordinates and applies that frame to every selected page,
+        including blank ones. It requires exactly equal displayed CropBox
+        dimensions in page user units, after rotation. Origins and rotations
+        may differ. An entirely blank selection is left unchanged.
+
+        All options, selections, page geometry and crop results are validated
+        before any box is written. A failed render, parse or resource limit
+        leaves all CropBoxes intact. Rendering follows get_content_bounds():
+        white paper, no antialiasing, optional visible annotations and the
+        current rotation, layers and font substitution. Finite nonnegative
+        ``margin`` adds padding, clamped to each page's current visible box.
+        ``uniform`` and ``dry_run`` must be booleans.
+
+        Pages render one at a time; streaming inputs read selected page content
+        only. MediaBox, explicit production boxes, content, object coordinates,
+        annotations and form values are preserved. Changes reach files only
+        on explicit save. Cropping is a finite-resolution visual heuristic:
+        tiny or faint marks can be missed, and scan borders count as content.
+        Cropped-out data remains stored; this operation is not redaction.
+        """
+        from aspose_pdf.engine.auto_crop import auto_crop_document
+
+        self._ensure_not_disposed()
+        return auto_crop_document(
+            self,
+            margin,
+            pages=pages,
+            uniform=uniform,
+            dpi=dpi,
+            white_threshold=white_threshold,
+            include_annotations=include_annotations,
+            dry_run=dry_run,
+        )
+
     def find_blank_pages(
         self,
         *,

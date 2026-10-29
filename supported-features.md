@@ -1582,6 +1582,46 @@ Supported:
     normalization or deskewing. Cropping changes visibility, **not stored
     content**: hidden text, annotations, images and other cropped-out data
     remain in the PDF. It is not redaction.
+- **Trim a document or page selection with one planned operation.**
+  `Document.auto_crop(margin=0, pages=None, uniform=False, dpi=72,
+  white_threshold=250, include_annotations=True, dry_run=False)` returns a
+  dictionary of changed CropBoxes, keyed by original zero-based page index in
+  first-selected order. Each value is an unrotated `(x0, y0, x1, y1)` tuple in
+  page user units. Repeated indices count once; `None` selects all pages.
+  Empty inputs and plans return `{}`. The returned dictionary is detached.
+  - The default mode trims each page independently, leaving visually blank
+    pages unchanged and supporting different page formats. `uniform=True`
+    unions detected ink bounds in displayed coordinates, then applies that
+    shared frame to every selected page, including blank ones. This keeps
+    repeated scans and reports at consistent visible sizes without clipping
+    content to the intersection of different pages' ink. Entirely blank
+    selections and a union spanning the full visible canvas are left unchanged.
+  - Uniform cropping requires exactly equal displayed CropBox dimensions in
+    page user units, after rotation. Origins and rotations may differ: the
+    shared frame is mapped back to each page's coordinates. Incompatible
+    formats raise `PdfValidationException` before rendering. There is no
+    rescaling or UserUnit normalization. Use individual mode for mixed formats.
+  - All options, indices and geometry are validated and all selected pages
+    are rendered before any CropBox is written. Rendering, parsing, resource
+    limits or crop-calculation failures leave every CropBox intact.
+    `dry_run=True` returns the same plan without changing page boxes.
+    `uniform` and `dry_run` must be actual booleans. Margin, DPI, threshold,
+    annotation visibility and visual-heuristic limitations follow `Page.auto_crop`.
+    Padding is clamped to existing visible boxes, never revealing hidden edges.
+  - At most one completed page raster is retained at a time. Streaming and
+    encrypted inputs are supported, reading selected page content only without
+    filling all-page content caches. Only changed CropBoxes receive local
+    overrides; inherited boxes, unselected pages, MediaBox, explicit production
+    boxes, content, annotations, form values, metadata and navigation retain
+    their data. Files change only on explicit save. Cropped-out data remains
+    stored in the PDF; this operation is not redaction.
+
+  ```python
+  with Document("scans.pdf") as document:
+      planned = document.auto_crop(margin=6, uniform=True, dry_run=True)
+      changed = document.auto_crop(margin=6, uniform=True)
+      document.save("trimmed.pdf")
+  ```
 - **Resize a page and take its drawing with it.** Setting `Page.size` changes
   the **sheet** and leaves the drawing where it was, so a smaller sheet crops it
   and a larger one pads it -- right for trimming a page, wrong for every other

@@ -1462,8 +1462,7 @@ Remove excess white space around scanned or drawn content:
 from aspose_pdf import Document
 
 with Document("scans.pdf") as document:
-    for page in document.pages:
-        page.auto_crop(margin=6, dpi=96)
+    changed = document.auto_crop(margin=6, dpi=96)
     document.save("trimmed.pdf")
 ```
 
@@ -1472,6 +1471,13 @@ page rotation and visible annotations; blank-looking pages stay unchanged.
 Only CropBox changes: cropped-out content remains stored in the PDF.
 Detection is approximate at the chosen DPI; dark scan borders and speckles
 count as content. See [cropping details](supported-features.md#pages).
+
+Use `pages=[0, 2]` to crop a subset or `dry_run=True` to preview the returned
+dictionary of changed page indices and crop rectangles. `uniform=True` applies
+one frame enclosing all selected content to every selected page, including blank
+ones, for consistent sizes. This mode requires equal displayed page dimensions;
+individual cropping supports mixed formats. `Page.auto_crop()` remains available
+for a single page.
 
 ### Apply Resource Limits for Untrusted PDF Input
 
@@ -1898,6 +1904,8 @@ and delete workflows. 275 public types are organized by module below.
     find visually blank pages without modifying the document
   - `get_content_bounds(pages=None, dpi=72, white_threshold=250, include_annotations=True) -> dict[int, tuple[float, float, float, float] | None]` —
     measure visible content per selected page without cropping
+  - `auto_crop(margin=0, pages=None, uniform=False, dpi=72, white_threshold=250, include_annotations=True, dry_run=False) -> dict[int, tuple[float, float, float, float]]` —
+    trim selected pages individually or with one shared frame, with optional preview
   - `find_duplicate_pages(pages=None, dpi=72, include_annotations=True) -> list[list[int]]` —
     group pages with identical rendered views without deleting them
   - `remove_duplicate_pages(pages=None, keep="first", dpi=72, include_annotations=True, dry_run=False) -> list[int]` —

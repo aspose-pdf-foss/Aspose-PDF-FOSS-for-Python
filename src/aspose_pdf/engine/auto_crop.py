@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from aspose_pdf.exceptions import PdfValidationException
@@ -10,6 +11,7 @@ from aspose_pdf.exceptions import PdfValidationException
 from .blank_pages import _number, _options, _render
 
 if TYPE_CHECKING:
+    from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.pages import Page
 
@@ -99,3 +101,82 @@ def auto_crop(
     result = _page_box(bounds, crop, page.rotation, options.dpi, margin)
     if result != crop:
         page.crop_box = result
+
+
+def auto_crop_document(
+    document: Document,
+    margin: float = 0.0,
+    *,
+    pages: Iterable[int] | None = None,
+    uniform: bool = False,
+    dpi: float = 72.0,
+    white_threshold: int = 250,
+    include_annotations: bool = True,
+    dry_run: bool = False,
+) -> dict[int, tuple[float, float, float, float]]:
+    """Plan every selected CropBox before applying individual or shared crops."""
+    from .rasterizer import _page_view
+    from .text_selection import page_indexes
+
+    margin = _number(margin, "margin")
+    if margin < 0:
+        raise PdfValidationException("margin must be nonnegative")
+    options = _options(dpi, white_threshold, 0.0, include_annotations)
+    if not isinstance(uniform, bool) or not isinstance(dry_run, bool):
+        raise PdfValidationException("uniform and dry_run must be booleans")
+    pdf = document._engine_pdf
+    selection = page_indexes(pages, document.page_count, limits=document.load_limits)
+    selection = range(document.page_count) if selection is None else selection
+    pdf._load_budget.check(len(selection), "max_container_items", "auto-crop selection")
+    pdf._load_budget.check_pages(len(selection))
+    views = {}
+    shared_size = None
+    for index in selection:
+        if index in views:
+            continue
+        _, crop, rotation = _page_view(pdf, index)
+        width, height = crop[2] - crop[0], crop[3] - crop[1]
+        if not all(math.isfinite(v) and v > 0 for v in (width, height)):
+            raise PdfValidationException("Invalid page dimensions for auto-crop")
+        size = (height, width) if rotation in (90, 270) else (width, height)
+        if uniform and shared_size is not None and size != shared_size:
+            raise PdfValidationException(
+                "uniform cropping requires equal displayed page dimensions"
+            )
+        shared_size = size
+        views[index] = crop, rotation
+
+    planned = {}
+    shared_bounds = None
+    canvas = None
+    for index, (crop, rotation) in views.items():
+        raster = _render(document.pages[index], options)
+        bounds = _ink_bounds(raster, options.white_threshold)
+        canvas = (0, 0, raster.width, raster.height)
+        # Keep only small geometry tuples between renders, never page rasters.
+        del raster
+        if bounds is None:
+            continue
+        if uniform:
+            if shared_bounds is None:
+                shared_bounds = bounds
+            else:
+                shared_bounds = (
+                    min(shared_bounds[0], bounds[0]),
+                    min(shared_bounds[1], bounds[1]),
+                    max(shared_bounds[2], bounds[2]),
+                    max(shared_bounds[3], bounds[3]),
+                )
+        elif bounds != canvas:
+            result = _page_box(bounds, crop, rotation, options.dpi, margin)
+            if result != crop:
+                planned[index] = result
+    if uniform and shared_bounds is not None and shared_bounds != canvas:
+        for index, (crop, rotation) in views.items():
+            result = _page_box(shared_bounds, crop, rotation, options.dpi, margin)
+            if result != crop:
+                planned[index] = result
+    if not dry_run:
+        for index, crop in planned.items():
+            document.pages[index].crop_box = crop
+    return planned
