@@ -117,6 +117,8 @@ flowchart TD
 - `Form.to_schema()` and `Form.export_schema()` describe reusable form templates, including
   field types, labels, required/read-only flags, text constraints, choice options and defaults.
   Applications can build filling interfaces and inspect templates without exporting current answers.
+- `Form.to_json_schema()` and `Form.export_json_schema()` describe flat form answers using
+  JSON Schema Draft 2020-12 for standard validators and form-generation integrations.
 - `Document.export_annotations_json()` exports comments, geometry, metadata and reply/popup
   links for review reports and external processing, with page and subtype filters. A page's
   `annotations.to_list()` provides editable snapshots and `annotations.export_json()` writes JSON.
@@ -2031,6 +2033,8 @@ and delete workflows. 275 public types are organized by module below.
     `export_json(destination=None) -> bytes` / `import_json(source, strict=True) -> list[str]`
   - `to_schema() -> dict` / `export_schema(destination=None, overwrite=True) -> bytes` —
     versioned template descriptions with field types, effective constraints, choices and defaults.
+  - `to_json_schema() -> dict` / `export_json_schema(destination=None, overwrite=True) -> bytes` —
+    JSON Schema Draft 2020-12 for normalized flat form answers and standard validation.
   - `reset(fields=None, strict=True) -> list[str]` — restore all or selected fields to template defaults
   - `validate(fields=None, strict=True) -> list[FormValidationIssue]` — inspect stored answers without changing them
   - `export_fdf(destination) -> bytes` / `export_xfdf(destination) -> bytes` /

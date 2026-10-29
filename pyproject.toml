@@ -53,6 +53,7 @@ fuzz = [
 ]
 dev = [
   "build>=1.2",
+  "jsonschema>=4.18",
   "pytest>=8",
   "ruff>=0.6",
   "setuptools>=83",

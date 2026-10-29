@@ -4804,6 +4804,63 @@ with Document("application.pdf") as document:
       document.form.export_schema("application-form-schema.json")
   ```
 
+- **Export standard JSON Schema for form-answer integrations.**
+  `Form.to_json_schema()` returns a detached
+  [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/schema)
+  document. `Form.export_json_schema(destination=None, overwrite=True)` returns
+  the same schema as UTF-8 JSON bytes, optionally writing a path or binary stream.
+  Applications can use standard validators and compatible form generators to
+  check answers and build filling workflows without recreating template rules.
+  - The root describes an object with flat, fully qualified field-name keys,
+    matching normalized `Form.to_dict()` snapshots. Dots and other special
+    characters remain literal names. Unknown properties are rejected with
+    `additionalProperties: false`. Signature fields and push buttons are omitted;
+    read-only and no-export data fields are included. Optional properties may be
+    omitted. This describes a complete answer document, not a partial-update API.
+  - Text is a string, with `maxLength` when declared; optional text also accepts
+    null. Required properties must be present. Required text must contain at
+    least one character outside Python's `str.strip()` whitespace set, expressed
+    as an ECMA-262-compatible character class. Length counts Unicode characters.
+    Checkboxes use booleans; required checkboxes must be true. Radio buttons use
+    on-state strings; required radios reject empty and `Off`, while optional
+    radios accept null or an empty string for no selection. Without readable
+    on-state declarations, no radio enum restriction is inferred.
+  - Single-choice fields use export-value enums, with null allowed when optional.
+    Multiselect lists use arrays of distinct allowed export strings, with
+    `minItems: 1` when required. Editable combos allow custom strings; required
+    custom answers must be nonblank unless the blank string is an explicitly
+    declared export. A declared empty-string choice counts as a selection.
+    Duplicate exports are deduplicated in first-occurrence order. Empty option
+    sets retain their restrictions, including unsatisfiable required choices.
+    Display labels are available separately through `to_schema()`'s inventory.
+  - Titles use alternate field names when present, then fully qualified names.
+    `readOnly` and template `default` values are standard annotations: they do
+    not enforce immutability or fill missing answers. Defaults come from effective
+    `/DV`, even when an existing template's default fails its own constraints.
+    Types, flags, defaults, lengths and choices use the metadata reader's
+    inheritance rules and resource limits. Current answers, signature contents,
+    actions and page/image/appearance streams are not read or exported.
+  - Checkboxes and multiselects use normalized booleans and arrays; the schema
+    does not model all filling aliases, legacy malformed COS representations,
+    JavaScript, XFA or template-specific business rules. Generating a schema does
+    not validate or modify the PDF or change `Form.fill()` behavior.
+    Standard schemas can be consumed externally; the runtime package needs no
+    validator dependency or network access. `jsonschema` is a development-only
+    dependency used to test emitted schemas and representative answer data.
+  - JSON output uses the existing bounded serializer. Metadata or encoding
+    failures occur before output is touched. Files are written atomically,
+    creating parent folders, with overwrite protection when requested. Binary
+    streams support short writes, retain their current-position semantics and
+    stay open. Streaming and encrypted inputs are supported without decoding
+    page content. The older `to_schema()` / `export_schema()` inventory format
+    remains available independently.
+
+  ```python
+  with Document("application-form.pdf") as document:
+      schema = document.form.to_json_schema()
+      document.form.export_json_schema("answers.schema.json")
+  ```
+
 - **Reset a form to its template defaults from Python**: `Form.reset(fields=None,
   strict=True)` restores all data fields from their effective `/DV` values,
   including inherited and indirect defaults, or just an iterable of fully

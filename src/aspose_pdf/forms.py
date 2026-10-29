@@ -1217,6 +1217,66 @@ class Form:
         self._document._ensure_not_disposed()
         return schema(self._document._engine_pdf)
 
+    def to_json_schema(self) -> dict[str, Any]:
+        """Describe normalized flat form answers with JSON Schema Draft 2020-12.
+
+        Property names are fully qualified field names, including literal dots,
+        following :meth:`to_dict`. Signature fields and push buttons are omitted;
+        read-only and no-export data fields are included. Unknown properties are
+        rejected. Required fields must be present and answered: text must contain
+        a non-whitespace character, checkboxes must be true, and multiselects
+        must contain at least one distinct allowed export value. A declared
+        empty-string choice is a valid selection, including in editable combos.
+
+        Text maximum lengths and choice/on-state restrictions use inherited
+        metadata. Optional text and single choices accept None; checkboxes use
+        booleans and multiselects use arrays, matching normalized snapshots.
+        Choice lists use export values, not display labels. Missing readable
+        radio states impose no enum restriction. Editable combos accept custom
+        text. Filling aliases and malformed raw COS values are not modeled.
+
+        Field labels become titles, read-only flags become readOnly annotations,
+        and template defaults become default annotations, even if an existing
+        default fails the constraints. These annotations neither fill nor enforce
+        immutability. Current answers, actions and appearance contents are not
+        read or exported. The result is detached, bounded by the metadata reader's
+        resource limits, and does not modify the PDF or decode page streams.
+
+        This describes local value rules, not JavaScript, XFA or business logic.
+        No validator or network access is required to generate the schema.
+        """
+        from aspose_pdf.engine.form_json_schema import to_json_schema
+
+        return to_json_schema(self.to_schema())
+
+    def export_json_schema(
+        self, destination: Any = None, *, overwrite: bool = True,
+    ) -> bytes:
+        """Return UTF-8 JSON Schema, optionally writing a path or binary stream.
+
+        Uses :meth:`to_json_schema`. Reading and bounded encoding finish before
+        output is touched. Files are written atomically, creating parent folders;
+        overwrite=False refuses existing files. Streams support short writes,
+        are written at their current position and remain open.
+        """
+        from pathlib import Path
+
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.form_schema import to_json
+        from aspose_pdf.engine.stream_output import write_all
+        from aspose_pdf.load_limits import _LoadBudget
+
+        self._document._ensure_not_disposed()
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = to_json(self.to_json_schema(), _LoadBudget(self._document.load_limits))
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def export_schema(self, destination: Any = None, *, overwrite: bool = True) -> bytes:
         """Return UTF-8 schema JSON, optionally writing a path or binary stream.
 
