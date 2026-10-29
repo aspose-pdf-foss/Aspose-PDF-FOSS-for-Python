@@ -3065,6 +3065,52 @@ Supported:
     facade binding and low-code inputs, can still decode other pages before
     extraction starts. Existing font decoding, optional-content visibility,
     damaged-stream recovery and region-extraction limits still apply.
+- **Iterate page text and stream TXT exports.**
+  `Document.iter_text_pages(pages=None, clip=None, skip_artifacts=False,
+  exclude_regions=None)` yields one text string per selected page as the caller
+  advances. Page indices are zero-based, preserving order, repetitions and
+  empty pages. Options are validated and snapshotted when the method is called;
+  page text is read only on demand. Close the iterator to stop early, and keep
+  the source open with its page order unchanged while iterating. Yielded strings
+  remain usable after the source closes.
+  - `Document.save_as_text(destination, pages=None, clip=None,
+    skip_artifacts=False, exclude_regions=None, page_separator="\n",
+    encoding="utf-8", overwrite=True)` streams text to a path or writable binary
+    stream and returns the number of bytes written. The separator appears only
+    between selected occurrences, including empty pages; use `"\f"` for page
+    breaks or `""` for no separator. Encoding is incremental, so BOM encodings
+    produce one BOM. Empty documents and selections write the selected
+    encoding's representation of an empty string.
+  - Extraction follows ordinary page text semantics and supports the same
+    clipping, artifact and exclusion filters. Full-document text caches and
+    the text cursor are preserved. At most the current page's text and small
+    encoding chunks are retained by the export; parser and font working data
+    are additional. Use `Document.open_streaming` to avoid eager input content
+    caches. Streaming and password-protected sources decode only selected page
+    content. No OCR or reading-order reconstruction is added.
+  - Selection counts, page text and cumulative UTF-8 text sizes obey
+    `PdfLoadLimits`; TXT output also bounds encoded page text, separator size
+    and cumulative encoded bytes. A later extraction or limit failure can
+    follow earlier yielded pages. Unknown encodings, binary-to-binary codecs
+    and domain-name codecs (IDNA/Punycode) are rejected; output streams must
+    be binary.
+  - File exports create parent directories and stage output beside the target,
+    replacing it only after extraction, encoding and writing succeed. Failures
+    preserve existing files and remove staging files. `overwrite=False`
+    refuses an existing path before reading text. Caller streams stay open,
+    start at their current position and retry short writes; a later failure
+    can leave a written prefix. Source PDF content is unchanged.
+
+  ```python
+  from contextlib import closing
+  from aspose_pdf import Document
+
+  with Document.open_streaming("report.pdf") as document:
+      with closing(document.iter_text_pages(pages=[2, 0])) as pages:
+          for text in pages:
+              print(text)
+      document.save_as_text("report.txt", page_separator="\f", encoding="utf-8-sig")
+  ```
 - **Optionally exclude explicitly marked artifacts from extracted text.**
   `skip_artifacts=True` on `Document.extract_text`, `Page.extract_text`,
   `PdfExtractor.extract_text`, or `TextExtractorOptions` omits `/Artifact`

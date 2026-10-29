@@ -18,11 +18,16 @@ import contextlib
 import os
 import secrets
 import shutil
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import BinaryIO, TypeVar
 
-__all__ = ["write_file_atomically"]
+from .stream_output import write_all
+
+__all__ = ["write_file_atomically", "write_file_chunks_atomically"]
 
 _STAGING_ATTEMPTS = 16
+_Result = TypeVar("_Result")
 
 
 def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> None:
@@ -48,6 +53,32 @@ def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> None:
     links** to the old one keep the old content. If the directory cannot hold
     a staging file, the write fails without touching the target.
     """
+    _write_file(path, lambda handle: handle.write(data))
+
+
+def write_file_chunks_atomically(
+    path: str | os.PathLike[str], chunks: Iterable[bytes]
+) -> int:
+    """Stage byte chunks without accumulating them, then replace the target.
+
+    Return the number of bytes written. A chunk producer or write failure
+    preserves the previous target and removes the staging file. Path,
+    symlink and permission behavior matches :func:`write_file_atomically`.
+    """
+    def write(handle: BinaryIO) -> int:
+        total = 0
+        for chunk in chunks:
+            write_all(handle, chunk)
+            total += len(chunk)
+        return total
+
+    return _write_file(path, write)
+
+
+def _write_file(
+    path: str | os.PathLike[str], writer: Callable[[BinaryIO], _Result]
+) -> _Result:
+    """Share atomic replacement policy between buffered and streaming writes."""
     target = Path(os.path.realpath(path))
     if target.exists() and not os.access(target, os.W_OK):
         raise PermissionError(f"Permission denied: '{target}'")
@@ -55,7 +86,7 @@ def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> None:
     descriptor, staging_path = _open_staging_file(target)
     try:
         with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
+            result = writer(handle)
             handle.flush()
             os.fsync(handle.fileno())
         if target.exists():
@@ -66,6 +97,7 @@ def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> None:
             os.unlink(staging_path)
         raise
     _sync_directory(target.parent)
+    return result
 
 
 def _open_staging_file(target: Path) -> tuple[int, str]:

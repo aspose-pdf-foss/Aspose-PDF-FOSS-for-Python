@@ -4540,6 +4540,74 @@ class Document:
             exclude_regions=exclude_regions,
         )
 
+    def iter_text_pages(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+        exclude_regions: Iterable[Sequence[float]] | None = None,
+    ) -> Generator[str, None, None]:
+        """Yield one detached text string per selected page, without joining them.
+
+        Options and extraction semantics match :meth:`extract_text`. Selection
+        and regions are validated and snapshotted on this call; no page text
+        is read until the iterator advances. Order, repeats and empty strings
+        for blank pages are retained. Keep the source open and its page order
+        unchanged until finished. Closing the iterator stops further reads;
+        strings already yielded remain usable after the source closes.
+
+        Streaming sources decode only requested pages. Results do not replace
+        the full-document text cache or change the text cursor. Current-page
+        and cumulative UTF-8 text sizes obey the document's decoded-byte limits.
+        A later extraction error propagates after any earlier strings yielded.
+        """
+        from aspose_pdf.engine.text_stream import iter_text_pages
+
+        return iter_text_pages(
+            self, pages=pages, clip=clip, skip_artifacts=skip_artifacts,
+            exclude_regions=exclude_regions,
+        )
+
+    def save_as_text(
+        self,
+        destination: str | Path | BinaryIO,
+        *,
+        pages: Iterable[int] | None = None,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+        exclude_regions: Iterable[Sequence[float]] | None = None,
+        page_separator: str = "\n",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> int:
+        """Stream extracted text to a path or binary stream and return its byte count.
+
+        Text follows :meth:`iter_text_pages`. The separator is placed only
+        between selected occurrences, including empty pages; ``"\\f"`` uses a
+        form feed, and ``""`` joins without a separator. Encoding is incremental,
+        with one BOM where applicable. An empty selection writes the chosen
+        encoding's representation of an empty string. Page text and total
+        output sizes obey the document's resource limits. IDNA, Punycode and
+        binary-to-binary codecs are not supported as TXT encodings.
+
+        File output is staged beside the target and replaced atomically after
+        success; extraction, encoding or write failures leave existing files
+        intact. Parent folders are created as needed. ``overwrite=False``
+        refuses existing paths before extraction. Binary streams receive bytes
+        at their current position, retry short writes, remain open, and can
+        retain a prefix if a later page or write fails. Text streams are refused.
+        No full-document text string or complete encoded output is accumulated;
+        use :meth:`open_streaming` to avoid eager input content caches too.
+        """
+        from aspose_pdf.engine.text_stream import save_as_text
+
+        return save_as_text(
+            self, destination, pages=pages, clip=clip, skip_artifacts=skip_artifacts,
+            exclude_regions=exclude_regions, page_separator=page_separator,
+            encoding=encoding, overwrite=overwrite,
+        )
+
     def extract_words(
         self,
         *,
