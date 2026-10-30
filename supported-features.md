@@ -4463,6 +4463,58 @@ Supported:
 - Read AcroForm fields through `Document.form`.
 - Iterate form fields and access fields by name.
 - Extract text, checkbox, radio, listbox, combobox, and push-button fields.
+- **Read and edit formatted text-field answers** through
+  `Field.rich_text: str | None`. The getter reads string-valued `/RV` from the
+  nearest field ancestor, even when its RichText flag is unset. Missing or null
+  markup returns `None`; other field types return `None` and reject edits.
+  Stream-valued rich text raises `UnsupportedFeatureException` without decoding
+  the stream; other non-string values raise `PdfValidationException`.
+  - Assign well-formed XHTML with an unprefixed `<body>` root, with or without
+    the default `http://www.w3.org/1999/xhtml` namespace. The exact markup is
+    stored locally as `/RV`, RichText (Ff bit 26) is enabled, and `/V` is derived
+    from the shared renderer's text runs: paragraph and `<br/>` boundaries
+    become newlines, literal source newlines become spaces, and leading or
+    inter-paragraph whitespace and empty paragraphs follow the renderer's
+    normalization. XML entities such as `&amp;` and numeric character references
+    are decoded in `/V`; named HTML entities such as `&nbsp;` require numeric
+    equivalents. An empty `<body/>` sets an empty answer. `max_length` does not
+    truncate programmatically authored rich text, just as with plain filling.
+  - Set `None` to disable RichText and mask inherited `/RV`, keeping `/V`.
+    Assigning `Field.value`, `Form.fill`, reset, or importing plain form data
+    likewise clears the replaced answer's rich markup and RichText flag, so
+    appearances do not keep displaying an old formatted answer. Reset uses
+    `/DV` as plain text; rich-text defaults and FDF/XFDF rich-text interchange
+    are not implemented. Defaults and unrelated flag bits remain unchanged.
+  - The edited field's widgets are refreshed immediately, including separate
+    unnamed widget children; retained `Field` instances see the new plain
+    value. Edits stay local, leaving inherited siblings and their appearances
+    unchanged, and survive saving, streaming input, encryption and flattening.
+    Reading markup does not decode page or appearance streams. Removed field
+    handles and disposed documents reject rich-text access.
+  - Type, Unicode, XML structure, style parsing, finite font sizes and
+    incompatible field modes are checked before field values change.
+    `PdfLoadLimits` bounds markup/plain-text bytes, XML depth, element counts
+    and attribute counts. DTD/entity declarations and prefixed element names
+    are rejected. Password, file-selection and comb modes cannot be combined
+    with newly assigned rich text. Embedded CID appearances cannot be rebuilt
+    by this API; assigning or clearing their rich markup raises
+    `UnsupportedFeatureException` before changing values or appearances.
+  - Formatting uses the existing rich-text renderer below and its font,
+    encoding and layout limits. This is an XHTML/CSS subset, not a browser:
+    unsupported styles/tags do not gain browser rendering, non-Latin plain
+    values remain Unicode but may lack glyphs in the generated standard-font
+    appearance, and external assets are not fetched.
+
+  ```python
+  with Document("application.pdf") as document:
+      notes = document.form["notes"]
+      notes.rich_text = (
+          '<body><p><b>Approved</b> '
+          '<span style="color:#008000">for processing</span></p></body>'
+      )
+      assert notes.value == "Approved for processing"
+      document.save("formatted-application.pdf")
+  ```
 - **A field reports what its dictionary says**: `partial_name`,
   `alternate_name` (`/TU`, the name shown to a user) and `mapping_name`
   (`/TM`); `flags` with `read_only`, `required` and `no_export` (all three

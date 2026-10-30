@@ -230,6 +230,9 @@ def set_parameter(
     else:
         raise ValueError(f"Unknown field parameter {parameter!r}")
 
+    if parameter == "password" and value and flags & (1 << 25):
+        raise PdfValidationException("Password cannot be combined with rich text")
+
     if kind == "text" and flags & (1 << 24) and parameter in (*_FLAGS, "max_length"):
         if flags & _COMB_CONFLICTS:
             raise PdfValidationException(

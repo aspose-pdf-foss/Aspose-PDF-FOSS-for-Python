@@ -16149,6 +16149,10 @@ class SimplePdf:
             if full_name == target_name:
                 pdf_val = self._value_to_pdf(field_obj, value)
                 if pdf_val is not None:
+                    if field_attribute(self, field_obj, "FT") == PdfName("Tx"):
+                        from .form_rich_text import plain_text_changes
+
+                        field_obj.mapping.update(plain_text_changes(self, field_obj))
                     field_obj.mapping[PdfName("V")] = pdf_val
                     self._update_choice_indices(field_obj, pdf_val)
                 elif field_attribute(self, field_obj, "FT") == PdfName("Ch"):

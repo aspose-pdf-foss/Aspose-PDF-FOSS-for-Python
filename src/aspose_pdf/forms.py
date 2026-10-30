@@ -140,6 +140,37 @@ class Field:
         """The field type, such as ``text``, ``checkbox``, or ``combobox``."""
         return self._field_type
 
+    @property
+    def rich_text(self) -> str | None:
+        """The text field's inherited XHTML markup (``/RV``), or ``None``.
+
+        Reads string-valued markup even when the RichText flag is unset.
+        Stream-valued markup is unsupported. Other field types return ``None``.
+        """
+        from aspose_pdf.engine.form_rich_text import rich_text_value
+
+        engine = self._engine()
+        if self._field_type != "text":
+            return None
+        return rich_text_value(engine, self._dictionary())
+
+    @rich_text.setter
+    def rich_text(self, markup: str | None) -> None:
+        """Set well-formed XHTML with a ``<body>`` root and redraw the widgets.
+
+        Enables RichText and derives :attr:`value` from the shared renderer's
+        paragraphs and runs. ``None`` disables RichText and keeps the plain
+        value. Assigning :attr:`value` also replaces rich text with plain text.
+        Password, comb, file-selection and embedded CID fields reject markup.
+        The existing rich-text renderer's font and layout limits apply.
+        """
+        from aspose_pdf.engine.form_rich_text import set_rich_text
+
+        engine = self._engine()
+        set_rich_text(engine, self._dictionary(), self._field_type, markup)
+        engine.refresh_field_appearance(self._name)
+        self._form._load_fields()
+
     # --- what the field's dictionary says --------------------------------------------
 
     def _engine(self):

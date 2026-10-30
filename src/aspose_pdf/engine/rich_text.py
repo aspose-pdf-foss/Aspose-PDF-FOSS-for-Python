@@ -242,13 +242,17 @@ class _RichTextParser(HTMLParser):
         self._flush_paragraph()
 
 
-def parse_rich_text(rc: str, default: RichStyle) -> list[list[RichRun]]:
-    """Parse an XHTML rich-text string into paragraphs of styled runs."""
+def parse_rich_text(
+    rc: str, default: RichStyle, *, strict: bool = False
+) -> list[list[RichRun]]:
+    """Parse styled paragraphs, optionally propagating malformed-style errors."""
     parser = _RichTextParser(default)
     try:
         parser.feed(rc or "")
         parser.close()
     except (ValueError, AssertionError):
+        if strict:
+            raise
         return []
     return parser.paragraphs
 

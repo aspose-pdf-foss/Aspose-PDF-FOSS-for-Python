@@ -2046,6 +2046,9 @@ and delete workflows. 275 public types are organized by module below.
   `export_values`, `widgets` (`FieldWidget(page_index, rect)`), `page_index`, `rect`
   Configuration setters include `default_value`, `max_length`, `multiline`, `password`,
   `comb`, `options`, `multi_select` and `editable`.
+  Set `rich_text` on a text field to XHTML with a `<body>` root to update its
+  formatting, plain answer and appearance together; set `None` to keep the answer
+  with plain formatting. Assigning `value` also replaces rich text with plain text.
 - `FormValidationIssue` — an immutable record with `field_name`, `field_type`,
   `code` and `message`; an empty validation report means no covered value issues.
 - `Annotation` — `generate_appearance(force) -> bool`, `get_property(name, default) -> Any`,
