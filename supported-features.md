@@ -5224,6 +5224,61 @@ Boundaries:
 
 Supported:
 
+- **Attach a supporting file at a point on the page** with
+  `page.annotations.add_file_attachment(rect, file, contents=None, title=None,
+  icon="PushPin", compress=True) -> FileAttachmentAnnotation`. `file` is a
+  `FileSpecification` carrying the filename, bytes and optional MIME type,
+  description, creation/modification datetimes and relationship. A compatible
+  PDF viewer offers the embedded file when the icon is activated.
+  - The factory writes a real `/FileAttachment` annotation with `/FS` pointing
+    to a `/Filespec`, which references its `/EmbeddedFile` stream through both
+    `/EF /F` and `/EF /UF`. Unicode filenames are preserved. `contents=None`
+    uses the file description or filename as the visible annotation text;
+    explicit empty contents remain empty. `title` sets the annotation author.
+    Standard icons are `PushPin`, `Graph`, `Paperclip` and `Tag`; other nonempty
+    names are retained with the renderer's existing default-icon fallback.
+    Icon appearances use the existing annotation renderer and
+    `generate_appearance()` API. No file is opened or executed by this library.
+  - Each annotation owns an independent snapshot of the supplied file.
+    Document-level `attachments` and `embedded_files` keep their existing
+    catalog-only scope; identical filenames may identify different files in
+    different annotations or in the catalog. Replacing, renaming or removing
+    a document-level attachment does not alter an annotation's file. A
+    snapshot from `Document.get_embedded_file()` can be passed to the factory.
+  - `FileAttachmentAnnotation.file_specification` reads a fresh, immutable
+    `FileSpecification` snapshot, decoding only the referenced embedded stream
+    under `PdfLoadLimits`. Use its `contents`, metadata, `size` or `save(path)`.
+    Ordinary annotation inspection does not decode the payload. Page content
+    and appearance streams are not decoded by this getter. Stream/filename
+    variants `UF`, `F`, `Unix`, `Mac` and `DOS` are supported, preferring `UF`.
+    Default MIME `application/octet-stream` and relationship `Unspecified`
+    normalize to `None`, as in the document attachment reader.
+  - Missing `/FS` and external-only file specifications return `None`; external
+    paths are never opened. Malformed embedded targets and invalid filenames
+    raise `PdfValidationException`; filter, decryption and resource errors
+    propagate. Factory input types, Unicode metadata, finite positive-size
+    rectangles and object/annotation counts are checked before adding objects.
+    Payload bytes, metadata strings, codec work and cumulative decoded data
+    are bounded. Compression is used when smaller and permitted by the stream
+    compression-ratio policy. Custom document PDF versions stay caller-set;
+    file attachment annotations require PDF 1.3 or newer.
+  - Tested file/byte saves, page copies, streaming inputs, encrypted PDFs and
+    repeated saves preserve the annotation's file and metadata. Standard
+    annotation removal deletes the icon; `Document.optimize()` can remove its
+    unreachable payload objects. Disposed documents reject factory/getter use.
+    Annotation files are not separately included in the document attachment
+    ZIP API or transferred by the review-annotation JSON/XFDF APIs.
+
+  ```python
+  from aspose_pdf import Document, FileSpecification
+
+  with Document("report.pdf") as document:
+      source = FileSpecification("source.csv", b"item,total\nA,42\n", mime_type="text/csv")
+      document.pages[0].annotations.add_file_attachment(
+          (72, 650, 96, 674), source, "Open the source data", icon="Paperclip"
+      )
+      document.save("report-with-source.pdf")
+  ```
 - Read page annotations through `Page.annotations`.
 - Add, insert, update, delete, clear, iterate, and index annotations.
 - **Clean up review annotations by author and date.**

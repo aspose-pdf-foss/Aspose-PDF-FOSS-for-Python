@@ -25,9 +25,11 @@ AF_RELATIONSHIPS: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class FileSpecification:
-    """A document-level embedded file (``/Filespec``) with typed metadata.
+    """An embedded file (``/Filespec``) with typed metadata.
 
-    Returned by :attr:`aspose_pdf.Document.embedded_files`. :attr:`contents` holds
+    Returned by :attr:`aspose_pdf.Document.embedded_files` or a file attachment
+    annotation's ``file_specification``; also accepted by
+    ``page.annotations.add_file_attachment``. :attr:`contents` holds
     the decoded file bytes; the remaining fields surface the metadata stored with
     the embedded file. Any of them is ``None`` when the producer omitted it (or
     when the attachment was added without that metadata).

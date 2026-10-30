@@ -3855,6 +3855,68 @@ class SimplePdf:
             slots[decode_pdf_text_string(key)] = (value.object_number, stream_number)
         return slots
 
+    def _embed_attachment(
+        self, name: str, data: bytes, meta: dict, *,
+        filespec_slot: int | None = None, stream_slot: int | None = None,
+        budget: _LoadBudget | None = None,
+    ) -> PdfIndirectReference:
+        """Build one embedded Filespec, optionally reusing document-level slots."""
+        params = PdfDictionary({PdfName("Size"): PdfNumber(len(data))})
+        for date_key, meta_key in (("CreationDate", "creation_date"),
+                                   ("ModDate", "mod_date")):
+            formatted = _format_pdf_date(meta.get(meta_key))
+            if formatted:
+                params.mapping[PdfName(date_key)] = PdfString(formatted)
+
+        ef_mapping = {
+            PdfName("Type"): PdfName("EmbeddedFile"),
+            PdfName("Params"): params,
+            # A media type is required of every embedded file by PDF/A-3
+            # (ISO 19005-3 6.8) and PDF/A-4 (ISO 19005-4 6.9), which name
+            # the value to use when it is not known; harmless otherwise and
+            # a valid optional key (ISO 32000-1 table 45), exactly like the
+            # /AFRelationship below. Without it veraPDF failed every
+            # PDF/A-4f file carrying an attachment added without ``mime=``.
+            PdfName("Subtype"): _encode_mime_name(
+                meta.get("mime") or "application/octet-stream"
+            ),
+        }
+
+        content = data
+        if meta.get("compress", True):
+            compressed = zlib.compress(data, 9)
+            ratio = budget.limits.max_compression_ratio if budget is not None else None
+            if len(compressed) < len(data) and (
+                ratio is None or len(data) <= max(1, len(compressed)) * ratio
+            ):  # never inflate tiny payloads or exceed an authored stream policy
+                content = compressed
+                ef_mapping[PdfName("Filter")] = PdfName("FlateDecode")
+
+        if budget is not None:
+            budget.check(len(content), "max_object_bytes", "embedded file stream bytes")
+        ef_stream = PdfStream(mapping=ef_mapping, content=content)
+        ef_ref = self._register_at(ef_stream, stream_slot)
+        filespec_mapping = {
+            PdfName("Type"): PdfName("Filespec"),
+            PdfName("F"): PdfString(name),
+            PdfName("UF"): PdfString(name),
+            PdfName("EF"): PdfDictionary(
+                {PdfName("F"): ef_ref, PdfName("UF"): ef_ref}
+            ),
+            # Required by PDF/A-3 for every embedded file; harmless
+            # otherwise and a valid optional Filespec key (ISO 32000-2).
+            PdfName("AFRelationship"): PdfName(
+                meta.get("relationship") or "Unspecified"
+            ),
+        }
+        description = meta.get("description")
+        if description:
+            filespec_mapping[PdfName("Desc")] = PdfString(description)
+        fs_ref = self._register_at(
+            PdfDictionary(filespec_mapping), filespec_slot
+        )
+        return fs_ref
+
     def _sync_attachments_to_cos(self) -> None:
         """Write ``self.attachments`` into the catalog name tree before save.
 
@@ -3897,54 +3959,8 @@ class SimplePdf:
                 **(self.attachment_meta.get(name) or {}),
             }
 
-            params = PdfDictionary({PdfName("Size"): PdfNumber(len(data))})
-            for date_key, meta_key in (("CreationDate", "creation_date"),
-                                       ("ModDate", "mod_date")):
-                formatted = _format_pdf_date(meta.get(meta_key))
-                if formatted:
-                    params.mapping[PdfName(date_key)] = PdfString(formatted)
-
-            ef_mapping = {
-                PdfName("Type"): PdfName("EmbeddedFile"),
-                PdfName("Params"): params,
-                # A media type is required of every embedded file by PDF/A-3
-                # (ISO 19005-3 6.8) and PDF/A-4 (ISO 19005-4 6.9), which name
-                # the value to use when it is not known; harmless otherwise and
-                # a valid optional key (ISO 32000-1 table 45), exactly like the
-                # /AFRelationship below. Without it veraPDF failed every
-                # PDF/A-4f file carrying an attachment added without ``mime=``.
-                PdfName("Subtype"): _encode_mime_name(
-                    meta.get("mime") or "application/octet-stream"
-                ),
-            }
-
-            content = data
-            if meta.get("compress", True):
-                compressed = zlib.compress(data, 9)
-                if len(compressed) < len(data):  # never inflate tiny payloads
-                    content = compressed
-                    ef_mapping[PdfName("Filter")] = PdfName("FlateDecode")
-
-            ef_stream = PdfStream(mapping=ef_mapping, content=content)
-            ef_ref = self._register_at(ef_stream, stream_slot)
-            filespec_mapping = {
-                PdfName("Type"): PdfName("Filespec"),
-                PdfName("F"): PdfString(name),
-                PdfName("UF"): PdfString(name),
-                PdfName("EF"): PdfDictionary(
-                    {PdfName("F"): ef_ref, PdfName("UF"): ef_ref}
-                ),
-                # Required by PDF/A-3 for every embedded file; harmless
-                # otherwise and a valid optional Filespec key (ISO 32000-2).
-                PdfName("AFRelationship"): PdfName(
-                    meta.get("relationship") or "Unspecified"
-                ),
-            }
-            description = meta.get("description")
-            if description:
-                filespec_mapping[PdfName("Desc")] = PdfString(description)
-            fs_ref = self._register_at(
-                PdfDictionary(filespec_mapping), filespec_slot
+            fs_ref = self._embed_attachment(
+                name, data, meta, filespec_slot=filespec_slot, stream_slot=stream_slot
             )
             array_items.append(PdfString(name))
             array_items.append(fs_ref)

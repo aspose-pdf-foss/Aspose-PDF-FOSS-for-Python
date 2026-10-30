@@ -1536,7 +1536,7 @@ and delete workflows. 276 public types are organized by module below.
 | `FieldType` | Type of form field. |
 | `FileDataSource` | A data source backed by a file on disk. |
 | `FileFontSource` | Discover the font(s) contained in a single file. |
-| `FileSpecification` | A document-level embedded file (``/Filespec``) with typed metadata. |
+| `FileSpecification` | An embedded file with typed metadata, for document or page attachments. |
 | `FillMode` | Fill mode enumeration for path operations. |
 | `FitBDestination` | Fit the page's bounding box in the window. |
 | `FitBHDestination` | Fit the bounding-box width with `top` at the top of the window. |
@@ -2056,6 +2056,9 @@ and delete workflows. 276 public types are organized by module below.
   `code` and `message`; an empty validation report means no covered value issues.
 - `HideAction(fields, hide=True)` — attach a show/hide action to a button or event
   using fully qualified field names; `hide=False` shows the fields in a compatible viewer.
+- `page.annotations.add_file_attachment(rect, file, contents=None, title=None, icon="PushPin", compress=True)` —
+  place a clickable embedded `FileSpecification` on the page; read or save its
+  bytes through `FileAttachmentAnnotation.file_specification`.
 - `Annotation` — `generate_appearance(force) -> bool`, `get_property(name, default) -> Any`,
   `set_property(name, value) -> None`; properties `subtype`, `rect`, `contents`, `appearance_normal`
 - `AnnotationCollection` — `add(subtype, rect, contents, title, appearance_normal, properties) -> Annotation`,

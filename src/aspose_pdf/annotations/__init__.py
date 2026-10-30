@@ -25,6 +25,7 @@ from aspose_pdf.engine.cos import AnnotationName as Name
 if TYPE_CHECKING:
     import datetime as _datetime
 
+    from aspose_pdf.attachments import FileSpecification
     from aspose_pdf.pages import Page
 
 __all__ = [
@@ -933,6 +934,20 @@ class FileAttachmentAnnotation(MarkupAnnotation):
 
     __slots__ = ()
 
+    @property
+    def file_specification(self) -> FileSpecification | None:
+        """A snapshot of this icon's embedded file, decoded on demand.
+
+        Returns ``None`` for a missing or external-only file specification.
+        Reads only the embedded stream under the document's resource limits;
+        no external path is opened. Changing the snapshot does not edit the PDF.
+        """
+        from aspose_pdf.engine.file_attachment import file_specification
+
+        document = self._page._document
+        document._ensure_not_disposed()
+        return file_specification(document._engine_pdf, self._page.index, self._index)
+
     icon = _name_property(
         "Name",
         "Which icon a viewer draws (``/Name``): ``PushPin``, ``Graph``, "
@@ -1232,6 +1247,34 @@ class AnnotationCollection:
         return self.add(
             subtype, rect, contents, title=title, properties=merged or None
         )
+
+    def add_file_attachment(
+        self,
+        rect: tuple[float, float, float, float],
+        file: FileSpecification,
+        contents: str | None = None,
+        *,
+        title: str | None = None,
+        icon: str = "PushPin",
+        compress: bool = True,
+    ) -> FileAttachmentAnnotation:
+        """Add a clickable embedded file using a :class:`FileSpecification`.
+
+        The file belongs to this annotation, independently of document-level
+        attachments. Contents default to its description or filename. Standard
+        icons are PushPin, Graph, Paperclip and Tag. Compression is used when
+        smaller and allowed by the document's compression-ratio limit.
+        A compatible PDF viewer offers the embedded file when activated.
+        """
+        from aspose_pdf.engine.file_attachment import add_file_attachment
+
+        document = self._page._document
+        document._ensure_not_disposed()
+        index = add_file_attachment(
+            document._engine_pdf, self._page.index, rect, file,
+            contents=contents, title=title, icon=icon, compress=compress,
+        )
+        return self[index]  # type: ignore[return-value]
 
     def add_text(
         self,
