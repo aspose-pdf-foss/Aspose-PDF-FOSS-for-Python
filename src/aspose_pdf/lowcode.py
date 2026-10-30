@@ -270,7 +270,8 @@ def _resolve_selection(
     A ``slice`` is resolved against the document's own length, so
     ``slice(5, None)`` means "page six onward" however long the input turns out
     to be, and a negative index counts from the end as it does everywhere else.
-    A range string uses one-based numbers and resolves open ends per input.
+    A range string uses one-based numbers, accepts odd/even physical pages
+    and descending ranges, and resolves ``last`` and open ends per input.
     """
     if isinstance(selection, str):
         from aspose_pdf.page_ranges import parse_page_range
@@ -476,6 +477,8 @@ class SplitOptions(PluginOptions):
         SplitOptions(selections=[range(0, 3), [3, 4], slice(5, None)])
 
     A page may appear in more than one selection, or in none.
+    Range strings also accept ``odd``, ``even``, ``last`` and descending ranges
+    such as ``"last-1"``; keywords and open ends resolve separately per input.
 
     ``bookmark_level=1`` instead splits at root bookmarks; higher levels select
     nested headings. It follows :meth:`Document.split_by_bookmarks`, including

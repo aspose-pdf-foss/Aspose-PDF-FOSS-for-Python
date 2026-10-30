@@ -1157,15 +1157,25 @@ Supported:
   returns a tuple of zero-based indices for text extraction, page rendering
   exports, comparisons and other APIs with a `pages` argument. Comma-separated
   numbers select individual pages; ranges include both endpoints; a missing
-  end means the last page of that document. Input order and repeated pages
-  are preserved, and whitespace around items and hyphens is ignored.
+  end means the last page of that document. Ranges may descend: `"4-2"`
+  returns indices `(3, 2, 1)`. Case-insensitive `odd` and `even` select physical
+  pages 1, 3, 5, ... and 2, 4, 6, ... respectively, regardless of page labels or
+  the numeric indexing mode. `last` names the final page and works as either
+  endpoint: `"2-last"` selects page 2 onward, and `"last-1"` reverses the
+  document with the default numbering. Input order and repeated pages are
+  preserved, including overlaps such as `"odd,last"`. Whitespace around items
+  and hyphens is ignored.
   Expressions use **one-based** page numbers by default; `one_based=False`
   explicitly interprets them as zero-based. The result is always zero-based;
   add one to each index for facades expecting one-based page numbers.
   `Document.extract_pages("1-3,7,10-")` accepts a one-based expression directly,
   while existing integer selections and slices retain their zero-based meaning.
-  Empty items, descending ranges, unsupported syntax and pages outside the
-  document are rejected, including every non-empty selection on an empty PDF.
+  `SplitOptions(selections=["odd", "even", "last-1"])` also accepts these
+  expressions, resolving keywords and open ends separately for each input.
+  Empty items, unsupported syntax and pages outside the document are rejected.
+  Numbers, `last` and open-ended ranges require an existing page, including on
+  an empty PDF. `odd` and `even` return an empty tuple when no pages match;
+  document extraction and splitting still reject empty selections.
   Parsing reads no PDF content. `limits=` bounds expression bytes and the total
   expanded selection, counting repeated pages; direct extraction uses the
   document's resource limits.
@@ -1180,6 +1190,10 @@ Supported:
       document.export_pages_zip("previews.zip", pages=pages)
       with document.extract_pages("1-3,7-") as selected:
           selected.save("selected.pdf")
+      with document.extract_pages("odd") as fronts:
+          fronts.save("fronts.pdf")
+      with document.extract_pages("last-1") as reversed_pages:
+          reversed_pages.save("reversed.pdf")
   ```
 
 - **Find visually blank pages, including scanned sides.**

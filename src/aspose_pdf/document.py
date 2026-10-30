@@ -5205,7 +5205,9 @@ class Document:
 
         *selection* is a zero-based iterable of page indexes or a slice, or a
         one-based range string such as ``"1-3,7,10-"``. String ranges include
-        both endpoints; an omitted end selects through the last page. Order
+        both endpoints and may descend (``"last-1"`` reverses all pages);
+        an omitted end selects through the last page. ``odd`` and ``even``
+        select physical odd/even pages; ``last`` names the final page. Order
         and repeated pages are retained. Page resources, annotations, fields,
         layers, and bookmarks that belong to
         those pages travel with them. An empty selection is invalid.
