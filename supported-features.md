@@ -7220,19 +7220,32 @@ Supported:
   for raster codecs, the original payload for JPEG and JPEG 2000) -- the same
   reconstruction `PdfExtractor.get_next_image` performs. An input that draws no
   image contributes no result.
-- `ImagesToPdf` builds a document from JPEG, PNG, TIFF and **static WebP, BMP
-  and GIF** inputs, one page per image or TIFF frame, preserving input and
+- `ImagesToPdf` builds a document from JPEG, PNG, TIFF, WebP, BMP
+  and GIF inputs, one page per image or TIFF/GIF/WebP frame, preserving input and
   frame order. TIFF, WebP, BMP and GIF require the optional `images` extra
   (Pillow); WebP additionally requires a Pillow build with WebP support.
   JPEG and PNG work without it. Inputs are recognized by their signatures,
-  regardless of the filename. Static WebP/BMP/GIF pixels are normalized to
+  regardless of the filename. WebP/BMP/GIF pixels are normalized to
   lossless 8-bit RGBA PNG before PDF authoring: palette colors, GIF palette
   transparency, WebP alpha and BMP alpha bitfields recognized by Pillow are
   preserved. Opaque pixels remain opaque; unsupported BMP alpha conventions
   follow Pillow's decoding. Both lossy and lossless WebP bitstreams are read;
   decoded pixels are not subjected to another lossy encoding.
-  Animated GIF/WebP inputs raise `UnsupportedFeatureException` before pixel
-  decoding; the importer does not silently select their first frame.
+  **Animated GIF/WebP inputs expand into full composited pages**, including
+  local frame offsets, transparency, blend operations and disposal between
+  frames as decoded by Pillow. GIF disposal can retain the current canvas,
+  restore the affected area to background or restore its previous contents;
+  WebP frames can blend or replace pixels and dispose their rectangle.
+  Each stored frame contributes exactly one page, including zero-duration
+  frames, in one pass through the sequence. Duration and loop counts do not
+  duplicate pages or create a PDF animation timeline. Identical stored frames
+  are retained. `single_document=False` produces one PDF per frame.
+  Canvas sizes remain fixed after the first GIF frame; later GIF rectangles
+  expanding beyond that canvas are rejected. WebP frame rectangles must fit
+  its declared canvas and match their embedded bitstream dimensions.
+  Pixels are decoded sequentially: each frame is authored before the next is
+  requested. Only the decoder's compositor state and the current frame buffers
+  are retained; PDF resources and result PDFs still accumulate as usual.
   Classic TIFF in either byte order and BigTIFF are accepted.
   Bilevel, 8-bit grayscale, RGB, palette, RGBA and LA frames are decoded into PDF
   images; bilevel becomes 8-bit grayscale and palette becomes RGB. RGBA and LA
@@ -7251,8 +7264,8 @@ Supported:
   `ImagesToPdfOptions(dpi="auto")` instead reads each image's physical resolution,
   retaining separate X/Y values. JPEG uses valid primary-image EXIF X/YResolution
   before JFIF density; PNG uses `pHYs` before the first `IDAT`; Windows BMP
-  headers use pixels per metre; static WebP uses EXIF resolution. Each TIFF
-  frame uses its own X/YResolution and ResolutionUnit. Inches and centimetres
+  headers use pixels per metre; WebP uses global EXIF resolution for all frames.
+  Each TIFF frame uses its own X/YResolution and ResolutionUnit. Inches and centimetres
   are converted to DPI, and pixels per metre use a factor of 0.0254.
   - The whole pair falls back to 72 DPI if either axis is missing, nonpositive
     or nonfinite, a rational denominator is zero, or units specify only an
@@ -7290,20 +7303,25 @@ Supported:
   and directory entries obey `PdfLoadLimits`; no linked directories or image
   pixels are decoded to determine orientation. `auto_orient` must be a boolean,
   including if options are edited after construction.
-  `single_document=False` emits one document per image or TIFF frame instead of
-  one carrying them all. The JPEG/PNG size is read from its own header, so a PNG
+  `single_document=False` emits one document per image or TIFF/GIF/WebP frame
+  instead of one carrying them all. The JPEG/PNG size is read from its own header, so a PNG
   is not decoded twice; raw samples carry no size and are refused. TIFF is
-  decoded one frame at a time. `PdfLoadLimits` bounds input bytes, frame pixels,
+  decoded one frame at a time, as are GIF/WebP animations. `PdfLoadLimits` bounds
+  input bytes, frame pixels,
   per-frame decoded samples and codec work; the page count and total decoded
   TIFF and WebP/BMP/GIF samples are bounded across the entire run, including
   separate results. TIFF sample budgets include the alpha channel: LA uses two
   bytes per pixel and RGBA uses four. Filtered PNG output and working-buffer
-  checks include those channels before pixel decoding. The static formats'
+  checks include those channels before pixel decoding. WebP/BMP/GIF
   dimensions and container structure are
   checked before opening Pillow; GIF frame extents and WebP canvas/bitstream
-  dimensions are checked together. Static decoded samples are budgeted as RGBA
+  dimensions are checked together, including nested animated WebP chunks.
+  Animation frame counts are checked against the cumulative page limit before
+  decoder construction. WebP/BMP/GIF decoded samples are budgeted as RGBA
   (four bytes per pixel), with space for PNG scanline filter bytes and a
-  conservative working-buffer estimate. Native codec allocations depend on
+  conservative working-buffer estimate, including animation compositing buffers.
+  Cumulative sample limits are checked again before seeking each next frame.
+  Native codec allocations depend on
   the installed Pillow build.
   Pillow's own pixel safety checks also apply. An invalid directory chain or a
   decoding failure raises `PdfValidationException`; missing Pillow, unsupported
@@ -7360,6 +7378,9 @@ Boundaries:
   management or infer rotation from EXIF. `ImagesToPdf`'s DPI and fixed-page
   sizing options apply to these formats. Their compressed payloads are decoded and re-encoded
   for PDF embedding rather than retained as embedded WebP/BMP/GIF files.
+  `ImagesToPdf` additionally expands animated GIF/WebP frames into pages;
+  placing or stamping one of these animations as a single image remains
+  unsupported and raises `UnsupportedFeatureException` before pixel decoding.
 - There is no signing plugin. Signing takes a certificate, a key, a field and an
   appearance, and wrapping that in an options object is a design rather than a
   composition -- `Document.sign` is the API for it (see

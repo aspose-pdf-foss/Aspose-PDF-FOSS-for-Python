@@ -330,7 +330,7 @@ flowchart TD
   `Encryptor` and `Decryptor` — each one a composition of the operations above, so a batch job is
   a few lines and the same code works on files, bytes or streams.
   `ImagesToPdf` also converts multipage TIFF scans, preserving 8-bit RGBA/LA transparency,
-  with the optional `images` extra.
+  and expands GIF/WebP animations into ordered PDF pages with the optional `images` extra.
 - `PdfLoadLimits` bounds input size, object counts, decoded-stream bytes, and image pixels when a
   `Document` loads untrusted PDF input, raising `PdfResourceLimitException` instead of hanging or
   silently truncating a hostile file.

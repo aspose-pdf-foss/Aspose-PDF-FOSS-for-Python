@@ -160,22 +160,22 @@ def test_lossy_webp_preserves_decoded_colors(pillow):
 
 
 @pytest.mark.parametrize("kind", ["GIF", "WEBP"])
-def test_animation_is_refused_before_pillow_opens_it(pillow, kind, monkeypatch):
+def test_animation_imports_all_frames(pillow, kind):
     if kind == "WEBP" and not pytest.importorskip("PIL.features").check("webp"):
         pytest.skip("Pillow was built without WebP")
     with pillow.new("RGB", (6, 4), "red") as first:
         with pillow.new("RGB", (6, 4), "blue") as second, io.BytesIO() as output:
             first.save(
-                output, format=kind, save_all=True, append_images=[second], duration=100
+                output, format=kind, save_all=True, append_images=[second], duration=100,
+                **({"lossless": True} if kind == "WEBP" else {}),
             )
             data = output.getvalue()
 
-    def forbidden(*args, **kwargs):
-        pytest.fail("Animations must be refused before opening a decoder")
-
-    monkeypatch.setattr(pillow, "open", forbidden)
-    with pytest.raises(UnsupportedFeatureException, match="Animated"):
-        _convert(data)
+    with Document(_convert(data)[0].to_array()) as document:
+        assert document.page_count == 2
+        assert [page.render().get_pixel(1, 1) for page in document.pages] == [
+            (255, 0, 0), (0, 0, 255),
+        ]
 
 
 @pytest.mark.parametrize("data", [b"BM", b"GIF89a", b"RIFF\x00\x00\x00\x00WEBP"])

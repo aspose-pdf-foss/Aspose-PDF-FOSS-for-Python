@@ -935,9 +935,10 @@ class ImagesToPdfOptions(PluginOptions):
     300 dpi scan come out at its physical size. ``margin`` is in points and
     applies to a fixed page size only -- a page cut to its image has no room for
     one -- and ``single_document`` collects every input into one file instead of
-    one file per image. Each TIFF frame counts as one image. TIFF and static
-    WebP/BMP/GIF inputs require the optional ``images`` extra; WebP also needs
-    Pillow's WebP codec. Animated GIF/WebP inputs are refused.
+    one file per image. Each TIFF, GIF or WebP frame counts as one image.
+    TIFF/WebP/BMP/GIF inputs require the optional ``images`` extra; WebP also
+    needs Pillow's WebP codec. Animated GIF/WebP frames become full composited
+    pages in display order, once per stored frame regardless of timing/loops.
     A numeric ``dpi`` overrides source resolution metadata. ``dpi="auto"``
     uses each image/frame's absolute X/Y resolution, falling back to 72 DPI
     when no usable pair exists. Inch/cm units and PNG/BMP pixels per metre
@@ -1198,15 +1199,16 @@ class ImageExtractor(PdfPlugin):
 
 
 class ImagesToPdf(PdfPlugin):
-    """Make PDFs from JPEG/PNG/TIFF and static WebP/BMP/GIF images.
+    """Make PDFs from JPEG/PNG/TIFF/WebP/BMP/GIF images and animation frames.
 
     Each page is cut to its own picture unless ``page_size`` says otherwise, in
     which case the image is centred inside that sheet and scaled down to fit
     within the margin. By default all images and frames become pages of one
     document; with ``single_document=False`` each image becomes a document of its
     own. TIFF frames retain their source order, including eight-bit RGBA/LA
-    transparency. TIFF and WebP/BMP/GIF require
-    the ``images`` extra; animated WebP/GIF inputs are refused.
+    transparency. GIF/WebP animations produce one page per composited frame,
+    retaining alpha, blend and disposal results; durations and loops are not
+    carried into the PDF. TIFF and WebP/BMP/GIF require the ``images`` extra.
     Set ``auto_orient=True`` to honor JPEG EXIF rotation and reflection without
     recompressing the JPEG or requiring Pillow.
     """
@@ -1214,7 +1216,7 @@ class ImagesToPdf(PdfPlugin):
     def process(self, options: ImagesToPdfOptions) -> ResultContainer:
         self._require_inputs(options)
         from aspose_pdf.engine.content_authoring import image_pixel_size
-        from aspose_pdf.engine.image_import import pillow_image_format, static_image
+        from aspose_pdf.engine.image_import import image_frames, pillow_image_format
         from aspose_pdf.engine.image_import_resolution import (
             DEFAULT_RESOLUTION,
             image_resolution,
@@ -1266,10 +1268,10 @@ class ImagesToPdf(PdfPlugin):
                     )
                     frame_context = closing(frames)
                 elif pillow_image_format(data) is not None:
-                    frames = iter(
-                        ((*static_image(data, budget, preceding_pages=page_count), resolution),)
+                    frames = image_frames(
+                        data, budget, preceding_pages=page_count, resolution=resolution,
                     )
-                    frame_context = nullcontext(frames)
+                    frame_context = closing(frames)
                 else:
                     pixel_width, pixel_height = image_pixel_size(data)
                     frames = iter(((data, pixel_width, pixel_height, resolution),))
