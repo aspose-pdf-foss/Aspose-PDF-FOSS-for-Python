@@ -157,6 +157,27 @@ def test_incremental_save_keeps_an_encrypted_document_encrypted(algorithm):
 
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
+def test_streamed_encrypted_incremental_save_retains_the_original_protection(
+    algorithm, tmp_path,
+):
+    base = _sealed_pdf(algorithm)
+    source = tmp_path / "sealed.pdf"
+    source.write_bytes(base)
+    with Document.open_streaming(source, password="u") as document, io.BytesIO() as output:
+        document.info["Title"] = "Streaming edit"
+        document.save(output, incremental=True)
+        data = output.getvalue()
+    assert data.startswith(base) and len(data) > len(base)
+    assert b"Streaming edit" not in data[len(base):]
+    with pytest.raises(PdfSecurityException):
+        Document(data)
+    with Document(data, password="u") as reopened:
+        assert reopened.info["Title"] == "Streaming edit"
+    with Document(data, password="owner") as reopened:
+        assert reopened.info["Title"] == "Streaming edit"
+
+
+@pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_the_appended_trailer_still_names_the_encryption_dictionary(algorithm):
     """Dropping ``/Encrypt`` would tell a reader the new objects are plain."""
     base = _sealed_pdf(algorithm)
@@ -167,6 +188,19 @@ def test_the_appended_trailer_still_names_the_encryption_dictionary(algorithm):
 
     appended = out.getvalue()[len(base) :]
     assert re.search(rb"trailer\b.*?/Encrypt \d+ 0 R", appended, re.S)
+
+
+@pytest.mark.parametrize("operation", ["encrypt", "change_passwords"])
+def test_streamed_incremental_save_still_refuses_new_protection(operation, tmp_path):
+    source = tmp_path / "sealed.pdf"
+    source.write_bytes(_sealed_pdf("AES-128"))
+    with Document.open_streaming(source, password="u") as document:
+        if operation == "encrypt":
+            document.encrypt("second", "new-owner")
+        else:
+            document.change_passwords("u", "second")
+        with pytest.raises(PdfSecurityException, match="change a document's encryption"):
+            document.save(io.BytesIO(), incremental=True)
 
 
 def test_incremental_save_rejects_adding_encryption():

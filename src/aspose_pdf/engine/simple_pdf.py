@@ -972,7 +972,7 @@ def _finite_number(value: Any, name: str) -> float:
         raise PdfValidationException(f"{name} must be a number")
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise PdfValidationException(f"{name} must be a number") from None
     if not math.isfinite(number):
         raise PdfValidationException(f"{name} must be finite")
@@ -4699,7 +4699,11 @@ class SimplePdf:
             # file whose offsets are right again.
             return self.to_bytes()
 
-        if self.encrypted:
+        if self.encrypted and (
+            (self.O is not None and self.U is not None) or self._recipient_envelopes
+        ):
+            # Streaming loads retain the encrypted flag without authoring new
+            # protection; the existing dictionary and key remain reusable.
             # encrypt() or change_passwords() derives a fresh file key, so every
             # object in the prefix is enciphered under a key the new /Encrypt no
             # longer describes. Checked before the handler is built, because
@@ -7691,12 +7695,7 @@ class SimplePdf:
         if (factor_x, factor_y, shift_x, shift_y) == (1.0, 1.0, 0.0, 0.0):
             return  # the identity: nothing to say and nothing to rewrite
 
-        self._materialize_page_contents_for_edit()
-        content = (
-            self.page_contents[page_index]
-            if page_index < len(self.page_contents)
-            else b""
-        )
+        content = self.get_page_content(page_index)
         matrix = " ".join(
             format_number(value)
             for value in (factor_x, 0.0, 0.0, factor_y, shift_x, shift_y)
@@ -7708,12 +7707,16 @@ class SimplePdf:
                 budget=self._load_budget,
             )
             if wrapped is None:
+                operation = "translated" if factor_x == factor_y == 1.0 else "scaled"
                 raise PdfValidationException(
-                    f"The content of page {page_index + 1} cannot be scaled: it "
+                    f"The content of page {page_index + 1} cannot be {operation}: it "
                     "restores a graphics state it never saved, so putting a "
                     "transform around it would change how the page itself "
                     "draws."
                 )
+            self._load_budget.check(
+                len(wrapped), "max_content_stream_bytes", "transformed page content"
+            )
             self._set_page_content(page_index, wrapped)
 
         def place(x: float, y: float) -> tuple[float, float]:
@@ -7734,6 +7737,19 @@ class SimplePdf:
         self._scale_page_annotations(
             page_index, factor_x, factor_y, shift_x, shift_y
         )
+        for key, matrix in self._image_matrix_map.items():
+            if key[0] == page_index:
+                a, b, c, d, e, f = matrix
+                self._image_matrix_map[key] = (
+                    factor_x * a, factor_y * b, factor_x * c, factor_y * d,
+                    factor_x * e + shift_x, factor_y * f + shift_y,
+                )
+        for key, (x, y, width, height) in self._image_rect_map.items():
+            if key[0] == page_index:
+                self._image_rect_map[key] = (
+                    factor_x * x + shift_x, factor_y * y + shift_y,
+                    factor_x * width, factor_y * height,
+                )
         self._extracted_text = None
 
     def _scale_page_annotations(
@@ -7879,7 +7895,10 @@ class SimplePdf:
 
     def _set_page_content(self, page_index: int, content: bytes) -> None:
         """Replace a page's content stream(s) with a single decoded stream."""
-        self._materialize_page_contents_for_edit()
+        # A lazy page reads from its COS entry; updating it does not require
+        # filling the eager cache with every other page's decoded content.
+        if not (self._lazy and self._cos_doc is not None):
+            self._materialize_page_contents_for_edit()
         self._ensure_cos()
         if page_index < len(self.page_contents):
             self.page_contents[page_index] = content
@@ -7889,6 +7908,7 @@ class SimplePdf:
                 PdfStream(content=content, mapping={})
             )
             page.mapping[PdfName("Contents")] = new_ref
+        self._isolated_page_contents.pop(page_index, None)
         while len(self._content_obj_ids) < len(self.pages):
             self._content_obj_ids.append(0)
         if page_index < len(self._content_obj_ids):

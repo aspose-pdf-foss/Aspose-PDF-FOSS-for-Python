@@ -1678,6 +1678,40 @@ Supported:
     exactly, every glyph box, its height and the link's `/Rect` scale by the same
     0.9407 and shift by the same 26 points, and our own raster of the result
     differs from pdfium's on 0.07% of samples.
+- **Shift existing page content without resizing the sheet.**
+  `Page.translate_content(dx, dy)` moves text, images, paths and annotations
+  together, for scan alignment corrections or a binding margin. Offsets are
+  finite PDF points in unrotated page coordinates: positive `dx` moves right,
+  positive `dy` moves up. Negative and fractional offsets are supported. The
+  method returns the page for chaining.
+  - MediaBox, CropBox, production boxes and rotation keep their values. Content
+    shifted beyond the page's visible area is clipped normally. Content added
+    afterwards is placed at its own coordinates, outside the earlier shift.
+  - Annotation rectangles and points move with the drawing, including markup
+    quads, line/polygon/callout points, ink strokes and form widgets. `/RD`
+    insets remain distances. Read `page.annotations` again after transforming
+    the page to obtain current annotation views. Cached image placement matrices
+    and bounding rectangles are updated as well.
+  - Like `scale_content`, this uses a balanced graphics-state wrapper and
+    rejects content whose state cannot be wrapped safely. Invalid offsets,
+    including booleans, infinities and NaN, fail before edits. A zero shift
+    changes no objects and reads no content. The transformed stream obeys
+    `PdfLoadLimits.max_content_stream_bytes`.
+  - Only the selected page's content is decoded. `translate_content`,
+    `scale_content` and `resize` retain streaming mode when rewriting that page;
+    other pages' content streams are left deferred. Full and incremental saves
+    preserve the edit, including on encrypted documents. Shared content streams
+    on other pages are preserved. Destinations referring to page coordinates
+    are not retargeted to shifted content.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document.open_streaming("scans.pdf") as document:
+      document.pages[0].translate_content(18, -6)
+      document.save("aligned.pdf")
+  ```
+
 - **Imposition**: `Document.n_up(rows, columns, …)` puts a grid of pages on each
   sheet and `Document.booklet(…)` lays a document out two pages to a sheet in
   saddle-stitch order -- the last page beside the first, the second beside the

@@ -386,6 +386,27 @@ class Page:
         eng.scale_page_content(self._index, sx, sy, dx=dx, dy=dy)
         return self
 
+    def translate_content(self, dx: float, dy: float) -> Page:
+        """Move existing content and annotations without changing the sheet.
+
+        Offsets are finite PDF points in unrotated page coordinates: positive
+        ``dx`` moves right and positive ``dy`` moves up. Text, images, paths and
+        annotation geometry, including form widgets, move together. Page boxes
+        and rotation are preserved; content moved outside them is clipped by
+        the viewer as usual. Content added afterwards uses its own coordinates.
+
+        Only this page's content is decoded, including in streaming mode.
+        ``(0, 0)`` leaves the document untouched and reads no content. Invalid
+        offsets and content that cannot be wrapped safely raise
+        :class:`~aspose_pdf.exceptions.PdfValidationException` before edits.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+        eng.scale_page_content(self._index, 1.0, dx=dx, dy=dy)
+        return self
+
     def resize(
         self,
         size: PageSize | Sequence[float] | str,

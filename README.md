@@ -236,6 +236,8 @@ flowchart TD
   `fit`, `fill` or `stretch`, centred, with annotations and the production boxes travelling along —
   while `Page.scale_content(0.95)` shrinks the drawing inside the sheet it is on. Setting
   `Page.size` still changes the sheet alone.
+- `Page.translate_content(dx, dy)` shifts existing text, images and annotations
+  together to correct scan alignment or make room for binding, keeping the sheet size.
 - `Document.generate_outlines()` builds the bookmark tree from the document's own headings — the
   structure tree when it is tagged, the inferred size tiers when it is not — nesting them by level
   and pointing each one at the heading itself rather than at the top of its page.
@@ -1932,6 +1934,7 @@ and delete workflows. 276 public types are organized by module below.
 ### Pages And Content
 
 - `Page`
+  - `translate_content(dx, dy) -> Page` — move existing content and annotation geometry in PDF points
   - `add_text(text, x, y, font_size, font_name, font, color, tag, actual_text, layout) -> Page`
   - `add_image(image, x, y, width, height, fit="stretch", pixel_width, pixel_height, color_space, bits_per_component, name, tag, alt, actual_text) -> str` —
     use `fit="contain"` or `fit="cover"` to center an image in a frame while preserving its proportions
