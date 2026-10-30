@@ -48,8 +48,8 @@ _GIF_MAGIC = (b"GIF87a", b"GIF89a")
 _BMP_MAGIC = b"BM"
 
 # PNG colour types and channel counts per supported mode.
-_PNG_COLOR_TYPE = {"L": 0, "RGB": 2, "P": 3, "RGBA": 6}
-_PNG_CHANNELS = {"L": 1, "RGB": 3, "P": 1, "RGBA": 4}
+_PNG_COLOR_TYPE = {"L": 0, "LA": 4, "RGB": 2, "P": 3, "RGBA": 6}
+_PNG_CHANNELS = {"L": 1, "LA": 2, "RGB": 3, "P": 1, "RGBA": 4}
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,8 @@ def write_png(
 
     Parameters
     ----------
-    mode: one of ``"L"`` (grayscale), ``"RGB"``, ``"RGBA"``, ``"P"`` (indexed).
+    mode: one of ``"L"`` (grayscale), ``"LA"`` (grayscale with alpha),
+        ``"RGB"``, ``"RGBA"``, ``"P"`` (indexed).
     bit_depth: bits per sample/channel; ``1`` and ``8`` are supported (``1`` only
         for ``"L"``/``"P"``).
     palette: for ``mode="P"``, the RGB palette bytes (3 per entry).
@@ -132,7 +133,7 @@ def write_png(
     """
     if mode not in _PNG_COLOR_TYPE:
         raise ValueError(f"unsupported PNG mode: {mode!r}")
-    if bit_depth not in (1, 8):
+    if bit_depth not in (1, 8) or (mode == "LA" and bit_depth != 8):
         raise ValueError(f"unsupported PNG bit depth: {bit_depth}")
     if width <= 0 or height <= 0:
         raise ValueError("PNG width and height must be positive")

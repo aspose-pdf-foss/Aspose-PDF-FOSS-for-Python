@@ -248,10 +248,200 @@ def test_big_endian_tiff_is_recognized(pillow):
         assert document.pages[0].render().get_pixel(1, 1) == (50, 50, 50)
 
 
-@pytest.mark.parametrize("mode", ["RGBA", "LA", "CMYK", "I;16", "F"])
+@pytest.mark.parametrize("mode", ["CMYK", "I;16", "F"])
 def test_unsupported_tiff_modes_are_refused_explicitly(pillow, mode):
     with pytest.raises(UnsupportedFeatureException, match="unsupported mode"):
         _convert(_tiff(pillow, [(mode, (2, 2), 0)]))
+
+
+def _alpha_tiff(pillow, mode, *, orientation=1, compression="raw", extra_samples=2):
+    alpha = (0, 64, 128, 255)
+    pixels = [
+        (50 + i * 20, 40 + i * 10, 200 - i * 20, alpha[i % 4])
+        if mode == "RGBA" else (30 + i * 25, alpha[i % 4])
+        for i in range(8)
+    ]
+    if extra_samples == 1:
+        pixels = [
+            (*((channel * pixel[3] + 127) // 255 for channel in pixel[:3]), pixel[3])
+            for pixel in pixels
+        ]
+    with pillow.new(mode, (4, 2)) as image, io.BytesIO() as output:
+        image.putdata(pixels)
+        image.save(output, format="TIFF", compression=compression,
+                   tiffinfo={274: orientation, 338: (extra_samples,)})
+        data = output.getvalue()
+    if extra_samples == 1:
+        # Pillow writes an unassociated-alpha tag even when tiffinfo supplies 1.
+        # Mark the premultiplied fixture samples as associated in the saved IFD.
+        data = bytearray(data)
+        assert data[:2] == b"II"
+        first = struct.unpack_from("<I", data, 4)[0]
+        count = struct.unpack_from("<H", data, first)[0]
+        for index in range(count):
+            entry = first + 2 + 12 * index
+            if struct.unpack_from("<H", data, entry)[0] == 338:
+                struct.pack_into("<H", data, entry + 8, 1)
+                return bytes(data)
+        raise AssertionError("Fixture has no ExtraSamples tag")
+    return data
+
+
+def _reference_png(pillow, data, frame=0):
+    with pillow.open(io.BytesIO(data)) as image:
+        image.seek(frame)
+        with image.convert("RGBA") as rgba:
+            return write_png(*rgba.size, "RGBA", rgba.tobytes())
+
+
+@pytest.mark.parametrize("mode", ["RGBA", "LA"])
+@pytest.mark.parametrize("compression", ["raw", "tiff_lzw", "tiff_adobe_deflate", "packbits"])
+@pytest.mark.parametrize("source_kind", ["bytes", "file", "stream"])
+def test_transparent_tiff_matches_png_and_survives_pdf_round_trips(
+    pillow, tmp_path, mode, compression, source_kind,
+):
+    if compression != "raw" and not pytest.importorskip("PIL.features").check("libtiff"):
+        pytest.skip("Pillow was built without libtiff")
+    data = _alpha_tiff(pillow, mode, compression=compression)
+    source = tmp_path / "misnamed.jpg"
+    source.write_bytes(data)
+    with io.BytesIO(data) as stream:
+        inputs = {
+            "bytes": ByteArrayDataSource(data), "file": FileDataSource(source),
+            "stream": StreamDataSource(stream),
+        }
+        result = ImagesToPdf().process(ImagesToPdfOptions().add_input(inputs[source_kind]))
+        assert not stream.closed
+    png = _reference_png(pillow, data)
+    with Document(result[0].to_array()) as actual:
+        with Document(_convert(png)[0].to_array()) as reference:
+            assert actual.pages[0].size == PageSize(4, 2)
+            for background in ((255, 255, 255), (0, 255, 0)):
+                expected = reference.pages[0].render(background=background, antialias=False)
+                assert actual.pages[0].render(
+                    background=background, antialias=False,
+                ).pixels == expected.pixels
+            output = tmp_path / "transparent.pdf"
+            actual.save(output)
+            for value in (output, output.read_bytes()):
+                with Document(value) as reopened:
+                    assert reopened.pages[0].render(
+                        background=(0, 255, 0), antialias=False,
+                    ).pixels == expected.pixels
+    assert source.read_bytes() == data
+
+
+@pytest.mark.parametrize("mode", ["RGBA", "LA"])
+@pytest.mark.parametrize("orientation", range(1, 9))
+def test_alpha_tiff_orientation_preserves_colors_and_transparency(pillow, mode, orientation):
+    data = _alpha_tiff(pillow, mode, orientation=orientation)
+    with Document(_convert(data)[0].to_array()) as actual:
+        with Document(_convert(_reference_png(pillow, data))[0].to_array()) as reference:
+            assert actual.pages[0].size == reference.pages[0].size
+            assert actual.pages[0].render(
+                background=(0, 255, 0), antialias=False,
+            ).pixels == reference.pages[0].render(
+                background=(0, 255, 0), antialias=False,
+            ).pixels
+
+
+def test_associated_rgba_alpha_is_not_applied_twice(pillow):
+    data = _alpha_tiff(pillow, "RGBA", extra_samples=1)
+    with pillow.open(io.BytesIO(data)) as image:
+        assert image.tag_v2[338] == (1,)
+    with Document(_convert(data)[0].to_array()) as actual:
+        with Document(_convert(_reference_png(pillow, data))[0].to_array()) as reference:
+            assert actual.pages[0].render(
+                background=(0, 255, 0), antialias=False,
+            ).pixels == reference.pages[0].render(
+                background=(0, 255, 0), antialias=False,
+            ).pixels
+
+
+@pytest.mark.parametrize("single", [False, True])
+def test_mixed_opaque_and_alpha_frames_keep_their_order_and_dimensions(pillow, single):
+    data = _tiff(pillow, [
+        ("RGB", (6, 4), (255, 0, 0)), ("LA", (3, 5), (100, 64)),
+        ("RGBA", (4, 2), (20, 100, 200, 128)), ("L", (2, 2), 50),
+    ])
+    results = _convert(data, single_document=single)
+    assert len(results) == (1 if single else 4)
+    index = 0
+    for result in results:
+        with Document(result.to_array()) as document:
+            for page in document.pages:
+                png = _reference_png(pillow, data, index)
+                with Document(_convert(png)[0].to_array()) as reference:
+                    assert page.size == reference.pages[0].size
+                    assert page.render(background=(0, 255, 0), antialias=False).pixels == (
+                        reference.pages[0].render(background=(0, 255, 0), antialias=False).pixels
+                    )
+                index += 1
+    assert index == 4
+
+
+@pytest.mark.parametrize("mode,color", [("RGBA", (20, 40, 60, 255)), ("LA", (100, 255))])
+def test_fully_opaque_alpha_frames_do_not_create_soft_masks(pillow, mode, color):
+    data = _tiff(pillow, [(mode, (4, 2), color)])
+    result = _convert(data)[0].to_array()
+    assert b"/SMask" not in result
+    with Document(result) as document:
+        expected = color[:3] if mode == "RGBA" else (100, 100, 100)
+        assert document.pages[0].render(antialias=False).get_pixel(1, 1) == expected
+
+
+@pytest.mark.parametrize("mode", ["RGBA", "LA"])
+@pytest.mark.parametrize("limit_name", ["max_decoded_stream_bytes", "max_total_decoded_bytes",
+                                        "max_codec_work_bytes"])
+def test_alpha_channels_are_budgeted_before_pixel_decoding(pillow, monkeypatch, mode, limit_name):
+    data = _tiff(pillow, [(mode, (6, 4), 0)])
+    components = 4 if mode == "RGBA" else 2
+    limit = {
+        "max_decoded_stream_bytes": 24 * components + 4 - 1,
+        "max_total_decoded_bytes": 24 * components - 1,
+        "max_codec_work_bytes": len(data) + 24 * (4 + components * 5) + 8 + 1024 - 1,
+    }[limit_name]
+    plugin = pytest.importorskip("PIL.TiffImagePlugin")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Alpha-channel allocations must be bounded before pixel decoding")
+
+    monkeypatch.setattr(plugin.TiffImageFile, "load", forbidden)
+    with pytest.raises(PdfResourceLimitException, match=limit_name):
+        _convert(data, limits=PdfLoadLimits(**{limit_name: limit}))
+
+
+@pytest.mark.parametrize("mode", ["RGBA", "LA"])
+@pytest.mark.parametrize("single", [False, True])
+def test_alpha_bytes_count_toward_cumulative_frame_limits(pillow, monkeypatch, mode, single):
+    data = _tiff(pillow, [(mode, (6, 4), 0), (mode, (6, 4), 0)])
+    plugin = pytest.importorskip("PIL.TiffImagePlugin")
+    original = plugin.TiffImageFile.load
+
+    def guarded(image):
+        assert image.tell() == 0, "The next alpha frame must fail before decoding"
+        return original(image)
+
+    monkeypatch.setattr(plugin.TiffImageFile, "load", guarded)
+    limit = 24 * (4 if mode == "RGBA" else 2) * 2 - 1
+    with pytest.raises(PdfResourceLimitException, match="max_total_decoded_bytes"):
+        _convert(data, single_document=single, limits=PdfLoadLimits(max_total_decoded_bytes=limit))
+
+
+def test_high_precision_rgba_is_rejected_before_downsampling(pillow):
+    data = bytearray(_tiff(pillow, [("RGBA", (6, 4), 0)]))
+    first = struct.unpack_from("<I", data, 4)[0]
+    count = struct.unpack_from("<H", data, first)[0]
+    for index in range(count):
+        entry = first + 2 + 12 * index
+        if struct.unpack_from("<H", data, entry)[0] == 258:
+            bits_offset = struct.unpack_from("<I", data, entry + 8)[0]
+            struct.pack_into("<HHHH", data, bits_offset, 16, 16, 16, 16)
+            break
+    else:
+        raise AssertionError("Fixture has no BitsPerSample tag")
+    with pytest.raises(UnsupportedFeatureException, match="bit depth"):
+        _convert(bytes(data))
 
 
 def test_high_precision_rgb_is_refused_before_pillow_can_downsample(pillow):
@@ -320,7 +510,7 @@ def test_invalid_frame_chain_is_refused(pillow, cyclic):
 
 
 def test_later_frame_failure_does_not_write_any_output(pillow, tmp_path):
-    data = _tiff(pillow, [("RGB", (6, 4), 0), ("RGBA", (2, 2), 0)])
+    data = _tiff(pillow, [("RGB", (6, 4), 0), ("CMYK", (2, 2), 0)])
     outputs = [tmp_path / "first.pdf", tmp_path / "second.pdf"]
     options = ImagesToPdfOptions(single_document=False).add_input(
         ByteArrayDataSource(data)

@@ -7118,9 +7118,14 @@ Supported:
   Animated GIF/WebP inputs raise `UnsupportedFeatureException` before pixel
   decoding; the importer does not silently select their first frame.
   Classic TIFF in either byte order and BigTIFF are accepted.
-  Bilevel, 8-bit grayscale, RGB
-  and palette frames are decoded losslessly into PDF images; bilevel becomes
-  8-bit grayscale and palette becomes RGB. Compression support follows the
+  Bilevel, 8-bit grayscale, RGB, palette, RGBA and LA frames are decoded into PDF
+  images; bilevel becomes 8-bit grayscale and palette becomes RGB. RGBA and LA
+  retain their eight-bit alpha samples as PDF soft masks, including fully
+  transparent and partially opaque pixels. LA remains grayscale rather than
+  expanding to RGB; fully opaque alpha frames need no soft mask. Decoded sample
+  values are preserved, including Pillow's normalization of recognized associated
+  RGBA alpha. This supports reusing transparent color and grayscale artwork
+  directly in PDF workflows. Compression support follows the
   installed Pillow build (tested with uncompressed, LZW, Deflate, PackBits and
   Group 4 bilevel input). TIFF orientation is applied to the pixels.
   Each page is cut to its own picture at `dpi` pixels per inch (72 is one point
@@ -7175,7 +7180,10 @@ Supported:
   decoded one frame at a time. `PdfLoadLimits` bounds input bytes, frame pixels,
   per-frame decoded samples and codec work; the page count and total decoded
   TIFF and WebP/BMP/GIF samples are bounded across the entire run, including
-  separate results. The static formats' dimensions and container structure are
+  separate results. TIFF sample budgets include the alpha channel: LA uses two
+  bytes per pixel and RGBA uses four. Filtered PNG output and working-buffer
+  checks include those channels before pixel decoding. The static formats'
+  dimensions and container structure are
   checked before opening Pillow; GIF frame extents and WebP canvas/bitstream
   dimensions are checked together. Static decoded samples are budgeted as RGBA
   (four bytes per pixel), with space for PNG scanline filter bytes and a
@@ -7226,8 +7234,9 @@ Boundaries:
 - The plugin layer composes high-level PDF operations and adds data-source
   plumbing and one name per workflow. TIFF frames are decoded by `ImagesToPdf`
   before page authoring. There are no hosted services or billing integrations.
-- TIFF import currently rejects alpha, CMYK, floating-point and greater-than-8-bit
-  sample data. It does not copy TIFF metadata or ICC profiles, apply color
+- TIFF alpha import covers eight-bit RGBA/LA frames recognized by Pillow. CMYK,
+  floating-point and greater-than-8-bit sample data remain unsupported.
+  The importer does not copy TIFF metadata or ICC profiles, apply color
   management, or run OCR; resulting pages contain raster images.
 - Static WebP/BMP/GIF import is available through `ImagesToPdf`,
   `Page.add_image()` and `ImageStamp`. These imports do

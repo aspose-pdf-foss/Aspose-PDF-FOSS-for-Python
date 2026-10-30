@@ -34,7 +34,8 @@ def tiff_frames(
     """Yield lossless PNG frames, checking allocations before decoding pixels.
 
     Pillow is needed only for TIFF. Bilevel and palette images are expanded to
-    eight-bit grayscale and RGB respectively; other supported modes are L/RGB.
+    eight-bit grayscale and RGB respectively; L/RGB/LA/RGBA samples are retained,
+    including an eight-bit alpha channel when present.
     The caller places each yielded frame before requesting the next one.
     The final tuple item is the oriented X/Y DPI pair, or 72 DPI when metadata
     is not requested or cannot specify an absolute physical size.
@@ -69,14 +70,19 @@ def tiff_frames(
                     bits = image.tag_v2.get(258, (1,))
                     if isinstance(bits, int):
                         bits = (bits,)
-                    allowed_bits = (1, 2, 4, 8) if mode == "P" else (1, 8)
-                    if mode not in ("1", "L", "RGB", "P") or any(
+                    allowed_bits = (
+                        (1, 2, 4, 8) if mode == "P"
+                        else (8,) if mode in ("LA", "RGBA")
+                        else (1, 8)
+                    )
+                    if mode not in ("1", "L", "RGB", "P", "LA", "RGBA") or any(
                         value not in allowed_bits for value in bits
                     ):
                         raise UnsupportedFeatureException(
                             f"TIFF frame {index + 1} has unsupported mode {mode!r} "
                             f"or bit depth {bits!r}; "
-                            "supported modes are bilevel, 8-bit grayscale, RGB and palette."
+                            "supported modes are bilevel, palette, 8-bit grayscale, "
+                            "RGB, LA and RGBA."
                         )
                     width, height = image.size
                     resolution = DEFAULT_RESOLUTION
@@ -97,8 +103,8 @@ def tiff_frames(
                         )
                     context = f"TIFF frame {index + 1}"
                     budget.check_image_pixels(width, height, context)
-                    target = "L" if mode in ("1", "L") else "RGB"
-                    components = 1 if target == "L" else 3
+                    target = {"1": "L", "P": "RGB"}.get(mode, mode)
+                    components = {"L": 1, "LA": 2, "RGB": 3, "RGBA": 4}[target]
                     decoded_size = width * height * components
                     budget.check(
                         decoded_size + height,

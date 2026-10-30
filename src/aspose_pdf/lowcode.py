@@ -1204,7 +1204,8 @@ class ImagesToPdf(PdfPlugin):
     which case the image is centred inside that sheet and scaled down to fit
     within the margin. By default all images and frames become pages of one
     document; with ``single_document=False`` each image becomes a document of its
-    own. TIFF frames retain their source order. TIFF and WebP/BMP/GIF require
+    own. TIFF frames retain their source order, including eight-bit RGBA/LA
+    transparency. TIFF and WebP/BMP/GIF require
     the ``images`` extra; animated WebP/GIF inputs are refused.
     Set ``auto_orient=True`` to honor JPEG EXIF rotation and reflection without
     recompressing the JPEG or requiring Pillow.

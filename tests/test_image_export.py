@@ -93,6 +93,15 @@ class TestWritePng:
         info = parse_png(png)
         assert info["color_type"] == 6
 
+    def test_gray_alpha8(self):
+        samples = bytes([10, 0, 90, 128, 200, 255])
+        png = ie.write_png(3, 1, "LA", samples)
+        info = parse_png(png)
+        assert info["color_type"] == 4 and info["bit_depth"] == 8
+        assert info["raw"] == b"\0" + samples
+        with pytest.raises(ValueError, match="bit depth"):
+            ie.write_png(1, 1, "LA", b"\0", bit_depth=1)
+
     def test_short_data_is_padded(self):
         # Only one of two rows supplied -> encoder pads, still valid PNG.
         png = ie.write_png(1, 2, "L", bytes([7]))
