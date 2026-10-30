@@ -2164,6 +2164,44 @@ class SimplePdf:
             return
         page.mapping[PdfName("Rotate")] = PdfNumber(int(degrees) % 360)
 
+    def get_page_tab_order(self, page_index: int) -> str | None:
+        """Read the page-local /Tabs name without decoding content streams."""
+        self._ensure_not_disposed()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            return None
+        value = self._resolve(page.mapping.get(PdfName("Tabs")))
+        if not isinstance(value, PdfName):
+            return None
+        return {"/R": "row", "/C": "column", "/S": "structure"}.get(value.name)
+
+    def set_page_tab_order(self, page_index: int, order: str | None) -> None:
+        """Validate a tab-order setting and write or remove this page's /Tabs."""
+        self._ensure_not_disposed()
+        name = None
+        if order is not None:
+            if not isinstance(order, str):
+                raise TypeError("tab_order must be a string or None")
+            name = {
+                "row": "R",
+                "r": "R",
+                "column": "C",
+                "c": "C",
+                "structure": "S",
+                "s": "S",
+            }.get(order.strip().lower())
+            if name is None:
+                raise PdfValidationException(
+                    "tab_order must be 'row', 'column', 'structure', R, C, S or None"
+                )
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page index out of range")
+        if name is None:
+            page.mapping.pop(PdfName("Tabs"), None)
+        else:
+            page.mapping[PdfName("Tabs")] = PdfName(name)
+
     def get_page_crop_box(self, page_index: int):
         """The crop box in effect for a page, or ``None`` when it is the media box.
 

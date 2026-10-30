@@ -1787,6 +1787,38 @@ Supported:
   crop box, which is intersected with it when read.
 - Read and set page rotation through `Page.rotation` (0/90/180/270, clockwise;
   inherited from parent page-tree nodes, normalised, and persisted on save).
+- **Set keyboard navigation order per page** through `Page.tab_order`.
+  Assign `"row"`, `"column"` or `"structure"` to write the PDF 1.5+ page entry
+  `/Tabs /R`, `/C` or `/S`. Names and the short codes `R`/`C`/`S` are case
+  insensitive on assignment, with surrounding whitespace ignored; the getter
+  always returns the full lowercase name. `None` removes the local `/Tabs` and
+  leaves the default traversal to the viewer. This property is not inherited
+  from parent page-tree nodes and is independent for each page.
+  - Missing, null, malformed or unsupported entries read as `None` and are
+    preserved until explicitly replaced or cleared. This includes newer tab
+    order names outside the three supported modes. Indirect PDF name entries
+    are supported; a string such as `(R)` is not treated as the name `/R`.
+    Invalid input types or names are rejected before modifying the page.
+  - A compatible viewer applies the preference to form widgets and other
+    annotations. Row/column traversal uses the page's displayed orientation
+    and the document's reading direction. Structure order follows the existing
+    tagged structure; setting it does not create tags or certify accessibility.
+    The existing PDF/UA conversion's `/Tabs /S` setting is readable through
+    this API. Arbitrary field-name sequences and keyboard event execution are
+    not implemented by this property.
+  - Changing the preference leaves `/Annots` array order, fields, widget
+    rectangles, appearances and page content unchanged. Settings survive
+    in-memory/file saves, page copying and streaming/encrypted input. Reading
+    and editing the property do not decode content or appearance streams.
+    `Document.version` remains caller-controlled: use PDF 1.5 or newer for
+    `/Tabs` when preparing older documents. Disposed documents reject access.
+
+  ```python
+  with Document("application.pdf") as document:
+      document.pages[0].tab_order = "row"
+      document.pages[1].tab_order = "column"
+      document.save("keyboard-navigation.pdf")
+  ```
 - **Read and set the page crop box through `Page.crop_box`, which reports the
   box in effect.** ISO 32000-1 Table 30: the crop box "shall be intersected with
   the media box" to determine the visible region, so the value read back is that

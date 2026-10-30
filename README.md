@@ -1947,7 +1947,9 @@ and delete workflows. 276 public types are organized by module below.
   - `add_stamp(stamp) -> Page` — a text, image or page-number stamp over or under the page
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - `highlight_text(...) -> TextHighlightResult` — annotations and a report of unplaceable matches
-  - properties: `index`, `label`, `rect`, `media_box`, `crop_box`, `rotation`, `annotations`, `content`
+  - properties: `index`, `label`, `rect`, `media_box`, `crop_box`, `rotation`, `tab_order`, `annotations`, `content`
+    Set `tab_order` to `"row"`, `"column"` or `"structure"` for keyboard navigation
+    through fields and annotations; `None` clears the page's explicit preference.
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`
   (the page may belong to another document, and is then imported with all it names),
   `delete(index) -> None`, `clear() -> None`, `contains(page) -> bool`, `index_of(page) -> int`

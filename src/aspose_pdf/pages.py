@@ -482,6 +482,34 @@ class Page:
         eng.set_page_box(self._index, name, rect)
 
     @property
+    def tab_order(self) -> str | None:
+        """The page's explicit annotation tab order: row, column or structure.
+
+        ``None`` means no supported setting is present. The PDF ``/Tabs`` entry
+        is local to the page, not inherited. Unknown entries remain untouched.
+        A compatible viewer applies the order to form widgets and annotations;
+        structure order uses the document's existing structure tree.
+        """
+        self._document._ensure_not_disposed()
+        engine = self._document._engine_pdf
+        return None if engine is None else engine.get_page_tab_order(self._index)
+
+    @tab_order.setter
+    def tab_order(self, value: str | None) -> None:
+        """Set ``row``, ``column`` or ``structure``, or clear with ``None``.
+
+        Names and PDF codes R/C/S are case insensitive; surrounding whitespace
+        is ignored. This writes metadata without reordering annotations or
+        creating structure tags. The document's PDF version stays caller-set;
+        ``/Tabs`` requires PDF 1.5 or newer.
+        """
+        self._document._ensure_not_disposed()
+        engine = self._document._engine_pdf
+        if engine is None:
+            raise AsposePdfException("Cannot set tab order: no underlying document.")
+        engine.set_page_tab_order(self._index, value)
+
+    @property
     def actions(self) -> ActionCollection:
         """What the page does when it is opened or closed (``/AA``).
 
