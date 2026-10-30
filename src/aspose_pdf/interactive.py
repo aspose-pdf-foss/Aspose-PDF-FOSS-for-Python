@@ -219,6 +219,30 @@ def _field_names(fields: Sequence[str] | None) -> list[str] | None:
 
 
 @dataclass(frozen=True)
+class HideAction(Action):
+    """Hide or show named form fields when a PDF viewer executes the action.
+
+    *fields* is a nonempty sequence of fully qualified field names. *hide*
+    defaults to ``True``; ``False`` shows the fields. Names may refer to fields
+    added later. Creating or attaching this action does not change visibility.
+    Annotation-reference targets and chained actions are not modeled.
+    """
+
+    fields: Sequence[str]
+    hide: bool = True
+
+    def _spec(self) -> dict:
+        fields = _field_names(self.fields)
+        if fields is None:
+            raise TypeError("fields must be a nonempty sequence of strings")
+        if not fields or any(not name for name in fields):
+            raise ValueError("HideAction requires nonempty field names")
+        if not isinstance(self.hide, bool):
+            raise TypeError("hide must be a boolean")
+        return {"S": "Hide", "T": fields, "H": self.hide}
+
+
+@dataclass(frozen=True)
 class SubmitFormAction(Action):
     """Send the form's field values to *url*.
 
@@ -332,6 +356,18 @@ def action_from_spec(spec: dict) -> Action | None:
     file holds rather than write something else in its place.
     """
     kind = spec.get("S")
+    if kind == "Hide":
+        if "Next" in spec:
+            return None
+        fields = spec.get("T")
+        if isinstance(fields, str):
+            fields = [fields]
+        action = HideAction(fields, spec.get("H", True))
+        try:
+            action._spec()
+        except (TypeError, ValueError):
+            return None
+        return action
     if kind == "GoTo":
         destination = spec.get("D")
         # A named destination is a string looked up in the document's /Dests;
@@ -423,6 +459,7 @@ __all__ = [
     "FitVDestination",
     "GoToAction",
     "GoToRAction",
+    "HideAction",
     "JavaScriptAction",
     "LaunchAction",
     "NamedAction",

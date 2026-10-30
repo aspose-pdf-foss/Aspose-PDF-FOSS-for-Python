@@ -5152,6 +5152,38 @@ Boundaries:
   into one-character field names. Loaded form actions with conflicting formats
   or flags outside this typed model stay untyped, preserving the original
   action dictionary rather than silently discarding bits.
+  **Show and hide form fields** with `HideAction(fields, hide=True)`, exported
+  from `aspose_pdf` and `aspose_pdf.interactive`. It writes `/S /Hide`, a `/T`
+  array of fully qualified field-name text strings and a boolean `/H`.
+  `hide=False` shows the named fields. Attach it through
+  `Form.add_push_button(action=...)`, `Field.actions["A"]`, field pointer/focus
+  events, page/document action collections, links or outline targets.
+  - `fields` must be a nonempty sequence of nonempty strings; a bare string,
+    bytes, mapping, generator, `None` or a non-string entry is rejected.
+    `hide` must be a boolean. Names are preserved exactly, including Unicode,
+    order and duplicates. References to fields added later are allowed;
+    existence is not checked when authoring the action.
+  - Loaded scalar-string and string-array `/T` targets, including indirect
+    strings/arrays, are read as a typed action with a field-name list. An absent
+    `/H` means `True`; explicit `False` remains a PDF boolean through saves,
+    encrypted documents and streaming input. Reading the action does not decode
+    page or appearance streams.
+  - Annotation-reference targets, mixed or malformed target arrays, empty
+    targets, non-boolean `/H` and chained `/Next` actions stay untyped (`None`)
+    in this API. Their original dictionaries remain in the PDF unless the
+    caller explicitly replaces or removes the action.
+  - A compatible PDF viewer executes the action when its event fires. Creating,
+    reading, saving or rendering a document with this library leaves current
+    field visibility and values unchanged. Event execution and conditional form
+    logic are viewer behavior; this API authors explicit hide/show actions.
+
+  ```python
+  from aspose_pdf import HideAction
+
+  hide_button.actions["A"] = HideAction(["details.notes", "details.email"])
+  show_button.actions["A"] = HideAction(["details.notes", "details.email"], hide=False)
+  ```
+
   Type0 field **rich text** (`/RC` values fall back to the plain `/DA`
   appearance) and XFA authoring are not implemented. Signature fields can be authored *and* signed (see above and
   [Security](#security-encryption-and-signatures)); XFA authoring is not.

@@ -1508,7 +1508,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 275 public types are organized by module below.
+and delete workflows. 276 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1562,6 +1562,7 @@ and delete workflows. 275 public types are organized by module below.
 | `GraphicElement` | A painted path or a placed image, read from a page's content stream. |
 | `GraphicElementCollection` | Collection of graphic elements that can be added to or removed from a page. |
 | `GraphicsAbsorber` | Absorbs graphic elements from PDF pages. |
+| `HideAction` | Hide or show named form fields when a viewer executes an event. |
 | `HtmlLoadOptions` | Options for loading HTML documents. |
 | `HtmlSaveOptions` | Options for saving PDF documents as HTML. |
 | `ImagePlacement-images` | Represent an image placed on a PDF page. |
@@ -2051,6 +2052,8 @@ and delete workflows. 275 public types are organized by module below.
   with plain formatting. Assigning `value` also replaces rich text with plain text.
 - `FormValidationIssue` — an immutable record with `field_name`, `field_type`,
   `code` and `message`; an empty validation report means no covered value issues.
+- `HideAction(fields, hide=True)` — attach a show/hide action to a button or event
+  using fully qualified field names; `hide=False` shows the fields in a compatible viewer.
 - `Annotation` — `generate_appearance(force) -> bool`, `get_property(name, default) -> Any`,
   `set_property(name, value) -> None`; properties `subtype`, `rect`, `contents`, `appearance_normal`
 - `AnnotationCollection` — `add(subtype, rect, contents, title, appearance_normal, properties) -> Annotation`,

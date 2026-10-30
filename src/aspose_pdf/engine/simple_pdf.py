@@ -1546,8 +1546,8 @@ def destination_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
     return _UNRESOLVED_DESTINATION if built is None else built
 
 
-#: The ``/A`` entries any action this API models is built from; nothing else is
-#: read, which keeps the conversion flat and bounded whatever the file holds.
+#: Keys for the general action decoder. Hide validates its target types
+#: separately; both paths keep conversion flat and bounded.
 _ACTION_SPEC_KEYS = ("S", "D", "F", "URI", "N", "JS", "Flags", "Fields")
 
 
@@ -1557,6 +1557,24 @@ def action_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
 
     if not isinstance(obj, PdfDictionary):
         return None
+
+    if resolve(obj.mapping.get(PdfName("S"))) == PdfName("Hide"):
+        # This typed action covers field-name targets only. Preserve other
+        # target shapes and action chains rather than returning a partial view.
+        if PdfName("Next") in obj.mapping:
+            return None
+        targets = resolve(obj.mapping.get(PdfName("T")))
+        targets = targets.items if isinstance(targets, PdfArray) else [targets]
+        fields = []
+        for target in targets:
+            target = resolve(target)
+            if not isinstance(target, PdfString):
+                return None
+            fields.append(decode_pdf_text_string(target))
+        hide = resolve(obj.mapping.get(PdfName("H"), PdfBoolean(True)))
+        if not isinstance(hide, PdfBoolean):
+            return None
+        return action_from_spec({"S": "Hide", "T": fields, "H": hide.value})
 
     def plain(value: Any) -> Any:
         value = resolve(value)
@@ -11465,7 +11483,7 @@ class SimplePdf:
             elif isinstance(value, int):
                 mapping[pdf_key] = PdfNumber(value)
             elif isinstance(value, (list, tuple)):
-                # /Fields on a submit/reset action: fully qualified field names.
+                # /Fields and /T carry fully qualified field names.
                 mapping[pdf_key] = PdfArray(
                     [_pdf_text_string(str(item)) for item in value]
                 )
