@@ -420,16 +420,23 @@ def build_image_stream(
     y: float,
     width: float,
     height: float,
+    *,
+    clip: tuple[float, float, float, float] | None = None,
 ) -> bytes:
-    parts = [
-        "q",
-        (
-            f"{format_number(width)} 0 0 {format_number(height)} "
-            f"{format_number(x)} {format_number(y)} cm"
-        ),
-        f"/{image_resource} Do",
-        "Q",
-    ]
+    parts = ["q"]
+    if clip is not None:
+        # The current path is not saved by q/Q; discard any unfinished path.
+        parts.append("n " + " ".join(format_number(value) for value in clip) + " re W n")
+    parts.extend(
+        [
+            (
+                f"{format_number(width)} 0 0 {format_number(height)} "
+                f"{format_number(x)} {format_number(y)} cm"
+            ),
+            f"/{image_resource} Do",
+            "Q",
+        ]
+    )
     return (" ".join(parts) + "\n").encode("ascii")
 
 

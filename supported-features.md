@@ -4288,6 +4288,36 @@ Supported:
   raise library exceptions. Explicit raw dimensions still identify raw samples
   whose bytes happen to begin with a BMP/GIF/WebP signature. JPEG, PNG and raw
   samples continue to work without Pillow.
+- **Fit images into a frame without distortion.**
+  `Page.add_image(image, x, y, width, height, fit="contain")` keeps the whole
+  image visible, centered in the frame with unused space left transparent.
+  `fit="cover"` centers and fills the frame, clipping overflow on the longer
+  axis. Both preserve the source pixel aspect ratio and work with every image
+  format accepted by `add_image`, including raw samples. JPEG, PNG and raw
+  fitting need no optional dependencies. The default `fit="stretch"` retains
+  independent axis scaling and per-axis pixel-size defaults for omitted display
+  dimensions.
+  - Both new modes require explicit, positive finite `width` and `height` in
+    PDF points; `(x, y)` is the frame's lower-left corner in the current user
+    space. Dimensions that round to zero at PDF coordinate precision, or
+    produce non-finite fitted geometry, are rejected before image resources
+    are registered. Mode names are case-sensitive.
+  - Fitting changes the placement matrix only: it does not resize or crop the
+    embedded pixel data, recompress JPEG bytes, or change page boxes. Cover
+    clipping is local to that image and follows any surrounding graphics
+    transform. Transparency, alternate text and artifact marking retain their
+    existing behavior. Placement metadata reports the full scaled image before
+    clipping, so effective image resolution uses its actual placement scale.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document() as document:
+      page = document.pages.add()
+      page.add_image("logo.png", 40, 700, 160, 80, fit="contain", alt="Company logo")
+      page.add_image("photo.jpg", 40, 400, 160, 160, fit="cover", alt="Photo")
+      document.save("framed-images.pdf")
+  ```
 - **Every embedded file is an associated file.** The catalog carries an `/AF`
   array naming each attachment's file specification, which is what says the
   embedded file belongs to this document — ISO 19005-3 6.8 and ISO 19005-4 6.9

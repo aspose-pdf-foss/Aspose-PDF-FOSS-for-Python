@@ -1933,7 +1933,8 @@ and delete workflows. 276 public types are organized by module below.
 
 - `Page`
   - `add_text(text, x, y, font_size, font_name, font, color, tag, actual_text, layout) -> Page`
-  - `add_image(image, x, y, width, height, pixel_width, pixel_height, color_space, bits_per_component, name, tag, alt, actual_text) -> str`
+  - `add_image(image, x, y, width, height, fit="stretch", pixel_width, pixel_height, color_space, bits_per_component, name, tag, alt, actual_text) -> str` —
+    use `fit="contain"` or `fit="cover"` to center an image in a frame while preserving its proportions
   - `draw_rectangle(x, y, width, height, stroke_color, fill_color, line_width, tag, alt, actual_text) -> Page` /
     `draw_line(x1, y1, x2, y2, stroke_color, line_width, tag, alt, actual_text) -> Page`
   - `render(dpi, scale, background, antialias) -> RasterizedPage` /

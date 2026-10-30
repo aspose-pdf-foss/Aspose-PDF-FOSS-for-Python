@@ -664,6 +664,7 @@ class Page:
         width: float | None = None,
         height: float | None = None,
         *,
+        fit: str = "stretch",
         pixel_width: int | None = None,
         pixel_height: int | None = None,
         color_space: str = "DeviceRGB",
@@ -680,6 +681,13 @@ class Page:
         Static BMP, GIF and WebP require the ``images`` extra; transparency is
         preserved, and animated inputs are rejected. Omitted display dimensions
         default to the corresponding pixel dimensions in PDF points.
+
+        ``fit="stretch"`` (the default) scales each axis independently.
+        ``fit="contain"`` preserves proportions and centers the entire image
+        within ``(x, y, width, height)``, leaving unused space transparent.
+        ``fit="cover"`` preserves proportions, centers the image and clips it
+        to that frame. Both require positive finite width and height. Fitting
+        changes placement only: source pixels and page boxes are preserved.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
@@ -704,6 +712,7 @@ class Page:
             y,
             width,
             height,
+            fit=fit,
             pixel_width=pixel_width,
             pixel_height=pixel_height,
             color_space=color_space,
