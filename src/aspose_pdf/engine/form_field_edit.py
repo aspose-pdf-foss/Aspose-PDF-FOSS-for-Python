@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -26,6 +27,40 @@ _FLAGS = {
     "editable": ("combobox", 1 << 18),
 }
 _COMB_CONFLICTS = (1 << 12) | (1 << 13) | (1 << 20) | (1 << 25)
+
+
+def set_widget_rect(
+    pdf: Any, field: PdfDictionary, rect: Any, widget_index: int
+) -> None:
+    """Change one widget's geometry while retaining its appearances and page."""
+    if isinstance(widget_index, bool) or not isinstance(widget_index, int):
+        raise TypeError("widget_index must be an integer")
+    widgets = widget_dictionaries(pdf, field)
+    if not 0 <= widget_index < len(widgets):
+        raise IndexError("widget_index is out of range")
+    if (
+        not isinstance(rect, (list, tuple))
+        or len(rect) != 4
+        or any(isinstance(value, bool) for value in rect)
+    ):
+        raise PdfValidationException("Field rectangle must contain four numbers")
+    try:
+        coords = tuple(float(value) for value in rect)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise PdfValidationException(
+            "Field rectangle must contain four numbers"
+        ) from exc
+    if not all(math.isfinite(value) for value in coords):
+        raise PdfValidationException("Field rectangle values must be finite")
+    width, height = coords[2] - coords[0], coords[3] - coords[1]
+    if not all(math.isfinite(value) and value > 0 for value in (width, height)):
+        raise PdfValidationException(
+            "Field rectangle must have finite, positive dimensions"
+        )
+    # Replace the array so other widgets sharing the old /Rect keep their geometry.
+    widgets[widget_index].mapping[PdfName("Rect")] = PdfArray(
+        [PdfNumber(value) for value in coords]
+    )
 
 
 def _check_text(pdf: Any, value: Any, *, size: int = 0) -> int:

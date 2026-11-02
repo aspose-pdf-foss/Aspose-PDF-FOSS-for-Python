@@ -591,9 +591,40 @@ class Field:
 
     @property
     def rect(self) -> tuple[float, float, float, float] | None:
-        """The rectangle of the field's first widget, or ``None`` without one."""
+        """The first widget's rectangle; assign to move or resize it on its page.
+
+        Returns ``None`` without a widget. See :meth:`set_widget_rect` for
+        coordinates, validation and appearance scaling.
+        """
         widgets = self.widgets
         return widgets[0].rect if widgets else None
+
+    @rect.setter
+    def rect(self, value: Sequence[float]) -> None:
+        self.set_widget_rect(value)
+
+    def set_widget_rect(
+        self, rect: Sequence[float], *, widget_index: int = 0
+    ) -> Field:
+        """Move or resize a widget on its current page and return this field.
+
+        ``widget_index`` is a zero-based index into :attr:`widgets`; negative
+        or out-of-range values raise ``IndexError``. ``rect`` is a list or tuple of
+        four finite coordinates ``(x0, y0, x1, y1)`` in unrotated default user
+        space, with positive width and height. Invalid rectangles raise
+        :class:`~aspose_pdf.exceptions.PdfValidationException` before any edit.
+
+        Existing appearances and button states are preserved. Viewers scale
+        appearances to fit the new rectangle; text is not reflowed. No page or
+        appearance content is decoded, and other widgets keep their geometry.
+        A widget with no page remains unplaced. :class:`FieldWidget` objects
+        obtained earlier remain immutable snapshots.
+        """
+        from aspose_pdf.engine.form_field_edit import set_widget_rect
+
+        engine = self._engine()
+        set_widget_rect(engine, self._dictionary(), rect, widget_index)
+        return self
 
     def remove(self) -> Field:
         """Remove this field and all of its widgets from the form."""

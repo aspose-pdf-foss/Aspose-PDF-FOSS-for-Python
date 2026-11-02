@@ -4643,6 +4643,30 @@ Supported:
   pdfium and MuPDF do, and the specification places it) rather than from a
   separate widget (pdf.js, qpdf), and radio export values are on-state names
   (pdf.js, MuPDF) rather than `/Opt` texts (pdfium).
+- **Move or resize an existing form widget** with
+  `Field.set_widget_rect(rect, widget_index=0) -> Field`, or assign `Field.rect`
+  to edit the first widget. Indices match `Field.widgets` and must be non-negative;
+  a missing widget raises `IndexError`. Rectangles are lists or tuples of four
+  finite coordinates `(x0, y0, x1, y1)` in unrotated default user space, with
+  positive, finite width and height. Invalid rectangles raise
+  `PdfValidationException` before any edit. Coordinates may extend outside the page.
+  Only the selected widget's `/Rect` is replaced. Its page membership, field
+  value, actions, appearance streams and button states are retained, as are
+  other widgets. Compatible viewers, rendering and flattening fit the existing
+  appearance to the new rectangle: resizing scales text and graphics rather
+  than reflowing text or regenerating appearances. No page or appearance streams
+  are decoded, including for streaming input. Moving to a different page is
+  unsupported; a widget with no page stays unplaced. Previously returned
+  `FieldWidget` records remain immutable snapshots.
+
+  ```python
+  with Document("application.pdf") as document:
+      document.form["name"].rect = (72, 700, 320, 728)
+      document.form["delivery"].set_widget_rect(
+          (72, 640, 92, 660), widget_index=1
+      )
+      document.save("adjusted-application.pdf")
+  ```
 - **Edit existing field configuration** with setters for `default_value`,
   `alignment`, `max_length`, `multiline`, `password`, `comb`, `options`,
   `multi_select` and `editable`. Changes are written on the selected field, retaining unrelated

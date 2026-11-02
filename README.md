@@ -2058,6 +2058,9 @@ and delete workflows. 276 public types are organized by module below.
   `export_values`, `widgets` (`FieldWidget(page_index, rect)`), `page_index`, `rect`
   Configuration setters include `default_value`, `max_length`, `multiline`, `password`,
   `comb`, `options`, `multi_select` and `editable`.
+  Assign `rect` to move or resize the first widget on its page, or call
+  `set_widget_rect(rect, widget_index=0) -> Field` to select a widget by index.
+  Existing appearances scale to fit; text is not reflowed.
   Set `rich_text` on a text field to XHTML with a `<body>` root to update its
   formatting, plain answer and appearance together; set `None` to keep the answer
   with plain formatting. Assigning `value` also replaces rich text with plain text.
