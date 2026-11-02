@@ -117,13 +117,105 @@ def _borders_of(table: Any, row: Any, cell: Any) -> list[tuple[float, Any]]:
     ]
 
 
-def column_edges(table: Any, available: float) -> list[float]:
+def _auto_widths(
+    table: Any, faces: dict[str, _Face], count: int, total: float
+) -> list[float]:
+    """Fit measured preferred widths while retaining room for padding and glyphs."""
+    from ..tables import _positive
+
+    constraints: dict[tuple[int, int], tuple[float, float]] = {}
+    for row in table.rows:
+        column = 0
+        for cell in row.cells:
+            if (
+                isinstance(cell.column_span, bool)
+                or not isinstance(cell.column_span, int)
+                or cell.column_span < 1
+            ):
+                raise PdfValidationException("column_span must be a positive integer")
+            if column >= count:
+                raise PdfValidationException(
+                    f"A row covers more than the table's {count} columns"
+                )
+            span = min(cell.column_span, count - column)
+            style = _style_of(table, row, cell)
+            padding = _positive(style["padding"], "padding", allow_zero=True)
+            size = _positive(style["font_size"], "font_size")
+            face = faces[style["font_name"]]
+            # Measure the same whitespace and hard breaks the wrapper renders.
+            paragraphs = cell.text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            lines = [" ".join(line.split()) for line in paragraphs]
+            preferred = max((face.width(line, size) for line in lines), default=0.0)
+            glyph = max(
+                (face.width(char, size) for char in set("".join(lines))), default=0.0
+            )
+            minimum = max(1.0, 2 * padding + glyph)
+            preferred = max(minimum, 2 * padding + preferred)
+            if not all(math.isfinite(value) for value in (minimum, preferred)):
+                raise PdfValidationException(
+                    "Automatic column measurements must be finite"
+                )
+            old_min, old_pref = constraints.get((column, span), (0.0, 0.0))
+            constraints[column, span] = max(old_min, minimum), max(old_pref, preferred)
+            column += span
+
+    def grow(widths: list[float], start: int, span: int, required: float) -> None:
+        """Share a span's deficit proportionally across the covered columns."""
+        current = math.fsum(widths[start : start + span])
+        if required > current:
+            scale = required / current
+            for index in range(start, start + span):
+                widths[index] *= scale
+
+    ordered = sorted(constraints, key=lambda key: (key[1], key[0]))
+    try:
+        # Prefix lower bounds find feasible minimum widths even for overlapping spans.
+        endings: dict[int, list[tuple[int, float]]] = {}
+        for (start, span), (minimum, _) in constraints.items():
+            endings.setdefault(start + span, []).append((start, minimum))
+        edges = [0.0]
+        for end in range(1, count + 1):
+            edge = edges[-1] + 1.0
+            for start, required in endings.get(end, ()):
+                edge = max(edge, edges[start] + required)
+            edges.append(edge)
+        minimums = [edges[index + 1] - edges[index] for index in range(count)]
+        preferreds = [1.0] * count
+        for start, span in ordered:
+            grow(preferreds, start, span, constraints[start, span][1])
+        minimum_total = math.fsum(minimums)
+        preferred_total = math.fsum(preferreds)
+        if minimum_total > total and not math.isclose(
+            minimum_total, total, rel_tol=0, abs_tol=1e-8
+        ):
+            raise PdfValidationException(
+                "Table width is too narrow for cell padding and glyphs"
+            )
+        if preferred_total <= total or preferred_total == minimum_total:
+            widths = [width * (total / preferred_total) for width in preferreds]
+        else:
+            scale = max(0.0, total - minimum_total) / (preferred_total - minimum_total)
+            widths = [
+                low + (high - low) * scale
+                for low, high in zip(minimums, preferreds)
+            ]
+        widths[-1] += total - math.fsum(widths)
+    except OverflowError as exc:
+        raise PdfValidationException("Automatic column measurements are too large") from exc
+    return widths
+
+
+def column_edges(
+    table: Any, available: float, faces: dict[str, _Face] | None = None
+) -> list[float]:
     """Where each column starts, plus where the table ends, from its left edge.
 
     Explicit widths are taken as they are. Otherwise the table's width -- or the
-    room left on the page -- is split equally among its columns, which is the
-    only answer that needs nothing measured.
+    room left on the page -- is split equally, or fitted to measured content
+    when ``auto_column_widths`` is enabled and *faces* supplies the metrics.
     """
+    if not isinstance(table.auto_column_widths, bool):
+        raise PdfValidationException("auto_column_widths must be a boolean")
     if table.column_widths:
         widths = list(table.column_widths)
     else:
@@ -131,14 +223,29 @@ def column_edges(table: Any, available: float) -> list[float]:
         if count < 1:
             raise PdfValidationException("A table needs at least one column")
         total = table.width if table.width is not None else available
-        if total is None or total <= 0:
-            raise PdfValidationException(
-                "A table without column widths needs a width, or room on the page"
-            )
-        widths = [float(total) / count] * count
+        if table.auto_column_widths:
+            from ..tables import _positive
+
+            total = _positive(total, "table width")
+            if faces is None:
+                raise PdfValidationException(
+                    "Automatic column widths require font measurements"
+                )
+            widths = _auto_widths(table, faces, count, total)
+        else:
+            if total is None or total <= 0:
+                raise PdfValidationException(
+                    "A table without column widths needs a width, or room on the page"
+                )
+            widths = [float(total) / count] * count
     edges = [0.0]
     for width in widths:
-        edges.append(edges[-1] + float(width))
+        edge = edges[-1] + float(width)
+        if table.auto_column_widths and not table.column_widths and (
+            not math.isfinite(edge) or edge <= edges[-1]
+        ):
+            raise PdfValidationException("Automatic column widths cannot be represented")
+        edges.append(edge)
     return edges
 
 
@@ -148,7 +255,7 @@ def layout(
     available: float,
 ) -> list[_RowBox]:
     """Measure every row: its cells' lines, their boxes, and its height."""
-    edges = column_edges(table, available)
+    edges = column_edges(table, available, faces)
     columns = len(edges) - 1
     boxes: list[_RowBox] = []
     for row in table.rows:
@@ -630,6 +737,13 @@ def draw(
     while pending:
         row = pending[0]
         if cursor - row.height < bottom_margin and (page_rows or pages):
+            if current_page + 1 >= len(pdf.pages):
+                next_top = pdf.pages[current_page][3] - (box[3] - float(y))
+                repeated_height = sum(header.height for header in headers)
+                if next_top - repeated_height - row.height < bottom_margin:
+                    raise PdfValidationException(
+                        "A row does not fit on a continuation page with its repeated headers"
+                    )
             start_new_page()
             continue
         if cursor - row.height < bottom_margin and not page_rows and not pages:

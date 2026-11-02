@@ -1998,6 +1998,31 @@ Supported:
   - `column_widths` are points and decide the table's width; without them
     `columns` (or the widest row) splits `width`, or the room left on the page,
     into equal columns. A cell may span columns.
+  - `auto_column_widths=True` enables content-based column sizing when explicit
+    `column_widths` are absent. The default remains equal columns, and explicit
+    widths always take precedence. The total width is `Table.width` when set,
+    otherwise the starting page's remaining crop-box width from `x` to its right
+    edge. Effective font names, sizes, header styles, cell padding and embedded
+    font advances are measured. Explicit newlines use the widest rendered line;
+    whitespace is normalized in the same way as the table's word wrapper.
+    A deterministic heuristic starts with no-wrap preferences, growing spanned
+    column groups proportionally to their measured requirements. Spare room is
+    shared proportionally; narrow budgets reduce widths toward feasible minimums
+    and let the normal wrapper grow the rows. Minimums reserve cell padding and
+    the widest glyph, with a 1-point floor per column, including empty columns.
+    Overlapping spans are included in those minimum constraints. An insufficient
+    or non-finite width raises `PdfValidationException` before table content is
+    drawn. The grid is calculated once per placement and reused on continuation
+    pages, including repeated headers and link rectangles. `column_widths` is
+    not populated or changed, so the same table can fit a different width when
+    placed again. This path needs no additional dependencies.
+
+    ```python
+    table = Table(width=420, auto_column_widths=True)
+    table.add_header_row(["Description", "Qty", "Price"])
+    table.add_row(["A product with a longer description", "2", "9.99"])
+    page.add_table(table, 60, 760)
+    ```
   - Cell text wraps to the column: explicit newlines are hard breaks, words pack
     greedily, and a word too long for the column is broken so nothing overflows.
     A row grows to hold the lines its cells wrap to, and `row_height` or a row's
@@ -2005,8 +2030,10 @@ Supported:
   - A table taller than the room left **continues onto the next page** --
     repeating the rows marked as headers, and adding a page like the one it is
     leaving when there is none to continue onto. `bottom_margin` says how much to
-    leave at the foot. A first row that cannot fit at all is refused rather than
-    drawn off the page.
+    leave at the foot. Rows are not split across pages. A first row that cannot
+    fit, or a row that cannot fit with the repeated headers on a new continuation
+    page, raises `PdfValidationException` instead of drawing off the page or
+    creating further pages indefinitely.
   - Style falls back cell → row → table: `font_name`/`font_size`/`text_color`,
     `padding`, `alignment` (left/center/right) and `vertical_alignment`
     (top/middle/bottom), `background_color`, `border_width`/`border_color`, and

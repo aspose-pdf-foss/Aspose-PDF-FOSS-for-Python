@@ -727,6 +727,10 @@ Set `border_widths={"bottom": 1.5}` or `border_colors={"bottom": "#003366"}`
 on a `Table`, `Row` or `Cell` to style individual sides (`top`, `right`,
 `bottom`, `left`). Width `0` or a side color of `None` hides that side.
 
+Set `Table(auto_column_widths=True)` to allocate column widths from text,
+fonts and padding within the table's `width` or the remaining page width.
+Explicit `column_widths` take precedence.
+
 `Cell("Product details", link=URIAction("https://example.com/product"))` makes
 the whole cell clickable. `link` also accepts a page destination or its name;
 links follow column spans, wrapped row heights and repeated headers.

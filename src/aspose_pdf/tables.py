@@ -217,7 +217,9 @@ class Table:
 
     ``column_widths`` are in points and decide the table's width. Without them,
     ``columns`` (or the widest row) splits ``width`` -- or the room left on the
-    page -- into equal columns.
+    page -- into equal columns. Set ``auto_column_widths=True`` to distribute
+    that space by measured content instead. Fonts, sizes, padding, headers and
+    column spans are considered. Explicit ``column_widths`` take precedence.
 
     The styles here are the defaults every row and cell falls back to:
     ``font_name`` and ``font_size`` for the text, ``font`` to embed a Unicode
@@ -256,8 +258,11 @@ class Table:
     repeat_header: bool = True
     border_widths: Mapping[str, float] | None = None
     border_colors: Mapping[str, Any] | None = None
+    auto_column_widths: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.auto_column_widths, bool):
+            raise PdfValidationException("auto_column_widths must be a boolean")
         self.rows = [
             row if isinstance(row, Row) else Row(list(row)) for row in self.rows
         ]
