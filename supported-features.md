@@ -5643,6 +5643,31 @@ Supported:
     fetching or checking network reachability. PDF string decoding follows
     the existing BOM-aware UTF-16/UTF-8 and Latin-1 fallback helper. This is
     not exhaustive URI syntax validation.
+  - `Document.base_uri` reads or changes the catalog's `/URI /Base`. It returns
+    the declared ASCII string, or `None` when the entry is missing or null.
+    Assign a nonempty absolute ASCII URI, using percent-encoding for spaces
+    and international characters; malformed percent escapes and invalid
+    authorities are rejected. URI spelling, case, query, fragment and trailing
+    slashes are retained. The getter exposes existing ASCII text as stored;
+    assignment validates the new value locally without network access.
+    Setting a base changes the resolved addresses in subsequent link inventories
+    and CSV/JSON reports while preserving action URLs, destinations and page
+    content. `None` removes only `Base`, retaining unrelated URI dictionary
+    entries and removing the dictionary if it becomes empty. Updates copy the
+    URI dictionary so shared dictionaries and strings keep their other uses.
+    Malformed metadata types, non-ASCII stored bytes and cyclic or dangling
+    references raise `PdfParseException`; a new assignment can replace a
+    malformed URI container or Base value. String sizes, dictionary counts,
+    reference depth and initial catalog allocation obey `PdfLoadLimits`.
+    Reading and editing this metadata keep streaming page content lazy, and
+    the setting survives full, encrypted and incremental saves.
+
+    ```python
+    with Document("manual.pdf") as document:
+        document.base_uri = "https://example.com/manuals/"
+        document.pages[0].add_link((60, 700, 200, 720), URIAction("appendix.pdf"))
+        document.save("relocated-manual.pdf")
+    ```
   - Direct `Dest` and `GoTo` resolve explicit targets, named aliases,
     destination dictionaries and indirect values to immutable `Destination`
     objects. `target_page_index` returns the local destination page, otherwise

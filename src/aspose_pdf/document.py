@@ -371,6 +371,36 @@ class Document:
         )
 
     @property
+    def base_uri(self) -> str | None:
+        """The catalog's ``/URI /Base`` for resolving relative URI actions.
+
+        Returns the declared ASCII string, or ``None`` when absent. Malformed
+        dictionaries, references or non-ASCII strings raise ``PdfParseException``.
+        Assign an absolute ASCII URI to set it, or ``None`` to remove it. Spaces
+        and international characters must be percent-encoded. Stored spelling
+        and trailing slashes are preserved; no address is fetched or checked online.
+
+        Link inventories and reports apply the base to ``resolved_uri`` while
+        retaining each action's raw ``uri``. Other URI dictionary entries and
+        shared metadata are preserved. Page content is not decoded.
+        """
+        from aspose_pdf.engine.base_uri import get_base_uri
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return get_base_uri(self)
+
+    @base_uri.setter
+    def base_uri(self, value: str | None) -> None:
+        from aspose_pdf.engine.base_uri import set_base_uri
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        set_base_uri(self, value)
+
+    @property
     def open_action(self) -> Action | Destination | None:
         """Where the document opens, or what it does when opened.
 

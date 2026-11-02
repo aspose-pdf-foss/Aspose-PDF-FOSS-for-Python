@@ -990,6 +990,11 @@ and downstream processing. CSV uses one-based page numbers, with separate local
 and remote target columns; JSON retains zero-based indices and structured views.
 See [link inventory details](supported-features.md#annotations).
 
+Read or set `Document.base_uri` to give relative links a common address, for
+example `document.base_uri = "https://example.com/manuals/"`; assign `None` to
+clear it. New values are absolute ASCII URIs, with international characters
+percent-encoded. The setting is saved in the PDF and used by link reports.
+
 ### Update URLs Across a PDF
 
 ```python
@@ -1946,7 +1951,7 @@ and delete workflows. 276 public types are organized by module below.
   - properties: `pages`, `page_labels`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
     `is_pdfua_compliant`, `font_substitution`, `page_mode`, `page_layout`, `open_action`,
-    `viewer_preferences`
+    `viewer_preferences`, `base_uri`
   - `add_stamp(stamp, pages) -> Document` — stamp the pages named, or every page
 
 ### Pages And Content
