@@ -19,6 +19,7 @@ would tell a reader every cell is a sibling of the table.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,6 +28,7 @@ from .cos import (
     PdfArray,
     PdfDictionary,
     PdfName,
+    PdfNull,
     PdfNumber,
 )
 from .text_faces import DEFAULT_LINE_HEIGHT, _EmbeddedFace, _Face, _StandardFace
@@ -48,6 +50,7 @@ class _CellBox:
     text_height: float
     style: dict[str, Any]
     is_header: bool
+    link: Any = None
 
 
 @dataclass
@@ -180,6 +183,7 @@ def layout(
                     is_header=cell.is_header
                     if cell.is_header is not None
                     else row.header,
+                    link=cell.link,
                 )
             )
             tallest = max(tallest, text_height + 2 * padding)
@@ -189,8 +193,123 @@ def layout(
     return boxes
 
 
+def _prepare_cell_link(pdf: Any, cell: _CellBox) -> Any:
+    """Validate and encode a target before any table pages are drawn."""
+    from ..interactive import Action, Destination
+    from ..tables import _cell_link
+    from .simple_pdf import _pdf_text_string
+
+    target = _cell_link(cell.link)
+    if target is None:
+        return None
+    destinations = [target] if isinstance(target, Destination) else []
+    if isinstance(target, Action):
+        spec = target._spec()
+        if spec.get("S") != "GoToR":
+            destinations.extend(
+                value for value in spec.values() if isinstance(value, Destination)
+            )
+    for destination in destinations:
+        page = destination.page
+        if (
+            isinstance(page, bool)
+            or not isinstance(page, int)
+            or not 0 <= page < len(pdf.pages)
+        ):
+            raise PdfValidationException(
+                "A cell link destination must name an existing page"
+            )
+        for value in destination._spec()[1]:
+            if value is None:
+                continue
+            try:
+                valid = not isinstance(value, bool) and math.isfinite(float(value))
+            except (TypeError, ValueError, OverflowError):
+                valid = False
+            if not valid:
+                raise PdfValidationException(
+                    "Cell link destination coordinates must be finite numbers"
+                )
+    try:
+        value, key = pdf._interactive_target_cos(target)
+        label = _pdf_text_string("\n".join(cell.lines))
+    except UnicodeError as exc:
+        raise PdfValidationException("Cell link contains invalid Unicode text") from exc
+    return value, key, label
+
+
+def _add_cell_links(
+    pdf: Any, page_index: int, rows: list[_RowBox], tops: list[float], left: float
+) -> list[list[Any]]:
+    """Place one borderless annotation per linked cell occurrence."""
+    if not any(cell.link is not None for row in rows for cell in row.cells):
+        return [[None for cell in row.cells] for row in rows]
+    page = pdf._get_page_dict(page_index)
+    annots = pdf._resolve(page.mapping.get(PdfName("Annots")))
+    if annots is not None and not isinstance(annots, (PdfArray, PdfNull)):
+        raise PdfValidationException("Page annotations must be an array")
+    refs = []
+    links = []
+    for row, top in zip(rows, tops):
+        row_links = []
+        for cell in row.cells:
+            ref = None
+            if cell.link is not None:
+                value, key, label = cell.link
+                x = left + cell.x
+                annotation = PdfDictionary(
+                    {
+                        PdfName("Type"): PdfName("Annot"),
+                        PdfName("Subtype"): PdfName("Link"),
+                        PdfName("Rect"): PdfArray(
+                            [
+                                PdfNumber(v)
+                                for v in (x, top - row.height, x + cell.width, top)
+                            ]
+                        ),
+                        PdfName("Border"): PdfArray([PdfNumber(0) for _ in range(3)]),
+                        PdfName("P"): pdf._page_ref_for_structure(page_index),
+                        PdfName("Contents"): label,
+                        PdfName(key): value,
+                    }
+                )
+                ref = pdf._cos_doc.register_object(annotation)
+                refs.append(ref)
+            row_links.append(ref)
+        links.append(row_links)
+    if refs:
+        # A shared /Annots array must not put the new links on another page.
+        page.mapping[PdfName("Annots")] = PdfArray(
+            (annots.items if isinstance(annots, PdfArray) else []) + refs
+        )
+    return links
+
+
+def _link_structure_parents(
+    pdf: Any, root: PdfDictionary, links: list[tuple[Any, Any]]
+) -> None:
+    """Associate annotations with Link elements using consecutive unique keys."""
+    if not links:
+        return
+    tree = pdf._resolve(root.mapping[PdfName("ParentTree")])
+    nums = pdf._resolve(tree.mapping[PdfName("Nums")])
+    keys = (pdf._resolve(item) for item in nums.items[0::2])
+    key = max(
+        (int(item.value) for item in keys if isinstance(item, PdfNumber)),
+        default=-1,
+    ) + 1
+    next_key = pdf._resolve(root.mapping.get(PdfName("ParentTreeNextKey")))
+    if isinstance(next_key, PdfNumber):
+        key = max(key, int(next_key.value))
+    for annotation, link in links:
+        nums.items.extend([PdfNumber(key), link])
+        pdf._resolve(annotation).mapping[PdfName("StructParent")] = PdfNumber(key)
+        key += 1
+    root.mapping[PdfName("ParentTreeNextKey")] = PdfNumber(key)
+
+
 def _register_table_structure(
-    pdf: Any, page_index: int, rows: list[_RowBox]
+    pdf: Any, page_index: int, rows: list[_RowBox], links: list[list[Any]]
 ) -> list[list[tuple[str, int]]] | None:
     """Build a ``/Table`` → ``/TR`` → ``/TH``/``/TD`` tree; return a mark per cell.
 
@@ -218,7 +337,8 @@ def _register_table_structure(
 
     marks: list[list[tuple[str, int]]] = []
     row_refs: list[Any] = []
-    for row in rows:
+    link_parents: list[tuple[Any, Any]] = []
+    for row, row_links in zip(rows, links):
         row_elem = PdfDictionary(
             {
                 PdfName("Type"): PdfName("StructElem"),
@@ -230,7 +350,7 @@ def _register_table_structure(
         row_ref = pdf._cos_doc.register_object(row_elem)
         cell_refs: list[Any] = []
         row_marks: list[tuple[str, int]] = []
-        for cell in row.cells:
+        for cell, annotation in zip(row.cells, row_links):
             tag = "TH" if cell.is_header else "TD"
             mcid = len(parent_array.items)
             cell_elem = PdfDictionary(
@@ -243,7 +363,35 @@ def _register_table_structure(
                 }
             )
             cell_ref = pdf._cos_doc.register_object(cell_elem)
-            parent_array.items.append(cell_ref)
+            if annotation is not None:
+                link_elem = PdfDictionary(
+                    {
+                        PdfName("Type"): PdfName("StructElem"),
+                        PdfName("S"): PdfName("Link"),
+                        PdfName("P"): cell_ref,
+                        PdfName("Pg"): page_ref,
+                        PdfName("K"): PdfArray(
+                            [
+                                PdfNumber(mcid),
+                                PdfDictionary(
+                                    {
+                                        PdfName("Type"): PdfName("OBJR"),
+                                        PdfName("Obj"): annotation,
+                                        PdfName("Pg"): page_ref,
+                                    }
+                                ),
+                            ]
+                        ),
+                    }
+                )
+                link_ref = pdf._cos_doc.register_object(link_elem)
+                cell_elem.mapping[PdfName("K")] = link_ref
+                parent_array.items.append(link_ref)
+                link_parents.append((annotation, link_ref))
+                tag = "Link"
+                page.mapping[PdfName("Tabs")] = PdfName("S")
+            else:
+                parent_array.items.append(cell_ref)
             cell_refs.append(cell_ref)
             row_marks.append((tag, mcid))
         if cell_refs:
@@ -252,6 +400,7 @@ def _register_table_structure(
         marks.append(row_marks)
     if row_refs:
         table_elem.mapping[PdfName("K")] = PdfArray(row_refs)
+    _link_structure_parents(pdf, struct_root, link_parents)
     pdf._append_struct_root_kid(struct_root, table_ref)
     return marks
 
@@ -389,6 +538,21 @@ def draw(
     box = pdf.get_page_crop_box(page_index) or tuple(pdf.pages[page_index])
     available = (box[2] - box[0]) - (float(x) - box[0])
     rows = layout(table, faces, available)
+    for row in rows:
+        for cell in row.cells:
+            cell.link = _prepare_cell_link(pdf, cell)
+            if cell.link is not None:
+                coordinates = (
+                    float(x) + cell.x, float(x) + cell.x + cell.width,
+                    float(y), row.height, cell.width,
+                )
+                if (
+                    not all(math.isfinite(value) for value in coordinates)
+                    or row.height <= 0 or cell.width <= 0
+                ):
+                    raise PdfValidationException(
+                        "Cell link rectangle must have finite, positive dimensions"
+                    )
     headers = [row for row in rows if row.is_header] if table.repeat_header else []
 
     pages: list[int] = []
@@ -404,21 +568,47 @@ def draw(
         nonlocal page_rows, page_tops
         if not page_rows:
             return
+        isolation = None
+        sections = getattr(pdf, "_open_graphics_sections", None)
+        if pdf._lazy and not (sections and sections.get(current_page)):
+            from .content_isolation import isolation_for
+
+            isolation = isolation_for(
+                pdf.get_page_content(current_page), budget=pdf._load_budget
+            )
+            if not isolation.complete:
+                raise PdfValidationException("Cannot safely isolate table page content")
         resources = {name: face.resource(current_page) for name, face in faces.items()}
-        marks = (
-            _register_table_structure(pdf, current_page, page_rows) if tag else None
-        )
-        content: list[bytes] = []
-        for index, (row, top) in enumerate(zip(page_rows, page_tops)):
-            for position, cell in enumerate(row.cells):
-                fragment = _cell_content(
+        fragments = [
+            [
+                _cell_content(
                     pdf, current_page, cell, float(x), top, row.height, faces, resources
                 )
+                for cell in row.cells
+            ]
+            for row, top in zip(page_rows, page_tops)
+        ]
+        links = _add_cell_links(pdf, current_page, page_rows, page_tops, float(x))
+        marks = (
+            _register_table_structure(pdf, current_page, page_rows, links)
+            if tag
+            else None
+        )
+        content: list[bytes] = []
+        for index, row_fragments in enumerate(fragments):
+            for position, fragment in enumerate(row_fragments):
                 if marks is not None and fragment:
                     tag_name, mcid = marks[index][position]
                     fragment = wrap_marked_content(fragment, tag_name, mcid)
                 content.append(fragment)
-        pdf._append_content_to_page(current_page, b"".join(content))
+        if isolation is None:
+            pdf._append_content_to_page(current_page, b"".join(content))
+        else:
+            pdf._append_content_to_cos_page(
+                current_page, isolation.closing + b"".join(content),
+                opening=isolation.opening,
+            )
+            pdf._extracted_text = None
         pages.append(current_page)
         page_rows = []
         page_tops = []

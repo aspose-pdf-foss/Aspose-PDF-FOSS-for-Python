@@ -2041,6 +2041,35 @@ Supported:
     table.add_row(["Total", "9.99"], border_widths={"top": 1})
     page.add_table(table, 60, 760)
     ```
+  - `Cell(link=...)` makes the full cell rectangle clickable, including padding,
+    its column span and the final row height. Targets use the same types as
+    `Page.add_link`: `Action` (such as `URIAction` or `GoToAction`), a typed
+    `Destination`, or a named destination string. Strings name destinations;
+    web URLs must be wrapped in `URIAction`. `None` adds no annotation. Links
+    are cell-specific and do not change text color, underlining or borders.
+    One borderless Link annotation is added per cell occurrence on its actual
+    page, including repeated headers on continuation pages. Existing annotations
+    are retained. Local destination page indices must already exist when
+    `add_table` is called; invalid types, page indices, destination coordinates
+    and names are rejected before table content is drawn. Named definitions
+    can be added or repointed separately, as for ordinary links.
+    With `tag=True`, each linked cell owns a `Link` structure element containing
+    its marked content and an `OBJR` to the annotation; page and annotation
+    ParentTree entries are connected and the page uses structure tab order.
+    `tag=False` creates the link annotations without adding structure elements.
+    On streaming input, table authoring decodes only pages it draws on and
+    isolates existing graphics state so annotation rectangles match the cells.
+
+    ```python
+    from aspose_pdf import Cell, FitDestination, Table, URIAction
+
+    table = Table(column_widths=[220, 90])
+    table.add_row([
+        Cell("Product details", link=URIAction("https://example.com/product")),
+        Cell("Appendix", link=FitDestination(1)),  # Page 1 already exists.
+    ])
+    page.add_table(table, 60, 760)
+    ```
   - The structure is **tagged as it is drawn**: a `/Table` of `/TR` of `/TH` and
     `/TD`, nested as ISO 32000-1 14.8.4.3 asks, each cell owning the
     marked-content sequence its text is in. Flattening that -- every cell a

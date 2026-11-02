@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf.interactive import Action, Destination
 
 __all__ = ["Cell", "Row", "Table"]
 
@@ -36,6 +37,13 @@ __all__ = ["Cell", "Row", "Table"]
 _HORIZONTAL = ("left", "center", "centre", "right")
 _VERTICAL = ("top", "middle", "center", "centre", "bottom")
 _BORDER_SIDES = ("top", "right", "bottom", "left")
+
+
+def _cell_link(value: Any) -> Action | Destination | str | None:
+    """Check the target type without needing a document or resolving a page."""
+    if value is not None and not isinstance(value, (Action, Destination, str)):
+        raise TypeError("link must be an Action, a Destination, a destination name or None")
+    return value
 
 
 def _positive(value: Any, name: str, *, allow_zero: bool = False) -> float:
@@ -104,6 +112,13 @@ class Cell:
     ``border_widths`` and ``border_colors`` map any of ``top``, ``right``,
     ``bottom`` and ``left`` to overrides of the uniform border style. A width
     of zero or a side colour of ``None`` hides that side.
+
+    ``link`` makes the whole cell clickable: pass an ``Action`` such as
+    ``URIAction``, a ``Destination``, or a named destination string. Strings
+    name destinations; wrap web addresses in ``URIAction``. ``None`` adds no
+    link. Links keep the cell's existing text and visual style.
+    Local destination pages must exist when the table is placed. A linked
+    header cell gets a separate link each time the header is repeated.
     """
 
     text: str = ""
@@ -120,6 +135,7 @@ class Cell:
     is_header: bool | None = None
     border_widths: Mapping[str, float] | None = None
     border_colors: Mapping[str, Any] | None = None
+    link: Action | Destination | str | None = None
 
     def __post_init__(self) -> None:
         self.text = "" if self.text is None else str(self.text)
@@ -140,6 +156,7 @@ class Cell:
             )
         self.border_widths = _border_sides(self.border_widths, "border_widths")
         self.border_colors = _border_sides(self.border_colors, "border_colors")
+        _cell_link(self.link)
 
 
 @dataclass
