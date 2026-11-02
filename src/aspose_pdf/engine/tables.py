@@ -86,14 +86,32 @@ def _style_of(table: Any, row: Any, cell: Any) -> dict[str, Any]:
         "padding": table.padding if cell.padding is None else cell.padding,
         "alignment": cell.alignment or table.alignment,
         "vertical_alignment": cell.vertical_alignment or table.vertical_alignment,
-        "border_width": (
-            table.border_width if cell.border_width is None else cell.border_width
-        ),
-        "border_color": (
-            table.border_color if cell.border_color is None else cell.border_color
-        ),
+        "borders": _borders_of(table, row, cell),
         "font_name": cell.font_name or row.font_name or table.font_name,
     }
+
+
+def _borders_of(table: Any, row: Any, cell: Any) -> list[tuple[float, Any]]:
+    """Resolve side styles before drawing, including edits made after creation."""
+    from ..tables import _BORDER_SIDES, _border_sides, _positive
+    from .content_authoring import normalize_color
+
+    widths = dict.fromkeys(_BORDER_SIDES, 0.0)
+    colors = dict.fromkeys(_BORDER_SIDES)
+    for source in (table, row, cell):
+        if source.border_width is not None:
+            width = _positive(source.border_width, "border_width", allow_zero=True)
+            widths = dict.fromkeys(_BORDER_SIDES, width)
+        if source.border_color is not None:
+            colors = dict.fromkeys(_BORDER_SIDES, source.border_color)
+        widths.update(_border_sides(source.border_widths, "border_widths") or {})
+        colors.update(_border_sides(source.border_colors, "border_colors") or {})
+    return [
+        (widths[side], normalize_color(colors[side]))
+        if widths[side] > 0 and colors[side] is not None
+        else (0.0, None)
+        for side in _BORDER_SIDES
+    ]
 
 
 def column_edges(table: Any, available: float) -> list[float]:
@@ -298,15 +316,33 @@ def _cell_content(
             face.content(line, x + offset, baseline, resource, size, style["text_color"])
         )
 
-    if style["border_width"] > 0 and style["border_color"] is not None:
+    borders = style["borders"]
+    if borders[0][0] > 0 and all(border == borders[0] for border in borders):
         parts.append(
             build_path_stream(
                 GraphicsPath().rect(x, bottom, cell.width, height),
-                stroke_color=style["border_color"],
+                stroke_color=borders[0][1],
                 fill_color=None,
-                line_width=style["border_width"],
+                line_width=borders[0][0],
             )
         )
+    else:
+        edges = (
+            (x, top, x + cell.width, top),
+            (x + cell.width, top, x + cell.width, bottom),
+            (x + cell.width, bottom, x, bottom),
+            (x, bottom, x, top),
+        )
+        for (width, color), (x0, y0, x1, y1) in zip(borders, edges):
+            if width > 0:
+                parts.append(
+                    build_path_stream(
+                        GraphicsPath().move_to(x0, y0).line_to(x1, y1),
+                        stroke_color=color,
+                        line_width=width,
+                        line_cap="butt",
+                    )
+                )
     return b"".join(parts)
 
 

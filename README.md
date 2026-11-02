@@ -273,8 +273,9 @@ flowchart TD
   Paragraphs can set `widow_lines` and `orphan_lines` to control line counts around page breaks,
   and `keep_with_next` keeps headings with the text that follows them.
 - `Page.add_table(table, x, y)` draws a real table — `Table`, `Row`, `Cell`, column spans, per-cell
-  style, text wrapped to each column with the font's own advances, headers repeated when the table
-  runs onto the next page — and tags it as a nested `/Table` of `/TR` of `/TH`/`/TD`, so the result
+  style, separate border widths and colors for each side, text wrapped to each column with the
+  font's own advances, headers repeated when the table runs onto the next page — and tags it
+  as a nested `/Table` of `/TR` of `/TH`/`/TD`, so the result
   passes PDF/UA.
 - `PageStamp` puts a page of another PDF onto a page — a letterhead, a background form, a
   designed watermark — importing everything it draws with, and `Document.n_up(2, 2)` /
@@ -721,6 +722,10 @@ with Document() as document:
     page.add_text("Thank you", 60, placement["bottom"] - 24)
     document.save("invoice.pdf")
 ```
+
+Set `border_widths={"bottom": 1.5}` or `border_colors={"bottom": "#003366"}`
+on a `Table`, `Row` or `Cell` to style individual sides (`top`, `right`,
+`bottom`, `left`). Width `0` or a side color of `None` hides that side.
 
 ### Draw Paths and Hold a Graphics State
 

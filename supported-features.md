@@ -2015,6 +2015,32 @@ Supported:
     its own widths -- and a subset grows as it is encoded, so the text is encoded
     before it is measured (a table measured from a table taken too early came out
     zero-width).
+  - `Table`, `Row` and `Cell` accept partial `border_widths` and `border_colors`
+    mappings keyed by `"top"`, `"right"`, `"bottom"` and `"left"`. Widths are
+    finite, non-negative point values; colors accept the same gray, RGB, CMYK,
+    hex and `Color` inputs as drawing paths. Width `0` or a side color of `None`
+    hides that side. At each level, uniform `border_width`/`border_color`
+    overrides inherited styles, then the side mappings override those uniform
+    styles; width and color inherit independently. Uniform `None` on a row or
+    cell means inherit, while an explicit `None` in `border_colors` hides that
+    side. Mappings are copied and validated on construction and revalidated
+    during layout, before table content is drawn. Spanning cells draw borders
+    around their full width; repeated headers retain their border styles.
+    Defaults apply to every cell, including interior edges. Adjacent cells
+    draw their borders independently; to hide a shared edge, hide both adjoining
+    sides. There is no border-collapse conflict resolution.
+
+    ```python
+    table = Table(column_widths=[220, 90], border_width=0)
+    table.add_header_row(
+        ["Item", "Price"],
+        border_widths={"bottom": 1.5},
+        border_colors={"bottom": "#003366"},
+    )
+    table.add_row(["Widget", "9.99"])
+    table.add_row(["Total", "9.99"], border_widths={"top": 1})
+    page.add_table(table, 60, 760)
+    ```
   - The structure is **tagged as it is drawn**: a `/Table` of `/TR` of `/TH` and
     `/TD`, nested as ISO 32000-1 14.8.4.3 asks, each cell owning the
     marked-content sequence its text is in. Flattening that -- every cell a

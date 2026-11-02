@@ -24,6 +24,7 @@ bottom of the page as it does everywhere else in the package.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,6 +35,7 @@ __all__ = ["Cell", "Row", "Table"]
 #: How a cell's text sits across its width and down its height.
 _HORIZONTAL = ("left", "center", "centre", "right")
 _VERTICAL = ("top", "middle", "center", "centre", "bottom")
+_BORDER_SIDES = ("top", "right", "bottom", "left")
 
 
 def _positive(value: Any, name: str, *, allow_zero: bool = False) -> float:
@@ -42,7 +44,7 @@ def _positive(value: Any, name: str, *, allow_zero: bool = False) -> float:
         raise PdfValidationException(f"{name} must be a number")
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise PdfValidationException(f"{name} must be a number") from None
     if number != number or number in (float("inf"), float("-inf")):
         raise PdfValidationException(f"{name} must be finite")
@@ -50,6 +52,33 @@ def _positive(value: Any, name: str, *, allow_zero: bool = False) -> float:
         limit = "not be negative" if allow_zero else "be above zero"
         raise PdfValidationException(f"{name} must {limit}")
     return number
+
+
+def _border_sides(value: Any, name: str) -> dict[str, Any] | None:
+    """Validate and copy a partial mapping of side widths or colours."""
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or any(
+        side not in _BORDER_SIDES for side in value
+    ):
+        raise PdfValidationException(
+            f"{name} must map side names: top, right, bottom, left"
+        )
+    from aspose_pdf.engine.content_authoring import normalize_color
+
+    result = {}
+    for side, item in value.items():
+        label = f"{name}[{side!r}]"
+        if name == "border_widths":
+            result[side] = _positive(item, label, allow_zero=True)
+        elif item is None:
+            result[side] = None
+        else:
+            try:
+                result[side] = normalize_color(item)
+            except (PdfValidationException, OverflowError) as exc:
+                raise PdfValidationException(f"{label}: {exc}") from exc
+    return result
 
 
 def _alignment(value: Any, allowed: tuple[str, ...], name: str) -> str | None:
@@ -72,6 +101,9 @@ class Cell:
 
     Every style is ``None`` by default, which means *take the row's, then the
     table's* -- so a table is styled once and a cell only says where it differs.
+    ``border_widths`` and ``border_colors`` map any of ``top``, ``right``,
+    ``bottom`` and ``left`` to overrides of the uniform border style. A width
+    of zero or a side colour of ``None`` hides that side.
     """
 
     text: str = ""
@@ -86,6 +118,8 @@ class Cell:
     border_width: float | None = None
     border_color: Any = None
     is_header: bool | None = None
+    border_widths: Mapping[str, float] | None = None
+    border_colors: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.text = "" if self.text is None else str(self.text)
@@ -104,11 +138,17 @@ class Cell:
             self.border_width = _positive(
                 self.border_width, "border_width", allow_zero=True
             )
+        self.border_widths = _border_sides(self.border_widths, "border_widths")
+        self.border_colors = _border_sides(self.border_colors, "border_colors")
 
 
 @dataclass
 class Row:
-    """One row of a table: its cells, and what they have in common."""
+    """One row of a table: its cells, and what they have in common.
+
+    Border defaults override the table's, with per-side mappings applied after
+    uniform width and colour. Each cell can override the resulting defaults.
+    """
 
     cells: list[Cell] = field(default_factory=list)
     height: float | None = None
@@ -117,6 +157,10 @@ class Row:
     font_size: float | None = None
     font_name: str | None = None
     header: bool = False
+    border_width: float | None = None
+    border_color: Any = None
+    border_widths: Mapping[str, float] | None = None
+    border_colors: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.cells = [
@@ -127,6 +171,12 @@ class Row:
         if self.font_size is not None:
             self.font_size = _positive(self.font_size, "font_size")
         self.header = bool(self.header)
+        if self.border_width is not None:
+            self.border_width = _positive(
+                self.border_width, "border_width", allow_zero=True
+            )
+        self.border_widths = _border_sides(self.border_widths, "border_widths")
+        self.border_colors = _border_sides(self.border_colors, "border_colors")
 
     def add_cell(self, text: Any = "", **options: Any) -> Cell:
         """Append a cell and return it."""
@@ -159,6 +209,12 @@ class Table:
     ``header_background_color``/``header_text_color``/``header_font_size`` for the
     rows marked as headers. ``repeat_header`` repeats those rows at the top of
     every page the table continues onto.
+
+    ``border_widths`` and ``border_colors`` are partial mappings keyed by
+    ``top``, ``right``, ``bottom`` and ``left``. At each level (table, row, cell),
+    uniform border styles override inherited defaults, then per-side entries
+    override the uniform styles. Width zero or a side colour of ``None`` hides
+    that side. Width and colour inherit independently.
     """
 
     rows: list[Row] = field(default_factory=list)
@@ -181,6 +237,8 @@ class Table:
     header_text_color: Any = None
     header_font_size: float | None = None
     repeat_header: bool = True
+    border_widths: Mapping[str, float] | None = None
+    border_colors: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.rows = [
@@ -204,6 +262,8 @@ class Table:
         self.border_width = _positive(
             self.border_width, "border_width", allow_zero=True
         )
+        self.border_widths = _border_sides(self.border_widths, "border_widths")
+        self.border_colors = _border_sides(self.border_colors, "border_colors")
         if self.line_height is not None:
             self.line_height = _positive(self.line_height, "line_height")
         if self.row_height is not None:
