@@ -960,6 +960,8 @@ with Document("manual.pdf") as document:
     for link in document.extract_links(pages=[0, 2]):
         print(link.page_index + 1, link.rect, link.action_type,
               link.resolved_uri, link.target_page_index, link.file, link.issues)
+    document.export_links_csv("links.csv", encoding="utf-8-sig")
+    document.export_links_json("links.json")
 ```
 
 Audit outbound URLs, locate internal navigation and prepare link migrations
@@ -970,7 +972,10 @@ and annotation indices are zero-based. Relative URLs use the catalog URI Base
 when present; remote file paths are reported as declared. No links are opened,
 files fetched or page content decoded. This inventories Link annotations,
 including hidden ones; bookmarks and URLs written only as page text are outside
-its scope. See [link inventory details](supported-features.md#annotations).
+its scope. CSV and versioned JSON exports make the inventory ready for review
+and downstream processing. CSV uses one-based page numbers, with separate local
+and remote target columns; JSON retains zero-based indices and structured views.
+See [link inventory details](supported-features.md#annotations).
 
 ### Update URLs Across a PDF
 
@@ -2082,6 +2087,9 @@ and delete workflows. 276 public types are organized by module below.
   annotations from a path, UTF-8 bytes or readable binary stream; returns the number added.
 - `Document.extract_links(pages=None)` / `Page.extract_links()` return
   `list[ExtractedLink]` for link auditing, navigation review and content migrations.
+- `Document.export_links_json(destination=None, pages=None, overwrite=True)` /
+  `export_links_csv(destination=None, pages=None, delimiter=",", encoding="utf-8", overwrite=True)`
+  return report bytes and optionally save them to a file or binary stream.
 - `Document.validate_links(pages=None, include_outlines=True, include_named_destinations=True)` /
   `Page.validate_links()` return `list[LinkValidationIssue]` without editing the PDF.
   Issues expose `source`, `code`, `message`, `page_index`, `annotation_index`,

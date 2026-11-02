@@ -5431,6 +5431,46 @@ Supported:
     embedded asset bytes, and does not rewrite tagged structure trees, document
     actions or arbitrary custom references to annotations. It is review cleanup,
     not secure sanitization, redaction or full PDF conformance repair.
+- **Export link audit reports as CSV or versioned JSON.**
+  `Document.export_links_json(destination=None, pages=None, overwrite=True)` and
+  `Document.export_links_csv(destination=None, pages=None, delimiter=",",
+  encoding="utf-8", overwrite=True)` return bytes and optionally write those
+  same bytes to a path or binary stream. They reuse `extract_links()` selection,
+  ordering and diagnostics: one row/record per target or action, including
+  malformed targets and action chains. Repeated page selections are inspected
+  once in first-selected order. No optional dependency is needed.
+  - JSON is UTF-8 with `{"schema_version": 1, "links": [...]}`. Each record
+    contains `page_index`, `annotation_index`, `rect`, `action_type`,
+    `action_path`, `uri`, `resolved_uri`, `destination`, `destination_name`,
+    `target_page_index`, `file`, `named_action` and `issues`. Indices are
+    zero-based; rectangles and issue tuples become arrays. Missing values are
+    `null`. A destination is `{page_index, view, parameters}` with all numeric
+    and null view parameters preserved. For `GoToR` its page index is remote;
+    `target_page_index` reports local destinations only.
+  - CSV columns are `page_number`, `annotation_index`, `action_type`,
+    `action_path`, `uri`, `resolved_uri`, `target_page_number`,
+    `remote_page_number`, `destination_name`, `destination_view`,
+    `destination_parameters`, `file`, `named_action`, `x0`, `y0`, `x1`, `y1`,
+    `issues`. All page numbers are one-based; annotation indices remain
+    zero-based. Local and remote targets occupy separate columns. Parameters
+    and issues are JSON arrays within CSV cells; other absent values are empty
+    cells. Standard quoting preserves Unicode, delimiters, quotes and embedded
+    newlines with CRLF records. `encoding="utf-8-sig"` adds a spreadsheet BOM.
+    URI text is preserved without normalization or spreadsheet formula rewriting.
+  - Empty selections/documents produce an empty JSON links array or a
+    header-only CSV. Executable payloads, page text, bookmarks, field values,
+    appearance streams and embedded assets are outside this report. URL
+    reachability and full PDF conformance are not checked. No content or image
+    stream is decoded, and no URL or remote file is opened. Reports leave the
+    PDF unchanged, including for streaming and encrypted input.
+  - Metadata reads, selection/result growth, CSV cells and encoded output obey
+    `PdfLoadLimits`. JSON strings are escaped in bounded chunks and records
+    serialized one at a time. Output byte counts obey `max_decoded_stream_bytes`
+    and `max_total_decoded_bytes`. Complete reports are prepared before any
+    external write. Paths create parent folders and are replaced atomically;
+    `overwrite=False` refuses existing files. Binary streams are written at
+    their current position with short-write handling and remain open. Preparation
+    or encoding errors preserve an existing destination.
 - **Inventory PDF link targets without following them.**
   `Document.extract_links(pages=None) -> list[ExtractedLink]` and
   `Page.extract_links()` expose outbound URLs, local navigation and remote

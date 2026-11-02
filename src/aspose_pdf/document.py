@@ -2582,6 +2582,86 @@ class Document:
             raise AsposePdfException("No document loaded")
         return extract(self, pages)
 
+    def export_links_json(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return a versioned UTF-8 JSON link report, optionally writing it.
+
+        Selection, ordering, diagnostic codes and scope match
+        :meth:`extract_links`. Schema version 1 contains a ``links`` array
+        with each inventory entry's fields and ``target_page_index``. Page
+        indices are zero-based. A destination is ``{page_index, view,
+        parameters}``; its page index is remote for GoToR. Null parameters
+        and invalid targets are retained without executable action payloads.
+
+        No page content, images or appearances are decoded, and no links or
+        files are opened. Metadata and encoded output obey ``load_limits``.
+        All output is prepared before writing. Paths are replaced atomically,
+        creating parent folders; ``overwrite=False`` refuses existing files.
+        Binary streams are written at their current position with short-write
+        handling and remain open. The PDF is unchanged.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.link_export import to_json
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = to_json(self, pages)
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
+    def export_links_csv(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return CSV with one row per inventoried link target or action.
+
+        Selection, ordering, scope and output handling match
+        :meth:`export_links_json`. Columns include source ``page_number``
+        (one-based), ``annotation_index`` (zero-based), ``action_type``,
+        ``action_path``, ``uri``, ``resolved_uri``, local ``target_page_number``
+        and ``remote_page_number`` (both one-based), ``destination_name``,
+        ``destination_view``, ``destination_parameters``, ``file``,
+        ``named_action``, rectangle ``x0,y0,x1,y1`` and ``issues``.
+
+        Parameters and issues are JSON arrays within CSV cells. Other missing
+        values are empty cells. Empty selections return a header-only report.
+        Standard CSV quoting preserves delimiters, quotes, Unicode and newlines
+        with CRLF records. ``encoding="utf-8-sig"`` adds a spreadsheet BOM.
+        No optional dependencies are needed; the PDF is unchanged.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.link_export import to_csv
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = to_csv(self, pages, delimiter=delimiter, encoding=encoding)
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def replace_link_urls(
         self,
         search: str | re.Pattern[str],
