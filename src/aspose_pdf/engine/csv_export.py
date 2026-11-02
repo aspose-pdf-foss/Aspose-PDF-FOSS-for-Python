@@ -24,10 +24,14 @@ def _text_size(value: str, budget: _LoadBudget, label: str) -> int:
 
 
 class CsvWriter:
-    """Prepare CSV bytes with one encoder state and bounded records/output."""
+    """Prepare CSV bytes with one encoder state and bounded records/output.
+
+    ``limit_object_bytes`` also caps a complete file, such as a ZIP member.
+    """
 
     def __init__(
-        self, delimiter: str, encoding: str, budget: _LoadBudget, *, context: str
+        self, delimiter: str, encoding: str, budget: _LoadBudget, *, context: str,
+        limit_object_bytes: bool = False,
     ) -> None:
         if not isinstance(encoding, str):
             raise TypeError("encoding must be a string")
@@ -49,12 +53,15 @@ class CsvWriter:
         self.delimiter = delimiter
         self.budget = budget
         self.context = context
+        self.limit_object_bytes = limit_object_bytes
         self.data = bytearray()
         self.text_bytes = 0
 
     def _append(self, text: str, *, final: bool = False) -> None:
         data = self.encoder.encode(text, final=final)
         size = len(self.data) + len(data)
+        if self.limit_object_bytes:
+            self.budget.check(size, "max_object_bytes", f"{self.context} output bytes")
         self.budget.check(
             size, "max_decoded_stream_bytes", f"{self.context} output bytes"
         )
@@ -79,6 +86,10 @@ class CsvWriter:
             quoted = any(char in value for char in (self.delimiter, '"', "\r", "\n"))
             quoted = quoted or (len(record) == 1 and not value)
             characters += len(value) + value.count('"') + 2 * quoted
+            if self.limit_object_bytes:
+                self.budget.check(
+                    characters, "max_object_bytes", f"{self.context} record characters"
+                )
             self.budget.check(
                 characters,
                 "max_decoded_stream_bytes",

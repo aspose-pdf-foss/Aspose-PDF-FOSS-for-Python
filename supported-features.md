@@ -3015,6 +3015,41 @@ Boundaries:
     `overwrite=False` refuses an existing file. Conversion and encoding finish
     before writing, and an encoding or write failure leaves the old file
     intact. No optional dependency is needed.
+  - `Document.export_tables_zip(destination=None, pages=None, clip_to_page=True,
+    delimiter=",", encoding="utf-8", compression="deflate", compresslevel=6,
+    include_manifest=False, overwrite=True)` and `Page.export_tables_zip(...)`
+    return ZIP bytes and optionally save one path or binary stream. Each
+    detected table becomes `table-0001.csv`, `table-0002.csv`, and so on, in
+    selected page order and table reading order. Page repetitions are retained;
+    empty selections and pages with no detected tables contribute no CSV files.
+    The archive is valid even when there are no tables. Extraction uses the
+    same clipping and recognition limits as `extract_tables`, reading selected
+    pages one at a time without rendering, image decoding or cross-page merging.
+    CSV keeps the extracted cell strings, first row, blank/covered columns and
+    formula text; quoting and CRLF records match `ExtractedTable.to_csv`.
+    `encoding="utf-8-sig"` adds a BOM independently to every member.
+    Compression is `"deflate"` (level 0..9) or `"stored"`; timestamps and regular
+    file permissions are fixed for deterministic archives. Flat generated names
+    contain no source filenames or path components.
+    `include_manifest=True` adds UTF-8 `manifest.json` with `schema_version: 1`,
+    `delimiter`, `encoding` and a `tables` array. Records contain `archive_name`,
+    original zero-based `page_index`, zero-based `table_index` within that page,
+    `row_count`, `column_count` and uncompressed CSV byte `size`.
+    Selection, entry/table counts, row/cell counts, member bytes and cumulative
+    CSV/manifest bytes obey `PdfLoadLimits`; the ZIP buffer is bounded by
+    `max_codec_work_bytes`. Options and all page indices are validated before
+    extraction. The archive is completed before writing; paths are replaced
+    atomically with parent folders created, and `overwrite=False` refuses an
+    existing file. Streams retry short writes and remain open; a stream write
+    failure can leave partial output. The source PDF is not edited.
+
+    ```python
+    with Document("report.pdf") as document:
+        document.export_tables_zip(
+            "tables.zip", pages=[0, 2], delimiter=";",
+            encoding="utf-8-sig", include_manifest=True,
+        )
+    ```
   - **Recognition limits:** this is a geometric heuristic for regular text
     grids with at least two rows and two columns. It does not reconstruct the
     tag tree, drawn borders, scanned tables, wrapped/multiline cells, vertical

@@ -1426,6 +1426,23 @@ class Page:
             pages=[self._index], clip_to_page=clip_to_page
         )
 
+    def export_tables_zip(
+        self, destination: str | Path | BinaryIO | None = None, *,
+        clip_to_page: bool = True, delimiter: str = ",", encoding: str = "utf-8",
+        compression: str = "deflate", compresslevel: int = 6,
+        include_manifest: bool = False, overwrite: bool = True,
+    ) -> bytes:
+        """Package this page's tables; see :meth:`Document.export_tables_zip`.
+
+        Manifest records keep this page's original zero-based document index.
+        """
+        return self._document.export_tables_zip(
+            destination, pages=[self._index], clip_to_page=clip_to_page,
+            delimiter=delimiter, encoding=encoding, compression=compression,
+            compresslevel=compresslevel, include_manifest=include_manifest,
+            overwrite=overwrite,
+        )
+
     def extract_blocks(
         self, *, include_images: bool = False, paragraph_gap: float | None = None,
         clip_to_page: bool = True,

@@ -2010,6 +2010,10 @@ and delete workflows. 276 public types are organized by module below.
   `page_index`, immutable `rows` / `column_spans`, `row_count`, `column_count`, `to_list()`,
   `to_csv(delimiter=",")` and `save_csv(path, delimiter=",", encoding="utf-8", overwrite=True)`.
 
+- `Document.export_tables_zip(destination=None, pages=None, clip_to_page=True, delimiter=",", encoding="utf-8", compression="deflate", compresslevel=6, include_manifest=False, overwrite=True)` /
+  `Page.export_tables_zip(...)` package detected tables as separate CSV files.
+  Return ZIP bytes or save a path/binary stream; an optional manifest retains source-page references.
+
 - `Document.extract_blocks(pages=None, include_images=False, paragraph_gap=None, clip_to_page=True)` /
   `Page.extract_blocks(...)` return `list[ExtractedBlock]` with immutable structure data,
   original page indices and unrotated PDF position anchors.

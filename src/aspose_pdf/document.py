@@ -2798,6 +2798,64 @@ class Document:
             for table in _page_tables(self._engine_pdf, index, clip_to_page)
         ]
 
+    def export_tables_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        clip_to_page: bool = True,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return inferred text tables as separate CSV members in a ZIP archive.
+
+        Names are ``table-0001.csv``, ``table-0002.csv``, and so on, following
+        the requested zero-based page order (including repeats) and each page's
+        table reading order. ``None`` selects all pages; ``[]`` selects none.
+        Recognition and clipping follow :meth:`extract_tables`. Selected pages
+        are read one at a time, without rendering or image decoding.
+
+        CSV preserves cell strings, blank and covered cells, with standard
+        quoting and CRLF records. ``encoding='utf-8-sig'`` adds a BOM per CSV.
+        ``include_manifest=True`` adds a versioned UTF-8 ``manifest.json`` with
+        archive names, original page indices, zero-based table indices within
+        each page, row/column counts and encoded file sizes.
+
+        ZIP uses ``'deflate'`` (level 0..9) or ``'stored'``, fixed timestamps
+        and regular-file permissions. Empty results produce a valid empty ZIP
+        or a manifest with no tables. Selection, table sizes, CSV bytes,
+        manifest and archive buffers obey :class:`PdfLoadLimits`.
+
+        The archive is completed before output is touched. Paths are written
+        atomically with parent directories created; ``overwrite=False`` refuses
+        existing files. Binary streams retry short writes at their current
+        position and remain open; write failures can leave partial stream output.
+        The source PDF is not edited.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.table_zip import export_zip
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = export_zip(
+            self, pages=pages, clip_to_page=clip_to_page, delimiter=delimiter,
+            encoding=encoding, compression=compression, compresslevel=compresslevel,
+            include_manifest=include_manifest,
+        )
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def extract_blocks(
         self,
         *,
