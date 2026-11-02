@@ -78,6 +78,130 @@ def test_changed_lines_produce_a_readable_unified_diff():
         )
 
 
+@pytest.mark.parametrize("kind", ["live", "bytes", "file", "streaming"])
+@pytest.mark.parametrize("changed_body", [False, True])
+def test_excluded_headers_and_footers_leave_only_body_revisions(
+    tmp_path, kind, changed_body
+):
+    regions = [(0, 75, 120, 100), (0, 0, 120, 20)]
+    results = []
+    for side in range(2):
+        with Document() as document:
+            for index in range(2):
+                page = document.pages.add(size=(120, 100))
+                page.add_text(f"Date {side}", 5, 85, font_size=10)
+                body = "Revised" if side and changed_body else "Shared"
+                page.add_text(f"{body} {index}", 5, 50, font_size=10)
+                page.add_text(f"Page {side + index}", 5, 5, font_size=10)
+            results.append(_bytes(document))
+    paths = [tmp_path / "left.pdf", tmp_path / "right.pdf"]
+    for path, data in zip(paths, results):
+        path.write_bytes(data)
+    opener = Document.open_streaming if kind == "streaming" else Document
+    sources = paths if kind in ("file", "streaming") else results
+    with opener(sources[0]) as left, opener(sources[1]) as right:
+        if kind == "live":
+            left.pages[0].add_text("Live header", 5, 85, font_size=10)
+        before = (
+            [_bytes(document) for document in (left, right)]
+            if kind != "streaming" else None
+        )
+        reports = left.compare_text(
+            right, pages=[1, 0, 1], other_pages=[1, 0, 1],
+            exclude_regions=(region for region in regions),
+        )
+        assert [result.text for result in reports] == ["Shared 1", "Shared 0", "Shared 1"]
+        body = "Revised" if changed_body else "Shared"
+        assert [result.other_text for result in reports] == [
+            f"{body} 1", f"{body} 0", f"{body} 1",
+        ]
+        assert all(result.matches is not changed_body for result in reports)
+        if changed_body:
+            assert "-Shared 1\n" in reports[0].unified_diff
+            assert "+Revised 1\n" in reports[0].unified_diff
+        assert all(
+            "Date" not in result.unified_diff and "Page" not in result.unified_diff
+            for result in reports
+        )
+        if before:
+            assert [_bytes(document) for document in (left, right)] == before
+        else:
+            for document in (left, right):
+                assert document._engine_pdf.page_contents == []
+                assert document._engine_pdf._extracted_text is None
+        assert not left.compare_text(right)[0].matches
+    assert [path.read_bytes() for path in paths] == results
+    assert reports[0].text == "Shared 1"
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_exclusions_use_unrotated_coordinates_with_artifacts_and_normalization(rotation):
+    with Document() as left, Document() as right:
+        for side, document in enumerate((left, right)):
+            page = _page(document, f"Header {side}")
+            page.add_text(" Body " if side == 0 else "body", 5, 50, font_size=10)
+            page.add_text(f"Draft {side}", 5, 30, font_size=10, artifact=True)
+            page.rotation = rotation
+            page.crop_box = (60, 0, 120, 40)
+        options = dict(exclude_regions=[(0, 75, 120, 100)], skip_artifacts=True)
+        assert not left.compare_text(right, **options)[0].matches
+        (result,) = left.compare_text(
+            right, case_sensitive=False, ignore_whitespace=True, **options
+        )
+        assert result.matches and result.unified_diff == ""
+        assert result.text.strip() == "Body" and result.other_text == "body"
+
+
+def test_fully_excluded_existing_pages_still_differ_from_missing_pages():
+    with Document() as left, Document() as right:
+        _page(left, "Excluded")
+        _page(left, "Also excluded")
+        _page(right, "Different")
+        matched, missing = left.compare_text(
+            right, exclude_regions=[(-10, -10, 150, 150)]
+        )
+        assert matched.matches and matched.text == matched.other_text == ""
+        assert not missing.matches
+        assert missing.text == "" and missing.other_text is None
+        assert missing.unified_diff == "--- page-2\n+++ missing\n"
+
+
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("regions", [
+    "invalid", 1, {"header": (0, 75, 120, 100)},
+    [(0, 0, 1)], [(0, 0, 0, 1)], [(0, 0, float("nan"), 1)],
+    [(0, 75, 120, 100), (False, 0, 1, 1)],
+])
+def test_invalid_exclusions_fail_before_either_document_is_extracted(
+    monkeypatch, empty, regions
+):
+    with Document() as left, Document() as right:
+        if not empty:
+            _page(left)
+            _page(right)
+        for document in (left, right):
+            monkeypatch.setattr(
+                document._engine_pdf, "extract_page_text",
+                lambda *a, **kw: pytest.fail("validate exclusions first"),
+            )
+        with pytest.raises(PdfValidationException, match="exclude_regions"):
+            left.compare_text(right, exclude_regions=regions)
+
+
+@pytest.mark.parametrize("side", [0, 1])
+def test_exclusion_generators_obey_the_stricter_source_limit(monkeypatch, side):
+    limits = [PdfLoadLimits.unlimited(), PdfLoadLimits.unlimited()]
+    limits[side] = PdfLoadLimits(max_container_items=2)
+    with Document(limits=limits[0]) as left, Document(limits=limits[1]) as right:
+        for document in (left, right):
+            monkeypatch.setattr(
+                document._engine_pdf, "extract_page_text",
+                lambda *a, **kw: pytest.fail("limit exclusions first"),
+            )
+        with pytest.raises(PdfResourceLimitException, match="text exclusion rectangles"):
+            left.compare_text(right, exclude_regions=repeat((0, 75, 120, 100)))
+
+
 @pytest.mark.parametrize(
     "before,after,removed,added",
     [
@@ -342,7 +466,10 @@ def test_saved_inputs_preserve_sources_and_reports_survive_disposal(
     assert [path.read_bytes() for path in paths] == original
 
 
-def test_only_selected_pages_are_extracted_and_cache_cursor_are_preserved(monkeypatch):
+@pytest.mark.parametrize("exclude_regions", [None, [], [(0, 0, 1, 1)]])
+def test_only_selected_pages_are_extracted_and_cache_cursor_are_preserved(
+    monkeypatch, exclude_regions
+):
     with Document() as left, Document() as right:
         for document in (left, right):
             _page(document, "First")
@@ -354,9 +481,14 @@ def test_only_selected_pages_are_extracted_and_cache_cursor_are_preserved(monkey
         for side, document in enumerate((left, right)):
             original = document._engine_pdf.extract_page_text
 
-            def extract(index, *, skip_artifacts=False, original=original, side=side):
+            def extract(
+                index, *, skip_artifacts=False, exclude_regions=None,
+                original=original, side=side,
+            ):
                 calls.append((side, index, skip_artifacts))
-                return original(index, skip_artifacts=skip_artifacts)
+                return original(
+                    index, skip_artifacts=skip_artifacts, exclude_regions=exclude_regions
+                )
 
             monkeypatch.setattr(document._engine_pdf, "extract_page_text", extract)
             monkeypatch.setattr(
@@ -365,7 +497,10 @@ def test_only_selected_pages_are_extracted_and_cache_cursor_are_preserved(monkey
                 lambda *a, **kw: pytest.fail("no all-page extraction"),
             )
         assert (
-            left.compare_text(right, pages=[1], other_pages=[0], skip_artifacts=True)[
+            left.compare_text(
+                right, pages=[1], other_pages=[0], skip_artifacts=True,
+                exclude_regions=exclude_regions,
+            )[
                 0
             ].text
             == "Second"
@@ -516,7 +651,8 @@ def test_streaming_content_limit_is_not_swallowed(tmp_path):
             left.compare_text(right)
 
 
-def test_streaming_unselected_oversized_content_is_not_decoded(tmp_path):
+@pytest.mark.parametrize("exclude_regions", [None, [], [(0, 0, 1, 1)]])
+def test_streaming_unselected_oversized_content_is_not_decoded(tmp_path, exclude_regions):
     path = tmp_path / "source.pdf"
     with Document() as source:
         _page(source, "Selected")
@@ -529,7 +665,11 @@ def test_streaming_unselected_oversized_content_is_not_decoded(tmp_path):
         ) as left,
         Document.open_streaming(path) as right,
     ):
-        assert left.compare_text(right, pages=[0], other_pages=[0])[0].matches
+        assert left.compare_text(
+            right, pages=[0], other_pages=[0], exclude_regions=exclude_regions
+        )[0].matches
         assert left._engine_pdf.page_contents == right._engine_pdf.page_contents == []
         with pytest.raises(PdfResourceLimitException, match="max_content_stream_bytes"):
-            left.compare_text(right, pages=[1], other_pages=[1])
+            left.compare_text(
+                right, pages=[1], other_pages=[1], exclude_regions=exclude_regions
+            )

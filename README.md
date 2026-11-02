@@ -173,6 +173,7 @@ flowchart TD
   Use `ignore_regions` to exclude changing dates, headers or page numbers.
 - `Document.compare_text()` reviews extracted text changes page by page, with
   unified diffs and optional case, whitespace and tagged-artifact filtering.
+  Use `exclude_regions` to omit changing headers, footers or dates.
 - `Document.export_attachments_zip()` packages embedded files for download or handoff,
   with safe unique archive names, optional selection and a metadata manifest.
 - `Document.export_images_zip()` collects reusable images from selected pages
@@ -1408,17 +1409,23 @@ change. See [ZIP import limits and formats](supported-features.md#attachments).
 from aspose_pdf import Document
 
 with Document("before.pdf") as before, Document("after.pdf") as after:
-    for result in before.compare_text(after, ignore_whitespace=True):
+    for result in before.compare_text(
+        after, ignore_whitespace=True,
+        exclude_regions=[(0, 740, 600, 800), (0, 0, 600, 50)],
+    ):
         if not result.matches:
             print(result.unified_diff)
 ```
 
 Pages are paired in order; use `pages=` and `other_pages=` for independent
-selections. Missing pages are reported explicitly. Reports retain the original
-extracted strings, while matching and diffs use the requested normalization.
+selections. Missing pages are reported explicitly. Reports retain extracted
+strings after exclusion filtering, while matching and diffs use the requested normalization.
 Use `case_sensitive=False` for Unicode case folding or `skip_artifacts=True`
 to omit explicitly tagged artifacts such as page numbers. Extraction needs a
-text layer and follows its reading-order limitations. It does not compare
+text layer and follows its reading-order limitations. `exclude_regions` removes
+overlapping glyphs from report text, matching and diffs on both sides. The example
+excludes header and footer bands in unrotated PDF points with a lower-left
+origin. Adjust the rectangles to your pages. It does not compare
 graphics, metadata or form values. Neither PDF is edited. See
 [text comparison details](supported-features.md#text).
 
@@ -1908,7 +1915,7 @@ and delete workflows. 276 public types are organized by module below.
   - `export_pages_zip(destination=None, pages=None, image_format="png", dpi=72, ..., include_manifest=False, overwrite=True) -> bytes` —
     package selected rendered page views as image files with optional source-page metadata
   - `compare_visual(other, pages, other_pages, dpi, tolerance, max_diff_ratio, include_annotations, include_diff_images, ignore_regions=None) -> list[PageVisualComparison]`
-  - `compare_text(other, pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False, skip_artifacts=False) -> list[PageTextComparison]` —
+  - `compare_text(other, pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False, skip_artifacts=False, exclude_regions=None) -> list[PageTextComparison]` —
     review extracted page text revisions with normalized unified diffs
   - `to_html(pages, title, embed_images, paragraph_gap, clip_to_page) -> str` /
     `to_markdown(pages, title, embed_images, markdown_format, paragraph_gap, clip_to_page) -> str` /

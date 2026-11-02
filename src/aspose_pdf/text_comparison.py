@@ -11,7 +11,8 @@ __all__ = ["PageTextComparison"]
 class PageTextComparison:
     """An immutable comparison of two selected pages, using zero-based indices.
 
-    ``text`` and ``other_text`` contain the original extracted strings. A
+    ``text`` and ``other_text`` contain extracted strings after any exclusion
+    filtering and before case or whitespace normalization. A
     missing page has a ``None`` index and text, distinct from a blank page's
     empty string. Missing pages never match, even when the other page is blank.
 

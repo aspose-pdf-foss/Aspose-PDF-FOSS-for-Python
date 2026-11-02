@@ -3215,20 +3215,21 @@ Supported:
 
 - **Compare extracted text revisions.** `Document.compare_text(other,
   pages=None, other_pages=None, case_sensitive=True, ignore_whitespace=False,
-  skip_artifacts=False)` returns an ordered `list[PageTextComparison]` for
-  reviewing text changes without differences in colors or drawing positions.
+  skip_artifacts=False, exclude_regions=None)` returns an ordered
+  `list[PageTextComparison]` for reviewing text changes without differences
+  in colors or drawing positions.
   - `other` must be an open `Document`. Selectors independently accept
     zero-based page indices, preserving order and repetitions; `None` means
     every page. Selected pages are paired by position, without searching for
     matching pages or aligning insertions. The shorter side produces missing
     pages for the remaining pairs. Two empty selections return `[]`. Both
-    full selectors and all flags are validated before extraction, even on
-    empty documents. Invalid arguments raise `PdfValidationException`;
-    disposed documents are rejected.
+    full selectors, flags and exclusion rectangles are validated before
+    extraction, even on empty documents. Invalid arguments raise
+    `PdfValidationException`. Disposed documents are rejected.
   - Frozen `PageTextComparison` reports contain `page_index`,
-    `other_page_index`, original extracted `text`/`other_text`, `matches` and
-    `unified_diff`. A missing page has a `None` index and text, distinct from
-    an existing blank page's empty string. Missing pages never match. Reports
+    `other_page_index`, extracted `text`/`other_text` after exclusion filtering,
+    `matches` and `unified_diff`. A missing page has a `None` index and text,
+    distinct from an existing blank page's empty string. Missing pages never match. Reports
     hold no document/page objects and remain usable after source disposal.
   - Exact string equality is the default. `ignore_whitespace=True` collapses
     Unicode whitespace runs to one ordinary space and strips leading/trailing
@@ -3237,6 +3238,18 @@ Supported:
     handling, including expansions such as `Straße` to `strasse`. There is no
     Unicode canonical normalization, fuzzy or semantic matching. Flags require
     actual booleans. Original report strings are never normalized in place.
+  - `exclude_regions` accepts an iterable of `(x0, y0, x1, y1)` rectangles
+    in unrotated PDF points with a lower-left origin, independent of CropBox
+    and page rotation. The same rectangles apply to both sides and every
+    selected pair. Glyphs overlapping any rectangle are omitted from report
+    text before normalization, matching and diffs, so untagged headers,
+    footers, dates and page numbers can be ignored. Regions are snapshotted
+    once, including generators. `None` and empty iterables preserve ordinary
+    extraction. Coordinates must be finite and enclose positive area.
+    Nonempty exclusions follow `Page.extract_text(exclude_regions=...)`.
+    Text without reliable geometry is omitted, gaps preserve word boundaries,
+    and an entire `/ActualText` span is omitted if any underlying glyph is
+    excluded. These are font-metric glyph bounds, rather than visible ink.
   - `unified_diff` compares those same normalized strings with three context
     lines, using `page-N` and `other-page-N` headers with one-based page
     numbers, or `missing` for an absent side. It is empty for matches. When
@@ -3247,9 +3260,9 @@ Supported:
   - Extraction follows `Page.extract_text()`, including its content order,
     font decoding, line breaks, hidden-layer filtering and invisible OCR text.
     `skip_artifacts=True` omits explicitly marked Artifact text, including
-    invoked forms; untagged headers remain ordinary text. Image-only pages
-    without text layers compare as empty strings. CropBox and rotation do
-    not clip or reorder extraction. Graphics, metadata, annotation contents,
+    invoked forms; untagged headers can be omitted with `exclude_regions`.
+    Image-only pages without text layers compare as empty strings. CropBox
+    and rotation do not clip or reorder extraction. Graphics, metadata, annotation contents,
     field values and appearances are not compared. This is not OCR, visual
     comparison or proof that PDFs are equivalent.
   - Pages are extracted one pair at a time, without populating whole-document
@@ -3259,9 +3272,9 @@ Supported:
     source page data, metadata, encryption or files.
   - Shared work uses the stricter enabled limit from each source:
     `max_pages` bounds pair count, `max_container_items` bounds selections,
-    reports and combined normalized input line count per diff,
-    `max_object_bytes` bounds
-    original/normalized strings and each diff in UTF-8 bytes, and
+    reports, exclusion rectangles and combined normalized input line count
+    per diff, `max_object_bytes` bounds original/normalized strings and each
+    diff in UTF-8 bytes, and
     `max_total_decoded_bytes` bounds the cumulative original strings plus
     diffs retained by this call. Original source decoding retains its own
     policy. No partial result is returned on extraction/validation errors.

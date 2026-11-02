@@ -5166,6 +5166,7 @@ class Document:
         case_sensitive: bool = True,
         ignore_whitespace: bool = False,
         skip_artifacts: bool = False,
+        exclude_regions: Iterable[Sequence[float]] | None = None,
     ) -> list[PageTextComparison]:
         """Compare extracted page text and return detached per-pair reports.
 
@@ -5173,17 +5174,29 @@ class Document:
         are retained. ``None`` means all pages. Pages are paired by position,
         without automatic alignment. Unpaired pages have a missing index/text
         on the other side and never match, even against blank pages. Two empty
-        selections return []. Both selectors and all flags are validated first.
+        selections return []. Selectors, flags and exclusions are validated first.
 
         Defaults compare exact extracted strings. ``ignore_whitespace=True``
         collapses Unicode whitespace runs to a single space and strips leading
         and trailing whitespace; word boundaries remain significant.
-        ``case_sensitive=False`` applies Unicode case folding. Original text
-        remains in each report; ``unified_diff`` describes the normalized text
-        with three lines of context. Missing blank pages have headers alone.
+        ``case_sensitive=False`` applies Unicode case folding. Extracted text
+        remains unnormalized in each report; ``unified_diff`` describes the
+        normalized text with three lines of context. Missing blank pages have
+        headers alone.
         ``skip_artifacts=True`` omits explicitly marked Artifact text.
 
-        Uses ordinary full-page text extraction, including hidden OCR text and
+        ``exclude_regions`` removes glyphs overlapping any supplied rectangle
+        from extracted report strings, matching and diffs, including untagged
+        headers and footers. Rectangles are ``(x0, y0, x1, y1)`` in unrotated
+        PDF points with a lower-left origin, independent of CropBox and page
+        rotation, as in :meth:`Page.extract_text`. The same regions apply to
+        every selected page on both sides. A bounded iterable is snapshotted
+        before extraction; ``None`` and empty iterables preserve full-page
+        extraction. Nonempty exclusions require reliable glyph geometry and
+        omit an entire /ActualText replacement when any of its glyphs is
+        excluded. Text without reliable geometry is omitted conservatively.
+
+        Uses page text extraction, including hidden OCR text and
         its reading-order/font limitations. Images need an existing text layer;
         appearance, metadata, annotations and form values are not compared.
         CropBox and rotation do not clip or reorder extraction. This is not OCR
@@ -5213,6 +5226,7 @@ class Document:
             case_sensitive=case_sensitive,
             ignore_whitespace=ignore_whitespace,
             skip_artifacts=skip_artifacts,
+            exclude_regions=exclude_regions,
         )
 
     def compare_visual(

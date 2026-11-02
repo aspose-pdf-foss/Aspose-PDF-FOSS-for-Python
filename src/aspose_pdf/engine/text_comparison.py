@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from difflib import unified_diff
 from itertools import zip_longest
 from typing import TYPE_CHECKING
@@ -11,6 +11,7 @@ from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.load_limits import _combined_limits, _LoadBudget
 from aspose_pdf.text_comparison import PageTextComparison
 
+from .text_region import validate_exclude_regions
 from .text_selection import page_indexes
 
 if TYPE_CHECKING:
@@ -90,6 +91,7 @@ def compare_text(
     case_sensitive: bool = True,
     ignore_whitespace: bool = False,
     skip_artifacts: bool = False,
+    exclude_regions: Iterable[Sequence[float]] | None = None,
 ) -> list[PageTextComparison]:
     """Validate both full selections, then extract and compare one pair at a time."""
     for name, value in (
@@ -100,6 +102,7 @@ def compare_text(
         if not isinstance(value, bool):
             raise PdfValidationException(f"{name} must be a boolean")
     budget = _LoadBudget(_combined_limits(document.load_limits, other.load_limits))
+    exclusions = validate_exclude_regions(exclude_regions, limits=budget.limits)
     selection = page_indexes(pages, document.page_count, limits=budget.limits)
     other_selection = page_indexes(other_pages, other.page_count, limits=budget.limits)
     selection = range(document.page_count) if selection is None else selection
@@ -117,7 +120,7 @@ def compare_text(
         for source, page in ((document, index), (other, other_index)):
             text = (
                 source._engine_pdf.extract_page_text(
-                    page, skip_artifacts=skip_artifacts
+                    page, skip_artifacts=skip_artifacts, exclude_regions=exclusions
                 )
                 if page is not None
                 else None
