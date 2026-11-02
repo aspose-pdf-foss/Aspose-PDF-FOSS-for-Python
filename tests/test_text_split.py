@@ -94,6 +94,55 @@ def test_matching_pages_start_parts_and_leave_no_gaps_or_duplicates(
     assert _bytes(source) == before
 
 
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_header_clip_ignores_body_matches_and_preserves_whole_pages(source, rotation):
+    source.pages[2].add_text("INVOICE mentioned in details", 15, 80)
+    for page in source.pages:
+        page.rotation = rotation
+        page.crop_box = (0, 0, 240, 120)
+    original = _bytes(source)
+    texts = _texts(source)
+    with _parts(source) as parts:
+        assert [part.page_count for part in parts] == [1, 1, 1, 1, 2]
+    with _parts(source, clip=(0, 125, 240, 160)) as parts:
+        assert [part.page_count for part in parts] == [1, 2, 1, 2]
+        assert [text for part in parts for text in _texts(part)] == texts
+        for part in parts:
+            with Document(_bytes(part)) as reopened:
+                assert _texts(reopened) == _texts(part)
+                for page in reopened.pages:
+                    assert page.rotation == rotation
+                    assert page.crop_box == (0, 0, 240, 120)
+    assert _bytes(source) == original
+
+
+def test_clip_without_text_uses_existing_no_match_and_zero_width_regex_rules(source):
+    clip = (500, 500, 600, 600)
+    with pytest.raises(PdfValidationException, match="No pages match"):
+        source.split_by_text("INVOICE", clip=clip)
+    with _parts(source, "^", regex=True, clip=clip) as parts:
+        assert [part.page_count for part in parts] == [1] * 6
+
+
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("clip", [
+    "invalid", True, [], (0, 0, 1), (0, 0, 0, 1), (1, 0, 0, 1),
+    (0, 0, float("nan"), 1), (0, 0, 1, float("inf")), (False, 0, 1, 1),
+])
+def test_invalid_clip_fails_before_scanning_or_importing(source, monkeypatch, empty, clip):
+    with Document() as blank:
+        document = blank if empty else source
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("Validate the search rectangle before reading or importing pages")
+
+        monkeypatch.setattr(document._engine_pdf, "extract_page_text", forbidden)
+        monkeypatch.setattr(document._engine_pdf, "extract_pages", forbidden)
+        with pytest.raises(PdfValidationException, match="clip"):
+            document.split_by_text("INVOICE", clip=clip)
+
+
+@pytest.mark.parametrize("clip", [None, (0, 0, 240, 160)])
 @pytest.mark.parametrize(
     "pattern,options,counts",
     [
@@ -115,13 +164,13 @@ def test_matching_pages_start_parts_and_leave_no_gaps_or_duplicates(
     ],
 )
 def test_literal_and_regex_matching_use_page_text_and_python_flags(
-    source, pattern, options, counts
+    source, pattern, options, counts, clip
 ):
     if counts is None:
         with pytest.raises(PdfValidationException, match="No pages match"):
-            source.split_by_text(pattern, **options)
+            source.split_by_text(pattern, clip=clip, **options)
     else:
-        with _parts(source, pattern, **options) as parts:
+        with _parts(source, pattern, clip=clip, **options) as parts:
             assert [part.page_count for part in parts] == counts
 
 
@@ -334,10 +383,11 @@ def test_live_and_loaded_bookmarks_follow_current_pages_and_promote_children(
         assert loaded.outlines[-1].title == "Live edit"
 
 
+@pytest.mark.parametrize("clip", [None, (0, 125, 240, 160)])
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("encrypted", [False, True])
 def test_parts_keep_resources_boxes_fields_links_and_labels_after_source_disposal(
-    source, streaming, encrypted, tmp_path
+    source, streaming, encrypted, tmp_path, clip
 ):
     source.version = "2.0"
     source.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ARABIC, "Sheet-", 10)
@@ -363,7 +413,7 @@ def test_parts_keep_resources_boxes_fields_links_and_labels_after_source_disposa
     with opener(path, password="secret" if encrypted else None) as loaded:
         reference = loaded.pages[1].render(antialias=False)
         protected = loaded.is_encrypted
-        parts = loaded.split_by_text("INVOICE")
+        parts = loaded.split_by_text("INVOICE", clip=clip)
         assert loaded.is_encrypted == protected
         if streaming:
             assert loaded._engine_pdf.page_contents == []
@@ -401,8 +451,9 @@ def test_parts_keep_resources_boxes_fields_links_and_labels_after_source_disposa
     assert path.read_bytes() == original
 
 
+@pytest.mark.parametrize("clip", [None, (0, 125, 240, 160)])
 def test_streaming_scans_each_page_in_order_without_joining_text_before_import(
-    source, tmp_path, monkeypatch
+    source, tmp_path, monkeypatch, clip
 ):
     source.pages[2].add_image(_PNG, 30, 30, width=20, height=20)
     path = tmp_path / "stream.pdf"
@@ -413,9 +464,9 @@ def test_streaming_scans_each_page_in_order_without_joining_text_before_import(
         original_import = engine.extract_pages
         visited = []
 
-        def extract(index):
+        def extract(index, **options):
             visited.append(index)
-            return original(index)
+            return original(index, **options)
 
         def forbidden(*args, **kwargs):
             pytest.fail("Text detection must not extract whole-document text or render")
@@ -430,22 +481,23 @@ def test_streaming_scans_each_page_in_order_without_joining_text_before_import(
         monkeypatch.setattr(engine, "extract_page_text", extract)
         monkeypatch.setattr(engine, "extract_text", forbidden)
         monkeypatch.setattr(engine, "extract_pages", extract_pages)
-        with _parts(loaded) as parts:
+        with _parts(loaded, clip=clip) as parts:
             assert visited == list(range(6))
             assert [part.page_count for part in parts] == [1, 2, 1, 2]
             assert engine.page_contents == [] and engine._extracted_text is None
 
 
+@pytest.mark.parametrize("clip", [None, (0, 125, 240, 160)])
 def test_later_text_extraction_failure_does_not_import_earlier_matches(
-    source, monkeypatch
+    source, monkeypatch, clip
 ):
     before = _bytes(source)
     original = source._engine_pdf.extract_page_text
 
-    def extract(index):
+    def extract(index, **options):
         if index == 5:
             raise PdfParseException("Unreadable final page")
-        return original(index)
+        return original(index, **options)
 
     def forbidden(*args, **kwargs):
         pytest.fail("All text boundaries must be found before importing pages")
@@ -454,7 +506,7 @@ def test_later_text_extraction_failure_does_not_import_earlier_matches(
         patch.setattr(source._engine_pdf, "extract_page_text", extract)
         patch.setattr(source._engine_pdf, "extract_pages", forbidden)
         with pytest.raises(PdfParseException, match="Unreadable final page"):
-            source.split_by_text("INVOICE")
+            source.split_by_text("INVOICE", clip=clip)
     assert _bytes(source) == before
 
 
@@ -503,8 +555,9 @@ def test_pattern_and_page_selection_limits_fail_before_reading_text(
         source.split_by_text("INVOICE")
 
 
+@pytest.mark.parametrize("clip", [None, (0, 125, 240, 160)])
 def test_streaming_content_limits_propagate_before_import(
-    source, tmp_path, monkeypatch
+    source, tmp_path, monkeypatch, clip
 ):
     path = tmp_path / "limited.pdf"
     source.save(path)
@@ -517,7 +570,7 @@ def test_streaming_content_limits_propagate_before_import(
 
         monkeypatch.setattr(loaded._engine_pdf, "extract_pages", forbidden)
         with pytest.raises(PdfResourceLimitException, match="max_content_stream_bytes"):
-            loaded.split_by_text("INVOICE")
+            loaded.split_by_text("INVOICE", clip=clip)
 
 
 @pytest.mark.parametrize(

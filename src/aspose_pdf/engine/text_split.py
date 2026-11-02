@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
@@ -11,6 +11,7 @@ from aspose_pdf.exceptions import PdfValidationException
 
 from .bookmark_split import _range_outlines, _snapshot
 from .cos import PdfStream
+from .text_region import validate_clip
 
 if TYPE_CHECKING:
     from .simple_pdf import SimplePdf
@@ -64,11 +65,13 @@ def split_by_text(
     regex: bool = False,
     case_sensitive: bool = True,
     include_preamble: bool = True,
+    clip: Sequence[float] | None = None,
     outlines: list | None = None,
 ) -> Iterator[SimplePdf]:
     """Yield whole-page parts, restoring the source outline model before each yield."""
     pdf._ensure_not_disposed()
     matcher = _pattern(pdf, pattern, regex, case_sensitive, include_preamble)
+    rectangle = None if clip is None else validate_clip(clip)
     count = len(pdf.pages)
     pdf._load_budget.check_pages(count)
     pdf._load_budget.check(count, "max_container_items", "text split pages")
@@ -76,7 +79,7 @@ def split_by_text(
     for index in range(count):
         # A match starts one part even when the page has several occurrences.
         # Do not join page texts or fill the full-document text/content caches.
-        if matcher.search(pdf.extract_page_text(index)) is not None:
+        if matcher.search(pdf.extract_page_text(index, clip=rectangle)) is not None:
             starts.append(index)
     if not starts:
         raise PdfValidationException("No pages match the text split pattern")

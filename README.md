@@ -1233,13 +1233,16 @@ See [word extraction details](supported-features.md#text).
 
 ### Split at Text Markers
 
-Separate a batch of invoices or reports at pages containing a heading:
+Separate a batch of invoices or reports by searching for a heading in the
+page header.
 
 ```python
 from aspose_pdf import Document
 
 with Document("batch.pdf") as document:
-    parts = document.split_by_text(r"(?m)^Invoice\s+\d+", regex=True)
+    parts = document.split_by_text(
+        r"(?m)^Invoice\s+\d+", regex=True, clip=(0, 740, 600, 842),
+    )
     try:
         for number, part in enumerate(parts, 1):
             part.save(f"part-{number:03d}.pdf")
@@ -1252,7 +1255,11 @@ Strings are literal substrings by default; compiled text regexes also work.
 Each matching page starts a part, with preceding pages kept separately unless
 `include_preamble=False`. No matches raises `PdfValidationException`.
 Matching uses extracted text, with optional `case_sensitive=False`; image-only
-scans need a text layer. See [splitting details](supported-features.md#documents).
+scans need a text layer. `clip` restricts boundary detection to a rectangle in
+unrotated PDF points with a lower-left origin. Adjust the example's header band
+to your pages, or omit `clip` to search all page text. Each part retains complete
+pages, including content outside the search area. See
+[splitting details](supported-features.md#documents).
 
 ### Split a Scan Batch at Blank Pages
 
@@ -1928,7 +1935,7 @@ and delete workflows. 276 public types are organized by module below.
   - `export_bookmarks_json(destination=None, resolve_named_destinations=True, overwrite=True) -> bytes` /
     `import_bookmarks_json(source, replace=False, page_map=None) -> int` — exchange a
     versioned bookmark tree, preserving supported targets and styles
-  - `split_by_text(pattern, regex=False, case_sensitive=True, include_preamble=True) -> list[Document]` —
+  - `split_by_text(pattern, regex=False, case_sensitive=True, include_preamble=True, clip=None) -> list[Document]` —
     split a batch at pages containing a literal or regular expression match
   - `generate_outlines_from_text(pattern, pages=None, regex=False, case_sensitive=True, title_group=0, replace=True, max_count=0, clip=None, exclude_regions=None, skip_artifacts=False) -> int` —
     create flat page bookmarks from extracted text matches and optional capture titles

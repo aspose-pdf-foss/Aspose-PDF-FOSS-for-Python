@@ -5685,6 +5685,7 @@ class Document:
         regex: bool = False,
         case_sensitive: bool = True,
         include_preamble: bool = True,
+        clip: Sequence[float] | None = None,
     ) -> list[Document]:
         """Return independent parts starting at pages whose extracted text matches.
 
@@ -5693,6 +5694,15 @@ class Document:
         ``case_sensitive=False`` adds ``re.IGNORECASE``. Matching is a search
         anywhere in each page's extracted text, with Python's regex semantics.
         Zero-width regex matches count. Patterns cannot be empty.
+
+        ``clip=(x0, y0, x1, y1)`` restricts boundary detection to glyphs whose
+        font-metric bounds overlap that rectangle, as in :meth:`Page.extract_text`.
+        Coordinates are unrotated PDF points with a lower-left origin,
+        independent of CropBox and page rotation. The same rectangle applies
+        to every page and is validated before scanning. Characters without
+        reliable geometry are omitted in this mode. ``None`` searches full
+        page text. Only boundary detection is filtered. Parts retain whole
+        pages, including text and graphics outside the rectangle.
 
         A matching page starts a new part, ending before the next matching
         page or at the end of the PDF. Multiple matches on one page give one
@@ -5727,6 +5737,7 @@ class Document:
                 regex=regex,
                 case_sensitive=case_sensitive,
                 include_preamble=include_preamble,
+                clip=clip,
                 outlines=None if self._outlines is None else self._outlines._items,
             ):
                 part = Document(limits=self._load_limits)

@@ -466,8 +466,8 @@ Supported:
   their old signatures do not authenticate the extracted chapter.
 - **Split batches at text or regex markers.**
   `Document.split_by_text(pattern, regex=False, case_sensitive=True,
-  include_preamble=True)` returns independent `Document` instances in physical
-  page order. This separates invoices, reports or other batches with repeated
+  include_preamble=True, clip=None)` returns independent `Document` instances
+  in physical page order. This separates invoices, reports or other batches with repeated
   start headings without requiring bookmarks or a page-number list.
   - Every page whose extracted text matches starts a new part. It runs through
     the page before the next match, or the end of the PDF. Matching pages stay
@@ -481,12 +481,24 @@ Supported:
     `re.Pattern[str]` always enables regex matching and retains its flags;
     compiled byte patterns are rejected. `case_sensitive=False` adds
     `re.IGNORECASE` using Python's semantics. Matching uses `re.search` on
-    each complete page text separately. Zero-width matches such as `^` count;
-    empty patterns are rejected. Use inline flags such as `(?m)` for line
+    each page's extracted search text separately. Zero-width matches such as
+    `^` count. Empty patterns are rejected. Use inline flags such as `(?m)` for line
     anchors or `(?s)` for a dot matching line breaks. Flags must be booleans;
     invalid types raise `TypeError`, empty patterns `ValueError`, invalid
     regex syntax `re.error`, and invalid Unicode `PdfValidationException`.
     Validation and regex compilation precede page reads, even on empty input.
+  - `clip=(x0, y0, x1, y1)` restricts boundary detection to glyphs whose
+    font-metric bounds overlap that rectangle, following
+    `Page.extract_text(clip=...)`. Use a header band to avoid splitting on a
+    repeated heading mentioned in body text. Coordinates are unrotated PDF
+    points with a lower-left origin, independent of CropBox and page rotation.
+    The same rectangle applies to every page. It is snapshotted and validated
+    before scanning, including for empty documents. Coordinates must be finite
+    and enclose positive area. Text without reliable geometry is omitted in
+    this mode. `None` preserves full-page searching. Matching still uses
+    ordinary regex semantics when the selected area contains no text, so a
+    zero-width pattern such as `^` can match an empty search result. Parts
+    retain whole pages and their content outside the search rectangle.
   - Search uses ordinary `Page.extract_text()` semantics, including decoded
     Unicode text, adjacent text operators, invoked Form XObjects, original
     line breaks and invisible OCR text. Hidden-layer text is skipped as in
