@@ -155,7 +155,7 @@ def test_recipient_opens_the_document_a_password_cannot(alice, tmp_path):
 
     with Document(path, certificate=alice[0], private_key=alice[1]) as document:
         assert document.page_count == 1
-        assert _TEXT.encode() in document.pages[0].content
+        assert _TEXT.encode() in document.pages[1].content
         # The envelope's flags become the document's, and -- as with a
         # password-opened file -- the loaded document is no longer "encrypted"
         # from the caller's side once the credential has unlocked it.
@@ -203,7 +203,7 @@ def test_every_cipher_round_trips(alice, algorithm, tmp_path):
     path.write_bytes(_sealed([Recipient(alice[0])], algorithm=algorithm))
 
     with Document(path, certificate=alice[0], private_key=alice[1]) as document:
-        assert _TEXT.encode() in document.pages[0].content
+        assert _TEXT.encode() in document.pages[1].content
         assert document._engine_pdf.encryption_algorithm == algorithm
 
 
@@ -219,7 +219,7 @@ def test_ec_recipient_opens_the_document(carol, tmp_path):
     path.write_bytes(data)
 
     with Document(path, certificate=carol[0], private_key=carol[1]) as document:
-        assert _TEXT.encode() in document.pages[0].content
+        assert _TEXT.encode() in document.pages[1].content
         assert document.permissions == normalize_permissions(-1)
 
 
@@ -665,7 +665,7 @@ def test_password_recipient_document_round_trips(tmp_path):
 
     assert _TEXT.encode() not in data
     with Document(path, password="correct horse") as document:
-        assert _TEXT.encode() in document.pages[0].content
+        assert _TEXT.encode() in document.pages[1].content
         assert document.permissions == normalize_permissions(-3844)
 
     with pytest.raises(PdfSecurityException, match="supplied password"):
@@ -699,7 +699,7 @@ def test_kek_recipient_document_round_trips(tmp_path):
 
     assert _TEXT.encode() not in data
     with Document(path, key_encryption_key=key_encryption_key) as document:
-        assert _TEXT.encode() in document.pages[0].content
+        assert _TEXT.encode() in document.pages[1].content
         assert document.permissions == normalize_permissions(-3844)
 
     with pytest.raises(PdfSecurityException, match="key-encryption key"):
@@ -804,7 +804,7 @@ def test_resaving_keeps_the_document_readable_by_its_recipients(alice, bob, tmp_
         (bob[0], bob[1], normalize_permissions(-3844)),
     ):
         with Document(target, certificate=certificate, private_key=key) as reopened:
-            assert _TEXT.encode() in reopened.pages[0].content
+            assert _TEXT.encode() in reopened.pages[1].content
             assert reopened.permissions == expected
 
 

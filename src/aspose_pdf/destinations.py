@@ -119,7 +119,7 @@ class NamedDestinationCollection:
             raise PdfValidationException(
                 "A named destination needs a page to point at; this document has none."
             )
-        if not 0 <= resolved.page < count:
+        if not 1 <= resolved.page <= count:
             raise PdfValidationException(
                 f"Page index {resolved.page} is outside this document's {count} pages."
             )

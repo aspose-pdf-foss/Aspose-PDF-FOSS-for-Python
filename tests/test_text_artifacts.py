@@ -115,9 +115,9 @@ def test_authored_artifacts_and_stamps_are_optional_and_cache_is_not_contaminate
             )
             expected = "Body\nUntagged header stays"
             assert document.extract_text(skip_artifacts=True) == expected
-            assert document.pages[0].extract_text(skip_artifacts=True) == expected
+            assert document.pages[1].extract_text(skip_artifacts=True) == expected
             assert (
-                document.extract_text(pages=[0, 0], skip_artifacts=True)
+                document.extract_text(pages=[1, 1], skip_artifacts=True)
                 == expected + "\n" + expected
             )
             assert document.extract_text(pages=[], skip_artifacts=True) == ""
@@ -151,7 +151,7 @@ def test_bare_named_inline_and_escaped_artifact_tags_are_recognized(opening, cli
         clip = (0, 0, 595, 842) if clipped else None
         assert document.extract_text(skip_artifacts=True, clip=clip) == "Before\nAfter"
         assert (
-            document.pages[0].extract_text(skip_artifacts=True, clip=clip)
+            document.pages[1].extract_text(skip_artifacts=True, clip=clip)
             == "Before\nAfter"
         )
 
@@ -391,7 +391,7 @@ def test_facade_and_lowcode_combine_filtering_page_selection_clip_and_repeated_r
         extractor.extract_text(page_numbers=[1])
         assert extractor.get_text() == "First\nHeader"
     options = TextExtractorOptions(
-        PdfLoadLimits(), pages=(i for i in [1, 0]), clip=clip, skip_artifacts=True
+        PdfLoadLimits(), pages=(number + 1 if type(number) is int else number for number in ((i for i in [1, 0]))), clip=clip, skip_artifacts=True
     )
     options.add_input(ByteArrayDataSource(raw))
     options.add_input(ByteArrayDataSource(raw))
@@ -477,14 +477,14 @@ def test_filtered_streaming_selection_does_not_decode_other_pages(tmp_path):
     with Document.open_streaming(
         path, limits=PdfLoadLimits(max_decoded_stream_bytes=1000)
     ) as document:
-        assert document.extract_text(pages=[0], skip_artifacts=True) == "Body"
+        assert document.extract_text(pages=[1], skip_artifacts=True) == "Body"
         assert (
-            document.extract_text(pages=[0], skip_artifacts=True, clip=(0, 0, 595, 842))
+            document.extract_text(pages=[1], skip_artifacts=True, clip=(0, 0, 595, 842))
             == "Body"
         )
         assert document._engine_pdf.page_contents == []
         with pytest.raises(PdfResourceLimitException):
-            document.extract_text(pages=[1], skip_artifacts=True)
+            document.extract_text(pages=[2], skip_artifacts=True)
 
 
 @pytest.mark.parametrize("streaming", [False, True])

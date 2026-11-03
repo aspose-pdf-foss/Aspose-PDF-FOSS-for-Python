@@ -105,18 +105,18 @@ def test_rotator_can_set_the_rotation_instead():
 
 
 def test_rotator_turns_only_the_pages_named():
-    results = Rotator().process(RotateOptions(90, pages=[1]).add_input(_source(_pdf())))
+    results = Rotator().process(RotateOptions(90, pages=[2]).add_input(_source(_pdf())))
     assert [page.rotation for page in _loaded(results[0]).pages] == [0, 90, 0]
 
 
 def test_rotator_refuses_a_page_the_document_does_not_have():
-    with pytest.raises(AsposePdfException, match="outside this document"):
-        Rotator().process(RotateOptions(90, pages=[7]).add_input(_source(_pdf())))
+    with pytest.raises(AsposePdfException, match="out of range"):
+        Rotator().process(RotateOptions(90, pages=[8]).add_input(_source(_pdf())))
 
 
 def test_page_remover_drops_the_pages_named():
     results = PageRemover().process(
-        PageRemoveOptions([0, 2]).add_input(_source(_pdf()))
+        PageRemoveOptions([1, 3]).add_input(_source(_pdf()))
     )
     document = _loaded(results[0])
     assert document.page_count == 1
@@ -125,14 +125,14 @@ def test_page_remover_drops_the_pages_named():
 
 def test_page_remover_takes_the_pages_in_any_order_and_without_repeats():
     results = PageRemover().process(
-        PageRemoveOptions([2, 0, 2]).add_input(_source(_pdf()))
+        PageRemoveOptions([3, 1, 3]).add_input(_source(_pdf()))
     )
     assert _loaded(results[0]).page_count == 1
 
 
 def test_page_remover_will_not_empty_a_document():
     with pytest.raises(AsposePdfException, match="no document behind"):
-        PageRemover().process(PageRemoveOptions([0, 1, 2]).add_input(_source(_pdf())))
+        PageRemover().process(PageRemoveOptions([1, 2, 3]).add_input(_source(_pdf())))
 
 
 def test_page_remover_needs_pages_to_remove():
@@ -142,13 +142,13 @@ def test_page_remover_needs_pages_to_remove():
 
 def test_stamper_puts_the_stamp_on_the_pages_named():
     results = Stamper().process(
-        StampOptions(TextStamp("DRAFT", font_size=30), pages=[0]).add_input(
+        StampOptions(TextStamp("DRAFT", font_size=30), pages=[1]).add_input(
             _source(_pdf())
         )
     )
     document = _loaded(results[0])
-    assert "DRAFT" in document.pages[0].extract_text()
-    assert "DRAFT" not in document.pages[1].extract_text()
+    assert "DRAFT" in document.pages[1].extract_text()
+    assert "DRAFT" not in document.pages[2].extract_text()
 
 
 def test_stamper_stamps_every_page_by_default():
@@ -176,7 +176,7 @@ def test_form_flattener_bakes_a_field_into_the_page():
     )
     flattened = _loaded(results[0])
     assert len(flattened.form.fields) == 0
-    assert "typed" in flattened.pages[0].extract_text()
+    assert "typed" in flattened.pages[1].extract_text()
 
 
 def test_form_flattener_takes_annotations_with_the_fields():
@@ -193,7 +193,7 @@ def test_form_flattener_takes_annotations_with_the_fields():
     )
     flattened = _loaded(results[0])
     assert len(flattened.form.fields) == 0
-    assert len(flattened.pages[0].annotations) == 0
+    assert len(flattened.pages[1].annotations) == 0
 
 
 def test_encryptor_produces_a_document_that_needs_its_password():
@@ -253,22 +253,22 @@ def test_splitter_still_splits_into_single_pages_by_default():
     assert [_loaded(result).page_count for result in results] == [1, 1, 1]
 
 
-def test_splitter_takes_iterables_and_slices_as_selections():
-    options = SplitOptions(selections=[range(0, 2), [2], slice(1, None)])
+def test_splitter_takes_positive_page_numbers_as_selections():
+    options = SplitOptions(selections=[range(1, 3), [3], [2, 3]])
     results = Splitter().process(options.add_input(_source(_pdf())))
     assert [_loaded(result).page_count for result in results] == [2, 1, 2]
     assert "Hello 2" in _loaded(results[1]).extract_text()
 
 
-def test_a_negative_index_in_a_selection_counts_from_the_end():
+def test_a_negative_index_in_a_selection_is_rejected():
     options = SplitOptions(selections=[[-1]])
-    results = Splitter().process(options.add_input(_source(_pdf())))
-    assert "Hello 2" in _loaded(results[0]).extract_text()
+    with pytest.raises(AsposePdfException, match="out of range"):
+        Splitter().process(options.add_input(_source(_pdf())))
 
 
 def test_a_selection_outside_the_document_is_refused():
     options = SplitOptions(selections=[[0, 9]])
-    with pytest.raises(AsposePdfException, match="outside this document"):
+    with pytest.raises(AsposePdfException, match="out of range"):
         Splitter().process(options.add_input(_source(_pdf())))
 
 
@@ -341,11 +341,11 @@ def test_converter_refuses_a_format_it_has_no_writer_for():
 
 def test_converter_takes_only_the_pages_named():
     container = Converter().process(
-        ConvertOptions("png", pages=[0, 2]).add_input(_source(_pdf()))
+        ConvertOptions("png", pages=[1, 3]).add_input(_source(_pdf()))
     )
     assert len(container) == 2
     markdown = Converter().process(
-        ConvertOptions("markdown", pages=[1]).add_input(_source(_pdf()))
+        ConvertOptions("markdown", pages=[2]).add_input(_source(_pdf()))
     )
     assert "Hello 1" in markdown[0].to_string()
     assert "Hello 0" not in markdown[0].to_string()
@@ -358,10 +358,10 @@ def test_converter_renders_at_the_dpi_asked_for():
         return struct.unpack(">II", data[16:24])
 
     at_72 = Converter().process(
-        ConvertOptions("png", pages=[0]).add_input(_source(_pdf(1)))
+        ConvertOptions("png", pages=[1]).add_input(_source(_pdf(1)))
     )[0].to_array()
     at_144 = Converter().process(
-        ConvertOptions("png", pages=[0], dpi=144).add_input(_source(_pdf(1)))
+        ConvertOptions("png", pages=[1], dpi=144).add_input(_source(_pdf(1)))
     )[0].to_array()
     assert png_size(at_144)[0] == pytest.approx(png_size(at_72)[0] * 2, abs=2)
 
@@ -413,17 +413,17 @@ def test_images_to_pdf_cuts_each_page_to_its_own_picture():
     assert len(container) == 1
     document = _loaded(container[0])
     assert document.page_count == 2
-    assert document.pages[0].size == PageSize(60, 40)
+    assert document.pages[1].size == PageSize(60, 40)
     # Rendered at 144 dpi, the second image is 120x80 pixels, so one point per
     # pixel makes a page twice the size.
-    assert document.pages[1].size == PageSize(120, 80)
+    assert document.pages[2].size == PageSize(120, 80)
 
 
 def test_images_to_pdf_sizes_a_page_by_the_dpi_given():
     container = ImagesToPdf().process(
         ImagesToPdfOptions(dpi=300).add_input(_source(_png(60, 40)))
     )
-    page = _loaded(container[0]).pages[0]
+    page = _loaded(container[0]).pages[1]
     assert page.size.width == pytest.approx(60 * 72 / 300)
     assert page.size.height == pytest.approx(40 * 72 / 300)
 
@@ -445,17 +445,17 @@ def test_images_to_pdf_fits_an_image_inside_a_fixed_page_size():
         )
     )
     document = _loaded(container[0])
-    assert document.pages[0].size == PageSize.A4
+    assert document.pages[1].size == PageSize.A4
     # The image is wider than A4 less two margins, so it is scaled to fit and
     # something is actually drawn.
-    assert b"/Image" in document.pages[0].content or document.pages[0].content
+    assert b"/Image" in document.pages[1].content or document.pages[1].content
 
 
 def test_images_to_pdf_takes_a_page_size_by_name():
     container = ImagesToPdf().process(
         ImagesToPdfOptions(page_size="letter").add_input(_source(_png()))
     )
-    assert _loaded(container[0]).pages[0].size == PageSize.LETTER
+    assert _loaded(container[0]).pages[1].size == PageSize.LETTER
 
 
 def test_images_to_pdf_refuses_a_margin_that_leaves_no_room():

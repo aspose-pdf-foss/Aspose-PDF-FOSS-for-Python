@@ -91,14 +91,14 @@ def bookmarked(document):
     chapter = document.outlines.add(
         OutlineItem(
             "Глава 🌍\nOne",
-            destination=XYZDestination(1, 0, 700, 2),
+            destination=XYZDestination(2, 0, 700, 2),
             is_bold=True,
             is_italic=True,
             color=(0.1, 0.2, 0.3),
             open=True,
         )
     )
-    chapter.add(OutlineItem("Section", 2)).add(
+    chapter.add(OutlineItem("Section", 3)).add(
         OutlineItem("Heading only", page_index=None)
     )
     document.outlines.add(
@@ -128,14 +128,14 @@ def test_versioned_unicode_hierarchy_style_and_pdf_roundtrips(
         assert not data.startswith(b"\xef\xbb\xbf") and "Глава".encode() in data
         assert (
             list(tree) == ["schema_version", "bookmarks"]
-            and tree["schema_version"] == 1
+            and tree["schema_version"] == 2
         )
         root = tree["bookmarks"][0]
         assert root["title"] == "Глава 🌍\nOne"
         assert root["is_bold"] and root["is_italic"] and root["open"]
         assert root["color"] == [0.1, 0.2, 0.3]
-        assert root["target"] == _page(1, "XYZ", [0, 700, 2])
-        assert root["children"][0]["target"] == _page(2)
+        assert root["target"] == _page(2, "XYZ", [0, 700, 2])
+        assert root["children"][0]["target"] == _page(3)
         assert root["children"][0]["children"][0]["target"] is None
         assert source.export_bookmarks_json() == data
         with Document() as target:
@@ -155,14 +155,14 @@ def test_versioned_unicode_hierarchy_style_and_pdf_roundtrips(
 @pytest.mark.parametrize(
     "destination",
     [
-        FitDestination(1),
-        FitBDestination(2),
-        XYZDestination(0),
-        FitHDestination(1),
-        FitBHDestination(1, 200),
-        FitVDestination(2, 10),
-        FitBVDestination(2),
-        FitRDestination(1, 1, 2, 100, 200),
+        FitDestination(2),
+        FitBDestination(3),
+        XYZDestination(1),
+        FitHDestination(2),
+        FitBHDestination(2, 200),
+        FitVDestination(3, 10),
+        FitBVDestination(3),
+        FitRDestination(2, 1, 2, 100, 200),
     ],
 )
 @pytest.mark.parametrize("action", [False, True])
@@ -259,15 +259,15 @@ def test_append_to_unopened_loaded_collection_preserves_existing_targets(bookmar
         ]
         with Document(_saved(reopened)) as again:
             assert len(again.outlines) == 3
-            assert again.outlines[0].destination == XYZDestination(1, 0, 700, 2)
+            assert again.outlines[0].destination == XYZDestination(2, 0, 700, 2)
 
 
 def test_named_destinations_are_portable_by_default_or_can_be_retained(document):
-    document.destinations["chapter"] = XYZDestination(2, 10, 300, 1)
+    document.destinations["chapter"] = XYZDestination(3, 10, 300, 1)
     document.outlines.add(OutlineItem("named", destination="chapter"))
     resolved = _payload(document)
     retained = _payload(document, resolve_named_destinations=False)
-    assert resolved["bookmarks"][0]["target"] == _page(2, "XYZ", [10, 300, 1])
+    assert resolved["bookmarks"][0]["target"] == _page(3, "XYZ", [10, 300, 1])
     assert retained["bookmarks"][0]["target"] == {
         "kind": "named",
         "name": "chapter",
@@ -276,14 +276,14 @@ def test_named_destinations_are_portable_by_default_or_can_be_retained(document)
     with Document() as target:
         for _ in range(3):
             target.pages.add()
-        target.import_bookmarks_json(json.dumps(resolved).encode(), page_map={2: 0})
-        assert target.outlines[0].destination == XYZDestination(0, 10, 300, 1)
+        target.import_bookmarks_json(json.dumps(resolved).encode(), page_map={3: 1})
+        assert target.outlines[0].destination == XYZDestination(1, 10, 300, 1)
         assert target.validate_links() == []
-        target.destinations["chapter"] = 1
+        target.destinations["chapter"] = 2
         target.import_bookmarks_json(json.dumps(retained).encode(), replace=True)
         assert (
             target.outlines[0].destination_name == "chapter"
-            and target.outlines[0].page_index == 1
+            and target.outlines[0].page_index == 2
         )
 
 
@@ -295,14 +295,14 @@ def test_retained_names_preserve_representation_and_goto_actions(
     target = {"kind": "named", "name": "chapteré", "representation": representation}
     if goto:
         target = {"kind": "goto", "destination": target}
-    document.destinations["chapteré"] = 2
+    document.destinations["chapteré"] = 3
     data = _data(_record(target=target))
     document.import_bookmarks_json(data)
-    assert _payload(document, resolve_named_destinations=False) == json.loads(data)
+    assert _payload(document, resolve_named_destinations=False) == _version2(json.loads(data))
     with Document(_saved(document)) as reopened:
-        assert _payload(reopened, resolve_named_destinations=False) == json.loads(data)
+        assert _payload(reopened, resolve_named_destinations=False) == _version2(json.loads(data))
         resolved = _payload(reopened)["bookmarks"][0]["target"]
-        assert (resolved["destination"] if goto else resolved) == _page(2)
+        assert (resolved["destination"] if goto else resolved) == _page(3)
 
 
 def test_unresolved_names_can_be_retained_but_default_export_refuses_them(
@@ -356,17 +356,17 @@ def test_uri_remote_and_named_actions_survive_pdf_roundtrip_without_access(
     document, target
 ):
     data = _data(_record(target=target))
-    assert document.import_bookmarks_json(data, page_map={1: 0}) == 1
-    assert _payload(document) == json.loads(data)
+    assert document.import_bookmarks_json(data, page_map={2: 1}) == 1
+    assert _payload(document) == _version2(json.loads(data))
     with Document(_saved(document)) as reopened:
-        assert _payload(reopened) == json.loads(data)
+        assert _payload(reopened) == _version2(json.loads(data))
 
 
 @pytest.mark.parametrize(
     "target",
     [
         URIAction("https://example.invalid"),
-        GoToRAction("file.pdf", FitDestination(50)),
+        GoToRAction("file.pdf", FitDestination(51)),
         NamedAction("NextPage"),
     ],
 )
@@ -384,25 +384,25 @@ def test_page_mapping_is_recursive_and_imported_references_follow_insertions(doc
             children=[_record(target={"kind": "goto", "destination": _page(8)})],
         )
     )
-    assert document.import_bookmarks_json(data, page_map={9: 0, 8: 2}) == 2
-    document.pages.insert(0)
+    assert document.import_bookmarks_json(data, page_map={10: 1, 9: 3}) == 2
+    document.pages.insert(1)
     tree = _payload(document)["bookmarks"][0]
-    assert tree["target"]["page_index"] == 1
-    assert tree["children"][0]["target"]["destination"]["page_index"] == 3
+    assert tree["target"]["page_index"] == 2
+    assert tree["children"][0]["target"]["destination"]["page_index"] == 4
 
 
 def test_export_reads_current_page_identity_and_unsaved_target_edits(bookmarked):
     with Document(_saved(bookmarked)) as reopened:
-        reopened.pages.insert(0)
-        assert _payload(reopened)["bookmarks"][0]["target"]["page_index"] == 2
-        reopened.outlines[0].destination = FitDestination(0)
-        assert _payload(reopened)["bookmarks"][0]["target"] == _page(0)
+        reopened.pages.insert(1)
+        assert _payload(reopened)["bookmarks"][0]["target"]["page_index"] == 3
+        reopened.outlines[0].destination = FitDestination(1)
+        assert _payload(reopened)["bookmarks"][0]["target"] == _page(1)
 
 
 def test_export_rejects_deleted_or_stale_explicit_targets(document):
-    document.outlines.add(OutlineItem("page", destination=FitDestination(2)))
+    document.outlines.add(OutlineItem("page", destination=FitDestination(3)))
     with Document(_saved(document)) as reopened:
-        reopened.pages.delete(2)
+        reopened.pages.delete(3)
         with pytest.raises(PdfValidationException, match="current document page"):
             reopened.export_bookmarks_json()
 
@@ -418,7 +418,7 @@ def test_export_rejects_deleted_or_stale_explicit_targets(document):
         b'{"schema_version":1,"bookmarks":[],}',
         b'{"schema_version":1,"schema_version":1,"bookmarks":[]}',
         b'{"schema_version":true,"bookmarks":[]}',
-        b'{"schema_version":2,"bookmarks":[]}',
+        b'{"schema_version":3,"bookmarks":[]}',
         b'{"schema_version":1,"bookmarks":{}}',
         b'{"schema_version":1,"bookmarks":[],"extra":1}',
         b'{"schema_version":1,"bookmarks":[NaN]}',
@@ -543,7 +543,7 @@ def test_action_entries_are_not_silently_lost(document, extra):
 
 @pytest.mark.parametrize("repeat", [False, True])
 def test_live_tree_cycles_and_reused_nodes_are_refused(document, repeat):
-    root = document.outlines.add(OutlineItem("root", 1))
+    root = document.outlines.add(OutlineItem("root", 2))
     root.children.append(root)
     if repeat:
         root.children.clear()
@@ -683,7 +683,7 @@ def test_export_and_import_agree_on_actual_json_nesting_limits():
 def test_streaming_exchange_and_save_do_not_decode_content(
     bookmarked, tmp_path, monkeypatch, encrypted
 ):
-    bookmarked.pages[0].add_text("Do not decode while exchanging bookmarks", 20, 100)
+    bookmarked.pages[1].add_text("Do not decode while exchanging bookmarks", 20, 100)
     if encrypted:
         bookmarked.encrypt(user_password="secret", owner_password="owner")
     path = tmp_path / "source.pdf"
@@ -702,11 +702,11 @@ def test_streaming_exchange_and_save_do_not_decode_content(
         target = tmp_path / "result.pdf"
         document.save(target)
     with Document(target, password=password) as reopened:
-        assert _payload(reopened) == json.loads(data)
+        assert _payload(reopened) == _version2(json.loads(data))
 
 
 def test_incremental_save_preserves_original_content_and_imported_bookmarks(document):
-    document.pages[0].add_text("Original page text", 20, 100)
+    document.pages[1].add_text("Original page text", 20, 100)
     original = _saved(document)
     with Document(original) as reopened:
         before = reopened.extract_text()
@@ -725,7 +725,7 @@ def test_incremental_save_preserves_original_content_and_imported_bookmarks(docu
 
 def test_empty_documents_and_disposed_exchange():
     with Document() as document:
-        assert _payload(document) == {"schema_version": 1, "bookmarks": []}
+        assert _payload(document) == {"schema_version": 2, "bookmarks": []}
         assert document.import_bookmarks_json(_data(), replace=True) == 0
         with pytest.raises(PdfValidationException, match="requires a document page"):
             document.import_bookmarks_json(_data(_record(target=None)))
@@ -739,7 +739,7 @@ def test_empty_documents_and_disposed_exchange():
 
 @pytest.mark.parametrize(
     "target",
-    [XYZDestination(1, top=True), XYZDestination(1, zoom=float("nan")), URIAction(7)],
+    [XYZDestination(2, top=True), XYZDestination(2, zoom=float("nan")), URIAction(7)],
 )
 def test_invalid_live_typed_values_are_not_silently_coerced(document, target):
     document.outlines.add(OutlineItem("invalid", destination=target))
@@ -749,19 +749,19 @@ def test_invalid_live_typed_values_are_not_silently_coerced(document, target):
 
 def test_append_refreshes_current_indices_for_unopened_existing_bookmarks(bookmarked):
     with Document(_saved(bookmarked)) as document:
-        document.pages.insert(0)
+        document.pages.insert(1)
         assert document._outlines is None
         document.import_bookmarks_json(_data(_record()))
-        assert document.outlines[0].page_index == 2
-        assert document.outlines[0].children[0].page_index == 3
+        assert document.outlines[0].page_index == 3
+        assert document.outlines[0].children[0].page_index == 4
 
 
 def test_goto_action_with_a_named_target_exports_without_losing_action(document):
-    document.destinations["chapter"] = 2
+    document.destinations["chapter"] = 3
     document.outlines.add(OutlineItem("named", destination=GoToAction("chapter")))
     assert _payload(document)["bookmarks"][0]["target"] == {
         "kind": "goto",
-        "destination": _page(2),
+        "destination": _page(3),
     }
 
 
@@ -792,7 +792,7 @@ def test_malformed_retained_targets_are_refused_before_output(document, kind):
 
 
 def test_indirect_named_goto_uri_flags_and_remote_window_flags_are_preserved(document):
-    document.destinations["chapter"] = 1
+    document.destinations["chapter"] = 2
     cos = document._engine_pdf._cos_doc
     item = document.outlines.add(OutlineItem("GoTo name", page_index=None))
     item._loaded_target = (
@@ -818,7 +818,7 @@ def test_indirect_named_goto_uri_flags_and_remote_window_flags_are_preserved(doc
         ),
     )
     tree = _payload(document)
-    assert tree["bookmarks"][0]["target"] == {"kind": "goto", "destination": _page(1)}
+    assert tree["bookmarks"][0]["target"] == {"kind": "goto", "destination": _page(2)}
     assert tree["bookmarks"][1]["target"]["is_map"] is False
 
 
@@ -839,7 +839,7 @@ def test_combined_tree_limit_checks_existing_nodes_before_append():
     with Document(limits=PdfLoadLimits(max_container_items=50)) as document:
         document.pages.add()
         for index in range(50):
-            document.outlines.add(OutlineItem(str(index), 0))
+            document.outlines.add(OutlineItem(str(index), 1))
         original = list(document.outlines)
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             document.import_bookmarks_json(_data(_record(target=None)))
@@ -865,8 +865,8 @@ def test_failed_stream_read_does_not_mutate_or_close_source(bookmarked):
 
 
 def test_export_name_lookup_is_fresh_and_does_not_overwrite_engine_cache(document):
-    document.destinations["chapter"] = 1
-    assert document.destinations["chapter"] == FitDestination(1)
+    document.destinations["chapter"] = 2
+    assert document.destinations["chapter"] == FitDestination(2)
     cached = document._engine_pdf._named_destination_cache
     catalog = document._engine_pdf._resolve(
         document._engine_pdf._cos_doc.trailer.mapping[PdfName("Root")]
@@ -877,7 +877,7 @@ def test_export_name_lookup_is_fresh_and_does_not_overwrite_engine_cache(documen
         [document._engine_pdf._make_page_ref(2), PdfName("Fit")]
     )
     document.outlines.add(OutlineItem("chapter", destination="chapter"))
-    assert _payload(document)["bookmarks"][0]["target"]["page_index"] == 2
+    assert _payload(document)["bookmarks"][0]["target"]["page_index"] == 3
     assert document._engine_pdf._named_destination_cache is cached
 
 
@@ -913,7 +913,7 @@ def test_projected_pdf_object_limit_rejects_import_before_mutation():
 
 def test_replacing_tree_reuses_existing_pdf_slots_at_object_limit(document):
     for index in range(4):
-        document.outlines.add(OutlineItem(str(index), 0))
+        document.outlines.add(OutlineItem(str(index), 1))
     raw = _saved(document)
     with Document(raw) as source:
         cos = source._engine_pdf._cos_doc
@@ -924,7 +924,7 @@ def test_replacing_tree_reuses_existing_pdf_slots_at_object_limit(document):
             == 1
         )
         with Document(_saved(target)) as reopened:
-            assert len(reopened.outlines) == 1 and reopened.outlines[0].page_index == 0
+            assert len(reopened.outlines) == 1 and reopened.outlines[0].page_index == 1
 
 
 @pytest.mark.parametrize("object_kind", ["Page", "Pages"])
@@ -943,3 +943,20 @@ def test_malformed_existing_outline_pointer_cannot_overwrite_page_objects(
     with pytest.raises(PdfValidationException, match="outline slots"):
         document.import_bookmarks_json(_data(_record()))
     assert document._outlines is None and engine._resolve(reference) is original
+
+
+def _version2(payload):
+    """Express an existing version 1 fixture using the current export schema."""
+    if payload["schema_version"] == 2:
+        return payload
+    payload["schema_version"] = 2
+    pending = [payload]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            if "page_index" in value:
+                value["page_index"] += 1
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return payload

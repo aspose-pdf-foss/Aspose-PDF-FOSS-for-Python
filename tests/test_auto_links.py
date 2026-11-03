@@ -171,7 +171,7 @@ def test_links_survive_round_trips_and_repeated_calls_preserve_content(
                 path
             )
         try:
-            page = document.pages[0]
+            page = document.pages[1]
             text, content = document.extract_text(), page.content
             pixels = page.render(dpi=24, antialias=False).pixels
             result = document.auto_link()
@@ -196,10 +196,10 @@ def test_links_survive_round_trips_and_repeated_calls_preserve_content(
             document.save(output)
             with Document(output) as reopened:
                 assert _targets(
-                    AutoLinkResult(tuple(reopened.pages[0].annotations))
+                    AutoLinkResult(tuple(reopened.pages[1].annotations))
                 ) == ["https://example.com/a", "mailto:hello@example.org"]
                 assert reopened.auto_link().existing_count == 2
-                assert reopened.pages[0].annotations[0].contents == "Web link"
+                assert reopened.pages[1].annotations[0].contents == "Web link"
                 assert reopened.extract_text() == text
         finally:
             if document is not original:
@@ -224,11 +224,11 @@ def test_page_selection_order_repeats_and_max_count():
         for index in range(3):
             document.pages.add().add_text(f"https://example.org/{index}", 72, 700)
         assert document.auto_link(pages=[]) == AutoLinkResult()
-        result = document.auto_link(pages=(i for i in [2, 0, 2, 1]), max_count=3)
+        result = document.auto_link(pages=(number + 1 if type(number) is int else number for number in ((i for i in [2, 0, 2, 1]))), max_count=3)
         assert _targets(result) == ["https://example.org/2", "https://example.org/0"]
         assert result.existing_count == 1 and result.matched_count == 3
         assert [len(page.annotations) for page in document.pages] == [1, 0, 1]
-        assert document.pages[1].auto_link().linked_count == 1
+        assert document.pages[2].auto_link().linked_count == 1
 
 
 @pytest.mark.parametrize("target", ["https://example.org", "https://different.org"])
@@ -282,7 +282,7 @@ def test_uncertain_geometry_is_reported_and_counts_toward_max_count():
             1,
         )
         fragment = result.skipped_fragments[0]
-        assert fragment.text == "https://unknown.org" and fragment.page_index == 0
+        assert fragment.text == "https://unknown.org" and fragment.page_index == 1
         assert document.extract_text()[fragment.start : fragment.end] == fragment.text
         assert fragment.rect is None and fragment.quads is None
         result = document.auto_link()
@@ -295,7 +295,7 @@ def test_ambiguous_repetition_does_not_borrow_the_known_address_coordinates():
     ) as document:
         result = document.auto_link()
         assert (result.linked_count, result.skipped_count) == (0, 2)
-        assert len(document.pages[0].annotations) == 0
+        assert len(document.pages[1].annotations) == 0
 
 
 def test_form_text_without_supported_geometry_is_reported_as_skipped():
@@ -324,7 +324,7 @@ def test_transformed_text_uses_unrotated_page_coordinates(rotation):
     with _with_content(
         b"q 0 1 -1 0 400 0 cm BT /F1 10 Tf 72 200 Td (https://example.org) Tj ET Q"
     ) as document:
-        page = document.pages[0]
+        page = document.pages[1]
         page.rotation = rotation
         page.crop_box = (10, 10, 500, 780)
         absorber = TextFragmentAbsorber("https://example.org")
@@ -388,8 +388,8 @@ def test_hidden_optional_content_does_not_get_linked():
         {"pages": "0"},
         {"pages": [True]},
         {"pages": [-1]},
-        {"pages": [0, 1]},
-        {"pages": [0, "0"]},
+        {"pages": [1, 2]},
+        {"pages": [1, "0"]},
     ],
 )
 def test_invalid_options_and_selections_do_not_modify_document(options):
@@ -417,14 +417,14 @@ def test_max_count_includes_existing_addresses_across_pages():
     with Document() as document:
         for index in range(2):
             document.pages.add().add_text(f"https://example.org/{index}", 72, 700)
-        document.pages[0].auto_link()
+        document.pages[1].auto_link()
         result = document.auto_link(max_count=1)
         assert (result.linked_count, result.existing_count, result.matched_count) == (
             0,
             1,
             1,
         )
-        assert len(document.pages[1].annotations) == 0
+        assert len(document.pages[2].annotations) == 0
 
 
 @pytest.mark.parametrize("streaming", [False, True])
@@ -444,7 +444,7 @@ def test_password_protected_pdf_round_trip(tmp_path, streaming, algorithm):
         output = tmp_path / "linked.pdf"
         document.save(output)
     with Document(output, password="secret") as document:
-        assert _targets(AutoLinkResult(tuple(document.pages[0].annotations))) == [
+        assert _targets(AutoLinkResult(tuple(document.pages[1].annotations))) == [
             "mailto:user@example.org",
             "https://example.org",
         ]
@@ -466,7 +466,7 @@ def test_streaming_selection_does_not_decode_other_pages(tmp_path, monkeypatch):
             return original(index)
 
         monkeypatch.setattr(engine, "get_page_content", selected_only)
-        result = document.auto_link(pages=[1])
+        result = document.auto_link(pages=[2])
         assert result.linked_count == 1
         assert engine.page_contents == []
         assert result.annotations[0].get_property("A")["URI"] == "https://example.org/1"
@@ -479,7 +479,7 @@ def test_address_collection_and_token_limits_propagate_before_page_edits():
         )
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             document.auto_link()
-        assert len(document.pages[0].annotations) == 0
+        assert len(document.pages[1].annotations) == 0
     with Document(limits=PdfLoadLimits(max_content_tokens=5)) as document:
         document.pages.add()
         document._engine_pdf._set_page_content(
@@ -539,13 +539,13 @@ def test_inserted_and_deleted_pages_keep_links_and_live_handles_on_the_right_pag
     with Document() as document:
         document.pages.add().add_text("https://deleted.org", 72, 700)
         document.pages.add().add_text("https://last.org", 72, 700)
-        document.pages.insert(1).add_text("https://inserted.org", 72, 700)
-        document.pages.delete(0)
+        document.pages.insert(2).add_text("https://inserted.org", 72, 700)
+        document.pages.delete(1)
         result = document.auto_link()
         assert _targets(result) == ["https://inserted.org", "https://last.org"]
         result.annotations[0].contents = "Inserted"
-        assert document.pages[0].annotations[0].contents == "Inserted"
-        assert document.pages[1].annotations[0].contents == ""
+        assert document.pages[1].annotations[0].contents == "Inserted"
+        assert document.pages[2].annotations[0].contents == ""
 
 
 def test_disabled_recognition_and_empty_selection_do_not_read_page_content(monkeypatch):

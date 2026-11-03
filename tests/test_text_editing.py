@@ -39,8 +39,8 @@ def test_document_replace_text_across_pages_honors_max_count() -> None:
 
     assert doc.replace_text("cat", "dog", max_count=2) == 2
 
-    assert b"(dog dog)" in doc.pages[0].content
-    assert b"(cat)" in doc.pages[1].content
+    assert b"(dog dog)" in doc.pages[1].content
+    assert b"(cat)" in doc.pages[2].content
 
 
 def test_replace_text_can_target_one_page() -> None:
@@ -49,10 +49,10 @@ def test_replace_text_can_target_one_page() -> None:
         b"BT /F1 12 Tf (alpha) Tj ET",
     )
 
-    assert doc.replace_text("alpha", "beta", page_index=1) == 1
+    assert doc.replace_text("alpha", "beta", page_index=2) == 1
 
-    assert b"(alpha)" in doc.pages[0].content
-    assert b"(beta)" in doc.pages[1].content
+    assert b"(alpha)" in doc.pages[1].content
+    assert b"(beta)" in doc.pages[2].content
 
 
 def test_replace_text_handles_tj_array_elements() -> None:
@@ -60,7 +60,7 @@ def test_replace_text_handles_tj_array_elements() -> None:
 
     assert doc.replace_text("World", "PDF") == 1
 
-    assert b"[(Hello) 120 (PDF)] TJ" in doc.pages[0].content
+    assert b"[(Hello) 120 (PDF)] TJ" in doc.pages[1].content
 
 
 def test_replace_text_handles_hex_string_operand() -> None:
@@ -68,7 +68,7 @@ def test_replace_text_handles_hex_string_operand() -> None:
 
     assert doc.replace_text("Hello", "Hi") == 1
 
-    assert b"<4869>" in doc.pages[0].content
+    assert b"<4869>" in doc.pages[1].content
 
 
 def test_replace_text_case_insensitive() -> None:
@@ -76,7 +76,7 @@ def test_replace_text_case_insensitive() -> None:
 
     assert doc.replace_text("hello", "hi", case_sensitive=False) == 3
 
-    assert b"(hi hi hi)" in doc.pages[0].content
+    assert b"(hi hi hi)" in doc.pages[1].content
 
 
 def test_redact_text_removes_simple_operand_text() -> None:
@@ -84,8 +84,8 @@ def test_redact_text_removes_simple_operand_text() -> None:
 
     assert doc.redact_text("Secret") == 1
 
-    assert b"Secret" not in doc.pages[0].content
-    assert b"(Public )" in doc.pages[0].content
+    assert b"Secret" not in doc.pages[1].content
+    assert b"(Public )" in doc.pages[1].content
 
 
 def test_replace_text_persists_after_save_reload() -> None:
@@ -97,7 +97,7 @@ def test_replace_text_persists_after_save_reload() -> None:
     buf.seek(0)
     reloaded = Document().load_from(buf)
 
-    assert b"(after)" in reloaded.pages[0].content
+    assert b"(after)" in reloaded.pages[1].content
 
 
 def test_replace_text_rejects_unencodable_replacement() -> None:
@@ -114,6 +114,6 @@ def test_replace_text_joins_split_tj_fragments() -> None:
 
     assert doc.replace_text("Hello", "Hi") == 1
 
-    content = doc.pages[0].content
+    content = doc.pages[1].content
     assert b"(Hi)" in content
     assert b"(Hel)" not in content and b"(lo)" not in content

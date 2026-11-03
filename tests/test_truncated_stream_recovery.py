@@ -40,7 +40,7 @@ def three_pages() -> bytes:
     document = Document()
     for index in range(3):
         document.pages.add()
-        document.pages[index].add_text(f"Page {index}", 50, 700)
+        document.pages[(index) + 1].add_text(f"Page {index}", 50, 700)
     buffer = io.BytesIO()
     document.save(buffer)
     data = buffer.getvalue()
@@ -58,7 +58,7 @@ def _cut_inside_last_stream(data: bytes) -> bytes:
 
 def _texts(document: Document) -> list[str]:
     return [
-        document.pages[index].extract_text().strip().replace("\n", " ")
+        document.pages[(index) + 1].extract_text().strip().replace("\n", " ")
         for index in range(len(document.pages))
     ]
 

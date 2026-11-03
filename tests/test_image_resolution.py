@@ -37,7 +37,7 @@ def _page(document, content=b"72 0 0 72 10 20 cm /Im Do", size=(300, 150)):
     page = document.pages.add()
     pdf = document._engine_pdf
     pdf._ensure_cos()
-    resource = pdf._ensure_resource_subdict(page.index, "XObject")
+    resource = pdf._ensure_resource_subdict((page.index) - 1, "XObject")
     image = PdfStream(
         b"samples must never be decoded",
         {
@@ -49,8 +49,8 @@ def _page(document, content=b"72 0 0 72 10 20 cm /Im Do", size=(300, 150)):
     )
     reference = pdf._cos_doc.register_object(image)
     resource.mapping[PdfName("Im")] = reference
-    pdf._set_page_content(page.index, content)
-    return pdf._get_page_dict(page.index), resource, image
+    pdf._set_page_content((page.index) - 1, content)
+    return pdf._get_page_dict((page.index) - 1), resource, image
 
 
 def _form(document, resources, content, matrix=None):
@@ -79,7 +79,7 @@ def test_public_report_thresholds_and_detached_immutable_results():
         (issue,) = document.find_low_resolution_images(151)
         assert isinstance(issue, ImageResolutionIssue)
         assert (issue.page_index, issue.placement_index, issue.resource_path) == (
-            0,
+            1,
             0,
             ("Im",),
         )
@@ -219,8 +219,8 @@ def test_selection_order_repeats_empty_and_full_validation_before_content(monkey
             _page(document, size=(1, 1))
         assert [
             i.page_index
-            for i in document.find_low_resolution_images(pages=iter([2, 0, 2]))
-        ] == [2, 0, 2]
+            for i in document.find_low_resolution_images(pages=(number + 1 if type(number) is int else number for number in (iter([2, 0, 2]))))
+        ] == [3, 1, 3]
         assert document.find_low_resolution_images(pages=[]) == []
         monkeypatch.setattr(
             image_resolution,
@@ -330,8 +330,8 @@ def test_roundtrip_lazy_selected_reads_no_pixel_decode_or_source_mutation(
         monkeypatch.setattr(
             pdf, "_hydrate_image_info", lambda: pytest.fail("must stay lazy")
         )
-        (issue,) = document.find_low_resolution_images(pages=[2])
-        assert issue.page_index == 2 and issue.effective_dpi == 1
+        (issue,) = document.find_low_resolution_images(pages=[3])
+        assert issue.page_index == 3 and issue.effective_dpi == 1
         assert (pdf._image_names, pdf._image_cursor) == cursor
         assert (
             set(dict.keys(pdf.images)),
@@ -366,7 +366,7 @@ def test_unbounded_selection_and_repeated_form_expansion_are_bounded():
     with Document(limits=PdfLoadLimits(max_container_items=100)) as document:
         _page(document)
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            document.find_low_resolution_images(pages=repeat(0))
+            document.find_low_resolution_images(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
     with Document() as document:
         _, resources, _ = _page(document, b"/F Do " * 10)
         reference, _ = _form(

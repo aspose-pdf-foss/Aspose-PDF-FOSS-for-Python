@@ -548,7 +548,7 @@ def test_a_drawn_path_renders():
     page.draw_path(
         GraphicsPath().circle(50, 50, 40), fill_color=(1, 0, 0), stroke_color=None
     )
-    raster = Document(io.BytesIO(_saved(document))).pages[0].render(dpi=72)
+    raster = Document(io.BytesIO(_saved(document))).pages[1].render(dpi=72)
     assert raster.get_pixel(50, 50) == (255, 0, 0)  # the middle of the circle
     assert raster.get_pixel(2, 2) == (255, 255, 255)  # outside it
 
@@ -559,7 +559,7 @@ def test_the_even_odd_rule_leaves_the_hole_a_hole():
     # nonzero winding fills straight over it (8.5.3.3).
     rings = GraphicsPath().circle(50, 50, 40).circle(50, 50, 20)
     page.draw_path(rings, fill_color=(1, 0, 0), stroke_color=None, even_odd=True)
-    raster = Document(io.BytesIO(_saved(document))).pages[0].render(dpi=72)
+    raster = Document(io.BytesIO(_saved(document))).pages[1].render(dpi=72)
     assert raster.get_pixel(50, 50) == (255, 255, 255)  # the hole
     assert raster.get_pixel(50, 20) == (255, 0, 0)  # the ring
 
@@ -570,7 +570,7 @@ def test_the_even_odd_rule_leaves_the_hole_a_hole():
         stroke_color=None,
         even_odd=False,
     )
-    raster = Document(io.BytesIO(_saved(document))).pages[0].render(dpi=72)
+    raster = Document(io.BytesIO(_saved(document))).pages[1].render(dpi=72)
     assert raster.get_pixel(50, 50) == (255, 0, 0)  # filled through
 
 
@@ -582,7 +582,7 @@ def test_opacity_renders_as_transparency():
         stroke_color=None,
         opacity=0.5,
     )
-    raster = Document(io.BytesIO(_saved(document))).pages[0].render(dpi=72)
+    raster = Document(io.BytesIO(_saved(document))).pages[1].render(dpi=72)
     red, green, blue = raster.get_pixel(50, 50)
     assert 120 <= red <= 135 and red == green == blue  # half way to white
 
@@ -591,7 +591,7 @@ def test_a_clip_keeps_the_drawing_inside_it():
     document, page = _page(100, 100)
     with page.graphics(clip=GraphicsPath().rect(0, 0, 50, 100)):
         page.draw_rectangle(0, 0, 100, 100, fill_color=(1, 0, 0), stroke_color=None)
-    raster = Document(io.BytesIO(_saved(document))).pages[0].render(dpi=72)
+    raster = Document(io.BytesIO(_saved(document))).pages[1].render(dpi=72)
     assert raster.get_pixel(25, 50) == (255, 0, 0)  # inside the clip
     assert raster.get_pixel(75, 50) == (255, 255, 255)  # outside it
 
@@ -600,7 +600,7 @@ def test_a_transform_moves_what_is_drawn_under_it():
     document, page = _page(100, 100)
     with page.graphics(transform=(1, 0, 0, 1, 50, 0)):
         page.draw_rectangle(0, 0, 40, 40, fill_color=(1, 0, 0), stroke_color=None)
-    raster = Document(io.BytesIO(_saved(document))).pages[0].render(dpi=72)
+    raster = Document(io.BytesIO(_saved(document))).pages[1].render(dpi=72)
     assert raster.get_pixel(70, 80) == (255, 0, 0)  # where the matrix put it
     assert raster.get_pixel(20, 80) == (255, 255, 255)  # where it was authored
 
@@ -615,7 +615,7 @@ def test_a_path_survives_a_round_trip_as_the_same_content():
     )
     before = page.content
     reloaded = Document(io.BytesIO(_saved(document)))
-    assert reloaded.pages[0].content == before
+    assert reloaded.pages[1].content == before
 
 
 def test_a_drawing_can_be_tagged_like_any_other_authored_content():

@@ -9,7 +9,7 @@ __all__ = ["PageTextComparison"]
 
 @dataclass(frozen=True, slots=True)
 class PageTextComparison:
-    """An immutable comparison of two selected pages, using zero-based indices.
+    """An immutable comparison of two selected pages, using one-based page numbers.
 
     ``text`` and ``other_text`` contain extracted strings after any exclusion
     filtering and before case or whitespace normalization. A

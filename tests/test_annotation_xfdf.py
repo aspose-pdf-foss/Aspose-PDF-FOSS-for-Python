@@ -115,7 +115,7 @@ def test_namespace_metadata_unicode_and_threads_survive_pdf_round_trips(
             and len(highlight.attrib["coords"].split(",")) == 8
         )
         assert reopened.export_annotations_xfdf() == data
-        assert len(_annots(reopened.pages[0].annotations.export_xfdf())) == 3
+        assert len(_annots(reopened.pages[1].annotations.export_xfdf())) == 3
     finally:
         if reopened is not document:
             reopened.dispose()
@@ -123,7 +123,7 @@ def test_namespace_metadata_unicode_and_threads_survive_pdf_round_trips(
 
 def test_page_order_repeats_type_filters_and_orphan_popup_behavior(document):
     nodes = _annots(
-        document.export_annotations_xfdf(pages=(value for value in (1, 0, 1)))
+        document.export_annotations_xfdf(pages=(number + 1 if type(number) is int else number for number in ((value for value in (1, 0, 1)))))
     )
     assert [node.attrib["page"] for node in nodes] == ["1", "0", "0", "0"]
     nodes = _annots(document.export_annotations_xfdf(subtypes=[AnnotationType.TEXT]))
@@ -182,7 +182,7 @@ def test_reply_targets_outside_selected_pages_are_omitted():
         )
         all_nodes = _annots(document.export_annotations_xfdf())
         assert all_nodes[1].attrib["inreplyto"] == all_nodes[0].attrib["name"]
-        reply = _annots(document.export_annotations_xfdf(pages=[1]))[0]
+        reply = _annots(document.export_annotations_xfdf(pages=[2]))[0]
         assert "inreplyto" not in reply.attrib and "replyType" not in reply.attrib
 
 
@@ -281,7 +281,7 @@ def test_non_review_types_are_skipped(subtype):
         {"pages": "0"},
         {"pages": [True]},
         {"pages": [-1]},
-        {"pages": [0, 9]},
+        {"pages": [1, 10]},
         {"subtypes": True},
         {"subtypes": b"Text"},
         {"subtypes": ["Text", None]},
@@ -336,7 +336,7 @@ def test_malformed_selected_properties_leave_outputs_untouched(
 @pytest.mark.parametrize("value", ["bad\x00text", "bad\x01", "bad\ufffe", "bad\uffff"])
 @pytest.mark.parametrize("field", ["contents", "author", "name"])
 def test_xml_forbidden_characters_are_rejected(document, value, field):
-    note = document.pages[0].annotations[0]
+    note = document.pages[1].annotations[0]
     if field == "name":
         note.set_property("NM", value)
     else:
@@ -408,7 +408,7 @@ def test_unbounded_selection_is_stopped_by_resource_policy():
     with Document(limits=PdfLoadLimits(max_container_items=2)) as document:
         document.pages.add()
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            document.export_annotations_xfdf(pages=repeat(0))
+            document.export_annotations_xfdf(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
 
 
 @pytest.mark.parametrize(
@@ -539,21 +539,21 @@ def test_sources_remain_unchanged_without_decoding_content_or_appearance_streams
     ) as source:
         pdf = source._engine_pdf
         protection = source.is_encrypted
-        before = source.pages[0].annotations.to_list()
+        before = source.pages[1].annotations.to_list()
 
         def no_content(*args, **kwargs):
             pytest.fail("XFDF metadata export must not decode page or asset streams")
 
         monkeypatch.setattr(pdf, "_decode_cos_stream", no_content)
         monkeypatch.setattr(pdf, "get_page_content", no_content)
-        data = source.export_annotations_xfdf(pages=[0])
+        data = source.export_annotations_xfdf(pages=[1])
         assert len(_annots(data)) == 2 and "Привет".encode() in data
         assert (
             b"Not parsed" not in data
             and b"private.bin" not in data
             and b"Secret" not in data
         )
-        assert source.pages[0].annotations.to_list() == before
+        assert source.pages[1].annotations.to_list() == before
         assert source.is_encrypted is protection and source.info["Title"] == "Original"
         if kind == "streaming":
             assert pdf.page_contents == [] and pdf._extracted_text is None
@@ -586,7 +586,7 @@ def test_unselected_annotations_and_unmapped_metadata_are_not_read(
         return original(index)
 
     monkeypatch.setattr(pdf, "_get_page_dict", page)
-    assert len(_annots(document.export_annotations_xfdf(pages=[0]))) == 3
+    assert len(_annots(document.export_annotations_xfdf(pages=[1]))) == 3
 
 
 @pytest.mark.parametrize(

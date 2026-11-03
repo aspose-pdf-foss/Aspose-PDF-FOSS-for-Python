@@ -255,9 +255,9 @@ def _placement(page: Any, rect: Any) -> tuple[int, tuple[float, float, float, fl
         raise PdfValidationException(
             "rect encloses no area, so nothing drawn in it would be visible."
         )
-    index = 0 if page is None else page
+    index = 1 if page is None else page
     if isinstance(index, bool) or not isinstance(index, int):
-        raise PdfValidationException("page is a zero-based page index.")
-    if index < 0:
-        raise PdfValidationException(f"page is not negative: {index}.")
+        raise PdfValidationException("page is a one-based page number.")
+    if index < 1:
+        raise PdfValidationException(f"page must be positive: {index}.")
     return index, (llx, lly, urx, ury)

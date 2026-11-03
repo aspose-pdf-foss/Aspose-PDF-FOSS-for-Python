@@ -309,14 +309,17 @@ def to_json(annotations: list[dict[str, Any]]) -> bytes:
     try:
         return (
             json.dumps(
-                {"schema_version": 1, "annotations": annotations},
+                {"schema_version": 2, "annotations": [
+                    {**record, "page_index": record["page_index"] + 1}
+                    for record in annotations
+                ]},
                 ensure_ascii=False,
                 allow_nan=False,
                 indent=2,
             )
             + "\n"
         ).encode("utf-8")
-    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+    except (KeyError, TypeError, ValueError, UnicodeError, RecursionError) as exc:
         raise PdfValidationException(
             "Annotations cannot be encoded as UTF-8 JSON"
         ) from exc

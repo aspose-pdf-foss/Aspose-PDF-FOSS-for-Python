@@ -16,7 +16,7 @@ from .text_selection import page_indexes
 def _manifest(records, delimiter, encoding, budget, total):
     """Keep source provenance separate from the unchanged CSV cell strings."""
     value = dict(
-        schema_version=1, delimiter=delimiter, encoding=encoding, tables=records
+        schema_version=2, delimiter=delimiter, encoding=encoding, tables=records
     )
     with _BoundedBuffer(
         budget, "max_object_bytes", "table ZIP manifest bytes", decoded_prefix=total
@@ -119,7 +119,7 @@ def export_zip(
                         records.append(
                             dict(
                                 archive_name=name,
-                                page_index=index,
+                                page_index=index + 1,
                                 table_index=table_index,
                                 row_count=table.row_count,
                                 column_count=table.column_count,

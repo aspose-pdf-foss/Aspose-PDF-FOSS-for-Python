@@ -87,7 +87,7 @@ class ImagePlacement:
         self,
         name: str,
         image_data: bytes | bytearray,
-        page_index: int = 0,
+        page_index: int = 1,
         rect: Rectangle | None = None,
         resolution: tuple[float, float] | None = None,
         rotation: int = 0,
@@ -195,8 +195,8 @@ class ImagePlacement:
         if engine is None:
             return False
         if data is None:
-            return bool(engine.hide_page_image(self.page_index, self.name))
-        return bool(engine.replace_page_image(self.page_index, self.name, data))
+            return bool(engine.hide_page_image(self.page_index - 1, self.name))
+        return bool(engine.replace_page_image(self.page_index - 1, self.name, data))
 
     def save(
         self, path: str | os.PathLike, *, color_space: str | None = None
@@ -365,7 +365,7 @@ class ImagePlacementAbsorber:
             placement = ImagePlacement(
                 name,
                 data,
-                page_index,
+                page_index + 1,
                 rect=rect,
                 resolution=resolution,
                 rotation=rotation,

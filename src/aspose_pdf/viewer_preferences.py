@@ -308,11 +308,12 @@ class ViewerPreferences:
     def print_page_range(self) -> tuple[tuple[int, int], ...]:
         """The page ranges the print dialogue starts on, both ends included.
 
-        Pairs of 0-based page indices, as everywhere else here; the file holds
+        Pairs of one-based page indices, as everywhere else here; the file holds
         them as 1-based page numbers. A range naming a page the document does
         not have makes the whole entry meaningless, and it reads as empty.
         """
-        return engine_prefs.print_page_range(self._pdf, len(self._document.pages))
+        return tuple((first + 1, last + 1) for first, last in
+                     engine_prefs.print_page_range(self._pdf, len(self._document.pages)))
 
     @print_page_range.setter
     def print_page_range(self, value: Any) -> None:
@@ -330,11 +331,11 @@ class ViewerPreferences:
                 or not isinstance(last, int)
             ):
                 raise PdfValidationException("a print range needs whole page indices")
-            if not 0 <= first <= last < count:
+            if not 1 <= first <= last <= count:
                 raise PdfValidationException(
-                    f"a print range must name pages this document has (0 to {count - 1})"
+                    f"a print range must name pages this document has (1 to {count})"
                 )
-            pairs.append((first, last))
+            pairs.append((first - 1, last - 1))
         self._set("PrintPageRange", pairs)
 
     # -- the whole entry ----------------------------------------------------

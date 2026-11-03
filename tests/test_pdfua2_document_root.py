@@ -25,8 +25,8 @@ from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfName
 def _tagged(part: int) -> Document:
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720, tag="H1")
-    document.pages[0].add_text("Body text", 50, 690, tag="P")
+    document.pages[1].add_text("Heading", 50, 720, tag="H1")
+    document.pages[1].add_text("Body text", 50, 690, tag="P")
     document.info["Title"] = "A Title"
     document.convert_to_pdfua(part=part, title="A Title")
     return document

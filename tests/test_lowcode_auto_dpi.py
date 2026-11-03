@@ -48,7 +48,7 @@ def _convert(data, **options):
 def _assert_size(data, expected, **options):
     with Document(_convert(data, **options)[0].to_array()) as document:
         assert document.page_count == 1
-        size = document.pages[0].size
+        size = document.pages[1].size
         assert (size.width, size.height) == pytest.approx(expected)
 
 
@@ -138,7 +138,7 @@ def test_unequal_dpi_axes_follow_jpeg_rotation_without_changing_payload(
     data = _tagged(jpeg, orientation=orientation)
     results = _convert(data, dpi="auto", auto_orient=True)
     with Document(results[0].to_array()) as document:
-        page = document.pages[0]
+        page = document.pages[1]
         assert page.size == PageSize(*((4, 16) if orientation >= 5 else (16, 4)))
         absorber = ImagePlacementAbsorber()
         absorber.visit(page)
@@ -195,7 +195,7 @@ def test_fixed_page_margin_fitting_uses_physical_size_and_avoids_upscaling(jpeg)
         ].to_array()
     ) as document:
         absorber = ImagePlacementAbsorber()
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
         rect = absorber.image_placements[0].rectangle
         assert (rect.x, rect.y, rect.width, rect.height) == pytest.approx(
             (18, 12, 4, 16)
@@ -223,7 +223,7 @@ def test_auto_dpi_input_sources_and_pdf_file_round_trip(jpeg, kind, tmp_path):
         assert not stream.closed
     assert target.read_bytes() == results[0].to_array()
     with Document.open_streaming(target) as document:
-        assert document.pages[0].size == PageSize(16, 4)
+        assert document.pages[1].size == PageSize(16, 4)
     assert path.read_bytes() == data
 
 

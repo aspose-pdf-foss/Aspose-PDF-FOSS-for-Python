@@ -59,7 +59,7 @@ def test_blocks_cover_structure_and_anchors_through_round_trips(source, tmp_path
             document = opener(path)
         try:
             blocks = document.extract_blocks()
-            assert blocks == expected == document.pages[0].extract_blocks()
+            assert blocks == expected == document.pages[1].extract_blocks()
             assert ModuleBlock is ExtractedBlock
             assert all(isinstance(block, ExtractedBlock) for block in blocks)
             assert [block.kind for block in blocks] == [
@@ -67,8 +67,8 @@ def test_blocks_cover_structure_and_anchors_through_round_trips(source, tmp_path
             ]
             assert blocks[0].text == "Inventory report" and blocks[0].level == 1
             assert [(b.page_index, b.x, b.y) for b in blocks] == [
-                (0, 60, 760), (0, 60, 730), (0, 60, 690),
-                (0, 70, 610), (0, 60, 540),
+                (1, 60, 760), (1, 60, 730), (1, 60, 690),
+                (1, 70, 610), (1, 60, 540),
             ]
             assert blocks[2].rows == (("Part", "Count"), ("Bolt", "20"), ("Nut", "30"))
             assert blocks[2].column_spans == ((1, 1),) * 3
@@ -90,7 +90,7 @@ def test_snapshots_and_json_ready_dictionaries_are_independent():
             blocks[0].text = "Edited"
         with pytest.raises(TypeError):
             blocks[3].items[0] = "Edited"
-        document.pages[0].replace_text("Inventory report", "Other report")
+        document.pages[1].replace_text("Inventory report", "Other report")
     assert blocks[0].text == "Inventory report"
     assert blocks[2].rows[0] == ("Part", "Count")
     assert blocks[2].column_spans[0] == (1, 1)
@@ -101,14 +101,14 @@ def test_page_selection_preserves_order_repetitions_and_original_indices():
     with Document() as document:
         for number in range(3):
             document.pages.add().add_text(f"Page {number}", 20, 700)
-        blocks = document.extract_blocks(pages=(i for i in (2, 0, 2)))
+        blocks = document.extract_blocks(pages=(number + 1 if type(number) is int else number for number in ((i for i in (2, 0, 2)))))
         assert [(b.page_index, b.text) for b in blocks] == [
-            (2, "Page 2"), (0, "Page 0"), (2, "Page 2"),
+            (3, "Page 2"), (1, "Page 0"), (3, "Page 2"),
         ]
         assert document.extract_blocks(pages=[]) == []
-        assert document.pages[1].extract_blocks()[0].page_index == 1
-        payload = json.loads(document.pages[1].export_blocks_json())
-        assert [b["page_index"] for b in payload["blocks"]] == [1]
+        assert document.pages[2].extract_blocks()[0].page_index == 2
+        payload = json.loads(document.pages[2].export_blocks_json())
+        assert [b["page_index"] for b in payload["blocks"]] == [2]
 
 
 def test_json_schema_unicode_and_output_destinations(tmp_path):
@@ -121,7 +121,7 @@ def test_json_schema_unicode_and_output_destinations(tmp_path):
         assert "café Ångström".encode() in data
         assert data.endswith(b"\n")
         assert json.loads(data) == {
-            "schema_version": 1, "blocks": [b.to_dict() for b in blocks],
+            "schema_version": 2, "blocks": [b.to_dict() for b in blocks],
         }
         assert set(json.loads(data)["blocks"][0]) == {
             "page_index", "kind", "x", "y", "text", "level", "items",
@@ -138,7 +138,7 @@ def test_json_schema_unicode_and_output_destinations(tmp_path):
         stream.seek(0, 2)
         assert document.export_blocks_json(stream) == data
         assert not stream.closed and stream.getvalue() == b"prefix:" + data
-        assert document.pages[0].export_blocks_json() == data
+        assert document.pages[1].export_blocks_json() == data
 
 
 def test_short_and_stalled_binary_stream_writes():
@@ -214,7 +214,7 @@ def test_figures_are_opt_in_with_detached_png_and_base64(monkeypatch):
         assert page.extract_blocks() == []
 
 
-@pytest.mark.parametrize("pages", [0, "0", b"0", bytearray(b"0"), [True], [0.0], ["0"], [-1], [1]])
+@pytest.mark.parametrize("pages", [0, "0", b"0", bytearray(b"0"), [True], [0.0], ["0"], [-1], [3]])
 def test_invalid_page_selections_fail_before_decoding(pages, monkeypatch):
     with Document() as document:
         document.pages.add()
@@ -226,7 +226,7 @@ def test_invalid_page_selections_fail_before_decoding(pages, monkeypatch):
         with pytest.raises(PdfValidationException):
             document.extract_blocks(pages=pages)
         with pytest.raises(PdfValidationException):
-            document.export_blocks_json(pages=[0, 10])
+            document.export_blocks_json(pages=[1, 11])
 
 
 @pytest.mark.parametrize("options", [
@@ -246,10 +246,10 @@ def test_options_are_validated_on_empty_inputs(options):
 def test_empty_disposed_and_stale_pages():
     with Document() as document:
         assert document.extract_blocks() == []
-        assert json.loads(document.export_blocks_json()) == {"schema_version": 1, "blocks": []}
+        assert json.loads(document.export_blocks_json()) == {"schema_version": 2, "blocks": []}
         page = document.pages.add()
         assert page.extract_blocks() == []
-        document.pages.delete(0)
+        document.pages.delete(1)
         with pytest.raises(PdfValidationException):
             page.extract_blocks()
     for call in (document.extract_blocks, document.export_blocks_json, page.extract_blocks,
@@ -263,7 +263,7 @@ def test_limits_bound_unbounded_selection_and_output():
     with Document(limits=limits) as document:
         document.pages.add()
         with pytest.raises(PdfResourceLimitException, match="page selection"):
-            document.extract_blocks(pages=repeat(0))
+            document.extract_blocks(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
     with Document(limits=PdfLoadLimits(max_total_decoded_bytes=5)) as document:
         document.pages.add().add_text("Too much text", 60, 700)
         with pytest.raises(PdfResourceLimitException):
@@ -287,7 +287,7 @@ def test_streaming_only_decodes_selected_pages_and_does_not_change_source(tmp_pa
             return read(index)
 
         monkeypatch.setattr(document._engine_pdf, "get_page_content", selected)
-        assert [b.text for b in document.extract_blocks(pages=[1])] == ["Page 1"]
+        assert [b.text for b in document.extract_blocks(pages=[2])] == ["Page 1"]
         assert seen == [1]
         assert document._engine_pdf._extracted_text is None
         assert document._engine_pdf.page_contents == []
@@ -322,7 +322,7 @@ def test_json_serialization_bounds_long_strings_and_chunked_base64():
 
     image = bytes(range(256)) * 150
     block = ExtractedBlock(
-        0, "figure", 3, 4, alt='café "quoted" \\ \n' * 5000, image=image,
+        1, "figure", 3, 4, alt='café "quoted" \\ \n' * 5000, image=image,
     )
     encoded = to_json([block], _LoadBudget())
     assert json.loads(encoded)["blocks"] == [block.to_dict()]
@@ -358,7 +358,7 @@ def test_invalid_public_snapshots_are_rejected(options):
 
 def test_mutable_constructor_inputs_are_snapshotted():
     rows, items, spans = [["a", ""]], ["one"], [[2, 1]]
-    block = ExtractedBlock(0, "table", 0, 0, rows=rows, items=items, column_spans=spans)
+    block = ExtractedBlock(1, "table", 0, 0, rows=rows, items=items, column_spans=spans)
     rows[0][0], items[0], spans[0][0] = "changed", "changed", 1
     assert block.rows == (("a", ""),) and block.items == ("one",)
     assert block.column_spans == ((2, 1),)
@@ -381,12 +381,12 @@ def test_nested_forms_decode_their_own_fonts_and_transform_anchors(tmp_path):
             "café", 10, 100, font_size=10, font=load_substitute_sfnt("sans-regular"),
         )
         middle.pages.add(size=(300, 300)).add_stamp(PageStamp(
-            source=source.pages[0], horizontal_alignment="Left", vertical_alignment="Bottom",
+            source=source.pages[1], horizontal_alignment="Left", vertical_alignment="Bottom",
             x_indent=20, y_indent=30,
         ))
         page = document.pages.add(size=(400, 400))
         page.add_stamp(PageStamp(
-            source=middle.pages[0], horizontal_alignment="Left", vertical_alignment="Bottom",
+            source=middle.pages[1], horizontal_alignment="Left", vertical_alignment="Bottom",
             x_indent=40, y_indent=50,
         ))
         # F1 on the page must not replace the nested form's embedded font.

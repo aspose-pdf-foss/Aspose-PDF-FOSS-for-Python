@@ -131,10 +131,12 @@ def _read(source: Any, budget: _LoadBudget) -> list:
         raise PdfValidationException("Invalid UTF-8 bookmark JSON") from error
     _json_limits(payload, budget)
     _keys(payload, {"schema_version", "bookmarks"})
-    if type(payload["schema_version"]) is not int or payload["schema_version"] != 1:
-        _fail("schema_version must be 1")
+    if type(payload["schema_version"]) is not int or payload["schema_version"] not in (1, 2):
+        _fail("schema_version must be 1 or 2")
     if not isinstance(payload["bookmarks"], list):
         _fail("bookmarks must be an array")
+    if payload["schema_version"] == 2:
+        _page_numbers(payload["bookmarks"], -1)
     return payload["bookmarks"]
 
 
@@ -290,7 +292,7 @@ class _Context:
                         None,
                     )
                 elif isinstance(local, Destination):
-                    page = self.page(local.page)
+                    page = self.page(local.page - 1)
                     try:
                         view, params = local._spec()
                     except NotImplementedError:
@@ -554,7 +556,7 @@ def _walk(roots: Any, context: _Context):
                 "children": item.children,
                 "target": item.destination,
                 "loaded_target": item._loaded_target,
-                "page_index": item.page_index,
+                "page_index": item._page_index,
             }
         elif isinstance(item, dict):
             entry = item
@@ -621,7 +623,8 @@ def export_json(document: Any, resolve_names: bool) -> bytes:
         }
         (result if parent is None else outputs[parent]).append(record)
         outputs[id(item)] = record["children"]
-    payload = {"schema_version": 1, "bookmarks": result}
+    _page_numbers(result, 1)
+    payload = {"schema_version": 2, "bookmarks": result}
     _json_limits(payload, context.budget)
     try:
         return (
@@ -698,7 +701,7 @@ def _existing_collection(context: _Context) -> OutlineCollection:
     for item, entry, parent in _walk(context.pdf._outlines_data, context):
         copied = OutlineItem(
             entry.get("title", ""),
-            page_index=entry.get("page_index"),
+            page_index=None if entry.get("page_index") is None else entry["page_index"] + 1,
             is_bold=entry.get("is_bold", False),
             is_italic=entry.get("is_italic", False),
             color=entry.get("color"),
@@ -712,3 +715,19 @@ def _existing_collection(context: _Context) -> OutlineCollection:
         (collection._items if parent is None else outputs[parent]).append(copied)
         outputs[id(item)] = copied.children
     return collection
+
+
+def _page_numbers(value: Any, delta: int) -> None:
+    """Convert only typed page fields in the detached exchange tree."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            if "page_index" in item:
+                page = item["page_index"]
+                if type(page) is not int or page < (1 if delta < 0 else 0):
+                    _fail("page_index is outside the schema numbering range")
+                item["page_index"] = page + delta
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)

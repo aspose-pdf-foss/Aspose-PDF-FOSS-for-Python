@@ -76,7 +76,7 @@ def _opened(data: bytes, caplog: pytest.LogCaptureFixture, **kwargs) -> Document
 def test_the_trailer_reads_whole(trailer, caplog):
     document = _opened(_file(_objects(), trailer), caplog)
     assert (document.info.get("Title"), document.info.get("Author")) == ("Commented", "Tester")
-    assert document.pages[0].extract_text().strip() == "Body text"
+    assert document.pages[1].extract_text().strip() == "Body text"
 
 
 def test_comments_inside_objects_are_white_space(caplog):
@@ -88,8 +88,8 @@ def test_comments_inside_objects_are_white_space(caplog):
     content = b"BT /F1 24 Tf 72 700 Td (Body text) Tj ET"
     objects[5] = b"<< /Length %d >> %% before the keyword\nstream\n" % len(content) + content + b"\nendstream"
     document = _opened(_file(objects, b"<< /Root 1 0 R /Info 6 0 R /Size 7 >>"), caplog)
-    assert document.pages[0].media_box is not None
-    assert document.pages[0].extract_text().strip() == "Body text"
+    assert document.pages[1].media_box is not None
+    assert document.pages[1].extract_text().strip() == "Body text"
 
 
 def test_an_encrypted_file_with_a_commented_trailer_opens(caplog):
@@ -107,4 +107,4 @@ def test_an_encrypted_file_with_a_commented_trailer_opens(caplog):
     for password in ("user", "owner"):
         document = _opened(commented, caplog, password=password)
         assert document.info.get("Title") == "Encrypted title"
-        assert document.pages[0].extract_text().strip() == "Secret body"
+        assert document.pages[1].extract_text().strip() == "Secret body"

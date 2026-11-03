@@ -44,18 +44,18 @@ def _source() -> Document:
     document = Document()
     for index in range(4):
         document.pages.add().add_text(f"P{index}", 72, 700, font_size=36)
-    document.pages[2].add_image(PNG, 100, 500, width=80, height=80)
-    document.pages[2].annotations.add("Text", (10, 10, 40, 40), "note on 2")
-    document.outlines.add(OutlineItem("to 0", 0))
-    document.outlines.add(OutlineItem("to 2", 2))
-    document.outlines.add(OutlineItem("to 3", 3))
+    document.pages[3].add_image(PNG, 100, 500, width=80, height=80)
+    document.pages[3].annotations.add("Text", (10, 10, 40, 40), "note on 2")
+    document.outlines.add(OutlineItem("to 0", 1))
+    document.outlines.add(OutlineItem("to 2", 3))
+    document.outlines.add(OutlineItem("to 3", 4))
     document.add_attachment("a.txt", b"x")
     return document
 
 
 def _text(document: Document) -> list[str]:
     return [
-        document.pages[index].to_markdown().strip().split("\n")[0]
+        document.pages[(index) + 1].to_markdown().strip().split("\n")[0]
         for index in range(len(document.pages))
     ]
 
@@ -76,21 +76,21 @@ def _xobjects(document: Document, index: int) -> list[str]:
 
 def test_document_extract_pages_returns_an_independent_editable_document():
     source = _source()
-    source.form.add_text_field("on 2", 2, (50, 400, 200, 425), value="selected")
+    source.form.add_text_field("on 2", 3, (50, 400, 200, 425), value="selected")
     source.info["Title"] = "original"
     source.version = "2.0"
 
-    taken = source.extract_pages([2, 0])
+    taken = source.extract_pages([3, 1])
 
     assert isinstance(taken, Document)
     assert _text(taken) == ["P2", "P0"]
     assert "note on 2" in [
-        annotation.contents for annotation in taken.pages[0].annotations
+        annotation.contents for annotation in taken.pages[1].annotations
     ]
     assert [field.name for field in taken.form] == ["on 2"]
     assert [(item.title, item.page_index) for item in taken.outlines] == [
-        ("to 0", 1),
-        ("to 2", 0),
+        ("to 0", 2),
+        ("to 2", 1),
     ]
     assert taken.attachments == {}
     assert taken.info["Title"] == "original"
@@ -101,30 +101,32 @@ def test_document_extract_pages_returns_an_independent_editable_document():
 
     taken.info["Title"] = "subset"
     taken.form["on 2"].value = "changed"
-    taken.pages[0].add_text("subset only", 72, 350)
+    taken.pages[1].add_text("subset only", 72, 350)
     assert source.info["Title"] == "original"
     assert source.form["on 2"].value == "selected"
-    assert "subset only" not in source.pages[2].extract_text()
+    assert "subset only" not in source.pages[3].extract_text()
     source.dispose()
 
     reopened = Document(_saved(taken))
-    assert "P2" in reopened.pages[0].extract_text()
-    assert "subset only" in reopened.pages[0].extract_text()
-    assert "P0" in reopened.pages[1].extract_text()
+    assert "P2" in reopened.pages[1].extract_text()
+    assert "subset only" in reopened.pages[1].extract_text()
+    assert "P0" in reopened.pages[2].extract_text()
     assert reopened.form["on 2"].value == "changed"
     assert reopened.version == "2.0"
     taken.dispose()
-    assert "subset only" in reopened.pages[0].extract_text()
+    assert "subset only" in reopened.pages[1].extract_text()
     reopened.dispose()
 
 
-def test_document_extract_pages_accepts_a_slice_and_keeps_load_limits():
+def test_document_extract_pages_accepts_reverse_numbers_and_keeps_load_limits():
     limits = PdfLoadLimits(max_pages=3)
     source = Document(limits=limits)
     for index in range(3):
         source.pages.add().add_text(f"P{index}", 72, 700)
 
-    taken = source.extract_pages(slice(None, None, -1))
+    with pytest.raises(PdfValidationException):
+        source.extract_pages(slice(None, None, -1))
+    taken = source.extract_pages([3, 2, 1])
 
     assert _text(taken) == ["P2", "P1", "P0"]
     assert taken.load_limits is limits
@@ -138,7 +140,7 @@ def test_document_extract_pages_survives_streaming_source_disposal(tmp_path):
     path = tmp_path / "source.pdf"
     _source().save(path)
     with Document.open_streaming(path) as source:
-        taken = source.extract_pages(index for index in (3, 1))
+        taken = source.extract_pages(number + 1 for number in (3, 1))
 
     assert _text(taken) == ["P3", "P1"]
     with Document(_saved(taken)) as reopened:
@@ -150,15 +152,15 @@ def test_document_extract_pages_rejects_empty_and_invalid_selections():
     source = _source()
     with pytest.raises(PdfValidationException, match="empty"):
         source.extract_pages([])
-    with pytest.raises(PdfValidationException, match="empty"):
+    with pytest.raises(PdfValidationException, match="page numbers"):
         source.extract_pages(slice(0, 0))
-    with pytest.raises(IndexError, match="Page index out of range"):
-        source.extract_pages([4])
-    with pytest.raises(IndexError, match="Page index out of range"):
-        source.extract_pages([-1])
+    with pytest.raises(PdfValidationException, match="Page number out of range"):
+        source.extract_pages([5])
+    with pytest.raises(PdfValidationException, match="Page number out of range"):
+        source.extract_pages([(-1) + 1])
     source.dispose()
     with pytest.raises(AsposePdfException, match="disposed"):
-        source.extract_pages([0])
+        source.extract_pages([1])
 
 
 def test_an_extracted_page_keeps_what_it_draws_with():
@@ -176,8 +178,8 @@ def test_an_extracted_page_keeps_its_annotations():
 
     taken = Document(io.BytesIO(engine.extract_pages([2, 3]).to_bytes()))
 
-    assert [a.contents for a in taken.pages[0].annotations] == ["note on 2"]
-    assert list(taken.pages[1].annotations) == []
+    assert [a.contents for a in taken.pages[1].annotations] == ["note on 2"]
+    assert list(taken.pages[2].annotations) == []
 
 
 def test_only_the_bookmarks_whose_page_came_come_with_it():
@@ -188,8 +190,8 @@ def test_only_the_bookmarks_whose_page_came_come_with_it():
     taken = Document(io.BytesIO(engine.extract_pages([2, 3]).to_bytes()))
 
     assert [(o.title, o.page_index) for o in taken.outlines] == [
-        ("to 2", 0),
-        ("to 3", 1),
+        ("to 2", 1),
+        ("to 3", 2),
     ]
 
 
@@ -200,8 +202,8 @@ def test_bookmarks_follow_pages_that_were_reordered():
 
     assert _text(taken) == ["P3", "P0"]
     assert sorted((o.title, o.page_index) for o in taken.outlines) == [
-        ("to 0", 1),
-        ("to 3", 0),
+        ("to 0", 2),
+        ("to 3", 1),
     ]
 
 
@@ -214,7 +216,7 @@ def test_a_typed_destination_is_remapped_before_the_document_is_even_saved():
     for index in range(4):
         document.pages.add().add_text(f"P{index}", 72, 700, font_size=36)
     document.outlines.add(
-        OutlineItem("zoomed", destination=XYZDestination(3, 0.0, 700.0, 2.0))
+        OutlineItem("zoomed", destination=XYZDestination(4, 0.0, 700.0, 2.0))
     )
     engine = SimplePdf.from_bytes(_saved(document))
 
@@ -222,7 +224,7 @@ def test_a_typed_destination_is_remapped_before_the_document_is_even_saved():
     taken._engine_pdf = engine.extract_pages([3])
 
     assert [(o.title, o.destination) for o in taken.outlines] == [
-        ("zoomed", XYZDestination(page=0, left=0.0, top=700.0, zoom=2.0))
+        ("zoomed", XYZDestination(page=1, left=0.0, top=700.0, zoom=2.0))
     ]
 
 
@@ -235,11 +237,11 @@ def test_a_merged_image_is_found_on_the_page_it_arrived_on():
     target.pages.add().add_text("A0", 72, 700)
     source = Document()
     source.pages.add().add_text("B0", 72, 700)
-    source.pages[0].add_image(PNG, 100, 500, width=80, height=80)
+    source.pages[1].add_image(PNG, 100, 500, width=80, height=80)
     target.merge(source)
 
     absorber = ImagePlacementAbsorber()
-    absorber.visit(target.pages[1])
+    absorber.visit(target.pages[2])
 
     assert len(absorber.image_placements) == 1
 
@@ -256,7 +258,7 @@ def test_an_extracted_widget_arrives_with_its_field():
     document = Document()
     document.pages.add()
     document.pages.add()
-    document.form.add_text_field("on the second", 1, (10, 10, 200, 30))
+    document.form.add_text_field("on the second", 2, (10, 10, 200, 30))
     engine = SimplePdf.from_bytes(_saved(document))
 
     taken = Document(io.BytesIO(engine.extract_pages([1]).to_bytes()))
@@ -288,8 +290,8 @@ def _files(tmp_path):
     first.pages.add().add_text("A0", 72, 700, font_size=36)
     second = Document()
     second.pages.add().add_text("B0", 72, 700, font_size=36)
-    second.pages[0].add_image(PNG, 100, 500, width=80, height=80)
-    second.pages[0].annotations.add("Text", (10, 10, 40, 40), "note B")
+    second.pages[1].add_image(PNG, 100, 500, width=80, height=80)
+    second.pages[1].annotations.add("Text", (10, 10, 40, 40), "note B")
     paths = []
     for name, document in (("a.pdf", first), ("b.pdf", second)):
         path = tmp_path / name
@@ -317,8 +319,8 @@ def test_concatenate_keeps_the_annotations_of_the_pages_it_joins(tmp_path):
 
     joined = Document(output)
 
-    assert list(joined.pages[0].annotations) == []
-    assert [a.contents for a in joined.pages[1].annotations] == ["note B"]
+    assert list(joined.pages[1].annotations) == []
+    assert [a.contents for a in joined.pages[2].annotations] == ["note B"]
 
 
 def test_extract_through_the_editor_keeps_the_page_whole(tmp_path):
@@ -329,7 +331,7 @@ def test_extract_through_the_editor_keeps_the_page_whole(tmp_path):
 
     taken = Document(output)
     assert _xobjects(taken, 0) == ["/Im1"]
-    assert [a.contents for a in taken.pages[0].annotations] == ["note B"]
+    assert [a.contents for a in taken.pages[1].annotations] == ["note B"]
 
 
 def test_merging_only_accepts_documents():

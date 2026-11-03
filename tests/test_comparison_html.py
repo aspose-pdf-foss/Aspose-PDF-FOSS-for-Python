@@ -84,7 +84,7 @@ def test_combined_report_contains_summary_exact_diffs_and_embedded_pngs(tmp_path
         _document("Invoice 20", "Same", "Added") as right,
     ):
         visuals = left.compare_visual(right, include_diff_images=True)
-        texts = left.compare_text(right)
+        texts = left._api_compare_text(right)
         source_contents = [
             [page.content for page in document.pages] for document in (left, right)
         ]
@@ -206,8 +206,8 @@ def test_selection_generators_keep_order_repetitions_and_missing_pages():
             left.export_comparison_html(
                 right,
                 mode="text",
-                pages=(index for index in (2, 0, 2)),
-                other_pages=(index for index in (1, 0)),
+                pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))),
+                other_pages=(number + 1 if type(number) is int else number for number in ((index for index in (1, 0)))),
             )
         )
         assert [row[:2] for row in report.rows] == [
@@ -220,7 +220,7 @@ def test_selection_generators_keep_order_repetitions_and_missing_pages():
 
 def test_tolerated_visual_differences_are_reported_without_claiming_exact_equality():
     with _document("", size=(10, 10)) as left, _document("", size=(10, 10)) as right:
-        right.pages[0].draw_rectangle(
+        right.pages[1].draw_rectangle(
             0, 0, 10, 10, fill_color="#010000", stroke_color=None
         )
         report = Report(
@@ -277,14 +277,14 @@ def test_late_comparison_failure_preserves_existing_file_and_stream(
     tmp_path, monkeypatch
 ):
     with _document("A", "B") as left, _document("A", "C") as right:
-        original = left.compare_text
+        original = left._api_compare_text
 
         def fail_late(other, **options):
             if options["pages"] == (1,):
                 raise PdfParseException("Broken second page")
             return original(other, **options)
 
-        monkeypatch.setattr(left, "compare_text", fail_late)
+        monkeypatch.setattr(left, "_api_compare_text", fail_late)
         path = tmp_path / "report.html"
         path.write_bytes(b"Keep file")
         with io.BytesIO(b"Keep stream") as stream:
@@ -315,7 +315,7 @@ def test_late_comparison_failure_preserves_existing_file_and_stream(
         {"case_sensitive": 1},
         {"ignore_whitespace": 1},
         {"skip_artifacts": 1},
-        {"pages": [0, 99]},
+        {"pages": [1, 100]},
         {"other_pages": [0, 99]},
         {"pages": [True]},
         {"ignore_regions": [(0, 0, 0, 1)]},
@@ -409,7 +409,7 @@ def test_unbounded_selections_are_stopped_by_resource_policy():
     policy = replace(PdfLoadLimits.unlimited(), max_container_items=8)
     with _document("A", limits=policy) as left, _document("B") as right:
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            left.export_comparison_html(right, pages=repeat(0))
+            left.export_comparison_html(right, pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
 
 
 def test_streaming_password_protected_sources_read_only_selected_pages(
@@ -435,7 +435,7 @@ def test_streaming_password_protected_sources_read_only_selected_pages(
                 return read(index)
 
             monkeypatch.setattr(document._engine_pdf, "get_page_content", selected_only)
-        report = Report(left.export_comparison_html(right, pages=[1], other_pages=[1]))
+        report = Report(left.export_comparison_html(right, pages=[2], other_pages=[2]))
         assert report.rows[0][:3] == ["2", "2", "Changed"]
     assert [path.read_bytes() for path in paths] == source_bytes
 

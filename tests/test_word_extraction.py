@@ -98,12 +98,12 @@ def test_public_api_gives_words_boxes_and_detached_snapshots(mode, tmp_path):
             words = document.extract_words()
             assert _texts(words) == ["Hello", "world!"]
             assert all(
-                isinstance(word, TextWord) and word.page_index == 0 for word in words
+                isinstance(word, TextWord) and word.page_index == 1 for word in words
             )
             assert words[0].rect == pytest.approx((72, 698, 102, 708))
             assert words[1].bbox == pytest.approx((108, 698, 144, 708))
             assert words[0].quad == ((72, 698), (102, 698), (102, 708), (72, 708))
-            assert document.pages[0].extract_words() == words
+            assert document.pages[1].extract_words() == words
             assert _bytes(document) == before
         finally:
             if document is not source:
@@ -143,7 +143,7 @@ def test_word_boundaries_follow_whitespace_and_measured_show_runs(content, expec
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_page_rotation_and_crop_do_not_change_unrotated_word_coordinates(rotation):
     with _content(b"BT /F1 10 Tf 72 700 Td (Word) Tj ET") as document:
-        page = document.pages[0]
+        page = document.pages[1]
         page.rotation = rotation
         page.crop_box = (0, 0, 200, 200)
         (word,) = page.extract_words()
@@ -173,7 +173,7 @@ def test_word_clip_selects_complete_words_and_excludes_boundary_only_touches():
     with _content(b"BT /F1 10 Tf 72 700 Td (Hello world!) Tj ET") as document:
         (word,) = document.extract_words(clip=(90, 699, 95, 701))
         assert word.text == "Hello" and word.rect == (72, 698, 102, 708)
-        assert document.pages[0].extract_words(clip=(102, 698, 108, 708)) == []
+        assert document.pages[1].extract_words(clip=(102, 698, 108, 708)) == []
         assert _texts(document.extract_words(clip=(102, 699, 109, 701))) == ["world!"]
 
 
@@ -197,13 +197,13 @@ def test_selected_pages_keep_order_repeats_and_original_page_indices():
     with Document() as document:
         for index in range(3):
             document.pages.add().add_text(f"Page{index}", 20, 100)
-        words = document.extract_words(pages=(index for index in (2, 0, 2)))
+        words = document.extract_words(pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))))
         assert [(word.page_index, word.text) for word in words] == [
-            (2, "Page2"),
-            (0, "Page0"),
-            (2, "Page2"),
+            (3, "Page2"),
+            (1, "Page0"),
+            (3, "Page2"),
         ]
-        assert document.pages[1].extract_words()[0].page_index == 1
+        assert document.pages[2].extract_words()[0].page_index == 2
         assert document.extract_words(pages=[]) == []
 
 
@@ -253,7 +253,7 @@ def test_empty_and_disposed_documents_and_stale_pages():
         assert document.extract_words() == []
         page = document.pages.add()
         assert page.extract_words() == []
-        document.pages.delete(0)
+        document.pages.delete(1)
         with pytest.raises(PdfValidationException, match="out of range"):
             page.extract_words()
     with pytest.raises(AsposePdfException, match="disposed"):
@@ -355,7 +355,7 @@ def test_actual_text_replacements_are_not_given_guessed_word_positions():
                 )
             }
         )
-        assert "Logical replacement" in document.pages[0].extract_text()
+        assert "Logical replacement" in document.pages[1].extract_text()
         assert _texts(document.extract_words()) == ["Before", "After"]
 
 
@@ -391,7 +391,7 @@ def test_streaming_reads_selected_content_and_never_images_or_unused_forms(
             )
         )
         resources.mapping[PdfName("XObject")].mapping[PdfName("Im")] = image
-        engine._set_page_content(0, source.pages[0].content + b"\n/Im Do")
+        engine._set_page_content(0, source.pages[1].content + b"\n/Im Do")
         source.pages.add().add_text("Unselected", 20, 100)
         source.save(path)
     before = path.read_bytes()
@@ -408,7 +408,7 @@ def test_streaming_reads_selected_content_and_never_images_or_unused_forms(
             return original(index)
 
         monkeypatch.setattr(engine, "get_page_content", content)
-        assert _texts(document.extract_words(pages=[0])) == ["Words"]
+        assert _texts(document.extract_words(pages=[1])) == ["Words"]
         assert visited == [0]
         assert engine.page_contents == [] and engine._extracted_text is None
     assert path.read_bytes() == before
@@ -452,8 +452,8 @@ def test_encrypted_sources_keep_data_protection_and_text_caches(tmp_path, stream
     with opener(path, password="secret") as document:
         protected = document.is_encrypted
         document._engine_pdf._page_text_cursor = 1
-        words = document.extract_words(pages=[1])
-        assert _texts(words) == ["Word1"] and words[0].page_index == 1
+        words = document.extract_words(pages=[2])
+        assert _texts(words) == ["Word1"] and words[0].page_index == 2
         assert document.is_encrypted == protected
         assert document._engine_pdf._page_text_cursor == 1
         assert document._engine_pdf._extracted_text is None
@@ -463,7 +463,7 @@ def test_encrypted_sources_keep_data_protection_and_text_caches(tmp_path, stream
 def test_word_constructor_snapshots_mutable_coordinate_inputs():
     rect = [0, 0, 10, 10]
     quad = [[0, 0], [10, 0], [10, 10], [0, 10]]
-    word = TextWord(0, "Word", rect, quad)
+    word = TextWord(1, "Word", rect, quad)
     rect[0] = -10
     quad[0][0] = -10
     assert word.rect == (0, 0, 10, 10)

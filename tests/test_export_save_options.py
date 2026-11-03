@@ -51,7 +51,7 @@ def _illustrated() -> Document:
         page = document.pages.add()
         page.add_text(f"Page {number} heading", 60, 740, font_size=20)
         page.add_image(_png((200, 0, 0)), 60, 500, 120, 120)
-    document.pages[0].add_image(_png((0, 0, 200)), 300, 500, 120, 120)
+    document.pages[1].add_image(_png((0, 0, 200)), 300, 500, 120, 120)
     return document
 
 
@@ -227,13 +227,13 @@ def test_a_crop_box_may_name_its_corners_in_either_order():
     # ISO 32000-1 7.9.5: any two diagonally opposite corners. MuPDF and
     # pdfium read (560 700 50 50) as the box (50 50 560 700).
     document = _cropped()
-    document.pages[0].crop_box = (560, 700, 50, 50)
+    document.pages[1].crop_box = (560, 700, 50, 50)
     assert document.to_markdown() == _cropped().to_markdown()
 
 
 def test_a_crop_box_off_the_media_box_does_not_empty_the_page():
     document = _cropped()
-    document.pages[0].crop_box = (2000, 2000, 2100, 2100)
+    document.pages[1].crop_box = (2000, 2000, 2100, 2100)
     assert "Inside the crop box" in document.to_markdown()
 
 
@@ -300,17 +300,17 @@ def _writers(document: Document, tmp_path: Path):
     from aspose_pdf.images import ImagePlacementAbsorber
 
     absorber = ImagePlacementAbsorber()
-    document.pages[0].accept(absorber)
+    document.pages[1].accept(absorber)
     placement = absorber.image_placements[0]
     document.add_attachment("note.txt", b"attached", mime="text/plain")
     attachment = Document(io.BytesIO(_saved(document))).embedded_files[0]
     return {
         "html": lambda path: document.save_as_html(path),
         "markdown": lambda path: document.save_as_markdown(path),
-        "svg": lambda path: document.save_as_svg(path, pages=[0]),
-        "page svg": lambda path: document.pages[0].save_as_svg(path),
-        "tiff": lambda path: document.save_as_tiff(path, pages=[0]),
-        "raster": lambda path: document.pages[0].render(dpi=18).save(path.with_suffix(".png")),
+        "svg": lambda path: document.save_as_svg(path, pages=[1]),
+        "page svg": lambda path: document.pages[1].save_as_svg(path),
+        "tiff": lambda path: document.save_as_tiff(path, pages=[1]),
+        "raster": lambda path: document.pages[1].render(dpi=18).save(path.with_suffix(".png")),
         "image": lambda path: placement.save(path.with_suffix(".png")),
         "attachment": lambda path: attachment.save(path),
     }

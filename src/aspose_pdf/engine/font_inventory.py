@@ -77,7 +77,7 @@ def inventory(pdf: Any) -> list[DocumentFont]:
                 is_subset=bool(_SUBSET_TAG.match(base_font)),
                 is_standard_14=_is_standard14_base_font_name(base_font),
                 has_to_unicode=entry["has_to_unicode"],
-                page_indexes=tuple(sorted(record["pages"])),
+                page_indexes=tuple(index + 1 for index in sorted(record["pages"])),
                 locations=tuple(record["locations"]),
             )
         )

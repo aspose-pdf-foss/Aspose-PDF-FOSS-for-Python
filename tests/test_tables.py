@@ -157,11 +157,11 @@ def test_the_alignments_are_the_ones_there_are():
 def test_a_table_is_drawn_and_reads_back_in_order():
     document, page = _page()
     result = page.add_table(_invoice(), 60, 760)
-    assert result["pages"] == [0]
+    assert result["pages"] == [1]
     assert result["rows"] == 3
     assert result["bottom"] < 760
 
-    text = _roundtrip(document).pages[0].extract_text()
+    text = _roundtrip(document).pages[1].extract_text()
     assert text.index("Item") < text.index("Widget") < text.index("Grommet")
     assert "9.99" in text and "0.40" in text
 
@@ -172,7 +172,7 @@ def test_the_placement_says_where_the_table_ended():
     # The next thing on the page starts where the table stopped.
     second = page.add_table(_invoice(), 60, first["bottom"] - 20)
     assert second["bottom"] < first["bottom"]
-    assert second["pages"] == [0]
+    assert second["pages"] == [1]
 
 
 def test_an_empty_table_has_nothing_to_draw():
@@ -330,7 +330,7 @@ def test_the_header_is_not_repeated_when_it_is_not_asked_for():
         table.add_row([f"Item {index}", "x"])
     result = page.add_table(table, 40, 560, bottom_margin=40)
     reloaded = _roundtrip(document)
-    later = reloaded.pages[result["pages"][1]].extract_text()
+    later = reloaded.pages[result['pages'][1]].extract_text()
     assert not later.startswith("Row")
 
 
@@ -342,7 +342,7 @@ def test_a_table_continues_onto_a_page_that_is_already_there():
     for index in range(40):
         table.add_row([f"Item {index}"])
     result = page.add_table(table, 40, 560, bottom_margin=40)
-    assert result["pages"][:2] == [0, 1]
+    assert result["pages"][:2] == [1, 2]
     # The second page was there already, so only what is still needed is added.
     assert document.page_count >= before
 
@@ -437,7 +437,7 @@ def test_the_vertical_alignments_put_the_text_where_they_say(vertical, expected)
     row.cells[0].vertical_alignment = vertical
     page.add_table(table, 10, 80, bottom_margin=0)
 
-    raster = _roundtrip(document).pages[0].render(dpi=72)
+    raster = _roundtrip(document).pages[1].render(dpi=72)
     assert _ink_rows(raster, 11, 109) == expected
 
 
@@ -448,7 +448,7 @@ def test_the_horizontal_alignments_move_the_text_across_the_cell():
     row = table.add_row(["AB"])
     row.cells[0].alignment = "right"
     page.add_table(table, 10, 50, bottom_margin=0)
-    raster = _roundtrip(document).pages[0].render(dpi=72)
+    raster = _roundtrip(document).pages[1].render(dpi=72)
 
     inked = [
         x

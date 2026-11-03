@@ -72,7 +72,7 @@ _SELF_NAMING = (
 
 
 def _ink(document: Document) -> int:
-    raster = document.pages[0].render(antialias=False)
+    raster = document.pages[1].render(antialias=False)
     return sum(
         1
         for y in range(0, 200, 2)
@@ -85,12 +85,12 @@ def test_the_page_still_has_its_text():
     document = _document(
         b"BT /F1 14 Tf 40 180 Td (page) Tj ET\n/Fm1 Do\n", *_SELF_NAMING
     )
-    assert "page" in document.pages[0].extract_text()
+    assert "page" in document.pages[1].extract_text()
 
 
 def test_the_form_s_own_text_survives_as_well():
     document = _document(b"/Fm1 Do\n", *_SELF_NAMING)
-    assert document.pages[0].extract_text().strip() == "inner"
+    assert document.pages[1].extract_text().strip() == "inner"
 
 
 def test_the_page_can_still_be_drawn():
@@ -102,7 +102,7 @@ def test_the_page_can_still_be_drawn():
 
 def test_the_page_can_still_be_exported_to_svg():
     document = _document(b"/Fm1 Do\n", *_SELF_NAMING)
-    assert "<svg" in document.pages[0].to_svg()
+    assert "<svg" in document.pages[1].to_svg()
 
 
 def test_a_resource_beside_the_cycle_is_untouched():
@@ -111,7 +111,7 @@ def test_a_resource_beside_the_cycle_is_untouched():
     document = _document(
         b"BT /F1 14 Tf 40 180 Td (caf\xe9) Tj ET\n/Fm1 Do\n", *_SELF_NAMING
     )
-    assert "café" in document.pages[0].extract_text()
+    assert "café" in document.pages[1].extract_text()
 
 
 def test_two_forms_that_name_each_other_also_stop():
@@ -120,7 +120,7 @@ def test_two_forms_that_name_each_other_also_stop():
         b"BT /F1 14 Tf 40 150 Td (inner) Tj ET",
         b"/Font << /F1 5 0 R >> /XObject << /Fm1 6 0 R /Fm2 6 0 R >> ",
     )
-    assert isinstance(document.pages[0].extract_text(), str)
+    assert isinstance(document.pages[1].extract_text(), str)
     assert _ink(document) >= 0
 
 
@@ -130,7 +130,7 @@ def test_a_page_with_no_cycle_is_unaffected():
         b"BT /F1 14 Tf 40 150 Td (inner) Tj ET",
         b"/Font << /F1 5 0 R >> ",
     )
-    assert " ".join(document.pages[0].extract_text().split()) == "page inner"
+    assert " ".join(document.pages[1].extract_text().split()) == "page inner"
 
 
 # --- what is still refused --------------------------------------------------
@@ -171,7 +171,7 @@ def _messages(action) -> list[str]:
 def test_a_dropped_dictionary_edge_is_reported():
     # Silence would make a page quietly different from what its file says.
     messages = _messages(
-        lambda: _document(b"/Fm1 Do\n", *_SELF_NAMING).pages[0].extract_text()
+        lambda: _document(b"/Fm1 Do\n", *_SELF_NAMING).pages[1].extract_text()
     )
     assert any("circular reference" in message for message in messages)
 

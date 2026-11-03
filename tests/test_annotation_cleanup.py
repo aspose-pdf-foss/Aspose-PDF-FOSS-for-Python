@@ -63,7 +63,7 @@ def _add(
         properties["M"] = modified
     if created is not None:
         properties["CreationDate"] = created
-    return doc.pages[page].annotations.add(
+    return doc.pages[(page) + 1].annotations.add(
         subtype, RECT, contents, title=author, properties=properties
     )
 
@@ -74,7 +74,7 @@ def _objects(doc, page=0):
 
 
 def _contents(doc, page=0):
-    return [a.contents for a in doc.pages[page].annotations]
+    return [a.contents for a in doc.pages[(page) + 1].annotations]
 
 
 @pytest.mark.parametrize("conflict", ["parent", "other_owner"])
@@ -136,10 +136,10 @@ def test_default_review_cleanup_preserves_links_widgets_files_and_unknown_kinds(
         "Redact",
     ):
         _add(document, subtype=kind)
-    page = document.pages[0]
+    page = document.pages[1]
     page.add_link(RECT, URIAction("https://example.test/keep"))
     field = document.form.add_text_field(
-        "Alice", 0, (40, 20, 90, 40), value="Keep value"
+        "Alice", 1, (40, 20, 90, 40), value="Keep value"
     )
     _add(document, subtype="FileAttachment", contents="keep file icon")
     _add(document, subtype="VendorReview", contents="keep unknown")
@@ -159,7 +159,7 @@ def test_default_review_cleanup_preserves_links_widgets_files_and_unknown_kinds(
     assert field.value == "Keep value" and document.info["Title"] == "Keep title"
     assert document.attachments == {"keep.txt": b"keep bytes"}
     with Document(_save(document)) as reopened:
-        assert [a.subtype for a in reopened.pages[0].annotations] == [
+        assert [a.subtype for a in reopened.pages[1].annotations] == [
             "Link",
             "Widget",
             "FileAttachment",
@@ -302,13 +302,13 @@ def test_dry_run_page_wrapper_selection_order_and_explicit_subtypes(document):
     for page in range(3):
         _add(document, page=page, contents=str(page))
     before = _save(document)
-    assert document.remove_annotations(pages=iter([2, 0, 2]), dry_run=True) == 2
+    assert document.remove_annotations(pages=(number + 1 if type(number) is int else number for number in (iter([2, 0, 2]))), dry_run=True) == 2
     assert _save(document) == before
-    assert document.pages[1].annotations.remove_matching(authors="Alice") == 1
-    assert document.remove_annotations(pages=[2, 0, 2]) == 2
+    assert document.pages[2].annotations.remove_matching(authors="Alice") == 1
+    assert document.remove_annotations(pages=[3, 1, 3]) == 2
     assert all(len(page.annotations) == 0 for page in document.pages)
     _add(document, subtype="FileAttachment")
-    document.pages[0].add_link(RECT, FitDestination(1))
+    document.pages[1].add_link(RECT, FitDestination(2))
     assert document.remove_annotations(subtypes=["/Link", "FileAttachment"]) == 2
 
 
@@ -378,12 +378,12 @@ def test_owned_popups_are_counted_and_surviving_reply_threads_are_detached(docum
     assert _save(document) == before
     assert document.remove_annotations(authors="Alice") == 2
     assert _contents(document) == ["reply", "", "nested"]
-    current = document.pages[0].annotations
+    current = document.pages[1].annotations
     assert current[0].in_reply_to is None and "RT" not in current[0].properties
     assert current[0].popup.parent_annotation.contents == "reply"
     assert current[2].in_reply_to.contents == "reply"
     with Document(_save(document)) as reopened:
-        current = reopened.pages[0].annotations
+        current = reopened.pages[1].annotations
         assert current[0].in_reply_to is None and current[0].popup is not None
         assert current[2].in_reply_to.contents == "reply"
 
@@ -398,7 +398,7 @@ def test_one_way_popup_relationships_are_included_in_cleanup(document, edge):
     if edge == "popup_only":
         parent.mapping.pop(PdfName("Popup"))
     assert document.remove_annotations(authors="Alice") == 2
-    assert len(document.pages[0].annotations) == 0
+    assert len(document.pages[1].annotations) == 0
 
 
 def test_explicit_popup_removal_keeps_owner_and_clears_its_popup_link(document):
@@ -406,7 +406,7 @@ def test_explicit_popup_removal_keeps_owner_and_clears_its_popup_link(document):
     note.add_popup()
     assert document.remove_annotations(subtypes="Popup") == 1
     assert _contents(document) == ["note"]
-    assert document.pages[0].annotations[0].popup is None
+    assert document.pages[1].annotations[0].popup is None
 
 
 def test_cross_page_reply_links_are_repaired_without_removing_replies(document):
@@ -417,7 +417,7 @@ def test_cross_page_reply_links_are_repaired_without_removing_replies(document):
     reply.mapping[PdfName("IRT")] = pdf._annotation_refs(0)[0]
     reply.mapping[PdfName("RT")] = PdfName("Reply")
     original_array = pdf._get_page_dict(1).mapping[PdfName("Annots")]
-    assert document.remove_annotations(pages=[0], authors="Alice") == 1
+    assert document.remove_annotations(pages=[1], authors="Alice") == 1
     assert _contents(document, 1) == ["reply"]
     assert PdfName("IRT") not in reply.mapping and PdfName("RT") not in reply.mapping
     assert pdf._get_page_dict(1).mapping[PdfName("Annots")] is original_array
@@ -435,9 +435,9 @@ def test_cross_page_popup_scope_failure_is_atomic_and_broader_selection_succeeds
     before = _save(document)
     for dry_run in (True, False):
         with pytest.raises(PdfValidationException, match="orphan a popup"):
-            document.remove_annotations(pages=[0], authors="Alice", dry_run=dry_run)
+            document.remove_annotations(pages=[1], authors="Alice", dry_run=dry_run)
         assert _save(document) == before
-    assert document.remove_annotations(pages=[0, 1], authors="Alice") == 2
+    assert document.remove_annotations(pages=[1, 2], authors="Alice") == 2
     assert all(len(page.annotations) == 0 for page in document.pages)
 
 
@@ -457,7 +457,7 @@ def test_shared_arrays_are_copied_and_shared_surviving_targets_keep_reply_links(
     target = pdf._annotation_refs(0)[0]
     reply.mapping[PdfName("IRT")] = target
     reply.mapping[PdfName("RT")] = PdfName("Reply")
-    assert document.remove_annotations(pages=[0]) == 1
+    assert document.remove_annotations(pages=[1]) == 1
     assert _contents(document) == [] and _contents(document, 1) == ["shared parent"]
     assert second.mapping[PdfName("Annots")] is array
     assert reply.mapping[PdfName("IRT")] is target and reply.mapping[
@@ -474,21 +474,21 @@ def test_later_malformed_metadata_and_indirect_cycles_leave_prior_matches_untouc
     last.mapping[PdfName("Annots")] = PdfNumber(1)
     before = _save(document)
     with pytest.raises(PdfParseException, match="Annots"):
-        document.remove_annotations(pages=[0])
+        document.remove_annotations(pages=[1])
     assert _save(document) == before
     cycle = pdf._cos_doc.register_object(PdfNull())
     pdf._cos_doc.objects[cycle.object_number] = cycle
     last.mapping[PdfName("Annots")] = cycle
     before = _save(document)
     with pytest.raises(PdfParseException, match="cycle"):
-        document.remove_annotations(pages=[0])
+        document.remove_annotations(pages=[1])
     assert _save(document) == before
 
 
 def test_no_match_does_not_scan_unselected_annotation_metadata(document):
     _add(document)
     document._engine_pdf._get_page_dict(2).mapping[PdfName("Annots")] = PdfNumber(1)
-    assert document.remove_annotations(pages=[0], authors="Nobody") == 0
+    assert document.remove_annotations(pages=[1], authors="Nobody") == 0
 
 
 def test_runtime_commit_failure_rolls_back_page_arrays_and_reply_edits(document):
@@ -522,7 +522,7 @@ def test_limits_bound_generators_strings_and_metadata_before_any_edit(document):
     before = _save(document)
     pdf = document._engine_pdf
     original = document.load_limits
-    for options in ({"pages": repeat(0)}, {"authors": repeat("Alice")}):
+    for options in ({"pages": repeat(1)}, {"authors": repeat("Alice")}):
         document._load_limits = pdf._load_limits = PdfLoadLimits(max_container_items=20)
         with pytest.raises(PdfResourceLimitException):
             document.remove_annotations(**options)
@@ -576,11 +576,11 @@ def test_streaming_encryption_roundtrip_preserve_sources_and_do_not_decode_conte
                 "_decode_stream",
                 lambda *a, **k: pytest.fail("must not decode streams"),
             )
-            assert doc.remove_annotations(pages=[1], authors="Alice", dry_run=True) == 1
-            assert doc.remove_annotations(pages=[1], authors="Alice") == 1
+            assert doc.remove_annotations(pages=[2], authors="Alice", dry_run=True) == 1
+            assert doc.remove_annotations(pages=[2], authors="Alice") == 1
         assert (
             _contents(doc, 1) == ["note"]
-            and doc.pages[1].annotations[0].author == "Bob"
+            and doc.pages[2].annotations[0].author == "Bob"
         )
         assert pdf.page_contents == content and pdf._extracted_text is text
         assert (
@@ -592,8 +592,8 @@ def test_streaming_encryption_roundtrip_preserve_sources_and_do_not_decode_conte
         }
         doc.save(output)
     with Document(output, password="secret" if encrypted else None) as reopened:
-        assert [a.author for a in reopened.pages[1].annotations] == ["Bob"]
-        assert "Keep page content" in reopened.pages[1].extract_text()
+        assert [a.author for a in reopened.pages[2].annotations] == ["Bob"]
+        assert "Keep page content" in reopened.pages[2].extract_text()
     assert path.read_bytes() == before
 
 
@@ -624,7 +624,7 @@ def test_malformed_later_annotation_entries_fail_before_removal(document, entry)
     )
     before = _save(document)
     with pytest.raises(PdfParseException):
-        document.remove_annotations(pages=[0])
+        document.remove_annotations(pages=[1])
     assert _save(document) == before
 
 
@@ -635,7 +635,7 @@ def test_missing_annotation_array_references_are_not_treated_as_empty_pages(docu
     )
     before = _save(document)
     with pytest.raises(PdfParseException, match="reference was not found"):
-        document.remove_annotations(pages=[0])
+        document.remove_annotations(pages=[1])
     assert _save(document) == before
 
 

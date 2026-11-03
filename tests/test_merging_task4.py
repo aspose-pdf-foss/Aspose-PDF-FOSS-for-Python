@@ -96,7 +96,7 @@ def test_the_merged_pages_still_read_back_as_themselves():
         reloaded = Document(io.BytesIO(merged.to_bytes()))
 
         assert [
-            reloaded.pages[index].to_markdown().strip()
+            reloaded.pages[(index) + 1].to_markdown().strip()
             for index in range(len(reloaded.pages))
         ] == ["Part one", "Part two"]
     finally:

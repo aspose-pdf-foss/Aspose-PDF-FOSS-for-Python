@@ -19,14 +19,13 @@ def parse_page_range(
     one_based: bool = True,
     limits: PdfLoadLimits | None = None,
 ) -> tuple[int, ...]:
-    """Return zero-based indices from page numbers, keywords and ranges.
+    """Return one-based page numbers from page numbers, keywords and ranges.
 
     ``"1-3,7,10-"`` selects pages 1 through 3, page 7, and page 10 through
     the last page. Numbers in the expression are one-based by default;
     ``one_based=False`` interprets them as zero-based instead. The returned
-    indices are always zero-based, ready for ``Document.extract_pages`` and
-    APIs accepting a ``pages`` argument. Add one to each index for facades
-    accepting one-based page numbers.
+    page numbers are always one-based, ready for ``Document.extract_pages`` and
+    APIs accepting a ``pages`` argument. The same numbers can be passed to facades.
 
     Case-insensitive ``odd`` and ``even`` select physical pages 1, 3, 5, ...
     and 2, 4, 6, ... regardless of ``one_based`` or page labels. ``last``
@@ -105,4 +104,4 @@ def parse_page_range(
             "expanded page range selection",
         )
         indexes.extend(range(start - offset, end - offset + step, step))
-    return tuple(indexes)
+    return tuple(index + 1 for index in indexes)

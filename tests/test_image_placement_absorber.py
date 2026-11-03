@@ -54,10 +54,10 @@ def test_visiting_a_page_collects_only_that_page(tmp_path: Path) -> None:
     path = _two_page_document(tmp_path)
     absorber = ImagePlacementAbsorber()
     with Document(path) as document:
+        absorber.visit(document.pages[2])
+        assert [p.page_index for p in absorber.image_placements] == [2]
         absorber.visit(document.pages[1])
         assert [p.page_index for p in absorber.image_placements] == [1]
-        absorber.visit(document.pages[0])
-        assert [p.page_index for p in absorber.image_placements] == [0]
 
 
 def test_visiting_a_document_collects_every_page(tmp_path: Path) -> None:
@@ -65,7 +65,7 @@ def test_visiting_a_document_collects_every_page(tmp_path: Path) -> None:
     with Document(path) as document:
         absorber = ImagePlacementAbsorber()
         absorber.visit(document)
-    assert sorted(p.page_index for p in absorber.image_placements) == [0, 1]
+    assert sorted(p.page_index for p in absorber.image_placements) == [1, 2]
 
 
 def test_placement_rectangle_is_the_size_drawn_on_the_page(tmp_path: Path) -> None:
@@ -73,7 +73,7 @@ def test_placement_rectangle_is_the_size_drawn_on_the_page(tmp_path: Path) -> No
     path = _two_page_document(tmp_path)
     with Document(path) as document:
         absorber = ImagePlacementAbsorber()
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
 
     rectangle = absorber.image_placements[0].rectangle
     assert (rectangle.x, rectangle.y) == (10.0, 600.0)
@@ -84,7 +84,7 @@ def test_resolution_is_pixels_over_the_drawn_size(tmp_path: Path) -> None:
     path = _two_page_document(tmp_path)
     with Document(path) as document:
         absorber = ImagePlacementAbsorber()
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
 
     placement = absorber.image_placements[0]
     assert (placement.width, placement.height) == (200, 100)
@@ -95,7 +95,7 @@ def test_resolution_is_pixels_over_the_drawn_size(tmp_path: Path) -> None:
 def test_encrypted_document_yields_its_image() -> None:
     with Document(FIXTURES / "fixtures_encrypted_image.pdf", password="user") as document:
         absorber = ImagePlacementAbsorber()
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
 
     assert len(absorber.image_placements) == 1
     assert absorber.image_placements[0].image_data
@@ -110,7 +110,7 @@ def test_page_without_images_yields_nothing(tmp_path: Path) -> None:
 
     with Document(out) as reloaded:
         absorber = ImagePlacementAbsorber()
-        absorber.visit(reloaded.pages[0])
+        absorber.visit(reloaded.pages[1])
     assert absorber.image_placements == []
 
 
@@ -127,10 +127,10 @@ def test_pages_reusing_a_resource_name_keep_both_images(tmp_path: Path) -> None:
 
     by_page = {p.page_index: p for p in absorber.image_placements}
     assert len(by_page) == 2
-    assert (by_page[0].width, by_page[0].height) == (200, 100)
-    assert (by_page[1].width, by_page[1].height) == (4, 4)
-    assert by_page[0].image_data != by_page[1].image_data
-    assert by_page[0].name != by_page[1].name
+    assert (by_page[1].width, by_page[1].height) == (200, 100)
+    assert (by_page[2].width, by_page[2].height) == (4, 4)
+    assert by_page[1].image_data != by_page[2].image_data
+    assert by_page[1].name != by_page[2].name
 
 
 def test_extractor_yields_both_colliding_images(tmp_path: Path) -> None:

@@ -47,7 +47,7 @@ def remove_pages(document: Document, indexes: list[int]) -> None:
             live.append((item, entry))
             pending.extend(zip(item.children, entry["children"], strict=True))
     for index in descending:
-        document.pages.delete(index)
+        document.pages.delete((index) + 1)
     pdf._outlines_data = outlines
     _refresh_targets(pdf)
     for item, entry in live:

@@ -42,7 +42,7 @@ def _authored(text: str, *, font: str | None = None) -> Document:
     document = Document()
     document.pages.add()
     kwargs = {"font": font, "font_size": 18} if font else {}
-    document.pages[0].add_text(text, 40, 700, **kwargs)
+    document.pages[1].add_text(text, 40, 700, **kwargs)
     buffer = io.BytesIO()
     document.save(buffer)
     return Document(io.BytesIO(buffer.getvalue()))
@@ -53,7 +53,7 @@ def _authored(text: str, *, font: str | None = None) -> Document:
     [(" ", " "), ("  ", "  "), (" a", " a"), ("a ", "a "), ("a", "a")],
 )
 def test_a_simple_font_keeps_the_whitespace_it_draws(authored, expected):
-    assert _authored(authored).pages[0].extract_text() == expected
+    assert _authored(authored).pages[1].extract_text() == expected
 
 
 @pytest.mark.parametrize(
@@ -66,7 +66,7 @@ def test_a_composite_font_keeps_it_too_and_leaks_no_cids(authored, expected):
 
     if not os.path.exists(FONT):
         pytest.skip("no system font to embed")
-    extracted = _authored(authored, font=FONT).pages[0].extract_text()
+    extracted = _authored(authored, font=FONT).pages[1].extract_text()
     assert extracted == expected
     # The symptom: raw two-byte CIDs where characters belong.
     assert "\x00" not in extracted
@@ -75,10 +75,10 @@ def test_a_composite_font_keeps_it_too_and_leaks_no_cids(authored, expected):
 def test_a_page_that_draws_no_text_extracts_as_empty():
     document = Document()
     document.pages.add()
-    document.pages[0].draw_rectangle(10, 10, 50, 50)
+    document.pages[1].draw_rectangle(10, 10, 50, 50)
     buffer = io.BytesIO()
     document.save(buffer)
-    assert Document(io.BytesIO(buffer.getvalue())).pages[0].extract_text() == ""
+    assert Document(io.BytesIO(buffer.getvalue())).pages[1].extract_text() == ""
 
 
 def test_the_parser_reports_whether_the_stream_showed_any_text():
@@ -221,9 +221,9 @@ def test_replacing_text_with_nothing_leaves_the_rest_readable():
     if not os.path.exists(FONT):
         pytest.skip("no system font to embed")
     document = _authored("abc abc", font=FONT)
-    document.pages[0].replace_text("abc", "")
+    document.pages[1].replace_text("abc", "")
     buffer = io.BytesIO()
     document.save(buffer)
 
     reopened = Document(io.BytesIO(buffer.getvalue()))
-    assert reopened.pages[0].extract_text() == " "
+    assert reopened.pages[1].extract_text() == " "

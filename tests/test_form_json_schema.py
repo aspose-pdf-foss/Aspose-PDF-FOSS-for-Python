@@ -138,9 +138,9 @@ def test_optional_empty_choice_lists_and_arbitrary_field_names_are_standard():
         document.pages.add()
         form = document.form
         for name in ('person.name', 'a/b~c', '$ref', 'Имя "name"'):
-            form.add_text_field(name, 0, (10, 10, 100, 30), value="Answer")
-        form.add_list_box("many", 0, (10, 40, 100, 100), ["a"], multiselect=True)
-        form.add_combo_box("one", 0, (10, 110, 100, 130), ["a"])
+            form.add_text_field(name, 1, (10, 10, 100, 30), value="Answer")
+        form.add_list_box("many", 1, (10, 40, 100, 100), ["a"], multiselect=True)
+        form.add_combo_box("one", 1, (10, 110, 100, 130), ["a"])
         for name in ("many", "one"):
             field_dictionary(document._engine_pdf, name).mapping[PdfName("Opt")] = PdfArray([])
         schema = form.to_json_schema()
@@ -328,7 +328,7 @@ def test_empty_disposed_and_cyclic_forms():
             call()
     with Document() as document:
         document.pages.add()
-        document.form.add_text_field("name", 0, (10, 10, 100, 30))
+        document.form.add_text_field("name", 1, (10, 10, 100, 30))
         field = field_dictionary(document._engine_pdf, "name")
         field.mapping[PdfName("Kids")] = PdfArray([field])
         with pytest.raises(PdfParseException, match="cycle"):

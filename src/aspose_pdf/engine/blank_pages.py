@@ -125,7 +125,7 @@ def find_blank_pages(
     for index in selection:
         if index not in seen:
             seen.add(index)
-            if _is_blank(document.pages[index], options):
+            if _is_blank(document._page_at(index), options):
                 found.append(index)
     return found
 

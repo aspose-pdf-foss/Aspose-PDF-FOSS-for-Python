@@ -56,7 +56,7 @@ def _snapshot(pdf: Any, roots: list, level: int) -> tuple[list[dict], dict[int, 
         if isinstance(item, OutlineItem):
             entry = {
                 "title": item.title,
-                "page_index": item.page_index,
+                "page_index": item._page_index,
                 "target": item.destination,
                 "loaded_target": item._loaded_target,
                 "is_bold": item.is_bold,
@@ -89,7 +89,7 @@ def _snapshot(pdf: Any, roots: list, level: int) -> tuple[list[dict], dict[int, 
             local = target.destination if isinstance(target, GoToAction) else target
             if (
                 isinstance(local, Destination)
-                and _page_index(local.page, len(pages)) is None
+                and _page_index(local.page - 1, len(pages)) is None
             ):
                 loaded = None
             else:

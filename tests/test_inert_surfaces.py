@@ -128,7 +128,7 @@ def test_a_render_records_its_phases_into_a_logger():
     document = _drawn_page()
     timings = PerformanceLogger()
 
-    document.pages[0].render(dpi=36, performance=timings)
+    document.pages[1].render(dpi=36, performance=timings)
 
     assert set(timings.timings) == {"content", "interpret", "annotations", "downsample"}
     assert all(value >= 0.0 for value in timings.timings.values())
@@ -138,16 +138,16 @@ def test_a_render_records_its_phases_into_a_logger():
 def test_a_render_without_a_logger_records_nothing():
     document = _drawn_page()
     # The point of the option: a render nobody asked to measure does no timing.
-    assert document.pages[0].render(dpi=36).width > 0
+    assert document.pages[1].render(dpi=36).width > 0
 
 
 def test_two_renders_accumulate_into_the_same_logger():
     document = _drawn_page()
     timings = PerformanceLogger()
 
-    document.pages[0].render(dpi=36, performance=timings)
+    document.pages[1].render(dpi=36, performance=timings)
     first = timings.timings["interpret"]
-    document.pages[0].render(dpi=36, performance=timings)
+    document.pages[1].render(dpi=36, performance=timings)
 
     assert timings.timings["interpret"] >= first
 
@@ -156,7 +156,7 @@ def test_each_logger_keeps_its_own_numbers():
     # Caller-owned rather than process-global, so two renders cannot interleave.
     document = _drawn_page()
     one, two = PerformanceLogger(), PerformanceLogger()
-    document.pages[0].render(dpi=36, performance=one)
+    document.pages[1].render(dpi=36, performance=one)
     assert two.timings == {}
 
 
@@ -208,7 +208,7 @@ def test_the_global_stopwatch_is_still_a_working_stopwatch():
 
 def test_rendering_does_not_write_to_the_global_stopwatch():
     VirtualizationPerformance.reset()
-    _drawn_page().pages[0].render(dpi=36, performance=PerformanceLogger())
+    _drawn_page().pages[1].render(dpi=36, performance=PerformanceLogger())
     assert VirtualizationPerformance.get_elapsed_time("interpret") == 0.0
 
 

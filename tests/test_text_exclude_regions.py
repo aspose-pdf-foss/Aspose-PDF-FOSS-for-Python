@@ -53,9 +53,9 @@ def test_untagged_headers_and_footers_are_excluded_without_changing_pdf(source, 
         try:
             assert document.extract_text(exclude_regions=[HEADER, FOOTER]) == "First\nSecond\nThird"
             assert document.extract_text(
-                pages=[2, 0, 2], exclude_regions=(box for box in [HEADER, FOOTER]),
+                pages=[3, 1, 3], exclude_regions=(box for box in [HEADER, FOOTER]),
             ) == "Third\nFirst\nThird"
-            assert document.pages[1].extract_text(exclude_regions=[HEADER, FOOTER]) == "Second"
+            assert document.pages[2].extract_text(exclude_regions=[HEADER, FOOTER]) == "Second"
             assert document.extract_text().count("Header") == 3
             assert document.extract_text().count("Footer") == 3
             assert _bytes(document) == raw
@@ -260,7 +260,7 @@ def test_streaming_selection_only_decodes_selected_pages(tmp_path, monkeypatch):
             return read(index)
 
         monkeypatch.setattr(engine, "get_page_content", selected)
-        assert document.extract_text(pages=[1, 1], exclude_regions=[HEADER, FOOTER]) == "Second\nSecond"
+        assert document.extract_text(pages=[2, 2], exclude_regions=[HEADER, FOOTER]) == "Second\nSecond"
         assert visited == [1, 1] and engine.page_contents == []
         assert engine._extracted_text is None
 
@@ -452,7 +452,7 @@ def test_streaming_encrypted_pdf_retains_source_and_only_reads_selected_pages(tm
             return read(index)
 
         monkeypatch.setattr(engine, "get_page_content", selected)
-        assert document.extract_text(pages=[1, 1], exclude_regions=[HEADER, FOOTER]) == "Second\nSecond"
+        assert document.extract_text(pages=[2, 2], exclude_regions=[HEADER, FOOTER]) == "Second\nSecond"
         assert document.is_encrypted and engine.page_contents == []
         assert engine._extracted_text is None
     assert path.read_bytes() == original

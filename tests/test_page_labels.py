@@ -286,14 +286,14 @@ def _book() -> Document:
 @pytest.mark.parametrize(
     ("edit", "expected"),
     [
-        (lambda d: d.pages.insert(0), ["1", "i", "ii", "iii", "1", "A-1", "A-2", "B-5", "B-6"]),
-        (lambda d: d.pages.delete(0), ["i", "ii", "1", "A-1", "A-2", "B-5", "B-6"]),
-        (lambda d: d.pages.delete(3), ["i", "ii", "iii", "A-1", "A-2", "B-5", "B-6"]),
-        (lambda d: d.pages.delete(7), ["i", "ii", "iii", "1", "A-1", "A-2", "B-5"]),
+        (lambda d: d.pages.insert(1), ["1", "i", "ii", "iii", "1", "A-1", "A-2", "B-5", "B-6"]),
+        (lambda d: d.pages.delete(1), ["i", "ii", "1", "A-1", "A-2", "B-5", "B-6"]),
+        (lambda d: d.pages.delete(4), ["i", "ii", "iii", "A-1", "A-2", "B-5", "B-6"]),
+        (lambda d: d.pages.delete(8), ["i", "ii", "iii", "1", "A-1", "A-2", "B-5"]),
         (lambda d: d.pages.add(), ["i", "ii", "iii", "1", "A-1", "A-2", "B-5", "B-6", "B-7"]),
+        (lambda d: d.pages.insert(7), ["i", "ii", "iii", "1", "A-1", "A-2", "A-3", "B-5", "B-6"]),
         (lambda d: d.pages.insert(6), ["i", "ii", "iii", "1", "A-1", "A-2", "A-3", "B-5", "B-6"]),
-        (lambda d: d.pages.insert(5), ["i", "ii", "iii", "1", "A-1", "A-2", "A-3", "B-5", "B-6"]),
-        (lambda d: [d.pages.delete(3) for _ in range(3)], ["i", "ii", "iii", "B-5", "B-6"]),
+        (lambda d: [d.pages.delete(4) for _ in range(3)], ["i", "ii", "iii", "B-5", "B-6"]),
     ],
     ids=["insert-0", "delete-0", "delete-one-page-range", "delete-last", "add", "insert-at-range-start", "insert-inside", "delete-three"],
 )
@@ -314,7 +314,7 @@ def test_a_copied_page_is_an_inserted_one():
 def test_deleting_every_page_leaves_no_labels():
     document = _book()
     for _ in range(8):
-        document.pages.delete(0)
+        document.pages.delete(1)
     document.pages.add()
     assert _labels(document) == [None]
 
@@ -323,8 +323,8 @@ def test_inserting_into_a_document_without_labels_adds_none():
     # MuPDF labels an unlabelled document on inserting at page 0 -- 1, 1, 2,
     # 3 in every reader; it stays unlabelled here.
     document = _blank(3)
-    document.pages.insert(0)
-    document.pages.delete(2)
+    document.pages.insert(1)
+    document.pages.delete(3)
     assert _labels(_reloaded(document)) == [None] * 3
 
 

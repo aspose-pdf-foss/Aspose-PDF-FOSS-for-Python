@@ -143,4 +143,4 @@ def _document(base: bytes) -> Document:
 def test_a_kerned_sentence_reads_as_a_sentence(base):
     """The same words and the same displacements in four faces, each of which
     has different metrics -- and pdfminer reads all four the same way."""
-    assert _document(base).pages[0].extract_text() == "The quick, brown fox"
+    assert _document(base).pages[1].extract_text() == "The quick, brown fox"

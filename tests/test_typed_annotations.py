@@ -111,7 +111,7 @@ def test_each_subtype_is_read_as_its_own_class():
     ]
     assert [type(item) for item in page.annotations] == expected
     # And the classes come back after a save, from the file's own /Subtype.
-    assert [type(item) for item in _roundtrip(document).pages[0].annotations] == expected
+    assert [type(item) for item in _roundtrip(document).pages[1].annotations] == expected
 
 
 def test_a_subtype_with_no_class_of_its_own_is_still_read():
@@ -143,7 +143,7 @@ def test_opacity_subject_and_dates():
     note.subject = "A question"
     note.creation_date = "D:20261007120000+02'00'"
     note.modified = "D:20261007130000+02'00'"
-    reloaded = _roundtrip(document).pages[0].annotations[0]
+    reloaded = _roundtrip(document).pages[1].annotations[0]
     assert reloaded.opacity == 0.5
     assert reloaded.subject == "A question"
     assert reloaded.creation_date.startswith("D:20261007120000")
@@ -163,7 +163,7 @@ def test_the_border_is_one_dictionary_edited_entry_by_entry():
     square.border_width = 1
     assert square.border_style == "D"
     assert square.border_dash == (4.0, 2.0)
-    reloaded = _roundtrip(document).pages[0].annotations[0]
+    reloaded = _roundtrip(document).pages[1].annotations[0]
     assert (reloaded.border_width, reloaded.border_style) == (1.0, "D")
     assert reloaded.border_dash == (4.0, 2.0)
 
@@ -205,7 +205,7 @@ def test_a_line_knows_where_it_runs():
     assert line.line_endings == ("OpenArrow", "ClosedArrow")
     line.set_line((10, 20), (30, 40))
     assert (line.start, line.end) == ((10.0, 20.0), (30.0, 40.0))
-    reloaded = _roundtrip(document).pages[0].annotations[0]
+    reloaded = _roundtrip(document).pages[1].annotations[0]
     assert reloaded.end == (30.0, 40.0)
 
 
@@ -225,7 +225,7 @@ def test_vertices_are_points_in_and_points_out():
     assert polygon.vertices == [(50.0, 150.0), (120.0, 220.0), (190.0, 150.0)]
     polygon.vertices = [10, 20, 30, 40]  # a flat sequence is taken too
     assert polygon.vertices == [(10.0, 20.0), (30.0, 40.0)]
-    assert _roundtrip(document).pages[0].annotations[0].vertices == [
+    assert _roundtrip(document).pages[1].annotations[0].vertices == [
         (10.0, 20.0),
         (30.0, 40.0),
     ]
@@ -249,7 +249,7 @@ def test_ink_is_a_list_of_strokes():
         [(50.0, 80.0), (70.0, 110.0), (90.0, 80.0)],
         [(110.0, 80.0), (130.0, 110.0)],
     ]
-    reloaded = _roundtrip(document).pages[0].annotations[0]
+    reloaded = _roundtrip(document).pages[1].annotations[0]
     assert len(reloaded.ink_list) == 2  # two marks, not one with a jump in it
 
 
@@ -259,7 +259,7 @@ def test_quad_points_are_groups_of_four_corners():
     quads = highlight.quad_points
     assert len(quads) == 1
     assert quads[0] == ((48.0, 515.0), (300.0, 515.0), (48.0, 495.0), (300.0, 495.0))
-    assert _roundtrip(document).pages[0].annotations[0].quad_points == quads
+    assert _roundtrip(document).pages[1].annotations[0].quad_points == quads
 
 
 def test_a_single_rectangle_is_taken_as_the_one_quad_it_describes():
@@ -314,7 +314,7 @@ def test_the_text_entries_of_a_free_text_annotation():
     free_text.alignment = "right"
     assert free_text.alignment == 2
     free_text.rich_text = "<p>rich</p>"
-    reloaded = _roundtrip(document).pages[0].annotations[0]
+    reloaded = _roundtrip(document).pages[1].annotations[0]
     assert reloaded.alignment == 2
     assert reloaded.rich_text == "<p>rich</p>"
     with pytest.raises(PdfValidationException, match="left"):
@@ -332,7 +332,7 @@ def test_the_sticky_note_entries():
     assert note.is_open is True
     note.state_model = "Review"
     note.state = "Accepted"
-    reloaded = _roundtrip(document).pages[0].annotations[0]
+    reloaded = _roundtrip(document).pages[1].annotations[0]
     assert (reloaded.state, reloaded.state_model) == ("Accepted", "Review")
     assert b"/Name /Help" in _saved(document)
 
@@ -342,7 +342,7 @@ def test_a_stamp_is_named():
     stamp = page.annotations.add_stamp((250, 560, 380, 590), "Approved")
     assert stamp.icon == "Approved"
     stamp.icon = "Draft"
-    assert _roundtrip(document).pages[0].annotations[0].icon == "Draft"
+    assert _roundtrip(document).pages[1].annotations[0].icon == "Draft"
     assert b"/Name /Draft" in _saved(document)
 
 
@@ -354,7 +354,7 @@ def test_a_redaction_marks_and_says_what_to_write_over_it():
     assert redact.overlay_text == "REDACTED"
     assert redact.interior_color == (0.0, 0.0, 0.0)
     assert len(redact.quad_points) == 1
-    assert _roundtrip(document).pages[0].annotations[0].overlay_text == "REDACTED"
+    assert _roundtrip(document).pages[1].annotations[0].overlay_text == "REDACTED"
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +390,7 @@ def test_a_reply_survives_the_round_trip_as_a_reply():
     note = page.annotations.add_text((40, 560, 60, 580), "Look here")
     note.reply("Agreed")
     note.reply("And again")
-    reloaded = _roundtrip(document).pages[0].annotations
+    reloaded = _roundtrip(document).pages[1].annotations
     assert [item.contents for item in reloaded[0].replies] == ["Agreed", "And again"]
     assert reloaded[1].in_reply_to.contents == "Look here"
 
@@ -428,7 +428,7 @@ def test_a_popup_is_linked_both_ways():
     assert popup.is_open is True
     assert popup.parent_annotation.contents == "Look here"
     assert note.popup.rect == popup.rect
-    reloaded = _roundtrip(document).pages[0].annotations
+    reloaded = _roundtrip(document).pages[1].annotations
     assert reloaded[0].popup is not None
     assert reloaded[1].parent_annotation.contents == "Look here"
 
@@ -490,7 +490,7 @@ def test_an_entry_the_typed_layer_does_not_name_still_round_trips():
     document, page = _page()
     square = page.annotations.add_square((50, 300, 200, 360))
     square.set_property("BE", {"S": "C", "I": 2})  # a cloud border
-    reloaded = _roundtrip(document).pages[0].annotations[0]
+    reloaded = _roundtrip(document).pages[1].annotations[0]
     assert reloaded.get_property("BE") == {"S": "C", "I": 2}
 
 
@@ -500,7 +500,7 @@ def test_the_generated_appearance_uses_the_typed_entries():
         (50, 300, 200, 360), interior_color=(1, 0, 0), border_width=3
     )
     assert page.annotations.generate_appearances() == 1
-    raster = _roundtrip(document).pages[0].render(dpi=72)
+    raster = _roundtrip(document).pages[1].render(dpi=72)
     # The inside of the square is the interior colour it was given.
     assert raster.get_pixel(125, 595 - 330)[0] > 200
 

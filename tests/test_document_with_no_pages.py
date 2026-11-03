@@ -77,7 +77,7 @@ def test_no_blank_page_is_invented_to_extract_from(shape):
     document = Document(io.BytesIO(NO_PAGES[shape]))
     assert document.extract_text() == ""
     with pytest.raises(IndexError):
-        _ = document.pages[0]
+        _ = document.pages[1]
 
 
 def test_the_page_tree_is_still_the_one_the_file_had():
@@ -106,7 +106,7 @@ def test_a_page_less_document_is_invalid_and_repair_is_what_adds_the_page():
 def test_a_page_less_document_can_be_authored_into():
     document = Document(io.BytesIO(EMPTY_TREE))
     document.pages.add()
-    document.pages[0].add_text("Hello", 50, 700)
+    document.pages[1].add_text("Hello", 50, 700)
 
     buffer = io.BytesIO()
     document.save(buffer)

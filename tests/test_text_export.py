@@ -276,7 +276,7 @@ def test_page_level_export_covers_one_page():
     document.pages.add().add_text("One", 60, 700, font_size=11)
     document.pages.add().add_text("Two", 60, 700, font_size=11)
 
-    markdown = document.pages[1].to_markdown()
+    markdown = document.pages[2].to_markdown()
 
     assert "Two" in markdown
     assert "One" not in markdown
@@ -395,6 +395,6 @@ def test_selected_pages_only():
     document.pages.add().add_text("Alpha", 60, 700, font_size=11)
     document.pages.add().add_text("Beta", 60, 700, font_size=11)
 
-    markdown = document.to_markdown(pages=[1])
+    markdown = document.to_markdown(pages=[2])
 
     assert "Beta" in markdown and "Alpha" not in markdown

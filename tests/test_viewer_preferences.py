@@ -78,13 +78,13 @@ def test_a_document_opens_the_way_it_is_told_to():
     document = _pages()
     document.page_mode = PageMode.USE_OUTLINES
     document.page_layout = PageLayout.TWO_PAGE_RIGHT
-    document.open_action = XYZDestination(page=2, left=50, top=650, zoom=1.5)
+    document.open_action = XYZDestination(page=3, left=50, top=650, zoom=1.5)
 
     reopened = _reloaded(document)
     # pdf.js, PDFBox and MuPDF all read exactly this back.
     assert reopened.page_mode is PageMode.USE_OUTLINES
     assert reopened.page_layout is PageLayout.TWO_PAGE_RIGHT
-    assert reopened.open_action == XYZDestination(page=2, left=50.0, top=650.0, zoom=1.5)
+    assert reopened.open_action == XYZDestination(page=3, left=50.0, top=650.0, zoom=1.5)
 
 
 def test_a_document_that_says_nothing_opens_on_its_defaults():
@@ -124,7 +124,7 @@ def test_a_mode_or_layout_that_is_not_one_of_the_names_is_refused():
 def test_an_open_action_may_be_an_action_as_well_as_a_destination():
     document = _pages()
     for action in (
-        GoToAction(FitDestination(page=1)),
+        GoToAction(FitDestination(page=2)),
         JavaScriptAction("app.alert(1)"),
         NamedAction("NextPage"),
     ):
@@ -134,7 +134,7 @@ def test_an_open_action_may_be_an_action_as_well_as_a_destination():
 
 def test_an_open_action_can_be_taken_away():
     document = _pages()
-    document.open_action = FitDestination(page=1)
+    document.open_action = FitDestination(page=2)
     document.open_action = None
     assert _reloaded(document).open_action is None
     assert PdfName("OpenAction") not in _catalog(document).mapping
@@ -144,9 +144,9 @@ def test_an_open_action_pointing_at_a_page_that_is_gone_reads_as_nothing():
     # pikepdf and MuPDF both leave the entry behind when the page goes, so it
     # is still in the file; a viewer ignores it, and so does this.
     document = _reloaded(_pages(3))
-    document.open_action = FitDestination(page=2)
+    document.open_action = FitDestination(page=3)
     document = _reloaded(document)
-    document.pages.delete(2)
+    document.pages.delete(3)
 
     assert document.open_action is None
     buffer = io.BytesIO()
@@ -158,7 +158,7 @@ def test_a_document_can_open_at_a_named_destination():
     # 12.6.2 lets /OpenAction be a destination, and 12.3.2.3 lets a destination be
     # a name, so a string here is the name of one -- it used to be refused.
     document = _pages()
-    document.destinations["start-here"] = 1
+    document.destinations["start-here"] = 2
     document.open_action = "start-here"
     buffer = io.BytesIO()
     document.save(buffer)
@@ -288,10 +288,10 @@ def test_full_screen_is_not_something_to_come_back_to():
 
 def test_a_print_range_is_written_as_the_page_numbers_a_dialogue_shows():
     document = _pages(4)
-    document.viewer_preferences.print_page_range = [(0, 1), (3, 3)]
+    document.viewer_preferences.print_page_range = [(1, 2), (4, 4)]
 
     reopened = _reloaded(document)
-    assert reopened.viewer_preferences.print_page_range == ((0, 1), (3, 3))
+    assert reopened.viewer_preferences.print_page_range == ((1, 2), (4, 4))
     # In the file the pages are numbered from one, which is what pdf.js and
     # PDFBox read out of it: 1, 2, 4, 4.
     preferences = document._engine_pdf._resolve(
@@ -318,17 +318,17 @@ def test_a_page_number_written_as_a_whole_real_is_that_page():
     document = _set_preferences(
         _pages(3), PrintPageRange=PdfArray([PdfNumber(1.0), PdfNumber(2.0)])
     )
-    assert document.viewer_preferences.print_page_range == ((0, 1),)
+    assert document.viewer_preferences.print_page_range == ((1, 2),)
 
 
 def test_a_range_outside_the_document_is_refused_rather_than_written():
     document = _pages(3)
     with pytest.raises(PdfValidationException, match="pages this document has"):
-        document.viewer_preferences.print_page_range = [(0, 3)]
+        document.viewer_preferences.print_page_range = [(1, 4)]
     with pytest.raises(PdfValidationException, match="pages this document has"):
-        document.viewer_preferences.print_page_range = [(2, 1)]
+        document.viewer_preferences.print_page_range = [(3, 2)]
     with pytest.raises(PdfValidationException, match="whole page indices"):
-        document.viewer_preferences.print_page_range = [(0.5, 1)]
+        document.viewer_preferences.print_page_range = [(0.5, 2)]
 
 
 @pytest.mark.parametrize(
@@ -338,12 +338,12 @@ def test_a_range_outside_the_document_is_refused_rather_than_written():
 def test_print_ranges_require_integer_indices(pair):
     document = _pages(3)
     preferences = document.viewer_preferences
-    preferences.print_page_range = [(0, 1)]
+    preferences.print_page_range = [(1, 2)]
 
     with pytest.raises(PdfValidationException, match="whole page indices"):
         preferences.print_page_range = [pair]
 
-    assert preferences.print_page_range == ((0, 1),)
+    assert preferences.print_page_range == ((1, 2),)
 
 
 @pytest.mark.parametrize("value", [True, 2.0, "2", 0, -1])
@@ -370,7 +370,7 @@ def test_an_optional_entry_can_be_taken_back():
     preferences = document.viewer_preferences
     preferences.num_copies = 3
     preferences.duplex = DuplexMode.SIMPLEX
-    preferences.print_page_range = [(0, 1)]
+    preferences.print_page_range = [(1, 2)]
     preferences.pick_tray_by_pdf_size = True
 
     preferences.num_copies = None

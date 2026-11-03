@@ -80,7 +80,7 @@ def test_the_comment_does_not_disturb_the_file():
     reloaded = Document(io.BytesIO(data))
 
     assert len(reloaded.pages) == 1
-    assert reloaded.pages[0].to_markdown().strip() == "hello"
+    assert reloaded.pages[1].to_markdown().strip() == "hello"
     assert _saved(reloaded) == data
 
 
@@ -184,7 +184,7 @@ def test_a_document_built_in_memory_is_not_asked_about_bytes_it_has_none_of():
 
 def test_a_name_longer_than_the_limit_is_reported():
     document = _pdfa()
-    document.pages[0].annotations.add(
+    document.pages[1].annotations.add(
         "Text", (10, 10, 40, 40), "x", properties={"n" * 200: 1}
     )
 
@@ -195,7 +195,7 @@ def test_a_name_longer_than_the_limit_is_reported():
 
 def test_a_string_longer_than_the_limit_is_reported():
     document = _pdfa()
-    document.pages[0].annotations.add("Text", (10, 10, 40, 40), "y" * 70000)
+    document.pages[1].annotations.add("Text", (10, 10, 40, 40), "y" * 70000)
 
     errors, _warnings = _checked(Document(io.BytesIO(_saved(document))))
 
@@ -226,7 +226,7 @@ def test_an_integer_past_the_limit_is_reported():
 )
 def test_a_value_exactly_at_the_limit_is_allowed(properties):
     document = _pdfa()
-    document.pages[0].annotations.add(
+    document.pages[1].annotations.add(
         "Text", (10, 10, 40, 40), "x", properties=properties
     )
 

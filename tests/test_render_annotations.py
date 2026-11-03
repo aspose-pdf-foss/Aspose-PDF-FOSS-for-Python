@@ -63,7 +63,7 @@ def _annot(cos, rect, *, subtype="Square", flags=None, matrix=None, bbox=(0, 0, 
 
 
 def _render(document: Document, **kwargs):
-    return document.pages[0].render(dpi=72, antialias=False, **kwargs)
+    return document.pages[1].render(dpi=72, antialias=False, **kwargs)
 
 
 def _build(rect=(10, 160, 50, 200), **kwargs):
@@ -248,4 +248,4 @@ def test_rendering_survives_a_save_and_reload():
     output = BytesIO()
     document.save(output)
     reloaded = Document().load_from(output.getvalue())
-    assert _is_red(reloaded.pages[0].render(dpi=72, antialias=False), 30, 20)
+    assert _is_red(reloaded.pages[1].render(dpi=72, antialias=False), 30, 20)

@@ -13,7 +13,7 @@ __all__ = ["PageVisualComparison"]
 
 @dataclass(frozen=True, slots=True)
 class PageVisualComparison:
-    """One pair of rendered pages, using zero-based source page indices.
+    """One pair of rendered pages, using one-based source page indices.
 
     A missing page has a ``None`` index and size. Sizes are ``(width, height)``
     in pixels. ``changed_pixels`` counts pixels outside the color tolerance,

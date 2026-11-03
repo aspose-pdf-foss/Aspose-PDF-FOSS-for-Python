@@ -31,7 +31,7 @@ another only read the same file -- which no password-based scheme can express::
 Opening one needs the certificate *and* its private key::
 
     with Document("report-sealed.pdf", certificate=cert, private_key=key) as doc:
-        print(doc.pages[0].content)
+        print(doc.pages[1].content)
 """
 
 from __future__ import annotations

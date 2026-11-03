@@ -100,7 +100,7 @@ def test_fixed_size_parts_keep_order_tail_metadata_and_independence(
                     assert _texts(reopened) == _texts(part)
                     assert reopened.validate()
         parts[0].info["Title"] = "Independent"
-        parts[0].pages[0].add_text("PART ONLY", 15, 70)
+        parts[0].pages[1].add_text("PART ONLY", 15, 70)
         assert "PART ONLY" not in source.extract_text()
         assert all("PART ONLY" not in part.extract_text() for part in parts[1:])
     assert source._engine_pdf._outlines_data is model
@@ -173,17 +173,17 @@ def test_streaming_parts_keep_resources_and_remain_usable_after_source_closes(
     source.version = "2.0"
     source.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ROMAN_LOWERCASE)
     source.page_labels[2] = PageLabel(prefix="A-")
-    page = source.pages[2]
+    page = source.pages[3]
     page.rotation = 90
     page.crop_box = (5, 5, 230, 155)
     page.add_image(_PNG, 50, 50, width=20, height=20)
     page.annotations.add_square((20, 30, 40, 50), interior_color=(0, 0, 1))
-    page.add_link((10, 10, 30, 25), FitDestination(3))
-    page.add_link((40, 10, 60, 25), FitDestination(0))
-    source.form.add_text_field("Editable", 3, (10, 60, 100, 80), value="Keep me")
+    page.add_link((10, 10, 30, 25), FitDestination(4))
+    page.add_link((40, 10, 60, 25), FitDestination(1))
+    source.form.add_text_field("Editable", 4, (10, 60, 100, 80), value="Keep me")
     layer = source.layers.add("Hidden note", visible=False)
-    with source.pages[3].layer(layer):
-        source.pages[3].draw_rectangle(
+    with source.pages[4].layer(layer):
+        source.pages[4].draw_rectangle(
             0, 0, 20, 20, fill_color="#000", stroke_color=None
         )
     source.add_attachment("batch.txt", b"Document attachment")
@@ -192,7 +192,7 @@ def test_streaming_parts_keep_resources_and_remain_usable_after_source_closes(
     path = tmp_path / "source.pdf"
     source.save(path)
     original = path.read_bytes()
-    reference = source.pages[2].render(antialias=False)
+    reference = source.pages[3].render(antialias=False)
     with Document.open_streaming(
         path, password="secret" if encrypted else None
     ) as loaded:
@@ -222,21 +222,21 @@ def test_streaming_parts_keep_resources_and_remain_usable_after_source_closes(
         for part in parts:
             stack.enter_context(part)
         middle = parts[1]
-        assert middle.pages[0].rotation == 90
-        assert middle.pages[0].crop_box == (5, 5, 230, 155)
-        rendered = middle.pages[0].render(antialias=False)
+        assert middle.pages[1].rotation == 90
+        assert middle.pages[1].crop_box == (5, 5, 230, 155)
+        rendered = middle.pages[1].render(antialias=False)
         assert (rendered.width, rendered.height, rendered.pixels) == (
             reference.width,
             reference.height,
             reference.pixels,
         )
         assert [page.label for page in middle.pages] == ["A-1", "A-2"]
-        assert middle.form["Editable"].widgets[0].page_index == 1
+        assert middle.form["Editable"].widgets[0].page_index == 2
         assert middle.form["Editable"].value == "Keep me"
         assert not middle.layers["Hidden note"].visible
         assert middle.attachments == {} and middle.version == "2.0"
-        links = [note for note in middle.pages[0].annotations if note.subtype == "Link"]
-        assert links[0].get_property("Dest") == FitDestination(1)
+        links = [note for note in middle.pages[1].annotations if note.subtype == "Link"]
+        assert links[0].get_property("Dest") == FitDestination(2)
         assert links[1].get_property("Dest") == [None, "Fit"]
         assert all(not part.is_encrypted for part in parts)
         middle.form["Editable"].value = "Edited"
@@ -246,28 +246,28 @@ def test_streaming_parts_keep_resources_and_remain_usable_after_source_closes(
 
 
 def test_live_bookmarks_keep_views_and_promote_children_of_excluded_parents(source):
-    source.outlines.add(OutlineItem("Outside", 0)).add(
-        OutlineItem("Inside", destination=XYZDestination(3, 10, 120, 1.5), is_bold=True)
+    source.outlines.add(OutlineItem("Outside", 1)).add(
+        OutlineItem("Inside", destination=XYZDestination(4, 10, 120, 1.5), is_bold=True)
     )
     model = source._engine_pdf._outlines_data
     with _parts(source) as parts:
         assert parts[1].info["Title"] == "Batch"
         assert [(item.title, item.page_index) for item in parts[1].outlines] == [
-            ("Inside", 1)
+            ("Inside", 2)
         ]
-        assert parts[1].outlines[0].destination == XYZDestination(1, 10, 120, 1.5)
+        assert parts[1].outlines[0].destination == XYZDestination(2, 10, 120, 1.5)
         assert parts[1].outlines[0].is_bold
         with Document(_bytes(parts[1])) as reopened:
-            assert reopened.outlines[0].destination == XYZDestination(1, 10, 120, 1.5)
+            assert reopened.outlines[0].destination == XYZDestination(2, 10, 120, 1.5)
     assert source._engine_pdf._outlines_data is model
-    assert source.outlines[0].children[0].destination == XYZDestination(3, 10, 120, 1.5)
+    assert source.outlines[0].children[0].destination == XYZDestination(4, 10, 120, 1.5)
 
 
 @pytest.mark.parametrize("error", [PdfValidationException, KeyboardInterrupt])
 def test_failed_later_import_disposes_parts_and_restores_source(
     source, monkeypatch, error
 ):
-    source.outlines.add(OutlineItem("Live edit", 1))
+    source.outlines.add(OutlineItem("Live edit", 2))
     engine = source._engine_pdf
     original = engine.extract_pages
     model = engine._outlines_data
@@ -313,7 +313,7 @@ def test_planning_limits_fail_before_any_import(
 
 
 def test_malformed_live_outline_tree_is_rejected_before_import(source, monkeypatch):
-    root = source.outlines.add(OutlineItem("Loop", 0))
+    root = source.outlines.add(OutlineItem("Loop", 1))
     root.children.append(root)
 
     def forbidden(*args, **kwargs):
@@ -453,7 +453,7 @@ def test_lowcode_serialization_failure_disposes_parts_without_writing_outputs(
 def test_iterator_imports_only_requested_batches_and_restores_live_outlines(
     source, monkeypatch
 ):
-    source.outlines.add(OutlineItem("Live edit", 1))
+    source.outlines.add(OutlineItem("Live edit", 2))
     engine = source._engine_pdf
     model = engine._outlines_data
     original = engine.extract_pages
@@ -521,7 +521,7 @@ def test_closing_iterator_keeps_yielded_parts_usable_after_source_closes(source,
 def test_iterator_failure_preserves_yielded_parts_and_restores_source(
     source, monkeypatch, error
 ):
-    source.outlines.add(OutlineItem("Live edit", 1))
+    source.outlines.add(OutlineItem("Live edit", 2))
     engine = source._engine_pdf
     original = engine.extract_pages
     model = engine._outlines_data

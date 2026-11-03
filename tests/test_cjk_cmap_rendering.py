@@ -146,7 +146,7 @@ def _make_cjk_pdf(
 def _render(pdf: SimplePdf):
     doc = Document()
     doc._engine_pdf = pdf
-    return doc.pages[0].render(antialias=False)
+    return doc.pages[1].render(antialias=False)
 
 
 def _all_pixels(raster) -> list[tuple[int, int, int]]:

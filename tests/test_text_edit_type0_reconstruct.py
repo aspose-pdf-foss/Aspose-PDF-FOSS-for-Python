@@ -92,7 +92,7 @@ def _reconstruct_doc() -> Document:
 def test_reconstruct_replace_without_tounicode() -> None:
     doc = _reconstruct_doc()
     assert doc.replace_text("Hi", "Ho") == 1
-    content = doc.pages[0].content
+    content = doc.pages[1].content
     # "Ho" re-encodes through the reverse reconstructed map (H unchanged, i->o).
     assert _hexbytes("Ho").hex().upper().encode() in content
     assert _hexbytes("Hi").hex().upper().encode() not in content
@@ -100,8 +100,8 @@ def test_reconstruct_replace_without_tounicode() -> None:
 
 def test_reconstruct_redact_without_tounicode() -> None:
     doc = _reconstruct_doc()
-    assert doc.pages[0].redact_text("Hi") == 1
-    content = doc.pages[0].content
+    assert doc.pages[1].redact_text("Hi") == 1
+    content = doc.pages[1].content
     assert _hexbytes("Hi").hex().upper().encode() not in content
 
 
@@ -110,8 +110,8 @@ def test_reconstruct_redact_without_tounicode() -> None:
 
 def test_reconstruct_overlay_draws_bar() -> None:
     doc = _reconstruct_doc()
-    assert doc.pages[0].redact_text("Hi", overlay=True) == 1
-    content = doc.pages[0].content
+    assert doc.pages[1].redact_text("Hi", overlay=True) == 1
+    content = doc.pages[1].content
     assert b"h f" in content  # a redaction bar (filled path) was appended
 
 
@@ -224,8 +224,8 @@ def _embedded_cmap_doc(
 def test_embedded_cmap_overlay_draws_bar() -> None:
     doc = _embedded_cmap_doc()
     assert doc._engine_pdf.extract_text() == "Hi"
-    assert doc.pages[0].redact_text("Hi", overlay=True) == 1
-    content = doc.pages[0].content
+    assert doc.pages[1].redact_text("Hi", overlay=True) == 1
+    content = doc.pages[1].content
     assert b"0102" not in content  # one-byte codes removed
     assert b"h f" in content  # bar drawn from the parsed code -> CID widths
 
@@ -244,11 +244,11 @@ def test_embedded_cmap_rejects_invalid_to_unicode_source_code() -> None:
         encoding_cmap=encoding_cmap,
         to_unicode=to_unicode,
     )
-    before = doc.pages[0].content
+    before = doc.pages[1].content
 
     assert doc._engine_pdf.extract_text() == "�"
     assert doc.replace_text("X", "Y") == 0
-    assert doc.pages[0].content == before
+    assert doc.pages[1].content == before
 
 
 def test_embedded_cmap_program_wmode_uses_vertical_metrics() -> None:

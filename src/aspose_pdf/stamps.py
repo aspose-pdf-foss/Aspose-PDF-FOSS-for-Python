@@ -3,12 +3,12 @@
 A stamp is placed, not authored at a coordinate: say which corner it belongs in
 and how far off it, and it lands there on any page size::
 
-    document.pages[0].add_stamp(TextStamp("DRAFT", font_size=64, rotate=45,
+    document.pages[1].add_stamp(TextStamp("DRAFT", font_size=64, rotate=45,
                                           opacity=0.2, background=True))
     document.add_stamp(PageNumberStamp("{page} of {total}", font_size=9,
                                        vertical_alignment=VerticalAlignment.BOTTOM,
                                        y_indent=24))
-    document.pages[0].add_stamp(ImageStamp(logo_png, width=80, height=40,
+    document.pages[1].add_stamp(ImageStamp(logo_png, width=80, height=40,
                                            horizontal_alignment=HorizontalAlignment.RIGHT,
                                            vertical_alignment=VerticalAlignment.TOP,
                                            x_indent=-24, y_indent=-24))
@@ -447,7 +447,7 @@ class PageStamp(Stamp):
     *under* the page's own content, which is what a letterhead wants::
 
         letterhead = Document("letterhead.pdf")
-        document.add_stamp(PageStamp(letterhead.pages[0], background=True))
+        document.add_stamp(PageStamp(letterhead.pages[1], background=True))
 
     A page of the document being stamped may be placed on another of its pages;
     placing a page on *itself* is refused, since the content being drawn would be
@@ -455,14 +455,14 @@ class PageStamp(Stamp):
     """
 
     source: Any = None
-    page_index: int = 0
+    page_index: int = 1
 
     def _validate(self) -> None:
         super()._validate()
         if self.source is None:
             raise PdfValidationException("A page stamp needs a page to place")
-        if int(self.page_index) != self.page_index or int(self.page_index) < 0:
-            raise PdfValidationException("page_index must be a page number from zero")
+        if int(self.page_index) != self.page_index or int(self.page_index) < 1:
+            raise PdfValidationException("page_index must be a page number from one")
 
     def _resolved(self) -> tuple[Any, int]:
         """The engine document and page index the stamp places, whatever it was given."""
@@ -473,10 +473,10 @@ class PageStamp(Stamp):
         source = self.source
         if isinstance(source, Page):
             document = source._document
-            index = source.index
+            index = source._index
         elif isinstance(source, Document):
             document = source
-            index = int(self.page_index)
+            index = int(self.page_index) - 1
         else:
             raise PdfValidationException(
                 "A page stamp places a Page or a Document, not "

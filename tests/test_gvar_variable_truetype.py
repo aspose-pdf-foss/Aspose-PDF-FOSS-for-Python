@@ -380,7 +380,7 @@ def test_a_substituted_variable_face_is_drawn_at_the_weight_asked_for():
 
 
 def _ink(document, options) -> set[tuple[int, int]]:
-    raster = document.pages[0].render(antialias=False, font_substitution=options)
+    raster = document.pages[1].render(antialias=False, font_substitution=options)
     return {
         (x, y)
         for y in range(raster.height)

@@ -54,9 +54,9 @@ CASES = {
 def _document(crop=None) -> Document:
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("X", 120, 150)
+    document.pages[1].add_text("X", 120, 150)
     if crop is not None:
-        document.pages[0].crop_box = crop
+        document.pages[1].crop_box = crop
     return document
 
 
@@ -68,13 +68,13 @@ def _png_size(path) -> tuple[int, int]:
 @pytest.mark.parametrize("shape", sorted(CASES))
 def test_the_effective_crop_box_is_the_intersection(shape):
     crop, effective, _ = CASES[shape]
-    assert tuple(_document(crop).pages[0].crop_box) == tuple(effective)
+    assert tuple(_document(crop).pages[1].crop_box) == tuple(effective)
 
 
 @pytest.mark.parametrize("shape", sorted(CASES))
 def test_the_page_renders_at_the_size_the_references_render_it(shape, tmp_path):
     crop, _, size = CASES[shape]
-    out = _document(crop).pages[0].save_as_image(tmp_path / "page.png", dpi=72)
+    out = _document(crop).pages[1].save_as_image(tmp_path / "page.png", dpi=72)
     assert _png_size(out) == size
 
 
@@ -86,8 +86,8 @@ def test_a_loaded_document_is_treated_the_same(shape, tmp_path, request):
     path = tmp_path / "in.pdf"
     _document(crop).save(path)
     reloaded = Document(path)
-    assert tuple(reloaded.pages[0].crop_box) == tuple(effective)
-    out = reloaded.pages[0].save_as_image(tmp_path / "page.png", dpi=72)
+    assert tuple(reloaded.pages[1].crop_box) == tuple(effective)
+    out = reloaded.pages[1].save_as_image(tmp_path / "page.png", dpi=72)
     assert _png_size(out) == size
 
 
@@ -103,20 +103,20 @@ def test_an_empty_crop_box_no_longer_makes_the_page_unrenderable():
     # It used to raise "page box must have positive area" where both references
     # show the whole media box.
     document = _document((0, 0, 0, 0))
-    assert document.pages[0].extract_text().strip() == "X"
-    assert tuple(document.pages[0].crop_box) == (0, 0, 612, 792)
+    assert document.pages[1].extract_text().strip() == "X"
+    assert tuple(document.pages[1].crop_box) == (0, 0, 612, 792)
 
 
 def test_a_stamp_lands_inside_the_page_not_inside_an_over_large_crop_box():
     # Stamp placement measures the crop box too, so an over-large one used to put
     # a centred stamp outside the sheet entirely.
     document = _document((0, 0, 2000, 2000))
-    document.pages[0].add_stamp(TextStamp("MARK", font_size=24))
-    assert "MARK" in document.pages[0].extract_text()
+    document.pages[1].add_stamp(TextStamp("MARK", font_size=24))
+    assert "MARK" in document.pages[1].extract_text()
 
 
 def test_a_crop_box_inside_the_media_box_is_left_alone():
     # The common case must not move: no clipping happens when none is called for.
     document = _document((100, 100, 300, 400))
-    assert tuple(document.pages[0].crop_box) == (100.0, 100.0, 300.0, 400.0)
-    assert tuple(document.pages[0].rect) == (0, 0, 612, 792)  # the media box
+    assert tuple(document.pages[1].crop_box) == (100.0, 100.0, 300.0, 400.0)
+    assert tuple(document.pages[1].rect) == (0, 0, 612, 792)  # the media box

@@ -68,12 +68,12 @@ def _document(content: bytes, procs: dict[str, bytes], *, font_matrix=b"[0.001 0
 
 
 def _pixels(document: Document):
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     return lambda x, y: raster.get_pixel(x, y)
 
 
 def _all(document: Document) -> list:
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     return [raster.get_pixel(x, y) for y in range(200) for x in range(200)]
 
 

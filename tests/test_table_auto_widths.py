@@ -56,7 +56,7 @@ def test_auto_widths_use_glyph_advances_and_survive_save(document, tmp_path, on_
             Cell("1", link=URIAction("https://example.test/quantity")),
         ]
     )
-    document.pages[0].add_table(table, 20, 160)
+    document.pages[1].add_table(table, 20, 160)
     assert table.column_widths is None
     if on_disk:
         source = tmp_path / "auto.pdf"
@@ -67,8 +67,8 @@ def test_auto_widths_use_glyph_advances_and_survive_save(document, tmp_path, on_
         first, second = reopened.extract_links()
         assert first.rect[0:3:2] == pytest.approx((20, 53.32))
         assert second.rect[0:3:2] == pytest.approx((53.32, 58.88))
-        assert "MMMM" in reopened.pages[0].extract_text()
-        assert "1" in reopened.pages[0].extract_text()
+        assert "MMMM" in reopened.pages[1].extract_text()
+        assert "1" in reopened.pages[1].extract_text()
 
 
 def test_same_character_count_does_not_imply_equal_widths(document):
@@ -177,7 +177,7 @@ def test_rounding_at_the_minimum_width_does_not_divide_by_zero(document):
 def test_auto_widths_and_link_rectangles_stay_consistent_on_continuation_pages(
     document,
 ):
-    page = document.pages[0]
+    page = document.pages[1]
     page.size = (160, 120)
     table = Table(width=140, row_height=30, auto_column_widths=True)
     table.add_header_row(
@@ -191,8 +191,8 @@ def test_auto_widths_and_link_rectangles_stay_consistent_on_continuation_pages(
     page.add_table(table, 10, 100, bottom_margin=10)
     with Document(_saved(document)) as reopened:
         assert len(reopened.pages) == 2
-        first = reopened.pages[0].extract_links()
-        repeated = reopened.pages[1].extract_links()
+        first = reopened.pages[1].extract_links()
+        repeated = reopened.pages[2].extract_links()
         assert [link.rect for link in first] == [link.rect for link in repeated]
         assert first[0].rect[2] - first[0].rect[0] > first[1].rect[2] - first[1].rect[0]
         assert first[-1].rect[2] == 150
@@ -204,7 +204,7 @@ def test_edited_auto_width_flag_is_revalidated_before_drawing(document):
     table.auto_column_widths = "yes"
     before = _saved(document)
     with pytest.raises(PdfValidationException, match="auto_column_widths"):
-        document.pages[0].add_table(table, 20, 160)
+        document.pages[1].add_table(table, 20, 160)
     assert _saved(document) == before
 
 
@@ -212,7 +212,7 @@ def test_edited_auto_width_flag_is_revalidated_before_drawing(document):
 def test_overheight_wrapped_rows_are_rejected_without_creating_endless_pages(
     document, repeat
 ):
-    page = document.pages[0]
+    page = document.pages[1]
     page.size = (160, 120)
     table = Table(width=60, auto_column_widths=True, repeat_header=repeat)
     table.add_header_row(["Item", "Qty"])
@@ -224,15 +224,15 @@ def test_overheight_wrapped_rows_are_rejected_without_creating_endless_pages(
 
 
 def test_a_tall_row_can_continue_onto_an_existing_larger_page(document):
-    page = document.pages[0]
+    page = document.pages[1]
     page.size = (160, 120)
     document.pages.add(size=(160, 300))
     table = Table(width=100, auto_column_widths=True)
     table.add_header_row(["Header"], height=30)
     table.add_row(["Body"], height=180)
     result = page.add_table(table, 20, 100, bottom_margin=10)
-    assert result["pages"] == [0, 1]
-    assert "Body" in document.pages[1].extract_text()
+    assert result["pages"] == [1, 2]
+    assert "Body" in document.pages[2].extract_text()
 
 
 def test_empty_and_missing_columns_keep_positive_widths(document):
@@ -256,7 +256,7 @@ def test_impossible_or_invalid_width_fails_before_drawing(document, width):
     table.add_row(["Text", "42"])
     table.width = width
     with pytest.raises(PdfValidationException):
-        document.pages[0].add_table(table, 20, 160)
+        document.pages[1].add_table(table, 20, 160)
     assert _saved(document) == before
 
 
@@ -264,7 +264,7 @@ def test_measured_dimensions_must_remain_finite(document):
     table = Table(auto_column_widths=True, font_size=1e308)
     table.add_row(["MMMM", "1"])
     with pytest.raises(PdfValidationException):
-        document.pages[0].add_table(table, 20, 160)
+        document.pages[1].add_table(table, 20, 160)
 
 
 def test_page_room_and_reusing_a_table_do_not_freeze_the_column_widths(document):
@@ -275,7 +275,7 @@ def test_page_room_and_reusing_a_table_do_not_freeze_the_column_widths(document)
             Cell("1", link=URIAction("https://example.test/quantity")),
         ]
     )
-    page = document.pages[0]
+    page = document.pages[1]
     page.add_table(table, 20, 160)
     first = page.extract_links()
     page.add_table(table, 100, 100)
@@ -296,6 +296,6 @@ def test_embedded_fonts_measure_new_unicode_glyphs(document):
     widths = _widths(table, document, faces={"Helvetica": face})
     assert all(math.isfinite(width) and width > 0 for width in widths)
     assert widths[0] > widths[1] * 2
-    document.pages[0].add_table(table, 20, 160)
+    document.pages[1].add_table(table, 20, 160)
     with Document(_saved(document)) as reopened:
-        assert "Żółw" in reopened.pages[0].extract_text()
+        assert "Żółw" in reopened.pages[1].extract_text()

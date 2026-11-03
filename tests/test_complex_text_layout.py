@@ -301,7 +301,7 @@ def test_arabic_shaping_roundtrips_and_renders(layout_font: bytes) -> None:
 
     data = _save(document)
     loaded = Document().load_from(data)
-    content = loaded.pages[0].content
+    content = loaded.pages[1].content
     graph = _font_graphs(loaded)[0]
     base = prepare_authored_font(layout_font)
     base_gids = {base.glyph_id(character) for character in text}
@@ -319,7 +319,7 @@ def test_arabic_shaping_roundtrips_and_renders(layout_font: bytes) -> None:
     assert rendered_gids - base_gids
     assert loaded._engine_pdf.extract_text() == text
     assert loaded.tagged_content.root_elements[0].actual_text == text
-    raster = loaded.pages[0].render(antialias=False)
+    raster = loaded.pages[1].render(antialias=False)
     ink = sum(
         raster.get_pixel(x, y) != (255, 255, 255)
         for y in range(60, 110)
@@ -372,7 +372,7 @@ def test_font_fallback_switches_resources(layout_font: bytes, fallback_font: byt
     )
     loaded = Document().load_from(_save(document))
     assert len(_font_graphs(loaded)) == 2
-    assert len(set(re.findall(rb"/(F\d+) [0-9.]+ Tf", loaded.pages[0].content))) == 2
+    assert len(set(re.findall(rb"/(F\d+) [0-9.]+ Tf", loaded.pages[1].content))) == 2
     assert loaded._engine_pdf.extract_text() == text
 
 
@@ -392,7 +392,7 @@ def test_wrapping_line_height_and_center_alignment(layout_font: bytes) -> None:
         ),
     )
     loaded = Document().load_from(_save(document))
-    content = loaded.pages[0].content
+    content = loaded.pages[1].content
     matrices = re.findall(
         rb"1 0 0 1 ([0-9.]+) ([0-9.]+) Tm", content
     )

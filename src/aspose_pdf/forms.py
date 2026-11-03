@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from aspose_pdf._page_numbers import page_index
 from aspose_pdf.actions import FIELD_TRIGGERS, ActionCollection
 from aspose_pdf.engine.form_fields import validate_choice_value
 from aspose_pdf.engine.form_validation import FormValidationIssue
@@ -66,7 +67,7 @@ class FieldWidget:
     """Where one of a field's widgets sits: the page and the rectangle on it."""
 
     page_index: int | None
-    """Zero-based index of the page, or ``None`` if no page lists the widget."""
+    """One-based number of the page, or ``None`` if no page lists the widget."""
 
     rect: tuple[float, float, float, float]
     """``(x0, y0, x1, y1)`` in default user space, lower-left corner first."""
@@ -579,7 +580,7 @@ class Field:
         from aspose_pdf.engine.form_fields import field_widgets
 
         return [
-            FieldWidget(page, rect)
+            FieldWidget(None if page is None else page + 1, rect)
             for page, rect in field_widgets(self._engine(), self._dictionary())
         ]
 
@@ -695,16 +696,16 @@ class Form:
 
     def _page_index(self, page: Any) -> int:
         if isinstance(page, bool):
-            raise TypeError("page must be a Page or a zero-based page index")
+            raise TypeError("page must be a Page or a one-based page number")
         if isinstance(page, int):
-            return page
+            return page_index(page, self._document.page_count)
         from aspose_pdf.pages import Page
 
         if not isinstance(page, Page):
-            raise TypeError("page must be a Page or a zero-based page index")
+            raise TypeError("page must be a Page or a one-based page number")
         if page._document is not self._document:
             raise PdfValidationException("Page belongs to a different document")
-        return page.index
+        return page._index
 
     @staticmethod
     def _alignment_value(alignment: str | int) -> int:
@@ -1569,7 +1570,7 @@ class Form:
 
         The legacy default includes non-widget annotations. Pass
         ``annotations=False`` to bake only fields, optionally selected by fully
-        qualified names. ``pages`` uses zero-based indices. Widgets on other
+        qualified names. ``pages`` uses one-based page numbers. Widgets on other
         pages, Hidden/NoView objects and objects without usable appearances
         remain interactive. On a later page's failure, completed pages remain
         flattened and this instance's field handles are refreshed.

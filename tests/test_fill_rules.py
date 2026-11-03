@@ -66,7 +66,7 @@ def _document(content: bytes) -> Document:
 
 def _probe(content: bytes) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
     """``(inside the hole, inside the ring)`` after rendering *content*."""
-    raster = _document(content).pages[0].render(antialias=False)
+    raster = _document(content).pages[1].render(antialias=False)
     return raster.get_pixel(100, 100), raster.get_pixel(50, 100)
 
 
@@ -183,7 +183,7 @@ def _shaded(operator: bytes) -> tuple[tuple[int, int, int], tuple[int, int, int]
         len(objects) + 1,
         start,
     )
-    raster = Document(io.BytesIO(bytes(raw))).pages[0].render(antialias=False)
+    raster = Document(io.BytesIO(bytes(raw))).pages[1].render(antialias=False)
     return raster.get_pixel(100, 100), raster.get_pixel(50, 100)
 
 
@@ -198,7 +198,7 @@ def test_a_shading_pattern_fills_the_region_the_rule_describes():
 
 
 def _svg(content: bytes) -> str:
-    return _document(content).pages[0].to_svg()
+    return _document(content).pages[1].to_svg()
 
 
 def test_the_svg_export_names_the_fill_rule():

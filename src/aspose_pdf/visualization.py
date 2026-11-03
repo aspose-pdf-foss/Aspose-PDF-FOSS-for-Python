@@ -35,7 +35,7 @@ class PerformanceLogger:
         from aspose_pdf.visualization import PerformanceLogger
 
         timings = PerformanceLogger()
-        document.pages[0].render(dpi=150, performance=timings)
+        document.pages[1].render(dpi=150, performance=timings)
         print(timings.timings)  # {'content': 0.001, 'interpret': 0.42, ...}
     """
 

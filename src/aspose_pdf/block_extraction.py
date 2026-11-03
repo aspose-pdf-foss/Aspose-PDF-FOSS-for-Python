@@ -24,7 +24,7 @@ __all__ = ["ExtractedBlock"]
 class ExtractedBlock:
     """A detached heading, paragraph, list, table or figure in reading order.
 
-    ``page_index`` is zero-based. ``x`` and ``y`` locate the first text
+    ``page_index`` is one-based. ``x`` and ``y`` locate the first text
     element's baseline origin, or a figure's center, in unrotated PDF user
     space with a lower-left origin; they are not a bounding box.
     ``level`` is a heading's inferred level, otherwise zero.
@@ -194,7 +194,7 @@ def to_json(blocks: list[ExtractedBlock], budget: _LoadBudget) -> bytes:
                 write(json.dumps(raw, allow_nan=False).encode("ascii"))
 
         try:
-            write(b'{"schema_version":1,"blocks":[')
+            write(b'{"schema_version":2,"blocks":[')
             for index, block in enumerate(blocks):
                 if index:
                     write(b",")

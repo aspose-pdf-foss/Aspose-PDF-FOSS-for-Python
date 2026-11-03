@@ -172,8 +172,8 @@ def _doc_with_widths_font() -> Document:
 
 def test_public_redact_overlay_across_positioning_gap() -> None:
     doc = _doc_with_widths_font()
-    assert doc.pages[0].redact_text("Hello World", overlay=True) == 1
-    content = doc.pages[0].content
+    assert doc.pages[1].redact_text("Hello World", overlay=True) == 1
+    content = doc.pages[1].content
     assert b"(Hello)" not in content and b"(World)" not in content
     assert b"h f" in content  # a filled overlay path was appended
     # One bar from x=20 to 20 + 33.6 + 30 = 83.6 on the shared baseline.

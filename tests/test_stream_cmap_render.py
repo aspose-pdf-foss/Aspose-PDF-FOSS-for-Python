@@ -127,7 +127,7 @@ def _make_stream_cmap_pdf(cmap_bytes: bytes, content: bytes) -> tuple[SimplePdf,
 def _render(pdf: SimplePdf):
     doc = Document()
     doc._engine_pdf = pdf
-    return doc.pages[0].render(antialias=False)
+    return doc.pages[1].render(antialias=False)
 
 
 def test_stream_cmap_builds_and_renders_real_glyphs():

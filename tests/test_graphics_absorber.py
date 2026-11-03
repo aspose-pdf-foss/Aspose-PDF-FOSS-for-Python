@@ -170,7 +170,7 @@ def test_placed_image_reports_its_placement(tmp_path: Path) -> None:
     document.dispose()
 
     with Document(out) as reloaded:
-        elements = _absorb(reloaded.pages[0])
+        elements = _absorb(reloaded.pages[1])
 
     assert len(elements) == 1
     assert elements[0].kind == "image"
@@ -192,7 +192,7 @@ def test_curve_bounds_are_exact_not_the_control_hull() -> None:
     """Control points reach y=+-300; the drawn curve only reaches +-86.6."""
     data = _page_with_content(b"q 0 0 m 100 300 200 -300 300 0 c S Q")
     with Document(io.BytesIO(data)) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert len(elements) == 1
     x, y, width, height = _rect(elements[0])
@@ -219,7 +219,7 @@ def test_form_xobject_composes_its_matrix_with_the_placement() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert len(elements) == 1
     assert _rect(elements[0]) == (52.0, 52.0, 60.0, 60.0)
@@ -241,7 +241,7 @@ def test_self_referential_form_terminates() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert len(elements) == 1
     assert _rect(elements[0]) == (0.0, 0.0, 5.0, 5.0)
@@ -251,7 +251,7 @@ def test_form_xobject_inside_an_encrypted_document_is_absorbed() -> None:
     """The form's stream is decrypted with its own object key before parsing."""
     path = Path(__file__).parent / "fixtures_encrypted_form_xobject.pdf"
     with Document(path, password="user") as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert len(elements) == 1
     assert _rect(elements[0]) == (52.0, 52.0, 60.0, 60.0)
@@ -260,7 +260,7 @@ def test_form_xobject_inside_an_encrypted_document_is_absorbed() -> None:
 def test_graphics_state_is_restored_by_q_and_Q() -> None:
     content = b"q 10 0 0 10 5 5 cm 0 0 1 1 re f Q 0 0 1 1 re f"
     with Document(io.BytesIO(_page_with_content(content))) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert _rect(elements[0]) == (5.0, 5.0, 10.0, 10.0)
     assert _rect(elements[1]) == (0.0, 0.0, 1.0, 1.0)
@@ -269,7 +269,7 @@ def test_graphics_state_is_restored_by_q_and_Q() -> None:
 def test_clipping_path_is_reported_as_a_clip() -> None:
     content = b"20 20 40 40 re W n 0 0 10 10 re f"
     with Document(io.BytesIO(_page_with_content(content))) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert [element.operation for element in elements] == ["clip", "fill"]
     assert _rect(elements[0]) == (20.0, 20.0, 40.0, 40.0)
@@ -277,7 +277,7 @@ def test_clipping_path_is_reported_as_a_clip() -> None:
 
 def test_path_without_a_painting_operator_is_not_reported() -> None:
     with Document(io.BytesIO(_page_with_content(b"0 0 10 10 re n"))) as document:
-        assert _absorb(document.pages[0]) == []
+        assert _absorb(document.pages[1]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +290,7 @@ def test_device_colours_are_reported() -> None:
         b"0 0 0 1 k 0 0 1 1 re f"
     )
     with Document(io.BytesIO(_page_with_content(content))) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert elements[0].fill_color == pytest.approx((0.25, 0.25, 0.25))
     assert elements[1].fill_color == pytest.approx((0.0, 1.0, 0.0))
@@ -300,7 +300,7 @@ def test_device_colours_are_reported() -> None:
 def test_device_components_through_scn_are_reported() -> None:
     content = b"/DeviceRGB cs 1 0 0 scn 0 0 1 1 re f"
     with Document(io.BytesIO(_page_with_content(content))) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
     assert elements[0].fill_color == pytest.approx((1.0, 0.0, 0.0))
 
 
@@ -308,7 +308,7 @@ def test_a_pattern_colour_is_still_reported_as_unknown() -> None:
     """A pattern has no single colour, so none is invented."""
     content = b"/Pattern cs /P1 scn 0 0 1 1 re f"
     with Document(io.BytesIO(_page_with_content(content))) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
     assert elements[0].fill_color is None
 
 
@@ -329,7 +329,7 @@ def test_an_iccbased_colour_is_resolved_through_its_component_count() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert elements[0].fill_color == pytest.approx((1.0, 0.0, 0.0), abs=0.01)
 
@@ -349,7 +349,7 @@ def test_an_indexed_colour_is_looked_up_in_its_palette() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert elements[0].fill_color == pytest.approx((0.0, 0.0, 1.0), abs=0.01)
 
@@ -374,7 +374,7 @@ def test_the_renderer_paints_an_indexed_fill_with_its_palette_colour() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        raster = document.pages[0].render(antialias=False)
+        raster = document.pages[1].render(antialias=False)
 
     assert raster.get_pixel(20, 20) == (0, 0, 255)
 
@@ -400,7 +400,7 @@ def test_an_sh_shading_covers_the_clip_it_paints() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     shading_elements = [e for e in elements if e.kind == "shading"]
     assert len(shading_elements) == 1
@@ -425,7 +425,7 @@ def test_an_sh_without_a_clip_covers_the_page() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert _rect(elements[0]) == (0.0, 0.0, 300.0, 300.0)
 
@@ -436,7 +436,7 @@ def test_an_inline_image_is_collected_like_a_placed_one() -> None:
         b"q 60 0 0 40 20 30 cm BI /W 2 /H 2 /CS /G /BPC 8 ID \x00\xff\x80\x40 EI Q"
     )
     with Document(io.BytesIO(_page_with_content(content))) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     images = [e for e in elements if e.kind == "image"]
     assert len(images) == 1
@@ -448,7 +448,7 @@ def test_invisible_text_puts_nothing_on_the_page() -> None:
     """Rendering mode 3 shows nothing, so there is no mark to report."""
     content = b"BT /F1 12 Tf 3 Tr 10 10 Td (hidden) Tj ET"
     with Document(io.BytesIO(_page_with_content(content))) as document:
-        elements = _absorb(document.pages[0])
+        elements = _absorb(document.pages[1])
 
     assert elements == []
 
@@ -465,7 +465,7 @@ def test_visiting_a_document_covers_every_page() -> None:
     elements = _absorb(document)
     document.dispose()
 
-    assert [element.page_index for element in elements] == [0, 1, 2]
+    assert [element.page_index for element in elements] == [1, 2, 3]
     # draw_rectangle strokes by default, so the box includes the stroke width.
     assert _rect(elements[2])[0] == 29.5
 

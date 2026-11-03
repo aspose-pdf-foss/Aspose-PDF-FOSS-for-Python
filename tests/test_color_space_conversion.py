@@ -88,7 +88,7 @@ def _pdf(content: bytes, resources: bytes = b"", extra: dict | None = None) -> b
 
 
 def _rendered(data: bytes):
-    raster = Document(io.BytesIO(data)).pages[0].render(dpi=72, antialias=False)
+    raster = Document(io.BytesIO(data)).pages[1].render(dpi=72, antialias=False)
     return raster.get_pixel
 
 
@@ -289,7 +289,7 @@ def test_exporting_a_converted_image_writes_the_colours_the_page_shows(tmp_path)
     for name, data in cases:
         path = tmp_path / f"{name}.pdf"
         path.write_bytes(data)
-        page = Document(io.BytesIO(data)).pages[0].render(dpi=72, antialias=False)
+        page = Document(io.BytesIO(data)).pages[1].render(dpi=72, antialias=False)
         shown = [page.get_pixel(*cell) for cell in _CELLS]
         assert len(set(shown)) == 4, (name, shown)
         # Opened eagerly and streamed: the two find their images separately.

@@ -47,8 +47,8 @@ def _page_of_everything() -> Document:
     page = document.pages.add()
     page.add_text("Heading", 60, 720, font_size=20)
     page.add_text("Body text that runs on for a while.", 60, 700, font_size=11)
-    document.outlines.add(OutlineItem("Chapter one", 0))
-    document.form.add_text_field("nickname", 0, (60, 100, 260, 130), value="typed")
+    document.outlines.add(OutlineItem("Chapter one", 1))
+    document.form.add_text_field("nickname", 1, (60, 100, 260, 130), value="typed")
     document.add_attachment("notes.txt", b"an attachment", mime="text/plain")
     return _reloaded(document)
 
@@ -88,8 +88,8 @@ def _documents() -> dict[str, bytes]:
 
     layered = _page_of_everything()
     watermark = layered.layers.add("Watermark")
-    with layered.pages[0].layer(watermark):
-        layered.pages[0].add_text("DRAFT", 100, 400, font_size=40)
+    with layered.pages[1].layer(watermark):
+        layered.pages[1].add_text("DRAFT", 100, 400, font_size=40)
     layered.layers["Watermark"].set_usage(printing=False)
     layered.layers.save_configuration("Clean copy")
     made["layers"] = _saved(layered)
@@ -272,7 +272,7 @@ def test_qpdf_opens_what_the_writer_enciphered(documents, name):
         assert [str(f.T) for f in pdf.Root.AcroForm.Fields] == ["nickname"]
         assert str(pdf.Root.Names.EmbeddedFiles.Names[0]) == "notes.txt"
         assert "/Outlines" in pdf.Root
-        assert b"Body text" in _page_content(pdf.pages[0])
+        assert b"Body text" in _page_content(pdf.pages[1])
 
 
 def test_a_qpdf_rewrite_settles_after_one_save_here():
@@ -305,7 +305,7 @@ def test_qpdf_reads_an_appended_revision_without_repairing_it():
     reconstructs the table.
     """
     document = _page_of_everything()
-    document.pages[0].add_text("Appended later", 60, 660, font_size=11)
+    document.pages[1].add_text("Appended later", 60, 660, font_size=11)
     out = io.BytesIO()
     document.save(out, incremental=True)
     whole = out.getvalue()
@@ -313,7 +313,7 @@ def test_qpdf_reads_an_appended_revision_without_repairing_it():
     assert whole.count(b"%%EOF") >= 2
     assert _qpdf_problems(whole) == []
     with pikepdf.open(io.BytesIO(whole)) as pdf:
-        assert b"Appended later" in _page_content(pdf.pages[0])
+        assert b"Appended later" in _page_content(pdf.pages[1])
 
 
 @pytest.mark.parametrize("algorithm", ["RC4", "AES-128", "AES-256"])
@@ -330,7 +330,7 @@ def test_qpdf_reads_an_encrypted_incremental_revision(algorithm):
     sealed = _saved(base)
 
     document = Document(io.BytesIO(sealed), password="u")
-    document.pages[0].add_text("Appended later", 60, 660, font_size=11)
+    document.pages[1].add_text("Appended later", 60, 660, font_size=11)
     out = io.BytesIO()
     document.save(out, incremental=True)
     whole = out.getvalue()
@@ -339,7 +339,7 @@ def test_qpdf_reads_an_encrypted_incremental_revision(algorithm):
     assert _qpdf_problems(whole, "u") == []
     with pikepdf.open(io.BytesIO(whole), password="u") as pdf:
         assert str(pdf.docinfo["/Title"]) == "Encrypted and structured"
-        content = _page_content(pdf.pages[0])
+        content = _page_content(pdf.pages[1])
         assert b"Appended later" in content
         assert b"Body text" in content
 

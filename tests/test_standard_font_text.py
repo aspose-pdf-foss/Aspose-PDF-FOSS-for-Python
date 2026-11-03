@@ -56,7 +56,7 @@ def _shown(data: bytes) -> bytes:
 
 
 def _read_back(data: bytes) -> str:
-    return Document(io.BytesIO(data)).pages[0].to_markdown().strip()
+    return Document(io.BytesIO(data)).pages[1].to_markdown().strip()
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +127,9 @@ def test_nothing_is_written_when_the_text_is_refused():
     document.pages.add()
 
     with pytest.raises(PdfValidationException):
-        document.pages[0].add_text("Привет", 72, 700)
+        document.pages[1].add_text("Привет", 72, 700)
 
-    assert document.pages[0].content == b""
+    assert document.pages[1].content == b""
 
 
 # ---------------------------------------------------------------------------

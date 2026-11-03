@@ -115,7 +115,7 @@ def test_raster_save_dispatches_webp_and_creates_parent_directories(
 
 def test_page_and_document_save_webp_with_render_options(pillow, tmp_path):
     with Document(io.BytesIO(_pdf())) as document:
-        page = document.pages[0].save_as_image(
+        page = document.pages[1].save_as_image(
             tmp_path / "red.webp",
             dpi=144,
             antialias=False,
@@ -125,7 +125,7 @@ def test_page_and_document_save_webp_with_render_options(pillow, tmp_path):
             method=0,
         )
         whole = document.save_page_as_image(
-            2,
+            3,
             tmp_path / "blue.webp",
             dpi=144,
             antialias=False,
@@ -156,7 +156,7 @@ def test_lowcode_converter_preserves_selection_source_order_and_outputs(
     pillow, tmp_path
 ):
     options = ConvertOptions(
-        ".WebP", pages=[2, 0], dpi=144, lossless=True, quality=100, method=6
+        ".WebP", pages=[3, 1], dpi=144, lossless=True, quality=100, method=6
     )
     options.add_input(ByteArrayDataSource(_pdf())).add_input(
         ByteArrayDataSource(_pdf())
@@ -297,7 +297,7 @@ def test_lowcode_dependency_failure_does_not_write_outputs(monkeypatch, tmp_path
     monkeypatch.setitem(sys.modules, "PIL", None)
     with pytest.raises(UnsupportedFeatureException):
         Converter().process(
-            ConvertOptions("webp", pages=[0])
+            ConvertOptions("webp", pages=[1])
             .add_input(ByteArrayDataSource(data))
             .add_output(FileDataSource(path))
         )

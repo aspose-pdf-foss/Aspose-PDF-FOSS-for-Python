@@ -79,15 +79,15 @@ def test_prefix_only_empty_labels_remain_empty():
 def test_selections_use_destination_labels_and_keep_order_and_duplicates():
     with _document(4) as document:
         document.page_labels[0] = PageLabel(prefix="A-", start=10)
-        document.add_stamp(PageNumberStamp("{label}/{page}"), pages=[3, 1, 3])
-        document.pages[2].add_stamp(PageNumberStamp("{label}/{total}"))
+        document.add_stamp(PageNumberStamp("{label}/{page}"), pages=[4, 2, 4])
+        document.pages[3].add_stamp(PageNumberStamp("{label}/{total}"))
         assert _texts(document) == ["", "A-11/2", "A-12/4", "A-13/4\nA-13/4"]
 
 
 def test_reordered_extracted_pages_use_preserved_labels_with_new_positions():
     with _document(4) as source:
         source.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ROMAN_UPPERCASE)
-        with source.extract_pages([3, 0]) as selected:
+        with source.extract_pages([4, 1]) as selected:
             selected.add_stamp(PageNumberStamp("{label} ({page}/{total})"))
             assert _texts(selected) == ["IV (1/2)", "I (2/2)"]
         assert _texts(source) == [""] * 4
@@ -97,9 +97,9 @@ def test_reusing_a_stamp_reads_current_labels_from_each_document():
     stamp = PageNumberStamp("{label}-{page}", starting_number=8)
     with _document(2) as first, _document(1) as second:
         first.page_labels[0] = PageLabel(prefix="A")
-        first.pages[0].add_stamp(stamp)
-        first.page_labels[0] = PageLabel(prefix="B")
         first.pages[1].add_stamp(stamp)
+        first.page_labels[0] = PageLabel(prefix="B")
+        first.pages[2].add_stamp(stamp)
         second.add_stamp(stamp)
         assert _texts(first) == ["A1-8", "B2-9"]
         assert _texts(second) == ["1-8"]
@@ -174,11 +174,11 @@ def test_repeated_label_fields_read_metadata_once_per_destination_page(monkeypat
 def test_invalid_formats_raise_before_changing_page_content(template):
     with _document() as document:
         document.page_labels[0] = PageLabel(prefix="A-")
-        before = document.pages[0].content
+        before = document.pages[1].content
         with pytest.raises(PdfValidationException, match=r"page.*total.*label"):
             document.add_stamp(PageNumberStamp(template))
-        assert document.pages[0].content == before
-        assert document.pages[0].label == "A-1"
+        assert document.pages[1].content == before
+        assert document.pages[1].label == "A-1"
 
 
 @pytest.mark.parametrize("embedded", [False, True])
@@ -202,37 +202,37 @@ def test_resolved_labels_use_text_stamp_encoding_measurement_and_placement(embed
     )
     with _document() as actual, _document() as expected:
         for document in (actual, expected):
-            document.pages[0].rotation = 90
-            document.pages[0].crop_box = (10, 10, 230, 150)
+            document.pages[1].rotation = 90
+            document.pages[1].crop_box = (10, 10, 230, 150)
         actual.page_labels[0] = PageLabel(NumberingStyle.NONE, label)
         actual.add_stamp(PageNumberStamp("{label}", **options))
         expected.add_stamp(TextStamp(label, **options))
         with Document(_saved(actual)) as saved:
             assert _texts(saved) == [label]
             assert (
-                saved.pages[0].render(antialias=False).pixels
-                == expected.pages[0].render(antialias=False).pixels
+                saved.pages[1].render(antialias=False).pixels
+                == expected.pages[1].render(antialias=False).pixels
             )
 
 
 def test_unencodable_label_is_refused_without_replacing_characters():
     with _document() as document:
         document.page_labels[0] = PageLabel(NumberingStyle.NONE, "Раздел")
-        before = document.pages[0].content
+        before = document.pages[1].content
         with pytest.raises(PdfValidationException, match="cannot write"):
             document.add_stamp(PageNumberStamp("{label}"))
-        assert document.pages[0].content == before
-        assert document.pages[0].label == "Раздел"
+        assert document.pages[1].content == before
+        assert document.pages[1].label == "Раздел"
 
 
 def test_labels_remain_pagination_artifacts_and_can_be_excluded_from_extraction():
     with _document() as document:
-        document.pages[0].add_text("Body", 20, 80)
+        document.pages[1].add_text("Body", 20, 80)
         document.page_labels[0] = PageLabel(prefix="A-")
         document.add_stamp(PageNumberStamp("Page {label}", vertical_alignment="Bottom"))
-        assert "Page A-1" in document.pages[0].extract_text()
-        assert document.pages[0].extract_text(skip_artifacts=True).strip() == "Body"
-        assert b"/Subtype /Footer" in document.pages[0].content
+        assert "Page A-1" in document.pages[1].extract_text()
+        assert document.pages[1].extract_text(skip_artifacts=True).strip() == "Body"
+        assert b"/Subtype /Footer" in document.pages[1].content
 
 
 def test_facade_and_lowcode_stamper_accept_label_templates():
@@ -243,7 +243,7 @@ def test_facade_and_lowcode_stamper_accept_label_templates():
         assert _texts(document) == ["", "Page ii"]
     with _document(2) as document:
         document.page_labels[0] = PageLabel(prefix="A-")
-        options = StampOptions(PageNumberStamp("{label}"), pages=[1]).add_input(
+        options = StampOptions(PageNumberStamp("{label}"), pages=[2]).add_input(
             ByteArrayDataSource(bytearray(_saved(document)))
         )
         results = Stamper().process(options)
@@ -258,7 +258,7 @@ def test_labels_are_read_from_streaming_encrypted_pdfs(tmp_path):
         source = _saved(document, tmp_path)
     original = source.read_bytes()
     with Document.open_streaming(source, password="user") as opened:
-        opened.pages[1].add_stamp(PageNumberStamp("{label}/{total}"))
+        opened.pages[2].add_stamp(PageNumberStamp("{label}/{total}"))
         with io.BytesIO() as output:
             opened.save(output)
             with Document(output.getvalue(), password="user") as reopened:

@@ -57,7 +57,7 @@ def _document(content, **resources):
 
 
 def _tree(doc, **options):
-    return ET.fromstring(doc.pages[0].to_svg(**options))
+    return ET.fromstring(doc.pages[1].to_svg(**options))
 
 
 def _elements(root, tag):
@@ -268,7 +268,7 @@ def test_nested_isolated_group_alpha_applies_once_and_inherits_colour():
         ExtGState=_dict(Half=_dict(ca=PdfNumber(0.5))),
     ) as doc:
         root = _tree(doc)
-        raster = doc.pages[0].render(antialias=False)
+        raster = doc.pages[1].render(antialias=False)
     groups = [g for g in _elements(root, "g") if g.get("opacity") == "0.5"]
     assert len(groups) == 2
     assert len(_painted(root)) == 2
@@ -328,7 +328,7 @@ def test_nested_forms_restore_clip_stroke_state_and_caller_path():
         XObject=_dict(Outer=outer),
     ) as doc:
         root = _tree(doc)
-        raster = doc.pages[0].render(antialias=False)
+        raster = doc.pages[1].render(antialias=False)
     inner_path, outer_path, after = _painted(root)
     assert inner_path.get("stroke-dasharray") == "2 1"
     assert outer_path.get("stroke-dasharray") is None
@@ -348,7 +348,7 @@ def test_form_bbox_clips_marks_and_does_not_clip_later_marks():
     )
     with _document(b"/Fm Do 0 0 1 rg 30 0 10 10 re f", XObject=_dict(Fm=form)) as doc:
         root = _tree(doc)
-        raster = doc.pages[0].render(antialias=False)
+        raster = doc.pages[1].render(antialias=False)
     red, blue = _painted(root)
     assert red.get("clip-path") is not None and blue.get("clip-path") is None
     assert raster.get_pixel(15, 25) == (255, 0, 0)
@@ -420,7 +420,7 @@ def test_annotation_group_placement_and_clip_are_independent_of_page(knockout):
             ]
         )
         root = _tree(doc)
-        raster = doc.pages[0].render(antialias=False)
+        raster = doc.pages[1].render(antialias=False)
         hidden = _tree(doc, draw_annotations=False)
     assert raster.get_pixel(30, 10) == (0, 0, 255)
     assert raster.get_pixel(10, 10) == (255, 255, 255)
@@ -466,7 +466,7 @@ def test_pattern_fallback_preserves_painted_pixels(paint):
 
     with _document(paint, _tiling(_CELL)) as doc:
         root = _tree(doc)
-        expected = doc.pages[0].render(antialias=False)
+        expected = doc.pages[1].render(antialias=False)
     with _png(_elements(root, "image")[0]) as pixels:
         white = Image.new("RGBA", pixels.size, "white")
         white.alpha_composite(pixels)
@@ -490,7 +490,7 @@ def test_svg_compositing_survives_pdf_file_round_trip(tmp_path):
         mask.mapping[PdfName("G")] = register(mask.mapping[PdfName("G")])
         doc.save(path)
     with Document(path) as loaded:
-        svg_path = loaded.pages[0].save_as_svg(
+        svg_path = loaded.pages[1].save_as_svg(
             tmp_path / "compositing.svg", background=None
         )
         root = ET.parse(svg_path).getroot()
@@ -508,7 +508,7 @@ def test_type3_glyph_clips_do_not_escape_into_the_next_glyph_or_page():
         {"a": clipped, "b": square},
     ) as doc:
         root = _tree(doc)
-        raster = doc.pages[0].render(antialias=False)
+        raster = doc.pages[1].render(antialias=False)
     first, second, after = _painted(root)
     assert first.get("clip-path") is not None
     assert second.get("clip-path") is None and after.get("clip-path") is None
@@ -526,7 +526,7 @@ def test_soft_mask_transform_is_fixed_when_selected(rotation):
         page.mapping[PdfName("Rotate")] = PdfNumber(rotation)
         page.mapping[PdfName("CropBox")] = _arr(5, 0, 35, 40)
         root = _tree(doc)
-        raster = doc.pages[0].render(antialias=False)
+        raster = doc.pages[1].render(antialias=False)
     with _png(_elements(root, "mask")[0][0]) as alpha:
         assert alpha.size == (raster.width, raster.height)
         values = set(alpha.tobytes())

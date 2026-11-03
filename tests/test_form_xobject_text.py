@@ -106,7 +106,7 @@ _OWN_FONT = b"/Font << /F1 5 0 R >> "
 
 
 def _text(document: Document) -> str:
-    return " ".join(document.pages[0].extract_text().split())
+    return " ".join(document.pages[1].extract_text().split())
 
 
 # --- the text inside a form is read -----------------------------------------
@@ -196,7 +196,7 @@ def test_the_absorber_finds_a_form_s_text():
 
     document = _document(b"/Fm1 Do\n", {6: _form(_shows(b"inner text"), _OWN_FONT)})
     absorber = TextAbsorber()
-    document.pages[0].accept(absorber)
+    document.pages[1].accept(absorber)
     assert "inner text" in absorber.text
 
 
@@ -210,7 +210,7 @@ def test_the_layout_exports_read_inside_a_form():
     # one `Do`; it used to drop every word inside one while `extract_text`
     # kept them. A form's text objects now join the page's own.
     document = _document(b"/Fm1 Do\n", {6: _form(_shows(b"inner text"), _OWN_FONT)})
-    page = document.pages[0]
+    page = document.pages[1]
     assert "inner text" in page.to_html(embed_images=False)
     assert "inner text" in page.to_markdown(embed_images=False)
 
@@ -218,22 +218,22 @@ def test_the_layout_exports_read_inside_a_form():
 def test_replace_text_reaches_inside_a_form():
     document = _document(b"/Fm1 Do\n", {6: _form(_shows(b"inner text"), _OWN_FONT)})
 
-    assert document.pages[0].replace_text("inner", "outer") == 1
+    assert document.pages[1].replace_text("inner", "outer") == 1
     assert _text(document) == "outer text"
 
 
 def test_editing_a_shared_form_isolated_to_the_selected_page():
     document = _shared_form_document()
 
-    assert document.pages[0].replace_text("shared", "first") == 1
-    assert document.pages[0].extract_text() == "first text"
-    assert document.pages[1].extract_text() == "shared text"
+    assert document.pages[1].replace_text("shared", "first") == 1
+    assert document.pages[1].extract_text() == "first text"
+    assert document.pages[2].extract_text() == "shared text"
 
     saved = io.BytesIO()
     document.save(saved)
     reloaded = Document(io.BytesIO(saved.getvalue()))
-    assert reloaded.pages[0].extract_text() == "first text"
-    assert reloaded.pages[1].extract_text() == "shared text"
+    assert reloaded.pages[1].extract_text() == "first text"
+    assert reloaded.pages[2].extract_text() == "shared text"
 
 
 def test_redact_text_reaches_nested_forms():
@@ -245,8 +245,8 @@ def test_redact_text_reaches_nested_forms():
         },
     )
 
-    assert document.pages[0].redact_text("secret", overlay=True) == 1
-    assert "secret" not in document.pages[0].extract_text()
+    assert document.pages[1].redact_text("secret", overlay=True) == 1
+    assert "secret" not in document.pages[1].extract_text()
 
 
 def test_a_form_s_font_governs_inside_it():
@@ -313,7 +313,7 @@ def test_a_chain_of_forms_is_followed_to_a_bound():
 
 
 def _lines(document: Document) -> list[str]:
-    markdown = document.pages[0].to_markdown(embed_images=False)
+    markdown = document.pages[1].to_markdown(embed_images=False)
     return [line for line in markdown.splitlines() if line.strip()]
 
 

@@ -92,7 +92,7 @@ def _two_pages() -> Document:
     document = Document()
     for index in range(2):
         document.pages.add()
-        document.pages[index].add_text(f"Page {index}", 50, 700)
+        document.pages[(index) + 1].add_text(f"Page {index}", 50, 700)
     return document
 
 

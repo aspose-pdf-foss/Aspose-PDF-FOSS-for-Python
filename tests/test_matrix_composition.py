@@ -69,7 +69,7 @@ def _document(content: bytes, form: bytes = b"", form_body: bytes = b"") -> Docu
 
 def _ink_box(content: bytes, **form) -> tuple[int, int, int, int] | None:
     """The device-space box of everything painted, at 72 dpi (1 px = 1 pt)."""
-    raster = _document(content, **form).pages[0].render(dpi=72, antialias=False)
+    raster = _document(content, **form).pages[1].render(dpi=72, antialias=False)
     painted = [
         (x, y)
         for y in range(300)
@@ -136,7 +136,7 @@ def test_an_image_inside_a_scaled_page_lands_where_the_scale_puts_it():
 def test_the_image_placement_absorber_reports_the_same_place():
     document = _document(b"q 0.5 0 0 0.5 0 0 cm q 200 0 0 100 300 200 cm /Im Do Q Q")
     absorber = ImagePlacementAbsorber()
-    document.pages[0].accept(absorber)
+    document.pages[1].accept(absorber)
     rect = absorber.image_placements[0].rectangle
     assert (rect.x, rect.y, rect.width, rect.height) == (150, 100, 100, 50)
 

@@ -81,11 +81,11 @@ def test_images_keep_size_colors_and_placement_after_save(
         with io.BytesIO() as output:
             document.save(output)
             with Document(output.getvalue()) as reopened:
-                assert reopened.pages[0].render(antialias=False).pixels == raster.pixels
+                assert reopened.pages[1].render(antialias=False).pixels == raster.pixels
         output_path = tmp_path / "output.pdf"
         document.save(output_path)
         with Document(output_path) as reopened:
-            assert reopened.pages[0].render(antialias=False).pixels == raster.pixels
+            assert reopened.pages[1].render(antialias=False).pixels == raster.pixels
 
 
 def _alpha_bmp():
@@ -120,7 +120,7 @@ def test_transparency_matches_png_after_round_trip(pillow, entrypoint, kind):
             _place(page, payload, entrypoint, 12, 8)
             document.save(output)
             with Document(output.getvalue()) as reopened:
-                rendered.append(reopened.pages[0].render(
+                rendered.append(reopened.pages[1].render(
                     background=(0, 255, 0), antialias=False,
                 ).pixels)
     assert rendered[0] == rendered[1]

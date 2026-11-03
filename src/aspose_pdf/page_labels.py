@@ -12,7 +12,7 @@ is the label one page ends up with::
     document.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ROMAN_LOWERCASE)
     document.page_labels[4] = PageLabel()                  # 1, 2, 3, ...
     document.page_labels[20] = PageLabel(prefix="A-")      # A-1, A-2, ...
-    document.pages[4].label                                # '1'
+    document.pages[5].label                                # '1'
 """
 
 from __future__ import annotations

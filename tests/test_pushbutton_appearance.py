@@ -15,7 +15,7 @@ def _button_widget(caption="Go", **kwargs):
     doc = Document()
     doc._engine_pdf = pdf
     doc.form.add_push_button(
-        "btn", doc.pages[0], (100, 100, 220, 140), caption=caption, **kwargs
+        "btn", doc.pages[1], (100, 100, 220, 140), caption=caption, **kwargs
     )
     doc.form.generate_appearances()
     engine = doc._engine_pdf

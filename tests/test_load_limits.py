@@ -480,7 +480,7 @@ def test_supersampled_raster_limit_is_checked_before_rendering() -> None:
     try:
         document.load_from(_single_page_pdf())
         with pytest.raises(PdfResourceLimitException, match="max_raster_pixels"):
-            document.render_page(0, antialias=False)
+            document.render_page(1, antialias=False)
     finally:
         document.close()
 

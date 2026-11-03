@@ -16,7 +16,7 @@ def test_non_text_annotation_subtypes_roundtrip() -> None:
     """Link, Highlight, Square, and Circle subtypes persist through save/load."""
     doc = Document()
     doc.pages.add()
-    page = doc.pages[0]
+    page = doc.pages[1]
     specs = [
         ("Link", (10, 10, 110, 50), "jump"),
         ("Highlight", (10, 60, 110, 90), ""),
@@ -32,7 +32,7 @@ def test_non_text_annotation_subtypes_roundtrip() -> None:
         doc.save(path, overwrite=True)
         doc2 = Document()
         doc2.load_from(path)
-        page2 = doc2.pages[0]
+        page2 = doc2.pages[1]
         assert len(page2.annotations) == len(specs)
         for i, (subtype, rect, contents) in enumerate(specs):
             a = page2.annotations[i]
@@ -47,7 +47,7 @@ def test_non_text_annotation_subtypes_roundtrip() -> None:
 def test_appearance_stream_save_load_and_facade() -> None:
     doc = Document()
     doc.pages.add()
-    page = doc.pages[0]
+    page = doc.pages[1]
     page.annotations.add(
         "Text",
         (100, 100, 200, 200),
@@ -63,7 +63,7 @@ def test_appearance_stream_save_load_and_facade() -> None:
     buf.seek(0)
     doc2 = Document()
     doc2.load_from(buf)
-    b0 = doc2.pages[0].annotations[0]
+    b0 = doc2.pages[1].annotations[0]
     assert b0.has_appearance
     assert len(b0.appearance_normal) > 0
     engine_ann = doc2._engine_pdf.get_annotations(0)[0]
@@ -74,7 +74,7 @@ def test_appearance_stream_save_load_and_facade() -> None:
 def test_flatten_uses_normal_appearance_stream() -> None:
     doc = Document()
     doc.pages.add()
-    page = doc.pages[0]
+    page = doc.pages[1]
     page.annotations.add(
         "Highlight",
         (100, 100, 200, 200),
@@ -92,7 +92,7 @@ def test_flatten_uses_normal_appearance_stream() -> None:
 def test_insert_with_appearance_and_clear_appearance_via_setter() -> None:
     doc = Document()
     doc.pages.add()
-    page = doc.pages[0]
+    page = doc.pages[1]
     page.annotations.insert(
         0,
         "Square",

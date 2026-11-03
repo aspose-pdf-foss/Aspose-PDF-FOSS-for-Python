@@ -154,13 +154,13 @@ def test_redacting_all_uses_of_a_shared_form_purges_the_original():
 
 def test_selected_page_keeps_another_pages_shared_content():
     with _shared_form_document() as document:
-        assert document.pages[0].redact_text("shared") == 1
+        assert document.pages[1].redact_text("shared") == 1
         result = _saved(document)
     with Document(result) as loaded:
         # The space the redacted word left behind is kept: extraction
         # reports what the page draws, and MuPDF and pdfium keep it too.
-        assert loaded.pages[0].extract_text() == " text"
-        assert loaded.pages[1].extract_text() == "shared text"
+        assert loaded.pages[1].extract_text() == " text"
+        assert loaded.pages[2].extract_text() == "shared text"
 
 
 @pytest.mark.parametrize("property_list", [
@@ -173,8 +173,8 @@ def test_inline_alternate_text_is_removed_with_its_run(property_list):
         assert document.redact_text(_SECRET) == 1
         result = _saved(document)
         _assert_removed(result)
-        assert b"/ActualText" not in document.pages[0].content
-        assert b"/Actual#54ext" not in document.pages[0].content
+        assert b"/ActualText" not in document.pages[1].content
+        assert b"/Actual#54ext" not in document.pages[1].content
 
 
 def test_structure_alternate_text_is_removed_but_unrelated_tags_survive():
@@ -236,7 +236,7 @@ def test_named_property_shared_with_unmatched_scope_is_preserved():
         })
         assert document.redact_text(_SECRET) == 1
         _assert_removed(_saved(document))
-        assert document.pages[0].content.count(b"/AT BDC") == 1
+        assert document.pages[1].content.count(b"/AT BDC") == 1
         assert b"Alternate" in _saved(document)
 
 
@@ -245,7 +245,7 @@ def test_tagged_form_is_refused_instead_of_retaining_structure_copies():
         document._engine_pdf._cos_doc.objects[6].mapping[PdfName("StructParents")] = PdfNumber(0)
         with pytest.raises(PdfValidationException, match="tagged Form"):
             document.redact_text(_SECRET)
-        assert _SECRET in document.pages[0].extract_text()
+        assert _SECRET in document.pages[1].extract_text()
 
 
 def test_engine_save_cos_cannot_bypass_cleanup(tmp_path):
@@ -320,7 +320,7 @@ def test_lazy_redaction_can_overwrite_its_input_file(tmp_path):
     source = tmp_path / "source.pdf"
     source.write_bytes(_source(packed=True))
     with Document.open_streaming(source) as document:
-        assert document.pages[0].redact_text(_SECRET) == 1
+        assert document.pages[1].redact_text(_SECRET) == 1
         document.save(source, overwrite=True)
         _assert_removed(source.read_bytes())
         _assert_removed(_saved(document))
@@ -355,7 +355,7 @@ def test_partial_redaction_failure_still_disables_incremental_save():
         engine._set_page_content(1, b"/Span /Missing BDC " + _shows(_SECRET.encode()) + b" EMC")
         with pytest.raises(PdfValidationException, match="resolve"):
             document.redact_text(_SECRET)
-        assert _SECRET not in document.pages[0].extract_text()
+        assert _SECRET not in document.pages[1].extract_text()
         with pytest.raises(PdfSecurityException, match="redact"):
             _saved(document, incremental=True)
 

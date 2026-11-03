@@ -27,7 +27,7 @@ def _measure(page: Page, options: _Options) -> Bounds | None:
         return None
     # Read exactly the same normalized, inherited geometry as the renderer,
     # including its fallback for degenerate page boxes.
-    _, crop, rotation = _page_view(page._document._engine_pdf, page.index)
+    _, crop, rotation = _page_view(page._document._engine_pdf, page._index)
     if bounds == (0, 0, raster.width, raster.height):
         return crop
     return _page_box(bounds, crop, rotation, options.dpi, 0.0)
@@ -63,5 +63,5 @@ def document_bounds(
     results = {}
     for index in selection:
         if index not in results:
-            results[index] = _measure(document.pages[index], options)
+            results[index] = _measure(document._page_at(index), options)
     return results

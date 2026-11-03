@@ -174,7 +174,7 @@ def test_public_api_replace_across_operators() -> None:
         page_contents=[_content("BT /F1 12 Tf (Hello ) Tj (World) Tj ET")],
     )
     assert doc.replace_text("Hello World", "Hi all") == 1
-    content = doc.pages[0].content
+    content = doc.pages[1].content
     assert b"(Hi all)" in content
     assert b"(World)" not in content
 

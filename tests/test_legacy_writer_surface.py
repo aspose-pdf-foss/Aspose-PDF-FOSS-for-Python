@@ -93,7 +93,7 @@ def test_a_watermark_is_what_a_stamp_does():
     # -- which is every document the public API makes.
     document = Document()
     document.pages.add()
-    document.pages[0].add_stamp(TextStamp("CONFIDENTIAL", font_size=36))
+    document.pages[1].add_stamp(TextStamp("CONFIDENTIAL", font_size=36))
     assert "CONFIDENTIAL" in document.extract_text()
 
 

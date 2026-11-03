@@ -156,7 +156,7 @@ def group_imported(
     """Wrap imported roots while retaining their targets and page identities."""
     pdf = document._engine_pdf
     roots = pdf._outlines_data
-    section = OutlineItem(title, first_page)._to_dict()
+    section = OutlineItem(title, first_page + 1)._to_dict()
     section["loaded_target"] = (
         "Dest",
         PdfArray([pdf._make_page_ref(first_page), PdfName("Fit")]),

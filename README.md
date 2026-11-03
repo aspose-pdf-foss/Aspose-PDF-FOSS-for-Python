@@ -10,6 +10,13 @@ information (`py.typed`), and depends only on `cryptography` and `asn1crypto` at
 project is currently in alpha, so its public APIs and feature coverage continue to evolve ahead
 of a first stable release.
 
+Page numbers in public APIs start at **1**, matching Aspose.PDF for .NET:
+`document.pages[1]` is the first page. Numeric page selections and returned
+`page_index` fields use the same numbering. Page-label collection keys retain
+.NET's zero-based convention. This is a breaking change from earlier FOSS
+versions; negative page indices and page-selection slices are no longer accepted.
+See [the split examples](examples/split_documents.py) for ten compatible workflows.
+
 ## Navigation
 
 - [At a Glance](#at-a-glance)
@@ -425,7 +432,7 @@ after the fact:
 from aspose_pdf import Document, PageSize
 
 with Document("input.pdf") as document:
-    page = document.pages[0]
+    page = document.pages[1]
     page.size = PageSize.A4.landscape()   # resizes the sheet, keeping its origin
     page.trim_box = (28, 28, page.rect[2] - 28, page.rect[3] - 28)
     document.save("resized.pdf")
@@ -460,7 +467,7 @@ with Document("input.pdf") as source:
         copy.save("static-copy.pdf")
 ```
 
-Use `pages=[2, 0, 2]` to select and reorder zero-based pages, including repeats.
+Use `pages=[3, 1, 3]` to select and reorder one-based pages, including repeats.
 Each page becomes one losslessly stored image at its original displayed
 physical size, with CropBox and rotation baked in. Visible annotations and
 form appearances are included unless `include_annotations=False`.
@@ -492,8 +499,8 @@ with Document("spreads.pdf") as source:
 
 `horizontal` splits the displayed view left then right; `vertical` splits top
 then bottom. Use `reverse=True` to reverse each pair, `split_ratio=0.5` to set
-the cut from the left/top, and `gutter=6` to omit a centered strip. `pages=[1, 2]`
-splits only those zero-based pages, retaining covers and other pages in source
+the cut from the left/top, and `gutter=6` to omit a centered strip. `pages=[2, 3]`
+splits only those one-based pages, retaining covers and other pages in source
 order. Rotation and the visible CropBox are respected.
 
 The result preserves text, vectors and image resources without rasterizing.
@@ -510,7 +517,7 @@ from aspose_pdf import Document
 with Document("input.pdf") as document:
     document.export_pages_zip(
         "previews.zip",
-        pages=[0, 2, 3],
+        pages=[1, 3, 4],
         image_format="png",
         dpi=144,
         include_manifest=True,
@@ -519,7 +526,7 @@ with Document("input.pdf") as document:
 
 Each selected view becomes `page-0001.png`, `page-0002.png`, and so on, in
 selection order, including repeated pages. The optional `manifest.json` maps
-files to zero-based source page indices and pixel dimensions. Use
+files to one-based source page indices and pixel dimensions. Use
 `image_format="jpeg"` with `quality=85` for JPEG or `image_format="webp"` with
 the optional `images` extra. `mode="gray"` or `mode="bilevel"` reduces color;
 JPEG supports RGB and gray. The method returns ZIP bytes and can also write a
@@ -533,7 +540,7 @@ from aspose_pdf import Document
 
 with Document() as document:
     document.load_from("input.pdf")
-    document.pages[0].save_as_image("page-1.png", dpi=144)
+    document.pages[1].save_as_image("page-1.png", dpi=144)
 ```
 
 Create a contact sheet to inspect several pages at once:
@@ -542,7 +549,7 @@ Create a contact sheet to inspect several pages at once:
 with Document("input.pdf") as document:
     document.save_contact_sheet(
         "overview.png",
-        pages=[0, 2, 4],              # zero-based indices, in this order
+        pages=[1, 3, 5],              # one-based indices, in this order
         columns=3,
         thumbnail_size=(160, 220),   # pixel bounds; page proportions are preserved
     )
@@ -582,7 +589,7 @@ from aspose_pdf import Document
 with Document("report.pdf") as document:
     pages = document.add_table_of_contents(at=1)   # after the cover
     document.generate_outlines()                   # and bookmarks from the same headings
-    print(f"contents on page {pages[0] + 1}")
+    print(f"contents on page {pages[1] + 1}")
     document.save("report-with-contents.pdf")
 ```
 
@@ -665,8 +672,8 @@ from aspose_pdf import Document
 
 with Document("report.pdf") as document:
     draft = document.layers.add("Draft", visible=False)
-    with document.pages[0].layer(draft):
-        document.pages[0].add_text("DRAFT", 150, 400, font_size=64)
+    with document.pages[1].layer(draft):
+        document.pages[1].add_text("DRAFT", 150, 400, font_size=64)
     document.save("with-layers.pdf")
 
     # ...and when the file has to leave: hidden means gone, not merely hidden.
@@ -684,7 +691,7 @@ with Document("report.pdf") as document:
     document.save_as_markdown("report.md")
     # Images as files in report_files/ rather than data: URIs; one HTML file per page.
     document.save_as_html("report.html", resources_directory="report_files", split_into_pages=True)
-    print(document.to_markdown(pages=[0], markdown_format="CommonMark"))
+    print(document.to_markdown(pages=[1], markdown_format="CommonMark"))
 ```
 
 ### Extract Tables as Lists or CSV
@@ -693,7 +700,7 @@ with Document("report.pdf") as document:
 from aspose_pdf import Document
 
 with Document("report.pdf") as document:
-    for number, table in enumerate(document.extract_tables(pages=[0, 1]), 1):
+    for number, table in enumerate(document.extract_tables(pages=[1, 2]), 1):
         print(table.page_index, table.to_list())  # Zero-based source page; all rows retained.
         table.save_csv(f"tables/table-{number}.csv", overwrite=False)
         # table.to_csv(delimiter=";") returns a string without writing a file.
@@ -781,14 +788,14 @@ with Document() as document:
 from aspose_pdf import Document
 
 with Document("report.pdf") as document:
-    document.pages[0].save_as_svg("page-1.svg")
+    document.pages[1].save_as_svg("page-1.svg")
     document.save_as_svg("report.svg")  # one file per page: report-1.svg, ...
 
     # text="both" keeps the glyph outlines and puts selectable <text> over them,
     # so the page looks identical and its words can be searched and copied.
     # text="text" writes the words instead of the curves: far smaller, and the
     # glyph shapes become whatever font the viewer resolves the name to.
-    document.pages[0].save_as_svg("page-1-selectable.svg", text="both")
+    document.pages[1].save_as_svg("page-1-selectable.svg", text="both")
 ```
 
 ### Render a Page Whose Fonts Are Not Embedded
@@ -898,10 +905,10 @@ coordinates (lower-left origin):
 from aspose_pdf import Document
 
 with Document("input.pdf") as document:
-    print(document.pages[0].extract_text(clip=(72, 650, 300, 750)))
+    print(document.pages[1].extract_text(clip=(72, 650, 300, 750)))
 ```
 
-`Document.extract_text(pages=[2, 0, 2])` reads the third, first, then third page.
+`Document.extract_text(pages=[3, 1, 3])` reads the third, first, then third page.
 Indices in `Document` and `TextExtractorOptions(pages=...)` start at zero;
 the facade uses `PdfExtractor.extract_text(page_numbers=[3, 1, 3])` instead.
 `None` selects all pages and `[]` selects none. Lists, ranges and generators
@@ -918,7 +925,7 @@ Pass `skip_artifacts=True` to `Document.extract_text`, `Page.extract_text`,
 
 ```python
 with Document("input.pdf") as document:
-    print(document.extract_text(pages=[0, 1], skip_artifacts=True))
+    print(document.extract_text(pages=[1, 2], skip_artifacts=True))
 ```
 
 The default is `False`. Untagged content is retained; filtering relies on PDF
@@ -947,7 +954,7 @@ OCR or redact the PDF. `None` and empty iterables preserve ordinary extraction.
 from aspose_pdf import Document
 
 with Document("input.pdf") as document:
-    result = document.auto_link(pages=[0, 1])
+    result = document.auto_link(pages=[1, 2])
     print(result.linked_count, result.skipped_count, result.existing_count)
     document.save("linked.pdf")
 ```
@@ -987,8 +994,8 @@ supported actions and validation limits.
 from aspose_pdf import Document
 
 with Document("manual.pdf") as document:
-    for link in document.extract_links(pages=[0, 2]):
-        print(link.page_index + 1, link.rect, link.action_type,
+    for link in document.extract_links(pages=[1, 3]):
+        print(link.page_index, link.rect, link.action_type,
               link.resolved_uri, link.target_page_index, link.file, link.issues)
     document.export_links_csv("links.csv", encoding="utf-8-sig")
     document.export_links_json("links.json")
@@ -997,14 +1004,14 @@ with Document("manual.pdf") as document:
 Audit outbound URLs, locate internal navigation and prepare link migrations
 without clicking through the PDF. `Page.extract_links()` inspects one page.
 Reports include direct targets and action chains, retain invalid targets with
-diagnostic codes, and remain usable after the document is closed. Source page
-and annotation indices are zero-based. Relative URLs use the catalog URI Base
+diagnostic codes, and remain usable after the document is closed. Source page numbers are one-based;
+annotation indices remain zero-based. Relative URLs use the catalog URI Base
 when present; remote file paths are reported as declared. No links are opened,
 files fetched or page content decoded. This inventories Link annotations,
 including hidden ones; bookmarks and URLs written only as page text are outside
 its scope. CSV and versioned JSON exports make the inventory ready for review
 and downstream processing. CSV uses one-based page numbers, with separate local
-and remote target columns; JSON retains zero-based indices and structured views.
+and remote target columns; JSON version 2 uses one-based page numbers and structured views.
 See [link inventory details](supported-features.md#annotations).
 
 Read or set `Document.base_uri` to give relative links a common address, for
@@ -1026,7 +1033,7 @@ with Document("manual.pdf") as document:
 ```
 
 The returned count is changed Link annotations, excluding no-op replacements.
-Use `pages=[0, 2]` or `Page.replace_link_urls()` to select pages. Strings replace
+Use `pages=[1, 3]` or `Page.replace_link_urls()` to select pages. Strings replace
 literal substrings; `regex=True` or a compiled text regex supports capture-based
 replacement templates. Matching uses stored URLs, including relative or custom
 schemes. Only primary URI actions are edited; page text, bookmark URLs and
@@ -1045,7 +1052,7 @@ with Document("manual.pdf") as document:
 ```
 
 The report finds missing names/pages, malformed destinations and action chains,
-and cycles. Page and annotation indices start at zero. Use `pages=[0, 2]` to select
+and cycles. Page and annotation indices start at zero. Use `pages=[1, 3]` to select
 link sources; bookmark and destination-definition checks remain enabled unless
 `include_outlines=False` or `include_named_destinations=False` is passed.
 External target reachability and full PDF conformance are outside these checks.
@@ -1085,10 +1092,10 @@ from aspose_pdf import AnnotationType, Document
 
 with Document("reviewed.pdf") as document:
     document.export_annotations_json(
-        "review/comments.json", pages=[0],
+        "review/comments.json", pages=[1],
         subtypes=[AnnotationType.TEXT, AnnotationType.HIGHLIGHT], overwrite=False,
     )
-    for comment in document.pages[0].annotations.to_list(subtypes="Text"):
+    for comment in document.pages[1].annotations.to_list(subtypes="Text"):
         print(comment["author"], comment["contents"], comment["rect"])
 ```
 
@@ -1117,10 +1124,10 @@ from aspose_pdf import AnnotationType, Document
 with Document("reviewed.pdf") as document:
     document.export_annotations_xfdf(
         "review/comments.xfdf",
-        pages=[0, 2],
+        pages=[1, 3],
         subtypes=[AnnotationType.TEXT, AnnotationType.HIGHLIGHT],
     )
-    page_xfdf = document.pages[0].annotations.export_xfdf()
+    page_xfdf = document.pages[1].annotations.export_xfdf()
 ```
 
 The methods return UTF-8 XML bytes and can also write a file or binary stream.
@@ -1232,15 +1239,15 @@ Read positioned words for region analysis, indexing or custom highlights:
 from aspose_pdf import Document
 
 with Document("input.pdf") as document:
-    for word in document.pages[0].extract_words():
+    for word in document.pages[1].extract_words():
         print(word.text, word.bbox, word.page_index)
 
     selected = document.extract_words(
-        pages=[0, 2], clip=(72, 650, 300, 750), skip_artifacts=True
+        pages=[1, 3], clip=(72, 650, 300, 750), skip_artifacts=True
     )
 ```
 
-Each `TextWord` is an immutable snapshot with `text`, zero-based `page_index`,
+Each `TextWord` is an immutable snapshot with `text`, one-based `page_index`,
 `rect` (also `bbox`) and `quad`. Coordinates are unrotated PDF points with a
 lower-left origin. The region selects whole overlapping words. Bounds use
 font metrics; unmeasurable runs and content-stream `/ActualText` replacement
@@ -1310,7 +1317,7 @@ from aspose_pdf import Document
 with Document("scans.pdf") as document:
     blank_pages = document.find_blank_pages()
     print(blank_pages)  # Zero-based page indices; the document is unchanged.
-    print(document.pages[0].is_blank())
+    print(document.pages[1].is_blank())
 
     # Explicitly tolerate a small amount of scan noise.
     tolerant_matches = document.find_blank_pages(
@@ -1334,13 +1341,13 @@ from aspose_pdf import Document
 
 with Document("batch.pdf") as document:
     groups = document.find_duplicate_pages(dpi=96)
-    print(groups)  # For example: [[0, 3], [1, 4, 7]]; zero-based indices.
+    print(groups)  # For example: [[1, 4], [2, 5, 8]]; one-based indices.
 ```
 
 Each group includes its first occurrence. Pages must have equal raster
 dimensions and identical RGB pixels at the chosen DPI. Visible annotations
 count by default; `include_annotations=False` compares page content alone.
-Use `pages=[0, 3, 7]` to inspect a subset. The document is unchanged.
+Use `pages=[1, 4, 8]` to inspect a subset. The document is unchanged.
 This detects exact rendered matches; noisy scans can differ, and hidden data
 can differ on matching pages. See [comparison details](supported-features.md#pages).
 
@@ -1362,13 +1369,13 @@ from aspose_pdf import Document
 
 with Document("catalog.pdf") as document:
     for issue in document.find_low_resolution_images(min_dpi=150):
-        print(issue.page_index + 1, issue.image_name,
+        print(issue.page_index, issue.image_name,
               issue.dpi_x, issue.dpi_y, issue.bbox)
 ```
 
 Find each placement below the threshold on either image axis, including reused
 images, inline images and nested forms, without decoding image pixels. Reports
-use zero-based page indices; `pages=[2, 0]` selects a subset. Rotation, shear and
+use one-based page indices; `pages=[3, 1]` selects a subset. Rotation, shear and
 page UserUnit affect the calculation correctly. Hidden or clipped-out paints
 can be reported; this checks resolution rather than image sharpness or print
 certification. See [resolution details](supported-features.md#images).
@@ -1380,14 +1387,14 @@ from aspose_pdf import Document
 
 with Document("catalog.pdf") as document:
     document.export_images_zip("images.zip", include_manifest=True)
-    selected = document.export_images_zip(pages=[2, 0])
+    selected = document.export_images_zip(pages=[3, 1])
 ```
 
 Export photos, illustrations and scanned images in one step for reuse, content
 migration or downstream processing. Shared image objects are exported once;
 JPEG/JPEG 2000 keep their encoded payloads and other supported samples become
 PNG. Generated filenames are safe to unpack, and the optional manifest maps
-files to zero-based pages and resource paths. Export scans page and nested
+files to one-based pages and resource paths. Export scans page and nested
 Form resources, including unused or hidden assets; it does not render pages,
 apply placement/clipping or combine transparency masks. Inline images and
 annotation appearances are excluded. The source is unchanged. See
@@ -1500,15 +1507,15 @@ with Document("scans.pdf") as document:
     for page_index, bounds in document.get_content_bounds(dpi=96).items():
         if bounds is not None:
             x0, y0, x1, y1 = bounds
-            print(page_index + 1, x1 - x0, y1 - y0)
-    first_page_bounds = document.pages[0].get_content_bounds()
+            print(page_index, x1 - x0, y1 - y0)
+    first_page_bounds = document.pages[1].get_content_bounds()
 ```
 
 Use measurements to review white margins and prepare crop or alignment decisions
 before changing the PDF. Bounds are `(x0, y0, x1, y1)` in unrotated page user
 coordinates, within the current CropBox; visually blank pages return `None`.
-The document method returns a dictionary keyed by zero-based page indices;
-`pages=[2, 0]` selects a subset. Visible annotations count unless
+The document method returns a dictionary keyed by one-based page indices;
+`pages=[3, 1]` selects a subset. Visible annotations count unless
 `include_annotations=False`. Detection is approximate at the chosen DPI and
 shares the renderer's limits. See [content bounds details](supported-features.md#pages).
 
@@ -1530,7 +1537,7 @@ Only CropBox changes: cropped-out content remains stored in the PDF.
 Detection is approximate at the chosen DPI; dark scan borders and speckles
 count as content. See [cropping details](supported-features.md#pages).
 
-Use `pages=[0, 2]` to crop a subset or `dry_run=True` to preview the returned
+Use `pages=[1, 3]` to crop a subset or `dry_run=True` to preview the returned
 dictionary of changed page indices and crop rectangles. `uniform=True` applies
 one frame enclosing all selected content to every selected page, including blank
 ones, for consistent sizes. This mode requires equal displayed page dimensions;
@@ -2031,7 +2038,7 @@ and delete workflows. 276 public types are organized by module below.
 
 - `Document.extract_text(pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` /
   `Page.extract_text(clip=None, skip_artifacts=False, exclude_regions=None)` return text,
-  with zero-based page selection on `Document`,
+  with one-based page selection on `Document`,
   optionally selecting glyphs overlapping `(x0, y0, x1, y1)` in unrotated PDF space
   and excluding rectangular regions or explicitly marked Artifact content.
 
@@ -2041,7 +2048,7 @@ and delete workflows. 276 public types are organized by module below.
   whole overlapping words in unrotated PDF coordinates.
 
 - `Document.extract_tables(pages=None, clip_to_page=True)` / `Page.extract_tables(clip_to_page=True)`
-  return `list[ExtractedTable]`; `pages` contains zero-based indices. Each result exposes
+  return `list[ExtractedTable]`; `pages` contains one-based indices. Each result exposes
   `page_index`, immutable `rows` / `column_spans`, `row_count`, `column_count`, `to_list()`,
   `to_csv(delimiter=",")` and `save_csv(path, delimiter=",", encoding="utf-8", overwrite=True)`.
 
@@ -2057,7 +2064,7 @@ and delete workflows. 276 public types are organized by module below.
 
   ```python
   with Document("report.pdf") as document:
-      for block in document.extract_blocks(pages=[0]):
+      for block in document.extract_blocks(pages=[1]):
           print(block.page_index, block.kind, block.text, block.rows)
       document.export_blocks_json("report-structure.json")
   ```

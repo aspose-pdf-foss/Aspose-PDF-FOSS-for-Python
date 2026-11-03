@@ -48,11 +48,11 @@ def test_sections_preserve_nested_bookmarks_targets_and_source_documents(
     source_kind, on_disk, tmp_path
 ):
     with _document("First", "Second", "Third") as authored:
-        authored.destinations["chapter"] = XYZDestination(2, 30, 450, 1.5)
+        authored.destinations["chapter"] = XYZDestination(3, 30, 450, 1.5)
         heading = authored.outlines.add(
             OutlineItem(
                 "Chapter",
-                destination=XYZDestination(1, 20, 500, 2),
+                destination=XYZDestination(2, 20, 500, 2),
                 is_bold=True,
                 is_italic=True,
                 color="#336699",
@@ -81,7 +81,7 @@ def test_sections_preserve_nested_bookmarks_targets_and_source_documents(
             source_view = source.outlines
             source_heading = source_view[0]
             with _document("Cover") as target:
-                target.outlines.add(OutlineItem("Cover", 0))
+                target.outlines.add(OutlineItem("Cover", 1))
                 assert (
                     target.merge(
                         source,
@@ -90,7 +90,7 @@ def test_sections_preserve_nested_bookmarks_targets_and_source_documents(
                     )
                     is target
                 )
-                assert _titles(target) == [("Cover", 0), ("Report Привет 🌍", 1)]
+                assert _titles(target) == [("Cover", 1), ("Report Привет 🌍", 2)]
                 assert source.outlines is source_view
                 assert source.outlines[0] is source_heading
                 assert [item.title for item in source.outlines] == [
@@ -111,12 +111,12 @@ def test_sections_preserve_nested_bookmarks_targets_and_source_documents(
                         "Third",
                     ]
                     section = reopened.outlines[1]
-                    assert section.page_index == 1
+                    assert section.page_index == 2
                     chapter, website = section.children
-                    assert chapter.page_index == 2
-                    assert chapter.destination == XYZDestination(2, 20, 500, 2)
+                    assert chapter.page_index == 3
+                    assert chapter.destination == XYZDestination(3, 20, 500, 2)
                     assert chapter.children[0].destination == XYZDestination(
-                        3, 30, 450, 1.5
+                        4, 30, 450, 1.5
                     )
                     assert chapter.is_bold and chapter.is_italic and chapter.open
                     assert chapter.color == pytest.approx((0.2, 0.4, 0.6))
@@ -131,12 +131,12 @@ def test_section_targets_follow_pages_after_insertion_or_deletion(edit, expected
     with _document("A", "B") as source, _document("Cover") as target:
         target.merge(source, create_bookmarks=True)
         if edit == "insert":
-            target.pages.insert(0)
+            target.pages.insert(1)
         else:
-            target.pages.delete(0)
+            target.pages.delete(1)
         with Document(_saved(target)) as reopened:
-            assert _titles(reopened) == [("Document 1", expected)]
-            assert reopened.pages[expected].extract_text().strip() == "A"
+            assert _titles(reopened) == [("Document 1", expected + 1)]
+            assert reopened.pages[(expected) + 1].extract_text().strip() == "A"
 
 
 def test_default_titles_prefer_file_stems_then_pdf_metadata_then_input_numbers(
@@ -156,23 +156,23 @@ def test_default_titles_prefer_file_stems_then_pdf_metadata_then_input_numbers(
         target.merge(file_source, metadata_source, anonymous, create_bookmarks=True)
         with Document(_saved(target)) as reopened:
             assert _titles(reopened) == [
-                ("Annual report", 0),
-                ("Financial summary", 1),
-                ("Document 3", 2),
+                ("Annual report", 1),
+                ("Financial summary", 2),
+                ("Document 3", 3),
             ]
 
 
 def test_empty_inputs_do_not_create_dead_sections_and_repeated_inputs_stay_independent():
     with Document() as empty, _document("Page") as source, Document() as target:
-        source.outlines.add(OutlineItem("Original", 0))
+        source.outlines.add(OutlineItem("Original", 1))
         target.merge(empty, source, source, create_bookmarks=True)
-        assert _titles(target) == [("Document 2", 0), ("Document 3", 1)]
+        assert _titles(target) == [("Document 2", 1), ("Document 3", 2)]
         first, second = target.outlines
         first.children[0].title = "Edited first copy"
         assert second.children[0].title == "Original"
         assert source.outlines[0].title == "Original"
         with Document(_saved(target)) as reopened:
-            assert [item.children[0].page_index for item in reopened.outlines] == [0, 1]
+            assert [item.children[0].page_index for item in reopened.outlines] == [1, 2]
 
 
 def test_empty_input_keeps_existing_non_page_bookmarks_without_creating_a_section():
@@ -189,11 +189,11 @@ def test_empty_input_keeps_existing_non_page_bookmarks_without_creating_a_sectio
 
 def test_default_merge_keeps_existing_flat_bookmark_behavior():
     with _document("A") as first, _document("B") as second, Document() as target:
-        first.outlines.add(OutlineItem("First", 0))
-        second.outlines.add(OutlineItem("Second", 0))
+        first.outlines.add(OutlineItem("First", 1))
+        second.outlines.add(OutlineItem("Second", 1))
         target.merge(first, second)
         with Document(_saved(target)) as reopened:
-            assert _titles(reopened) == [("First", 0), ("Second", 1)]
+            assert _titles(reopened) == [("First", 1), ("Second", 2)]
             assert all(not item.children for item in reopened.outlines)
 
 
@@ -243,12 +243,12 @@ def test_invalid_or_oversized_bookmark_trees_fail_before_import(failure):
         PdfLoadLimits.unlimited(), max_container_items=8, max_nesting_depth=2
     )
     with _document("Source") as source, _document("Cover", limits=limits) as target:
-        root = source.outlines.add(OutlineItem("Root", 0))
+        root = source.outlines.add(OutlineItem("Root", 1))
         if failure == "depth":
-            root.add(OutlineItem("Child", 0))
+            root.add(OutlineItem("Child", 1))
         elif failure == "items":
             for index in range(9):
-                root.add(OutlineItem(str(index), 0))
+                root.add(OutlineItem(str(index), 1))
         elif failure == "unicode":
             root.title = "\ud800"
         else:
@@ -285,7 +285,7 @@ def test_unending_section_titles_are_bounded():
 def test_lowcode_merger_names_file_stream_metadata_and_anonymous_inputs(tmp_path):
     path = tmp_path / "Report.pdf"
     with _document("Page 1", "Page 2") as source:
-        source.outlines.add(OutlineItem("Chapter", 1))
+        source.outlines.add(OutlineItem("Chapter", 2))
         source.save(path)
         raw = _saved(source)
         source.info["Title"] = "Metadata title"
@@ -303,16 +303,16 @@ def test_lowcode_merger_names_file_stream_metadata_and_anonymous_inputs(tmp_path
     assert result[0].to_array() == destination.read_bytes()
     with Document(destination) as reopened:
         assert _titles(reopened) == [
-            ("Report", 0),
-            ("Statement", 2),
-            ("Metadata title", 4),
-            ("Document 4", 6),
+            ("Report", 1),
+            ("Statement", 3),
+            ("Metadata title", 5),
+            ("Document 4", 7),
         ]
         assert [root.children[0].page_index for root in reopened.outlines] == [
-            1,
-            3,
-            5,
-            7,
+            2,
+            4,
+            6,
+            8,
         ]
 
 
@@ -325,7 +325,7 @@ def test_lowcode_custom_titles_are_snapshotted_and_allow_duplicates():
     options.add_input(ByteArrayDataSource(raw))
     options.add_input(ByteArrayDataSource(raw))
     with Document(Merger().process(options)[0].to_array()) as reopened:
-        assert _titles(reopened) == [("Section", 0), ("Section", 1)]
+        assert _titles(reopened) == [("Section", 1), ("Section", 2)]
 
 
 class _FailOnRead(DataSource):
@@ -368,7 +368,7 @@ def test_lowcode_late_invalid_pdf_does_not_write_partial_output():
 
 def test_source_bookmark_views_are_restored_when_import_fails(monkeypatch):
     with _document("Source") as source, Document() as target:
-        source.outlines.add(OutlineItem("Original", 0))
+        source.outlines.add(OutlineItem("Original", 1))
         view = source.outlines
         original = source._engine_pdf._outlines_data
 
@@ -381,7 +381,7 @@ def test_source_bookmark_views_are_restored_when_import_fails(monkeypatch):
             target.merge(source, create_bookmarks=True)
         assert source.outlines is view
         assert source._engine_pdf._outlines_data is original
-        assert _titles(source) == [("Original", 0)]
+        assert _titles(source) == [("Original", 1)]
 
 
 def test_lowcode_input_order_is_snapshotted_before_custom_source_reads():
@@ -398,4 +398,4 @@ def test_lowcode_input_order_is_snapshotted_before_custom_source_reads():
     options.add_input(MutatingSource(raw))
     options.add_input(ByteArrayDataSource(raw))
     with Document(Merger().process(options)[0].to_array()) as reopened:
-        assert _titles(reopened) == [("First", 0), ("Second", 1)]
+        assert _titles(reopened) == [("First", 1), ("Second", 2)]

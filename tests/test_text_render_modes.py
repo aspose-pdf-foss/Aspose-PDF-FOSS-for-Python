@@ -62,7 +62,7 @@ def _document(content: bytes) -> Document:
 
 def _ink(content: bytes) -> int:
     """How many sampled pixels are not the bare page."""
-    raster = _document(content).pages[0].render(antialias=False)
+    raster = _document(content).pages[1].render(antialias=False)
     return sum(
         1
         for y in range(0, 200, 4)
@@ -84,7 +84,7 @@ def _shown(mode: int, *, after: bytes = b"") -> bytes:
 
 def _colours(content: bytes) -> tuple[int, int]:
     """Sampled pixels of the fill colour and of the stroke colour."""
-    raster = _document(content).pages[0].render(antialias=False)
+    raster = _document(content).pages[1].render(antialias=False)
     blue = red = 0
     for y in range(0, 200, 2):
         for x in range(0, 200, 2):
@@ -176,7 +176,7 @@ def test_the_clip_arrives_at_et_and_not_before():
 
 def test_the_clip_is_graphics_state_and_comes_back_at_q_restore():
     content = b"q " + _shown(7, after=_WASH) + b"Q 0 0 1 rg 0 0 200 20 re f\n"
-    raster = _document(content).pages[0].render(antialias=False)
+    raster = _document(content).pages[1].render(antialias=False)
     # The strip painted after Q is outside the text, and shows all the same.
     assert raster.get_pixel(100, 190) == _BLUE
 
@@ -307,7 +307,7 @@ def test_the_extractor_still_starts_each_text_object_at_the_origin():
 
 
 def test_the_svg_export_turns_a_text_clip_into_a_clip_path():
-    svg = _document(_shown(7, after=_WASH)).pages[0].to_svg()
+    svg = _document(_shown(7, after=_WASH)).pages[1].to_svg()
     assert "<clipPath" in svg
-    plain = _document(_shown(0, after=_WASH)).pages[0].to_svg()
+    plain = _document(_shown(0, after=_WASH)).pages[1].to_svg()
     assert "<clipPath" not in plain

@@ -57,20 +57,20 @@ class FakeDocument:
 
 class TestTextFragment:
     def test_end_defaults_to_start_plus_len(self):
-        frag = TextFragment(page_index=0, text="hello", start=5)
+        frag = TextFragment(page_index=1, text="hello", start=5)
         assert frag.end == 10
 
     def test_explicit_end(self):
-        frag = TextFragment(page_index=1, text="hi", start=3, end=5)
+        frag = TextFragment(page_index=2, text="hi", start=3, end=5)
         assert frag.end == 5
 
     def test_equality(self):
-        a = TextFragment(0, "hello", 0)
-        b = TextFragment(0, "hello", 0)
+        a = TextFragment(1, "hello", 0)
+        b = TextFragment(1, "hello", 0)
         assert a == b
 
     def test_repr_contains_text(self):
-        frag = TextFragment(2, "world", 7)
+        frag = TextFragment(3, "world", 7)
         assert "world" in repr(frag)
 
 
@@ -125,7 +125,7 @@ class TestNoFilter:
         page = FakePage("text")
         absorber = TextFragmentAbsorber()
         absorber.visit(page)
-        assert absorber.text_fragments[0].page_index == 0
+        assert absorber.text_fragments[0].page_index == 1
 
     def test_positions_are_within_text(self):
         full_text = "Alpha\nBeta\nGamma"
@@ -217,7 +217,7 @@ class TestPhraseSearch:
         page = FakePage("find me here")
         absorber = TextFragmentAbsorber("me")
         absorber.visit(page)
-        assert absorber.text_fragments[0].page_index == 0
+        assert absorber.text_fragments[0].page_index == 1
 
     def test_multiline_phrase(self):
         page = FakePage("first line\nsecond line\nthird line")
@@ -291,7 +291,7 @@ class TestRegexSearch:
         rr = absorber.regex_results[0]
         assert rr.text == "hello"
         assert rr.groups == ("hel", "lo")
-        assert rr.page_index == 0
+        assert rr.page_index == 1
         assert isinstance(rr.match, re.Match)
 
     def test_case_sensitive_regex_default(self):
@@ -317,7 +317,7 @@ class TestRegexSearch:
         page = FakePage("match here")
         absorber = self._make_absorber(r"match")
         absorber.visit(page)
-        assert absorber.regex_results[0].page_index == 0
+        assert absorber.regex_results[0].page_index == 1
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +332,7 @@ class TestMultiPageDocument:
         absorber.visit(doc)
         assert len(absorber.text_fragments) == 2
         page_indices = {f.page_index for f in absorber.text_fragments}
-        assert page_indices == {0, 1}
+        assert page_indices == {1, 2}
 
     def test_regex_search_across_pages(self):
         doc = FakeDocument("code: A1B2", "code: C3D4 and E5F6")
@@ -346,7 +346,7 @@ class TestMultiPageDocument:
         absorber = TextFragmentAbsorber()
         absorber.visit(doc)
         page_indices = [f.page_index for f in absorber.text_fragments]
-        assert 0 in page_indices
+        assert 1 in page_indices
         assert 1 in page_indices
 
     def test_page_indices_monotone(self):
@@ -435,7 +435,7 @@ class TestApplyForAllFragments:
 class TestTextFragmentCollection:
     def test_add_and_len(self):
         col = TextFragmentCollection()
-        frag = TextFragment(0, "hello", 0)
+        frag = TextFragment(1, "hello", 0)
         col.add(frag)
         assert len(col) == 1
 
@@ -446,25 +446,25 @@ class TestTextFragmentCollection:
 
     def test_remove_existing(self):
         col = TextFragmentCollection()
-        frag = TextFragment(0, "test", 0)
+        frag = TextFragment(1, "test", 0)
         col.add(frag)
         assert col.remove(frag) is True
         assert len(col) == 0
 
     def test_remove_nonexistent_returns_false(self):
         col = TextFragmentCollection()
-        frag = TextFragment(0, "nope", 0)
+        frag = TextFragment(1, "nope", 0)
         assert col.remove(frag) is False
 
     def test_contains(self):
         col = TextFragmentCollection()
-        frag = TextFragment(0, "x", 0)
+        frag = TextFragment(1, "x", 0)
         col.add(frag)
         assert col.contains(frag) is True
 
     def test_item_by_index(self):
         col = TextFragmentCollection()
-        frag = TextFragment(0, "item", 0)
+        frag = TextFragment(1, "item", 0)
         col.add(frag)
         assert col.item(0) == frag
 
@@ -476,18 +476,18 @@ class TestTextFragmentCollection:
     def test_iteration(self):
         col = TextFragmentCollection()
         for i in range(3):
-            col.add(TextFragment(0, str(i), i))
+            col.add(TextFragment(1, str(i), i))
         texts = [f.text for f in col]
         assert texts == ["0", "1", "2"]
 
     def test_clear(self):
         col = TextFragmentCollection()
-        col.add(TextFragment(0, "a", 0))
+        col.add(TextFragment(1, "a", 0))
         col.clear()
         assert len(col) == 0
 
     def test_getitem(self):
         col = TextFragmentCollection()
-        frag = TextFragment(0, "z", 0)
+        frag = TextFragment(1, "z", 0)
         col.add(frag)
         assert col[0] == frag

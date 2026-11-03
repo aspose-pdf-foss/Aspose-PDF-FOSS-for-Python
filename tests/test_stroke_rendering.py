@@ -30,7 +30,7 @@ def _document(content: bytes, *, extgstates=None, limits=None) -> Document:
 
 def _render(content: bytes, **kwargs):
     with _document(content, **kwargs) as document:
-        return document.pages[0].render(antialias=False)
+        return document.pages[1].render(antialias=False)
 
 
 def _at(raster, x, y):
@@ -199,7 +199,7 @@ def test_stroking_uses_the_ctm_at_paint_time():
 def test_dash_geometry_is_stable_under_scale_and_antialias():
     with _document(b"4 w [10 10] 0 d 10 50 m 90 50 l S") as document:
         for antialias in (False, 3):
-            raster = document.pages[0].render(scale=2, antialias=antialias)
+            raster = document.pages[1].render(scale=2, antialias=antialias)
             assert raster.get_pixel(25, 99) == BLACK
             assert raster.get_pixel(45, 99) == WHITE
 
@@ -223,7 +223,7 @@ def test_a_form_inherits_stroke_state_and_restores_its_own_changes():
         pdf._cos_page_resources(0).mapping[PdfName("XObject")] = PdfDictionary(
             {PdfName("Fm"): pdf._cos_doc.register_object(form)}
         )
-        raster = document.pages[0].render(antialias=False)
+        raster = document.pages[1].render(antialias=False)
     assert _at(raster, 35, 70) == WHITE
     assert _at(raster, 18, 50) == BLACK
     assert _at(raster, 35, 50) == BLACK
@@ -252,8 +252,8 @@ def test_round_trip_and_streaming_render_the_same_strokes(tmp_path):
     content = b"8 w 2 J 2 j [10 3 5] 7 d 20 20 m 60 20 l 60 70 l S"
     path = tmp_path / "stroke.pdf"
     with _document(content) as document:
-        expected = document.pages[0].render(antialias=False)
+        expected = document.pages[1].render(antialias=False)
         document.save(path)
     for opener in (Document, Document.open_streaming):
         with opener(path) as document:
-            assert document.pages[0].render(antialias=False).pixels == expected.pixels
+            assert document.pages[1].render(antialias=False).pixels == expected.pixels

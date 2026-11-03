@@ -75,7 +75,7 @@ def test_render_colored_tiling_pattern_repeats():
         _tiling_pattern(b"1 0 0 rg 0 0 5 5 re f"),
     )
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(2, 27) == (255, 0, 0)  # red block, tile (0,0)
     assert raster.get_pixel(7, 27) == (255, 255, 255)  # white gap inside tile (0,0)
@@ -90,7 +90,7 @@ def test_render_uncolored_tiling_pattern_uses_scn_color():
         _tiling_pattern(b"0 0 5 5 re f", paint_type=2),
     )
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(2, 27) == (0, 0, 255)  # block painted in the scn colour
     assert raster.get_pixel(7, 27) == (255, 255, 255)
@@ -103,7 +103,7 @@ def test_tiling_pattern_respects_fill_path():
         _tiling_pattern(b"1 0 0 rg 0 0 5 5 re f"),
     )
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(2, 27) == (255, 0, 0)  # inside the fill: patterned
     assert raster.get_pixel(20, 15) == (255, 255, 255)  # outside the fill: untouched
@@ -116,6 +116,6 @@ def test_unknown_pattern_falls_back_to_solid():
         _tiling_pattern(b"1 0 0 rg 0 0 5 5 re f"),
     )
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(15, 15) == (128, 128, 128)

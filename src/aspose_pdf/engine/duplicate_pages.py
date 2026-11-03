@@ -21,7 +21,7 @@ def _matches(
     document: Document, index: int, raster: RasterizedPage, options: _Options
 ) -> bool:
     """Confirm a hash candidate against a fresh reference raster, without copies."""
-    reference = _render(document.pages[index], options)
+    reference = _render(document._page_at(index), options)
     return (
         reference.width == raster.width
         and reference.height == raster.height
@@ -51,7 +51,7 @@ def find_duplicate_pages(
     buckets: dict[tuple[int, int, bytes], list[list[int]]] = {}
     groups: list[list[int]] = []
     for index in indexes:
-        raster = _render(document.pages[index], options)
+        raster = _render(document._page_at(index), options)
         key = (raster.width, raster.height, sha256(raster.pixels).digest())
         candidates = buckets.setdefault(key, [])
         for group in candidates:

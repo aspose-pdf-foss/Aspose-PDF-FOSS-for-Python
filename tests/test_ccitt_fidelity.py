@@ -345,7 +345,7 @@ def test_a_ccitt_image_renders_as_the_bitmap_it_encodes(name):
     for black_is_1, ink in (("false", 0), ("true", 255)):
         document = Document()
         document.load_from(_document(bitmap, black_is_1=black_is_1))
-        raster = document.pages[0].render(dpi=72, antialias=False)
+        raster = document.pages[1].render(dpi=72, antialias=False)
         for j in range(16):
             for i in range(16):
                 want = ink if bitmap[j][i] else (255 - ink)
@@ -397,7 +397,7 @@ def test_an_undecodable_image_is_not_painted_as_noise():
 
     document = Document()
     document.load_from(bytes(out))
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     assert {raster.get_pixel(i, j) for j in range(rows) for i in range(cols)} == {
         (255, 255, 255)
     }

@@ -63,7 +63,7 @@ def test_a_save_that_fails_leaves_the_file_it_was_replacing(
     path = _saved(tmp_path / "only-copy.pdf")
     original = path.read_bytes()
     document = Document(str(path))
-    document.pages[0].add_text("an edit", x=40, y=600)
+    document.pages[1].add_text("an edit", x=40, y=600)
 
     _disk_full(monkeypatch)
     with pytest.raises(OSError) as excinfo:
@@ -115,10 +115,10 @@ def test_the_low_code_output_is_written_the_same_way(tmp_path, monkeypatch):
 def test_a_save_over_the_source_replaces_it(tmp_path):
     path = _saved(tmp_path / "doc.pdf")
     document = Document(str(path))
-    document.pages[0].add_text("v2", x=40, y=600)
+    document.pages[1].add_text("v2", x=40, y=600)
     document.save(str(path), overwrite=True)
 
-    assert "v2" in Document(str(path)).pages[0].extract_text()
+    assert "v2" in Document(str(path)).pages[1].extract_text()
     assert _leftovers(tmp_path) == []
 
 

@@ -84,7 +84,7 @@ def _soft_mask(document: Document) -> bytes | None:
 
 
 def _pixel(document: Document, x: float, y: float) -> tuple[int, int, int]:
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     return raster.get_pixel(int(x), int(raster.height - y))
 
 

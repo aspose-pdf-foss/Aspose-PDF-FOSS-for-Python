@@ -101,8 +101,8 @@ def test_report_matches_review_metadata_and_preserves_pdf(document, kind, tmp_pa
         assert data.endswith(b"\r\n") and not data.startswith(b"\xef\xbb\xbf")
         assert loaded.export_annotations_csv() == data
         assert loaded.pages[
-            0
-        ].annotations.export_csv() == loaded.export_annotations_csv(pages=[0])
+            1
+        ].annotations.export_csv() == loaded.export_annotations_csv(pages=[1])
         assert _saved(loaded) == raw
     finally:
         if loaded is not document:
@@ -120,14 +120,14 @@ def test_reply_and_popup_ids_allow_review_threads_to_be_rebuilt(document):
 
 
 def test_cross_page_reply_keeps_id_when_parent_is_outside_selection(document):
-    page = document.pages[1]
+    page = document.pages[2]
     page.annotations.add_text((10, 20, 30, 40), "Cross-page reply")
     engine = document._engine_pdf
     parent = engine._annotation_refs(0)[0]
     reply = engine._resolve(engine._annotation_refs(1)[-1])
     reply.mapping[PdfName("IRT")] = parent
     all_rows = _report(document.export_annotations_csv())
-    selected = _report(document.export_annotations_csv(pages=[1]))
+    selected = _report(document.export_annotations_csv(pages=[2]))
     assert selected[-1]["in_reply_to"] == all_rows[0]["id"]
     assert all(row["id"] != selected[-1]["in_reply_to"] for row in selected)
 
@@ -148,16 +148,16 @@ def test_subtype_filters_match_existing_export_and_keep_original_positions(
     (row,) = _report(document.export_annotations_csv(subtypes=subtypes))
     assert row["page_number"] == "2" and row["annotation_index"] == "0"
     assert row["subtype"] == "Highlight"
-    assert document.pages[1].annotations.export_csv(
+    assert document.pages[2].annotations.export_csv(
         subtypes="Highlight"
-    ) == document.export_annotations_csv(pages=[1], subtypes="Highlight")
+    ) == document.export_annotations_csv(pages=[2], subtypes="Highlight")
 
 
 def test_page_selection_keeps_order_deduplicates_and_reports_header_only_empty_results(
     document,
 ):
     rows = _report(
-        document.export_annotations_csv(pages=(index for index in [1, 0, 1]))
+        document.export_annotations_csv(pages=(number + 1 if type(number) is int else number for number in ((index for index in [1, 0, 1]))))
     )
     assert [row["page_number"] for row in rows] == ["2", "1", "1", "1", "1"]
     for options in ({"pages": []}, {"subtypes": []}, {"subtypes": "VendorMissing"}):
@@ -172,7 +172,7 @@ def test_text_quotes_newlines_delimiters_and_encodings_are_preserved(
     document, delimiter, encoding
 ):
     value = 'Привет, a;b\tc|d "quoted"\nnext\rthird\r\nfourth'
-    document.pages[0].annotations[0].contents = value
+    document.pages[1].annotations[0].contents = value
     data = document.export_annotations_csv(delimiter=delimiter, encoding=encoding)
     assert _report(data, delimiter=delimiter, encoding=encoding)[0]["contents"] == value
     if encoding == "utf-8-sig":
@@ -196,7 +196,7 @@ def test_paths_overwrite_and_page_stream_exports_return_the_written_bytes(
     assert _report(path.read_bytes()) == []
     with io.BytesIO(b"prefix") as output:
         output.seek(6)
-        data = document.pages[1].annotations.export_csv(output)
+        data = document.pages[2].annotations.export_csv(output)
         assert output.getvalue() == b"prefix" + data and not output.closed
         assert _report(data)[0]["page_number"] == "2"
 
@@ -222,7 +222,7 @@ def test_short_writes_are_retried_and_stalled_writers_are_rejected(document):
 @pytest.mark.parametrize(
     "options",
     [
-        {"pages": [0, 2]},
+        {"pages": [1, 3]},
         {"pages": [True]},
         {"pages": "0"},
         {"subtypes": [1]},
@@ -379,7 +379,7 @@ def test_resource_limits_apply_before_writing(monkeypatch, name, value):
 
 
 def test_disposed_document_and_page_collection_reject_reports(document):
-    annotations = document.pages[0].annotations
+    annotations = document.pages[1].annotations
     document.dispose()
     with pytest.raises(AsposePdfException, match="disposed"):
         document.export_annotations_csv()

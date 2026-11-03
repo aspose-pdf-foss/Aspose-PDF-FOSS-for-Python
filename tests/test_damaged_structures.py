@@ -87,7 +87,7 @@ def _pages_of(data: bytes) -> list[str]:
     document.load_from(io.BytesIO(data))
     try:
         return [
-            document.pages[index].extract_text().strip()
+            document.pages[(index) + 1].extract_text().strip()
             for index in range(len(document.pages))
         ]
     finally:
@@ -135,7 +135,7 @@ def test_a_sound_outline_still_loads():
     document = Document()
     document.load_from(io.BytesIO(_damaged()))
     assert [item.title for item in document.outlines] == ["Chapter"]
-    assert document.outlines[0].page_index == 0
+    assert document.outlines[0].page_index == 1
     document.dispose()
 
 

@@ -43,14 +43,14 @@ def test_one_visible_side_survives_round_trip(tmp_path, on_disk, scope, side):
     with Document() as document:
         page = document.pages.add(size=(160, 120))
         placement = page.add_table(table, 20, 90, bottom_margin=0)
-        assert placement == {"pages": [0], "bottom": 50, "rows": 1}
+        assert placement == {"pages": [1], "bottom": 50, "rows": 1}
         if on_disk:
             source = tmp_path / "border.pdf"
             document.save(source)
         else:
             source = _save(document)
         with Document(source) as reopened:
-            raster = reopened.pages[0].render(dpi=72, antialias=False)
+            raster = reopened.pages[1].render(dpi=72, antialias=False)
             for edge, (x, y) in _MIDPOINTS.items():
                 assert raster.get_pixel(x, y) == (
                     (255, 0, 0) if edge == side else (255, 255, 255)
@@ -155,7 +155,7 @@ def test_header_border_is_repeated_on_continuation_pages():
     with Document() as document:
         page = document.pages.add(size=(160, 120))
         placement = page.add_table(table, 20, 100, bottom_margin=10)
-        assert placement["pages"] == [0, 1]
+        assert placement["pages"] == [1, 2]
         with Document(_save(document)) as reopened:
             for page in reopened.pages:
                 assert "Header" in page.extract_text()

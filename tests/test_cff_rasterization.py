@@ -274,7 +274,7 @@ def test_cff_rejects_cff2_and_junk():
 def _render_first_page(pdf):
     doc = Document()
     doc._engine_pdf = pdf
-    return doc.pages[0].render()
+    return doc.pages[1].render()
 
 
 def _count_black(raster, x0, y0, x1, y1):

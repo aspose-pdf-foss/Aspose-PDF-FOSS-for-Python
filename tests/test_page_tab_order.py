@@ -50,7 +50,7 @@ def test_each_page_has_its_own_persisted_tab_order(document, tmp_path, on_disk):
     ):
         page.tab_order = order
         assert page.tab_order == order
-        assert _dictionary(document, page.index).mapping[PdfName("Tabs")] == PdfName(
+        assert _dictionary(document, (page.index) - 1).mapping[PdfName("Tabs")] == PdfName(
             code
         )
     if on_disk:
@@ -82,8 +82,8 @@ def test_each_page_has_its_own_persisted_tab_order(document, tmp_path, on_disk):
     ],
 )
 def test_friendly_names_and_pdf_codes_are_normalized(document, value, expected):
-    document.pages[0].tab_order = value
-    assert document.pages[0].tab_order == expected
+    document.pages[1].tab_order = value
+    assert document.pages[1].tab_order == expected
 
 
 def test_none_removes_the_local_setting_and_does_not_inherit_from_parent(document):
@@ -91,13 +91,13 @@ def test_none_removes_the_local_setting_and_does_not_inherit_from_parent(documen
     engine = document._engine_pdf
     parent = engine._resolve(page.mapping[PdfName("Parent")])
     parent.mapping[PdfName("Tabs")] = PdfName("S")
-    assert document.pages[0].tab_order is None
-    document.pages[0].tab_order = "row"
-    document.pages[1].tab_order = "column"
-    document.pages[0].tab_order = None
+    assert document.pages[1].tab_order is None
+    document.pages[1].tab_order = "row"
+    document.pages[2].tab_order = "column"
+    document.pages[1].tab_order = None
     assert PdfName("Tabs") not in page.mapping
-    assert document.pages[0].tab_order is None
-    assert document.pages[1].tab_order == "column"
+    assert document.pages[1].tab_order is None
+    assert document.pages[2].tab_order == "column"
     assert parent.mapping[PdfName("Tabs")] == PdfName("S")
     with Document(_bytes(document)) as reopened:
         assert [page.tab_order for page in reopened.pages] == [None, "column", None]
@@ -105,10 +105,10 @@ def test_none_removes_the_local_setting_and_does_not_inherit_from_parent(documen
 
 @pytest.mark.parametrize("value", ["", "rows", "manual", "default", "/R", "A", "W"])
 def test_unknown_orders_are_rejected_before_any_pdf_changes(document, value):
-    document.pages[0].tab_order = "column"
+    document.pages[1].tab_order = "column"
     before = _bytes(document)
     with pytest.raises(PdfValidationException, match="tab_order"):
-        document.pages[0].tab_order = value
+        document.pages[1].tab_order = value
     assert _bytes(document) == before
 
 
@@ -116,7 +116,7 @@ def test_unknown_orders_are_rejected_before_any_pdf_changes(document, value):
 def test_only_strings_or_none_can_be_assigned(document, value):
     before = _bytes(document)
     with pytest.raises(TypeError, match="string or None"):
-        document.pages[0].tab_order = value
+        document.pages[1].tab_order = value
     assert _bytes(document) == before
 
 
@@ -142,11 +142,11 @@ def test_unsupported_or_malformed_entries_are_read_as_none_and_preserved(
         value = document._engine_pdf._cos_doc.register_object(value)
     _dictionary(document).mapping[PdfName("Tabs")] = value
     before = _bytes(document)
-    assert document.pages[0].tab_order is None
+    assert document.pages[1].tab_order is None
     assert _dictionary(document).mapping[PdfName("Tabs")] is value
     assert _bytes(document) == before
     with Document(before) as reopened:
-        assert reopened.pages[0].tab_order is None
+        assert reopened.pages[1].tab_order is None
         assert PdfName("Tabs") in _dictionary(reopened).mapping
 
 
@@ -158,13 +158,13 @@ def test_indirect_name_entries_in_existing_documents_are_read(document, code, ex
         document._engine_pdf._cos_doc.register_object(PdfName(code))
     )
     with Document(_bytes(document)) as reopened:
-        assert reopened.pages[0].tab_order == expected
+        assert reopened.pages[1].tab_order == expected
 
 
 def test_assignment_changes_only_the_selected_pages_tabs_entry(document):
-    page = document.pages[0]
-    field = document.form.add_text_field("last", 0, (20, 100, 120, 125), value="Last")
-    document.form.add_text_field("first", 0, (20, 150, 120, 175), value="First")
+    page = document.pages[1]
+    field = document.form.add_text_field("last", 1, (20, 100, 120, 125), value="Last")
+    document.form.add_text_field("first", 1, (20, 150, 120, 175), value="First")
     page.add_link((150, 100, 230, 125), URIAction("https://example.test"))
     page.add_text("Heading", 10, 10)
     dictionary = _dictionary(document)
@@ -195,32 +195,32 @@ def test_assignment_changes_only_the_selected_pages_tabs_entry(document):
 def test_page_copies_keep_their_order_and_can_be_edited_independently(
     document, foreign
 ):
-    document.pages[0].tab_order = "column"
+    document.pages[1].tab_order = "column"
     with Document() as other:
         target = other if foreign else document
-        copied = target.pages.add(document.pages[0])
+        copied = target.pages.add(document.pages[1])
         assert copied.tab_order == "column"
         copied.tab_order = "row"
-        assert document.pages[0].tab_order == "column"
+        assert document.pages[1].tab_order == "column"
         with Document(_bytes(target)) as reopened:
             assert reopened.pages[copied.index].tab_order == "row"
 
 
 def test_pdfua_structure_order_can_be_read_and_conversion_still_sets_it(document):
-    document.form.add_text_field("notes", 0, (20, 100, 120, 125))
-    document.pages[0].tab_order = "row"
+    document.form.add_text_field("notes", 1, (20, 100, 120, 125))
+    document.pages[1].tab_order = "row"
     document.convert_to_pdfua(title="Application", language="en-US")
-    assert document.pages[0].tab_order == "structure"
+    assert document.pages[1].tab_order == "structure"
     with Document(_bytes(document)) as reopened:
-        assert reopened.pages[0].tab_order == "structure"
+        assert reopened.pages[1].tab_order == "structure"
 
 
 @pytest.mark.parametrize("version", ["1.4", "1.5", "1.7", "2.0"])
 def test_explicit_document_version_stays_under_caller_control(document, version):
     document.version = version
-    document.pages[0].tab_order = "row"
+    document.pages[1].tab_order = "row"
     assert document.version == version
-    document.pages[0].tab_order = None
+    document.pages[1].tab_order = None
     assert document.version == version
 
 
@@ -228,9 +228,9 @@ def test_explicit_document_version_stays_under_caller_control(document, version)
 def test_streaming_read_and_edit_do_not_decode_content_or_appearances(
     document, tmp_path, monkeypatch, encrypted
 ):
-    document.pages[0].add_text("Content", 10, 10)
-    document.form.add_text_field("notes", 0, (20, 100, 120, 125), value="Answer")
-    document.pages[0].tab_order = "column"
+    document.pages[1].add_text("Content", 10, 10)
+    document.form.add_text_field("notes", 1, (20, 100, 120, 125), value="Answer")
+    document.pages[1].tab_order = "column"
     if encrypted:
         document.encrypt("secret", "owner")
     path = tmp_path / "source.pdf"
@@ -246,14 +246,14 @@ def test_streaming_read_and_edit_do_not_decode_content_or_appearances(
         with monkeypatch.context() as context:
             context.setattr(opened._engine_pdf, "_decode_cos_stream", forbidden)
             context.setattr(opened._engine_pdf, "get_page_content", forbidden)
-            assert opened.pages[0].tab_order == "column"
-            opened.pages[0].tab_order = "row"
-            assert opened.pages[0].tab_order == "row"
+            assert opened.pages[1].tab_order == "column"
+            opened.pages[1].tab_order = "row"
+            assert opened.pages[1].tab_order == "row"
             assert opened._engine_pdf.page_contents == []
         result = _bytes(opened)
     assert path.read_bytes() == original
     with Document(result, password="secret" if encrypted else None) as reopened:
-        assert reopened.pages[0].tab_order == "row"
+        assert reopened.pages[1].tab_order == "row"
         assert reopened.form["notes"].value == "Answer"
     if encrypted:
         with pytest.raises(PdfSecurityException):
@@ -261,7 +261,7 @@ def test_streaming_read_and_edit_do_not_decode_content_or_appearances(
 
 
 def test_disposed_documents_reject_reads_and_writes(document):
-    page = document.pages[0]
+    page = document.pages[1]
     document.dispose()
     with pytest.raises(AsposePdfException, match="disposed"):
         _ = page.tab_order

@@ -62,7 +62,7 @@ def _image(document, rgb=b"\xff\x00\x00", name=None):
     page.add_image(
         RasterizedPage(1, 1, rgb).to_png(), 0, 0, width=10, height=10, name=name
     )
-    return document._engine_pdf._get_page_dict(page.index)
+    return document._engine_pdf._get_page_dict((page.index) - 1)
 
 
 def _resources(document, page):
@@ -104,10 +104,10 @@ def test_export_real_png_files_and_deterministic_portable_zip_metadata(compressi
             b"\x00\x00\xff",
         ]
         manifest = json.loads(files["manifest.json"])
-        assert manifest["schema_version"] == 1
+        assert manifest["schema_version"] == 2
         assert [
             record["occurrences"][0]["page_index"] for record in manifest["images"]
-        ] == [0, 1]
+        ] == [1, 2]
         for record in manifest["images"]:
             assert (
                 record["width"],
@@ -142,7 +142,7 @@ def test_selection_keeps_order_deduplicates_pages_and_shared_objects_only():
         third_xobjects.mapping[PdfName("Shared")] = first_ref
         files = _read(
             document.export_images_zip(
-                pages=(p for p in (2, 0, 2, 1)), include_manifest=True
+                pages=(number + 1 if type(number) is int else number for number in ((p for p in (2, 0, 2, 1)))), include_manifest=True
             )
         )
         records = json.loads(files["manifest.json"])["images"]
@@ -153,11 +153,11 @@ def test_selection_keeps_order_deduplicates_pages_and_shared_objects_only():
             b"\xff\x00\x00",
         ]
         assert records[1]["occurrences"] == [
-            {"page_index": 2, "resource_path": ["Shared"]},
-            {"page_index": 0, "resource_path": ["Im1"]},
+            {"page_index": 3, "resource_path": ["Shared"]},
+            {"page_index": 1, "resource_path": ["Im1"]},
         ]
         assert records[2]["occurrences"] == [
-            {"page_index": 1, "resource_path": ["Im1"]}
+            {"page_index": 2, "resource_path": ["Im1"]}
         ]
         assert second is not first
 
@@ -254,11 +254,11 @@ def test_empty_pages_or_selection_export_valid_empty_archive(include_manifest):
         for selection in (None, []):
             files = _read(
                 document.export_images_zip(
-                    pages=selection, include_manifest=include_manifest
+                    pages=(None if selection is None else (number + 1 if type(number) is int else number for number in (selection))), include_manifest=include_manifest
                 )
             )
             assert files == (
-                {"manifest.json": b'{"schema_version":1,"images":[]}'}
+                {"manifest.json": b'{"schema_version":2,"images":[]}'}
                 if include_manifest
                 else {}
             )
@@ -399,7 +399,7 @@ def test_page_selection_bounds_unbounded_generators():
     with Document(limits=PdfLoadLimits(max_container_items=2)) as document:
         document.pages.add()
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            document.export_images_zip(pages=repeat(0))
+            document.export_images_zip(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
 
 
 def test_nested_form_depth_is_bounded():
@@ -550,7 +550,7 @@ def test_selected_exports_leave_lazy_caches_cursors_and_sources_unchanged(
             lambda *a: pytest.fail("no page content should be read"),
         )
         files = _read(
-            document.export_images_zip(pages=[2, 0, 2], include_manifest=True)
+            document.export_images_zip(pages=[3, 1, 3], include_manifest=True)
         )
         assert [_png_pixels(files[name]) for name in list(files)[:2]] == [
             b"\x00\x00\xff",
@@ -606,7 +606,7 @@ def test_only_selected_image_payloads_are_decoded(monkeypatch):
 
         monkeypatch.setattr(image_zip.CosExtractor, "_decode_stream", decode)
         assert (
-            _png_pixels(_read(document.export_images_zip(pages=[1]))["image-0001.png"])
+            _png_pixels(_read(document.export_images_zip(pages=[2]))["image-0001.png"])
             == b"\x00\xff\x00"
         )
 

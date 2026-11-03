@@ -97,9 +97,9 @@ def test_all_orientations_render_correctly_without_recompressing_jpeg(
 ):
     data = _tagged(jpeg, orientation, byte_order=byte_order)
     with Document(_convert(jpeg)[0].to_array()) as reference:
-        expected = [_corners(reference.pages[0])[index] for index in order]
+        expected = [_corners(reference.pages[1])[index] for index in order]
     with Document(_convert(data, auto_orient=True)[0].to_array()) as document:
-        page = document.pages[0]
+        page = document.pages[1]
         assert page.size == PageSize(*((16, 32) if orientation >= 5 else (32, 16)))
         assert page.rotation == 0
         assert _corners(page) == expected
@@ -110,18 +110,18 @@ def test_all_orientations_render_correctly_without_recompressing_jpeg(
         path = tmp_path / "oriented.pdf"
         document.save(path)
         with Document.open_streaming(path) as reopened:
-            assert _corners(reopened.pages[0]) == expected
+            assert _corners(reopened.pages[1]) == expected
 
 
 @pytest.mark.parametrize("orientation", range(2, 9))
 def test_default_and_explicit_opt_out_keep_original_orientation(jpeg, orientation):
     data = _tagged(jpeg, orientation)
     with Document(_convert(jpeg)[0].to_array()) as reference:
-        expected = _corners(reference.pages[0])
+        expected = _corners(reference.pages[1])
     for options in ({}, {"auto_orient": False}):
         with Document(_convert(data, **options)[0].to_array()) as document:
-            assert document.pages[0].size == PageSize(32, 16)
-            assert _corners(document.pages[0]) == expected
+            assert document.pages[1].size == PageSize(32, 16)
+            assert _corners(document.pages[1]) == expected
 
 
 @pytest.mark.parametrize("kind", ["bytes", "file", "stream"])
@@ -142,7 +142,7 @@ def test_orientation_uses_signatures_and_supports_all_input_sources(
         )
         assert not stream.closed
     with Document(results[0].to_array()) as document:
-        assert document.pages[0].size == PageSize(16, 32)
+        assert document.pages[1].size == PageSize(16, 32)
     assert path.read_bytes() == data
 
 
@@ -157,7 +157,7 @@ def test_oriented_bounds_are_fitted_and_centred_inside_fixed_page(
             0
         ].to_array()
     ) as document:
-        page = document.pages[0]
+        page = document.pages[1]
         assert page.size == PageSize(20, 40)
         width, height = (16, 32) if orientation >= 5 else (32, 16)
         width, height = width * 72 / dpi, height * 72 / dpi
@@ -175,7 +175,7 @@ def test_oriented_image_sized_page_respects_dpi(jpeg):
     with Document(
         _convert(_tagged(jpeg, 6), auto_orient=True, dpi=144)[0].to_array()
     ) as document:
-        assert document.pages[0].size == PageSize(8, 16)
+        assert document.pages[1].size == PageSize(8, 16)
 
 
 @pytest.mark.parametrize("single", [True, False])
@@ -212,9 +212,9 @@ def test_orientation_without_pillow_and_without_pixel_decoding(jpeg, monkeypatch
     monkeypatch.setattr(dct, "decode", forbidden)
     data = _tagged(jpeg, 7)
     with Document(_convert(data, auto_orient=True)[0].to_array()) as document:
-        assert document.pages[0].size == PageSize(16, 32)
+        assert document.pages[1].size == PageSize(16, 32)
         absorber = ImagePlacementAbsorber()
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
         assert absorber.image_placements[0].image_data == data
 
 
@@ -228,12 +228,12 @@ def test_missing_orientation_non_exif_app1_and_thumbnail_tags_are_ignored(jpeg):
         b"Exif\x00\x00II" + struct.pack("<HI", 42, 0),
     ]
     with Document(_convert(jpeg)[0].to_array()) as reference:
-        expected = _corners(reference.pages[0])
+        expected = _corners(reference.pages[1])
     for payload in payloads:
         data = jpeg[:2] + _segment(payload) + jpeg[2:]
         with Document(_convert(data, auto_orient=True)[0].to_array()) as document:
-            assert document.pages[0].size == PageSize(32, 16)
-            assert _corners(document.pages[0]) == expected
+            assert document.pages[1].size == PageSize(32, 16)
+            assert _corners(document.pages[1]) == expected
 
 
 @pytest.mark.parametrize("value", [None, 0, 1, "true", [], object()])
@@ -272,7 +272,7 @@ def test_malformed_exif_raises_and_opt_out_keeps_legacy_import(jpeg, payload):
     with pytest.raises(PdfValidationException, match="EXIF"):
         _convert(data, auto_orient=True)
     with Document(_convert(data)[0].to_array()) as document:
-        assert document.pages[0].size == PageSize(32, 16)
+        assert document.pages[1].size == PageSize(32, 16)
 
 
 @pytest.mark.parametrize("single", [True, False])
@@ -337,4 +337,4 @@ def test_marker_fill_bytes_and_xmp_before_exif_are_supported(jpeg):
         + jpeg[2:]
     )
     with Document(_convert(data, auto_orient=True)[0].to_array()) as document:
-        assert document.pages[0].size == PageSize(16, 32)
+        assert document.pages[1].size == PageSize(16, 32)

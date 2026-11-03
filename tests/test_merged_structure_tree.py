@@ -32,8 +32,8 @@ def _tagged(pages: int = 1, label: str = "A", *, wrap: bool = True) -> Document:
     document = Document()
     for index in range(pages):
         document.pages.add()
-        document.pages[index].add_text(f"{label}{index} heading", x=40, y=700)
-        document.pages[index].add_text(f"{label}{index} body", x=40, y=660)
+        document.pages[(index) + 1].add_text(f"{label}{index} heading", x=40, y=700)
+        document.pages[(index) + 1].add_text(f"{label}{index} body", x=40, y=660)
     content = document.tagged_content
     parent = content.add_element("Document") if wrap else None
     for index in range(pages):
@@ -46,7 +46,7 @@ def _plain(pages: int = 1, label: str = "Z") -> Document:
     document = Document()
     for index in range(pages):
         document.pages.add()
-        document.pages[index].add_text(f"{label}{index}", x=40, y=700)
+        document.pages[(index) + 1].add_text(f"{label}{index}", x=40, y=700)
     return document
 
 
@@ -251,10 +251,10 @@ def test_the_pages_still_draw_what_they_drew():
     # invariant the whole merge audit rests on.
     target = _tagged(pages=2, label="A")
     other = _tagged(pages=2, label="B")
-    expected = [other.pages[i].extract_text() for i in range(2)]
+    expected = [other.pages[(i) + 1].extract_text() for i in range(2)]
     target.merge(other)
     merged = _reopened(target)
-    assert [merged.pages[i].extract_text() for i in (2, 3)] == expected
+    assert [merged.pages[(i) + 1].extract_text() for i in (2, 3)] == expected
 
 
 # --- the edges the pruning has to get right ---------------------------------

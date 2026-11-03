@@ -28,7 +28,7 @@ def document():
 
 def _text(document, name="text", value="1234", **kwargs):
     return document.form.add_text_field(
-        name, 0, (20, 100, 220, 140), value=value, **kwargs
+        name, 1, (20, 100, 220, 140), value=value, **kwargs
     )
 
 
@@ -39,7 +39,7 @@ def _choice(document, kind="listbox", **kwargs):
         else document.form.add_list_box
     )
     return factory(
-        "choice", 0, (20, 20, 220, 80), [("a", "Alpha"), ("b", "Beta")], **kwargs
+        "choice", 1, (20, 20, 220, 80), [("a", "Alpha"), ("b", "Beta")], **kwargs
     )
 
 
@@ -82,7 +82,7 @@ def test_text_parameters_and_defaults_survive_save_and_reset(
 def test_multiline_change_refreshes_the_display_and_keeps_other_widgets(document):
     field = _text(document, value="first\nsecond")
     _text(document, name="other", value="untouched")
-    page = document.pages[0]
+    page = document.pages[1]
     old_sibling = page.annotations[1].appearance_normal
     assert b"(first second) Tj" in page.annotations[0].appearance_normal
     field.multiline = True
@@ -98,15 +98,15 @@ def test_password_masks_the_appearance_while_preserving_the_value(document, tmp_
     field = _text(document, value="secret")
     field.password = True
     assert field.value == "secret"
-    content = document.pages[0].annotations[0].appearance_normal
+    content = document.pages[1].annotations[0].appearance_normal
     assert b"(******) Tj" in content and b"secret" not in content
     field.value = "new"
-    assert b"(***) Tj" in document.pages[0].annotations[0].appearance_normal
+    assert b"(***) Tj" in document.pages[1].annotations[0].appearance_normal
     with Document(_saved(document, tmp_path, False)) as reopened:
         field = reopened.form["text"]
         assert field.password and field.value == "new"
         field.password = False
-        assert b"(new) Tj" in reopened.pages[0].annotations[0].appearance_normal
+        assert b"(new) Tj" in reopened.pages[1].annotations[0].appearance_normal
 
 
 @pytest.mark.parametrize("alignment", ["left", "center", "right"])
@@ -114,7 +114,7 @@ def test_comb_distributes_characters_in_cells_and_honors_alignment(document, ali
     field = _text(document, value="11", alignment=alignment)
     field.max_length = 4
     field.comb = True
-    content = document.pages[0].annotations[0].appearance_normal
+    content = document.pages[1].annotations[0].appearance_normal
     positions = [
         float(value) for value in re.findall(rb"1 0 0 1 ([\d.-]+) [\d.-]+ Tm", content)
     ]
@@ -123,19 +123,19 @@ def test_comb_distributes_characters_in_cells_and_honors_alignment(document, ali
     expected_cell = {"left": 0, "center": 1, "right": 2}[alignment]
     assert expected_cell * 50 <= positions[0] < (expected_cell + 1) * 50
     field.comb = False
-    assert b"(11) Tj" in document.pages[0].annotations[0].appearance_normal
+    assert b"(11) Tj" in document.pages[1].annotations[0].appearance_normal
 
 
 def test_comb_autosizing_and_flattening_render_the_configured_cells(document):
     field = _text(document, value="WWWW", font_size=0)
     field.max_length = 100
     field.comb = True
-    content = document.pages[0].annotations[0].appearance_normal
+    content = document.pages[1].annotations[0].appearance_normal
     size = float(re.search(rb"/Helv ([\d.]+) Tf", content).group(1))
     assert 0 < size < 3
-    before = document.pages[0].render(antialias=False).pixels
+    before = document.pages[1].render(antialias=False).pixels
     document.form.flatten()
-    assert document.pages[0].render(antialias=False).pixels == before
+    assert document.pages[1].render(antialias=False).pixels == before
 
 
 @pytest.mark.parametrize(
@@ -154,14 +154,14 @@ def test_invalid_limits_or_comb_without_length_leave_configuration_unchanged(
     before = (
         field.flags,
         field.max_length,
-        document.pages[0].annotations[0].appearance_normal,
+        document.pages[1].annotations[0].appearance_normal,
     )
     with pytest.raises(PdfValidationException):
         setattr(field, parameter, value)
     assert (
         field.flags,
         field.max_length,
-        document.pages[0].annotations[0].appearance_normal,
+        document.pages[1].annotations[0].appearance_normal,
     ) == before
 
 
@@ -217,7 +217,7 @@ def test_max_length_requires_an_integer(document, value):
     ],
 )
 def test_configuration_setters_reject_the_wrong_field_type(document, parameter, value):
-    field = document.form.add_checkbox("check", 0, (10, 10, 30, 30))
+    field = document.form.add_checkbox("check", 1, (10, 10, 30, 30))
     with pytest.raises(PdfValidationException, match="applies only"):
         setattr(field, parameter, value)
 
@@ -231,7 +231,7 @@ def test_choice_option_edits_preserve_selections_and_update_indices(
     field.options = (option for option in [("b", "New Beta"), ("a", "New Alpha"), "γ"])
     assert field.value == ["a", "b"]
     assert field.options == [("b", "New Beta"), ("a", "New Alpha"), ("γ", "γ")]
-    content = document.pages[0].annotations[0].appearance_normal
+    content = document.pages[1].annotations[0].appearance_normal
     assert b"New Beta" in content and b"New Alpha" in content
     with Document(_saved(document, tmp_path, on_disk)) as reopened:
         edited = reopened.form["choice"]
@@ -338,9 +338,9 @@ def test_editable_combo_can_use_free_text_after_enabling_it(document):
 
 def test_default_values_for_buttons_and_text_are_typed_and_resettable(document):
     text = _text(document)
-    check = document.form.add_checkbox("check", 0, (10, 10, 30, 30), on_value="Agree")
+    check = document.form.add_checkbox("check", 1, (10, 10, 30, 30), on_value="Agree")
     radio = document.form.add_radio_group(
-        "radio", 0, [("A", (35, 10, 55, 30)), ("B", (60, 10, 80, 30))]
+        "radio", 1, [("A", (35, 10, 55, 30)), ("B", (60, 10, 80, 30))]
     )
     text.default_value = "Шаблон"
     check.default_value = True
@@ -368,9 +368,9 @@ def test_invalid_default_values_do_not_change_existing_defaults(document, kind, 
     if kind == "text":
         field = _text(document)
     elif kind == "checkbox":
-        field = document.form.add_checkbox("check", 0, (10, 10, 30, 30))
+        field = document.form.add_checkbox("check", 1, (10, 10, 30, 30))
     elif kind == "radio":
-        field = document.form.add_radio_group("radio", 0, [("A", (10, 10, 30, 30))])
+        field = document.form.add_radio_group("radio", 1, [("A", (10, 10, 30, 30))])
     else:
         field = _choice(document, kind)
     before = field.default_value
@@ -386,7 +386,7 @@ def test_nonfillable_fields_reject_defaults(document, kind):
         if kind == "pushbutton"
         else document.form.add_signature_field
     )
-    field = factory("field", 0, (20, 20, 100, 50))
+    field = factory("field", 1, (20, 20, 100, 50))
     with pytest.raises(PdfValidationException, match="does not support"):
         field.default_value = "value"
 
@@ -437,7 +437,7 @@ def test_inherited_options_and_defaults_are_overridden_only_on_the_selected_chil
 ):
     first = _choice(document, value="a")
     second = document.form.add_list_box(
-        "other", 0, (20, 85, 220, 140), ["a", "b"], value="b"
+        "other", 1, (20, 85, 220, 140), ["a", "b"], value="b"
     )
     engine = document._engine_pdf
     first_dict = field_dictionary(engine, first.name)
@@ -468,16 +468,16 @@ def test_inherited_comb_length_is_used_by_every_appearance_refresh_path(document
     parent = engine._resolve(child.mapping[PdfName("Parent")])
     parent.mapping[PdfName("MaxLen")] = child.mapping.pop(PdfName("MaxLen"))
     field.value = "22"
-    appearance = document.pages[0].annotations[0].appearance_normal
+    appearance = document.pages[1].annotations[0].appearance_normal
     positions = [
         float(value)
         for value in re.findall(rb"1 0 0 1 ([\d.-]+) [\d.-]+ Tm", appearance)
     ]
     assert positions[1] - positions[0] == pytest.approx(200 / 6, abs=0.002)
     document.form.generate_appearances()
-    assert document.pages[0].annotations[0].appearance_normal == appearance
+    assert document.pages[1].annotations[0].appearance_normal == appearance
     field.multiline = False
-    assert document.pages[0].annotations[0].appearance_normal == appearance
+    assert document.pages[1].annotations[0].appearance_normal == appearance
 
 
 @pytest.mark.parametrize(
@@ -556,9 +556,9 @@ def test_cid_text_mode_changes_fail_without_overwriting_the_existing_appearance(
     )
     dictionary = field_dictionary(engine, field.name)
     dictionary.mapping[PdfName("DA")] = PdfString("/CID 12 Tf 0 g")
-    appearance = document.pages[0].annotations[0].appearance_normal
+    appearance = document.pages[1].annotations[0].appearance_normal
     before = field.flags
     with pytest.raises(UnsupportedFeatureException, match="embedded CID"):
         setattr(field, parameter, 8 if parameter == "max_length" else True)
     assert field.flags == before
-    assert document.pages[0].annotations[0].appearance_normal == appearance
+    assert document.pages[1].annotations[0].appearance_normal == appearance

@@ -3,7 +3,7 @@ and form-field widgets.
 
 These are immutable value objects. The engine turns them into the PDF ``/Dest``
 array or ``/A`` action dictionary, resolving a document page index to the page's
-indirect reference. A ``page`` is a zero-based index into the document (an
+indirect reference. A ``page`` is a one-based number in the document (an
 in-document page); ``GoToRAction`` targets a page *number* in a remote file.
 """
 
@@ -160,7 +160,7 @@ def _remote_page_number(value: object) -> int | None:
 class GoToRAction(Action):
     """Jump to a destination in another (remote) PDF file.
 
-    ``destination.page`` is a zero-based page *number* in the remote file.
+    ``destination.page`` is a one-based page *number* in the remote file.
     """
 
     file: str
@@ -169,9 +169,9 @@ class GoToRAction(Action):
     def _spec(self) -> dict:
         spec: dict = {"S": "GoToR", "F": self.file}
         if self.destination is not None:
-            if _remote_page_number(self.destination.page) is None:
+            if _remote_page_number(self.destination.page) is None or self.destination.page < 1:
                 raise ValueError(
-                    "remote destination page must be a non-negative integer"
+                    "remote destination page must be a positive integer"
                 )
             spec["D"] = self.destination
         return spec
@@ -330,7 +330,7 @@ def destination_from_spec(
     """Rebuild the destination a ``/Dest`` array describes.
 
     The inverse of :meth:`Destination._spec`. *kind* is the destination name
-    without its slash, *page* the zero-based index the array's page reference
+    without its slash, *page* the one-based number the array's page reference
     resolves to, and *params* the numbers after it (``None`` for a null).
     Returns ``None`` when *kind* is not one of the eight defined names or the
     parameters do not fit it -- an array that is no destination this API can
@@ -388,7 +388,7 @@ def action_from_spec(spec: dict) -> Action | None:
             page_number = _remote_page_number(page)
             if page_number is None or not isinstance(name, str):
                 return None
-            destination = destination_from_spec(name, page_number, params)
+            destination = destination_from_spec(name, page_number + 1, params)
             if destination is None:
                 return None
         elif destination is not None and not isinstance(destination, Destination):

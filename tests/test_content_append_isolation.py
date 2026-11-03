@@ -59,7 +59,7 @@ def _saved(document: Document, **kwargs) -> bytes:
 
 
 def _pixels(data: bytes, colour, *, password: str | None = None) -> set[tuple[int, int]]:
-    raster = Document(data, password=password).pages[0].render(antialias=False)
+    raster = Document(data, password=password).pages[1].render(antialias=False)
     return {
         (x, y)
         for y in range(raster.height)
@@ -113,7 +113,7 @@ def test_appended_content_draws_where_it_was_put(leak: str, operation: str) -> N
 
     document = Document(original)
     author, box = OPERATIONS[operation]
-    author(document.pages[0])
+    author(document.pages[1])
     edited = _saved(document)
 
     red = _pixels(edited, _red)
@@ -137,7 +137,7 @@ def _neighbours(region: set[tuple[int, int]]) -> set[tuple[int, int]]:
 def test_a_page_that_leaves_nothing_behind_is_not_wrapped() -> None:
     content = b"q 2 0 0 2 0 0 cm 0 0 1 rg 1 1 4 4 re f Q"
     document = Document(_page_bytes(content))
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
 
     loaded = SimplePdf.from_bytes(_saved(document))
     contents = loaded._resolve(loaded._get_page_dict(0).mapping[PdfName("Contents")])
@@ -151,7 +151,7 @@ def test_the_page_content_is_referenced_not_rewritten() -> None:
     source = SimplePdf.from_bytes(_page_bytes(b"2 0 0 2 0 0 cm" + OWN_MARK))
     first = source._get_page_dict(0).mapping[PdfName("Contents")]
     document = Document(_page_bytes(b"2 0 0 2 0 0 cm" + OWN_MARK))
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
 
     engine = document._engine_pdf
     contents = engine._resolve(engine._get_page_dict(0).mapping[PdfName("Contents")])
@@ -164,7 +164,7 @@ def test_the_page_content_is_referenced_not_rewritten() -> None:
 
 def test_repeated_appends_wrap_the_page_once() -> None:
     document = Document(_page_bytes(b"2 0 0 2 0 0 cm" + OWN_MARK))
-    page = document.pages[0]
+    page = document.pages[1]
     for _ in range(4):
         _draw_rectangle(page)
     content = document._engine_pdf.page_contents[0]
@@ -173,7 +173,7 @@ def test_repeated_appends_wrap_the_page_once() -> None:
 
     # Saved and opened again, the wrapped page leaves nothing behind either.
     reloaded = Document(_saved(document))
-    _draw_rectangle(reloaded.pages[0])
+    _draw_rectangle(reloaded.pages[1])
     engine = reloaded._engine_pdf
     contents = engine._resolve(engine._get_page_dict(0).mapping[PdfName("Contents")])
     streams = [engine._resolve(item).content for item in contents.items]
@@ -191,7 +191,7 @@ def test_a_page_is_read_once_however_many_fragments_are_added(monkeypatch) -> No
 
     monkeypatch.setattr(simple_pdf_module, "isolation_for", counting)
     document = Document(_page_bytes(content))
-    page = document.pages[0]
+    page = document.pages[1]
     for _ in range(5):
         _draw_rectangle(page)
     # Whole-page reads: only the first, of the original content.
@@ -202,9 +202,9 @@ def test_a_page_is_read_once_however_many_fragments_are_added(monkeypatch) -> No
 def test_a_page_whose_content_is_replaced_is_read_again() -> None:
     document = Document(_page_bytes(b"q 0 0 1 rg 1 1 4 4 re f Q"))
     engine = document._engine_pdf
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
     engine._set_page_content(0, b"2 0 0 2 0 0 cm" + OWN_MARK)
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
     assert engine.page_contents[0].startswith(b"q\n2 0 0 2 0 0 cm")
     assert _expected_region((41, 41, 59, 59)) <= _pixels(_saved(document), _red)
 
@@ -213,7 +213,7 @@ def test_content_appended_raw_that_leaks_is_isolated_before_the_next_addition() 
     document = Document(_page_bytes(b"q 0 0 1 rg 1 1 4 4 re f Q"))
     engine = document._engine_pdf
     engine._append_content_to_page(0, b"2 0 0 2 0 0 cm")
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
     assert _expected_region((41, 41, 59, 59)) <= _pixels(_saved(document), _red)
 
 
@@ -221,7 +221,7 @@ def test_a_page_that_cannot_be_isolated_says_so_once(caplog) -> None:
     document = Document(_page_bytes(b"2 0 0 2 0 0 cm Q" + OWN_MARK))
     with caplog.at_level("WARNING", logger="aspose_pdf"):
         for _ in range(3):
-            _draw_rectangle(document.pages[0])
+            _draw_rectangle(document.pages[1])
     warnings = [r for r in caplog.records if "cannot be undone" in r.getMessage()]
     assert len(warnings) == 1
     assert "Page 1" in warnings[0].getMessage()
@@ -250,7 +250,7 @@ def test_pages_sharing_a_contents_array_are_edited_separately(content: bytes) ->
         edited._get_page_dict(1).mapping[PdfName("Contents")]
     )
     before = list(second_contents.items)
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
     assert second_contents.items == before
     saved = _saved(document)
 
@@ -259,7 +259,7 @@ def test_pages_sharing_a_contents_array_are_edited_separately(content: bytes) ->
         p
         for y in range(SIZE)
         for x in range(SIZE)
-        if _red(p := reloaded.pages[1].render(antialias=False).get_pixel(x, y))
+        if _red(p := reloaded.pages[2].render(antialias=False).get_pixel(x, y))
     ]
     assert red_on_second == []
     assert _pixels(saved, _red)
@@ -268,7 +268,7 @@ def test_pages_sharing_a_contents_array_are_edited_separately(content: bytes) ->
 def test_an_incremental_save_only_appends() -> None:
     original = _page_bytes(b"2 0 0 2 0 0 cm" + OWN_MARK)
     document = Document(original)
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
     saved = _saved(document, incremental=True)
 
     assert saved.startswith(original)
@@ -281,7 +281,7 @@ def test_an_encrypted_page_is_isolated_too() -> None:
     encrypted = _saved(protected)
 
     document = Document(encrypted, password="user")
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
     saved = _saved(document)
 
     assert b"/Encrypt" in saved
@@ -292,7 +292,7 @@ def test_a_streamed_document_is_isolated_too(tmp_path) -> None:
     path = tmp_path / "leaky.pdf"
     path.write_bytes(_page_bytes(b"2 0 0 2 0 0 cm" + OWN_MARK))
     document = Document.open_streaming(path)
-    _draw_rectangle(document.pages[0])
+    _draw_rectangle(document.pages[1])
     saved = _saved(document)
     document.close()
 
@@ -302,11 +302,11 @@ def test_a_streamed_document_is_isolated_too(tmp_path) -> None:
 def test_a_redaction_bar_covers_the_text_it_replaces() -> None:
     def redacted(leak: bytes) -> set[tuple[int, int]]:
         document = Document(_page_bytes(b""))
-        document.pages[0].add_text("secret", 10, 60, font_size=12)
+        document.pages[1].add_text("secret", 10, 60, font_size=12)
         engine = document._engine_pdf
         engine._set_page_content(0, engine.page_contents[0] + leak)
         loaded = Document(_saved(document))
-        assert loaded.pages[0].redact_text("secret", overlay=True, overlay_color=(1, 0, 0))
+        assert loaded.pages[1].redact_text("secret", overlay=True, overlay_color=(1, 0, 0))
         return _pixels(_saved(loaded), _red)
 
     plain = redacted(b"")

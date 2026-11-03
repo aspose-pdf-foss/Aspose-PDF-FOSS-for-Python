@@ -34,7 +34,7 @@ def document():
 def _field(document, kind="text", name="field", **options):
     if kind == "text":
         return document.form.add_text_field(
-            name, 0, (20, 100, 220, 160), value="1234", **options
+            name, 1, (20, 100, 220, 160), value="1234", **options
         )
     factory = (
         document.form.add_combo_box
@@ -43,7 +43,7 @@ def _field(document, kind="text", name="field", **options):
     )
     return factory(
         name,
-        0,
+        1,
         (20, 100, 220, 160),
         [("a", "Alpha"), ("b", "Beta")],
         value="b",
@@ -62,7 +62,7 @@ def _saved(document, tmp_path, on_disk=False, name="form.pdf"):
 
 
 def _appearance(document, page=0, widget=0):
-    return document.pages[page].annotations[widget].appearance_normal
+    return document.pages[(page) + 1].annotations[widget].appearance_normal
 
 
 def _x_positions(appearance):
@@ -133,8 +133,8 @@ def test_alignment_accepts_factory_names_aliases_and_numeric_codes(
         _field(authored, alignment=value)
         assert _appearance(document) == _appearance(authored)
         assert (
-            document.pages[0].render(antialias=False).pixels
-            == authored.pages[0].render(antialias=False).pixels
+            document.pages[1].render(antialias=False).pixels
+            == authored.pages[1].render(antialias=False).pixels
         )
 
 
@@ -271,12 +271,12 @@ def test_every_widget_is_redrawn_and_local_widget_overrides_are_cleared(
 @pytest.mark.parametrize("kind", ["text", "listbox", "combobox"])
 def test_alignment_changes_are_visible_and_survive_flattening(document, kind):
     field = _field(document, kind)
-    before = document.pages[0].render(antialias=False).pixels
+    before = document.pages[1].render(antialias=False).pixels
     field.alignment = "right"
-    edited = document.pages[0].render(antialias=False).pixels
+    edited = document.pages[1].render(antialias=False).pixels
     assert before != edited
     document.form.flatten()
-    assert document.pages[0].render(antialias=False).pixels == edited
+    assert document.pages[1].render(antialias=False).pixels == edited
 
 
 @pytest.mark.parametrize(
@@ -315,14 +315,14 @@ def test_invalid_alignment_leaves_settings_values_and_appearances_unchanged(
 @pytest.mark.parametrize("kind", ["checkbox", "radio", "pushbutton", "signature"])
 def test_nontext_fields_do_not_offer_alignment(document, kind):
     if kind == "radio":
-        field = document.form.add_radio_group("field", 0, [("A", (20, 20, 40, 40))])
+        field = document.form.add_radio_group("field", 1, [("A", (20, 20, 40, 40))])
     else:
         factory = {
             "checkbox": document.form.add_checkbox,
             "pushbutton": document.form.add_push_button,
             "signature": document.form.add_signature_field,
         }[kind]
-        field = factory("field", 0, (20, 20, 80, 50))
+        field = factory("field", 1, (20, 20, 80, 50))
     assert field.alignment is None
     with pytest.raises(PdfValidationException, match="applies only"):
         field.alignment = "right"

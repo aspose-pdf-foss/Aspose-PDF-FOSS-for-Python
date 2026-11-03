@@ -238,7 +238,7 @@ def test_build_degenerate_rect_returns_none():
 
 def test_annotation_generate_appearance_sets_ap():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add(
+    ann = doc.pages[1].annotations.add(
         "Square", (100, 100, 200, 200), "", properties={"C": [1, 0, 0], "IC": [0, 1, 0]}
     )
     assert not ann.has_appearance
@@ -250,7 +250,7 @@ def test_annotation_generate_appearance_sets_ap():
 
 def test_highlight_generate_appearance_has_extgstate_resource():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add(
+    ann = doc.pages[1].annotations.add(
         "Highlight",
         (100, 100, 300, 140),
         "",
@@ -262,7 +262,7 @@ def test_highlight_generate_appearance_has_extgstate_resource():
 
 def test_freetext_generate_appearance_registers_font_resource():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add(
+    ann = doc.pages[1].annotations.add(
         "FreeText",
         (100, 100, 300, 160),
         "hello from a free text box",
@@ -279,7 +279,7 @@ def test_freetext_generate_appearance_registers_font_resource():
 
 def test_stamp_generate_appearance_end_to_end():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add(
+    ann = doc.pages[1].annotations.add(
         "Stamp",
         (100, 100, 260, 150),
         "",
@@ -291,21 +291,21 @@ def test_stamp_generate_appearance_end_to_end():
 
 def test_caret_generate_appearance_end_to_end():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add("Caret", (100, 100, 120, 120), "")
+    ann = doc.pages[1].annotations.add("Caret", (100, 100, 120, 120), "")
     assert ann.generate_appearance() is True
     assert b"\nf\n" in ann.appearance_normal
 
 
 def test_generate_appearance_unsupported_subtype_returns_false():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add("Sound", (0, 0, 20, 20), "note")
+    ann = doc.pages[1].annotations.add("Sound", (0, 0, 20, 20), "note")
     assert ann.generate_appearance() is False
     assert not ann.has_appearance
 
 
 def test_generate_appearance_keeps_existing_unless_forced():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add(
+    ann = doc.pages[1].annotations.add(
         "Square", (0, 0, 50, 50), "x", appearance_normal=b"0 0 50 50 re f\n"
     )
     assert ann.has_appearance
@@ -320,7 +320,7 @@ def test_generate_appearance_keeps_existing_unless_forced():
 
 def test_page_generate_appearances_counts_created():
     doc = _new_page_doc()
-    page = doc.pages[0]
+    page = doc.pages[1]
     page.annotations.add("Square", (0, 0, 50, 50), "")
     page.annotations.add("Circle", (60, 0, 110, 50), "")
     page.annotations.add("Sound", (0, 60, 20, 80), "")  # unsupported -> skipped
@@ -331,8 +331,8 @@ def test_document_generate_appearances_across_pages():
     doc = Document()
     doc.pages.add()
     doc.pages.add()
-    doc.pages[0].annotations.add("Square", (0, 0, 50, 50), "")
-    doc.pages[1].annotations.add(
+    doc.pages[1].annotations.add("Square", (0, 0, 50, 50), "")
+    doc.pages[2].annotations.add(
         "Line", (0, 0, 50, 50), "", properties={"L": [0, 0, 50, 50]}
     )
     assert doc.generate_appearances() == 2
@@ -342,7 +342,7 @@ def test_document_generate_appearances_across_pages():
 
 def test_generated_appearance_survives_save_load():
     doc = _new_page_doc()
-    ann = doc.pages[0].annotations.add(
+    ann = doc.pages[1].annotations.add(
         "Circle", (100, 100, 200, 160), "", properties={"C": [0, 0, 1]}
     )
     ann.generate_appearance()
@@ -351,7 +351,7 @@ def test_generated_appearance_survives_save_load():
     buf.seek(0)
     reopened = Document()
     reopened.load_from(buf)
-    assert reopened.pages[0].annotations[0].has_appearance
+    assert reopened.pages[1].annotations[0].has_appearance
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +361,7 @@ def test_generated_appearance_survives_save_load():
 
 def test_flatten_generates_and_inlines_missing_appearance():
     doc = _new_page_doc()
-    doc.pages[0].annotations.add(
+    doc.pages[1].annotations.add(
         "Square", (100, 100, 200, 200), "", properties={"C": [0, 0, 0]}
     )
     before = doc._engine_pdf.page_contents[0]
@@ -375,7 +375,7 @@ def test_flatten_generates_and_inlines_missing_appearance():
 def test_flatten_matrix_maps_bbox_to_rect_without_double_scaling():
     doc = _new_page_doc()
     # Manual appearance authored in annot-local coords; BBox is [0 0 100 100].
-    doc.pages[0].annotations.add(
+    doc.pages[1].annotations.add(
         "Square",
         (100, 100, 200, 200),
         "",

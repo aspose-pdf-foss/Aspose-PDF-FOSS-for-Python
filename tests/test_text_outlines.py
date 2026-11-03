@@ -48,7 +48,7 @@ def test_regex_bookmarks_work_for_uniform_text_and_survive_round_trips(source, t
             before = document.extract_text()
             content = [page.content for page in document.pages]
             assert document.generate_outlines_from_text(r"(?m)^Chapter \d+: (.+)$", regex=True, title_group=1) == 2
-            assert _titles(document) == [("First", 1), ("Second", 2)]
+            assert _titles(document) == [("First", 2), ("Second", 3)]
             assert document.extract_text() == before
             assert [page.content for page in document.pages] == content
             assert all(not item.children for item in document.outlines)
@@ -57,7 +57,7 @@ def test_regex_bookmarks_work_for_uniform_text_and_survive_round_trips(source, t
             for value in (path, _bytes(document)):
                 with Document(value) as reopened:
                     assert reopened.validate()
-                    assert _titles(reopened) == [("First", 1), ("Second", 2)]
+                    assert _titles(reopened) == [("First", 2), ("Second", 3)]
             assert b"/Fit" in path.read_bytes()
         finally:
             if document is not original:
@@ -65,13 +65,13 @@ def test_regex_bookmarks_work_for_uniform_text_and_survive_round_trips(source, t
 
 
 @pytest.mark.parametrize("pattern,options,expected", [
-    ("Chapter", {}, [("Chapter", 1), ("Chapter", 2)]),
+    ("Chapter", {}, [("Chapter", 2), ("Chapter", 3)]),
     ("chapter", {}, []),
-    ("chapter", {"case_sensitive": False}, [("Chapter", 1), ("Chapter", 2)]),
-    (r"Chapter \d+", {"regex": True}, [("Chapter 1", 1), ("Chapter 2", 2)]),
-    (re.compile(r"chapter \d+", re.I), {}, [("Chapter 1", 1), ("Chapter 2", 2)]),
-    (re.compile(r"(?m)^Chapter (?P<number>\d+)"), {"title_group": "number"}, [("1", 1), ("2", 2)]),
-    (re.compile(r"chapter (\d+)"), {"case_sensitive": False, "title_group": 1}, [("1", 1), ("2", 2)]),
+    ("chapter", {"case_sensitive": False}, [("Chapter", 2), ("Chapter", 3)]),
+    (r"Chapter \d+", {"regex": True}, [("Chapter 1", 2), ("Chapter 2", 3)]),
+    (re.compile(r"chapter \d+", re.I), {}, [("Chapter 1", 2), ("Chapter 2", 3)]),
+    (re.compile(r"(?m)^Chapter (?P<number>\d+)"), {"title_group": "number"}, [("1", 2), ("2", 3)]),
+    (re.compile(r"chapter (\d+)"), {"case_sensitive": False, "title_group": 1}, [("1", 2), ("2", 3)]),
 ])
 def test_literal_regex_flags_case_and_title_groups(pattern, options, expected):
     with Document() as document:
@@ -84,16 +84,16 @@ def test_literal_metacharacters_are_escaped():
     with Document() as document:
         document.pages.add().add_text("Section [A].+? Section Azzz", 72, 700)
         assert document.generate_outlines_from_text("Section [A].+?") == 1
-        assert _titles(document) == [("Section [A].+?", 0)]
+        assert _titles(document) == [("Section [A].+?", 1)]
 
 
 def test_page_selection_keeps_order_repetitions_and_original_indices():
     with Document() as document:
         _report(document)
         assert document.generate_outlines_from_text(
-            r"Chapter \d+", regex=True, pages=(index for index in [2, 1, 2]),
+            r"Chapter \d+", regex=True, pages=(number + 1 if type(number) is int else number for number in ((index for index in [2, 1, 2]))),
         ) == 3
-        assert _titles(document) == [("Chapter 2", 2), ("Chapter 1", 1), ("Chapter 2", 2)]
+        assert _titles(document) == [("Chapter 2", 3), ("Chapter 1", 2), ("Chapter 2", 3)]
 
 
 def test_multiple_occurrences_on_a_page_are_retained_and_matches_do_not_cross_pages():
@@ -101,7 +101,7 @@ def test_multiple_occurrences_on_a_page_are_retained_and_matches_do_not_cross_pa
         document.pages.add().add_text("Start Start", 72, 700)
         document.pages.add().add_text("End", 72, 700)
         assert document.generate_outlines_from_text("Start") == 2
-        assert _titles(document) == [("Start", 0), ("Start", 0)]
+        assert _titles(document) == [("Start", 1), ("Start", 1)]
         assert document.generate_outlines_from_text(r"Start.*End", regex=True) == 0
         assert _titles(document) == []
 
@@ -112,7 +112,7 @@ def test_empty_unmatched_groups_and_whitespace_only_titles_are_skipped():
         assert document.generate_outlines_from_text(r"(A)?B|(C)", regex=True, title_group=1) == 0
         assert document.generate_outlines_from_text(r"\s+|^|$", regex=True) == 0
         assert document.generate_outlines_from_text(r"(?=(C))", regex=True, title_group=1) == 1
-        assert _titles(document) == [("C", 0)]
+        assert _titles(document) == [("C", 1)]
 
 
 def test_multiline_titles_collapse_whitespace_and_keep_the_matched_case():
@@ -123,15 +123,15 @@ def test_multiline_titles_collapse_whitespace_and_keep_the_matched_case():
         assert document.generate_outlines_from_text(
             re.compile(r"chapter.*continued", re.S | re.I),
         ) == 1
-        assert _titles(document) == [("Chapter One Continued", 0)]
+        assert _titles(document) == [("Chapter One Continued", 1)]
 
 
 def test_replacement_and_append_preserve_collection_identity_and_live_targets():
     with Document() as document:
         _report(document)
         collection = document.outlines
-        existing = collection.add(OutlineItem("Website", 0, destination=URIAction("https://example.com")))
-        child = existing.add(OutlineItem("Child", 2))
+        existing = collection.add(OutlineItem("Website", 1, destination=URIAction("https://example.com")))
+        child = existing.add(OutlineItem("Child", 3))
         assert document.generate_outlines_from_text("Chapter", replace=False) == 2
         assert document.outlines is collection
         assert collection[0] is existing and collection[0].children[0] is child
@@ -139,7 +139,7 @@ def test_replacement_and_append_preserve_collection_identity_and_live_targets():
         assert document.generate_outlines_from_text("Missing", replace=False) == 0
         assert len(collection) == 3
         assert document.generate_outlines_from_text("Cover") == 1
-        assert document.outlines is collection and _titles(document) == [("Cover", 0)]
+        assert document.outlines is collection and _titles(document) == [("Cover", 1)]
         assert document.generate_outlines_from_text("Missing") == 0
         assert len(collection) == 0
         with Document(_bytes(document)) as reopened:
@@ -157,7 +157,7 @@ def test_clip_exclusions_and_artifacts_combine_for_bookmark_creation():
             r"(?m)^Chapter (.+)$", regex=True, title_group=1,
             clip=(0, 650, 600, 800), exclude_regions=[(0, 740, 600, 800)], skip_artifacts=True,
         ) == 1
-        assert _titles(document) == [("Body", 0)]
+        assert _titles(document) == [("Body", 1)]
 
 
 def test_hidden_optional_content_does_not_generate_bookmarks():
@@ -168,7 +168,7 @@ def test_hidden_optional_content_does_not_generate_bookmarks():
             page.add_text("Chapter Hidden", 72, 760)
         page.add_text("Chapter Visible", 72, 700)
         assert document.generate_outlines_from_text(r"Chapter \w+", regex=True) == 1
-        assert _titles(document) == [("Chapter Visible", 0)]
+        assert _titles(document) == [("Chapter Visible", 1)]
 
 
 @pytest.mark.parametrize("pattern,options", [
@@ -198,7 +198,7 @@ def test_later_invalid_page_is_rejected_before_any_page_is_read(monkeypatch):
         _report(document)
         monkeypatch.setattr(document._engine_pdf, "extract_page_text", lambda *a, **k: pytest.fail("Validate first"))
         with pytest.raises(PdfValidationException):
-            document.generate_outlines_from_text("Chapter", pages=[1, 99])
+            document.generate_outlines_from_text("Chapter", pages=[2, 100])
         assert document._outlines is None
 
 
@@ -207,7 +207,7 @@ def test_later_extraction_failure_preserves_live_edits_and_engine_model(replace,
     with Document() as document:
         _report(document)
         collection = document.outlines
-        original = collection.add(OutlineItem("Unsaved edit", 0))
+        original = collection.add(OutlineItem("Unsaved edit", 1))
         engine = document._engine_pdf
         previous = engine._outlines_data
         extract = engine.extract_page_text
@@ -238,7 +238,7 @@ def test_max_count_stops_after_created_titles_and_does_not_read_later_pages(monk
         monkeypatch.setattr(document._engine_pdf, "extract_page_text", selected)
         assert document.generate_outlines_from_text(r"(?m)^|Chapter \d+", regex=True, max_count=1) == 1
         assert read == [0, 1]
-        assert _titles(document) == [("Chapter 1", 1)]
+        assert _titles(document) == [("Chapter 1", 2)]
 
 
 def test_streaming_only_reads_selected_content_without_filling_text_or_page_caches(tmp_path, monkeypatch):
@@ -257,10 +257,10 @@ def test_streaming_only_reads_selected_content_without_filling_text_or_page_cach
             return get(index)
 
         monkeypatch.setattr(engine, "get_page_content", selected)
-        assert document.generate_outlines_from_text("Chapter", pages=[2, 2]) == 2
+        assert document.generate_outlines_from_text("Chapter", pages=[3, 3]) == 2
         assert visited == [2, 2] and engine.page_contents == []
         assert engine._extracted_text is None
-        assert _titles(document) == [("Chapter", 2), ("Chapter", 2)]
+        assert _titles(document) == [("Chapter", 3), ("Chapter", 3)]
 
 
 def test_empty_document_and_empty_selection_create_no_titles():
@@ -317,7 +317,7 @@ def test_cumulative_title_limit_counts_actual_pdf_encoding(monkeypatch):
         document.pages.add()
         monkeypatch.setattr(document._engine_pdf, "extract_page_text", lambda *a, **k: "A B C")
         assert document.generate_outlines_from_text(r"\w", regex=True) == 3
-        assert _titles(document) == [("A", 0), ("B", 0), ("C", 0)]
+        assert _titles(document) == [("A", 1), ("B", 1), ("C", 1)]
 
 
 @pytest.mark.parametrize("pattern,text", [("A", "A A A A"), (r"(?=.)", "AAAA")])
@@ -334,9 +334,9 @@ def test_append_limits_include_retained_descendants_and_detect_cycles(monkeypatc
     with Document(limits=PdfLoadLimits(max_container_items=5)) as document:
         document.pages.add()
         monkeypatch.setattr(document._engine_pdf, "extract_page_text", lambda *a, **k: "A")
-        root = document.outlines.add(OutlineItem("Existing", 0))
+        root = document.outlines.add(OutlineItem("Existing", 1))
         for index in range(4):
-            root.add(OutlineItem(str(index), 0))
+            root.add(OutlineItem(str(index), 1))
         with pytest.raises(PdfResourceLimitException, match="text bookmark tree items"):
             document.generate_outlines_from_text("A", replace=False)
         assert list(document.outlines) == [root] and len(root.children) == 4
@@ -345,14 +345,14 @@ def test_append_limits_include_retained_descendants_and_detect_cycles(monkeypatc
             document.generate_outlines_from_text("A", replace=False)
         assert root.children == [root]
         assert document.generate_outlines_from_text("A") == 1
-        assert _titles(document) == [("A", 0)]
+        assert _titles(document) == [("A", 1)]
 
 
 def test_replace_reuses_loaded_outline_slots_under_pdf_object_limit():
     with Document() as document:
         document.pages.add().add_text("A A A A A A", 72, 700)
         for index in range(4):
-            document.outlines.add(OutlineItem(str(index), 0))
+            document.outlines.add(OutlineItem(str(index), 1))
         raw = _bytes(document)
     with Document(raw) as source:
         cos = source._engine_pdf._cos_doc
@@ -363,7 +363,7 @@ def test_replace_reuses_loaded_outline_slots_under_pdf_object_limit():
         assert document._outlines is None
         assert document.generate_outlines_from_text("A", max_count=1) == 1
         with Document(_bytes(document)) as reopened:
-            assert _titles(reopened) == [("A", 0)]
+            assert _titles(reopened) == [("A", 1)]
 
 
 def test_streaming_encrypted_unicode_titles_survive_save_and_reopen(tmp_path, monkeypatch):
@@ -385,26 +385,26 @@ def test_streaming_encrypted_unicode_titles_survive_save_and_reopen(tmp_path, mo
 
         monkeypatch.setattr(engine, "get_page_content", selected)
         assert document.generate_outlines_from_text(
-            re.compile(r"Chapter \d+: (?P<title>.+)"), title_group="title", pages=[1],
+            re.compile(r"Chapter \d+: (?P<title>.+)"), title_group="title", pages=[2],
         ) == 1
-        assert _titles(document) == [("Résumé", 1)]
+        assert _titles(document) == [("Résumé", 2)]
         assert document.is_encrypted and engine._extracted_text is None
         assert engine.page_contents == []
         monkeypatch.setattr(engine, "get_page_content", get)
         with Document(_bytes(document), password="user") as reopened:
-            assert _titles(reopened) == [("Résumé", 1)]
+            assert _titles(reopened) == [("Résumé", 2)]
     assert path.read_bytes() == before
 
 
 def test_appending_to_unloaded_tree_keeps_named_targets_actions_styles_and_children():
     with Document() as source:
         _report(source)
-        source.destinations["chapter"] = XYZDestination(1, left=30, top=700, zoom=1.2)
+        source.destinations["chapter"] = XYZDestination(2, left=30, top=700, zoom=1.2)
         root = source.outlines.add(OutlineItem(
-            "Named chapter", 1, destination="chapter", is_bold=True,
+            "Named chapter", 2, destination="chapter", is_bold=True,
             is_italic=True, color="#008000", open=True,
         ))
-        root.add(OutlineItem("Website", 0, destination=URIAction("https://example.com")))
+        root.add(OutlineItem("Website", 1, destination=URIAction("https://example.com")))
         raw = _bytes(source)
     with Document(raw) as document:
         assert document._outlines is None
@@ -415,7 +415,7 @@ def test_appending_to_unloaded_tree_keeps_named_targets_actions_styles_and_child
         assert old.color == pytest.approx((0, 128 / 255, 0), abs=1e-6)
         assert old.children[0].destination.uri == "https://example.com"
         with Document(_bytes(document)) as reopened:
-            assert _titles(reopened) == [("Named chapter", 1), ("Chapter", 1), ("Chapter", 2)]
+            assert _titles(reopened) == [("Named chapter", 2), ("Chapter", 2), ("Chapter", 3)]
             assert reopened.outlines[0].destination_name == "chapter"
             assert reopened.outlines[0].children[0].destination.uri == "https://example.com"
 
@@ -423,21 +423,21 @@ def test_appending_to_unloaded_tree_keeps_named_targets_actions_styles_and_child
 def test_appending_loaded_targets_tracks_page_reordering_before_search():
     with Document() as source:
         _report(source)
-        source.outlines.add(OutlineItem("Existing", 1, destination=XYZDestination(1, top=700)))
+        source.outlines.add(OutlineItem("Existing", 2, destination=XYZDestination(2, top=700)))
         raw = _bytes(source)
     with Document(raw) as document:
-        document.pages.insert(0)
+        document.pages.insert(1)
         assert document.generate_outlines_from_text("Chapter", replace=False) == 2
-        assert _titles(document) == [("Existing", 2), ("Chapter", 2), ("Chapter", 3)]
+        assert _titles(document) == [("Existing", 3), ("Chapter", 3), ("Chapter", 4)]
         with Document(_bytes(document)) as reopened:
-            assert _titles(reopened) == [("Existing", 2), ("Chapter", 2), ("Chapter", 3)]
+            assert _titles(reopened) == [("Existing", 3), ("Chapter", 3), ("Chapter", 4)]
 
 
 def test_search_keeps_cached_text_cursor_metadata_layout_and_page_content():
     with Document() as document:
         _report(document)
         document.info["Title"] = "Report"
-        page = document.pages[1]
+        page = document.pages[2]
         page.rotation = 90
         page.crop_box = (50, 50, 400, 740)
         content = page.content
@@ -457,9 +457,9 @@ def test_bookmarks_are_not_created_from_widget_values_annotations_or_existing_ti
         page = document.pages.add()
         page.add_text("Ordinary body", 72, 700)
         page.annotations.add("Text", (10, 10, 40, 40), "Chapter Annotation")
-        document.form.add_text_field("chapter", 0, (20, 50, 150, 80), value="Chapter Field")
+        document.form.add_text_field("chapter", 1, (20, 50, 150, 80), value="Chapter Field")
         document.generate_field_appearances()
-        original = document.outlines.add(OutlineItem("Chapter Existing", 0))
+        original = document.outlines.add(OutlineItem("Chapter Existing", 1))
         assert document.generate_outlines_from_text("Chapter", replace=False) == 0
         assert list(document.outlines) == [original]
 
@@ -490,7 +490,7 @@ def test_invoked_forms_actual_text_and_adjacent_operands_can_supply_titles():
             + b"BT /F1 12 Tf 72 700 Td (Glyphs) Tj ET EMC"
         ))
         assert document.generate_outlines_from_text(r"Chapter (?:Form|Logical)", regex=True, skip_artifacts=True) == 2
-        assert _titles(document) == [("Chapter Form", 0), ("Chapter Logical", 0)]
+        assert _titles(document) == [("Chapter Form", 1), ("Chapter Logical", 1)]
 
 
 def test_nonempty_exclusions_avoid_decoding_unused_form_streams(monkeypatch):
@@ -504,7 +504,7 @@ def test_nonempty_exclusions_avoid_decoding_unused_form_streams(monkeypatch):
         assert document.generate_outlines_from_text(
             r"Chapter \w+", regex=True, exclude_regions=[(0, 0, 600, 50)],
         ) == 1
-        assert _titles(document) == [("Chapter Main", 0)]
+        assert _titles(document) == [("Chapter Main", 1)]
 
 
 def test_region_generator_is_snapshotted_for_all_selected_pages():
@@ -517,7 +517,7 @@ def test_region_generator_is_snapshotted_for_all_selected_pages():
             r"Chapter (\w+)", regex=True, title_group=1,
             exclude_regions=(box for box in [(0, 740, 600, 800)]),
         ) == 2
-        assert _titles(document) == [("First", 0), ("Second", 1)]
+        assert _titles(document) == [("First", 1), ("Second", 2)]
 
 
 def test_non_latin_to_unicode_text_creates_a_unicode_bookmark_title():
@@ -546,9 +546,9 @@ def test_non_latin_to_unicode_text_creates_a_unicode_bookmark_title():
         raw = _bytes(source)
     with Document(raw) as document:
         assert document.generate_outlines_from_text(r"СЧЁТ \d+", regex=True) == 1
-        assert _titles(document) == [(title, 0)]
+        assert _titles(document) == [(title, 1)]
         with Document(_bytes(document)) as reopened:
-            assert _titles(reopened) == [(title, 0)]
+            assert _titles(reopened) == [(title, 1)]
 
 
 @pytest.mark.parametrize("change,expected", [("insert", 2), ("delete_before", 0)])
@@ -558,9 +558,9 @@ def test_generated_bookmarks_follow_the_matched_page_when_page_order_changes(cha
         document.pages.add().add_text("Chapter One", 72, 700)
         assert document.generate_outlines_from_text("Chapter One") == 1
         if change == "insert":
-            document.pages.insert(0)
+            document.pages.insert(1)
         else:
-            document.pages.delete(0)
+            document.pages.delete(1)
         with Document(_bytes(document)) as reopened:
-            assert _titles(reopened) == [("Chapter One", expected)]
-            assert "Chapter One" in reopened.pages[expected].extract_text()
+            assert _titles(reopened) == [("Chapter One", expected + 1)]
+            assert "Chapter One" in reopened.pages[(expected) + 1].extract_text()

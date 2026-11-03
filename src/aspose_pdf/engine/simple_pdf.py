@@ -1543,7 +1543,7 @@ def destination_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
             params.append(None)
         else:
             return _UNRESOLVED_DESTINATION
-    built = destination_from_spec(kind.name.lstrip("/"), page, params)
+    built = destination_from_spec(kind.name.lstrip("/"), page + 1, params)
     return _UNRESOLVED_DESTINATION if built is None else built
 
 
@@ -11539,7 +11539,9 @@ class SimplePdf:
         from .cos import PdfNull
 
         kind, params = dest._spec()
-        items: list[Any] = [make_ref(dest.page), PdfName(kind)]
+        from aspose_pdf._page_numbers import page_index
+
+        items: list[Any] = [make_ref(page_index(dest.page)), PdfName(kind)]
         for param in params:
             items.append(PdfNull() if param is None else PdfNumber(float(param)))
         return PdfArray(items)
@@ -12702,7 +12704,7 @@ class SimplePdf:
                 )
                 target = item.get("target")
                 if target is not None and hasattr(target, "page"):
-                    entry["target"] = replace(target, page=index)
+                    entry["target"] = replace(target, page=index + 1)
                 entry["page_index"] = index
                 entry["children"] = retargeted(item.get("children", []))
                 out.append(entry)

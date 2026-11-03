@@ -76,7 +76,7 @@ def _drawn(document: Document, name: str) -> str:
 
 def test_a_text_field_redraws_when_its_value_changes():
     document = _authored(
-        lambda form: form.add_text_field("t", 0, (40, 700, 300, 730), value="Hello")
+        lambda form: form.add_text_field("t", 1, (40, 700, 300, 730), value="Hello")
     )
     assert "(Hello) Tj" in _drawn(document, "t")
     document.form["t"].value = "Goodbye"
@@ -87,7 +87,7 @@ def test_a_text_field_redraws_when_its_value_changes():
 
 def test_the_change_survives_a_save_and_reload():
     document = _authored(
-        lambda form: form.add_text_field("t", 0, (40, 700, 300, 730), value="Hello")
+        lambda form: form.add_text_field("t", 1, (40, 700, 300, 730), value="Hello")
     )
     document.form["t"].value = "Goodbye"
     assert "(Goodbye) Tj" in _drawn(_reopened(document), "t")
@@ -96,7 +96,7 @@ def test_the_change_survives_a_save_and_reload():
 def test_a_value_set_on_a_reopened_document_redraws_too():
     document = _reopened(
         _authored(
-            lambda form: form.add_text_field("t", 0, (40, 700, 300, 730), value="Hello")
+            lambda form: form.add_text_field("t", 1, (40, 700, 300, 730), value="Hello")
         )
     )
     document.form["t"].value = "Goodbye"
@@ -106,7 +106,7 @@ def test_a_value_set_on_a_reopened_document_redraws_too():
 def test_a_multiline_field_redraws():
     document = _authored(
         lambda form: form.add_text_field(
-            "m", 0, (40, 600, 300, 690), value="first", multiline=True
+            "m", 1, (40, 600, 300, 690), value="first", multiline=True
         )
     )
     document.form["m"].value = "second"
@@ -116,7 +116,7 @@ def test_a_multiline_field_redraws():
 def test_a_combo_box_redraws():
     document = _authored(
         lambda form: form.add_combo_box(
-            "k", 0, (40, 450, 200, 475), ["one", "two"], value="one"
+            "k", 1, (40, 450, 200, 475), ["one", "two"], value="one"
         )
     )
     document.form["k"].value = "two"
@@ -128,7 +128,7 @@ def test_a_combo_box_redraws():
 def test_a_list_box_moves_its_highlight():
     document = _authored(
         lambda form: form.add_list_box(
-            "l", 0, (40, 350, 200, 430), ["one", "two", "three"], value="one"
+            "l", 1, (40, 350, 200, 430), ["one", "two", "three"], value="one"
         )
     )
     before = _drawn(document, "l")
@@ -141,7 +141,7 @@ def test_a_list_box_moves_its_highlight():
 
 def test_an_emptied_field_stops_showing_its_old_value():
     document = _authored(
-        lambda form: form.add_text_field("t", 0, (40, 700, 300, 730), value="Hello")
+        lambda form: form.add_text_field("t", 1, (40, 700, 300, 730), value="Hello")
     )
     document.form["t"].value = ""
     assert "(Hello)" not in _drawn(document, "t")
@@ -152,7 +152,7 @@ def test_an_emptied_field_stops_showing_its_old_value():
 
 def test_a_checkbox_points_at_the_state_it_now_holds():
     document = _authored(
-        lambda form: form.add_checkbox("c", 0, (40, 650, 60, 670), checked=False)
+        lambda form: form.add_checkbox("c", 1, (40, 650, 60, 670), checked=False)
     )
     assert _drawn(document, "c") == "state=/Off"
     document.form["c"].value = True
@@ -164,7 +164,7 @@ def test_a_checkbox_points_at_the_state_it_now_holds():
 def test_a_radio_group_moves_the_state_between_its_widgets():
     document = _authored(
         lambda form: form.add_radio_group(
-            "r", 0, [("a", (40, 500, 60, 520)), ("b", (80, 500, 100, 520))], value="a"
+            "r", 1, [("a", (40, 500, 60, 520)), ("b", (80, 500, 100, 520))], value="a"
         )
     )
     assert _drawn(document, "r") == "state=/a || state=/Off"
@@ -177,8 +177,8 @@ def test_a_radio_group_moves_the_state_between_its_widgets():
 
 def test_only_the_named_field_is_rebuilt():
     def make(form):
-        form.add_text_field("one", 0, (40, 700, 300, 730), value="first")
-        form.add_text_field("two", 0, (40, 650, 300, 680), value="second")
+        form.add_text_field("one", 1, (40, 700, 300, 730), value="first")
+        form.add_text_field("two", 1, (40, 650, 300, 680), value="second")
 
     document = _authored(make)
     untouched = _drawn(document, "two")
@@ -192,8 +192,8 @@ def test_another_field_s_hand_made_appearance_is_left_alone():
     # for fields whose value did not change -- and quietly throw away one an
     # author had customised. Only the field that changed is rebuilt.
     def make(form):
-        form.add_text_field("one", 0, (40, 700, 300, 730), value="first")
-        form.add_text_field("two", 0, (40, 650, 300, 680), value="second")
+        form.add_text_field("one", 1, (40, 700, 300, 730), value="first")
+        form.add_text_field("two", 1, (40, 650, 300, 680), value="second")
 
     document = _authored(make)
     pdf = document._engine_pdf
@@ -210,7 +210,7 @@ def test_another_field_s_hand_made_appearance_is_left_alone():
 
 def test_setting_an_unknown_field_changes_nothing():
     document = _authored(
-        lambda form: form.add_text_field("t", 0, (40, 700, 300, 730), value="Hello")
+        lambda form: form.add_text_field("t", 1, (40, 700, 300, 730), value="Hello")
     )
     before = _drawn(document, "t")
     with pytest.raises(Exception):
@@ -226,7 +226,7 @@ def test_an_acroform_hands_the_same_attributes_down_either_way():
     # separately, and the bulk one never seeded `rv` -- so a rich-text field
     # could inherit an ancestor's /RV on one path and not the other.
     document = _authored(
-        lambda form: form.add_text_field("t", 0, (40, 700, 300, 730), value="Hello")
+        lambda form: form.add_text_field("t", 1, (40, 700, 300, 730), value="Hello")
     )
     pdf = document._engine_pdf
     root = pdf._resolve(pdf._cos_doc.trailer.mapping[PdfName("Root")])

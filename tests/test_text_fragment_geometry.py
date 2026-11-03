@@ -73,7 +73,7 @@ def _agrees(rect, mupdf, pdfium) -> bool:
 
 
 def test_a_found_phrase_knows_its_place(invoice):
-    [fragment] = _fragments(invoice.pages[0], "Invoice total")
+    [fragment] = _fragments(invoice.pages[1], "Invoice total")
     assert _agrees(fragment.rect, MUPDF[("total", 0)], PDFIUM[("total", 0)])
     assert (fragment.font_name, fragment.font_size, fragment.color) == ("F1", 18.0, (1.0, 0.0, 0.0))
     assert fragment.quads == [(
@@ -86,7 +86,7 @@ def test_a_found_phrase_knows_its_place(invoice):
 
 
 def test_each_occurrence_gets_its_own_box(invoice):
-    fragments = _fragments(invoice.pages[0], "paid")
+    fragments = _fragments(invoice.pages[1], "paid")
     assert len(fragments) == 2
     for fragment, mupdf, pdfium in zip(fragments, MUPDF[("paid", 0)], PDFIUM[("paid", 0)]):
         assert _agrees(fragment.rect, mupdf, pdfium)
@@ -95,26 +95,26 @@ def test_each_occurrence_gets_its_own_box(invoice):
 
 def test_a_whole_document_places_every_page(invoice):
     fragments = _fragments(invoice, "Invoice total")
-    assert [fragment.page_index for fragment in fragments] == [0, 1]
+    assert [fragment.page_index for fragment in fragments] == [1, 2]
     assert _agrees(fragments[0].rect, MUPDF[("total", 0)], PDFIUM[("total", 0)])
     assert _agrees(fragments[1].rect, MUPDF[("total", 1)], PDFIUM[("total", 1)])
     assert [fragment.font_size for fragment in fragments] == [18.0, 12.0]
 
 
 def test_lines_and_regular_expressions_are_placed_too(invoice):
-    lines = _fragments(invoice.pages[0])
+    lines = _fragments(invoice.pages[1])
     assert [fragment.text for fragment in lines] == ["Invoice total", "paid in full, paid twice"]
     assert _agrees(lines[0].rect, MUPDF[("total", 0)], PDFIUM[("total", 0)])
     assert lines[1].rect[0] == pytest.approx(72.0) and lines[1].font_size == 10.0
 
     options = TextSearchOptions(is_regular_expression=True)
-    [fragment] = _fragments(invoice.pages[1], r"Invoice\s+total", text_search_options=options)
+    [fragment] = _fragments(invoice.pages[2], r"Invoice\s+total", text_search_options=options)
     assert _agrees(fragment.rect, MUPDF[("total", 1)], PDFIUM[("total", 1)])
 
 
 def test_a_case_insensitive_match_is_placed_by_the_text_it_found(invoice):
     options = TextSearchOptions(case_sensitive=False)
-    [fragment] = _fragments(invoice.pages[1], "INVOICE TOTAL", text_search_options=options)
+    [fragment] = _fragments(invoice.pages[2], "INVOICE TOTAL", text_search_options=options)
     assert fragment.text == "Invoice total"
     assert _agrees(fragment.rect, MUPDF[("total", 1)], PDFIUM[("total", 1)])
 
@@ -145,22 +145,22 @@ def test_the_colour_is_the_one_the_glyphs_are_painted_in(painting, expected):
     # the CMYK red it paints is (238, 29, 35), its own conversion table against
     # the plain formula used here.
     document = _with_content(b"BT " + painting + b" /F1 12 Tf 72 700 Td (Coloured) Tj ET")
-    [fragment] = _fragments(document.pages[0], "Coloured")
+    [fragment] = _fragments(document.pages[1], "Coloured")
     assert fragment.color == pytest.approx(expected, abs=0.01)
 
 
 def test_outlined_text_reports_its_stroke_colour():
     # Rendering mode 1 paints the outline only: pdfium draws it (255, 0, 0).
     document = _with_content(b"BT 1 0 0 RG 1 Tr /F1 12 Tf 72 700 Td (Outline) Tj ET")
-    [fragment] = _fragments(document.pages[0], "Outline")
+    [fragment] = _fragments(document.pages[1], "Outline")
     assert fragment.color == pytest.approx((1.0, 0.0, 0.0), abs=0.01)
 
 
 def test_the_font_is_the_one_the_match_starts_in():
     # Two show operators on one baseline are one run; each keeps its own /Tf.
     document = _with_content(b"BT /F1 20 Tf 72 700 Td (Big) Tj /F1 10 Tf (small) Tj ET")
-    assert _fragments(document.pages[0], "Big")[0].font_size == 20.0
-    assert _fragments(document.pages[0], "small")[0].font_size == 10.0
+    assert _fragments(document.pages[1], "Big")[0].font_size == 20.0
+    assert _fragments(document.pages[1], "small")[0].font_size == 10.0
 
 
 def test_the_colour_comes_from_the_smallest_box_around_the_match():
@@ -168,8 +168,8 @@ def test_the_colour_comes_from_the_smallest_box_around_the_match():
         b"BT 0 0 1 rg /F1 30 Tf 72 700 Td (WIDE TEXT HERE) Tj ET "
         b"BT 1 0 0 rg /F1 8 Tf 220 710 Td (tiny) Tj ET"
     )
-    assert _fragments(document.pages[0], "tiny")[0].color == pytest.approx((1.0, 0.0, 0.0))
-    assert _fragments(document.pages[0], "WIDE")[0].color == pytest.approx((0.0, 0.0, 1.0))
+    assert _fragments(document.pages[1], "tiny")[0].color == pytest.approx((1.0, 0.0, 0.0))
+    assert _fragments(document.pages[1], "WIDE")[0].color == pytest.approx((0.0, 0.0, 1.0))
 
 
 # --- what cannot be placed ------------------------------------------------------------------
@@ -179,7 +179,7 @@ def test_text_the_locator_cannot_follow_is_left_unplaced():
     # A font the page's resources do not declare: the extractor still reads
     # the bytes, but nothing can measure where the glyphs went.
     document = _with_content(b"BT /Nosuch 12 Tf 72 700 Td (Untracked) Tj ET")
-    [fragment] = _fragments(document.pages[0], "Untracked")
+    [fragment] = _fragments(document.pages[1], "Untracked")
     assert fragment.text == "Untracked"
     assert (fragment.rect, fragment.quads, fragment.font_size, fragment.color) == (None, None, None, None)
 
@@ -190,11 +190,11 @@ def test_a_fragment_split_across_runs_is_left_unplaced():
     document = _with_content(
         b"BT /F1 12 Tf 72 700 Td (Left) Tj ET BT /F1 12 Tf 300 700 Td (Right) Tj ET"
     )
-    [fragment] = _fragments(document.pages[0])
+    [fragment] = _fragments(document.pages[1])
     assert "Left" in fragment.text and "Right" in fragment.text
     assert fragment.rect is None
     # Each part on its own is placed.
-    assert _fragments(document.pages[0], "Right")[0].rect[0] == pytest.approx(300.0)
+    assert _fragments(document.pages[1], "Right")[0].rect[0] == pytest.approx(300.0)
 
 
 def test_a_run_whose_pen_is_lost_places_none_of_itself():
@@ -202,7 +202,7 @@ def test_a_run_whose_pen_is_lost_places_none_of_itself():
     # trackable; the redactor draws no bar for such a run, and nor is a
     # fragment placed from it -- not even the part before the break.
     document = _with_content(b"BT /F1 12 Tf 72 700 Td (Alpha) Tj /Nosuch 12 Tf (Beta) Tj ET")
-    assert _fragments(document.pages[0], "Alpha")[0].rect is None
+    assert _fragments(document.pages[1], "Alpha")[0].rect is None
 
 
 def test_a_page_that_shows_a_match_fewer_times_than_its_text_places_none():
@@ -230,7 +230,7 @@ def test_a_page_that_shows_a_match_fewer_times_than_its_text_places_none():
     engine._set_page_content(0, engine.get_page_content(0) + b"\nq /Fm0 Do Q")
     document = _reloaded(document)
 
-    fragments = _fragments(document.pages[0], "Repeat")
+    fragments = _fragments(document.pages[1], "Repeat")
     assert len(fragments) == 2  # the extractor reads both
     assert [fragment.rect for fragment in fragments] == [None, None]
 
@@ -243,7 +243,7 @@ def test_text_read_from_something_that_is_not_a_page_stays_unplaced(invoice):
 
 
 def test_the_geometry_does_not_change_what_a_fragment_is():
-    plain = TextFragment(page_index=0, text="x", start=1)
+    plain = TextFragment(page_index=1, text="x", start=1)
     assert (plain.rect, plain.quads, plain.font_name, plain.font_size, plain.color) == (None,) * 5
-    assert plain == TextFragment(page_index=0, text="x", start=1, end=2)
-    assert repr(plain) == "TextFragment(page=0, text='x', start=1, end=2)"
+    assert plain == TextFragment(page_index=1, text="x", start=1, end=2)
+    assert repr(plain) == "TextFragment(page=1, text='x', start=1, end=2)"

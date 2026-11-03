@@ -230,9 +230,9 @@ class TestGenerate:
         with _tagged() as document:
             assert document.generate_outlines() == 3
             assert _tree(document) == [
-                (0, "Chapter One", 0, (60.0, 760.0)),
-                (1, "A Section", 0, (60.0, 700.0)),
-                (0, "Chapter Two", 1, (60.0, 760.0)),
+                (0, "Chapter One", 1, (60.0, 760.0)),
+                (1, "A Section", 1, (60.0, 700.0)),
+                (0, "Chapter Two", 2, (60.0, 760.0)),
             ]
 
     def test_an_untagged_document_gets_one_too(self):
@@ -284,7 +284,7 @@ class TestGenerate:
             section = next(iter(document.outlines)).children[0]
             assert isinstance(section.destination, XYZDestination)
             assert section.destination.top == 700.0
-            assert section.destination.page == 0
+            assert section.destination.page == 1
 
     def test_zoom_is_the_reader_s_unless_asked(self):
         with _tagged() as document:
@@ -295,13 +295,13 @@ class TestGenerate:
 
     def test_replace_is_the_default(self):
         with _tagged() as document:
-            document.outlines.add(OutlineItem("Hand-made", 0))
+            document.outlines.add(OutlineItem("Hand-made", 1))
             assert document.generate_outlines() == 3
             assert "Hand-made" not in [row[1] for row in _tree(document)]
 
     def test_appending_keeps_what_was_there(self):
         with _tagged() as document:
-            document.outlines.add(OutlineItem("Hand-made", 0))
+            document.outlines.add(OutlineItem("Hand-made", 1))
             document.generate_outlines(replace=False)
             titles = [row[1] for row in _tree(document)]
             assert titles[0] == "Hand-made"
@@ -328,7 +328,7 @@ class TestGenerate:
         document = Document()
         page = document.pages.add(PageSize.A4)
         page.add_text("All body text, every line of it the same.", 60, 700)
-        document.outlines.add(OutlineItem("Kept", 0))
+        document.outlines.add(OutlineItem("Kept", 1))
         assert document.generate_outlines(replace=False) == 0
         assert [row[1] for row in _tree(document)] == ["Kept"]
         document.close()
@@ -337,7 +337,7 @@ class TestGenerate:
         document = Document()
         page = document.pages.add(PageSize.A4)
         page.add_text("All body text, every line of it the same.", 60, 700)
-        document.outlines.add(OutlineItem("Dropped", 0))
+        document.outlines.add(OutlineItem("Dropped", 1))
         assert document.generate_outlines() == 0
         assert list(document.outlines) == []
         document.close()
@@ -366,9 +366,9 @@ class TestRoundTrip:
             document.save(target)
         with Document(target) as reopened:
             assert _tree(reopened) == [
-                (0, "Chapter One", 0, (60.0, 760.0)),
-                (1, "A Section", 0, (60.0, 700.0)),
-                (0, "Chapter Two", 1, (60.0, 760.0)),
+                (0, "Chapter One", 1, (60.0, 760.0)),
+                (1, "A Section", 1, (60.0, 700.0)),
+                (0, "Chapter Two", 2, (60.0, 760.0)),
             ]
 
     def test_the_destinations_are_written_as_xyz(self, tmp_path):
@@ -416,7 +416,7 @@ class TestRoundTrip:
         tree = _tree(document)
         document.close()
         assert created == 1
-        assert tree[0][2] == 0  # the page it starts on
+        assert tree[0][2] == 1  # the page it starts on
 
 
 def test_generated_outlines_do_not_disturb_pdfua():

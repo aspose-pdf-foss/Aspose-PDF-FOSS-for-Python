@@ -100,7 +100,7 @@ def _document(content: bytes, pattern) -> Document:
 
 
 def _pixels(content: bytes, pattern, points):
-    raster = _document(content, pattern).pages[0].render(antialias=False)
+    raster = _document(content, pattern).pages[1].render(antialias=False)
     return [raster.get_pixel(x, y) for x, y in points]
 
 
@@ -122,7 +122,7 @@ def test_a_stroke_takes_the_pattern_scn_gave_it():
     # A thick horizontal rule across the middle. Where the pattern's red square
     # falls under the pen the rule is red; between squares the page shows.
     content = b"/Pattern CS /P0 SCN 10 w 0 25 m 60 25 l S"
-    raster = _document(content, _tiling(_CELL)).pages[0].render(antialias=False)
+    raster = _document(content, _tiling(_CELL)).pages[1].render(antialias=False)
     band = _band(raster)
     assert _RED in band  # the pattern's squares, under the pen
     assert _WHITE in band  # and the gaps between them
@@ -135,7 +135,7 @@ def test_a_stroke_pattern_does_not_reach_outside_the_pen():
     # The cell is solid, so anywhere the pattern reaches is red.
     solid = _tiling(b"1 0 0 rg 0 0 10 10 re f")
     content = b"/Pattern CS /P0 SCN 4 w 0 0 m 60 60 l S"
-    raster = _document(content, solid).pages[0].render(antialias=False)
+    raster = _document(content, solid).pages[1].render(antialias=False)
     assert raster.get_pixel(2, 2) == _WHITE  # top-left, off the diagonal
     assert raster.get_pixel(57, 57) == _WHITE  # bottom-right
     assert raster.get_pixel(30, 29) == _RED  # but the diagonal itself
@@ -145,7 +145,7 @@ def test_a_stroke_pattern_does_not_reach_outside_the_pen():
 def test_pattern_strokes_honor_dash_gaps_and_square_caps(pattern):
     content = b"/Pattern CS /P0 SCN 6 w 2 J [10 10] 0 d 10 25 m 50 25 l S"
     with _document(content, pattern) as document:
-        raster = document.pages[0].render(antialias=False)
+        raster = document.pages[1].render(antialias=False)
     assert raster.get_pixel(7, 32) == _RED
     assert raster.get_pixel(25, 34) == _WHITE
     assert raster.get_pixel(35, 34) == _RED
@@ -153,14 +153,14 @@ def test_pattern_strokes_honor_dash_gaps_and_square_caps(pattern):
 
 def test_the_clip_goes_back_after_a_patterned_stroke():
     content = b"/Pattern CS /P0 SCN 4 w 0 0 m 60 60 l S 0 0 1 rg 0 50 10 10 re f"
-    raster = _document(content, _tiling(_CELL)).pages[0].render(antialias=False)
+    raster = _document(content, _tiling(_CELL)).pages[1].render(antialias=False)
     # The blue square is nowhere near the pen, and paints all the same.
     assert raster.get_pixel(5, 5) == _BLUE
 
 
 def test_a_plain_colour_set_after_a_pattern_wins():
     content = b"/Pattern CS /P0 SCN 0 0 1 RG 10 w 0 25 m 60 25 l S"
-    raster = _document(content, _tiling(_CELL)).pages[0].render(antialias=False)
+    raster = _document(content, _tiling(_CELL)).pages[1].render(antialias=False)
     assert raster.get_pixel(30, 33) == _BLUE
 
 
@@ -178,19 +178,19 @@ def test_a_plain_colour_set_after_a_pattern_wins():
     ],
 )
 def test_setting_a_plain_stroke_colour_puts_the_pattern_down(content, expected):
-    raster = _document(content, _tiling(_CELL)).pages[0].render(antialias=False)
+    raster = _document(content, _tiling(_CELL)).pages[1].render(antialias=False)
     assert raster.get_pixel(30, 35) == expected
 
 
 def test_changing_the_fill_colour_space_puts_the_pattern_down():
     content = b"/Pattern cs /P0 scn /DeviceRGB cs 0 0 60 60 re f"
-    raster = _document(content, _tiling(_CELL)).pages[0].render(antialias=False)
+    raster = _document(content, _tiling(_CELL)).pages[1].render(antialias=False)
     assert raster.get_pixel(30, 30) == _BLACK
 
 
 def test_a_shading_pattern_strokes_too():
     content = b"/Pattern CS /P0 SCN 10 w 0 25 m 60 25 l S"
-    raster = _document(content, _shading()).pages[0].render(antialias=False)
+    raster = _document(content, _shading()).pages[1].render(antialias=False)
     assert raster.get_pixel(30, 33) == _RED
     assert raster.get_pixel(30, 5) == _WHITE
 
@@ -199,7 +199,7 @@ def test_an_uncoloured_stroke_pattern_takes_the_colour_from_scn():
     content = b"/Cs1 CS 0 0 1 /P0 SCN 10 w 0 25 m 60 25 l S"
     raster = (
         _document(content, _tiling(b"0 0 5 5 re f", paint_type=2))
-        .pages[0]
+        .pages[1]
         .render(antialias=False)
     )
     assert _BLUE in _band(raster)
@@ -228,7 +228,7 @@ def _with_font(content: bytes, pattern) -> Document:
 
 
 def _glyph_pixels(pattern) -> list[tuple[int, int, int]]:
-    raster = _with_font(_TEXT, pattern).pages[0].render(antialias=False)
+    raster = _with_font(_TEXT, pattern).pages[1].render(antialias=False)
     return [raster.get_pixel(x, y) for y in range(0, 60) for x in range(0, 60)]
 
 
@@ -245,7 +245,7 @@ def test_text_filled_with_a_shading_pattern_shows_the_shading():
 
 
 def test_a_pattern_does_not_paint_outside_the_glyphs():
-    raster = _with_font(_TEXT, _tiling(_CELL)).pages[0].render(antialias=False)
+    raster = _with_font(_TEXT, _tiling(_CELL)).pages[1].render(antialias=False)
     assert raster.get_pixel(58, 58) == _WHITE
     assert raster.get_pixel(1, 1) == _WHITE
 
@@ -256,7 +256,7 @@ def test_text_in_a_clipping_mode_still_clips_with_a_pattern_set():
         b"/Pattern cs /P0 scn BT /F1 40 Tf 7 Tr 2 10 Td (H) Tj ET"
         b" 0 0 1 rg 0 0 60 60 re f"
     )
-    raster = _with_font(content, _tiling(_CELL)).pages[0].render(antialias=False)
+    raster = _with_font(content, _tiling(_CELL)).pages[1].render(antialias=False)
     painted = [raster.get_pixel(x, y) for y in range(0, 60) for x in range(0, 60)]
     assert _BLUE in painted  # through the letter
     assert painted.count(_BLUE) < 60 * 60 // 3
@@ -299,5 +299,5 @@ def test_a_pattern_cell_starts_with_no_pattern_of_its_own():
     # to stroke with the very pattern that is drawing the cell.
     stroking_cell = b"3 w 0 0 m 10 10 l S"
     content = b"/Pattern CS /P0 SCN 10 w 0 25 m 60 25 l S"
-    raster = _document(content, _tiling(stroking_cell)).pages[0].render(antialias=False)
+    raster = _document(content, _tiling(stroking_cell)).pages[1].render(antialias=False)
     assert _BLACK in _band(raster)  # the cell's own stroke, in its own colour

@@ -56,8 +56,8 @@ def test_gray_pdf_contains_one_component_luminance_and_survives_round_trips(tmp_
         assert image.mapping[PdfName("ColorSpace")] == PdfName("DeviceGray")
         assert image.mapping[PdfName("BitsPerComponent")].value == 8
         assert _samples(result, image) == expected
-        assert result.pages[0].media_box == (0, 0, 3, 2)
-        assert result.pages[0].render(antialias=False).pixels == bytes(v for v in expected for _ in range(3))
+        assert result.pages[1].media_box == (0, 0, 3, 2)
+        assert result.pages[1].render(antialias=False).pixels == bytes(v for v in expected for _ in range(3))
         path = tmp_path / "gray.pdf"
         result.save(path)
         for argument in (path, _bytes(result)):
@@ -80,7 +80,7 @@ def test_bilevel_pdf_has_one_bit_samples_with_correct_polarity_and_row_padding(t
         assert image.mapping[PdfName("BitsPerComponent")].value == 1
         assert image.mapping.get(PdfName("ImageMask")) is None
         assert _samples(result, image) == expected
-        assert result.pages[0].render(antialias=False).pixels == bytes(
+        assert result.pages[1].render(antialias=False).pixels == bytes(
             255 if v >= 128 else 0 for v in values for _ in range(3)
         )
         path = tmp_path / "bilevel.pdf"
@@ -170,7 +170,7 @@ def test_output_limits_use_converted_sample_sizes(mode, sample_bytes, monkeypatc
     )
     with Document(limits=limits) as source:
         source.pages.add(size=(128, 32))
-        with source.rasterized_copy(pages=[0, 0], mode=mode, dpi=72, antialias=False) as result:
+        with source.rasterized_copy(pages=[1, 1], mode=mode, dpi=72, antialias=False) as result:
             assert result.load_limits is limits and result.page_count == 2
             assert len(_samples(result, _images(result)[0])) == sample_bytes
 
@@ -282,7 +282,7 @@ def test_streaming_encrypted_color_copies_keep_selection_and_source_unchanged(mo
 
         monkeypatch.setattr(source._engine_pdf, "get_page_content", selected)
         result = source.rasterized_copy(
-            mode=mode, pages=[1, 0, 1], threshold=100, dpi=72, antialias=False,
+            mode=mode, pages=[2, 1, 2], threshold=100, dpi=72, antialias=False,
         )
         assert set(visited) == {0, 1}
         assert source._engine_pdf.page_contents == []
@@ -292,8 +292,8 @@ def test_streaming_encrypted_color_copies_keep_selection_and_source_unchanged(mo
         assert [page.render(antialias=False).get_pixel(5, 3) for page in result.pages] == [
             (value, value, value) for value in expected
         ]
-        result.pages[0].draw_rectangle(0, 0, 13, 7, stroke_color=None, fill_color="#000000")
-        assert result.pages[2].render(antialias=False).get_pixel(5, 3) == (255, 255, 255)
+        result.pages[1].draw_rectangle(0, 0, 13, 7, stroke_color=None, fill_color="#000000")
+        assert result.pages[3].render(antialias=False).get_pixel(5, 3) == (255, 255, 255)
     assert path.read_bytes() == before
 
 
@@ -309,12 +309,12 @@ def test_color_conversion_retains_cropped_rotated_page_size_and_view(mode, rotat
         with source.rasterized_copy(
             mode=mode, dpi=72, antialias=False, background=(200, 220, 240),
         ) as result:
-            output = result.pages[0]
+            output = result.pages[1]
             size = (40, 80) if rotation in (90, 270) else (80, 40)
             assert output.media_box == (0, 0, *size) and output.rotation == 0
             assert _samples(result, _images(result)[0]) == expected
             with Document(_bytes(result)) as reopened:
-                assert reopened.pages[0].media_box == (0, 0, *size)
+                assert reopened.pages[1].media_box == (0, 0, *size)
                 assert _samples(reopened, _images(reopened)[0]) == expected
 
 
@@ -338,10 +338,10 @@ def test_bilevel_cumulative_limits_include_padding_on_every_row(monkeypatch):
         source.pages.add(size=(9, 128))
         monkeypatch.setattr(source, "render_page", lambda *a, **kw: pytest.fail("preflight padding first"))
         with pytest.raises(PdfResourceLimitException, match="max_total_decoded_bytes"):
-            source.rasterized_copy(mode="bilevel", pages=[0, 0], dpi=72, antialias=False)
+            source.rasterized_copy(mode="bilevel", pages=[1, 1], dpi=72, antialias=False)
     with Document(limits=PdfLoadLimits(max_total_decoded_bytes=total)) as source:
         source.pages.add(size=(9, 128))
-        with source.rasterized_copy(mode="bilevel", pages=[0, 0], dpi=72, antialias=False) as result:
+        with source.rasterized_copy(mode="bilevel", pages=[1, 1], dpi=72, antialias=False) as result:
             assert [len(_samples(result, image)) for image in _images(result)] == [256, 256]
 
 
@@ -357,4 +357,4 @@ def test_converted_raw_samples_that_look_like_encoded_files_remain_raw(mode):
             (image,) = _images(result)
             assert image.mapping.get(PdfName("Filter")) is None
             assert _samples(result, image) == samples
-            assert result.pages[0].render(antialias=False).pixels == bytes(v for v in values for _ in range(3))
+            assert result.pages[1].render(antialias=False).pixels == bytes(v for v in values for _ in range(3))

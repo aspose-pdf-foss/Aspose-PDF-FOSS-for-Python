@@ -33,13 +33,13 @@ def test_page_collection_is_iterable(page_collection):
 
 def test_page_collection_supports_indexing(page_collection):
     """PageCollection should support indexing."""
-    first = page_collection[0]
+    first = page_collection[1]
     assert isinstance(first, Page)
-    assert first.index == 0
+    assert first.index == 1
 
-    last = page_collection[-1]
+    last = page_collection[len(page_collection)]
     assert isinstance(last, Page)
-    assert last.index == 2
+    assert last.index == 3
 
     with pytest.raises(IndexError):
         _ = page_collection[10]
@@ -71,12 +71,12 @@ def test_page_accept_rejects_invalid_visitor(document):
         page.accept(object())
 
 
-def test_insert_at_0(document):
+def test_insert_at_1(document):
     """Insert a page at the beginning of a non-empty collection."""
     pages = document.pages
     pages.add()
     original_len = len(pages)
-    pages.insert(0)
+    pages.insert(1)
     assert len(pages) == original_len + 1
 
 
@@ -87,7 +87,7 @@ def test_insert_middle(document):
     pages.add()
     pages.add()
     original_len = len(pages)
-    pages.insert(1)
+    pages.insert(2)
     assert len(pages) == original_len + 1
 
 
@@ -97,26 +97,28 @@ def test_insert_end(document):
     pages.add()
     pages.add()
     original_len = len(pages)
-    pages.insert(len(pages))
+    pages.insert((len(pages)) + 1)
     assert len(pages) == original_len + 1
 
 
 def test_insert_index_out_of_range(document):
-    """Inserting beyond the current length should clamp to end (no error)."""
+    """An insertion beyond the final insertion position is refused."""
     pages = document.pages
     pages.add()
     original_len = len(pages)
-    pages.insert(100)
-    assert len(pages) == original_len + 1
+    with pytest.raises(IndexError):
+        pages.insert(101)
+    assert len(pages) == original_len
 
 
 def test_insert_negative_index(document):
-    """Negative indices are clamped to 0 for insertion."""
+    """Negative page numbers are refused before insertion."""
     pages = document.pages
     pages.add()
     original_len = len(pages)
-    pages.insert(-1)
-    assert len(pages) == original_len + 1
+    with pytest.raises(IndexError):
+        pages.insert(-1)
+    assert len(pages) == original_len
 
 
 def test_delete_decreases_page_count(document):
@@ -126,7 +128,7 @@ def test_delete_decreases_page_count(document):
     pages.add()
     pages.add()
     assert len(pages) == 3
-    pages.delete(1)
+    pages.delete(2)
     assert len(pages) == 2
 
 
@@ -136,7 +138,7 @@ def test_delete_last_page(document):
     pages.add()
     pages.add()
     assert len(pages) == 2
-    pages.delete(1)
+    pages.delete(2)
     assert len(pages) == 1
 
 
@@ -145,7 +147,7 @@ def test_delete_index_out_of_range(document):
     pages = document.pages
     pages.add()
     with pytest.raises(IndexError):
-        pages.delete(5)
+        pages.delete(6)
 
 
 def test_add_increases_page_count(document):
@@ -196,19 +198,21 @@ def test_page_property_setters_reject_disposed_document(document, name, value):
 
 
 def test_insert_index_out_of_range_raises(document):
-    """Inserting at out-of-range index should clamp, not raise."""
+    """Out-of-range insertion leaves the collection untouched."""
     pages = document.pages
     original = len(pages)
-    pages.insert(len(pages) + 1)
-    assert len(pages) == original + 1
+    with pytest.raises(IndexError):
+        pages.insert(len(pages) + 2)
+    assert len(pages) == original
 
 
 def test_insert_negative_index_raises(document):
-    """Inserting at negative index should clamp to 0, not raise."""
+    """Negative insertion leaves the collection untouched."""
     pages = document.pages
     original = len(pages)
-    pages.insert(-1)
-    assert len(pages) == original + 1
+    with pytest.raises(IndexError):
+        pages.insert(-1)
+    assert len(pages) == original
 
 
 # ------- Document-based tests -------
@@ -229,7 +233,7 @@ def test_delete_decreases_page_count_doc(document):
         pages.add()
         pages.add()
     initial = len(pages)
-    pages.delete(0)
+    pages.delete(1)
     assert len(pages) == initial - 1
 
 
@@ -239,7 +243,7 @@ def test_delete_last_page_doc(document):
     if len(pages) == 0:
         pages.add()
     initial = len(pages)
-    pages.delete(initial - 1)
+    pages.delete((initial - 1) + 1)
     assert len(pages) == initial - 1
 
 
@@ -248,7 +252,7 @@ def test_delete_index_out_of_range_raises(document):
     pages = document.pages
     count = len(pages)
     with pytest.raises(IndexError):
-        pages.delete(count)
+        pages.delete((count) + 1)
 
 
 def test_page_collection_iterable(document):
@@ -265,19 +269,19 @@ def test_page_collection_indexing(document):
     pages = document.pages
     while len(pages) < 2:
         pages.add()
-    first_page = pages[0]
+    first_page = pages[1]
     assert first_page is not None
     with pytest.raises(IndexError):
-        _ = pages[len(pages)]
+        _ = pages[(len(pages)) + 1]
 
 
-def test_insert_at_0_doc(document):
-    """Insert a page at index 0."""
+def test_insert_at_1_doc(document):
+    """Insert a page at number 1."""
     pages = document.pages
     while len(pages) < 2:
         pages.add()
     original_len = len(pages)
-    pages.insert(0)
+    pages.insert(1)
     assert len(pages) == original_len + 1
 
 
@@ -288,7 +292,7 @@ def test_insert_middle_doc(document):
         pages.add()
     original_len = len(pages)
     middle_index = original_len // 2
-    pages.insert(middle_index)
+    pages.insert((middle_index) + 1)
     assert len(pages) == original_len + 1
 
 
@@ -296,7 +300,7 @@ def test_insert_end_doc(document):
     """Insert a page at the end of the collection."""
     pages = document.pages
     original_len = len(pages)
-    pages.insert(original_len)
+    pages.insert((original_len) + 1)
     assert len(pages) == original_len + 1
 
 
@@ -399,47 +403,47 @@ def test_an_inserted_page_draws_what_the_original_draws():
     reference dangling, nothing drawn, and no structural error to show for it.
     """
     document = Document(io.BytesIO(_document_with_a_furnished_page()))
-    document.pages.insert(1, document.pages[0])
+    document.pages.insert(2, document.pages[1])
     reloaded = _reloaded(document)
 
     assert len(reloaded.pages) == 3
-    assert _ink(reloaded.pages[1]) == _ink(reloaded.pages[0]) > 0
-    assert _ink(reloaded.pages[2]) < _ink(reloaded.pages[0])
+    assert _ink(reloaded.pages[2]) == _ink(reloaded.pages[1]) > 0
+    assert _ink(reloaded.pages[3]) < _ink(reloaded.pages[1])
 
 
 def test_a_copied_page_keeps_its_rotation_and_boxes():
     document = Document(io.BytesIO(_document_with_a_furnished_page()))
-    document.pages[0].rotation = 90
-    document.pages[0].crop_box = (10, 10, 500, 700)
-    document.pages.insert(1, document.pages[0])
+    document.pages[1].rotation = 90
+    document.pages[1].crop_box = (10, 10, 500, 700)
+    document.pages.insert(2, document.pages[1])
 
     reloaded = _reloaded(document)
-    assert reloaded.pages[1].rotation == 90
-    assert reloaded.pages[1].crop_box == reloaded.pages[0].crop_box
+    assert reloaded.pages[2].rotation == 90
+    assert reloaded.pages[2].crop_box == reloaded.pages[1].crop_box
 
 
 def test_the_two_pages_can_be_edited_apart():
     """Sharing the content stream would make one edit change both pages."""
     document = Document(io.BytesIO(_document_with_a_furnished_page()))
-    document.pages.insert(1, document.pages[0])
+    document.pages.insert(2, document.pages[1])
 
-    document.pages[1].add_text("ONLY ON THE COPY", 60, 200, font_size=12)
+    document.pages[2].add_text("ONLY ON THE COPY", 60, 200, font_size=12)
     reloaded = _reloaded(document)
 
-    assert b"ONLY ON THE COPY" in reloaded.pages[1].content
-    assert b"ONLY ON THE COPY" not in reloaded.pages[0].content
+    assert b"ONLY ON THE COPY" in reloaded.pages[2].content
+    assert b"ONLY ON THE COPY" not in reloaded.pages[1].content
 
 
 def test_a_copied_page_gets_its_own_annotations():
     document = Document(io.BytesIO(_document_with_a_furnished_page()))
-    document.pages.insert(1, document.pages[0])
+    document.pages.insert(2, document.pages[1])
     reloaded = _reloaded(document)
 
-    assert len(reloaded.pages[1].annotations) == 1
-    assert reloaded.pages[1].annotations[0].contents == "a note"
+    assert len(reloaded.pages[2].annotations) == 1
+    assert reloaded.pages[2].annotations[0].contents == "a note"
     # Distinct objects: moving one must not move the other.
-    reloaded.pages[1].annotations[0].rect = (0, 0, 10, 10)
-    assert reloaded.pages[0].annotations[0].rect != (0, 0, 10, 10)
+    reloaded.pages[2].annotations[0].rect = (0, 0, 10, 10)
+    assert reloaded.pages[1].annotations[0].rect != (0, 0, 10, 10)
 
 
 def test_a_form_field_is_not_duplicated_onto_the_copy():
@@ -450,14 +454,14 @@ def test_a_form_field_is_not_duplicated_onto_the_copy():
     """
     document = Document()
     document.pages.add()
-    document.form.add_text_field("nickname", 0, (60, 100, 260, 130), value="typed")
+    document.form.add_text_field("nickname", 1, (60, 100, 260, 130), value="typed")
     document = _reloaded(document)
 
-    document.pages.insert(1, document.pages[0])
+    document.pages.insert(2, document.pages[1])
     reloaded = _reloaded(document)
 
     assert [field.name for field in reloaded.form] == ["nickname"]
-    assert len(reloaded.pages[1].annotations) == 0
+    assert len(reloaded.pages[2].annotations) == 0
 
 
 def test_a_copied_page_does_not_share_its_annotations_before_a_save():
@@ -468,11 +472,11 @@ def test_a_copied_page_does_not_share_its_annotations_before_a_save():
     the writer emits an object per reference.
     """
     document = Document(io.BytesIO(_document_with_a_furnished_page()))
-    document.pages.insert(1, document.pages[0])
+    document.pages.insert(2, document.pages[1])
 
-    document.pages[1].annotations[0].rect = (0, 0, 10, 10)
+    document.pages[2].annotations[0].rect = (0, 0, 10, 10)
 
-    assert document.pages[0].annotations[0].rect != (0, 0, 10, 10)
+    assert document.pages[1].annotations[0].rect != (0, 0, 10, 10)
 
 
 def test_a_copied_annotation_says_which_page_it_is_on():
@@ -480,7 +484,7 @@ def test_a_copied_annotation_says_which_page_it_is_on():
     from aspose_pdf.engine.cos import PdfName
 
     document = Document(io.BytesIO(_document_with_a_furnished_page()))
-    document.pages.insert(1, document.pages[0])
+    document.pages.insert(2, document.pages[1])
     engine = document._engine_pdf
 
     page = engine._cos_doc.objects[engine._page_obj_ids[1]]
@@ -503,7 +507,7 @@ def test_a_copied_empty_page_gets_its_own_content_stream():
     from aspose_pdf.engine.cos import PdfName
 
     document = Document(io.BytesIO(_page_with_an_empty_content_stream()))
-    document.pages.insert(1, document.pages[0])
+    document.pages.insert(2, document.pages[1])
     engine = document._engine_pdf
 
     def contents_of(index: int):
@@ -526,7 +530,7 @@ def test_a_copy_hangs_from_the_node_that_lists_it():
     from aspose_pdf.engine.cos import PdfName
 
     document = Document(io.BytesIO(_nested_page_tree()))
-    document.pages.insert(2, document.pages[0])
+    document.pages.insert(3, document.pages[1])
     engine = document._engine_pdf
 
     copied_id = engine._page_obj_ids[2]
@@ -556,10 +560,10 @@ def test_a_page_from_another_document_is_imported_with_what_it_names():
     document = Document(io.BytesIO(_document_with_a_furnished_page()))
     other = Document(io.BytesIO(_document_with_a_furnished_page()))
 
-    document.pages.insert(0, other.pages[0])
+    document.pages.insert(1, other.pages[1])
 
     assert len(document.pages) == 3
-    assert "SOURCE TEXT" in document.pages[0].extract_text()
+    assert "SOURCE TEXT" in document.pages[1].extract_text()
     engine = document._engine_pdf
     resources = engine._resolve(
         engine._get_page_dict(0).get(PdfName("Resources"))
@@ -569,7 +573,7 @@ def test_a_page_from_another_document_is_imported_with_what_it_names():
     xobjects = engine._resolve(resources.mapping.get(PdfName("XObject")))
     assert fonts is not None and len(fonts.mapping) == 1
     assert xobjects is not None and len(xobjects.mapping) == 1
-    assert [a.subtype for a in document.pages[0].annotations] == ["Square"]
+    assert [a.subtype for a in document.pages[1].annotations] == ["Square"]
 
 
 def test_delete_takes_the_page_it_names_with_it(document):
@@ -582,7 +586,7 @@ def test_delete_takes_the_page_it_names_with_it(document):
     for index in range(3):
         document.pages.add().add_text(f"PAGE-{index}", x=20, y=700)
 
-    document.pages.delete(1)
+    document.pages.delete(2)
 
     assert [page.extract_text().strip() for page in document.pages] == [
         "PAGE-0",

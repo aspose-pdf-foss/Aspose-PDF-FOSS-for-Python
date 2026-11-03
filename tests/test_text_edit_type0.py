@@ -230,8 +230,8 @@ def _type0_doc() -> Document:
 
 def test_redact_overlay_draws_bar_for_type0_font() -> None:
     doc = _type0_doc()
-    assert doc.pages[0].redact_text("World", overlay=True) == 1
-    content = doc.pages[0].content
+    assert doc.pages[1].redact_text("World", overlay=True) == 1
+    content = doc.pages[1].content
     assert _cids("World").encode() not in content
     assert b"h f" in content  # a filled overlay path was appended
     # "World" starts after "Hello " (6 glyphs * 6pt at size 12) at x=20.
@@ -242,5 +242,5 @@ def test_redact_overlay_draws_bar_for_type0_font() -> None:
 def test_document_replace_text_rewrites_type0_codes() -> None:
     doc = _type0_doc()
     assert doc.replace_text("World", "led") == 1
-    content = doc.pages[0].content
+    content = doc.pages[1].content
     assert f"<{_cids('Hello led')}>".encode() in content

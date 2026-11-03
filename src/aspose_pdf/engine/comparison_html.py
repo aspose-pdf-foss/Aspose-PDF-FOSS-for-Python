@@ -375,7 +375,7 @@ def export(
         left_pages = () if index is None else (index,)
         right_pages = () if other_index is None else (other_index,)
         text = (
-            document.compare_text(
+            document._api_compare_text(
                 other,
                 pages=left_pages,
                 other_pages=right_pages,
@@ -387,7 +387,7 @@ def export(
             else None
         )
         visual = (
-            document.compare_visual(
+            document._api_compare_visual(
                 other,
                 pages=left_pages,
                 other_pages=right_pages,

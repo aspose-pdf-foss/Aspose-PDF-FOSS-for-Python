@@ -115,14 +115,14 @@ def test_text_with_a_parenthesis_or_backslash_survives_a_save(text):
     document = Document()
     document.pages.add()
     document.info["Title"] = text
-    document.outlines.add(OutlineItem(text, 0))
-    document.pages[0].annotations.add("Text", (10, 10, 40, 40), text)
+    document.outlines.add(OutlineItem(text, 1))
+    document.pages[1].annotations.add("Text", (10, 10, 40, 40), text)
 
     again = _reloaded(document)
 
     assert again.info.get("Title") == text
     assert again.outlines[0].title == text
-    assert again.pages[0].annotations[0].contents == text
+    assert again.pages[1].annotations[0].contents == text
 
 
 def test_a_javascript_action_keeps_its_call_parentheses():

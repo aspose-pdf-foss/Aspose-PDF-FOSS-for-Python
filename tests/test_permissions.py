@@ -39,7 +39,7 @@ NAMES = (
 def _saved(**encrypt: object) -> bytes:
     document = Document()
     document.pages.add(PageSize.A4)
-    document.pages[0].add_text("protected", 50, 700)
+    document.pages[1].add_text("protected", 50, 700)
     buffer = io.BytesIO()
     document.save(buffer)
     document.close()
@@ -479,7 +479,7 @@ class TestPublicKeyPermissions:
         certificate, key = _certificate()
         document = Document()
         document.pages.add(PageSize.A4)
-        document.pages[0].add_text("secret", 50, 700)
+        document.pages[1].add_text("secret", 50, 700)
         buffer = io.BytesIO()
         document.save(buffer)
         document.close()

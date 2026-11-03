@@ -234,7 +234,7 @@ def test_the_background_is_actually_drawn():
         border_color=None,
     )
     document.form.generate_appearances()
-    raster = _roundtrip(document).pages[0].render(dpi=72)
+    raster = _roundtrip(document).pages[1].render(dpi=72)
     # A5 is 595.28 pt tall; the middle of the widget is at y = 515.
     red, green, blue = raster.get_pixel(150, round(595.276 - 515))
     assert red > 200 and green < 80 and blue < 80
@@ -355,7 +355,7 @@ def test_a_page_acts_when_it_is_opened_or_closed():
     page.actions["open"] = JavaScriptAction("app.alert('here');")
     page.actions["close"] = JavaScriptAction("app.alert('gone');")
     assert sorted(page.actions.keys()) == ["close", "open"]
-    reloaded = _roundtrip(document).pages[0]
+    reloaded = _roundtrip(document).pages[1]
     assert sorted(reloaded.actions.keys()) == ["close", "open"]
     assert "here" in reloaded.actions["open"].script
 
@@ -376,8 +376,8 @@ def test_a_page_action_is_the_pages_own():
     page.actions["open"] = JavaScriptAction("first")
     assert len(second.actions) == 0
     reloaded = _roundtrip(document)
-    assert len(reloaded.pages[0].actions) == 1
-    assert len(reloaded.pages[1].actions) == 0
+    assert len(reloaded.pages[1].actions) == 1
+    assert len(reloaded.pages[2].actions) == 0
 
 
 def test_the_open_action_is_a_separate_thing():
@@ -468,7 +468,7 @@ def test_a_missing_script_raises_and_get_does_not():
 def test_the_javascript_tree_lives_beside_the_destinations_tree():
     # Both are /Names entries on the catalog, and neither may displace the other.
     document, _page, _fields = _form()
-    document.destinations["cover"] = 0
+    document.destinations["cover"] = 1
     document.javascript["a"] = "x"
     reloaded = _roundtrip(document)
     assert reloaded.destinations.keys() == ["cover"]

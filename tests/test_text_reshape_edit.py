@@ -356,5 +356,5 @@ def test_render_substitute_joining_no_crash_latin() -> None:
     document = Document()
     page = document.pages.add()
     page.add_text("Hello", x=72, y=700, font_size=24, font_name="Helvetica")
-    raster = document.render_page(0, shape_substitute_text=True)
+    raster = document.render_page(1, shape_substitute_text=True)
     assert raster.width > 0 and raster.height > 0

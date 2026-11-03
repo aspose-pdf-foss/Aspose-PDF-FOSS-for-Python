@@ -503,7 +503,7 @@ def test_render_shading_pattern_fill():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     left = raster.get_pixel(2, 10)
     right = raster.get_pixel(17, 10)
@@ -523,7 +523,7 @@ def test_render_sh_operator_respects_clip():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(2, 10) == (255, 255, 255)  # outside the clip: untouched
     painted = raster.get_pixel(10, 10)
@@ -555,7 +555,7 @@ def test_render_function_shading_pattern_applies_background():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(2, 10) == (0, 255, 0)
     center = raster.get_pixel(10, 10)
@@ -584,7 +584,7 @@ def test_render_function_shading_operator_ignores_background():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(2, 10) == (255, 255, 255)
     assert raster.get_pixel(10, 10) != (255, 255, 255)
@@ -614,7 +614,7 @@ def test_render_separation_fill_uses_tint_transform():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(5, 5) == (255, 128, 128)
 
@@ -651,7 +651,7 @@ def test_render_device_n_fill_uses_alternate_space():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(5, 5) == (64, 191, 0)
 
@@ -694,7 +694,7 @@ def test_render_spot_overprint_preserves_backdrop_inks():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(5, 5) == (255, 0, 0)
     assert raster.get_pixel(15, 5) == (0, 0, 0)
@@ -733,7 +733,7 @@ def test_render_cmyk_overprint_mode_one_preserves_zero_components():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(5, 5) == (255, 255, 0)
     assert raster.get_pixel(15, 5) == (0, 255, 0)
@@ -785,7 +785,7 @@ def test_image_overprint_uses_image_color_space_not_current_fill_space():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(5, 5) == (255, 0, 0)
 
@@ -820,7 +820,7 @@ def test_render_cmyk_overprint_replaces_colorant_with_lighter_tint():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(5, 5) == (128, 255, 255)
 
@@ -860,7 +860,7 @@ def test_render_spot_overprint_replaces_shared_colorant():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(5, 5) == (128, 255, 255)
 
@@ -887,7 +887,7 @@ def test_render_free_form_mesh_sh_operator():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
 
     mixed = raster.get_pixel(5, 14)
     assert all(35 <= component <= 165 for component in mixed)

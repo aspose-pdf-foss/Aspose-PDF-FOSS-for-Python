@@ -264,44 +264,44 @@ class TestRedact:
 class TestDocumentSurface:
     def test_page_replace_text(self):
         with _document("SSN 123-45-6789 and 987-65-4321") as document:
-            assert document.pages[0].replace_text(
+            assert document.pages[1].replace_text(
                 SSN_PATTERN, "***", regex=True
             ) == 2
-            assert document.pages[0].extract_text() == "SSN *** and ***"
+            assert document.pages[1].extract_text() == "SSN *** and ***"
 
     def test_page_replace_text_with_a_compiled_pattern(self):
         with _document("call 555-0100") as document:
-            assert document.pages[0].replace_text(
+            assert document.pages[1].replace_text(
                 re.compile(r"\d{3}-\d{4}"), "<number>"
             ) == 1
-            assert "<number>" in document.pages[0].extract_text()
+            assert "<number>" in document.pages[1].extract_text()
 
     def test_page_redact_text(self):
         with _document("SSN 123-45-6789") as document:
-            assert document.pages[0].redact_text(SSN_PATTERN, regex=True) == 1
-            assert document.pages[0].extract_text().strip() == "SSN"
+            assert document.pages[1].redact_text(SSN_PATTERN, regex=True) == 1
+            assert document.pages[1].extract_text().strip() == "SSN"
 
     def test_document_replace_text_covers_every_page(self):
         with _document("first 111-11-1111") as document:
             second = document.pages.add(PageSize.A4)
             second.add_text("second 222-22-2222", 50, 700)
             assert document.replace_text(SSN_PATTERN, "X", regex=True) == 2
-            assert "X" in document.pages[0].extract_text()
             assert "X" in document.pages[1].extract_text()
+            assert "X" in document.pages[2].extract_text()
 
     def test_page_index_limits_the_edit(self):
         with _document("first 111-11-1111") as document:
             second = document.pages.add(PageSize.A4)
             second.add_text("second 222-22-2222", 50, 700)
             assert document.replace_text(
-                SSN_PATTERN, "X", regex=True, page_index=1
+                SSN_PATTERN, "X", regex=True, page_index=2
             ) == 1
-            assert "111-11-1111" in document.pages[0].extract_text()
+            assert "111-11-1111" in document.pages[1].extract_text()
 
     def test_document_redact_text(self):
         with _document("Email a@b.com, card 4111 1111 1111 1111") as document:
             assert document.redact_text(CARD_PATTERN, regex=True) == 1
-            assert "4111" not in document.pages[0].extract_text()
+            assert "4111" not in document.pages[1].extract_text()
 
     def test_a_bad_pattern_from_the_public_surface(self):
         with _document("x") as document:
@@ -343,29 +343,29 @@ def _bars(content: bytes) -> list[tuple[float, float]]:
 class TestOverlay:
     def test_one_bar_per_match(self):
         with _document("SSN 123-45-6789 and 987-65-4321") as document:
-            count = document.pages[0].redact_text(
+            count = document.pages[1].redact_text(
                 SSN_PATTERN, regex=True, overlay=True
             )
             assert count == 2
-            assert len(_bars(document.pages[0].content)) == 2
+            assert len(_bars(document.pages[1].content)) == 2
 
     def test_a_pattern_puts_its_bar_where_the_literal_would(self):
         """The bars come from the spans the removal used, not a second search."""
         with _document("SSN 123-45-6789 and 987-65-4321") as literal:
-            literal.pages[0].redact_text("123-45-6789", overlay=True)
-            expected = _bars(literal.pages[0].content)
+            literal.pages[1].redact_text("123-45-6789", overlay=True)
+            expected = _bars(literal.pages[1].content)
         with _document("SSN 123-45-6789 and 987-65-4321") as pattern:
-            pattern.pages[0].redact_text(SSN_PATTERN, regex=True, overlay=True)
-            found = _bars(pattern.pages[0].content)
+            pattern.pages[1].redact_text(SSN_PATTERN, regex=True, overlay=True)
+            found = _bars(pattern.pages[1].content)
         assert len(expected) == 1 and len(found) == 2
         assert found[0] == pytest.approx(expected[0])
 
     def test_a_bar_covers_the_text_that_went(self):
         with _document("SSN 123-45-6789") as document:
-            before = document.pages[0].content
+            before = document.pages[1].content
             # Where the digits sit, measured from the text that is still there.
-            document.pages[0].redact_text(SSN_PATTERN, regex=True, overlay=True)
-            left, right = _bars(document.pages[0].content)[0]
+            document.pages[1].redact_text(SSN_PATTERN, regex=True, overlay=True)
+            left, right = _bars(document.pages[1].content)[0]
             assert b"123-45-6789" in before
             assert 50 < left < right
             assert right - left > 40  # eleven characters of 12 pt text
@@ -437,7 +437,7 @@ def test_a_pattern_edits_text_in_an_embedded_font():
     document.close()
     with Document(buffer.getvalue()) as reopened:
         assert reopened.replace_text(SSN_PATTERN, "ukryte", regex=True) == 1
-        text = reopened.pages[0].extract_text()
+        text = reopened.pages[1].extract_text()
     assert "ukryte" in text
     assert "123-45" not in text
 
@@ -474,7 +474,7 @@ def test_a_pattern_reaches_text_inside_a_form_xobject():
 
     with Document(buffer.getvalue()) as reopened:
         assert reopened.replace_text(SSN_PATTERN, "X", regex=True) == 2
-        text = reopened.pages[0].extract_text()
+        text = reopened.pages[1].extract_text()
     assert "111-11-1111" not in text
     assert "222-22-2222" not in text
 
@@ -488,7 +488,7 @@ def test_a_saved_regex_redaction_reads_back_clean(tmp_path):
         assert document.redact_text(CARD_PATTERN, regex=True) == 1
         document.save(target)
     with Document(target) as reopened:
-        text = reopened.pages[0].extract_text()
+        text = reopened.pages[1].extract_text()
     assert "Ada Lovelace" in text
     assert "123-45-6789" not in text
     assert "4111" not in text

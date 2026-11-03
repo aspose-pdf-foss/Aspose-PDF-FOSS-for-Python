@@ -52,7 +52,7 @@ def test_iterator_and_txt_match_existing_extraction_across_round_trips(kind, tmp
     with document:
         before = _bytes(document)
         assert list(document.iter_text_pages()) == ["First", "", "Third"]
-        assert list(document.iter_text_pages(pages=[2, 1, 0, 2])) == [
+        assert list(document.iter_text_pages(pages=[3, 2, 1, 3])) == [
             "Third",
             "",
             "First",
@@ -100,11 +100,11 @@ def test_iteration_preserves_existing_full_text_cache_and_cursor():
     with _document() as document:
         expected = document.extract_text()
         document._engine_pdf._page_text_cursor = 1
-        assert list(document.iter_text_pages(pages=[2, 0])) == ["Third", "First"]
+        assert list(document.iter_text_pages(pages=[3, 1])) == ["Third", "First"]
         assert document._engine_pdf._extracted_text == expected
         assert document._engine_pdf._page_text_cursor == 1
         with io.BytesIO() as output:
-            document.save_as_text(output, pages=[0])
+            document.save_as_text(output, pages=[1])
         assert document._engine_pdf._extracted_text == expected
         assert document._engine_pdf._page_text_cursor == 1
 
@@ -115,7 +115,7 @@ def test_selection_clip_and_exclusion_generators_are_snapshotted_on_call():
         clip = [0, 0, 300, 200]
         exclusion = [0, 0, 300, 50]
         parts = document.iter_text_pages(
-            pages=(index for index in pages),
+            pages=(number + 1 if type(number) is int else number for number in ((index for index in pages))),
             clip=clip,
             exclude_regions=(region for region in [exclusion]),
         )
@@ -262,7 +262,7 @@ def test_large_unicode_pages_are_written_in_bounded_encoded_chunks(monkeypatch):
 @pytest.mark.parametrize(
     "options",
     [
-        {"pages": [0, 3]},
+        {"pages": [1, 4]},
         {"pages": [True]},
         {"pages": "0"},
         {"pages": [-1]},
@@ -437,7 +437,7 @@ def test_streaming_encrypted_sources_read_selected_content_only(
             return original(index)
 
         monkeypatch.setattr(document._engine_pdf, "get_page_content", read)
-        assert list(document.iter_text_pages(pages=[2, 0, 2])) == [
+        assert list(document.iter_text_pages(pages=[3, 1, 3])) == [
             "Third",
             "First",
             "Third",
@@ -445,7 +445,7 @@ def test_streaming_encrypted_sources_read_selected_content_only(
         assert seen == [2, 0, 2]
         seen.clear()
         with io.BytesIO() as output:
-            document.save_as_text(output, pages=[2, 0, 2], page_separator="\f")
+            document.save_as_text(output, pages=[3, 1, 3], page_separator="\f")
             assert output.getvalue() == b"Third\fFirst\fThird"
         assert seen == [2, 0, 2]
         assert document._engine_pdf.page_contents == []

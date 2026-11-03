@@ -63,14 +63,14 @@ def _ink(*annotations: dict) -> int:
 
 
 def _ink_of(document: Document) -> int:
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     return sum(
         1 for y in range(80) for x in range(80) if raster.get_pixel(x, y) != _WHITE
     )
 
 
 def _pixel(annotation: dict, at: tuple[int, int]) -> tuple[int, int, int]:
-    raster = _document(annotation).pages[0].render(dpi=72, antialias=False)
+    raster = _document(annotation).pages[1].render(dpi=72, antialias=False)
     return raster.get_pixel(*at)
 
 
@@ -176,7 +176,7 @@ def test_a_carried_appearance_is_used_instead_of_a_generated_one():
     )
     document = Document()
     document._engine_pdf = pdf
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     assert raster.get_pixel(40, 40) == (0, 255, 0)  # the carried one, not /IC
 
 
@@ -191,7 +191,7 @@ def test_a_hidden_annotation_is_still_hidden():
 
 def test_drawing_an_annotation_does_not_give_it_an_appearance():
     document = _document(_annotation("Square", IC=_numbers(1, 0, 0)))
-    document.pages[0].render(dpi=72, antialias=False)
+    document.pages[1].render(dpi=72, antialias=False)
     annots = document._engine_pdf._get_page_dict(0).mapping[PdfName("Annots")]
     annot = document._engine_pdf._resolve(annots.items[0])
     assert PdfName("AP") not in annot.mapping
@@ -223,7 +223,7 @@ def test_the_generated_stream_is_a_form_the_size_of_the_rectangle():
 def test_an_oblong_annotation_is_drawn_the_shape_it_is():
     oblong = _annotation("Square", IC=_numbers(1, 0, 0))
     oblong["Rect"] = _numbers(10, 20, 70, 40)
-    raster = _document(oblong).pages[0].render(dpi=72, antialias=False)
+    raster = _document(oblong).pages[1].render(dpi=72, antialias=False)
     assert raster.get_pixel(40, 50) == (255, 0, 0)  # inside: rows 40..60
     assert raster.get_pixel(40, 30) == _WHITE  # above it
     assert raster.get_pixel(5, 50) == _WHITE  # left of it
@@ -257,4 +257,4 @@ def test_a_kept_appearance_keeps_the_resources_it_needs():
 
 def test_the_svg_export_draws_a_generated_appearance_too():
     document = _document(_annotation("Square", IC=_numbers(1, 0, 0)))
-    assert "<path" in document.pages[0].to_svg()
+    assert "<path" in document.pages[1].to_svg()

@@ -80,7 +80,7 @@ def test_copy_renders_one_rgb_image_per_page_with_no_searchable_text(tmp_path):
                     page.render(antialias=False).pixels for page in loaded.pages
                 ] == references
                 assert loaded.extract_text() == "\n" and len(_images(loaded)) == 2
-        result.pages[0].add_text("OUTPUT ONLY", 1, 10, font_size=3)
+        result.pages[1].add_text("OUTPUT ONLY", 1, 10, font_size=3)
         assert "OUTPUT ONLY" in result.extract_text()
 
 
@@ -89,21 +89,21 @@ def test_selected_pages_keep_order_repeats_and_independent_resources():
         for color in ("#f00", "#0f0", "#00f"):
             _page(source, color)
         with source.rasterized_copy(
-            pages=(index for index in (2, 0, 2)), dpi=72, antialias=False
+            pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))), dpi=72, antialias=False
         ) as result:
             assert [
                 page.render(antialias=False).get_pixel(10, 10) for page in result.pages
             ] == [(0, 0, 255), (255, 0, 0), (0, 0, 255)]
             assert len(_images(result)) == 3
-            result.pages[0].draw_rectangle(
+            result.pages[1].draw_rectangle(
                 0, 0, 20, 20, fill_color="#000", stroke_color=None
             )
-            assert result.pages[2].render(antialias=False).get_pixel(10, 10) == (
+            assert result.pages[3].render(antialias=False).get_pixel(10, 10) == (
                 0,
                 0,
                 255,
             )
-            assert source.pages[2].render(antialias=False).get_pixel(10, 10) == (
+            assert source.pages[3].render(antialias=False).get_pixel(10, 10) == (
                 0,
                 0,
                 255,
@@ -123,15 +123,15 @@ def test_visible_crop_rotation_offset_and_antialias_match_source_view(
         with source.rasterized_copy(
             dpi=72, antialias=antialias, background=(200, 220, 240)
         ) as result:
-            output = result.pages[0]
+            output = result.pages[1]
             size = (40.0, 80.0) if rotation in (90, 270) else (80.0, 40.0)
             assert output.media_box == output.crop_box == (0, 0, *size)
             assert output.rotation == 0
             assert output.render(antialias=False).pixels == reference.pixels
             with Document(_bytes(result)) as loaded:
-                assert loaded.pages[0].rotation == 0
+                assert loaded.pages[1].rotation == 0
                 assert (
-                    loaded.pages[0].render(antialias=False).pixels == reference.pixels
+                    loaded.pages[1].render(antialias=False).pixels == reference.pixels
                 )
 
 
@@ -145,7 +145,7 @@ def test_dpi_controls_pixels_without_enlarging_fractional_physical_page_size(
     with Document() as source:
         _page(source, "#f00", size=(10.25, 7.5))
         with source.rasterized_copy(dpi=dpi, antialias=False) as result:
-            assert result.pages[0].media_box == (0, 0, 10.25, 7.5)
+            assert result.pages[1].media_box == (0, 0, 10.25, 7.5)
             (image,) = _images(result)
             assert (
                 image.mapping[PdfName("Width")].value,
@@ -156,14 +156,14 @@ def test_dpi_controls_pixels_without_enlarging_fractional_physical_page_size(
 def test_default_dpi_is_150_and_default_antialias_factor_is_three(monkeypatch):
     with Document() as source:
         _page(source, size=(12, 12))
-        original = source.render_page
+        original = source._api_render_page
         calls = []
 
         def render(index, **options):
             calls.append((index, options))
             return original(index, **options)
 
-        monkeypatch.setattr(source, "render_page", render)
+        monkeypatch.setattr(source, "_api_render_page", render)
         with source.rasterized_copy() as result:
             assert calls == [
                 (
@@ -185,17 +185,17 @@ def test_annotations_and_filled_form_appearances_are_baked_or_excluded():
         page.annotations.add(
             "Square", (1, 1, 10, 10), "Comment", properties={"IC": [1, 0, 0]}
         )
-        source.form.add_text_field("Name", 0, (20, 5, 75, 25), value="Visible")
+        source.form.add_text_field("Name", 1, (20, 5, 75, 25), value="Visible")
         for include in (False, True):
             reference = page.render(antialias=False, draw_annotations=include)
             with source.rasterized_copy(
                 dpi=72, antialias=False, include_annotations=include
             ) as result:
                 assert (
-                    result.pages[0].render(antialias=False).pixels == reference.pixels
+                    result.pages[1].render(antialias=False).pixels == reference.pixels
                 )
                 assert (
-                    list(result.pages[0].annotations) == [] and list(result.form) == []
+                    list(result.pages[1].annotations) == [] and list(result.form) == []
                 )
         assert (
             page.render(antialias=False).pixels
@@ -212,9 +212,9 @@ def test_nonvisual_source_objects_and_hidden_text_are_not_transferred():
         hidden = source.layers.add("Hidden", visible=False)
         with page.layer(hidden):
             page.draw_rectangle(0, 0, 20, 20, fill_color="#f00", stroke_color=None)
-        page.add_link((1, 1, 10, 10), FitDestination(0))
-        source.outlines.add(OutlineItem("Private title", 0))
-        source.destinations["Private"] = FitDestination(0)
+        page.add_link((1, 1, 10, 10), FitDestination(1))
+        source.outlines.add(OutlineItem("Private title", 1))
+        source.destinations["Private"] = FitDestination(1)
         source.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ARABIC, "Private-", 7)
         source.info["Title"] = "Private metadata"
         source.xmp_metadata.set_value(
@@ -223,7 +223,7 @@ def test_nonvisual_source_objects_and_hidden_text_are_not_transferred():
         source.add_attachment("secret.txt", b"Private attachment")
         source.javascript.add("startup", "app.alert('Private script')")
         with source.rasterized_copy(dpi=72, antialias=False) as result:
-            assert result.pages[0].render(antialias=False).get_pixel(10, 10) == (
+            assert result.pages[1].render(antialias=False).get_pixel(10, 10) == (
                 255,
                 255,
                 255,
@@ -233,8 +233,8 @@ def test_nonvisual_source_objects_and_hidden_text_are_not_transferred():
             assert list(result.form) == [] and list(result.layers) == []
             assert list(result.destinations) == [] and list(result.javascript) == []
             assert (
-                result.pages[0].label is None
-                and list(result.pages[0].annotations) == []
+                result.pages[1].label is None
+                and list(result.pages[1].annotations) == []
             )
             data = _bytes(result)
             assert b"Private" not in data and b"Hidden OCR" not in data
@@ -259,7 +259,7 @@ def test_nonvisual_source_objects_and_hidden_text_are_not_transferred():
 def test_empty_selection_returns_independent_empty_document():
     with Document() as source:
         for pages in (None, []):
-            with source.rasterized_copy(pages=pages) as result:
+            with source.rasterized_copy(pages=(None if pages is None else (number + 1 if type(number) is int else number for number in (pages)))) as result:
                 assert result is not source and result.page_count == 0
                 with Document(_bytes(result)) as loaded:
                     assert loaded.page_count == 0
@@ -307,14 +307,14 @@ def test_invalid_options_fail_before_geometry_output_creation_or_render(
             pytest.fail("validate before geometry, output allocation or rendering")
 
         monkeypatch.setattr(rasterized_copy, "_geometry", forbidden)
-        monkeypatch.setattr(source, "render_page", forbidden)
+        monkeypatch.setattr(source, "_api_render_page", forbidden)
         with monkeypatch.context() as patch:
             patch.setattr(Document, "__init__", forbidden)
             with pytest.raises(PdfValidationException):
                 source.rasterized_copy(**{name: value})
 
 
-@pytest.mark.parametrize("pages", [0, "0", b"0", [True], [0.5], [-1], [1], [0, 1]])
+@pytest.mark.parametrize("pages", [0, "0", b"0", [True], [0.5], [-1], [2], [0, 2]])
 def test_full_selection_is_validated_before_geometry_or_render(monkeypatch, pages):
     with Document() as source:
         _page(source)
@@ -342,7 +342,7 @@ def test_page_count_limits_apply_to_all_pages_and_repeated_selection(
         monkeypatch.setattr(
             source, "render_page", lambda *a, **kw: pytest.fail("limit first")
         )
-        for options in ({}, {"pages": [0, 0]}):
+        for options in ({}, {"pages": [1, 1]}):
             with pytest.raises(PdfResourceLimitException, match=limit):
                 source.rasterized_copy(**options)
 
@@ -351,7 +351,7 @@ def test_unbounded_page_selection_is_stopped():
     with Document(limits=PdfLoadLimits(max_container_items=2)) as source:
         _page(source)
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            source.rasterized_copy(pages=repeat(0))
+            source.rasterized_copy(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
 
 
 @pytest.mark.parametrize(
@@ -374,7 +374,7 @@ def test_unbounded_page_selection_is_stopped():
         (PdfLoadLimits(max_content_stream_bytes=4), {}, "max_content_stream_bytes"),
         (
             PdfLoadLimits(max_total_decoded_bytes=599),
-            {"pages": [0, 0]},
+            {"pages": [1, 1]},
             "max_total_decoded_bytes",
         ),
         (PdfLoadLimits(max_objects=5), {}, "max_objects"),
@@ -408,7 +408,7 @@ def test_later_invalid_geometry_is_rejected_before_any_output_or_render(
         def forbidden(*a, **kw):
             pytest.fail("preflight every page first")
 
-        monkeypatch.setattr(source, "render_page", forbidden)
+        monkeypatch.setattr(source, "_api_render_page", forbidden)
         with monkeypatch.context() as patch:
             patch.setattr(Document, "__init__", forbidden)
             expected = (
@@ -433,7 +433,7 @@ def test_lossless_storage_obeys_compression_ratio_policy(compression_ratio):
                 None if compression_ratio == 1 else PdfName("FlateDecode")
             )
             with Document(_bytes(result), limits=source.load_limits) as loaded:
-                assert loaded.pages[0].render(antialias=False).get_pixel(10, 10) == (
+                assert loaded.pages[1].render(antialias=False).get_pixel(10, 10) == (
                     255,
                     0,
                     0,
@@ -468,7 +468,7 @@ def test_saved_sources_only_read_selected_pages_and_remain_unchanged(
             return original(index)
 
         monkeypatch.setattr(source._engine_pdf, "get_page_content", content)
-        result = source.rasterized_copy(pages=[2, 0, 2], dpi=72, antialias=False)
+        result = source.rasterized_copy(pages=[3, 1, 3], dpi=72, antialias=False)
         assert set(visited) == {0, 2}
         assert source.is_encrypted is protection
         assert source.info["Title"] == "Source metadata"
@@ -506,7 +506,7 @@ def test_previous_raster_wrappers_are_released_before_rendering_next_page(monkey
     with Document() as source:
         for _ in range(3):
             _page(source, "#f00")
-        original = source.render_page
+        original = source._api_render_page
         references = []
 
         def render(index, **options):
@@ -515,7 +515,7 @@ def test_previous_raster_wrappers_are_released_before_rendering_next_page(monkey
             references.append(weakref.ref(raster))
             return raster
 
-        monkeypatch.setattr(source, "render_page", render)
+        monkeypatch.setattr(source, "_api_render_page", render)
         with source.rasterized_copy(dpi=72, antialias=False) as result:
             assert result.page_count == 3
             assert all(reference() is None for reference in references)
@@ -529,7 +529,7 @@ def test_late_failure_disposes_partial_result_and_preserves_source(monkeypatch, 
         before = _bytes(source)
         original_append, original_render = (
             rasterized_copy._append_image,
-            source.render_page,
+            source._api_render_page,
         )
         partial = []
 
@@ -548,7 +548,7 @@ def test_late_failure_disposes_partial_result_and_preserves_source(monkeypatch, 
             return original_render(index, **options)
 
         monkeypatch.setattr(rasterized_copy, "_append_image", append)
-        monkeypatch.setattr(source, "render_page", render)
+        monkeypatch.setattr(source, "_api_render_page", render)
         error = KeyboardInterrupt if stage == "interrupt" else PdfValidationException
         with pytest.raises(error):
             source.rasterized_copy(dpi=72, antialias=False)
@@ -563,7 +563,7 @@ def test_cached_text_cursor_and_live_outline_edits_are_unchanged():
         _page(source).add_text("Source text", 1, 10, font_size=3)
         cached = source.extract_text()
         source._engine_pdf._page_text_cursor = 1
-        item = source.outlines.add(OutlineItem("Unsaved", 0))
+        item = source.outlines.add(OutlineItem("Unsaved", 1))
         model = source._engine_pdf._outlines_data
         with source.rasterized_copy(dpi=72, antialias=False) as result:
             assert result.extract_text() == ""
@@ -579,19 +579,19 @@ def test_each_call_observes_unsaved_edits_and_current_layer_visibility():
         with page.layer(layer):
             page.draw_rectangle(0, 0, 20, 20, fill_color="#f00", stroke_color=None)
         with source.rasterized_copy(dpi=72, antialias=False) as first:
-            assert first.pages[0].render(antialias=False).get_pixel(10, 10) == (
+            assert first.pages[1].render(antialias=False).get_pixel(10, 10) == (
                 255,
                 255,
                 255,
             )
             layer.visible = True
             with source.rasterized_copy(dpi=72, antialias=False) as second:
-                assert second.pages[0].render(antialias=False).get_pixel(10, 10) == (
+                assert second.pages[1].render(antialias=False).get_pixel(10, 10) == (
                     255,
                     0,
                     0,
                 )
-            assert first.pages[0].render(antialias=False).get_pixel(10, 10) == (
+            assert first.pages[1].render(antialias=False).get_pixel(10, 10) == (
                 255,
                 255,
                 255,
@@ -621,9 +621,9 @@ def test_rgb_samples_resembling_file_headers_are_not_reparsed_as_image_files(
             lambda *a, **kw: pytest.fail("no intermediate PNG encoding"),
         )
         with source.rasterized_copy(dpi=72, antialias=False) as result:
-            assert result.pages[0].render(antialias=False).pixels == samples
+            assert result.pages[1].render(antialias=False).pixels == samples
             with Document(_bytes(result)) as loaded:
-                assert loaded.pages[0].render(antialias=False).pixels == samples
+                assert loaded.pages[1].render(antialias=False).pixels == samples
 
 
 def test_exact_output_object_and_decoded_size_boundaries():
@@ -635,7 +635,7 @@ def test_exact_output_object_and_decoded_size_boundaries():
         _page(source, "#f00", size=(10, 10))
         with source.rasterized_copy(dpi=72, antialias=False) as result:
             assert len(result._engine_pdf._cos_doc.objects) == 5
-            assert result.pages[0].render(antialias=False).get_pixel(5, 5) == (
+            assert result.pages[1].render(antialias=False).get_pixel(5, 5) == (
                 255,
                 0,
                 0,

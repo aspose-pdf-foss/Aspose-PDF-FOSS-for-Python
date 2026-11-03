@@ -131,8 +131,8 @@ def test_substitute_is_metric_compatible_with_helvetica() -> None:
 def _render_text(text: str, font_name: str, font_size: float = 40.0):
     doc = Document()
     doc._engine_pdf = SimplePdf(pages=[(0.0, 0.0, 400.0, 80.0)], page_contents=[b""])
-    doc.pages[0].add_text(text, 10, 30, font_size=font_size, font_name=font_name)
-    return doc.pages[0].render(antialias=False)
+    doc.pages[1].add_text(text, 10, 30, font_size=font_size, font_name=font_name)
+    return doc.pages[1].render(antialias=False)
 
 
 def _dark_pixels(raster) -> int:
@@ -252,7 +252,7 @@ def _render_font(font_dict: bytes, shown: bytes):
     raw += b"xref\n0 6\n0000000000 65535 f \n"
     raw += b"".join(b"%010d 00000 n \n" % offsets[n] for n in sorted(objects))
     raw += b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % start
-    raster = Document(io.BytesIO(bytes(raw))).pages[0].render(antialias=False)
+    raster = Document(io.BytesIO(bytes(raw))).pages[1].render(antialias=False)
     return [raster.get_pixel(x, y) for y in range(raster.height) for x in range(raster.width)]
 
 

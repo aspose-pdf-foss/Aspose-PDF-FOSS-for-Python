@@ -31,8 +31,8 @@ def _tagged(pages: int = 2, label: str = "A") -> Document:
     document = Document()
     for index in range(pages):
         document.pages.add()
-        document.pages[index].add_text(f"{label}{index} heading", x=40, y=700)
-        document.pages[index].add_text(f"{label}{index} body", x=40, y=660)
+        document.pages[(index) + 1].add_text(f"{label}{index} heading", x=40, y=700)
+        document.pages[(index) + 1].add_text(f"{label}{index} body", x=40, y=660)
     content = document.tagged_content
     root = content.add_element("Document")
     for index in range(pages):
@@ -155,7 +155,7 @@ def test_an_imported_annotation_drops_its_own_key_too():
     from aspose_pdf.interactive import FitDestination
 
     other = _tagged(pages=1, label="B")
-    other.pages[0].add_link((40, 400, 200, 430), FitDestination(page=0))
+    other.pages[1].add_link((40, 400, 200, 430), FitDestination(page=1))
     other = _reopened(other)
     # Give the link a structure key, as a tagged document would.
     engine = other._engine_pdf
@@ -234,13 +234,13 @@ def test_an_imported_page_gets_one_content_stream_and_not_two():
     # One rebuilt stream for the copy -- importing the source's reference as
     # well would make it two -- and it draws what the source drew, once.
     assert stream_count(merged, 1) == 1
-    assert merged.pages[1].extract_text() == source.pages[0].extract_text()
+    assert merged.pages[2].extract_text() == source.pages[1].extract_text()
 
 
 def test_a_page_that_was_never_tagged_is_unaffected():
     plain = Document()
     plain.pages.add()
-    plain.pages[0].add_text("plain", x=40, y=700)
+    plain.pages[1].add_text("plain", x=40, y=700)
     target = _tagged(pages=1, label="A")
     target.merge(plain)
     assert _struct_parents(_reopened(target)) == [0, None]

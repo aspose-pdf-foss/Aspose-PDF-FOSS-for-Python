@@ -239,7 +239,7 @@ def _composite_font_pdf(
 def _render(pdf: SimplePdf, **kwargs):
     doc = Document()
     doc._engine_pdf = pdf
-    return doc.pages[0].render(antialias=False, **kwargs)
+    return doc.pages[1].render(antialias=False, **kwargs)
 
 
 def _drew_real_outline(raster) -> bool:
@@ -585,9 +585,9 @@ def test_document_setting_applies_to_every_render_path(tmp_path):
     doc.font_substitution = FontSubstitutionOptions([tmp_path])
 
     assert doc.font_substitution is not None
-    assert _drew_real_outline(doc.render_page(0, antialias=False))
+    assert _drew_real_outline(doc.render_page(1, antialias=False))
     # save_page_as_image renders through the same setting.
-    out = doc.save_page_as_image(0, tmp_path / "page.png", antialias=False)
+    out = doc.save_page_as_image(1, tmp_path / "page.png", antialias=False)
     assert out.exists() and out.stat().st_size > 0
 
 

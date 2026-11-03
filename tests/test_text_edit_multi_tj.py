@@ -120,7 +120,7 @@ def test_public_api_replace_split_phrase() -> None:
         page_contents=[_content("BT /F1 12 Tf [(Wor)-20(ld) -40 (Peace)] TJ ET")],
     )
     assert doc.replace_text("World", "Earth") == 1
-    content = doc.pages[0].content
+    content = doc.pages[1].content
     assert b"(Earth)" in content
     assert b"(Wor)" not in content and b"(ld)" not in content
     assert b"(Peace)" in content  # untouched element preserved

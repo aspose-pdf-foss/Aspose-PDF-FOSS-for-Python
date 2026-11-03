@@ -83,8 +83,8 @@ def test_modes_and_legacy_default(document, api, fields, annotations):
             assert subtypes.count("Widget") == (0 if fields else 1)
             assert subtypes.count("Square") == (0 if annotations else 1)
         if fields:
-            assert "value0" in reopened.pages[0].extract_text()
-            assert "value1" in reopened.pages[1].extract_text()
+            assert "value0" in reopened.pages[1].extract_text()
+            assert "value1" in reopened.pages[2].extract_text()
         else:
             reopened.form["section.field0"].value = "still editable"
             assert reopened.form["section.field0"].value == "still editable"
@@ -101,8 +101,8 @@ def test_selected_names_keep_handles_and_siblings(document, tmp_path, on_disk):
         removed.value = "ghost"
     retained.value = "edited"
     assert form[retained.name].value == "edited"
-    assert len(document.pages[0].annotations) == 1
-    assert len(document.pages[1].annotations) == 2
+    assert len(document.pages[1].annotations) == 1
+    assert len(document.pages[2].annotations) == 2
     if on_disk:
         source = tmp_path / "selected.pdf"
         document.save(source)
@@ -111,19 +111,19 @@ def test_selected_names_keep_handles_and_siblings(document, tmp_path, on_disk):
     with Document(source) as reopened:
         assert [field.name for field in reopened.form] == [retained.name]
         assert reopened.form[retained.name].value == "edited"
-        assert "value0" in reopened.pages[0].extract_text()
+        assert "value0" in reopened.pages[1].extract_text()
         reopened.flatten(annotations=False)
         assert len(reopened.form) == 0
-        assert len(reopened.pages[0].annotations) == 1
+        assert len(reopened.pages[1].annotations) == 1
 
 
 def test_name_and_page_filters_intersect(document):
     before = _bytes(document)
-    document.flatten(fields=["section.field0"], pages=[1], annotations=False)
+    document.flatten(fields=["section.field0"], pages=[2], annotations=False)
     assert _bytes(document) == before
-    document.form.flatten(["section.field0"], pages=[0, 0], annotations=False)
+    document.form.flatten(["section.field0"], pages=[1, 1], annotations=False)
     assert len(document.form) == 1
-    assert "value0" in document.pages[0].extract_text()
+    assert "value0" in document.pages[1].extract_text()
 
 
 @pytest.mark.parametrize(
@@ -136,11 +136,11 @@ def test_name_and_page_filters_intersect(document):
         ({"fields": ["section.field0", "missing"]}, KeyError),
         ({"fields": ["missing"], "pages": []}, KeyError),
         ({"fields": ["section"]}, KeyError),
-        ({"pages": [0, 2]}, IndexError),
-        ({"pages": [-1]}, IndexError),
-        ({"pages": [True]}, TypeError),
-        ({"pages": [0.0]}, TypeError),
-        ({"pages": "0"}, TypeError),
+        ({"pages": [1, 3]}, PdfValidationException),
+        ({"pages": [-1]}, PdfValidationException),
+        ({"pages": [True]}, PdfValidationException),
+        ({"pages": [0.0]}, PdfValidationException),
+        ({"pages": "0"}, PdfValidationException),
         ({"annotations": 1}, TypeError),
         ({"strict": 1}, TypeError),
     ],
@@ -182,7 +182,7 @@ def test_unselected_appearances_and_need_appearances_are_preserved(document):
     assert annot.mapping == annot_before
     assert _acro(document)[PdfName("NeedAppearances")].value is True
     assert selected.mapping[PdfName("AP")] is not None
-    assert "value0" in document.pages[0].extract_text()
+    assert "value0" in document.pages[1].extract_text()
 
 
 def test_multi_page_widget_field_survives_until_last_widget_is_baked(document):
@@ -197,17 +197,17 @@ def test_multi_page_widget_field_survives_until_last_widget_is_baked(document):
         value="shared value",
     )
     field = document.form["shared"]
-    document.flatten(fields=["shared"], annotations=False, pages=[0])
+    document.flatten(fields=["shared"], annotations=False, pages=[1])
     assert document.form["shared"] is field
     assert len(field.widgets) == 1
-    assert field.widgets[0].page_index == 1
+    assert field.widgets[0].page_index == 2
     field.value = "remaining"
     with Document(_bytes(document)) as reopened:
         assert len(reopened.form["shared"].widgets) == 1
-        assert "shared value" in reopened.pages[0].extract_text()
-        reopened.flatten(fields=["shared"], annotations=False, pages=[1])
+        assert "shared value" in reopened.pages[1].extract_text()
+        reopened.flatten(fields=["shared"], annotations=False, pages=[2])
         assert "shared" not in [f.name for f in reopened.form]
-        assert "remaining" in reopened.pages[1].extract_text()
+        assert "remaining" in reopened.pages[2].extract_text()
         assert len(reopened.form) == 2
 
 
@@ -249,11 +249,11 @@ def test_unbakeable_annotations_are_retained(document, reason):
         )
         annotation.mapping[PdfName("AS")] = PdfName("Missing")
     page[PdfName("Annots")].items.append(annotation)
-    document.flatten(fields=False, pages=[0])
+    document.flatten(fields=False, pages=[1])
     assert annotation in page[PdfName("Annots")].items
     assert len(document.form) == 2
     with Document(_bytes(document)) as reopened:
-        assert len(reopened.pages[0].annotations) == 2
+        assert len(reopened.pages[1].annotations) == 2
 
 
 def test_unsupported_field_appearance_is_not_dropped(document):
@@ -263,7 +263,7 @@ def test_unsupported_field_appearance_is_not_dropped(document):
     _widgets(document, "section.field0")[0].mapping.pop(PdfName("AP"))
     document.flatten(fields=["section.field0"], annotations=False)
     assert len(document.form) == 2
-    assert len(document.pages[0].annotations) == 2
+    assert len(document.pages[1].annotations) == 2
 
 
 def test_rotated_appearance_and_page_graphics_state_keep_pixels(document):
@@ -284,11 +284,11 @@ def test_rotated_appearance_and_page_graphics_state_keep_pixels(document):
         }
     )
     pdf._set_page_content(0, b"2 0 0 2 100 100 cm 0 0 1 1 re W n")
-    before = document.pages[0].render(dpi=72, antialias=False).pixels
+    before = document.pages[1].render(dpi=72, antialias=False).pixels
     document.flatten(fields=["section.field0"], annotations=False)
-    assert document.pages[0].render(dpi=72, antialias=False).pixels == before
+    assert document.pages[1].render(dpi=72, antialias=False).pixels == before
     with Document(_bytes(document)) as reopened:
-        assert reopened.pages[0].render(dpi=72, antialias=False).pixels == before
+        assert reopened.pages[1].render(dpi=72, antialias=False).pixels == before
 
 
 def test_inherited_and_shared_resources_keep_existing_xobjects(document):
@@ -302,7 +302,7 @@ def test_inherited_and_shared_resources_keep_existing_xobjects(document):
     parent.mapping[PdfName("Resources")] = resources
     first.mapping.pop(PdfName("Resources"), None)
     second.mapping[PdfName("Resources")] = resources
-    document.flatten(fields=False, pages=[0])
+    document.flatten(fields=False, pages=[1])
     new_resources = first[PdfName("Resources")]
     assert new_resources is not resources
     assert list(old.mapping) == [PdfName("FlatAnnot0")]
@@ -329,14 +329,14 @@ def test_streaming_only_decodes_selected_page(document, tmp_path, monkeypatch):
 
         with monkeypatch.context() as patch:
             patch.setattr(pdf, "get_page_content", read)
-            streamed.flatten(pages=[0])
+            streamed.flatten(pages=[1])
         assert reads == [0]
         assert pdf._lazy is True
         assert pdf.page_contents == []
         assert len(streamed.form) == 1
         with Document(_bytes(streamed)) as reopened:
-            assert "value0" in reopened.pages[0].extract_text()
-            assert len(reopened.pages[1].annotations) == 2
+            assert "value0" in reopened.pages[1].extract_text()
+            assert len(reopened.pages[2].annotations) == 2
 
 
 def test_cycle_and_metadata_limits_fail_without_mutation(document):
@@ -347,7 +347,7 @@ def test_cycle_and_metadata_limits_fail_without_mutation(document):
     with pytest.raises(PdfParseException, match="cycle"):
         document.flatten()
     field.mapping[PdfName("Kids")] = kids
-    assert len(document.pages[0].annotations) == 2
+    assert len(document.pages[1].annotations) == 2
     with Document(limits=PdfLoadLimits(max_container_items=2)) as limited:
         limited.pages.add()
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
@@ -357,7 +357,7 @@ def test_cycle_and_metadata_limits_fail_without_mutation(document):
 def test_plugin_reuses_iterators_for_multiple_inputs(document):
     data = _bytes(document)
     options = FlattenOptions(
-        fields=iter(["section.field0"]), annotations=False, pages=iter([0])
+        fields=iter(["section.field0"]), annotations=False, pages=(number + 1 if type(number) is int else number for number in (iter([0])))
     )
     options.add_input(ByteArrayDataSource(data)).add_input(ByteArrayDataSource(data))
     results = FormFlattener().process(options)
@@ -365,8 +365,8 @@ def test_plugin_reuses_iterators_for_multiple_inputs(document):
     for result in results:
         with Document(result.to_array()) as reopened:
             assert len(reopened.form) == 1
-            assert "value0" in reopened.pages[0].extract_text()
-            assert len(reopened.pages[0].annotations) == 1
+            assert "value0" in reopened.pages[1].extract_text()
+            assert len(reopened.pages[1].annotations) == 1
 
 
 def test_disposed_document_and_form_reject_flatten(document):
@@ -384,17 +384,17 @@ def test_selected_field_types_have_renderable_static_content(document, kind):
     form = document.form
     rect = (100, 65, 220, 95)
     if kind == "checkbox":
-        form.add_checkbox("selected", 0, rect, checked=True)
+        form.add_checkbox("selected", 1, rect, checked=True)
     elif kind == "radio":
-        form.add_radio_group("selected", 0, {"yes": rect}, value="yes")
+        form.add_radio_group("selected", 1, {"yes": rect}, value="yes")
     elif kind == "list":
-        form.add_list_box("selected", 0, rect, ["one", "two"], value="two")
+        form.add_list_box("selected", 1, rect, ["one", "two"], value="two")
     elif kind == "combo":
-        form.add_combo_box("selected", 0, rect, ["one", "two"], value="one")
+        form.add_combo_box("selected", 1, rect, ["one", "two"], value="one")
     elif kind == "button":
-        form.add_push_button("selected", 0, rect, caption="Run")
+        form.add_push_button("selected", 1, rect, caption="Run")
     else:
-        form.add_signature_field("selected", 0, rect)
+        form.add_signature_field("selected", 1, rect)
     # Force the selected widget down the missing-appearance path.
     _widgets(document, "selected")[0].mapping.pop(PdfName("AP"), None)
     document.flatten(fields=["selected"], annotations=False)
@@ -404,7 +404,7 @@ def test_selected_field_types_have_renderable_static_content(document, kind):
     ]
     with Document(_bytes(document)) as reopened:
         assert len(reopened.form) == 2
-        assert len(reopened.pages[0].annotations) == 2
+        assert len(reopened.pages[1].annotations) == 2
         page = reopened._engine_pdf._get_page_dict(0)
         xobjects = page[PdfName("Resources")][PdfName("XObject")]
         assert len(xobjects.mapping) == 1
@@ -448,7 +448,7 @@ def test_selected_merged_widget_and_unnamed_intermediate(document):
     document.flatten(fields=["nested.merged"], annotations=False)
     assert parent not in acro[PdfName("Fields")].items
     assert len(document.form) == 2
-    assert document.pages[0].render(dpi=72, antialias=False).get_pixel(110, 40) == (
+    assert document.pages[1].render(dpi=72, antialias=False).get_pixel(110, 40) == (
         0,
         0,
         255,
@@ -466,11 +466,11 @@ def test_selecting_field_beyond_old_4096_entry_cutoff(document):
                 }
             )
         )
-    document.form.add_text_field("last", 0, (100, 80, 220, 100), value="last value")
+    document.form.add_text_field("last", 1, (100, 80, 220, 100), value="last value")
     document.flatten(fields=["last"], annotations=False)
     assert "last" not in document.form.to_dict()
     assert len(document.form) == 4102
-    assert "last value" in document.pages[0].extract_text()
+    assert "last value" in document.pages[1].extract_text()
 
 
 def test_annotations_only_does_not_walk_invalid_form_tree(document):
@@ -479,8 +479,8 @@ def test_annotations_only_does_not_walk_invalid_form_tree(document):
     field.mapping[PdfName("Kids")] = PdfArray([field])
     # Avoid loading the malformed form through the cached public collection.
     document._form = None
-    document.flatten(fields=False, pages=[0])
-    assert len(document.pages[0].annotations) == 1
+    document.flatten(fields=False, pages=[1])
+    assert len(document.pages[1].annotations) == 1
 
 
 def test_selection_metadata_respects_depth_limit(document):
@@ -549,9 +549,9 @@ def test_hidden_and_no_view_objects_keep_visibility_and_flags(
     page = pdf._get_page_dict(0)
     for ref in page[PdfName("Annots")].items:
         pdf._resolve(ref).mapping[PdfName("F")] = PdfNumber(flags)
-    before_pixels = document.pages[0].render(dpi=72, antialias=False).pixels
+    before_pixels = document.pages[1].render(dpi=72, antialias=False).pixels
     before = _bytes(document)
-    document.flatten(fields=["section.field0"], pages=[0])
+    document.flatten(fields=["section.field0"], pages=[1])
     assert _bytes(document) == before
     if on_disk:
         source = tmp_path / "hidden.pdf"
@@ -559,9 +559,9 @@ def test_hidden_and_no_view_objects_keep_visibility_and_flags(
     else:
         source = _bytes(document)
     with Document(source) as reopened:
-        assert reopened.pages[0].render(dpi=72, antialias=False).pixels == before_pixels
+        assert reopened.pages[1].render(dpi=72, antialias=False).pixels == before_pixels
         assert len(reopened.form) == 2
-        assert len(reopened.pages[0].annotations) == 2
+        assert len(reopened.pages[1].annotations) == 2
         pdf = reopened._engine_pdf
         for ref in pdf._get_page_dict(0)[PdfName("Annots")].items:
             assert pdf._resolve(ref)[PdfName("F")].value == flags
@@ -582,8 +582,8 @@ def test_field_with_visible_and_hidden_widgets_keeps_hidden_widget(document):
     widgets[0].mapping[PdfName("F")] = PdfNumber(2)
     document.flatten(fields=["shared"], annotations=False)
     with Document(_bytes(document)) as reopened:
-        assert [widget.page_index for widget in reopened.form["shared"].widgets] == [0]
-        assert "shared value" in reopened.pages[1].extract_text()
+        assert [widget.page_index for widget in reopened.form["shared"].widgets] == [1]
+        assert "shared value" in reopened.pages[2].extract_text()
         assert _widgets(reopened, "shared")[0][PdfName("F")].value == 2
 
 
@@ -595,7 +595,7 @@ def test_independent_form_refreshes_handles_after_flatten(document):
     assert independent.fields == [retained]
     assert len(document.form) == len(independent) == 1
     document.form.add_text_field(
-        removed.name, 0, (20, 80, 220, 100), value="replacement"
+        removed.name, 1, (20, 80, 220, 100), value="replacement"
     )
     with pytest.raises(KeyError, match="no longer"):
         removed.value = "ghost edit"
@@ -615,7 +615,7 @@ def test_page_failure_keeps_committed_fields_consistent_and_allows_retry(
         for index in range(2):
             doc.pages.add()
             doc.form.add_text_field(
-                f"f{index}", index, (20, 20, 200, 40), value=f"value{index}"
+                f"f{index}", (index) + 1, (20, 20, 200, 40), value=f"value{index}"
             )
         target = {
             "document": doc,
@@ -639,7 +639,7 @@ def test_page_failure_keeps_committed_fields_consistent_and_allows_retry(
         assert acro[PdfName("CO")].items == (refs if failed_page == 0 else refs[1:])
         for field in form:
             assert len(field.widgets) == 1
-            assert field.widgets[0].page_index == int(field.name[-1])
+            assert field.widgets[0].page_index == (int(field.name[-1])) + 1
         # The failed page is still interactive and can be repaired and retried.
         pdf._set_page_content(failed_page, b"")
         with Document(_bytes(doc)) as reopened:
@@ -649,14 +649,14 @@ def test_page_failure_keeps_committed_fields_consistent_and_allows_retry(
         assert all(len(page.annotations) == 0 for page in doc.pages)
         with Document(_bytes(doc)) as reopened:
             assert len(reopened.form) == 0
-            assert "value0" in reopened.pages[0].extract_text()
-            assert "value1" in reopened.pages[1].extract_text()
+            assert "value0" in reopened.pages[1].extract_text()
+            assert "value1" in reopened.pages[2].extract_text()
 
 
 def test_calculation_order_limits_are_checked_before_any_page_is_edited():
     with Document(limits=PdfLoadLimits(max_container_items=6)) as doc:
         doc.pages.add()
-        doc.form.add_text_field("f", 0, (20, 20, 200, 40), value="value")
+        doc.form.add_text_field("f", 1, (20, 20, 200, 40), value="value")
         acro = _acro(doc)
         acro.mapping[PdfName("CO")] = PdfArray(acro[PdfName("Fields")].items * 7)
         pdf = doc._engine_pdf
@@ -691,21 +691,21 @@ def test_partial_failure_preserves_only_remaining_widgets_of_shared_field():
         with pytest.raises(PdfResourceLimitException, match="max_content_tokens"):
             doc.flatten(annotations=False)
         assert doc.form["shared"] is field
-        assert [widget.page_index for widget in field.widgets] == [1]
+        assert [widget.page_index for widget in field.widgets] == [2]
         assert len(acro[PdfName("CO")].items) == 1
         field.value = "remaining"
         pdf._set_page_content(1, b"")
         doc.flatten(annotations=False)
         assert len(doc.form) == 0
         with Document(_bytes(doc)) as reopened:
-            assert "original" in reopened.pages[0].extract_text()
-            assert "remaining" in reopened.pages[1].extract_text()
+            assert "original" in reopened.pages[1].extract_text()
+            assert "remaining" in reopened.pages[2].extract_text()
 
 
 def test_uncommitted_widget_is_not_pruned_if_another_widget_fails(
     document, monkeypatch
 ):
-    document.form.add_text_field("second", 0, (80, 80, 220, 105), value="second value")
+    document.form.add_text_field("second", 1, (80, 80, 220, 105), value="second value")
     pdf = document._engine_pdf
     failing_widget = _widgets(document, "second")[0]
     original = pdf._set_widget_appearance
@@ -722,7 +722,7 @@ def test_uncommitted_widget_is_not_pruned_if_another_widget_fails(
             document.flatten(fields=["section.field0", "second"], annotations=False)
     assert _bytes(document) == before
     assert len(document.form) == 3
-    assert len(document.pages[0].annotations) == 3
+    assert len(document.pages[1].annotations) == 3
     document.flatten(fields=["section.field0", "second"], annotations=False)
     assert [field.name for field in document.form] == ["section.field1"]
 
@@ -731,19 +731,19 @@ def test_unsafe_graphics_state_is_rejected_without_removing_selected_objects(doc
     pdf = document._engine_pdf
     pdf._set_page_content(0, b"2 0 0 2 50 50 cm Q\n")
     before = _bytes(document)
-    pixels = document.pages[0].render(dpi=72, antialias=False).pixels
+    pixels = document.pages[1].render(dpi=72, antialias=False).pixels
     retained = document.form["section.field0"]
     with pytest.raises(PdfValidationException, match=r"page 0.*safely isolated"):
         document.flatten(fields=[retained.name], annotations=False)
     assert _bytes(document) == before
     assert document.form[retained.name] is retained
-    assert len(document.pages[0].annotations) == 2
+    assert len(document.pages[1].annotations) == 2
     with Document(_bytes(document)) as reopened:
-        assert reopened.pages[0].render(dpi=72, antialias=False).pixels == pixels
+        assert reopened.pages[1].render(dpi=72, antialias=False).pixels == pixels
     retained.value = "still editable"
     pdf._set_page_content(0, b"")
     document.flatten(fields=[retained.name], annotations=False)
-    assert "still editable" in document.pages[0].extract_text()
+    assert "still editable" in document.pages[1].extract_text()
 
 
 @pytest.mark.parametrize("indirect", [False, True])
@@ -771,7 +771,7 @@ def test_acroform_default_alignment_is_inherited_and_can_be_overridden(
         reference.pages.add()
         reference.form.add_text_field(
             "reference",
-            0,
+            1,
             (20, 20, 200, 45),
             value="value0",
             alignment=2 if override is None else override,

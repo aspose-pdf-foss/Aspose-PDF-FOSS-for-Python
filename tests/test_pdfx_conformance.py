@@ -794,7 +794,7 @@ class TestColour:
         """``rg`` names no colour space, so the content itself is scanned."""
         doc = Document()
         doc.pages.add(PageSize.A4)
-        doc.pages[0].draw_rectangle(10, 10, 100, 100, stroke_color=(1.0, 0.0, 0.0))
+        doc.pages[1].draw_rectangle(10, 10, 100, 100, stroke_color=(1.0, 0.0, 0.0))
         buffer = io.BytesIO()
         doc.save(buffer)
         doc.close()
@@ -807,7 +807,7 @@ class TestColour:
 
         doc = Document()
         doc.pages.add(PageSize.A4)
-        doc.pages[0].draw_rectangle(
+        doc.pages[1].draw_rectangle(
             10,
             10,
             100,
@@ -1266,7 +1266,7 @@ class TestDocumentSurface:
     def _authored(self) -> bytes:
         doc = Document()
         doc.pages.add(PageSize.A4)
-        doc.pages[0].add_text("Print me", 72, 700)
+        doc.pages[1].add_text("Print me", 72, 700)
         buffer = io.BytesIO()
         doc.save(buffer)
         doc.close()

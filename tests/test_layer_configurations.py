@@ -514,7 +514,7 @@ def test_a_view_usage_reaches_the_renderer_and_the_extractor(tmp_path: Path):
 
     document.layers["Screen-hidden"].set_usage(view=False)
 
-    assert _ink(document.pages[0].render()) < before
+    assert _ink(document.pages[1].render()) < before
     after = _extracted(document, tmp_path / "after.pdf")
     assert "NOT ON SCREEN" not in after
     assert "Body text" in after

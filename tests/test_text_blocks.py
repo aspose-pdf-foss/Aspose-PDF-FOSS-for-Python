@@ -279,7 +279,7 @@ class TestDrawing:
     def test_a_block_puts_its_text_on_the_page(self):
         document, page = _page()
         result = page.add_text_block(TextBlock(LOREM, width=400), 72, 700)
-        assert result["pages"] == [0]
+        assert result["pages"] == [1]
         assert result["lines"] >= 2
         assert result["bottom"] < 700
         assert "disobedience" in page.extract_text()
@@ -473,7 +473,7 @@ class TestPageBreaking:
         document, page = _page()
         result = page.add_text_block(TextBlock(LOREM * 30, width=440), 72, 760)
         assert document.page_count > 1
-        assert result["pages"] == list(range(document.page_count))
+        assert result["pages"] == list(number + 1 for number in (list(range(document.page_count))))
         document.close()
 
     def test_an_existing_page_is_used_rather_than_a_new_one(self):
@@ -481,21 +481,21 @@ class TestPageBreaking:
         document.pages.add(PageSize.A4)
         result = page.add_text_block(TextBlock(LOREM * 8, width=440), 72, 300)
         assert document.page_count == 2  # the one that was already there
-        assert result["pages"] == [0, 1]
-        assert document.pages[1].extract_text().strip()
+        assert result["pages"] == [1, 2]
+        assert document.pages[2].extract_text().strip()
         document.close()
 
     def test_a_new_page_matches_the_one_it_continues_from(self):
         document, page = _page(PageSize.A5)
         page.add_text_block(TextBlock(LOREM * 16, width=300), 40, 560)
-        assert document.pages[1].size == document.pages[0].size
+        assert document.pages[2].size == document.pages[1].size
         document.close()
 
     def test_text_continues_at_the_same_height_on_the_next_page(self):
         document, page = _page()
         page.add_text_block(TextBlock(LOREM * 30, width=440), 72, 700)
-        first = _text_positions(document.pages[0].content)[0][1]
-        second = _text_positions(document.pages[1].content)[0][1]
+        first = _text_positions(document.pages[1].content)[0][1]
+        second = _text_positions(document.pages[2].content)[0][1]
         assert second == pytest.approx(first, abs=0.01)
         document.close()
 
@@ -506,8 +506,8 @@ class TestPageBreaking:
         block.add_paragraph(LOREM * 5, keep_together=True)
         page.add_text_block(block, 72, 200)
         # The paragraph did not fit below y=200, so none of it is on page one.
-        assert "disobedience" not in document.pages[0].extract_text()
-        assert "disobedience" in document.pages[1].extract_text()
+        assert "disobedience" not in document.pages[1].extract_text()
+        assert "disobedience" in document.pages[2].extract_text()
         document.close()
 
     def test_without_keep_together_a_paragraph_splits(self):
@@ -515,7 +515,7 @@ class TestPageBreaking:
         block = TextBlock(width=440)
         block.add_paragraph(LOREM * 5)
         page.add_text_block(block, 72, 200)
-        assert "disobedience" in document.pages[0].extract_text()
+        assert "disobedience" in document.pages[1].extract_text()
         assert document.page_count == 2
         document.close()
 
@@ -530,7 +530,7 @@ class TestPageBreaking:
         page.add_text_block(
             TextBlock(LOREM * 6, width=440), 72, 700, bottom_margin=300
         )
-        lowest = min(y for _x, y in _text_positions(document.pages[0].content))
+        lowest = min(y for _x, y in _text_positions(document.pages[1].content))
         assert lowest >= 300
         document.close()
 
@@ -621,7 +621,7 @@ class TestTagging:
         page.add_text_block(TextBlock(LOREM * 5, width=440), 72, 200)
         engine = document._engine_pdf
         for index in range(document.page_count):
-            content = document.pages[index].content
+            content = document.pages[(index) + 1].content
             ids = [int(m) for m in re.findall(rb"/MCID (\d+)", content)]
             page_dict = engine._get_page_dict(index)
             struct_root = engine._resolve(
@@ -715,7 +715,7 @@ class TestExtractingAJustifiedLine:
         document.pages.add(PageSize.A4)
         document._engine_pdf._append_content_to_page(0, content)
         try:
-            return document.pages[0].extract_text()
+            return document.pages[1].extract_text()
         finally:
             document.close()
 
@@ -748,7 +748,7 @@ def test_a_saved_block_reads_back_as_its_text(tmp_path):
     document.close()
 
     with Document(target) as reopened:
-        text = reopened.pages[0].extract_text()
+        text = reopened.pages[1].extract_text()
     assert "Paradise Lost" in text
     assert "Of Man's first disobedience" in text.replace("\n", " ")
     assert "  " not in text
@@ -763,7 +763,7 @@ def test_a_block_and_a_table_can_share_a_page():
     table.add_header_row(["Item", "Price"])
     table.add_row(["Widget", "9.99"])
     below = page.add_table(table, 72, end["bottom"] - 12)
-    assert below["pages"] == [0]
+    assert below["pages"] == [1]
     assert below["bottom"] < end["bottom"]
     text = page.extract_text()
     assert "introduction" in text and "Widget" in text

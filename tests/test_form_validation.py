@@ -587,7 +587,7 @@ def test_validation_snapshots_and_retained_handles_follow_lifecycle():
         assert form.validate() == []
         with Document() as source:
             source.pages.add()
-            source.form.add_text_field("imported", 0, _RECT, required=True)
+            source.form.add_text_field("imported", 1, _RECT, required=True)
             document.merge(source)
         assert _codes(form) == [("imported", "text", "required")]
         document.flatten()
@@ -597,7 +597,7 @@ def test_validation_snapshots_and_retained_handles_follow_lifecycle():
 def test_read_only_pdf_and_unchanged_incremental_save(monkeypatch):
     with Document() as document:
         document.pages.add()
-        document.form.add_text_field("f", 0, _RECT, required=True)
+        document.form.add_text_field("f", 1, _RECT, required=True)
         data = _save(document)
     with Document(data) as document:
         form = document.form
@@ -636,9 +636,9 @@ def test_streaming_validation_decodes_no_streams(tmp_path, monkeypatch, filled):
         for _ in range(2):
             document.pages.add().add_text("Page content", 20, 700)
         document.form.add_text_field(
-            "f", 0, _RECT, required=True, value="OK" if filled else ""
+            "f", 1, _RECT, required=True, value="OK" if filled else ""
         )
-        document.form.add_checkbox("box", 1, (20, 20, 40, 40), checked=True)
+        document.form.add_checkbox("box", 2, (20, 20, 40, 40), checked=True)
         source = tmp_path / "form.pdf"
         document.save(source)
     with Document.open_streaming(source) as document:
@@ -652,7 +652,7 @@ def test_streaming_validation_decodes_no_streams(tmp_path, monkeypatch, filled):
         monkeypatch.setattr(document._engine_pdf, "get_page_content", forbidden)
         monkeypatch.setattr(document._engine_pdf, "_decode_cos_stream", forbidden)
         monkeypatch.setattr(CosExtractor, "_decode_stream", forbidden)
-        monkeypatch.setattr(document, "render_page", forbidden)
+        monkeypatch.setattr(document, "_api_render_page", forbidden)
         assert len(form.validate()) == (0 if filled else 1)
         assert document._engine_pdf.page_contents == []
 

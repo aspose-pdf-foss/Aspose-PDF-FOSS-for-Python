@@ -7,6 +7,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO
 
+from aspose_pdf._page_numbers import layout_api, page_index, page_indices
 from aspose_pdf.actions import PAGE_TRIGGERS, ActionCollection
 from aspose_pdf.annotations import AnnotationCollection
 from aspose_pdf.color import ColorValue
@@ -154,24 +155,34 @@ class Page:
     """A page of a PDF document."""
 
     # Declared, so a name that is not one of these raises instead of being
-    # taken and quietly lost. These objects are rebuilt on demand -- ``pages[0]``
+    # taken and quietly lost. These objects are rebuilt on demand -- ``pages[1]``
     # hands back a new one each time -- so an attribute set on a misspelling used
     # to vanish before the next statement, with the document saved unchanged.
     __slots__ = ("_annotations", "_document", "_index")
 
     def __init__(self, document: Document, index: int):
         self._document = document
-        self._index = index
+        self._index = page_index(index)
+
+    @classmethod
+    def _from_index(cls, document: Document, index: int) -> Page:
+        """Create an internal page view from an engine index."""
+        return cls(document, index + 1)
+
+    @property
+    def number(self) -> int:
+        """The one-based number of this page, matching the .NET API."""
+        return self._index + 1
 
     @property
     def index(self) -> int:
-        """The zero-based index of the page."""
-        return self._index
+        """The one-based page number; an alias of :attr:`number`."""
+        return self.number
 
     @index.setter
     def index(self, value: int):
         # Internal use only or for legacy compatibility
-        self._index = value
+        self._index = page_index(value)
 
     @property
     def label(self) -> str | None:
@@ -616,10 +627,10 @@ class Page:
 
         See :meth:`Document.extract_words` for word boundaries and positioning
         limits. ``clip`` selects whole words with overlapping bounding boxes.
-        Results retain this page's original zero-based document index.
+        Results retain this page's original one-based document number.
         """
         return self._document.extract_words(
-            pages=[self._index], clip=clip, skip_artifacts=skip_artifacts
+            pages=[self.number], clip=clip, skip_artifacts=skip_artifacts
         )
 
     def add_text(
@@ -959,6 +970,7 @@ class Page:
         )
         return self
 
+    @layout_api
     def add_table(
         self,
         table: Table,
@@ -1000,6 +1012,7 @@ class Page:
             tag=bool(tag),
         )
 
+    @layout_api
     def add_text_block(
         self,
         block: TextBlock,
@@ -1052,6 +1065,7 @@ class Page:
             tag=bool(tag),
         )
 
+    @layout_api
     def add_list(
         self,
         text_list: TextList,
@@ -1116,7 +1130,7 @@ class Page:
         return self
 
     def __repr__(self) -> str:
-        return f"Page({self._index})"
+        return f"Page({self.number})"
 
     def accept(self, visitor: Any) -> None:
         """Dispatch this page to an object implementing ``visit(page)``.
@@ -1420,10 +1434,10 @@ class Page:
         """Extract this page's text grids as detached table snapshots.
 
         See :meth:`Document.extract_tables` for recognition limits and output
-        methods. Results retain this page's zero-based index in the document.
+        methods. Results retain this page's one-based number in the document.
         """
         return self._document.extract_tables(
-            pages=[self._index], clip_to_page=clip_to_page
+            pages=[self.number], clip_to_page=clip_to_page
         )
 
     def export_tables_zip(
@@ -1434,10 +1448,10 @@ class Page:
     ) -> bytes:
         """Package this page's tables; see :meth:`Document.export_tables_zip`.
 
-        Manifest records keep this page's original zero-based document index.
+        Manifest records keep this page's original one-based document number.
         """
         return self._document.export_tables_zip(
-            destination, pages=[self._index], clip_to_page=clip_to_page,
+            destination, pages=[self.number], clip_to_page=clip_to_page,
             delimiter=delimiter, encoding=encoding, compression=compression,
             compresslevel=compresslevel, include_manifest=include_manifest,
             overwrite=overwrite,
@@ -1449,7 +1463,7 @@ class Page:
     ) -> list[ExtractedBlock]:
         """Return this page's detached structure; see Document.extract_blocks."""
         return self._document.extract_blocks(
-            pages=[self._index], include_images=include_images,
+            pages=[self.number], include_images=include_images,
             paragraph_gap=paragraph_gap, clip_to_page=clip_to_page,
         )
 
@@ -1460,7 +1474,7 @@ class Page:
     ) -> bytes:
         """Export this page with its original index; see Document.export_blocks_json."""
         return self._document.export_blocks_json(
-            destination, pages=[self._index], include_images=include_images,
+            destination, pages=[self.number], include_images=include_images,
             paragraph_gap=paragraph_gap, clip_to_page=clip_to_page, overwrite=overwrite,
         )
 
@@ -1610,7 +1624,7 @@ class Page:
         return self._document.markup_text(
             search,
             kind=kind,
-            page_index=self._index,
+            page_index=self.number,
             case_sensitive=case_sensitive,
             max_count=max_count,
             regex=regex,
@@ -1639,7 +1653,7 @@ class Page:
         """
         return self._document.highlight_text(
             search,
-            page_index=self._index,
+            page_index=self.number,
             case_sensitive=case_sensitive,
             max_count=max_count,
             regex=regex,
@@ -1698,7 +1712,7 @@ class Page:
         See :meth:`Document.auto_link` for recognition and geometry limits.
         """
         return self._document.auto_link(
-            pages=[self._index], urls=urls, emails=emails, max_count=max_count
+            pages=[self.number], urls=urls, emails=emails, max_count=max_count
         )
 
     def add_link(
@@ -1724,7 +1738,7 @@ class Page:
 
         See :meth:`Document.extract_links` for fields, ordering and boundaries.
         """
-        return self._document.extract_links(pages=[self._index])
+        return self._document.extract_links(pages=[self.number])
 
     def replace_link_urls(
         self,
@@ -1737,7 +1751,7 @@ class Page:
     ) -> int:
         """Replace primary Link URI URLs on this page; see Document.replace_link_urls."""
         return self._document.replace_link_urls(
-            search, replacement, pages=[self._index], regex=regex,
+            search, replacement, pages=[self.number], regex=regex,
             case_sensitive=case_sensitive, dry_run=dry_run,
         )
 
@@ -1749,7 +1763,7 @@ class Page:
         :meth:`Document.validate_links` for checked targets and limitations.
         """
         return self._document.validate_links(
-            pages=[self._index], include_outlines=False,
+            pages=[self.number], include_outlines=False,
             include_named_destinations=False,
         )
 
@@ -1784,21 +1798,12 @@ class PageCollection:
     def __iter__(self) -> Iterator[Page]:
         self._ensure_not_disposed()
         for i in range(len(self)):
-            yield Page(self._document, i)
+            yield Page._from_index(self._document, i)
 
-    def __getitem__(self, index: int | slice) -> Page | list[Page]:
-        """Return the page at index or a slice of pages."""
+    def __getitem__(self, index: int) -> Page:
+        """Return the page numbered *index*, starting at one."""
         self._ensure_not_disposed()
-        count = len(self)
-        if isinstance(index, slice):
-            start, stop, step = index.indices(count)
-            return [Page(self._document, i) for i in range(start, stop, step)]
-
-        if index < 0:
-            index += count
-        if index < 0 or index >= count:
-            raise IndexError("Page index out of range.")
-        return Page(self._document, index)
+        return Page._from_index(self._document, page_index(index, len(self)))
 
     def item(self, index: int) -> Page:
         """Legacy accessor mirroring the original Item method."""
@@ -1810,11 +1815,11 @@ class PageCollection:
 
     def add(
         self,
-        page: Page | PageSize | Any | None = None,
+        page: Page | PageCollection | PageSize | Any | None = None,
         *,
         size: PageSize | Sequence[float] | str | None = None,
-    ) -> Page:
-        """Append a page to the collection.
+    ) -> Page | None:
+        """Append a page, or import every page of a page collection.
 
         A blank page is US Letter unless a size is given, either as the first
         argument or as *size* -- a :class:`~aspose_pdf.page_size.PageSize`, one of
@@ -1825,11 +1830,24 @@ class PageCollection:
             document.pages.add(size=(300, 400))
 
         Passing a :class:`Page` copies it, as :meth:`insert` describes --
-        including one from another document.
+        including one from another document. Passing a :class:`PageCollection`
+        imports its pages together, preserving resources and references between
+        them, and returns ``None``. An empty collection adds nothing. Adding
+        this document's own collection copies its original pages once.
         """
         self._ensure_not_disposed()
         idx = len(self)
         page, size = _split_page_argument(page, size)
+        if isinstance(page, PageCollection):
+            page._ensure_not_disposed()
+            if not len(page):
+                return None
+            if page._document is self._document:
+                with self._document.extract_pages(range(1, idx + 1)) as source:
+                    self._document._import_pages_from(source)
+            else:
+                self._document._import_pages_from(page._document)
+            return None
         if page is None and size is None:
             self._document._engine_pdf.add_page_break()
         elif page is None:
@@ -1841,10 +1859,10 @@ class PageCollection:
             # the page carried no ``/Resources`` of its own, and the name then
             # resolved to the *target's* ``/F1`` -- so the text drew in
             # whatever font happened to be there, silently.
-            self.insert(idx, page)
+            self.insert(idx + 1, page)
         else:
             self._document._engine_pdf.add(page)
-        return Page(self._document, idx)
+        return Page._from_index(self._document, idx)
 
     def insert(
         self,
@@ -1868,20 +1886,17 @@ class PageCollection:
         pointed at it. That is the same import :meth:`aspose_pdf.Document.merge`
         does, for one page and at a position::
 
-            report.pages.insert(0, cover.pages[0])
+            report.pages.insert(1, cover.pages[1])
 
-        Taking *every* page of the other document is still :meth:`merge`'s job,
-        and a run of them is cheaper through
+        Import every page together with ``pages.add(other.pages)`` or
+        :meth:`~aspose_pdf.Document.merge`. A selected run is cheaper through
         :meth:`~aspose_pdf.Document.extract_pages` and a merge than one call
         each, since each import walks the other document's forms, outlines and
         structure tree.
         """
         self._ensure_not_disposed()
         count = len(self)
-        if index < 0:
-            index = 0
-        if index > count:
-            index = count
+        index = page_index(index, count, insertion=True)
         page, size = _split_page_argument(page, size)
 
         if page is None:
@@ -1892,11 +1907,11 @@ class PageCollection:
             if page._document is not self._document:
                 self._import_page(page, index)
             else:
-                self._document._engine_pdf.copy_page(page.index, index)
+                self._document._engine_pdf.copy_page(page._index, index)
         else:
             self._document._engine_pdf.insert(index, page)
 
-        return Page(self._document, index)
+        return Page._from_index(self._document, index)
 
     def _import_page(self, page: Page, index: int) -> None:
         """Bring *page* in from the document it belongs to, at *index*."""
@@ -1912,25 +1927,33 @@ class PageCollection:
                 "The page's document holds nothing to import."
             )
         count = len(source.pages)
-        if not 0 <= page.index < count:
+        if not 0 <= page._index < count:
             raise IndexError(
                 f"The page is index {page.index} of a document with {count} "
                 "page(s); it may have been deleted since."
             )
-        self._document._import_pages_from(source, pages=[page.index], at=index)
+        self._document._import_pages_from(source, pages=[page._index], at=index)
 
-    def delete(self, index: int) -> None:
-        """Delete the page at index."""
+    def delete(self, index: int | Iterable[int] | None = None) -> None:
+        """Delete one page, original page numbers, or every page if omitted.
+
+        The complete selection is validated before any deletion. Repeated
+        numbers name the same original page and are deleted only once.
+        """
         self._ensure_not_disposed()
-        count = len(self)
-        if index < 0:
-            index += count
-        if index < 0 or index >= count:
-            raise IndexError("Page index out of range.")
+        if index is None:
+            self.clear()
+            return
+        if isinstance(index, int):
+            indices = (page_index(index, len(self)),)
+        else:
+            indices = page_indices(
+                index, len(self), limits=self._document.load_limits
+            )
+        for position in sorted(set(indices), reverse=True):
+            self._document._engine_pdf.delete(position)
 
-        self._document._engine_pdf.delete(index)
-
-    def Delete(self, index: int) -> None:
+    def Delete(self, index: int | Iterable[int] | None = None) -> None:
         """Public API alias for :meth:`delete`."""
         self.delete(index)
 
@@ -1946,18 +1969,16 @@ class PageCollection:
         self._ensure_not_disposed()
         if not isinstance(page, Page):
             return False
-        return page._document == self._document and 0 <= page.index < len(self)
+        return page._document == self._document and 0 <= page._index < len(self)
 
     def index_of(self, page: Page) -> int:
-        """Return the zero-based index of *page* in the collection."""
+        """Return the one-based page number, or zero if the page is absent."""
         self._ensure_not_disposed()
         if not isinstance(page, Page):
             raise TypeError("Argument must be a Page instance.")
-        if page._document != self._document:
-            raise PdfValidationException("The page belongs to a different document.")
-        if 0 <= page.index < len(self):
-            return page.index
-        raise PdfValidationException("The page is not in the collection.")
+        if self.contains(page):
+            return page.number
+        return 0
 
     def _dispose(self) -> None:
         """Internal use only."""

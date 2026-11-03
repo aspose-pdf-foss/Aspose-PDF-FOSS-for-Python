@@ -289,9 +289,9 @@ def compare_visual(
         plans.append((index, other_index))
     results = []
     for index, other_index in plans:
-        left = _render(document.pages[index], options) if index is not None else None
+        left = _render(document._page_at(index), options) if index is not None else None
         right = (
-            _render(other.pages[other_index], options)
+            _render(other._page_at(other_index), options)
             if other_index is not None
             else None
         )

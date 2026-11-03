@@ -375,7 +375,7 @@ class TestResize:
         engine = document._engine_pdf
         engine.pages[0] = (0.0, 0.0, 0.0, 0.0)
         engine.resize_page(0, LETTER[0] / 2, LETTER[1] / 2)
-        matrix = _matrix(document.pages[0])
+        matrix = _matrix(document.pages[1])
         assert matrix[0] == pytest.approx(0.5)
         assert matrix[3] == pytest.approx(0.5)
         document.close()
@@ -409,19 +409,19 @@ class TestDocumentAndFacade:
 
     def test_a_selection(self):
         with self._mixed() as document:
-            assert document.resize_pages(PageSize.LETTER, pages=[1]) == 1
-            assert (document.pages[0].size.width, document.pages[0].size.height) != LETTER
-            assert (document.pages[1].size.width, document.pages[1].size.height) == LETTER
+            assert document.resize_pages(PageSize.LETTER, pages=[2]) == 1
+            assert (document.pages[1].size.width, document.pages[1].size.height) != LETTER
+            assert (document.pages[2].size.width, document.pages[2].size.height) == LETTER
 
     def test_a_slice(self):
         with self._mixed() as document:
-            assert document.resize_pages(PageSize.LETTER, pages=slice(1, None)) == 2
-            assert (document.pages[0].size.width, document.pages[0].size.height) != LETTER
+            assert document.resize_pages(PageSize.LETTER, pages=[2, 3]) == 2
+            assert (document.pages[1].size.width, document.pages[1].size.height) != LETTER
 
     def test_the_mode_is_passed_on(self):
         with self._mixed() as document:
             document.resize_pages(PageSize.LETTER, mode="stretch")
-            matrix = _matrix(document.pages[1])
+            matrix = _matrix(document.pages[2])
             assert matrix[0] != matrix[3]
 
     def test_the_facade_still_changes_the_box_alone(self):
@@ -432,8 +432,8 @@ class TestDocumentAndFacade:
             editor = PdfPageEditor()
             editor.bind_pdf(document)
             assert editor.resize(PageSize.LETTER, [1])
-            assert _matrix(document.pages[0]) is None
-            assert (document.pages[0].size.width, document.pages[0].size.height) == LETTER
+            assert _matrix(document.pages[1]) is None
+            assert (document.pages[1].size.width, document.pages[1].size.height) == LETTER
 
     def test_the_facade_can_scale_the_content(self):
         from aspose_pdf import PdfPageEditor
@@ -442,7 +442,7 @@ class TestDocumentAndFacade:
             editor = PdfPageEditor()
             editor.bind_pdf(document)
             assert editor.resize(PageSize.LETTER, [1], scale_content=True)
-            assert _matrix(document.pages[0]) is not None
+            assert _matrix(document.pages[1]) is not None
 
     def test_the_facade_passes_the_mode_on(self):
         from aspose_pdf import PdfPageEditor
@@ -453,7 +453,7 @@ class TestDocumentAndFacade:
             assert editor.resize(
                 PageSize.LETTER, [1], scale_content=True, mode="stretch"
             )
-            matrix = _matrix(document.pages[0])
+            matrix = _matrix(document.pages[1])
             assert matrix[0] != matrix[3]
 
 
@@ -469,8 +469,8 @@ def test_a_resized_page_survives_a_save(tmp_path):
     document.close()
 
     with Document(target) as reopened:
-        assert (reopened.pages[0].size.width, reopened.pages[0].size.height) == LETTER
-        text = reopened.pages[0].extract_text()
+        assert (reopened.pages[1].size.width, reopened.pages[1].size.height) == LETTER
+        text = reopened.pages[1].extract_text()
     assert "upper left" in text and "corner" in text
 
 
@@ -508,6 +508,6 @@ def test_a_scaled_page_still_extracts_and_renders():
     document.save(buffer)
     document.close()
     with Document(buffer.getvalue()) as reopened:
-        assert "readable" in reopened.pages[0].extract_text()
-        raster = reopened.render_page(0, dpi=36)
+        assert "readable" in reopened.pages[1].extract_text()
+        raster = reopened.render_page(1, dpi=36)
         assert raster.width > 0

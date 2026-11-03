@@ -91,7 +91,7 @@ _QUADRANTS = {
 
 
 def _quadrants(doc: Document) -> dict[str, tuple[int, int, int]]:
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
     return {name: raster.get_pixel(*at) for name, at in _QUADRANTS.items()}
 
 
@@ -314,7 +314,7 @@ def test_smask_wins_when_a_file_carries_both():
 
 def _svg_mask(doc: Document) -> tuple[int, int, list[list[int]]] | None:
     """The alpha map the SVG export emits for the page's masked image."""
-    svg = doc.pages[0].to_svg()
+    svg = doc.pages[1].to_svg()
     found = re.search(
         r'<mask[^>]*>.*?xlink:href="data:image/png;base64,([^"]+)".*?</mask>',
         svg,

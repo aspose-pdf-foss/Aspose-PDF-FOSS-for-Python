@@ -86,10 +86,10 @@ def test_crop_uses_unrotated_pdf_coordinates_and_survives_round_trips(
         document.save(path)
         for source in (_bytes(document), path):
             with Document(source) as loaded:
-                assert loaded.pages[0].crop_box == pytest.approx(expected)
-                assert loaded.pages[0].media_box == _MEDIA
-                assert loaded.pages[0].rotation == rotation
-                assert loaded.pages[0].content == content and loaded.validate()
+                assert loaded.pages[1].crop_box == pytest.approx(expected)
+                assert loaded.pages[1].media_box == _MEDIA
+                assert loaded.pages[1].rotation == rotation
+                assert loaded.pages[1].content == content and loaded.validate()
 
 
 @pytest.mark.parametrize("kind", ["empty", "white", "near_white", "transparent", "ocr"])
@@ -142,14 +142,14 @@ def test_inherited_boxes_are_overridden_only_on_the_selected_page(rotation):
         crop = PdfArray([PdfNumber(v) for v in _CROP])
         parent.mapping[PdfName("CropBox")] = crop
         parent.mapping[PdfName("Rotate")] = PdfNumber(rotation + 360)
-        page = document.pages[0]
+        page = document.pages[1]
         page.draw_rectangle(6, 46, 60, 84, fill_color="#000", stroke_color=None)
         page.auto_crop()
         assert page.crop_box == pytest.approx(_INK)
-        assert document.pages[1].crop_box == _CROP
+        assert document.pages[2].crop_box == _CROP
         assert parent.mapping[PdfName("CropBox")] is crop
         assert PdfName("CropBox") not in engine._get_page_dict(1).mapping
-        assert page.rotation == rotation and document.pages[1].rotation == rotation
+        assert page.rotation == rotation and document.pages[2].rotation == rotation
 
 
 @pytest.mark.parametrize(
@@ -254,7 +254,7 @@ def test_widgets_layers_transparency_and_form_xobjects_follow_the_renderer():
     with Document() as document:
         page = document.pages.add(size=(100, 100))
         field = document.form.add_text_field(
-            "value", 0, (10, 20, 90, 50), value="A field"
+            "value", 1, (10, 20, 90, 50), value="A field"
         )
         document.generate_field_appearances()
         rect = field.rect
@@ -262,7 +262,7 @@ def test_widgets_layers_transparency_and_form_xobjects_follow_the_renderer():
         assert page.crop_box == (0, 0, 100, 100)
         page.auto_crop()
         assert page.crop_box != (0, 0, 100, 100)
-        assert field.rect == rect and field.value == "A field" and field.page_index == 0
+        assert field.rect == rect and field.value == "A field" and field.page_index == 1
 
 
 def test_threshold_and_dark_speckles_apply_to_every_color_channel():
@@ -358,7 +358,7 @@ def test_render_and_resource_limit_failures_leave_the_crop_unchanged(monkeypatch
 def test_disposed_and_out_of_range_pages_are_rejected():
     with Document() as document:
         page = document.pages.add(size=(10, 10))
-        document.pages.delete(0)
+        document.pages.delete(1)
         with pytest.raises(IndexError):
             page.auto_crop()
     with pytest.raises(AsposePdfException, match="disposed"):
@@ -399,8 +399,8 @@ def test_scanned_pages_crop_lazily_and_keep_their_resources_after_save(
 
         with monkeypatch.context() as patch:
             patch.setattr(document._engine_pdf, "get_page_content", content)
-            document.pages[1].auto_crop(margin=3)
-            assert visited and document.pages[1].crop_box == pytest.approx(
+            document.pages[2].auto_crop(margin=3)
+            assert visited and document.pages[2].crop_box == pytest.approx(
                 (17, 32, 63, 68)
             )
             if streaming:
@@ -413,11 +413,11 @@ def test_scanned_pages_crop_lazily_and_keep_their_resources_after_save(
                 pass
         with Document.open_streaming(output_path, password="secret") as loaded:
             assert loaded.is_encrypted
-            assert loaded.pages[1].crop_box == pytest.approx((17, 32, 63, 68))
+            assert loaded.pages[2].crop_box == pytest.approx((17, 32, 63, 68))
     with Document(output_path, password="secret" if encrypted else None) as loaded:
-        assert loaded.pages[1].crop_box == pytest.approx((17, 32, 63, 68))
-        assert loaded.pages[1].render(antialias=False).get_pixel(10, 10) == (0, 0, 255)
-        assert loaded.pages[0].crop_box == (0, 0, 100, 80)
-        assert loaded.pages[2].crop_box == (0, 0, 100, 80)
-        assert "Unselected" in loaded.pages[0].extract_text()
+        assert loaded.pages[2].crop_box == pytest.approx((17, 32, 63, 68))
+        assert loaded.pages[2].render(antialias=False).get_pixel(10, 10) == (0, 0, 255)
+        assert loaded.pages[1].crop_box == (0, 0, 100, 80)
+        assert loaded.pages[3].crop_box == (0, 0, 100, 80)
+        assert "Unselected" in loaded.pages[1].extract_text()
     assert source_path.read_bytes() == before

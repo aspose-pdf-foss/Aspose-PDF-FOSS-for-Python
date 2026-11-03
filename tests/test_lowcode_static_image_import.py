@@ -64,13 +64,13 @@ def test_imports_formats_by_signature_and_preserves_pixels(
         assert not stream.closed
     with Document(result[0].to_array()) as document:
         assert document.page_count == 1
-        assert document.pages[0].size == PageSize(6, 4)
-        assert document.pages[0].render(antialias=False).get_pixel(1, 1) == (20, 40, 60)
+        assert document.pages[1].size == PageSize(6, 4)
+        assert document.pages[1].render(antialias=False).get_pixel(1, 1) == (20, 40, 60)
         output = tmp_path / f"{kind}.pdf"
         document.save(output)
         with Document(output) as reopened:
             assert (
-                reopened.pages[0].render().pixels == document.pages[0].render().pixels
+                reopened.pages[1].render().pixels == document.pages[1].render().pixels
             )
 
 
@@ -78,12 +78,12 @@ def test_imports_formats_by_signature_and_preserves_pixels(
 def test_image_sizing_dpi_and_fixed_page_margins(pillow, kind):
     data = _image(pillow, kind, size=(60, 30))
     with Document(_convert(data, dpi=144)[0].to_array()) as document:
-        assert document.pages[0].size == PageSize(30, 15)
+        assert document.pages[1].size == PageSize(30, 15)
     with Document(
         _convert(data, page_size=(100, 100), margin=10)[0].to_array()
     ) as document:
         absorber = ImagePlacementAbsorber()
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
         rect = absorber.image_placements[0].rectangle
         assert (rect.x, rect.y, rect.width, rect.height) == pytest.approx(
             (20, 35, 60, 30)
@@ -142,8 +142,8 @@ def test_transparency_matches_png_authoring(pillow, kind):
         png = write_png(width, height, "RGBA", converted.tobytes())
     with Document(_convert(data)[0].to_array()) as actual:
         with Document(_convert(png)[0].to_array()) as reference:
-            raster = actual.pages[0].render(background=(0, 255, 0), antialias=False)
-            expected = reference.pages[0].render(
+            raster = actual.pages[1].render(background=(0, 255, 0), antialias=False)
+            expected = reference.pages[1].render(
                 background=(0, 255, 0), antialias=False
             )
             assert raster.pixels == expected.pixels
@@ -156,7 +156,7 @@ def test_lossy_webp_preserves_decoded_colors(pillow):
     with pillow.open(io.BytesIO(data)) as image, image.convert("RGB") as reference:
         expected = reference.getpixel((1, 1))
     with Document(_convert(data)[0].to_array()) as document:
-        assert document.pages[0].render().get_pixel(1, 1) == expected
+        assert document.pages[1].render().get_pixel(1, 1) == expected
 
 
 @pytest.mark.parametrize("kind", ["GIF", "WEBP"])
@@ -292,7 +292,7 @@ def test_bmp_bilevel_grayscale_and_palette_modes(pillow, mode, color):
         image.save(output, format="BMP")
         data = output.getvalue()
     with Document(_convert(data)[0].to_array()) as document:
-        assert document.pages[0].render().get_pixel(1, 1) == expected
+        assert document.pages[1].render().get_pixel(1, 1) == expected
 
 
 def test_bmp_top_down_and_core_headers(pillow):
@@ -302,7 +302,7 @@ def test_bmp_top_down_and_core_headers(pillow):
     core += struct.pack("<IHHHH", 12, 1, 1, 1, 24) + bytes([60, 40, 20, 0])
     for data in (header, core):
         with Document(_convert(bytes(data))[0].to_array()) as document:
-            assert document.pages[0].render().get_pixel(0, 0) == (20, 40, 60)
+            assert document.pages[1].render().get_pixel(0, 0) == (20, 40, 60)
 
 
 @pytest.mark.parametrize("kind", ["BMP", "GIF", "WEBP"])

@@ -21,7 +21,7 @@ def document():
 @pytest.fixture
 def page_with_annotations(document):
     """Create a page with three annotations."""
-    page = document.pages[0]
+    page = document.pages[1]
     page.annotations.add("Text", (100, 100, 200, 200), "First")
     page.annotations.add("Text", (150, 150, 250, 250), "Second", title="Author2")
     page.annotations.add("Text", (200, 200, 300, 300), "Third")
@@ -30,7 +30,7 @@ def page_with_annotations(document):
 
 def test_annotations_add(document):
     """Add annotations and verify count and properties."""
-    page = document.pages[0]
+    page = document.pages[1]
     assert len(page.annotations) == 0
 
     annot = page.annotations.add("Text", (100, 100, 200, 200), "Hello")
@@ -78,7 +78,7 @@ def test_annotations_delete(page_with_annotations):
 
 def test_annotations_delete_index_error(document):
     """Delete with invalid index raises IndexError."""
-    page = document.pages[0]
+    page = document.pages[1]
     page.annotations.add("Text", (0, 0, 100, 100), "One")
 
     with pytest.raises(IndexError):
@@ -98,7 +98,7 @@ def test_annotations_clear(page_with_annotations):
 
 def test_annotations_insert_at_0(document):
     """Insert annotation at beginning."""
-    page = document.pages[0]
+    page = document.pages[1]
     page.annotations.add("Text", (100, 100, 200, 200), "Second")
     page.annotations.insert(0, "Text", (50, 50, 150, 150), "First")
 
@@ -109,7 +109,7 @@ def test_annotations_insert_at_0(document):
 
 def test_annotations_insert_middle(document):
     """Insert annotation in the middle."""
-    page = document.pages[0]
+    page = document.pages[1]
     page.annotations.add("Text", (0, 0, 100, 100), "A")
     page.annotations.add("Text", (200, 200, 300, 300), "C")
     page.annotations.insert(1, "Text", (100, 100, 200, 200), "B")
@@ -122,7 +122,7 @@ def test_annotations_insert_middle(document):
 
 def test_annotations_insert_empty(document):
     """Insert into empty collection."""
-    page = document.pages[0]
+    page = document.pages[1]
     annot = page.annotations.insert(0, "Text", (0, 0, 100, 100), "Only")
     assert len(page.annotations) == 1
     assert annot.contents == "Only"
@@ -149,7 +149,7 @@ def test_annotations_indexing(page_with_annotations):
 
 def test_annotations_save_load_roundtrip(document):
     """Annotations persist through save and load."""
-    page = document.pages[0]
+    page = document.pages[1]
     page.annotations.add("Text", (100, 100, 200, 200), "Persisted", title="Tester")
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -158,7 +158,7 @@ def test_annotations_save_load_roundtrip(document):
         document.save(path, overwrite=True)
         doc2 = Document()
         doc2.load_from(path)
-        page2 = doc2.pages[0]
+        page2 = doc2.pages[1]
         assert len(page2.annotations) == 1
         assert page2.annotations[0].contents == "Persisted"
         assert page2.annotations[0].title == "Tester"
@@ -169,7 +169,7 @@ def test_annotations_save_load_roundtrip(document):
 
 def test_annotations_save_load_stream_roundtrip(document):
     """Annotations persist through BytesIO save and load."""
-    page = document.pages[0]
+    page = document.pages[1]
     page.annotations.add("Text", (50, 50, 150, 150), "Stream test")
 
     buf = io.BytesIO()
@@ -178,5 +178,5 @@ def test_annotations_save_load_stream_roundtrip(document):
 
     doc2 = Document()
     doc2.load_from(buf)
-    assert len(doc2.pages[0].annotations) == 1
-    assert doc2.pages[0].annotations[0].contents == "Stream test"
+    assert len(doc2.pages[1].annotations) == 1
+    assert doc2.pages[1].annotations[0].contents == "Stream test"

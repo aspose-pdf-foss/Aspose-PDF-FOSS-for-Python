@@ -35,12 +35,12 @@ from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
     ],
 )
 def test_ranges_return_zero_based_indices_in_requested_order(expression, count, expected):
-    assert parse_page_range(expression, count) == expected
+    assert parse_page_range(expression, count) == tuple(number + 1 for number in (expected))
 
 
 def test_numbering_can_be_explicitly_zero_based():
-    assert parse_page_range("0-2,4-", 5, one_based=False) == (0, 1, 2, 4)
-    assert parse_page_range("0-", 1, one_based=False) == (0,)
+    assert parse_page_range("0-2,4-", 5, one_based=False) == (1, 2, 3, 5)
+    assert parse_page_range("0-", 1, one_based=False) == (1,)
     with pytest.raises(PdfValidationException, match="out of range"):
         parse_page_range("5", 5, one_based=False)
 
@@ -59,8 +59,8 @@ def test_numbering_can_be_explicitly_zero_based():
 def test_parity_selects_physical_pages_independently_of_numbering(
     one_based, count, odd, even
 ):
-    assert parse_page_range("odd", count, one_based=one_based) == odd
-    assert parse_page_range("even", count, one_based=one_based) == even
+    assert parse_page_range("odd", count, one_based=one_based) == tuple(number + 1 for number in (odd))
+    assert parse_page_range("even", count, one_based=one_based) == tuple(number + 1 for number in (even))
 
 
 @pytest.mark.parametrize(
@@ -84,7 +84,7 @@ def test_parity_selects_physical_pages_independently_of_numbering(
 def test_keywords_and_reverse_ranges_preserve_order_and_repeats(
     expression, one_based, expected
 ):
-    assert parse_page_range(expression, 4, one_based=one_based) == expected
+    assert parse_page_range(expression, 4, one_based=one_based) == tuple(number + 1 for number in (expected))
 
 
 @pytest.mark.parametrize(
@@ -137,8 +137,8 @@ def test_huge_ranges_are_bounded_before_expansion(expression):
 
 def test_keyword_and_reverse_expansion_limits_include_repeated_pages():
     limits = PdfLoadLimits(max_container_items=3)
-    assert parse_page_range("odd,last", 4, limits=limits) == (0, 2, 3)
-    assert parse_page_range("last-2", 4, limits=limits) == (3, 2, 1)
+    assert parse_page_range("odd,last", 4, limits=limits) == (1, 3, 4)
+    assert parse_page_range("last-2", 4, limits=limits) == (4, 3, 2)
     for expression in ("odd,odd", "odd,last,even", "last-1", "last-2,last"):
         with pytest.raises(PdfResourceLimitException, match="expanded page range"):
             parse_page_range(expression, 4, limits=limits)
@@ -146,7 +146,7 @@ def test_keyword_and_reverse_expansion_limits_include_repeated_pages():
 
 def test_limits_count_repeated_pages_and_clauses_and_encoded_expression_bytes():
     limits = PdfLoadLimits(max_container_items=3)
-    assert parse_page_range("1-3", 4, limits=limits) == (0, 1, 2)
+    assert parse_page_range("1-3", 4, limits=limits) == (1, 2, 3)
     for expression in ("1-3,1", "1,1,1,1"):
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             parse_page_range(expression, 4, limits=limits)
@@ -229,7 +229,7 @@ def test_document_range_expansion_uses_its_resource_limits():
 
 
 def test_splitter_resolves_open_ends_per_input_and_keeps_existing_selections():
-    options = SplitOptions(selections=["3-", [0], slice(1, 2)])
+    options = SplitOptions(selections=["3-", [1], [2]])
     options.add_input(ByteArrayDataSource(_pdf(3)))
     options.add_input(ByteArrayDataSource(_pdf(4)))
     results = Splitter().process(options)

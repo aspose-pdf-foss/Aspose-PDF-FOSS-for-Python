@@ -128,7 +128,7 @@ def test_multi_page_tiff_honours_the_page_selection(tmp_path: Path) -> None:
     document = Document()
     for _ in range(4):
         document.pages.add()
-    out = document.save_as_tiff(tmp_path / "some.tif", pages=[2, 0])
+    out = document.save_as_tiff(tmp_path / "some.tif", pages=[3, 1])
     document.dispose()
     assert len(_read_ifds(out.read_bytes())) == 2
 
@@ -207,7 +207,7 @@ def test_rendered_page_saves_every_format(tmp_path: Path) -> None:
     page.add_text("Raster output", 72, 700)
     png = page.save_as_image(tmp_path / "page.png", dpi=18)
     tiff = page.save_as_image(tmp_path / "page.tif", dpi=18, mode="bilevel")
-    jpeg = document.save_page_as_image(0, tmp_path / "page.jpg", dpi=18, quality=70)
+    jpeg = document.save_page_as_image(1, tmp_path / "page.jpg", dpi=18, quality=70)
     document.dispose()
 
     assert png.read_bytes()[:8] == PNG_MAGIC

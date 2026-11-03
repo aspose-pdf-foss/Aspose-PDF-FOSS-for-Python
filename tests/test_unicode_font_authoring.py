@@ -254,7 +254,7 @@ def test_unicode_font_bytes_write_complete_type0_font_graph(
     assert graph["cid_to_gid"]
     assert len(graph["cid_to_gid"]) % 2 == 0
 
-    content = loaded.pages[0].content
+    content = loaded.pages[1].content
     operands = re.findall(rb"<([0-9A-Fa-f]+)>\s*Tj", content)
     assert operands
     assert all(len(operand) % 4 == 0 for operand in operands)
@@ -270,7 +270,7 @@ def test_unicode_embedded_font_renders_after_reload(unicode_ttf: bytes) -> None:
 
     loaded = _load(_save(document))
     assert _extract(_save(document)) == _RENDER_TEXT
-    raster = loaded.pages[0].render(antialias=False)
+    raster = loaded.pages[1].render(antialias=False)
 
     for baseline in baselines:
         x0, x1 = 68, 105
@@ -313,7 +313,7 @@ def test_unicode_authoring_continues_after_stream_compression(
     loaded = _load(data)
     assert _extract(data) == _RENDER_TEXT
 
-    raster = loaded.pages[0].render(antialias=False)
+    raster = loaded.pages[1].render(antialias=False)
     y0 = max(0, raster.height - 700 - 25)
     y1 = min(raster.height, raster.height - 700 + 8)
     ink = sum(

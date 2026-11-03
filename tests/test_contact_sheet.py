@@ -51,7 +51,7 @@ def test_grid_selection_order_repeats_margins_and_last_empty_cell():
         for color in ("#f00", "#0f0", "#00f"):
             _colored_page(document, color)
         sheet = document.render_contact_sheet(
-            pages=(i for i in (2, 0, 2)),
+            pages=(number + 1 if type(number) is int else number for number in ((i for i in (2, 0, 2)))),
             columns=2,
             thumbnail_size=(10, 10),
             margin=2,
@@ -132,7 +132,7 @@ def test_text_and_scanned_pages_survive_pdf_and_contact_sheet_png_round_trips():
         )
         assert (
             _pixels(sheet, 0, 0, 40, 20)
-            == document.render_page(0, scale=0.5, antialias=False).pixels
+            == document.render_page(1, scale=0.5, antialias=False).pixels
         )
         assert sheet.get_pixel(5, 30) == (255, 0, 0)
         assert sheet.get_pixel(35, 30) == (0, 0, 255)
@@ -140,7 +140,7 @@ def test_text_and_scanned_pages_survive_pdf_and_contact_sheet_png_round_trips():
             output.pages.add(size=(40, 40)).add_image(
                 sheet.to_png(), 0, 0, width=40, height=40
             )
-            assert output.render_page(0, antialias=False).pixels == sheet.pixels
+            assert output.render_page(1, antialias=False).pixels == sheet.pixels
 
 
 def test_labels_show_source_positions_and_keep_pdf_page_labels_separate():
@@ -158,7 +158,7 @@ def test_labels_show_source_positions_and_keep_pdf_page_labels_separate():
             antialias=False,
             label_color=(80, 90, 100),
         )
-        sheet = document.render_contact_sheet(pages=[11, 0, 11], **options)
+        sheet = document.render_contact_sheet(pages=[12, 1, 12], **options)
         assert (sheet.width, sheet.height) == (60, 84)
         assert _pixels(sheet, 0, 20, 30, 22) == _pixels(sheet, 0, 62, 30, 22)
         assert _pixels(sheet, 0, 20, 30, 22) != _pixels(sheet, 30, 20, 30, 22)
@@ -166,7 +166,7 @@ def test_labels_show_source_positions_and_keep_pdf_page_labels_separate():
         assert sheet.get_pixel(44, 24) == (80, 90, 100)
         assert sheet.get_pixel(40, 24) == (240, 240, 240)
         no_labels = document.render_contact_sheet(
-            pages=[11, 0, 11], labels=False, **options
+            pages=[12, 1, 12], labels=False, **options
         )
         assert (no_labels.width, no_labels.height) == (60, 40)
 
@@ -226,7 +226,7 @@ def test_round_trips_and_lazy_selected_content_stay_unchanged(
         _colored_page(source, "#f00", (20, 40))
         _colored_page(source, "#0f0", (40, 20))
         _colored_page(source, "#00f")
-        source.pages[0].rotation = 90
+        source.pages[1].rotation = 90
         source.info["Title"] = "Original"
         source.add_attachment("note.txt", b"Keep me")
         if encrypted:
@@ -247,7 +247,7 @@ def test_round_trips_and_lazy_selected_content_stay_unchanged(
 
         monkeypatch.setattr(document._engine_pdf, "get_page_content", content)
         sheet = document.render_contact_sheet(
-            pages=[2, 0],
+            pages=[3, 1],
             thumbnail_size=(20, 20),
             labels=False,
             margin=0,
@@ -350,10 +350,10 @@ def test_label_width_is_validated_for_all_selected_page_numbers():
         for _ in range(10):
             document.pages.add(size=(10, 10))
         with pytest.raises(PdfValidationException, match="too narrow"):
-            document.render_contact_sheet(pages=[0, 9], thumbnail_size=(20, 20))
+            document.render_contact_sheet(pages=[1, 10], thumbnail_size=(20, 20))
         assert (
             document.render_contact_sheet(
-                pages=[9], thumbnail_size=(1, 1), labels=False, margin=0
+                pages=[10], thumbnail_size=(1, 1), labels=False, margin=0
             ).width
             == 1
         )
@@ -406,14 +406,14 @@ def test_page_selection_limit_including_repeated_indices(pages):
         document.pages.add(size=(10, 10))
         document.pages.add(size=(10, 10))
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            document.render_contact_sheet(pages=pages)
+            document.render_contact_sheet(pages=(None if pages is None else (number + 1 if type(number) is int else number for number in (pages))))
 
 
 def test_only_one_small_thumbnail_is_alive_at_a_time(monkeypatch):
     with Document() as document:
         for _ in range(3):
             document.pages.add(size=(10**12, 10**12))
-        original = document.render_page
+        original = document._api_render_page
         previous = None
 
         def render(index, **options):
@@ -424,7 +424,7 @@ def test_only_one_small_thumbnail_is_alive_at_a_time(monkeypatch):
             previous = weakref.ref(result)
             return result
 
-        monkeypatch.setattr(document, "render_page", render)
+        monkeypatch.setattr(document, "_api_render_page", render)
         sheet = document.render_contact_sheet(
             thumbnail_size=(12, 12), labels=False, antialias=False
         )
@@ -540,7 +540,7 @@ def test_failed_save_preserves_existing_output_and_source(
         before = _saved(document)
         options = dict(thumbnail_size=(10, 10), labels=False, margin=0)
         if failure == "selection":
-            options["pages"] = [1]
+            options["pages"] = [2]
         elif failure == "encoding":
             options["mode"] = "invalid"
         elif failure == "render":
@@ -548,7 +548,7 @@ def test_failed_save_preserves_existing_output_and_source(
             def fail(*args, **kwargs):
                 raise PdfValidationException("Cannot render")
 
-            monkeypatch.setattr(document, "render_page", fail)
+            monkeypatch.setattr(document, "_api_render_page", fail)
         with pytest.raises(PdfValidationException):
             document.save_contact_sheet(path, **options)
         assert path.read_bytes() == b"Original"

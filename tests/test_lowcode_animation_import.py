@@ -183,13 +183,13 @@ def test_frames_match_composited_pngs_and_survive_pdf_saves(
             document.save(target)
             with Document(target) as reopened:
                 assert (
-                    reopened.pages[-1].render().pixels
-                    == document.pages[-1].render().pixels
+                    reopened.pages[len(reopened.pages) + (-1) + 1].render().pixels
+                    == document.pages[len(document.pages) + (-1) + 1].render().pixels
                 )
     for rendered, png in zip(actual, references, strict=True):
         with Document(_convert(png)[0].to_array()) as reference:
             assert rendered == [
-                reference.pages[0].render(background=background, antialias=False).pixels
+                reference.pages[1].render(background=background, antialias=False).pixels
                 for background in [(255, 255, 255), (0, 255, 0)]
             ]
     assert path.read_bytes() == data
@@ -221,14 +221,14 @@ def test_webp_blend_disposal_and_lossy_frames_match_decoder(
     with Document(_convert(data)[0].to_array()) as document:
         if lossless:
             expected_pixel = (127, 128, 0) if blend else (127, 255, 127)
-            assert document.pages[1].render(antialias=False).get_pixel(
+            assert document.pages[2].render(antialias=False).get_pixel(
                 0, 0
             ) == pytest.approx(expected_pixel, abs=1)
         for page, png in zip(document.pages, references, strict=True):
             with Document(_convert(png)[0].to_array()) as expected:
                 assert (
                     page.render(antialias=False).pixels
-                    == expected.pages[0].render(antialias=False).pixels
+                    == expected.pages[1].render(antialias=False).pixels
                 )
 
 
@@ -443,7 +443,7 @@ def test_identical_stored_frames_are_kept_as_separate_pages(pillow, kind):
     data = _animation(pillow, kind, repeat_first=True)
     with Document(_convert(data)[0].to_array()) as document:
         assert document.page_count == 2
-        assert document.pages[0].render().pixels == document.pages[1].render().pixels
+        assert document.pages[1].render().pixels == document.pages[2].render().pixels
 
 
 @pytest.mark.parametrize(

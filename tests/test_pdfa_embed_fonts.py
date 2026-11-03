@@ -109,12 +109,12 @@ def test_non_standard_font_stays_reported():
 def test_embedded_standard14_renders_the_same_glyphs():
     before = Document()
     before.load_from(_pdf_with_font("Helvetica"))
-    before_raster = before.pages[0].render(antialias=False)
+    before_raster = before.pages[1].render(antialias=False)
 
     after = Document()
     after.load_from(_pdf_with_font("Helvetica"))
     after.convert_to_pdfa("1b")
-    after_raster = after.pages[0].render(antialias=False)
+    after_raster = after.pages[1].render(antialias=False)
 
     # The embedded face is the same substitute at the same widths, so the page
     # renders identically (real glyphs, unchanged).
@@ -173,7 +173,7 @@ def test_a_font_only_a_form_field_uses_is_found():
     # PDF/A and PDF/UA both require it embedded -- and walking pages misses it.
     document = Document()
     document.pages.add()
-    document.form.add_text_field("nickname", 0, (60, 100, 260, 130), value="typed")
+    document.form.add_text_field("nickname", 1, (60, 100, 260, 130), value="typed")
     engine = document._engine_pdf
     engine._ensure_cos()
     root = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])

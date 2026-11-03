@@ -72,13 +72,13 @@ def test_fitted_images_keep_proportions_and_crop_at_the_frame_after_roundtrip(
         with io.BytesIO() as output:
             document.save(output)
             with Document(output.getvalue()) as reopened:
-                assert reopened.pages[0].render(
+                assert reopened.pages[1].render(
                     background=BACKGROUND, antialias=False,
                 ).pixels == _expected(vertical, fit)
         target = tmp_path / "fitted.pdf"
         document.save(target)
         with Document(target) as reopened:
-            assert reopened.pages[0].render(
+            assert reopened.pages[1].render(
                 background=BACKGROUND, antialias=False,
             ).pixels == _expected(vertical, fit)
 
@@ -98,7 +98,7 @@ def test_placement_metadata_tracks_the_full_image_transform(fit, matrix, dpi):
         with Document(output.getvalue()) as reopened:
             for current in (document, reopened):
                 absorber = ImagePlacementAbsorber()
-                absorber.visit(current.pages[0])
+                absorber.visit(current.pages[1])
                 [image] = absorber.image_placements
                 assert image.matrix == pytest.approx(matrix)
                 assert image.resolution == pytest.approx((dpi, dpi))
@@ -180,7 +180,7 @@ def test_jpeg_fitting_keeps_original_compressed_bytes_and_pixel_dimensions(
         document.save(output)
         with Document(output.getvalue()) as reopened:
             absorber = ImagePlacementAbsorber()
-            absorber.visit(reopened.pages[0])
+            absorber.visit(reopened.pages[1])
             [image] = absorber.image_placements
             assert (image.width, image.height) == (8, 4)
             target = image.save(tmp_path / "original.jpg")
@@ -197,13 +197,13 @@ def test_fitted_images_can_be_added_to_streaming_documents_with_alternate_text(
         document.pages.add(size=(24, 24))
         document.save(target)
     with Document.open_streaming(target) as document, io.BytesIO() as output:
-        document.pages[0].add_image(_stripes(), 8, 8, 8, 8, fit=fit, alt="Color stripes")
+        document.pages[1].add_image(_stripes(), 8, 8, 8, 8, fit=fit, alt="Color stripes")
         document.save(output, incremental=incremental)
         with Document(output.getvalue()) as reopened:
-            assert reopened.pages[0].render(
+            assert reopened.pages[1].render(
                 background=BACKGROUND, antialias=False,
             ).pixels == _expected(False, fit)
-            assert b"/Figure" in reopened.pages[0].content
+            assert b"/Figure" in reopened.pages[1].content
             assert reopened.tagged_content.root_elements[0].alt_text == "Color stripes"
 
 

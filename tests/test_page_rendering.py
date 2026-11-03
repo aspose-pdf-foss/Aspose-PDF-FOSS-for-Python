@@ -50,7 +50,7 @@ def test_page_render_fills_and_text_marks_pixels() -> None:
         ],
     )
 
-    raster = doc.pages[0].render()
+    raster = doc.pages[1].render()
 
     assert isinstance(raster, RasterizedPage)
     assert (raster.width, raster.height) == (40, 30)
@@ -66,12 +66,12 @@ def test_document_render_page_writes_png_and_tiff(tmp_path: Path) -> None:
         page_contents=[b"1 0 0 rg 0 0 10 10 re f"],
     )
 
-    png_path = doc.save_page_as_image(0, tmp_path / "page.png")
-    tif_path = doc.pages[0].save_as_image(tmp_path / "page.tiff")
+    png_path = doc.save_page_as_image(1, tmp_path / "page.png")
+    tif_path = doc.pages[1].save_as_image(tmp_path / "page.tiff")
 
     assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert tif_path.read_bytes()[:4] == b"II*\x00"
-    assert _png_pixels(doc.render_page(0).to_png())[2][:3] == b"\xff\x00\x00"
+    assert _png_pixels(doc.render_page(1).to_png())[2][:3] == b"\xff\x00\x00"
 
 
 def _partial_pixels(raster: RasterizedPage):
@@ -94,8 +94,8 @@ def test_antialias_smooths_edges_with_partial_coverage() -> None:
         page_contents=[b"0 0 0 rg 0 0 m 20 0 l 0 20 l h f"],
     )
 
-    smooth = doc.pages[0].render(antialias=3)
-    hard = doc.pages[0].render(antialias=False)
+    smooth = doc.pages[1].render(antialias=3)
+    hard = doc.pages[1].render(antialias=False)
 
     assert (smooth.width, smooth.height) == (hard.width, hard.height) == (20, 20)
     assert len(_partial_pixels(smooth)) > 0  # AA blends the diagonal
@@ -109,7 +109,7 @@ def test_antialias_preserves_target_dimensions() -> None:
         page_contents=[b"0 0 0 rg 0 0 15 11 re f"],
     )
     for antialias in (False, True, 1, 2, 4):
-        raster = doc.pages[0].render(antialias=antialias)
+        raster = doc.pages[1].render(antialias=antialias)
         assert (raster.width, raster.height) == (15, 11)
         # A full-page fill stays solid black regardless of supersampling.
         assert raster.get_pixel(7, 5) == (0, 0, 0)
@@ -121,7 +121,7 @@ def test_antialias_factor_out_of_range_rejected() -> None:
         pages=[(0.0, 0.0, 10.0, 10.0)], page_contents=[b""]
     )
     with pytest.raises(PdfValidationException):
-        doc.pages[0].render(antialias=9)
+        doc.pages[1].render(antialias=9)
 
 
 def test_extgstate_multiply_blend_mode_affects_fill() -> None:
@@ -135,7 +135,7 @@ def test_extgstate_multiply_blend_mode_affects_fill() -> None:
         extgstates={"Blend": {"BM": "Multiply"}},
     )
 
-    raster = doc.render_page(0, antialias=False)
+    raster = doc.render_page(1, antialias=False)
 
     assert raster.get_pixel(5, 5) == (0, 0, 0)
 
@@ -151,7 +151,7 @@ def test_extgstate_blend_mode_combines_with_constant_alpha() -> None:
         extgstates={"Blend": {"BM": "Multiply", "ca": 0.5}},
     )
 
-    raster = doc.render_page(0, antialias=False)
+    raster = doc.render_page(1, antialias=False)
 
     assert raster.get_pixel(5, 5) == (128, 0, 0)
 
@@ -171,7 +171,7 @@ def test_extgstate_blend_mode_array_uses_first_supported_cos_name() -> None:
         },
     )
 
-    raster = doc.render_page(0, antialias=False)
+    raster = doc.render_page(1, antialias=False)
 
     assert raster.get_pixel(5, 5) == (54, 54, 255)
 
@@ -191,7 +191,7 @@ def test_extgstate_unsupported_single_blend_mode_falls_back_to_normal() -> None:
         },
     )
 
-    raster = doc.render_page(0, antialias=False)
+    raster = doc.render_page(1, antialias=False)
 
     assert raster.get_pixel(5, 5) == (0, 255, 0)
 
@@ -220,7 +220,7 @@ def test_extgstate_nonseparable_blend_modes(
         extgstates={"Blend": {"BM": mode}},
     )
 
-    raster = doc.render_page(0, antialias=False)
+    raster = doc.render_page(1, antialias=False)
 
     assert raster.get_pixel(2, 2) == expected
 
@@ -243,7 +243,7 @@ def test_page_render_paints_raw_rgb_image_xobject() -> None:
         }
     }
 
-    raster = doc.render_page(0)
+    raster = doc.render_page(1)
 
     assert raster.get_pixel(1, 1) == (255, 0, 0)
     assert raster.get_pixel(2, 1) == (0, 255, 0)

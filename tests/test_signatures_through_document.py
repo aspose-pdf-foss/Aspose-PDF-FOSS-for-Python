@@ -135,7 +135,7 @@ def test_a_page_whose_content_was_replaced_is_unsigned(signed):
 
 def test_an_annotation_added_after_signing_is_unsigned_but_not_its_page(signed):
     def annotate(document):
-        document.pages[0].annotations.add("Text", (10, 10, 30, 30), "added later")
+        document.pages[1].annotations.add("Text", (10, 10, 30, 30), "added later")
 
     assert _unsigned(_incremental(signed, annotate)) == (0, [], ["Text"])
 
@@ -149,7 +149,7 @@ def test_a_field_filled_after_signing_is_unsigned_with_its_widget(signed):
 
 def test_an_edit_in_memory_is_unsigned_before_it_is_saved(signed):
     document = Document(io.BytesIO(signed))
-    document.pages[0].annotations.add("Text", (10, 10, 30, 30), "not saved yet")
+    document.pages[1].annotations.add("Text", (10, 10, 30, 30), "not saved yet")
     content = UnsignedContentAbsorber(document).extract()
     assert [annotation.subtype for annotation in content.annotations] == ["Text"]
     assert content.pages == [] and content.form_fields == []
@@ -178,7 +178,7 @@ def test_an_encrypted_signed_document_compares_in_the_clear():
     # Compared as ciphertext, every string and stream would differ.
     assert _unsigned(data, password="user") == (0, [], [])
 
-    reopened.pages[0].annotations.add("Text", (10, 10, 30, 30), "added later")
+    reopened.pages[1].annotations.add("Text", (10, 10, 30, 30), "added later")
     buffer = io.BytesIO()
     reopened.save(buffer, incremental=True)
     assert _unsigned(buffer.getvalue(), password="user") == (0, [], ["Text"])
@@ -215,12 +215,12 @@ def test_a_page_is_judged_by_its_own_content_not_its_neighbours(twice_signed):
     replaced = _replace_page(twice_signed, page_two, b"Swapped two")
     document = Document(io.BytesIO(replaced))
     content = UnsignedContentAbsorber(document).extract()
-    assert [page.index for page in content.pages] == [document.pages[1].index]
+    assert [page.index for page in content.pages] == [document.pages[2].index]
 
 
 def test_a_widget_changed_alone_leaves_its_field_unsigned(twice_signed):
     def recolour(document):
-        widget = next(a for a in document.pages[0].annotations if a.subtype == "Widget")
+        widget = next(a for a in document.pages[1].annotations if a.subtype == "Widget")
         widget.color = (1.0, 0.0, 0.0)
 
     pages, fields, annotations = _unsigned(_incremental(twice_signed, recolour))
@@ -228,17 +228,17 @@ def test_a_widget_changed_alone_leaves_its_field_unsigned(twice_signed):
 
 
 def test_an_annotation_edited_in_place_is_unsigned(signed):
-    annotated = _incremental(signed, lambda d: d.pages[0].annotations.add("Text", (10, 10, 30, 30), "first"))
+    annotated = _incremental(signed, lambda d: d.pages[1].annotations.add("Text", (10, 10, 30, 30), "first"))
     # Sign again so the note is covered, then edit it without adding an object.
     cert, key = SigningUtils.create_self_signed_cert()
     document = Document(io.BytesIO(annotated))
-    document.form.add_signature_field("Sig2", document.pages[0], (300, 500, 500, 580))
+    document.form.add_signature_field("Sig2", document.pages[1], (300, 500, 500, 580))
     buffer = io.BytesIO()
     document.save(buffer, incremental=True)
     covered = sign_field(buffer.getvalue(), "Sig2", cert, key)
     assert _unsigned(covered) == (0, [], [])
 
     def edit(document):
-        next(a for a in document.pages[0].annotations if a.subtype == "Text").contents = "second"
+        next(a for a in document.pages[1].annotations if a.subtype == "Text").contents = "second"
 
     assert _unsigned(_incremental(covered, edit)) == (0, [], ["Text"])

@@ -83,15 +83,15 @@ def test_reset_all_restores_template_defaults_and_survives_round_trips(
 ):
     defaults = document.form.to_dict()
     retained = document.form["person.name"]
-    original_pixels = document.pages[0].render(dpi=36, antialias=False).pixels
+    original_pixels = document.pages[1].render(dpi=36, antialias=False).pixels
     document.form.fill(FILLED)
     assert document.form.to_dict() != defaults
-    assert document.pages[0].render(dpi=36, antialias=False).pixels != original_pixels
+    assert document.pages[1].render(dpi=36, antialias=False).pixels != original_pixels
 
     assert document.form.reset() == list(defaults)
     assert document.form.to_dict() == defaults
     assert retained.value == "Template" and retained.read_only and retained.no_export
-    assert document.pages[0].render(dpi=36, antialias=False).pixels == original_pixels
+    assert document.pages[1].render(dpi=36, antialias=False).pixels == original_pixels
     if on_disk:
         source = tmp_path / "reset.pdf"
         document.save(source)
@@ -183,7 +183,7 @@ def test_custom_checkbox_state_names_restore_checked_defaults(on_value):
     with Document() as doc:
         doc.pages.add()
         field = doc.form.add_checkbox(
-            "custom", 0, (20, 20, 40, 40), checked=True, on_value=on_value
+            "custom", 1, (20, 20, 40, 40), checked=True, on_value=on_value
         )
         assert field.default_value is True
         field.value = False
@@ -214,7 +214,7 @@ def test_null_defaults_are_treated_as_absent(document):
 
 def test_inherited_default_is_restored_without_changing_siblings(document):
     form = document.form
-    form.add_text_field("person.city", 0, (20, 250, 220, 274), value="Keep city")
+    form.add_text_field("person.city", 1, (20, 250, 220, 274), value="Keep city")
     field = field_dictionary(document._engine_pdf, "person.name")
     parent = document._engine_pdf._resolve(field.mapping[PdfName("Parent")])
     parent.mapping[PdfName("DV")] = PdfString("Inherited default")
@@ -239,7 +239,7 @@ def test_indirect_multiselect_default_is_normalized(document):
 def test_missing_choice_default_clears_an_inherited_current_value(document):
     form = document.form
     form.add_combo_box(
-        "person.choice", 0, (20, 250, 220, 274), ["Inherited", "Other"], value="Other"
+        "person.choice", 1, (20, 250, 220, 274), ["Inherited", "Other"], value="Other"
     )
     field = field_dictionary(document._engine_pdf, "person.choice")
     parent = document._engine_pdf._resolve(field.mapping[PdfName("Parent")])

@@ -320,7 +320,7 @@ def test_expanded_cmap_replaces_and_round_trips(case: CMapCase) -> None:
         )
     )
     assert document.replace_text(case.source, case.replacement) == 1
-    assert case.replacement_hex.encode("ascii") in document.pages[0].content
+    assert case.replacement_hex.encode("ascii") in document.pages[1].content
     assert _extract(_save(document)) == case.replacement
 
 
@@ -370,7 +370,7 @@ def test_predefined_horizontal_cmap_replaces_and_round_trips(
     )
 
     assert document.replace_text(case.source, case.replacement) == 1
-    assert case.replacement_hex.encode("ascii") in document.pages[0].content
+    assert case.replacement_hex.encode("ascii") in document.pages[1].content
     assert _extract(_save(document)) == case.replacement
 
 
@@ -386,7 +386,7 @@ def test_predefined_cmap_redaction_uses_cid_widths(case: CMapCase) -> None:
     )
 
     assert document.redact_text(case.source, overlay=True) == 1
-    content = document.pages[0].content
+    content = document.pages[1].content
     assert case.source_hex.encode("ascii") not in content
     match = re.search(rb"([\d.]+) [\d.]+ m ([\d.]+) [\d.]+ l", content)
     assert match is not None
@@ -421,8 +421,8 @@ def test_predefined_vertical_cmap_inherits_base_and_uses_w2(
 
     document = _load(data)
     assert document.redact_text("〈〉", overlay=True) == 1
-    assert shown_hex.encode("ascii") not in document.pages[0].content
-    assert b" h f\n" in document.pages[0].content
+    assert shown_hex.encode("ascii") not in document.pages[1].content
+    assert b" h f\n" in document.pages[1].content
 
 
 @pytest.mark.parametrize(
@@ -445,7 +445,7 @@ def test_predefined_vertical_cmap_replaces_and_round_trips(
     )
 
     assert document.replace_text(case.source, case.replacement) == 1
-    assert case.replacement_hex.encode("ascii") in document.pages[0].content
+    assert case.replacement_hex.encode("ascii") in document.pages[1].content
     assert _extract(_save(document)) == case.replacement
 
 
@@ -584,12 +584,12 @@ def test_invalid_predefined_code_in_to_unicode_is_opaque() -> None:
         to_unicode=_to_unicode(("0378", "0041")),
     )
     document = _load(data)
-    before = document.pages[0].content
+    before = document.pages[1].content
 
     assert _extract(data) == "�"
     assert document.replace_text("A", "B") == 0
     assert document.redact_text("A", overlay=True) == 0
-    assert document.pages[0].content == before
+    assert document.pages[1].content == before
 
 
 def test_mismatched_predefined_collection_rejects_to_unicode_editing() -> None:
@@ -601,11 +601,11 @@ def test_mismatched_predefined_collection_rejects_to_unicode_editing() -> None:
         to_unicode=_to_unicode(("65E5", "0041")),
     )
     document = _load(data)
-    before = document.pages[0].content
+    before = document.pages[1].content
 
     assert _extract(data) == "�"
     assert document.replace_text("A", "B") == 0
-    assert document.pages[0].content == before
+    assert document.pages[1].content == before
 
 
 def test_partial_to_unicode_keeps_unmapped_predefined_code_opaque() -> None:
@@ -642,10 +642,10 @@ def test_real_legacy_reverse_mapping_rejects_ambiguous_unicode() -> None:
             cids=case.cids,
         )
     )
-    before = document.pages[0].content
+    before = document.pages[1].content
     with pytest.raises(PdfValidationException, match="cannot be encoded"):
         document.replace_text(case.source, "\uffe2")
-    assert document.pages[0].content == before
+    assert document.pages[1].content == before
 
 
 def test_predefined_codec_is_shared_across_font_instances() -> None:
@@ -712,12 +712,12 @@ def test_unknown_or_mismatched_composite_cmap_is_opaque_to_editor() -> None:
         cids=(1, 2),
     )
     document = _load(data)
-    before = document.pages[0].content
+    before = document.pages[1].content
 
     assert _extract(data) == "\ufffd"
     assert document.replace_text("A", "B") == 0
     assert document.redact_text("A") == 0
-    assert document.pages[0].content == before
+    assert document.pages[1].content == before
 
 
 def test_unmapped_predefined_code_is_an_opaque_match_barrier() -> None:
@@ -728,11 +728,11 @@ def test_unmapped_predefined_code_is_an_opaque_match_barrier() -> None:
         cids=(3284, 3722),
     )
     document = _load(data)
-    before = document.pages[0].content
+    before = document.pages[1].content
 
     assert _extract(data) == "日\ufffd本"
     assert document.replace_text("日本", "本日") == 0
-    assert document.pages[0].content == before
+    assert document.pages[1].content == before
 
 
 def test_cmap_registry_and_ordering_must_match_exactly() -> None:

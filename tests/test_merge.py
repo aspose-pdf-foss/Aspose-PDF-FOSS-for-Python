@@ -72,7 +72,7 @@ def _doc(*labels: str, font: str | None = None) -> Document:
 
 def _text(document: Document) -> list[str]:
     return [
-        document.pages[index].to_markdown().strip().split("\n")[0]
+        document.pages[(index) + 1].to_markdown().strip().split("\n")[0]
         for index in range(len(document.pages))
     ]
 
@@ -127,19 +127,19 @@ IMAGE_BOX = (100, 500, 180, 580)
 
 def test_a_merged_page_draws_what_it_drew():
     source = _doc("B0")
-    source.pages[0].add_image(PNG, 100, 500, width=80, height=80)
-    alone = _ink(_reloaded(source).pages[0], IMAGE_BOX)
+    source.pages[1].add_image(PNG, 100, 500, width=80, height=80)
+    alone = _ink(_reloaded(source).pages[1], IMAGE_BOX)
 
     target = _doc("A0")
     target.merge(source)
 
-    assert _ink(_reloaded(target).pages[1], IMAGE_BOX) == alone
+    assert _ink(_reloaded(target).pages[2], IMAGE_BOX) == alone
     assert alone > 0
 
 
 def test_a_merged_page_keeps_its_own_resources():
     source = _doc("B0")
-    source.pages[0].add_image(PNG, 100, 500, width=80, height=80)
+    source.pages[1].add_image(PNG, 100, 500, width=80, height=80)
     target = _doc("A0")
     target.merge(source)
 
@@ -178,7 +178,7 @@ def test_a_page_merged_from_a_loaded_file_resolves_its_inherited_resources():
 
 def test_the_source_document_is_not_changed_by_being_merged():
     source = _doc("B0", "B1")
-    source.outlines.add(OutlineItem("B", 1))
+    source.outlines.add(OutlineItem("B", 2))
     before = _saved(source)
 
     _doc("A0").merge(source)
@@ -271,8 +271,8 @@ def test_the_merged_document_shares_no_object_with_the_source():
     """Importing means copying. Holding the source's objects would tie the two
     documents together for as long as both are open."""
     source = _doc("B0")
-    source.pages[0].add_image(PNG, 100, 500, width=80, height=80)
-    source.pages[0].annotations.add("Text", (10, 10, 40, 40), "note B")
+    source.pages[1].add_image(PNG, 100, 500, width=80, height=80)
+    source.pages[1].annotations.add("Text", (10, 10, 40, 40), "note B")
     target = _doc("A0")
     target.merge(source)
 
@@ -289,62 +289,62 @@ def test_the_merged_document_shares_no_object_with_the_source():
 
 def test_annotations_come_with_their_pages():
     source = _doc("B0", "B1")
-    source.pages[0].annotations.add("Text", (10, 10, 40, 40), "note B")
+    source.pages[1].annotations.add("Text", (10, 10, 40, 40), "note B")
     target = _doc("A0")
     target.merge(source)
 
     merged = _reloaded(target)
 
-    assert [a.contents for a in merged.pages[1].annotations] == ["note B"]
-    assert list(merged.pages[0].annotations) == []
+    assert [a.contents for a in merged.pages[2].annotations] == ["note B"]
+    assert list(merged.pages[1].annotations) == []
 
 
 def test_a_merged_link_points_at_the_merged_page():
     """Not at the page that happens to sit at the same index in the target."""
     source = _doc("B0", "B1")
-    source.pages[0].add_link((72, 600, 200, 620), FitDestination(1))
+    source.pages[1].add_link((72, 600, 200, 620), FitDestination(2))
     target = _doc("A0", "A1")
     target.merge(source)
 
     merged = _reloaded(target)
-    (link,) = list(merged.pages[2].annotations)
+    (link,) = list(merged.pages[3].annotations)
 
-    assert link.properties["Dest"] == FitDestination(page=3)
+    assert link.properties["Dest"] == FitDestination(page=4)
 
 
 def test_a_widget_arrives_with_the_field_it_belongs_to():
     source = _doc("B0")
-    source.form.add_text_field("bfield", 0, (10, 10, 200, 30))
+    source.form.add_text_field("bfield", 1, (10, 10, 200, 30))
     target = _doc("A0")
     target.merge(source)
 
     merged = _reloaded(target)
 
     assert [field.name for field in merged.form] == ["bfield"]
-    assert [a.subtype for a in merged.pages[1].annotations] == ["Widget"]
+    assert [a.subtype for a in merged.pages[2].annotations] == ["Widget"]
 
 
 def test_bookmarks_are_appended_pointing_at_the_merged_pages():
     source = _doc("B0", "B1")
-    source.outlines.add(OutlineItem("B second", 1))
+    source.outlines.add(OutlineItem("B second", 2))
     target = _doc("A0", "A1")
-    target.outlines.add(OutlineItem("A second", 1))
+    target.outlines.add(OutlineItem("A second", 2))
     target.merge(source)
 
     merged = _reloaded(target)
 
     assert [(o.title, o.page_index) for o in merged.outlines] == [
-        ("A second", 1),
-        ("B second", 3),
+        ("A second", 2),
+        ("B second", 4),
     ]
-    assert merged.pages[3].to_markdown().strip() == "B1"
+    assert merged.pages[4].to_markdown().strip() == "B1"
 
 
 def test_a_bookmark_read_from_a_file_points_at_the_merged_page():
     """A loaded bookmark keeps the target the file held, page reference and
     all -- and that reference names a page of the *source*."""
     source = _doc("B0", "B1")
-    source.outlines.add(OutlineItem("B second", 1))
+    source.outlines.add(OutlineItem("B second", 2))
     loaded = _reloaded(source)
 
     target = _doc("A0", "A1")
@@ -353,8 +353,8 @@ def test_a_bookmark_read_from_a_file_points_at_the_merged_page():
     merged = _reloaded(target)
     (bookmark,) = list(merged.outlines)
 
-    assert bookmark.destination == FitDestination(page=3)
-    assert merged.pages[3].to_markdown().strip() == "B1"
+    assert bookmark.destination == FitDestination(page=4)
+    assert merged.pages[4].to_markdown().strip() == "B1"
 
 
 def test_attachments_and_layers_come_across():
@@ -396,10 +396,10 @@ def test_a_clashing_field_name_becomes_a_second_field():
     """Two fields of one name are *one* field in PDF: filling either would
     fill both, which is not what merging two forms means."""
     target = _doc("A0")
-    target.form.add_text_field("name", 0, (10, 10, 200, 30))
+    target.form.add_text_field("name", 1, (10, 10, 200, 30))
     target.form["name"].value = "from A"
     source = _doc("B0")
-    source.form.add_text_field("name", 0, (10, 10, 200, 30))
+    source.form.add_text_field("name", 1, (10, 10, 200, 30))
     source.form["name"].value = "from B"
     target.merge(source)
 
@@ -451,14 +451,14 @@ def test_merging_into_an_empty_document():
 
 def test_a_page_from_an_encrypted_document_merges_as_plaintext():
     source = _doc("ENC")
-    source.pages[0].add_image(PNG, 100, 500, width=80, height=80)
+    source.pages[1].add_image(PNG, 100, 500, width=80, height=80)
     source.encrypt("pw")
     locked = Document(io.BytesIO(_saved(source)), password="pw")
 
     target = _doc("A0")
     target.merge(locked)
 
-    assert _ink(_reloaded(target).pages[1], IMAGE_BOX) > 0
+    assert _ink(_reloaded(target).pages[2], IMAGE_BOX) > 0
 
 
 def test_merging_only_a_document_is_accepted():

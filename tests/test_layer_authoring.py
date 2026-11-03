@@ -132,7 +132,7 @@ def test_a_non_ascii_layer_name_survives_a_round_trip(tmp_path: Path):
 def test_content_authored_in_a_block_is_marked_as_the_layers():
     document = _layered_document()
 
-    content = document.pages[0].content
+    content = document.pages[1].content
 
     assert b"/OC /oc1 BDC" in content
     assert b"EMC" in content
@@ -153,9 +153,9 @@ def test_the_group_is_registered_in_the_pages_properties():
 def test_a_hidden_layers_content_is_not_drawn_and_a_visible_ones_is():
     document = _layered_document()
 
-    hidden = _ink(document.pages[0].render(antialias=False))
+    hidden = _ink(document.pages[1].render(antialias=False))
     document.layers["Draft"].visible = True
-    shown = _ink(document.pages[0].render(antialias=False))
+    shown = _ink(document.pages[1].render(antialias=False))
 
     assert shown > hidden > 0
 
@@ -216,13 +216,13 @@ def test_removing_a_layer_leaves_its_content_unconditionally_visible():
     """Removing the group is not removing the content -- that is what
     :meth:`flatten_layers` is for."""
     document = _layered_document()
-    hidden_before = _ink(document.pages[0].render(antialias=False))
+    hidden_before = _ink(document.pages[1].render(antialias=False))
 
     assert document.layers.remove("Draft") is True
 
     assert document.layers.names() == ["Notes"]
-    assert b"CONFIDENTIAL" in document.pages[0].content
-    assert _ink(document.pages[0].render(antialias=False)) > hidden_before
+    assert b"CONFIDENTIAL" in document.pages[1].content
+    assert _ink(document.pages[1].render(antialias=False)) > hidden_before
 
 
 def test_removing_an_unknown_layer_raises():
@@ -268,10 +268,10 @@ def test_flattening_removes_the_optional_content_structure(tmp_path: Path):
 
 
 def test_flattening_does_not_change_what_the_page_looks_like():
-    before = _layered_document().pages[0].render(dpi=72, antialias=False)
+    before = _layered_document().pages[1].render(dpi=72, antialias=False)
     document = _layered_document()
     document.flatten_layers()
-    after = document.pages[0].render(dpi=72, antialias=False)
+    after = document.pages[1].render(dpi=72, antialias=False)
 
     assert after.pixels == before.pixels
 
@@ -279,10 +279,10 @@ def test_flattening_does_not_change_what_the_page_looks_like():
 def test_a_document_without_layers_is_left_alone():
     document = Document()
     document.pages.add().add_text("Plain", 60, 700, font_size=12)
-    content = document.pages[0].content
+    content = document.pages[1].content
 
     assert document.flatten_layers() == 0
-    assert document.pages[0].content == content
+    assert document.pages[1].content == content
 
 
 def test_flattening_reports_the_pages_it_changed():
@@ -325,7 +325,7 @@ def test_an_image_hidden_by_its_own_oc_entry_is_dropped(tmp_path: Path):
     engine._append_content_to_page(0, b"q 100 0 0 100 60 600 cm /Im0 Do Q")
 
     assert document.flatten_layers() == 1
-    assert b"/Im0 Do" not in document.pages[0].content
+    assert b"/Im0 Do" not in document.pages[1].content
 
 
 def _reference(engine, layer):
@@ -407,7 +407,7 @@ def _placement(document: Document):
     from aspose_pdf.images import ImagePlacementAbsorber
 
     absorber = ImagePlacementAbsorber()
-    absorber.visit(document.pages[0])
+    absorber.visit(document.pages[1])
     return absorber.image_placements[0]
 
 
@@ -439,7 +439,7 @@ def test_an_existing_annotation_can_be_put_on_a_layer():
     """
     document = _document_with_existing_content()
     watermark = document.layers.add("Watermark")
-    annotation = document.pages[0].annotations[0]
+    annotation = document.pages[1].annotations[0]
 
     assert watermark.contains(annotation) is False
     assert watermark.add(annotation) is True
@@ -462,7 +462,7 @@ def test_an_existing_image_can_be_put_on_a_layer():
 def test_tagging_content_that_already_carries_the_layer_changes_nothing():
     document = _document_with_existing_content()
     watermark = document.layers.add("Watermark")
-    annotation = document.pages[0].annotations[0]
+    annotation = document.pages[1].annotations[0]
 
     assert watermark.add(annotation) is True
     assert watermark.add(annotation) is False
@@ -471,7 +471,7 @@ def test_tagging_content_that_already_carries_the_layer_changes_nothing():
 def test_a_tag_can_be_taken_off_again():
     document = _document_with_existing_content()
     watermark = document.layers.add("Watermark")
-    annotation = document.pages[0].annotations[0]
+    annotation = document.pages[1].annotations[0]
     watermark.add(annotation)
 
     assert watermark.remove(annotation) is True
@@ -485,7 +485,7 @@ def test_a_layer_only_removes_its_own_tag():
     document = _document_with_existing_content()
     watermark = document.layers.add("Watermark")
     notes = document.layers.add("Notes")
-    annotation = document.pages[0].annotations[0]
+    annotation = document.pages[1].annotations[0]
     watermark.add(annotation)
 
     assert notes.remove(annotation) is False
@@ -508,7 +508,7 @@ def test_membership_through_an_ocmd_counts():
     annotation_dict = _annotation_dict(document)
     annotation_dict.mapping[PdfName("OC")] = engine._cos_doc.register_object(ocmd)
 
-    assert watermark.contains(document.pages[0].annotations[0]) is True
+    assert watermark.contains(document.pages[1].annotations[0]) is True
 
 
 def _marks_in_the_image_box(document: Document) -> int:
@@ -517,7 +517,7 @@ def _marks_in_the_image_box(document: Document) -> int:
     A whole-page ink count is the wrong instrument here: the image is one
     small rectangle, and counting everything drowns it in the body text.
     """
-    raster = document.pages[0].render(antialias=False)
+    raster = document.pages[1].render(antialias=False)
     height = 792  # the default page height, in points and (at 72 dpi) pixels
     return sum(
         1

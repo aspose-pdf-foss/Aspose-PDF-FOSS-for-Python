@@ -122,22 +122,22 @@ def test_a_delimiter_still_ends_an_unescaped_name():
 def test_an_annotation_property_named_this_way_survives_a_save(name):
     document = Document()
     document.pages.add()
-    document.pages[0].annotations.add(
+    document.pages[1].annotations.add(
         "Text", (10, 10, 40, 40), "x", properties={name: 1}
     )
 
-    assert _reloaded(document).pages[0].annotations[0].properties[name] == 1
+    assert _reloaded(document).pages[1].annotations[0].properties[name] == 1
 
 
 @pytest.mark.parametrize("name", AWKWARD)
 def test_a_property_whose_value_is_a_name_survives_a_save(name):
     document = Document()
     document.pages.add()
-    document.pages[0].annotations.add(
+    document.pages[1].annotations.add(
         "Text", (10, 10, 40, 40), "x", properties={"Zz": Name(name)}
     )
 
-    assert _reloaded(document).pages[0].annotations[0].properties["Zz"] == name
+    assert _reloaded(document).pages[1].annotations[0].properties["Zz"] == name
 
 
 def test_a_media_type_is_escaped_by_the_writer_not_by_its_caller():

@@ -151,7 +151,7 @@ def test_rasterizer_uses_document_budget_for_sampled_shading() -> None:
     document._engine_pdf = pdf
 
     with pytest.raises(PdfResourceLimitException, match="sampled function entries"):
-        document.pages[0].render(antialias=False)
+        document.pages[1].render(antialias=False)
 
 
 def test_calculator_function_honors_token_limit() -> None:

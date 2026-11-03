@@ -34,6 +34,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
+from aspose_pdf._page_numbers import page_indices
 from aspose_pdf.document import Document
 from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.stream_output import write_all as _write_all
@@ -260,30 +261,24 @@ def _validate_split_options(
 
 
 def _resolve_selection(
-    selection: Iterable[int] | slice | str,
+    selection: Iterable[int] | str,
     page_count: int,
     *,
     limits: PdfLoadLimits | None = None,
 ) -> list[int]:
     """One of :class:`SplitOptions`'s selections as a plain list of page indexes.
 
-    A ``slice`` is resolved against the document's own length, so
-    ``slice(5, None)`` means "page six onward" however long the input turns out
-    to be, and a negative index counts from the end as it does everywhere else.
+    Numeric selections use positive one-based page numbers. Slices and
+    negative indices are rejected. The internal result uses engine indices.
     A range string uses one-based numbers, accepts odd/even physical pages
     and descending ranges, and resolves ``last`` and open ends per input.
     """
     if isinstance(selection, str):
         from aspose_pdf.page_ranges import parse_page_range
 
-        indexes = list(parse_page_range(selection, page_count, limits=limits))
-    elif isinstance(selection, slice):
-        indexes = list(range(page_count))[selection]
+        indexes = [number - 1 for number in parse_page_range(selection, page_count, limits=limits)]
     else:
-        indexes = [
-            index + page_count if index < 0 else index
-            for index in (int(value) for value in selection)
-        ]
+        indexes = list(page_indices(selection, page_count, limits=limits))
     if not indexes:
         raise AsposePdfException("A split selection names no page")
     for index in indexes:
@@ -295,14 +290,14 @@ def _resolve_selection(
 
 
 def _selected_pages(document: Document, pages: Iterable[int] | None) -> list[int]:
-    """The 0-based pages *pages* names, or all of them when it names none.
+    """Return engine indices for positive public page numbers, or all pages.
 
     An index the document does not have is refused rather than skipped: a plugin
     run over a batch should say that page 12 was asked for in a document of ten,
     not quietly do nine-tenths of the job.
     """
     count = document.page_count
-    indexes = list(range(count)) if pages is None else [int(index) for index in pages]
+    indexes = list(range(count)) if pages is None else list(page_indices(pages, count, limits=document.load_limits))
     if not indexes:
         raise AsposePdfException("No pages were selected")
     for index in indexes:
@@ -470,11 +465,11 @@ class SplitOptions(PluginOptions):
 
     By default every page of every input becomes a document of its own.
     *selections* splits into groups instead: each entry is what
-    :meth:`~aspose_pdf.Document.extract_pages` takes -- an iterable of 0-based
-    page indexes, a ``slice``, or a one-based range string such as ``"1-3,7-"``
+    :meth:`~aspose_pdf.Document.extract_pages` takes -- an iterable of one-based
+    page numbers or a one-based range string such as ``"1-3,7-"``
     -- and becomes one output document, in the order given::
 
-        SplitOptions(selections=[range(0, 3), [3, 4], slice(5, None)])
+        SplitOptions(selections=[range(1, 4), [4, 5], "6-"])
 
     A page may appear in more than one selection, or in none.
     Range strings also accept ``odd``, ``even``, ``last`` and descending ranges
@@ -494,7 +489,7 @@ class SplitOptions(PluginOptions):
         self,
         limits: PdfLoadLimits | None = None,
         *,
-        selections: Iterable[Iterable[int] | slice | str] | None = None,
+        selections: Iterable[Iterable[int] | str] | None = None,
         bookmark_level: int | None = None,
         include_preamble: bool = True,
         pages_per_part: int | None = None,
@@ -514,7 +509,7 @@ class SplitOptions(PluginOptions):
 class TextExtractorOptions(PluginOptions):
     """Extract text from all or selected pages, optionally within a ``clip``.
 
-    ``pages`` contains zero-based indices, preserving order and repetitions;
+    ``pages`` contains one-based page numbers, preserving order and repetitions;
     ``None`` selects all and ``[]`` selects none. The selection is snapshotted
     for reuse across inputs/runs, and checked against each input's page count.
     ``exclude_regions`` snapshots rectangles to omit from each selected page,
@@ -555,14 +550,13 @@ class TextExtractorOptions(PluginOptions):
 
     @property
     def pages(self) -> tuple[int, ...] | None:
-        """A reusable snapshot of zero-based page indices, or all pages."""
+        """A reusable snapshot of one-based page indices, or all pages."""
         return self._pages
 
     @pages.setter
     def pages(self, values: Iterable[int] | None) -> None:
-        from aspose_pdf.engine.text_selection import page_indexes
-
-        self._pages = page_indexes(values, limits=self.limits)
+        indices = page_indices(values, limits=self.limits)
+        self._pages = None if indices is None else tuple(index + 1 for index in indices)
 
     @property
     def skip_artifacts(self) -> bool:
@@ -886,11 +880,10 @@ class TextExtractor(PdfPlugin):
         self._require_inputs(options)
         limits = _coerce_limits(getattr(options, "limits", None))
         from aspose_pdf.engine.text_selection import (
-            page_indexes,
             validate_skip_artifacts,
         )
 
-        pages = page_indexes(getattr(options, "pages", None), limits=limits)
+        pages = page_indices(getattr(options, "pages", None), limits=limits)
         skip_artifacts = validate_skip_artifacts(getattr(options, "skip_artifacts", False))
         from aspose_pdf.engine.text_region import validate_exclude_regions
 
@@ -1047,7 +1040,7 @@ class RotateOptions(PluginOptions):
 
 
 class PageRemoveOptions(PluginOptions):
-    """Options for :class:`PageRemover`: ``pages`` are the 0-based pages to drop."""
+    """Options for :class:`PageRemover`: ``pages`` are the one-based pages to drop."""
 
     def __init__(
         self,
@@ -1113,7 +1106,7 @@ class PdfAConvertOptions(PluginOptions):
 
 
 class FlattenOptions(PluginOptions):
-    """Select fields, non-widget annotations and zero-based pages to flatten.
+    """Select fields, non-widget annotations and one-based pages to flatten.
 
     Filters match :meth:`Document.flatten`. Inputs default to flattening both
     fields and annotations. Iterable selections are stored for reuse across
@@ -1379,7 +1372,7 @@ class Converter(PdfPlugin):
         if output_format == "html":
             return [
                 OperationResult(
-                    document.to_html(
+                    document._api_to_html(
                         pages=indexes, embed_images=getattr(options, "embed_images", True)
                     )
                 )
@@ -1387,7 +1380,7 @@ class Converter(PdfPlugin):
         if output_format == "markdown":
             return [
                 OperationResult(
-                    document.to_markdown(
+                    document._api_to_markdown(
                         pages=indexes, embed_images=getattr(options, "embed_images", True)
                     )
                 )
@@ -1395,7 +1388,7 @@ class Converter(PdfPlugin):
         if output_format == "tiff":
             return [
                 OperationResult(
-                    document.to_tiff(
+                    document._api_to_tiff(
                         pages=indexes,
                         dpi=getattr(options, "dpi", 72.0),
                         mode=getattr(options, "mode", "rgb"),
@@ -1406,10 +1399,10 @@ class Converter(PdfPlugin):
                 )
             ]
         if output_format == "svg":
-            return [OperationResult(document.pages[index].to_svg()) for index in indexes]
+            return [OperationResult(document._page_at(index).to_svg()) for index in indexes]
         results: list[OperationResult] = []
         for index in indexes:
-            raster = document.render_page(index, dpi=getattr(options, "dpi", 72.0))
+            raster = document._api_render_page(index, dpi=getattr(options, "dpi", 72.0))
             if output_format == "png":
                 results.append(
                     OperationResult(raster.to_png(mode=getattr(options, "mode", "rgb"), threshold=getattr(options, "threshold", 128), dither=getattr(options, "dither", False)))
@@ -1448,7 +1441,7 @@ class Rotator(PdfPlugin):
 
         def rotate(document: Document) -> None:
             for index in _selected_pages(document, pages):
-                page = document.pages[index]
+                page = document._page_at(index)
                 page.rotation = page.rotation + rotation if relative else rotation
 
         return self._transform(options, rotate)
@@ -1470,7 +1463,7 @@ class PageRemover(PdfPlugin):
                 )
             # Last page first, so an index is never shifted before it is used.
             for index in targets:
-                document.pages.delete(index)
+                document.pages.delete((index) + 1)
 
         return self._transform(options, remove)
 
@@ -1608,7 +1601,7 @@ class FormFiller(PdfPlugin):
                     original_streams = snapshot_streams(document)
                     document.form.fill(values, strict=strict)
                     if flatten:
-                        document.flatten(annotations=False)
+                        document._api_flatten(annotations=False)
                     check_document(document, original_streams)
                     with OutputBuffer(budget, retained) as output:
                         document.save(output)
@@ -1625,9 +1618,9 @@ class FormFlattener(PdfPlugin):
     def process(self, options: FlattenOptions) -> ResultContainer:
         return self._transform(
             options,
-            lambda document: document.flatten(
+            lambda document: document._api_flatten(
                 fields=options.fields, annotations=options.annotations,
-                pages=options.pages, strict=options.strict,
+                pages=page_indices(options.pages, document.page_count, limits=document.load_limits), strict=options.strict,
             ),
         )
 
@@ -1642,6 +1635,6 @@ class Stamper(PdfPlugin):
         pages = getattr(options, "pages", None)
 
         def apply(document: Document) -> None:
-            document.add_stamp(stamp, _selected_pages(document, pages))
+            document._api_add_stamp(stamp, _selected_pages(document, pages))
 
         return self._transform(options, apply)

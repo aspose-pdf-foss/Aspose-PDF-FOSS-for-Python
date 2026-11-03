@@ -232,7 +232,7 @@ def _document(to_unicode: bytes, codes: bytes, encoding: bytes | None = None) ->
     ids=["one-line", "ligature-range", "astral-range"],
 )
 def test_page_text_decodes_through_the_cmap(to_unicode, codes, expected):
-    assert _document(to_unicode, codes).pages[0].extract_text().strip() == expected
+    assert _document(to_unicode, codes).pages[1].extract_text().strip() == expected
 
 
 def test_a_one_line_encoding_cmap_segments_mixed_length_codes():
@@ -246,4 +246,4 @@ def test_a_one_line_encoding_cmap_segments_mixed_length_codes():
         b"1 begincidrange <8140> <FFFF> 200 endcidrange endcmap CMapName currentdict /CMap defineresource pop end end"
     )
     document = _document(to_unicode, b"<41814042>", encoding)
-    assert document.pages[0].extract_text().strip() == "AあB"
+    assert document.pages[1].extract_text().strip() == "AあB"

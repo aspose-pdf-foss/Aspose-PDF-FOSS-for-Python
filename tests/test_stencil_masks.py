@@ -103,7 +103,7 @@ _QUADRANTS = {
 
 
 def _quadrants(doc: Document) -> dict[str, tuple[int, int, int]]:
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
     return {name: raster.get_pixel(*at) for name, at in _QUADRANTS.items()}
 
 
@@ -259,7 +259,7 @@ def _png_rgba(data: bytes) -> tuple[int, int, list[tuple[int, int, int, int]]]:
 
 def test_the_svg_export_paints_a_stencil_in_the_fill_colour_too():
     doc = _document(_draw(), _image(b"/Width 2 /Height 2 /ImageMask true", _BITS))
-    svg = doc.pages[0].to_svg()
+    svg = doc.pages[1].to_svg()
     href = re.search(r'xlink:href="data:image/png;base64,([^"]+)"', svg)
     assert href is not None
     width, height, pixels = _png_rgba(base64.b64decode(href.group(1)))

@@ -323,7 +323,7 @@ def test_render_type1_outline_not_box():
     doc, pdf = _embed_type1(pdf, font, l1, l2)
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render()
+    raster = doc.pages[1].render()
 
     assert _count_black(raster, 8, 27, 33, 35) > 30  # bottom bar filled
     assert _count_black(raster, 8, 9, 33, 19) == 0  # upper cell empty (not a box)
@@ -346,6 +346,6 @@ def test_render_type1_via_pdf_encoding_differences():
     doc, pdf = _embed_type1(pdf, font, l1, l2, encoding_obj=encoding)
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render()
+    raster = doc.pages[1].render()
 
     assert raster.get_pixel(20, 20) == (0, 0, 0)

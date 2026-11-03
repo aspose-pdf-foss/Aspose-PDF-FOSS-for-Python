@@ -174,7 +174,7 @@ class _Inventory(_Reader):
                 params[0] >= params[2] or params[1] >= params[3]
             ):
                 raise _Problem("invalid_destination")
-            fields["destination"] = destination_from_spec(kind.name[1:], index, params)
+            fields["destination"] = destination_from_spec(kind.name[1:], index + 1, params)
         except _Problem as problem:
             issues.append(problem.code)
         return fields, issues

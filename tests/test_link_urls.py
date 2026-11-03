@@ -51,7 +51,7 @@ def _report(document):
         page.add_text(f"Unchanged page {index}: {OLD}", 72, 700)
         page.add_link(RECT, URIAction(f"{OLD}/page-{index}?q=1#part"))
         page.add_link(RECT, URIAction("https://other.example/path"))
-        page.add_link(RECT, FitDestination(0))
+        page.add_link(RECT, FitDestination(1))
 
 
 @pytest.mark.parametrize("source", ["live", "bytes", "file", "streaming"])
@@ -80,7 +80,7 @@ def test_bulk_url_replacement_keeps_layout_content_and_survives_round_trips(sour
             for page in document.pages:
                 links = page.extract_links()
                 assert all(link.rect == RECT for link in links)
-                assert links[-1].target_page_index == 0
+                assert links[-1].target_page_index == 1
             path = tmp_path / "output.pdf"
             document.save(path)
             for value in (path, _bytes(document)):
@@ -115,9 +115,9 @@ def test_literal_regex_templates_flags_relative_and_custom_urls(search, replacem
 def test_page_selection_deduplicates_repeats_and_page_method_uses_its_own_index():
     with Document() as document:
         _report(document)
-        assert document.replace_link_urls(OLD, NEW, pages=(index for index in [2, 0, 2])) == 2
+        assert document.replace_link_urls(OLD, NEW, pages=(number + 1 if type(number) is int else number for number in ((index for index in [2, 0, 2])))) == 2
         assert _uris(document)[::2] == [NEW + "/page-0?q=1#part", OLD + "/page-1?q=1#part", NEW + "/page-2?q=1#part"]
-        assert document.pages[1].replace_link_urls(OLD, NEW) == 1
+        assert document.pages[2].replace_link_urls(OLD, NEW) == 1
         assert document.replace_link_urls(OLD, NEW, pages=[]) == 0
 
 
@@ -173,9 +173,9 @@ def test_shared_action_does_not_change_other_pages_bookmarks_or_additional_actio
         for page in range(2):
             _entry(document, page=page).mapping[PdfName("A")] = reference
         _entry(document).mapping[PdfName("AA")] = PdfDictionary({PdfName("E"): reference})
-        bookmark = document.outlines.add(OutlineItem("Website", 0))
+        bookmark = document.outlines.add(OutlineItem("Website", 1))
         bookmark._loaded_target = ("A", reference)
-        assert document.pages[0].replace_link_urls(OLD, NEW) == 1
+        assert document.pages[1].replace_link_urls(OLD, NEW) == 1
         assert _uris(document) == [NEW, OLD]
         assert action.mapping[PdfName("URI")].value == OLD.encode()
         assert _entry(document).mapping[PdfName("AA")].mapping[PdfName("E")] is reference
@@ -194,7 +194,7 @@ def test_shared_annotation_outside_page_selection_is_refused_without_edits(dry_r
         engine._get_page_dict(1).mapping[PdfName("Annots")] = PdfArray([original])
         before = _bytes(document)
         with pytest.raises(PdfValidationException, match="shared with an unselected page"):
-            document.pages[0].replace_link_urls(OLD, NEW, dry_run=dry_run)
+            document.pages[1].replace_link_urls(OLD, NEW, dry_run=dry_run)
         assert _bytes(document) == before
         assert document.replace_link_urls(OLD, NEW, dry_run=dry_run) == 1
         assert _uris(document) == ([OLD, OLD] if dry_run else [NEW, NEW])
@@ -221,7 +221,7 @@ def test_invalid_options_are_rejected_before_metadata_reads(search, replacement,
 def test_empty_result_and_later_malformed_uri_do_not_partially_update_links():
     with Document() as document:
         document.pages.add().add_link(RECT, URIAction(OLD))
-        document.pages[0].add_link(RECT, URIAction(OLD + "/second"))
+        document.pages[1].add_link(RECT, URIAction(OLD + "/second"))
         entry = _entry(document)
         mapping = entry.mapping
         with pytest.raises(PdfValidationException, match="empty URI"):
@@ -239,7 +239,7 @@ def test_later_invalid_page_is_rejected_before_any_metadata_access(monkeypatch):
         _report(document)
         monkeypatch.setattr(document._engine_pdf, "_get_page_dict", lambda *a: pytest.fail("Validate first"))
         with pytest.raises(PdfValidationException):
-            document.replace_link_urls(OLD, NEW, pages=[0, 99])
+            document.replace_link_urls(OLD, NEW, pages=[1, 100])
 
 
 def test_disposed_document_and_page_reject_replacement():
@@ -418,7 +418,7 @@ def test_streaming_encrypted_input_is_metadata_only_and_keeps_source_file(tmp_pa
         with monkeypatch.context() as patch:
             patch.setattr(engine, "get_page_content", forbidden)
             patch.setattr(engine, "_decode_cos_stream", forbidden)
-            assert document.replace_link_urls(OLD, NEW, pages=[1]) == 1
+            assert document.replace_link_urls(OLD, NEW, pages=[2]) == 1
             assert engine.page_contents == [] and engine._extracted_text is None
             assert document.is_encrypted
             assert _uris(document)[::2] == [OLD + "/page-0?q=1#part", NEW + "/page-1?q=1#part", OLD + "/page-2?q=1#part"]
@@ -500,7 +500,7 @@ def test_shared_uri_string_and_nonzero_generations_remain_valid():
 def test_primary_non_uri_actions_and_uri_next_chains_are_not_rewritten():
     with Document() as document:
         page = document.pages.add()
-        page.add_link(RECT, FitDestination(0))
+        page.add_link(RECT, FitDestination(1))
         page.add_link(RECT, URIAction(OLD))
         entry = _entry(document)
         next_action = PdfDictionary({PdfName("S"): PdfName("URI"), PdfName("URI"): PdfString(OLD)})

@@ -1484,6 +1484,8 @@ def _edit_run(
     max_count: int,
     budget: _LoadBudget,
     reshaper: Reshaper | None = None,
+    _spans: list[tuple[int, int, re.Match[str] | None]] | None = None,
+    _replacement_for_span: Callable[[int, int], str] | None = None,
 ) -> tuple[list[tuple[int, int, bytes]], int]:
     """Match *search* across the run's logical string and rewrite operands.
 
@@ -1499,7 +1501,7 @@ def _edit_run(
     infos, full, entries, seg_starts = _run_char_data(run, budget=budget)
     if not full:
         return [], 0
-    spans = _aligned_spans(
+    spans = _spans if _spans is not None else _aligned_spans(
         full,
         entries,
         search,
@@ -1525,7 +1527,11 @@ def _edit_run(
         # Each match brings its own replacement: with a pattern the template
         # may name the groups this match captured, so it cannot be expanded
         # once for the whole run.
-        text_for_match = _expand_replacement(replacement, match)
+        text_for_match = (
+            _replacement_for_span(s, e)
+            if _replacement_for_span is not None
+            else _expand_replacement(replacement, match)
+        )
         if infos[t_seg][0] == "cid":
             payload: Any = b""
             if text_for_match:

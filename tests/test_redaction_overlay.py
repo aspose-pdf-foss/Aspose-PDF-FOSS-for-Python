@@ -18,7 +18,7 @@ _FONTS = lambda name: _FONT if name == "F1" else None  # noqa: E731
 
 
 def _render(doc, antialias=False):
-    return doc.pages[0].render(antialias=antialias)
+    return doc.pages[1].render(antialias=antialias)
 
 
 # --- locator ---------------------------------------------------------------
@@ -64,14 +64,14 @@ def test_locate_honours_cm_scaling():
 def _authored_doc():
     doc = Document()
     doc._engine_pdf = SimplePdf(pages=[(0, 0, 300, 80)], page_contents=[b""])
-    doc.pages[0].add_text("Hello World", 20, 40, font_size=24, font_name="Helvetica")
+    doc.pages[1].add_text("Hello World", 20, 40, font_size=24, font_name="Helvetica")
     return doc
 
 
 def test_redact_overlay_removes_text_and_draws_bar():
     doc = _authored_doc()
-    assert doc.pages[0].redact_text("World", overlay=True) == 1
-    content = doc.pages[0].content
+    assert doc.pages[1].redact_text("World", overlay=True) == 1
+    content = doc.pages[1].content
     assert b"World" not in content  # text removed from the stream
     assert b"h f" in content  # a filled overlay path was appended
     assert b"0 0 0 rg" in content  # default black bar
@@ -79,22 +79,22 @@ def test_redact_overlay_removes_text_and_draws_bar():
 
 def test_redact_overlay_default_off_draws_no_bar():
     doc = _authored_doc()
-    assert doc.pages[0].redact_text("World") == 1
-    content = doc.pages[0].content
+    assert doc.pages[1].redact_text("World") == 1
+    content = doc.pages[1].content
     assert b"World" not in content
     assert b"h f" not in content  # no overlay path when overlay is off
 
 
 def test_redact_overlay_color_is_honoured():
     doc = _authored_doc()
-    doc.pages[0].redact_text("World", overlay=True, overlay_color=(1, 0, 0))
-    assert b"1 0 0 rg" in doc.pages[0].content
+    doc.pages[1].redact_text("World", overlay=True, overlay_color=(1, 0, 0))
+    assert b"1 0 0 rg" in doc.pages[1].content
 
 
 def test_redact_overlay_bar_covers_removed_region():
     doc = _authored_doc()
     before = _render(doc)
-    doc.pages[0].redact_text("World", overlay=True)
+    doc.pages[1].redact_text("World", overlay=True)
     after = _render(doc)
 
     def dark(raster, x0, x1):
@@ -119,8 +119,8 @@ def test_redact_overlay_skips_untrackable_font_but_still_removes_text():
         pages=[(0, 0, 200, 80)],
         page_contents=[b"BT /FX 12 Tf 10 20 Td (Secret) Tj ET"],
     )
-    assert doc.pages[0].redact_text("Secret", overlay=True) == 1
-    content = doc.pages[0].content
+    assert doc.pages[1].redact_text("Secret", overlay=True) == 1
+    content = doc.pages[1].content
     assert b"Secret" not in content
     assert b"h f" not in content  # no bar drawn for the untrackable run
 

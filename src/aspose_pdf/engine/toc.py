@@ -150,7 +150,7 @@ def draw(
     right = width - margin
     index = 0
     for offset in range(planned.page_count):
-        page = document.pages[at + offset]
+        page = document._page_at(at + offset)
         y = height - margin
         if offset == 0 and title:
             page.add_text(
@@ -280,9 +280,9 @@ def _draw_entry(
         from aspose_pdf.interactive import FitHDestination, XYZDestination
 
         target = (
-            XYZDestination(page=entry.page_index, left=entry.x, top=entry.y)
+            XYZDestination(page=entry.page_index + 1, left=entry.x, top=entry.y)
             if entry.y is not None
-            else FitHDestination(page=entry.page_index)
+            else FitHDestination(page=entry.page_index + 1)
         )
         # The whole line is the link, as a reader expects -- the number as much
         # as the words, and the dots between them.
@@ -385,7 +385,7 @@ def build(
     if not planned.page_count:
         return []
     for offset in range(planned.page_count):
-        document.pages.insert(at + offset, size=planned.size)
+        document.pages.insert((at + offset) + 1, size=planned.size)
     entries = entries_for(pdf, planned, at=at)
     draw(
         pdf,

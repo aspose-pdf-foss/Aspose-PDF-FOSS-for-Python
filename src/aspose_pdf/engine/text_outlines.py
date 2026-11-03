@@ -113,7 +113,7 @@ def generate_outlines_from_text(
                 continue
             retained += _size(title, budget, "text bookmark title", pdf_string=True)
             budget.check(retained, "max_total_decoded_bytes", "text bookmark titles")
-            planned.append(OutlineItem(title, index))
+            planned.append(OutlineItem(title, index + 1))
             if max_count and len(planned) >= max_count:
                 break
         if max_count and len(planned) >= max_count:
@@ -136,7 +136,7 @@ def generate_outlines_from_text(
         for item in planned:
             # Keep the matched page's identity if pages are inserted before a save.
             item._loaded_target = (
-                "Dest", PdfArray([context.refs[item.page_index], PdfName("Fit")])
+                "Dest", PdfArray([context.refs[item._page_index], PdfName("Fit")])
             )
     if replace:
         if collection is None:

@@ -61,7 +61,7 @@ def test_selected_copies_and_original_indices_survive_round_trips(
             Document.open_streaming if source_kind == "streaming" else Document
         )(path)
     with document:
-        assert document.remove_duplicate_pages(keep=keep) == removed
+        assert document.remove_duplicate_pages(keep=keep) == list(number + 1 for number in (removed))
         assert [page.extract_text() for page in document.pages] == remaining
         assert document.remove_duplicate_pages(keep=keep) == []
         output_path = tmp_path / "cleaned.pdf"
@@ -86,16 +86,16 @@ def test_selection_order_controls_keep_and_results_use_document_order(
 
         def render(page, **options):
             assert document.page_count == 6, "All inspection must precede deletion"
-            assert page.index != 3, "Unselected pages must not be rendered"
+            assert page.index != 4, "Unselected pages must not be rendered"
             visited.append(page.index)
             return original(page, **options)
 
         with monkeypatch.context() as patch:
             patch.setattr(Page, "render", render)
             assert document.remove_duplicate_pages(
-                pages=(i for i in (4, 2, 1, 5, 4, 0)), keep=keep,
-            ) == removed
-        assert set(visited) == {0, 1, 2, 4, 5}
+                pages=(number + 1 if type(number) is int else number for number in ((i for i in (4, 2, 1, 5, 4, 0)))), keep=keep,
+            ) == list(number + 1 for number in (removed))
+        assert set(visited) == {1, 2, 3, 5, 6}
         assert [page.extract_text() for page in document.pages] == remaining
 
 
@@ -108,29 +108,29 @@ def test_blank_documents_keep_one_page_and_noops_do_not_render(monkeypatch, keep
             patch.setattr(Page, "render", lambda *a, **k: pytest.fail("No comparison"))
             assert document.remove_duplicate_pages(keep=keep) == []
             assert document.remove_duplicate_pages(pages=[], keep=keep) == []
-            assert document.remove_duplicate_pages(pages=[0, 0], keep=keep) == []
+            assert document.remove_duplicate_pages(pages=[1, 1], keep=keep) == []
         for _ in range(3):
             document.pages.add(size=(10, 10))
         expected = [1, 2, 3] if keep == "first" else [0, 1, 2]
-        assert document.remove_duplicate_pages(keep=keep, dry_run=True) == expected
+        assert document.remove_duplicate_pages(keep=keep, dry_run=True) == list(number + 1 for number in (expected))
         assert document.page_count == 4
-        assert document.remove_duplicate_pages(keep=keep) == expected
+        assert document.remove_duplicate_pages(keep=keep) == list(number + 1 for number in (expected))
         assert document.page_count == 1
 
 
 def test_dry_run_keeps_bytes_live_outlines_and_text_caches():
     with _document() as document:
-        item = document.outlines.add(OutlineItem("Last copy", 5))
+        item = document.outlines.add(OutlineItem("Last copy", 6))
         cached = document.extract_text()
         before = _bytes(document)
         engine = document._engine_pdf
         model = engine._outlines_data
         engine._page_text_cursor = 4
-        assert document.remove_duplicate_pages(dry_run=True) == [2, 4, 5]
+        assert document.remove_duplicate_pages(dry_run=True) == [3, 5, 6]
         assert document.page_count == 6
         assert engine._outlines_data is model
         assert engine._extracted_text is cached and engine._page_text_cursor == 4
-        assert document.outlines[0] is item and item.page_index == 5
+        assert document.outlines[0] is item and item.page_index == 6
         assert _bytes(document) == before
 
 
@@ -141,8 +141,8 @@ def test_bookmarks_labels_metadata_and_attachments_survive_cleanup(access_outlin
         source.add_attachment("notes.txt", b"Keep this")
         source.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ROMAN_LOWERCASE)
         source.page_labels[3] = PageLabel(prefix="A-")
-        source.outlines.add(OutlineItem("Removed copy", 2)).add(
-            OutlineItem("Retained", destination=XYZDestination(3, 4, 50, 1.5),
+        source.outlines.add(OutlineItem("Removed copy", 3)).add(
+            OutlineItem("Retained", destination=XYZDestination(4, 4, 50, 1.5),
                         is_bold=True)
         )
         source.outlines.add(OutlineItem("External", destination=URIAction("https://example.com")))
@@ -152,10 +152,10 @@ def test_bookmarks_labels_metadata_and_attachments_survive_cleanup(access_outlin
             collection = document.outlines
             parent = collection[0]
             child = parent.children[0]
-        assert document.remove_duplicate_pages() == [2, 4, 5]
+        assert document.remove_duplicate_pages() == [3, 5, 6]
         parent_after = document.outlines[0]
         assert parent_after.page_index is None and parent_after.destination is None
-        assert parent_after.children[0].destination == XYZDestination(2, 4, 50, 1.5)
+        assert parent_after.children[0].destination == XYZDestination(3, 4, 50, 1.5)
         assert parent_after.children[0].is_bold
         if access_outlines:
             assert document.outlines is collection and parent_after is parent
@@ -166,25 +166,25 @@ def test_bookmarks_labels_metadata_and_attachments_survive_cleanup(access_outlin
         assert document.attachments == {"notes.txt": b"Keep this"}
         with Document(_bytes(document)) as reopened:
             assert reopened.outlines[0].page_index is None
-            assert reopened.outlines[0].children[0].destination == XYZDestination(2, 4, 50, 1.5)
+            assert reopened.outlines[0].children[0].destination == XYZDestination(3, 4, 50, 1.5)
             assert [page.label for page in reopened.pages] == ["i", "ii", "A-1"]
 
 
 def test_named_bookmarks_and_local_links_follow_ordinary_deletion():
     with _document() as document:
-        document.destinations["retained"] = XYZDestination(3, 4, 50, 1.5)
-        document.destinations["removed"] = FitDestination(2)
+        document.destinations["retained"] = XYZDestination(4, 4, 50, 1.5)
+        document.destinations["removed"] = FitDestination(3)
         document.outlines.add(OutlineItem("Retained", destination="retained"))
         document.outlines.add(OutlineItem("Removed", destination="removed"))
-        page = document.pages[1]
-        page.add_link((1, 1, 5, 5), FitDestination(3))
-        page.add_link((6, 1, 10, 5), FitDestination(2))
-        assert document.remove_duplicate_pages(include_annotations=False) == [2, 4, 5]
+        page = document.pages[2]
+        page.add_link((1, 1, 5, 5), FitDestination(4))
+        page.add_link((6, 1, 10, 5), FitDestination(3))
+        assert document.remove_duplicate_pages(include_annotations=False) == [3, 5, 6]
         assert document.outlines[0].destination_name == "retained"
-        assert document.outlines[0].page_index == 2
+        assert document.outlines[0].page_index == 3
         assert document.outlines[1].destination_name is None
-        links = list(document.pages[1].annotations)
-        assert links[0].get_property("Dest") == FitDestination(2)
+        links = list(document.pages[2].annotations)
+        assert links[0].get_property("Dest") == FitDestination(3)
         assert links[1].get_property("Dest") is None
 
 
@@ -193,11 +193,11 @@ def test_annotation_visibility_controls_duplicate_removal(include):
     with Document() as document:
         for _ in range(3):
             document.pages.add(size=(64, 64))
-        document.pages[1].annotations.add_square(
+        document.pages[2].annotations.add_square(
             (5, 5, 25, 25), interior_color=(0, 0, 0),
         )
         assert document.remove_duplicate_pages(include_annotations=include) == (
-            [2] if include else [1, 2]
+            list(number + 1 for number in ([2] if include else [1, 2]))
         )
 
 
@@ -226,7 +226,7 @@ def test_streaming_cleanup_reads_only_selected_scans(tmp_path, monkeypatch, encr
 
         with monkeypatch.context() as patch:
             patch.setattr(engine, "get_page_content", read)
-            assert document.remove_duplicate_pages(pages=[2, 0, 2]) == [0]
+            assert document.remove_duplicate_pages(pages=[3, 1, 3]) == [1]
             assert set(visited) == {0, 2}
             assert engine.page_contents == [] and engine._extracted_text is None
             assert document.page_count == 3
@@ -242,7 +242,7 @@ def test_streaming_cleanup_reads_only_selected_scans(tmp_path, monkeypatch, encr
 @pytest.mark.parametrize("options", [
     {"keep": "all"}, {"keep": None}, {"keep": []}, {"dry_run": 1},
     {"dpi": 0}, {"dpi": float("nan")}, {"include_annotations": 1},
-    {"pages": [0, 6]}, {"pages": [True]},
+    {"pages": [1, 7]}, {"pages": [True]},
 ])
 def test_invalid_options_fail_before_rendering_or_deletion(monkeypatch, options):
     def forbidden(*args, **kwargs):
@@ -260,19 +260,19 @@ def test_invalid_options_fail_before_rendering_or_deletion(monkeypatch, options)
 @pytest.mark.parametrize("error", [PdfParseException, PdfResourceLimitException])
 def test_late_render_failure_preserves_all_pages_and_live_bookmarks(monkeypatch, error):
     with _document() as document:
-        item = document.outlines.add(OutlineItem("Last", 5))
+        item = document.outlines.add(OutlineItem("Last", 6))
         before = _bytes(document)
         original = Page.render
 
         def render(page, **options):
-            if page.index == 5:
+            if page.index == 6:
                 raise error("Cannot render page")
             return original(page, **options)
 
         monkeypatch.setattr(Page, "render", render)
         with pytest.raises(error, match="Cannot render"):
             document.remove_duplicate_pages()
-        assert document.page_count == 6 and item.page_index == 5
+        assert document.page_count == 6 and item.page_index == 6
         assert _bytes(document) == before
 
 
@@ -283,7 +283,7 @@ def test_render_and_selection_limits_leave_pages_intact():
         with pytest.raises(PdfResourceLimitException, match="max_raster_pixels"):
             document.remove_duplicate_pages()
         assert document.page_count == 2
-        assert document.remove_duplicate_pages(dpi=36) == [1]
+        assert document.remove_duplicate_pages(dpi=36) == [2]
     with Document(limits=PdfLoadLimits(max_container_items=2)) as document:
         for _ in range(3):
             document.pages.add(size=(10, 10))
@@ -302,7 +302,7 @@ def test_invalid_navigation_is_rejected_before_any_deletion(monkeypatch):
             with pytest.raises(PdfResourceLimitException, match="PageLabels"):
                 document.remove_duplicate_pages()
         assert document.page_count == 6
-        item = document.outlines.add(OutlineItem("Cycle", 5))
+        item = document.outlines.add(OutlineItem("Cycle", 6))
         item.children.append(item)
         with pytest.raises(PdfParseException, match="cycle"):
             document.remove_duplicate_pages()
@@ -311,16 +311,16 @@ def test_invalid_navigation_is_rejected_before_any_deletion(monkeypatch):
 
 def test_removal_invalidates_text_cache_and_keeps_retained_field_handles():
     with _document() as document:
-        field = document.form.add_text_field("Retained", 3, (5, 5, 55, 20), value="Keep")
+        field = document.form.add_text_field("Retained", 4, (5, 5, 55, 20), value="Keep")
         document.extract_text()
         document._engine_pdf._page_text_cursor = 5
-        assert document.remove_duplicate_pages() == [2, 4, 5]
+        assert document.remove_duplicate_pages() == [3, 5, 6]
         assert document._engine_pdf._extracted_text is None
         assert document._engine_pdf.get_next_page_text() == "A"
         assert document.form["Retained"] is field
-        assert field.value == "Keep" and field.page_index == 2
+        assert field.value == "Keep" and field.page_index == 3
         with Document(_bytes(document)) as reopened:
             assert reopened.form["Retained"].value == "Keep"
-            assert reopened.form["Retained"].page_index == 2
+            assert reopened.form["Retained"].page_index == 3
     with pytest.raises(AsposePdfException, match="disposed"):
         document.remove_duplicate_pages()

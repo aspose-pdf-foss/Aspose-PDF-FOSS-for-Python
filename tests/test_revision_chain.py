@@ -32,7 +32,7 @@ def _authored(pages: int = 2) -> bytes:
     document = Document()
     for _ in range(pages):
         document.pages.add()
-    document.pages[0].add_text("base text", x=72, y=700)
+    document.pages[1].add_text("base text", x=72, y=700)
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
@@ -170,7 +170,7 @@ def _tail_kind(data: bytes) -> str:
 
 def test_an_update_to_a_table_file_appends_a_table():
     document = Document(io.BytesIO(_authored()))
-    document.pages[1].add_text("appended", x=72, y=600)
+    document.pages[2].add_text("appended", x=72, y=600)
     updated = _saved(document, incremental=True)
     assert _tail_kind(updated) == "table"
     assert _text(updated) == "base text | appended"
@@ -180,7 +180,7 @@ def test_an_update_to_a_stream_file_appends_a_stream():
     source = _with_xref_stream()
     assert _tail_kind(source) == "stream"
     document = Document(io.BytesIO(source))
-    document.pages[1].add_text("appended", x=72, y=600)
+    document.pages[2].add_text("appended", x=72, y=600)
     updated = _saved(document, incremental=True)
     assert _tail_kind(updated) == "stream"
     assert _text(updated) == "base text | appended"
@@ -189,7 +189,7 @@ def test_an_update_to_a_stream_file_appends_a_stream():
 def test_the_appended_stream_keeps_the_original_bytes_in_front():
     source = _with_xref_stream()
     document = Document(io.BytesIO(source))
-    document.pages[1].add_text("appended", x=72, y=600)
+    document.pages[2].add_text("appended", x=72, y=600)
     updated = _saved(document, incremental=True)
     assert updated.startswith(source)  # an update appends, it never rewrites
 
@@ -199,7 +199,7 @@ def test_the_appended_stream_is_not_compressed_or_enciphered():
     # how to decipher anything, so it is exempt -- and it is written plain.
     source = _with_xref_stream()
     document = Document(io.BytesIO(source))
-    document.pages[1].add_text("appended", x=72, y=600)
+    document.pages[2].add_text("appended", x=72, y=600)
     tail = _saved(document, incremental=True)[len(source) :]
     xref = tail[tail.rfind(b"/Type /XRef") :]
     assert b"/Filter" not in xref.split(b"stream")[0]
@@ -210,7 +210,7 @@ def test_the_appended_stream_lists_itself():
     # the file says where the object a reader just parsed actually lives.
     source = _with_xref_stream()
     document = Document(io.BytesIO(source))
-    document.pages[1].add_text("appended", x=72, y=600)
+    document.pages[2].add_text("appended", x=72, y=600)
     tail = _saved(document, incremental=True)[len(source) :]
     header = tail[tail.rfind(b"/Type /XRef") :].split(b"stream")[0]
     own_number = int(
@@ -237,11 +237,11 @@ def test_an_independent_reader_agrees_about_the_updated_stream_file():
     pikepdf = pytest.importorskip("pikepdf")
     source = _with_xref_stream()
     document = Document(io.BytesIO(source))
-    document.pages[1].add_text("appended", x=72, y=600)
+    document.pages[2].add_text("appended", x=72, y=600)
     updated = _saved(document, incremental=True)
     with pikepdf.open(io.BytesIO(updated)) as pdf:
         assert len(pdf.pages) == 2
-        assert b"appended" in bytes(pdf.pages[1].Contents.read_bytes())
+        assert b"appended" in bytes(pdf.pages[2].Contents.read_bytes())
 
 
 # --- the newest revision owns the object ------------------------------------
@@ -265,14 +265,14 @@ def test_an_object_lifted_out_of_a_stream_is_read_from_the_newer_revision():
     # one back.
     source = _with_xref_stream()
     document = Document(io.BytesIO(source))
-    document.pages[1].add_text("appended", x=72, y=600)
+    document.pages[2].add_text("appended", x=72, y=600)
     assert _text(_saved(document, incremental=True)) == "base text | appended"
 
 
 def test_the_older_copy_is_still_there_and_still_ignored():
     source = _with_xref_stream()
     document = Document(io.BytesIO(source))
-    document.pages[1].add_text("appended", x=72, y=600)
+    document.pages[2].add_text("appended", x=72, y=600)
     updated = _saved(document, incremental=True)
     # The whole original, object stream included, is still in the file.
     assert updated.startswith(source)
@@ -283,7 +283,7 @@ def test_a_chain_of_updates_reads_as_its_last_revision():
     data = _authored(pages=1)
     for index in range(1, 4):
         document = Document(io.BytesIO(data))
-        document.pages[0].add_text(f"rev{index}", x=72, y=700 - 20 * index)
+        document.pages[1].add_text(f"rev{index}", x=72, y=700 - 20 * index)
         data = _saved(document, incremental=True)
     assert _text(data) == "base text rev1 rev2 rev3"
 
@@ -294,7 +294,7 @@ def test_a_chain_of_updates_reads_as_its_last_revision():
 def test_a_full_save_carries_no_prev():
     data = _authored(pages=1)
     document = Document(io.BytesIO(data))
-    document.pages[0].add_text("more", x=72, y=650)
+    document.pages[1].add_text("more", x=72, y=650)
     once = _saved(document, incremental=True)
     # Reload the updated file and write it out whole: there is no revision
     # before this one, so nothing may claim there is.
@@ -320,7 +320,7 @@ def test_a_full_save_of_a_chained_file_needs_no_rescan(caplog):
     data = _authored(pages=1)
     for index in range(1, 4):
         document = Document(io.BytesIO(data))
-        document.pages[0].add_text(f"rev{index}", x=72, y=700 - 20 * index)
+        document.pages[1].add_text(f"rev{index}", x=72, y=700 - 20 * index)
         data = _saved(document, incremental=True)
     rewritten = _saved(Document(io.BytesIO(data)))
     with caplog.at_level(logging.WARNING):

@@ -51,11 +51,11 @@ def _cropped_pixels(full, left, top, width, height):
 def test_clip_pixels_match_the_same_area_of_the_full_render(
     document, rotation, antialias, dpi, scale
 ):
-    page = document.pages[0]
+    page = document.pages[1]
     page.rotation = rotation
     options = dict(dpi=dpi, scale=scale, antialias=antialias)
     full = page.render(**options)
-    clipped = document.render_page(0, clip=_CLIP, **options)
+    clipped = document.render_page(1, clip=_CLIP, **options)
     factor = dpi / 72 * scale
     left, top, width, height = {
         0: (12, 24, 20, 16),
@@ -81,19 +81,19 @@ def test_clip_pixels_match_the_same_area_of_the_full_render(
     ],
 )
 def test_clip_is_intersected_with_the_effective_crop_box(document, clip, expected):
-    raster = document.pages[0].render(clip=clip, antialias=False)
+    raster = document.pages[1].render(clip=clip, antialias=False)
     assert (raster.width, raster.height) == (
         expected[2] - expected[0],
         expected[3] - expected[1],
     )
     assert (
-        raster.pixels == document.render_page(0, clip=expected, antialias=False).pixels
+        raster.pixels == document.render_page(1, clip=expected, antialias=False).pixels
     )
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_fractional_clip_dimensions_and_background(document, rotation):
-    page = document.pages[0]
+    page = document.pages[1]
     page.rotation = rotation
     raster = page.render(
         clip=(2.25, 30.5, 4.4, 33.75),
@@ -107,7 +107,7 @@ def test_fractional_clip_dimensions_and_background(document, rotation):
     with Document() as blank:
         blank.pages.add(size=(10, 10))
         result = blank.render_page(
-            0, clip=(2.25, 2.5, 4.4, 5.75), background=(10, 20, 30)
+            1, clip=(2.25, 2.5, 4.4, 5.75), background=(10, 20, 30)
         )
         assert result.pixels == bytes((10, 20, 30)) * result.width * result.height
 
@@ -115,7 +115,7 @@ def test_fractional_clip_dimensions_and_background(document, rotation):
 def test_tiny_clip_uses_its_actual_span_before_pixel_rounding():
     with Document() as doc:
         doc.pages.add(size=(10, 10))
-        raster = doc.render_page(0, clip=(0, 0, 1e-9, 2e-9), dpi=72e9, antialias=False)
+        raster = doc.render_page(1, clip=(0, 0, 1e-9, 2e-9), dpi=72e9, antialias=False)
         assert (raster.width, raster.height) == (1, 2)
 
 
@@ -152,13 +152,13 @@ def test_invalid_or_empty_clip_is_rejected_before_allocation(
 
     monkeypatch.setattr(rasterizer, "_Canvas", unexpected_canvas)
     with pytest.raises(PdfValidationException, match="clip"):
-        document.render_page(0, clip=clip)
+        document.render_page(1, clip=clip)
 
 
 def test_clip_does_not_modify_page_boxes_content_or_subsequent_renders(
     document, tmp_path
 ):
-    page = document.pages[0]
+    page = document.pages[1]
     page.rotation = 90
     before = page.render(antialias=False)
     page.render(clip=_CLIP, antialias=False)
@@ -172,10 +172,10 @@ def test_clip_does_not_modify_page_boxes_content_or_subsequent_renders(
     document.save(path)
     for source in (buffer.getvalue(), path):
         with Document(source) as loaded:
-            assert loaded.pages[0].media_box == _MEDIA
-            assert loaded.pages[0].crop_box == _CROP
-            assert loaded.render_page(0, antialias=False) == before
-            assert loaded.render_page(0, clip=_CLIP, antialias=False).pixels == (
+            assert loaded.pages[1].media_box == _MEDIA
+            assert loaded.pages[1].crop_box == _CROP
+            assert loaded.render_page(1, antialias=False) == before
+            assert loaded.render_page(1, clip=_CLIP, antialias=False).pixels == (
                 page.render(clip=_CLIP, antialias=False).pixels
             )
 
@@ -184,11 +184,11 @@ def test_clip_does_not_modify_page_boxes_content_or_subsequent_renders(
 def test_save_as_image_forwards_clip_and_preserves_existing_files_on_error(
     document, use_document, tmp_path
 ):
-    page = document.pages[0]
+    page = document.pages[1]
     if use_document:
 
         def save(path, **kwargs):
-            return document.save_page_as_image(0, path, **kwargs)
+            return document.save_page_as_image(1, path, **kwargs)
     else:
         save = page.save_as_image
     path = tmp_path / "detail.png"
@@ -216,15 +216,15 @@ def test_small_clip_of_large_page_allocates_only_the_region(
     with Document(limits=limits) as doc:
         doc.pages.add(size=(100_000, 100_000))
         with pytest.raises(PdfResourceLimitException, match="max_raster_pixels"):
-            doc.render_page(0, antialias=antialias)
+            doc.render_page(1, antialias=antialias)
         assert allocations == []
         result = doc.render_page(
-            0, clip=(50_000, 50_000, 50_010, 50_010), antialias=antialias
+            1, clip=(50_000, 50_000, 50_010, 50_010), antialias=antialias
         )
         assert (result.width, result.height) == (10, 10)
         assert allocations == [(10 * factor, 10 * factor)]
         with pytest.raises(PdfResourceLimitException, match="max_raster_pixels"):
-            doc.render_page(0, clip=(0, 0, 40, 40), antialias=antialias)
+            doc.render_page(1, clip=(0, 0, 40, 40), antialias=antialias)
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
@@ -352,8 +352,8 @@ def test_clipped_region_exports_to_other_image_formats(
             pytest.skip("Pillow has no WebP codec")
     path = tmp_path / f"detail.{suffix}"
     if use_document:
-        document.save_page_as_image(0, path, clip=_CLIP, antialias=False)
+        document.save_page_as_image(1, path, clip=_CLIP, antialias=False)
     else:
-        document.pages[0].save_as_image(path, clip=_CLIP, antialias=False)
+        document.pages[1].save_as_image(path, clip=_CLIP, antialias=False)
     with image.open(path) as result:
         assert result.size == (20, 16)

@@ -122,7 +122,7 @@ def test_default_drops_separators_and_returns_independent_round_trippable_parts(
                     with Document(source) as loaded:
                         assert _indices(loaded) == _indices(part) and loaded.validate()
                         assert loaded.extract_text() == part.extract_text()
-            parts[0].pages[0].add_text("OUTPUT ONLY", 2, 15, font_size=3)
+            parts[0].pages[1].add_text("OUTPUT ONLY", 2, 15, font_size=3)
             parts[0].info["Title"] = "Edited"
             assert "OUTPUT ONLY" not in document.extract_text()
         assert _bytes(document) == before
@@ -142,7 +142,7 @@ def test_default_drops_separators_and_returns_independent_round_trippable_parts(
 def test_visual_detection_uses_images_visible_crop_and_layers_without_ocr(kind):
     with Document() as document:
         _batch(document, "ABA")
-        page = document.pages[1]
+        page = document.pages[2]
         if kind in {"white_scan", "near_white_scan"}:
             rgb = (255, 255, 255) if kind == "white_scan" else (250, 250, 250)
             page.add_image(
@@ -175,7 +175,7 @@ def test_visual_detection_uses_images_visible_crop_and_layers_without_ocr(kind):
 def test_white_threshold_is_shared_with_blank_detection():
     with Document() as document:
         _batch(document, "ABA")
-        page = document.pages[1]
+        page = document.pages[2]
         page.draw_rectangle(0, 0, 40, 40, fill_color="#f9ffff", stroke_color=None)
         with _parts(document) as parts:
             assert [_indices(part) for part in parts] == [[0, 1, 2]]
@@ -187,7 +187,7 @@ def test_white_threshold_is_shared_with_blank_detection():
 def test_annotation_appearances_count_unless_excluded(hidden):
     with Document() as document:
         _batch(document, "ABA")
-        document.pages[1].annotations.add(
+        document.pages[2].annotations.add(
             "Square",
             (5, 5, 25, 25),
             "Review",
@@ -204,7 +204,7 @@ def test_annotation_appearances_count_unless_excluded(hidden):
 def test_form_appearance_can_prevent_a_blank_separator():
     with Document() as document:
         _batch(document, "ABA")
-        document.form.add_text_field("Filled", 1, (2, 10, 38, 30), value="Visible")
+        document.form.add_text_field("Filled", 2, (2, 10, 38, 30), value="Visible")
         with _parts(document) as parts:
             assert [_indices(part) for part in parts] == [[0, 1, 2]]
         with _parts(document, include_annotations=False) as parts:
@@ -218,12 +218,12 @@ def test_live_bookmarks_promote_children_and_remap_local_targets(
 ):
     with Document() as document:
         _batch(document, "ABBAA")
-        root = document.outlines.add(OutlineItem("Separator", 1))
-        first = XYZDestination(0, 1, 30, 2)
+        root = document.outlines.add(OutlineItem("Separator", 2))
+        first = XYZDestination(1, 1, 30, 2)
         root.add(
             OutlineItem("First", destination=GoToAction(first) if action else first)
         )
-        document.destinations["last"] = FitDestination(3)
+        document.destinations["last"] = FitDestination(4)
         root.add(OutlineItem("Last", destination="last"))
         model = document._engine_pdf._outlines_data
         with _parts(document, keep_separators=keep_separators) as parts:
@@ -233,9 +233,9 @@ def test_live_bookmarks_promote_children_and_remap_local_targets(
             assert first_item.title == "First"
             assert first_item.destination == (GoToAction(first) if action else first)
             assert parts[1].outlines[0].title == "Last"
-            assert parts[1].outlines[0].page_index == 0
+            assert parts[1].outlines[0].page_index == 1
             assert document._engine_pdf._outlines_data is model
-            assert document.outlines[0] is root and root.page_index == 1
+            assert document.outlines[0] is root and root.page_index == 2
 
 
 @pytest.mark.parametrize("source_kind", ["bytes", "file", "streaming"])
@@ -249,21 +249,21 @@ def test_imported_resources_and_metadata_survive_source_disposal(
         source.version = "2.0"
         source.info["Title"] = "Original batch"
         source.add_attachment("note.txt", b"Document-level data")
-        source.pages[4].crop_box = (1, 1, 39, 39)
-        source.pages[4].rotation = 90
-        source.pages[4].add_image(
+        source.pages[5].crop_box = (1, 1, 39, 39)
+        source.pages[5].rotation = 90
+        source.pages[5].add_image(
             RasterizedPage(1, 1, b"\xff\x00\x00").to_png(), 10, 10, width=5, height=5
         )
-        source.pages[4].add_link((1, 1, 5, 5), FitDestination(5))
-        source.pages[4].add_link((6, 1, 10, 5), FitDestination(0))
-        source.form.add_text_field("Editable", 5, (2, 10, 38, 20), value="Keep")
+        source.pages[5].add_link((1, 1, 5, 5), FitDestination(6))
+        source.pages[5].add_link((6, 1, 10, 5), FitDestination(1))
+        source.form.add_text_field("Editable", 6, (2, 10, 38, 20), value="Keep")
         layer = source.layers.add("Private", visible=False)
-        with source.pages[5].layer(layer):
-            source.pages[5].draw_rectangle(
+        with source.pages[6].layer(layer):
+            source.pages[6].draw_rectangle(
                 0, 0, 40, 40, fill_color="#f00", stroke_color=None
             )
         source.outlines.add(
-            OutlineItem("Second part", destination=XYZDestination(4, 1, 35, 1.5))
+            OutlineItem("Second part", destination=XYZDestination(5, 1, 35, 1.5))
         )
         if encrypted:
             source.encrypt("secret", "owner")
@@ -273,7 +273,7 @@ def test_imported_resources_and_metadata_survive_source_disposal(
     argument = original_bytes if source_kind == "bytes" else path
     with opener(argument, password="secret" if encrypted else None) as loaded:
         protected = loaded.is_encrypted
-        reference = loaded.pages[4].render(antialias=False)
+        reference = loaded.pages[5].render(antialias=False)
         parts = loaded.split_by_blank_pages()
         assert loaded.is_encrypted is protected and loaded.attachments == {
             "note.txt": b"Document-level data"
@@ -288,26 +288,26 @@ def test_imported_resources_and_metadata_survive_source_disposal(
         part = parts[1]
         assert part.info["Title"] == "Original batch" and part.version == "2.0"
         assert part.attachments == {} and not part.is_encrypted
-        assert part.pages[0].crop_box == (1, 1, 39, 39) and part.pages[0].rotation == 90
-        assert part.pages[0].render(antialias=False).pixels == reference.pixels
-        assert part.form["Editable"].widgets[0].page_index == 1
+        assert part.pages[1].crop_box == (1, 1, 39, 39) and part.pages[1].rotation == 90
+        assert part.pages[1].render(antialias=False).pixels == reference.pixels
+        assert part.form["Editable"].widgets[0].page_index == 2
         assert (
             part.form["Editable"].value == "Keep" and not part.layers["Private"].visible
         )
-        assert part.outlines[0].destination == XYZDestination(0, 1, 35, 1.5)
+        assert part.outlines[0].destination == XYZDestination(1, 1, 35, 1.5)
         links = [
             annotation
-            for annotation in part.pages[0].annotations
+            for annotation in part.pages[1].annotations
             if annotation.subtype == "Link"
         ]
-        assert links[0].get_property("Dest") == FitDestination(1)
+        assert links[0].get_property("Dest") == FitDestination(2)
         assert links[1].get_property("Dest") == [None, "Fit"]
         part.form["Editable"].value = "Edited after close"
         output = tmp_path / "part.pdf"
         part.save(output)
         with Document(output) as reopened:
             assert reopened.form["Editable"].value == "Edited after close"
-            assert reopened.outlines[0].destination == XYZDestination(0, 1, 35, 1.5)
+            assert reopened.outlines[0].destination == XYZDestination(1, 1, 35, 1.5)
             assert _indices(reopened) == [4, 5]
     assert path.read_bytes() == original_bytes
 
@@ -412,7 +412,7 @@ def test_scan_is_complete_before_import_and_releases_rasters_between_pages(monke
             return result
 
         def extract(selection):
-            assert visited == list(range(7))
+            assert visited == list(range(1, 8))
             assert all(reference() is None for reference in references)
             return original_import(selection)
 
@@ -429,7 +429,7 @@ def test_late_render_failure_does_not_import_earlier_parts(monkeypatch):
         original = Page.render
 
         def render(page, **options):
-            if page.index == 4:
+            if page.index == 5:
                 raise PdfParseException("Unreadable last page")
             return original(page, **options)
 
@@ -451,7 +451,7 @@ def test_partial_import_failure_disposes_earlier_parts_and_restores_source(
 ):
     with Document() as document:
         _batch(document, "ABA")
-        document.outlines.add(OutlineItem("Live", 0))
+        document.outlines.add(OutlineItem("Live", 1))
         model = document._engine_pdf._outlines_data
         original_import = document._engine_pdf.extract_pages
         created = []
@@ -513,7 +513,7 @@ def test_imported_results_obey_source_limits_and_are_disposed_on_failure(
 def test_invalid_live_outline_tree_is_rejected_before_import(monkeypatch):
     with Document() as document:
         _batch(document, "ABA")
-        root = document.outlines.add(OutlineItem("Loop", 0))
+        root = document.outlines.add(OutlineItem("Loop", 1))
         root.children.append(root)
         model = document._engine_pdf._outlines_data
         monkeypatch.setattr(
@@ -546,7 +546,7 @@ def test_streaming_content_limits_fail_before_import(tmp_path, monkeypatch):
 def test_existing_text_cache_cursor_and_outline_model_are_unchanged():
     with Document() as document:
         _batch(document, "ABA")
-        document.outlines.add(OutlineItem("First", 0))
+        document.outlines.add(OutlineItem("First", 1))
         cached = document.extract_text()
         document._engine_pdf._page_text_cursor = 2
         model = document._engine_pdf._outlines_data
@@ -577,7 +577,7 @@ def test_all_short_blank_patterns_agree_with_an_independent_grouping_model(monke
         monkeypatch.setattr(document._engine_pdf, "extract_pages", extract)
         for flags in product((False, True), repeat=6):
             monkeypatch.setattr(
-                blank_split, "_is_blank", lambda page, options: flags[page.index]
+                blank_split, "_is_blank", lambda page, options: flags[page.index - 1]
             )
             # Build reference page groups from explicit transitions.
             expected = []
@@ -611,28 +611,28 @@ def test_all_short_blank_patterns_agree_with_an_independent_grouping_model(monke
 def test_loaded_cached_bookmarks_observe_page_changes_and_unsaved_edits():
     with Document() as source:
         _batch(source, "ABBAA")
-        parent = source.outlines.add(OutlineItem("Separator", 1))
-        source.destinations["last"] = FitDestination(3)
+        parent = source.outlines.add(OutlineItem("Separator", 2))
+        source.destinations["last"] = FitDestination(4)
         parent.add(OutlineItem("Last", destination="last"))
         data = _bytes(source)
     with Document(data) as loaded:
         last = loaded.outlines[0].children[0]
-        assert last.page_index == 3
-        loaded.pages.delete(0)
-        loaded.destinations["last"] = XYZDestination(3, 1, 30, 2)
+        assert last.page_index == 4
+        loaded.pages.delete(1)
+        loaded.destinations["last"] = XYZDestination(4, 1, 30, 2)
         last.title = "Edited last"
         last.is_bold = True
-        loaded.outlines.add(OutlineItem("Live", 3))
+        loaded.outlines.add(OutlineItem("Live", 4))
         model = loaded._engine_pdf._outlines_data
-        expected_labels = [loaded.pages[index].label for index in (2, 3)]
+        expected_labels = [loaded.pages[(index) + 1].label for index in (2, 3)]
         with _parts(loaded) as parts:
             assert len(parts) == 1
             assert [page.label for page in parts[0].pages] == expected_labels
             assert [(item.title, item.page_index) for item in parts[0].outlines] == [
-                ("Edited last", 1),
-                ("Live", 1),
+                ("Edited last", 2),
+                ("Live", 2),
             ]
-            assert parts[0].outlines[0].destination == XYZDestination(1, 1, 30, 2)
+            assert parts[0].outlines[0].destination == XYZDestination(2, 1, 30, 2)
             assert parts[0].outlines[0].is_bold
             assert loaded._engine_pdf._outlines_data is model
         assert loaded.outlines[0].children[0] is last

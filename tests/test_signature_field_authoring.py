@@ -122,7 +122,7 @@ def test_signature_field_duplicate_name_is_rejected():
     document = _with_signature_field()
     with pytest.raises(PdfValidationException):
         document.form.add_signature_field(
-            "Signature1", document.pages[0], (60, 500, 260, 560)
+            "Signature1", document.pages[1], (60, 500, 260, 560)
         )
 
 
@@ -138,7 +138,7 @@ def test_signature_field_survives_incremental_save():
 
     loaded = Document()
     loaded.load_from(original)
-    loaded.form.add_signature_field("Signature1", loaded.pages[0], (40, 600, 240, 680))
+    loaded.form.add_signature_field("Signature1", loaded.pages[1], (40, 600, 240, 680))
     out = BytesIO()
     loaded.save(out, incremental=True)
     whole = out.getvalue()

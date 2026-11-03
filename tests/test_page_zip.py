@@ -61,7 +61,7 @@ def test_selected_pages_keep_order_repeats_and_manifest_provenance():
             _page(document, color)
         files = _files(
             document.export_pages_zip(
-                pages=(index for index in (2, 0, 2)),
+                pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))),
                 antialias=False,
                 include_manifest=True,
             )
@@ -74,7 +74,7 @@ def test_selected_pages_keep_order_repeats_and_manifest_provenance():
             assert _png(files[name]) == (12, 8, 8, 2, rgb * 96)
         manifest = json.loads(files["manifest.json"])
         assert manifest == dict(
-            schema_version=1,
+            schema_version=2,
             image_format="png",
             mode="rgb",
             dpi=72.0,
@@ -86,7 +86,7 @@ def test_selected_pages_keep_order_repeats_and_manifest_provenance():
                     height=8,
                     size=len(files[name]),
                 )
-                for name, index in zip(names, (2, 0, 2), strict=True)
+                for name, index in zip(names, (3, 1, 3), strict=True)
             ],
         )
 
@@ -121,7 +121,7 @@ def test_crop_rotation_dpi_background_and_antialias_match_rendering(
         page.crop_box = (-2, 7, 16, 20)
         page.rotation = rotation
         options = dict(dpi=96, antialias=antialias, background=(200, 220, 240))
-        reference = document.render_page(0, **options)
+        reference = document.render_page(1, **options)
         data = _files(document.export_pages_zip(**options))["page-0001.png"]
         assert _png(data) == (reference.width, reference.height, 8, 2, reference.pixels)
         assert page.rotation == rotation and page.crop_box == (-2, 7, 16, 20)
@@ -136,7 +136,7 @@ def test_color_modes_threshold_and_dithering_match_raster_encoders(
 ):
     with Document() as document:
         _page(document, "#789abc", size=(9, 3))
-        raster = document.render_page(0, antialias=False)
+        raster = document.render_page(1, antialias=False)
         data = _files(
             document.export_pages_zip(
                 mode=mode,
@@ -157,7 +157,7 @@ def test_jpeg_quality_and_alias_match_existing_encoder(mode):
             image_format=" .JPG ", mode=mode, quality=73, dpi=144, antialias=False
         )
         data = _files(document.export_pages_zip(**options))["page-0001.jpg"]
-        raster = document.render_page(0, dpi=144, antialias=False)
+        raster = document.render_page(1, dpi=144, antialias=False)
         assert data == raster.to_jpeg(mode=mode, quality=73)
         assert data.startswith(b"\xff\xd8") and data.endswith(b"\xff\xd9")
 
@@ -225,7 +225,7 @@ def test_empty_documents_and_selections_produce_valid_archives(include_manifest)
             for pages in ([], None) if not populated else ([],):
                 files = _files(
                     document.export_pages_zip(
-                        pages=pages, include_manifest=include_manifest
+                        pages=(None if pages is None else (number + 1 if type(number) is int else number for number in (pages))), include_manifest=include_manifest
                     )
                 )
                 if include_manifest:
@@ -277,7 +277,7 @@ def test_empty_documents_and_selections_produce_valid_archives(include_manifest)
         {"pages": "0"},
         {"pages": [True]},
         {"pages": [-1]},
-        {"pages": [0, 9]},
+        {"pages": [1, 10]},
     ],
 )
 @pytest.mark.parametrize("empty", [False, True])
@@ -299,7 +299,7 @@ def test_invalid_options_and_pages_fail_before_any_render_or_output(
 @pytest.mark.parametrize(
     "limits,options,match",
     [
-        (PdfLoadLimits(max_pages=1), {"pages": [0, 0]}, "max_pages"),
+        (PdfLoadLimits(max_pages=1), {"pages": [1, 1]}, "max_pages"),
         (
             PdfLoadLimits(max_container_items=1),
             {"include_manifest": True},
@@ -328,7 +328,7 @@ def test_unbounded_page_generators_are_limited():
     with Document(limits=PdfLoadLimits(max_container_items=2)) as document:
         _page(document)
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            document.export_pages_zip(pages=repeat(0))
+            document.export_pages_zip(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
 
 
 def test_file_stream_overwrite_short_writes_and_late_render_failures(
@@ -351,14 +351,14 @@ def test_file_stream_overwrite_short_writes_and_late_render_failures(
             output.seek(6)
             assert document.export_pages_zip(output) == expected
             assert output.getvalue() == b"prefix" + expected and not output.closed
-        original = document.render_page
+        original = document._api_render_page
 
         def render(index, **kwargs):
             if index == 1:
                 raise PdfValidationException("Damaged later page")
             return original(index, **kwargs)
 
-        monkeypatch.setattr(document, "render_page", render)
+        monkeypatch.setattr(document, "_api_render_page", render)
         output = io.BytesIO(b"Keep")
         with pytest.raises(PdfValidationException, match="Damaged"):
             document.export_pages_zip(output)
@@ -418,7 +418,7 @@ def test_cumulative_encoded_bytes_are_bounded_before_writing_destination():
         document._load_limits = PdfLoadLimits(max_total_decoded_bytes=2 * len(one) - 1)
         output = io.BytesIO(b"Keep")
         with pytest.raises(PdfResourceLimitException, match="page ZIP selected files"):
-            document.export_pages_zip(output, pages=[0, 0])
+            document.export_pages_zip(output, pages=[1, 1])
         assert output.getvalue() == b"Keep"
 
 
@@ -432,7 +432,7 @@ def test_archive_growth_including_central_directory_is_bounded():
         with pytest.raises(PdfResourceLimitException, match="page ZIP output bytes"):
             document.export_pages_zip(
                 output,
-                pages=[0] * (530000 // (payload_size + 100) + 1000),
+                pages=(number + 1 if type(number) is int else number for number in ([0] * (530000 // (payload_size + 100) + 1000))),
                 compression="stored",
                 antialias=False,
             )
@@ -442,7 +442,7 @@ def test_archive_growth_including_central_directory_is_bounded():
 def test_completed_rasters_are_released_before_rendering_next_page(monkeypatch):
     with Document() as document:
         _page(document)
-        original = document.render_page
+        original = document._api_render_page
         references = []
 
         def render(index, **options):
@@ -451,8 +451,8 @@ def test_completed_rasters_are_released_before_rendering_next_page(monkeypatch):
             references.append(weakref.ref(raster))
             return raster
 
-        monkeypatch.setattr(document, "render_page", render)
-        assert len(_files(document.export_pages_zip(pages=[0, 0, 0]))) == 3
+        monkeypatch.setattr(document, "_api_render_page", render)
+        assert len(_files(document.export_pages_zip(pages=[1, 1, 1]))) == 3
         assert all(reference() is None for reference in references)
 
 
@@ -490,7 +490,7 @@ def test_saved_sources_only_read_selected_content_and_preserve_template(
             return original(index)
 
         monkeypatch.setattr(pdf, "get_page_content", content)
-        files = _files(document.export_pages_zip(pages=[2, 0, 2], antialias=False))
+        files = _files(document.export_pages_zip(pages=[3, 1, 3], antialias=False))
         assert [_png(data)[-1][:3] for data in files.values()] == [
             b"\x00\x00\xff",
             b"\xff\x00\x00",
@@ -518,7 +518,7 @@ def test_form_appearances_are_included_and_can_be_excluded():
         assert included != excluded
         assert (
             included
-            == document.render_page(0, antialias=False, draw_annotations=True).to_png()
+            == document.render_page(1, antialias=False, draw_annotations=True).to_png()
         )
         assert _png(excluded)[-1] == b"\xff" * (12 * 12 * 3)
         assert document.form["agree"].value is True

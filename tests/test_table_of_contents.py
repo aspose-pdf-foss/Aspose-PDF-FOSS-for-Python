@@ -73,7 +73,7 @@ def _untagged():
     return _reopen(document)
 
 
-def _lines(document: Document, index: int = 0) -> list[str]:
+def _lines(document: Document, index: int = 1) -> list[str]:
     """The contents page's lines, without the rows of leader dots."""
     text = document.pages[index].extract_text()
     return [line for line in text.split("\n") if line.strip() and "...." not in line]
@@ -107,7 +107,7 @@ def _links(document: Document, index: int = 0) -> list[tuple]:
 
 def test_a_contents_page_lists_the_documents_headings():
     with _tagged() as document:
-        assert document.add_table_of_contents() == [0]
+        assert document.add_table_of_contents() == [1]
         lines = _lines(document)
         assert lines[0] == "Contents"
         assert [line.rsplit(" ", 1)[0] for line in lines[1:]] == [
@@ -119,7 +119,7 @@ def test_the_pages_it_took_are_what_comes_back():
     with _tagged() as document:
         before = len(document.pages)
         made = document.add_table_of_contents()
-        assert made == [0]
+        assert made == [1]
         assert len(document.pages) == before + len(made)
 
 
@@ -135,7 +135,7 @@ def test_a_document_with_no_headings_gets_no_page():
 
 def test_headings_found_by_reading_the_pages_work_too():
     with _untagged() as document:
-        assert document.add_table_of_contents() == [0]
+        assert document.add_table_of_contents() == [1]
         assert [line.rsplit(" ", 1)[0] for line in _lines(document)[1:]] == [
             "Chapter 1",
             "Chapter 2",
@@ -176,14 +176,14 @@ def test_the_numbers_count_the_contents_itself():
 
 def test_a_contents_after_a_cover_leaves_the_cover_where_it_was():
     with _tagged([(1, "First"), (1, "Second")], cover=True) as document:
-        assert document.add_table_of_contents(at=1) == [1]
+        assert document.add_table_of_contents(at=2) == [2]
         assert [page.extract_text().split("\n")[0] for page in document.pages] == [
             "COVER",
             "Contents",
             "First",
             "Second",
         ]
-        assert _lines(document, 1)[1:] == ["First 3", "Second 4"]
+        assert _lines(document, 2)[1:] == ["First 3", "Second 4"]
 
 
 def test_the_number_shown_is_the_page_label_where_there_is_one():
@@ -191,7 +191,7 @@ def test_the_number_shown_is_the_page_label_where_there_is_one():
     with _tagged([(1, "First"), (1, "Second")], labels=True) as document:
         document.add_table_of_contents()
         shown = [line.rsplit(" ", 1)[1] for line in _lines(document)[1:]]
-        assert shown == [document.pages[1].label, document.pages[2].label]
+        assert shown == [document.pages[2].label, document.pages[3].label]
         assert shown == ["i", "ii"]
 
 
@@ -282,15 +282,15 @@ def test_deeper_headings_are_indented_further():
 
 def test_the_sheet_matches_the_document_by_default():
     with _tagged([(1, "Only chapter")]) as document:
-        body = document.pages[0].rect
+        body = document.pages[1].rect
         document.add_table_of_contents()
-        assert document.pages[0].rect == body
+        assert document.pages[1].rect == body
 
 
 def test_a_sheet_can_be_asked_for():
     with _tagged([(1, "Only chapter")]) as document:
         document.add_table_of_contents(size=(300, 400))
-        _llx, _lly, urx, ury = document.pages[0].rect
+        _llx, _lly, urx, ury = document.pages[1].rect
         assert (round(urx), round(ury)) == (300, 400)
 
 
@@ -303,11 +303,11 @@ def test_the_title_can_be_left_off():
 def test_the_leader_can_be_changed_or_dropped():
     with _tagged([(1, "Only chapter")]) as document:
         document.add_table_of_contents(leader="")
-        assert "...." not in document.pages[0].extract_text()
+        assert "...." not in document.pages[1].extract_text()
 
     with _tagged([(1, "Only chapter")]) as document:
         document.add_table_of_contents(leader="-")
-        assert "----" in document.pages[0].extract_text()
+        assert "----" in document.pages[1].extract_text()
 
 
 # ---------------------------------------------------------------------------
@@ -414,10 +414,12 @@ def test_a_measurement_a_page_cannot_have_is_refused(kwargs):
 
 
 @pytest.mark.parametrize("at", [-5, 99])
-def test_a_position_outside_the_document_is_clamped(at):
+def test_a_position_outside_the_document_is_rejected(at):
     with _tagged([(1, "First"), (1, "Second")]) as document:
-        made = document.add_table_of_contents(at=at)
-        assert made == [0] if at < 0 else made == [2]
+        before = document.page_count
+        with pytest.raises(IndexError):
+            document.add_table_of_contents(at=at)
+        assert document.page_count == before
 
 
 def test_only_headings_up_to_the_level_asked_for_are_listed():

@@ -76,7 +76,7 @@ def _dest(doc, index=1, kind="Fit", params=()):
 
 
 def _link(doc, page=0, **entries):
-    doc.pages[page].add_link(_RECT, FitDestination(0))
+    doc.pages[(page) + 1].add_link(_RECT, FitDestination(1))
     engine = doc._engine_pdf
     annot = engine._resolve(engine._annotation_refs(page)[-1])
     annot.mapping.pop(PdfName("Dest"), None)
@@ -114,22 +114,22 @@ def _names(doc, pairs):
 @pytest.mark.parametrize(
     "destination",
     [
-        FitDestination(1),
-        FitBDestination(2),
-        XYZDestination(0),
-        XYZDestination(2, 1, 2, 0),
-        FitHDestination(1),
-        FitBHDestination(1, 100),
-        FitVDestination(1),
-        FitBVDestination(1, 20),
-        FitRDestination(2, 1, 2, 10, 20),
+        FitDestination(2),
+        FitBDestination(3),
+        XYZDestination(1),
+        XYZDestination(3, 1, 2, 0),
+        FitHDestination(2),
+        FitBHDestination(2, 100),
+        FitVDestination(2),
+        FitBVDestination(2, 20),
+        FitRDestination(3, 1, 2, 10, 20),
     ],
 )
 @pytest.mark.parametrize("as_action", [False, True])
 def test_all_standard_views_are_valid_before_and_after_roundtrip(
     document, destination, as_action
 ):
-    document.pages[0].add_link(
+    document.pages[1].add_link(
         _RECT, GoToAction(destination) if as_action else destination
     )
     assert document.validate_links() == []
@@ -139,12 +139,12 @@ def test_all_standard_views_are_valid_before_and_after_roundtrip(
 
 def test_public_issue_is_detached_frozen_and_fresh(document):
     assert ModuleIssue is LinkValidationIssue
-    document.pages[1].add_link(_RECT, "missing")
+    document.pages[2].add_link(_RECT, "missing")
     (issue,) = document.validate_links()
     assert isinstance(issue, LinkValidationIssue)
     assert (issue.source, issue.page_index, issue.annotation_index) == (
         "annotation",
-        1,
+        2,
         0,
     )
     assert (
@@ -154,7 +154,7 @@ def test_public_issue_is_detached_frozen_and_fresh(document):
     assert issue.target_path == "Dest" and issue.outline_path is None
     with pytest.raises(FrozenInstanceError):
         issue.code = "changed"
-    document.destinations["missing"] = 2
+    document.destinations["missing"] = 3
     assert document.validate_links() == []
     document.dispose()
     assert issue.destination_name == "missing" and issue.message
@@ -206,7 +206,7 @@ def test_latin1_and_binary_name_keys_are_compared_byte_for_byte(document):
     _link(document, Dest=PdfString(b"chapter\xe9\x00"))
     assert document.validate_links() == []
     _link(document, Dest=PdfString(b"chapter\xe9"))
-    assert document.pages[0].validate_links()[0].destination_name == "chapteré"
+    assert document.pages[1].validate_links()[0].destination_name == "chapteré"
 
 
 @pytest.mark.parametrize(
@@ -226,7 +226,7 @@ def test_latin1_and_binary_name_keys_are_compared_byte_for_byte(document):
 )
 def test_missing_or_malformed_targets_are_reported(document, entries, code):
     _link(document, **entries)
-    (issue,) = document.pages[0].validate_links()
+    (issue,) = document.pages[1].validate_links()
     assert issue.code == code and issue.annotation_index == 0
 
 
@@ -253,7 +253,7 @@ def test_missing_or_malformed_targets_are_reported(document, entries, code):
 def test_invalid_view_parameters_are_reported_without_repair(document, kind, params):
     annotation = _link(document, Dest=_dest(document, kind=kind, params=params))
     before = dict(annotation.mapping)
-    (issue,) = document.pages[0].validate_links()
+    (issue,) = document.pages[1].validate_links()
     assert issue.code == "invalid_destination"
     assert annotation.mapping == before
 
@@ -269,7 +269,7 @@ def test_invalid_view_parameters_are_reported_without_repair(document, kind, par
 )
 def test_bad_page_targets(document, target):
     _link(document, Dest=target)
-    (issue,) = document.pages[0].validate_links()
+    (issue,) = document.pages[1].validate_links()
     assert issue.code in ("missing_page", "invalid_destination")
 
 
@@ -287,8 +287,8 @@ def test_wrong_generation_and_deleted_page_are_missing_even_when_objects_exist(
         ),
     )
     _link(document, Dest=_dest(document, 2))
-    document.pages.delete(2)
-    assert [issue.code for issue in document.pages[0].validate_links()] == [
+    document.pages.delete(3)
+    assert [issue.code for issue in document.pages[1].validate_links()] == [
         "missing_page",
         "missing_target",
     ]
@@ -297,19 +297,19 @@ def test_wrong_generation_and_deleted_page_are_missing_even_when_objects_exist(
 def test_current_page_tree_is_used_after_insert_and_unreferenced_object_is_not_a_page(
     document,
 ):
-    document.pages[0].add_link(_RECT, FitDestination(2))
-    document.pages.insert(0)
+    document.pages[1].add_link(_RECT, FitDestination(3))
+    document.pages.insert(1)
     assert document.validate_links() == []
     outside = document._engine_pdf._cos_doc.register_object(
         PdfDictionary({PdfName("Type"): PdfName("Page")})
     )
     _link(document, Dest=PdfArray([outside, PdfName("Fit")]))
-    assert document.pages[0].validate_links()[0].code == "missing_page"
+    assert document.pages[1].validate_links()[0].code == "missing_page"
 
 
 def test_conflicting_dest_and_action_are_reported_and_both_checked(document):
     _link(document, Dest=PdfString("one"), A=_action(D=PdfString("two")))
-    issues = document.pages[0].validate_links()
+    issues = document.pages[1].validate_links()
     assert [i.code for i in issues] == [
         "conflicting_targets",
         "missing_named_destination",
@@ -322,12 +322,12 @@ def test_conflicting_dest_and_action_are_reported_and_both_checked(document):
     "action",
     [
         URIAction("https://example.invalid"),
-        GoToRAction("nonexistent.pdf", FitDestination(99999)),
+        GoToRAction("nonexistent.pdf", FitDestination(100000)),
         JavaScriptAction("app.alert('never execute')"),
     ],
 )
 def test_nonlocal_actions_are_skipped(document, action):
-    document.pages[0].add_link(_RECT, action)
+    document.pages[1].add_link(_RECT, action)
     document.outlines.add(OutlineItem("external", destination=action))
     assert document.validate_links() == []
 
@@ -349,7 +349,7 @@ def test_action_next_arrays_indirections_external_roots_and_shared_nodes(documen
             ),
         ),
     )
-    (issue,) = document.pages[0].validate_links()
+    (issue,) = document.pages[1].validate_links()
     assert (
         issue.code == "missing_named_destination" and issue.target_path == "A.Next[1].D"
     )
@@ -361,7 +361,7 @@ def test_action_next_arrays_indirections_external_roots_and_shared_nodes(documen
 )
 def test_malformed_next_actions_are_reported(document, next_value):
     _link(document, A=_action(D=_dest(document), Next=next_value))
-    assert document.pages[0].validate_links()[0].code == "invalid_action"
+    assert document.pages[1].validate_links()[0].code == "invalid_action"
 
 
 def test_reference_and_action_cycles_are_bounded(document):
@@ -374,7 +374,7 @@ def test_reference_and_action_cycles_are_bounded(document):
     reference = document._engine_pdf._cos_doc.register_object(PdfNull())
     document._engine_pdf._cos_doc.objects[reference.object_number] = reference
     _link(document, A=reference)
-    assert [i.code for i in document.pages[0].validate_links()] == [
+    assert [i.code for i in document.pages[1].validate_links()] == [
         "cyclic_reference"
     ] * 3
 
@@ -388,7 +388,7 @@ def test_named_alias_cycles_and_missing_definitions_are_diagnosed(document):
             ("missing", PdfString("absent")),
         ],
     )
-    document.pages[0].add_link(_RECT, "a")
+    document.pages[1].add_link(_RECT, "a")
     issues = document.validate_links()
     assert issues[0].source == "annotation" and issues[0].code == "cyclic_reference"
     assert [(i.destination_name, i.code) for i in issues[1:]] == [
@@ -403,20 +403,20 @@ def test_named_aliases_and_dictionary_chains_can_reach_a_page(document):
         document,
         [("a", PdfDictionary({PdfName("D"): PdfString("b")})), ("b", _dest(document))],
     )
-    document.pages[0].add_link(_RECT, "a")
+    document.pages[1].add_link(_RECT, "a")
     assert document.validate_links() == []
 
 
 def test_live_outline_edits_nested_paths_and_headings(document):
     heading = document.outlines.add(OutlineItem("heading", page_index=None))
     heading.add(OutlineItem("bad", destination="absent"))
-    document.outlines.add(OutlineItem("outside", destination=FitDestination(99)))
+    document.outlines.add(OutlineItem("outside", destination=FitDestination(100)))
     issues = document.validate_links(pages=[])
     assert [(i.outline_path, i.code) for i in issues] == [
         ((0, 0), "missing_named_destination"),
         ((1,), "missing_page"),
     ]
-    heading.children[0].destination = FitDestination(1)
+    heading.children[0].destination = FitDestination(2)
     document.outlines[1].page_index = None
     assert document.validate_links(pages=[]) == []
 
@@ -424,9 +424,9 @@ def test_live_outline_edits_nested_paths_and_headings(document):
 @pytest.mark.parametrize(
     "target",
     [
-        XYZDestination(0, zoom=-1),
-        FitRDestination(0, 2, 2, 1, 1),
-        XYZDestination(0, top=float("inf")),
+        XYZDestination(1, zoom=-1),
+        FitRDestination(1, 2, 2, 1, 1),
+        XYZDestination(1, top=float("inf")),
     ],
 )
 def test_unsaved_typed_outline_parameters_are_checked(document, target):
@@ -438,13 +438,13 @@ def test_unsaved_typed_outline_parameters_are_checked(document, target):
 def test_loaded_outlines_use_original_references_and_current_named_definitions(
     document,
 ):
-    document.destinations["chapter"] = 2
+    document.destinations["chapter"] = 3
     document.outlines.add(OutlineItem("named", destination="chapter"))
-    document.outlines.add(OutlineItem("explicit", destination=FitDestination(2)))
+    document.outlines.add(OutlineItem("explicit", destination=FitDestination(3)))
     with Document(_saved(document)) as reopened:
         assert reopened._outlines is None
         reopened.destinations.remove("chapter")
-        reopened.pages.delete(2)
+        reopened.pages.delete(3)
         issues = reopened.validate_links(pages=[])
         assert [(i.outline_path, i.code) for i in issues] == [
             ((0,), "missing_named_destination"),
@@ -462,17 +462,17 @@ def test_live_outline_cycle_is_reported_without_recursion(document):
 
 def test_page_selection_order_duplicates_flags_and_page_convenience(document):
     for index in range(3):
-        document.pages[index].add_link(_RECT, f"missing-{index}")
+        document.pages[(index) + 1].add_link(_RECT, f"missing-{index}")
     document.outlines.add(OutlineItem("bad", destination="outline-missing"))
     _names(document, [("invalid", PdfNull())])
     issues = document.validate_links(
-        pages=(i for i in [2, 0, 2]),
+        pages=(number + 1 if type(number) is int else number for number in ((i for i in [2, 0, 2]))),
         include_outlines=False,
         include_named_destinations=False,
     )
-    assert [i.page_index for i in issues] == [2, 0]
-    assert document.pages[1].validate_links() == document.validate_links(
-        pages=[1], include_outlines=False, include_named_destinations=False
+    assert [i.page_index for i in issues] == [3, 1]
+    assert document.pages[2].validate_links() == document.validate_links(
+        pages=[2], include_outlines=False, include_named_destinations=False
     )
     assert [i.source for i in document.validate_links(pages=[])] == [
         "outline",
@@ -486,8 +486,8 @@ def test_page_selection_order_duplicates_flags_and_page_convenience(document):
         {"pages": [False]},
         {"pages": [0.0]},
         {"pages": [-1]},
-        {"pages": [3]},
-        {"pages": [0, 99]},
+        {"pages": [4]},
+        {"pages": [1, 100]},
         {"pages": "0"},
         {"pages": 0},
         {"include_outlines": 1},
@@ -509,7 +509,7 @@ def test_invalid_options_fail_before_metadata_reads(document, monkeypatch, optio
 )
 def test_malformed_annotation_containers_are_diagnosed(document, entry):
     document._engine_pdf._get_page_dict(0).mapping[PdfName("Annots")] = entry
-    assert document.pages[0].validate_links()[0].code == "invalid_structure"
+    assert document.pages[1].validate_links()[0].code == "invalid_structure"
 
 
 @pytest.mark.parametrize(
@@ -550,7 +550,7 @@ def test_name_tree_cycle_and_unsorted_duplicate_keys_are_diagnosed(document):
 
 
 def test_validation_is_read_only_for_bytes_caches_and_existing_issues(document):
-    document.pages[0].add_link(_RECT, "absent")
+    document.pages[1].add_link(_RECT, "absent")
     document.outlines.add(OutlineItem("bad", destination="missing"))
     before = _saved(document)
     engine = document._engine_pdf
@@ -572,8 +572,8 @@ def test_validation_is_read_only_for_bytes_caches_and_existing_issues(document):
 def test_files_streaming_and_encrypted_navigation_do_not_decode_streams(
     document, tmp_path, monkeypatch, streaming, encrypted
 ):
-    document.pages[0].add_text("Page content must not be decoded", 20, 100)
-    document.pages[0].add_link(_RECT, "missing")
+    document.pages[1].add_text("Page content must not be decoded", 20, 100)
+    document.pages[1].add_link(_RECT, "missing")
     if encrypted:
         document.encrypt(user_password="secret", owner_password="owner")
     path = tmp_path / "source.pdf"
@@ -594,7 +594,7 @@ def test_resource_limits_bound_annotation_work_and_action_depth():
     with Document(limits=PdfLoadLimits(max_container_items=10)) as document:
         document.pages.add()
         for _ in range(11):
-            document.pages[0].add_link(_RECT, FitDestination(0))
+            document.pages[1].add_link(_RECT, FitDestination(1))
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             document.validate_links()
     with Document(limits=PdfLoadLimits(max_nesting_depth=3)) as document:
@@ -610,7 +610,7 @@ def test_resource_limits_bound_annotation_work_and_action_depth():
 def test_name_size_budget_and_parser_failures_propagate(document, monkeypatch):
     with Document(limits=PdfLoadLimits(max_object_bytes=8)) as limited:
         limited.pages.add()
-        limited.pages[0].add_link(_RECT, "x" * 9)
+        limited.pages[1].add_link(_RECT, "x" * 9)
         with pytest.raises(PdfResourceLimitException, match="max_object_bytes"):
             limited.validate_links()
 
@@ -672,11 +672,11 @@ def test_empty_selection_with_global_checks_disabled_reads_no_metadata(
 
 
 def test_named_lookup_reads_current_values_even_with_populated_engine_cache(document):
-    document.destinations["chapter"] = 1
-    assert document.destinations["chapter"] == FitDestination(1)
+    document.destinations["chapter"] = 2
+    assert document.destinations["chapter"] == FitDestination(2)
     _names(document, [("chapter", PdfNull())])
     _link(document, Dest=PdfString("chapter"))
-    assert document.pages[0].validate_links()[0].code == "invalid_destination"
+    assert document.pages[1].validate_links()[0].code == "invalid_destination"
 
 
 def test_indirect_view_parameters_and_explicit_nulls_are_valid(document):
@@ -713,7 +713,7 @@ def test_unsaved_goto_bookmark_can_name_a_destination(document):
 
 
 def test_non_link_annotations_are_not_navigation_inputs(document):
-    document.pages[0].annotations.add_text(
+    document.pages[1].annotations.add_text(
         _RECT, "Review", properties={"A": {"S": "GoTo", "D": "missing"}}
     )
     assert document.validate_links() == []
@@ -723,7 +723,7 @@ def test_unicode_name_fallback_is_lossless(document):
     _names(document, [("?????", _dest(document)), ("глава".encode(), _dest(document))])
     _link(document, Dest=PdfName("глава"))
     _link(document, Dest=PdfName("другая"))
-    issues = document.pages[0].validate_links()
+    issues = document.pages[1].validate_links()
     assert len(issues) == 1 and issues[0].destination_name == "другая"
 
 
@@ -773,14 +773,14 @@ def test_valid_nonzero_page_generation_after_real_pdf_parsing():
     with Document(bytes(data)) as document:
         assert document.validate_links() == []
         _link(document, Dest=PdfArray([PdfIndirectReference(3, 0), PdfName("Fit")]))
-        assert document.pages[0].validate_links()[0].code == "missing_page"
+        assert document.pages[1].validate_links()[0].code == "missing_page"
 
 
 def test_metadata_work_budget_is_cumulative_within_each_call():
     with Document(limits=PdfLoadLimits(max_container_items=10)) as document:
         document.pages.add()
         for _ in range(5):
-            document.pages[0].add_link(_RECT, FitDestination(0))
+            document.pages[1].add_link(_RECT, FitDestination(1))
         with pytest.raises(PdfResourceLimitException, match="metadata work"):
             document.validate_links()
 

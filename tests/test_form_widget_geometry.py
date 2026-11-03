@@ -34,19 +34,19 @@ def _add_field(document, kind):
     form = document.form
     rect = (10, 20, 90, 50)
     if kind == "text":
-        return form.add_text_field("field", 0, rect, value="Alice", required=True)
+        return form.add_text_field("field", 1, rect, value="Alice", required=True)
     if kind == "checkbox":
-        return form.add_checkbox("field", 0, rect, checked=True, on_value="Agree")
+        return form.add_checkbox("field", 1, rect, checked=True, on_value="Agree")
     if kind == "radio":
         return form.add_radio_group(
-            "field", 0, [("A", rect), ("B", (100, 20, 120, 40))], value="B"
+            "field", 1, [("A", rect), ("B", (100, 20, 120, 40))], value="B"
         )
     if kind == "signature":
-        return form.add_signature_field("field", 0, rect)
+        return form.add_signature_field("field", 1, rect)
     if kind == "pushbutton":
-        return form.add_push_button("field", 0, rect, caption="Submit")
+        return form.add_push_button("field", 1, rect, caption="Submit")
     factory = form.add_combo_box if kind == "combobox" else form.add_list_box
-    return factory("field", 0, rect, [("a", "Alpha"), "Beta"], value="a")
+    return factory("field", 1, rect, [("a", "Alpha"), "Beta"], value="a")
 
 
 @pytest.mark.parametrize("on_disk", [False, True])
@@ -63,7 +63,7 @@ def test_first_widget_rect_round_trip(document, tmp_path, kind, on_disk):
         field.options,
         field.export_values,
     )
-    appearances = [annot.appearance_normal for annot in document.pages[0].annotations]
+    appearances = [annot.appearance_normal for annot in document.pages[1].annotations]
     field.rect = [40, 80, 200, 140]
     assert document.form["field"] is field
     assert field.rect == (40, 80, 200, 140)
@@ -74,7 +74,7 @@ def test_first_widget_rect_round_trip(document, tmp_path, kind, on_disk):
         source = _bytes(document)
     with Document(source) as reopened:
         edited = reopened.form["field"]
-        assert edited.widgets[0] == FieldWidget(0, (40, 80, 200, 140))
+        assert edited.widgets[0] == FieldWidget(1, (40, 80, 200, 140))
         assert (
             edited.value,
             edited.default_value,
@@ -83,7 +83,7 @@ def test_first_widget_rect_round_trip(document, tmp_path, kind, on_disk):
             edited.export_values,
         ) == before
         assert [
-            a.appearance_normal for a in reopened.pages[0].annotations
+            a.appearance_normal for a in reopened.pages[1].annotations
         ] == appearances
         if kind == "radio":
             assert edited.widgets[1].rect == (100, 20, 120, 40)
@@ -99,7 +99,7 @@ def test_select_second_widget_preserves_other_widgets_and_metadata(document):
     assert {k: v for k, v in widgets[1].mapping.items() if k != PdfName("Rect")} == {
         k: v for k, v in before[1].items() if k != PdfName("Rect")
     }
-    assert field.widgets == [snapshot[0], FieldWidget(0, (150, 80, 190, 120))]
+    assert field.widgets == [snapshot[0], FieldWidget(1, (150, 80, 190, 120))]
     assert snapshot[1].rect == (100, 20, 120, 40)
     assert field.value == "B"
 
@@ -121,8 +121,8 @@ def test_shared_rect_and_page_membership_are_preserved(document, page_index):
         )
     field.set_widget_rect((150, 80, 190, 120), widget_index=1)
     assert field.widgets == [
-        FieldWidget(0, (10, 20, 90, 50)),
-        FieldWidget(page_index, (150, 80, 190, 120)),
+        FieldWidget(1, (10, 20, 90, 50)),
+        FieldWidget(None if page_index is None else page_index + 1, (150, 80, 190, 120)),
     ]
     assert PdfName("P") not in second.mapping
     with Document(_bytes(document)) as reopened:
@@ -152,7 +152,7 @@ def test_merged_field_widget_without_appearance(document):
         [pdf._cos_doc.register_object(dictionary)]
     )
     field.set_widget_rect((100, 80, 240, 140))
-    assert field.widgets == [FieldWidget(0, (100, 80, 240, 140))]
+    assert field.widgets == [FieldWidget(1, (100, 80, 240, 140))]
     assert PdfName("AP") not in dictionary.mapping
     with Document(_bytes(document)) as reopened:
         assert reopened.form["field"].widgets == field.widgets
@@ -259,7 +259,7 @@ def test_custom_appearance_scales_and_moves_when_rendered_and_flattened(document
     for flattened in (False, True):
         if flattened:
             document.flatten(annotations=False)
-        raster = document.pages[0].render(dpi=72, antialias=False)
+        raster = document.pages[1].render(dpi=72, antialias=False)
         assert raster.get_pixel(110, 70) == (255, 0, 0)
         assert raster.get_pixel(230, 110) == (255, 0, 0)
         assert raster.get_pixel(20, 160) == (255, 255, 255)

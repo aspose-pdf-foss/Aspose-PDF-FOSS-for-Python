@@ -219,7 +219,7 @@ def test_the_catalogs_additional_actions_and_open_action_go():
 def test_an_open_action_that_only_names_a_page_is_kept():
     """A destination says which page to show; it runs nothing (12.6.2)."""
     document = _plain()
-    document.open_action = XYZDestination(page=1, top=700)
+    document.open_action = XYZDestination(page=2, top=700)
     document.sanitize()
     with Document(_saved(document)) as saved:
         assert saved.open_action is not None
@@ -259,7 +259,7 @@ def test_a_fields_keystroke_and_format_scripts_go():
 
 def test_a_link_that_launches_a_program_loses_its_action_but_stays_a_link():
     document = _plain()
-    page = document.pages[0]
+    page = document.pages[1]
     page.add_link([60, 690, 300, 720], "https://example.invalid")
     engine = document._engine_pdf
     annots = engine._resolve(engine._get_page_dict(0).mapping.get(PdfName("Annots")))
@@ -277,7 +277,7 @@ def test_a_link_that_launches_a_program_loses_its_action_but_stays_a_link():
 
 def test_a_link_that_opens_a_url_keeps_working():
     document = _plain()
-    document.pages[0].add_link([60, 690, 300, 720], "https://example.invalid")
+    document.pages[1].add_link([60, 690, 300, 720], "https://example.invalid")
     document.sanitize()
     data = _saved(document)
     assert b"example.invalid" in data
@@ -288,7 +288,7 @@ def test_a_link_that_opens_a_url_keeps_working():
 def test_an_action_chained_behind_a_harmless_one_is_still_found():
     """``/Next`` can hide a script behind a navigation action (12.6.1)."""
     document = _plain()
-    document.pages[0].add_link([60, 690, 300, 720], "https://example.invalid")
+    document.pages[1].add_link([60, 690, 300, 720], "https://example.invalid")
     engine = document._engine_pdf
     annots = engine._resolve(engine._get_page_dict(0).mapping.get(PdfName("Annots")))
     annotation = engine._resolve(annots.items[0])
@@ -306,7 +306,7 @@ def test_an_action_chained_behind_a_harmless_one_is_still_found():
 
 def test_a_plain_navigation_action_with_no_chain_is_kept():
     document = _plain()
-    document.pages[0].add_link([60, 690, 300, 720], "https://example.invalid")
+    document.pages[1].add_link([60, 690, 300, 720], "https://example.invalid")
     engine = document._engine_pdf
     annots = engine._resolve(engine._get_page_dict(0).mapping.get(PdfName("Annots")))
     annotation = engine._resolve(annots.items[0])
@@ -453,11 +453,11 @@ def test_the_pages_and_their_content_are_untouched():
 def test_bookmarks_edited_before_the_pass_are_not_lost():
     """The outline collection is a copy; it has to be put back, not dropped."""
     document = _plain()
-    document.outlines.add(OutlineItem("Edited bookmark", 1))
+    document.outlines.add(OutlineItem("Edited bookmark", 2))
     document.sanitize()
     with Document(_saved(document)) as saved:
         assert [(o.title, o.page_index) for o in saved.outlines] == [
-            ("Edited bookmark", 1)
+            ("Edited bookmark", 2)
         ]
 
 
@@ -566,7 +566,7 @@ def test_an_emptied_names_dictionary_does_not_stay_behind():
 
 def test_a_names_dictionary_holding_something_else_is_kept():
     document = _plain()
-    document.destinations["chapter-2"] = XYZDestination(page=1, top=700)
+    document.destinations["chapter-2"] = XYZDestination(page=2, top=700)
     document.sanitize()
     with Document(_saved(document)) as saved:
         assert "chapter-2" in saved.destinations

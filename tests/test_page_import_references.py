@@ -87,7 +87,7 @@ def _saved(document) -> Document:
 
 def _targets(document: Document, page: int) -> list:
     out = []
-    for annotation in document.pages[page].annotations:
+    for annotation in document.pages[(page) + 1].annotations:
         properties = annotation.properties
         out.append(properties.get("Dest", properties.get("A")))
     return out
@@ -137,7 +137,7 @@ def test_extracting_a_contents_page_does_not_copy_the_pages_it_links_to():
 def test_extracted_links_by_name_land_on_the_pages_they_named():
     extract = _saved(_linked()._engine_pdf.extract_pages([0, 1, 3]))
 
-    fit_second, fit_last = FitDestination(page=1), FitDestination(page=2)
+    fit_second, fit_last = FitDestination(page=2), FitDestination(page=3)
     targets = _targets(extract, 0)
     assert targets[0] == [None, "Fit"]  # it named page 3, which was not taken
     assert targets[1:5] == [
@@ -146,7 +146,7 @@ def test_extracted_links_by_name_land_on_the_pages_they_named():
         {"S": "GoTo", "D": fit_second},
         {"S": "GoTo", "D": fit_last},
     ]
-    assert "Dest" not in extract.pages[0].annotations[5].properties  # an undefined name
+    assert "Dest" not in extract.pages[1].annotations[5].properties  # an undefined name
     assert targets[6] == {"S": "GoToR", "F": "other.pdf", "D": "sec.two"}  # a name in the other file
     assert _page_objects(extract) == 3
 
@@ -160,10 +160,10 @@ def test_a_merged_copy_s_links_land_in_that_copy():
     # This document's own names stay names; they still mean this document.
     assert first[1:5] == ["sec.two", "old.four", {"S": "GoTo", "D": "sec.two"}, {"S": "GoTo", "D": "old.four"}]
     assert second[:5] == [
-        FitDestination(page=6),
-        FitDestination(page=5),
         FitDestination(page=7),
-        {"S": "GoTo", "D": FitDestination(page=5)},
-        {"S": "GoTo", "D": FitDestination(page=7)},
+        FitDestination(page=6),
+        FitDestination(page=8),
+        {"S": "GoTo", "D": FitDestination(page=6)},
+        {"S": "GoTo", "D": FitDestination(page=8)},
     ]
     assert _page_objects(merged) == 8

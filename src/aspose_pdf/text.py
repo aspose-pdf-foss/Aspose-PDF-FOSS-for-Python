@@ -12,8 +12,7 @@ Supports three search modes:
   case-insensitive via TextSearchOptions.case_sensitive=False).
 - regex search: find all regex matches; results available via both
   text_fragments and regex_results (set is_regular_expression=True on
-  the TextSearchOptions passed to the constructor, or pass a regex=...
-  keyword argument directly).
+    the TextSearchOptions passed to the constructor or assigned before a visit).
 """
 
 from __future__ import annotations
@@ -85,7 +84,7 @@ class TextExtractionOptions:
 class TextWord:
     """A detached positioned word in unrotated PDF coordinates, in points.
 
-    ``page_index`` is zero-based. ``rect`` (also ``bbox``) encloses ``quad``
+    ``page_index`` is one-based. ``rect`` (also ``bbox``) encloses ``quad``
     as ``(x0, y0, x1, y1)`` with a lower-left origin. The quad is the affine
     transform of the font-metric word box, in text-corner order; a reflection
     can reverse its winding. These are advance/ascent/descent bounds rather
@@ -152,10 +151,17 @@ class TextWord:
 class TextFragment:
     """A text fragment found inside a PDF page.
 
+    Assigning ``text`` on a fragment collected from a real :class:`Page`
+    edits that occurrence in the PDF. Detached fragments remain value objects.
+    Edits preserve the existing font and do not reflow layout; unsupported or
+    ambiguous matches raise instead of changing another occurrence. Collect
+    again after unrelated page-content edits. Geometry is invalidated when
+    text changes; character offsets describe the original visit.
+
     Attributes
     ----------
     page_index : int
-        Zero-based index of the page where the fragment was found.
+        One-based number of the page where the fragment was found.
     text : str
         The matched (or extracted) text.
     start : int
@@ -189,6 +195,14 @@ class TextFragment:
     font_name: str | None = None
     font_size: float | None = None
     color: tuple[float, float, float] | None = None
+    _editor: Any = field(default=None, init=False, repr=False, compare=False)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "text":
+            editor = self.__dict__.get("_editor")
+            if editor is not None:
+                editor.replace(self, value)
+        object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
         if self.end == -1:
@@ -299,7 +313,7 @@ class RegexResult:
     Attributes
     ----------
     page_index : int
-        Zero-based page index.
+        one-based page index.
     text : str
         Full matched string (``match.group(0)``).
     start : int
@@ -399,11 +413,22 @@ class TextFragmentAbsorber:
         self._errors: list[Any] = []
         self.has_errors: bool = False
 
-        # Pre-compile regex pattern once if needed.
         self._compiled_regex: re.Pattern | None = None
-        if phrase is not None and self.text_search_options.is_regular_expression:
+        self._search_key: tuple | None = None
+        self._prepare_search()
+
+    def _prepare_search(self) -> None:
+        """Refresh the pattern after phrase or mutable search options change."""
+        options = self.text_search_options
+        key = (self.phrase, options.is_regular_expression, options.case_sensitive)
+        if key == self._search_key:
+            return
+        pattern = None
+        if self.phrase is not None and options.is_regular_expression:
             flags = 0 if self.text_search_options.case_sensitive else re.IGNORECASE
-            self._compiled_regex = re.compile(phrase, flags)
+            pattern = re.compile(self.phrase, flags)
+        self._compiled_regex = pattern
+        self._search_key = key
 
     # ------------------------------------------------------------------
     # Properties
@@ -439,15 +464,16 @@ class TextFragmentAbsorber:
         the only way a fragment can say which page it came from. Asking the
         document for all its text at once puts every fragment on page 0.
         """
+        self._prepare_search()
         if self._visit_pages(page_or_doc):
             return
         if hasattr(page_or_doc, "extract_text"):
             text = page_or_doc.extract_text()
             if isinstance(text, list):
-                for page_idx, item in enumerate(text):
+                for page_idx, item in enumerate(text, 1):
                     self._process_page_text(str(item), page_idx)
             elif isinstance(text, str):
-                self._process_page_text(text, 0, page=page_or_doc)
+                self._process_page_text(text, getattr(page_or_doc, "number", 1), page=page_or_doc)
 
     def _visit_pages(self, page_or_doc: Any) -> bool:
         """Collect page by page; False when *page_or_doc* has no such pages."""
@@ -460,7 +486,7 @@ class TextFragmentAbsorber:
             return False
         if not page_list or not all(hasattr(page, "extract_text") for page in page_list):
             return False
-        for page_idx, page in enumerate(page_list):
+        for page_idx, page in enumerate(page_list, 1):
             raw = page.extract_text()
             if isinstance(raw, str):
                 self._process_page_text(raw, page_idx, page=page)
@@ -559,7 +585,12 @@ class TextFragmentAbsorber:
                     )
                 offset += len(line) + 1  # +1 for '\n'
 
-        self._place(page, self._text_fragments[first:])
+        fragments = self._text_fragments[first:]
+        self._place(page, fragments)
+        if fragments and page is not None and hasattr(page, "_document"):
+            from aspose_pdf._text_fragments import FragmentEditSession
+
+            FragmentEditSession(page, text, self._text_fragments[first:])
 
     def _place(self, page: Any, fragments: list[TextFragment]) -> None:
         """Give each fragment its place on the page, where that can be told.
@@ -579,7 +610,7 @@ class TextFragmentAbsorber:
         )
 
         engine = getattr(getattr(page, "_document", None), "_engine_pdf", None)
-        index = getattr(page, "index", None)
+        index = getattr(page, "_index", None)
         if engine is None or not isinstance(index, int) or not fragments:
             return
         by_text: dict[str, list[TextFragment]] = {}

@@ -35,11 +35,11 @@ def _saved(document):
         URIAction("https://example.test/catalog?q=1#product"),
         URIAction("mailto:sales@example.test"),
         URIAction("https://example.test/資料"),
-        FitDestination(1),
-        XYZDestination(1, top=100),
-        GoToAction(FitDestination(1)),
+        FitDestination(2),
+        XYZDestination(2, top=100),
+        GoToAction(FitDestination(2)),
         "appendix",
-        GoToRAction("other.pdf", FitDestination(7)),
+        GoToRAction("other.pdf", FitDestination(8)),
         NamedAction("NextPage"),
     ],
 )
@@ -47,7 +47,7 @@ def test_targets_survive_save(tmp_path, on_disk, tag, target):
     with Document() as document:
         page = document.pages.add(size=(300, 200))
         document.pages.add(size=(300, 200))
-        document.destinations["appendix"] = FitDestination(1)
+        document.destinations["appendix"] = FitDestination(2)
         table = Table(column_widths=[120], row_height=40)
         table.add_row([Cell("Details", link=target)])
         page.add_table(table, 20, 160, tag=tag)
@@ -59,20 +59,20 @@ def test_targets_survive_save(tmp_path, on_disk, tag, target):
             assert expected[0].uri == target.uri
         elif isinstance(target, GoToRAction):
             assert expected[0].file == "other.pdf"
-            assert expected[0].destination == FitDestination(7)
+            assert expected[0].destination == FitDestination(8)
         elif isinstance(target, NamedAction):
             assert expected[0].named_action == "NextPage"
         else:
-            assert expected[0].target_page_index == 1
+            assert expected[0].target_page_index == 2
         if on_disk:
             source = tmp_path / "linked-table.pdf"
             document.save(source)
         else:
             source = _saved(document)
         with Document(source) as reopened:
-            assert reopened.pages[0].extract_links() == expected
-            assert "Details" in reopened.pages[0].extract_text()
-            assert reopened.pages[1].extract_links() == []
+            assert reopened.pages[1].extract_links() == expected
+            assert "Details" in reopened.pages[1].extract_text()
+            assert reopened.pages[2].extract_links() == []
 
 
 def test_spanning_wrapped_and_empty_cells_use_the_entire_row_height():
@@ -110,18 +110,18 @@ def test_links_follow_body_rows_and_repeated_headers_on_later_pages(repeat):
                 [Cell(str(index), link=URIAction(f"https://example.test/{index}"))]
             )
         result = page.add_table(table, 20, 100, bottom_margin=10)
-        assert result["pages"] == [0, 1]
+        assert result["pages"] == [1, 2]
         with Document(_saved(document)) as reopened:
             records = reopened.extract_links()
             expected = ["header", "0", "1", *(["header"] if repeat else []), "2", "3"]
             assert [record.uri.rsplit("/", 1)[-1] for record in records] == expected
-            assert [r.rect for r in reopened.pages[0].extract_links()] == [
+            assert [r.rect for r in reopened.pages[1].extract_links()] == [
                 (20, 70, 120, 100),
                 (20, 40, 120, 70),
                 (20, 10, 120, 40),
             ]
-            assert all(r.page_index == 1 for r in reopened.pages[1].extract_links())
-            assert reopened.pages[1].extract_links()[0].rect == (20, 70, 120, 100)
+            assert all(r.page_index == 2 for r in reopened.pages[2].extract_links())
+            assert reopened.pages[2].extract_links()[0].rect == (20, 70, 120, 100)
 
 
 def test_links_do_not_change_cell_rendering_and_plain_cells_add_no_annotations():
@@ -144,15 +144,15 @@ def test_named_cell_link_follows_a_repointed_destination():
     with Document() as document:
         page = document.pages.add()
         document.pages.add()
-        document.destinations["appendix"] = FitDestination(1)
+        document.destinations["appendix"] = FitDestination(2)
         table = Table(column_widths=[120])
         table.add_row([Cell("Appendix", link="appendix")])
         page.add_table(table, 20, 700)
-        document.destinations["appendix"] = XYZDestination(0, top=500)
+        document.destinations["appendix"] = XYZDestination(1, top=500)
         with Document(_saved(document)) as reopened:
             (link,) = reopened.extract_links()
             assert link.destination_name == "appendix"
-            assert link.destination == XYZDestination(0, top=500)
+            assert link.destination == XYZDestination(1, top=500)
 
 
 @pytest.mark.parametrize("transformed", [False, True])
@@ -187,17 +187,17 @@ def test_streaming_keeps_other_pages_lazy_and_preserves_shared_annotations(
         table.add_row([Cell("New link", link=URIAction("https://example.test/new"))])
         with monkeypatch.context() as patch:
             patch.setattr(pdf, "get_page_content", read)
-            document.pages[0].add_table(table, 20, 700)
+            document.pages[1].add_table(table, 20, 700)
         assert reads == [0] and pdf._lazy and pdf.page_contents == []
         with Document(_saved(document)) as reopened:
-            assert [r.uri for r in reopened.pages[0].extract_links()] == [
+            assert [r.uri for r in reopened.pages[1].extract_links()] == [
                 "https://example.test/existing",
                 "https://example.test/new",
             ]
-            assert [r.uri for r in reopened.pages[1].extract_links()] == [
+            assert [r.uri for r in reopened.pages[2].extract_links()] == [
                 "https://example.test/existing",
             ]
-            raster = reopened.pages[0].render(dpi=72, antialias=False)
+            raster = reopened.pages[1].render(dpi=72, antialias=False)
             assert raster.get_pixel(130, 100) == (0, 0, 255)
 
 
@@ -215,8 +215,8 @@ def test_streaming_linked_table_can_create_continuation_pages(tmp_path):
             table.add_row(
                 [Cell(str(index), link=URIAction(f"https://example.test/{index}"))]
             )
-        placement = document.pages[0].add_table(table, 20, 100, bottom_margin=10)
-        assert placement["pages"] == [0, 1]
+        placement = document.pages[1].add_table(table, 20, 100, bottom_margin=10)
+        assert placement["pages"] == [1, 2]
         assert document._engine_pdf._lazy
         with Document(_saved(document)) as reopened:
             assert all("Header" in page.extract_text() for page in reopened.pages)
@@ -259,12 +259,12 @@ def test_invalid_link_types_are_rejected(value):
         object(),
         "",
         "глава",
-        FitDestination(-1),
-        FitDestination(2),
+        FitDestination((-1) + 1),
+        FitDestination(3),
         FitDestination(True),
-        GoToAction(FitDestination(5)),
-        XYZDestination(0, top=float("nan")),
-        XYZDestination(0, zoom=float("inf")),
+        GoToAction(FitDestination(6)),
+        XYZDestination(1, top=float("nan")),
+        XYZDestination(1, zoom=float("inf")),
         URIAction("https://example.test/\ud800"),
     ],
 )
@@ -289,7 +289,7 @@ def test_tagged_links_belong_to_their_cells_and_use_unique_parent_tree_keys():
         for index in (0, 0, 1):
             table = Table(column_widths=[120], row_height=40)
             table.add_row([Cell("Details", link=URIAction("https://example.test"))])
-            document.pages[index].add_table(table, 20, 160)
+            document.pages[(index) + 1].add_table(table, 20, 160)
         with Document(_saved(document)) as reopened:
             pdf = reopened._engine_pdf
             catalog = pdf._resolve(pdf._cos_doc.trailer.mapping[PdfName("Root")])
@@ -302,13 +302,13 @@ def test_tagged_links_belong_to_their_cells_and_use_unique_parent_tree_keys():
             }
             assert len(entries) == len(nums.items) // 2 == 5
             for page in reopened.pages:
-                page_dict = pdf._get_page_dict(page.index)
+                page_dict = pdf._get_page_dict((page.index) - 1)
                 assert page_dict.mapping[PdfName("Tabs")] == PdfName("S")
                 page_parents = entries[
                     int(page_dict.mapping[PdfName("StructParents")].value)
                 ]
                 assert isinstance(page_parents, PdfArray)
-                for ref in pdf._annotation_refs(page.index):
+                for ref in pdf._annotation_refs((page.index) - 1):
                     annotation = pdf._resolve(ref)
                     assert pdf._resolve(annotation.mapping[PdfName("P")]) is page_dict
                     parent = entries[

@@ -45,14 +45,14 @@ def _lines(*rows: str, gap: float = 17, size: float = 14) -> Document:
 
 
 def test_each_line_is_a_line():
-    assert _lines("L0", "L1", "L2").pages[0].extract_text() == "L0\nL1\nL2"
+    assert _lines("L0", "L1", "L2").pages[1].extract_text() == "L0\nL1\nL2"
 
 
 @pytest.mark.parametrize("gap", [11, 14, 17, 20, 24, 40])
 def test_the_leading_does_not_decide_whether_it_is_a_line(gap):
     """Single-spaced prose is about 1.2x the size; a page of it used to come
     out as one line because the separator was chosen by distance."""
-    assert _lines("A", "B", gap=gap).pages[0].extract_text() == "A\nB"
+    assert _lines("A", "B", gap=gap).pages[1].extract_text() == "A\nB"
 
 
 def test_text_moved_along_the_same_line_stays_on_it():
@@ -61,13 +61,13 @@ def test_text_moved_along_the_same_line_stays_on_it():
     page.add_text("left", 72, 700, font_size=14)
     page.add_text("right", 300, 700, font_size=14)
 
-    assert _reloaded(document).pages[0].extract_text() == "left right"
+    assert _reloaded(document).pages[1].extract_text() == "left right"
 
 
 def test_a_paragraph_is_still_joined_when_asked_for_markdown():
     """Where the lines go is `to_markdown`'s judgement, not the extractor's:
     a wrapped paragraph is one paragraph."""
-    assert _lines("wrapped", "over", "lines").pages[0].to_markdown().strip() == (
+    assert _lines("wrapped", "over", "lines").pages[1].to_markdown().strip() == (
         "wrapped over lines"
     )
 
@@ -84,7 +84,7 @@ def test_a_page_with_nothing_on_it_says_nothing():
     document = Document()
     document.pages.add()
 
-    assert _reloaded(document).pages[0].extract_text() == ""
+    assert _reloaded(document).pages[1].extract_text() == ""
 
 
 def test_an_index_outside_the_document_says_nothing():
@@ -122,7 +122,7 @@ def _from_content(content: bytes) -> Document:
 def test_td_with_a_vertical_move_starts_a_line():
     page = _from_content(
         b"BT /F1 12 Tf 72 700 Td (one) Tj 0 -14 Td (two) Tj ET\n"
-    ).pages[0]
+    ).pages[1]
 
     assert page.extract_text() == "one\ntwo"
 
@@ -130,7 +130,7 @@ def test_td_with_a_vertical_move_starts_a_line():
 def test_td_along_the_line_does_not():
     page = _from_content(
         b"BT /F1 12 Tf 72 700 Td (one) Tj 40 0 Td (two) Tj ET\n"
-    ).pages[0]
+    ).pages[1]
 
     assert page.extract_text() == "one two"
 
@@ -138,7 +138,7 @@ def test_td_along_the_line_does_not():
 def test_t_star_steps_down_by_the_leading():
     page = _from_content(
         b"BT /F1 12 Tf 14 TL 72 700 Td (one) Tj T* (two) Tj T* (three) Tj ET\n"
-    ).pages[0]
+    ).pages[1]
 
     assert page.extract_text() == "one\ntwo\nthree"
 
@@ -150,7 +150,7 @@ def test_t_star_without_a_leading_draws_over_the_line_it_is_on():
     read as two words side by side. MuPDF and poppler both answer ``one\ntwo``
     here, and so does each of them for a plain ``0 0 Td``.
     """
-    page = _from_content(b"BT /F1 12 Tf 72 700 Td (one) Tj T* (two) Tj ET\n").pages[0]
+    page = _from_content(b"BT /F1 12 Tf 72 700 Td (one) Tj T* (two) Tj ET\n").pages[1]
 
     assert page.extract_text() == "one\ntwo"
 
@@ -158,7 +158,7 @@ def test_t_star_without_a_leading_draws_over_the_line_it_is_on():
 def test_td_capital_sets_the_leading_as_well_as_moving():
     page = _from_content(
         b"BT /F1 12 Tf 72 700 Td (one) Tj 0 -14 TD (two) Tj T* (three) Tj ET\n"
-    ).pages[0]
+    ).pages[1]
 
     assert page.extract_text() == "one\ntwo\nthree"
 
@@ -166,7 +166,7 @@ def test_td_capital_sets_the_leading_as_well_as_moving():
 def test_the_quote_operators_show_on_the_next_line():
     page = _from_content(
         b"BT /F1 12 Tf 14 TL 72 700 Td (one) Tj (two) ' 1 2 (three) \" ET\n"
-    ).pages[0]
+    ).pages[1]
 
     assert page.extract_text() == "one\ntwo\nthree"
 
@@ -179,7 +179,7 @@ def test_the_quote_operators_show_on_the_next_line():
 def test_an_absorber_collects_a_real_page_s_lines():
     absorber = TextFragmentAbsorber()
 
-    absorber.visit(_lines("L0", "L1", "L2").pages[0])
+    absorber.visit(_lines("L0", "L1", "L2").pages[1])
 
     assert [fragment.text for fragment in absorber.text_fragments] == ["L0", "L1", "L2"]
 
@@ -193,8 +193,8 @@ def test_an_absorber_collects_a_real_document():
     absorber.visit(_reloaded(document))
 
     assert [(f.text, f.page_index) for f in absorber.text_fragments] == [
-        ("first", 0),
-        ("second", 1),
+        ("first", 1),
+        ("second", 2),
     ]
 
 
@@ -208,13 +208,13 @@ def test_a_document_is_taken_page_by_page_so_a_fragment_knows_where_it_was():
 
     absorber.visit(_reloaded(document))
 
-    assert [f.page_index for f in absorber.text_fragments] == [0, 1, 2]
+    assert [f.page_index for f in absorber.text_fragments] == [1, 2, 3]
 
 
 def test_a_phrase_search_finds_it_on_a_real_page():
     absorber = TextFragmentAbsorber("L1")
 
-    absorber.visit(_lines("L0", "L1", "L2").pages[0])
+    absorber.visit(_lines("L0", "L1", "L2").pages[1])
 
     assert [fragment.text for fragment in absorber.text_fragments] == ["L1"]
 
@@ -222,7 +222,7 @@ def test_a_phrase_search_finds_it_on_a_real_page():
 def test_the_legacy_absorber_reads_a_real_page_too():
     absorber = TextAbsorber()
 
-    absorber.visit(_lines("L0", "L1").pages[0])
+    absorber.visit(_lines("L0", "L1").pages[1])
 
     assert absorber.text == "L0\nL1"
 

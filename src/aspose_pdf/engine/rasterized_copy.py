@@ -156,7 +156,7 @@ def rasterized_copy(
     try:
         result._engine_pdf._ensure_cos()
         for index, width, height, content in plans:
-            raster = document.render_page(
+            raster = document._api_render_page(
                 index,
                 dpi=dpi,
                 background=background,

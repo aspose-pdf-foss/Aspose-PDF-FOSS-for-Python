@@ -78,7 +78,7 @@ def test_unrotated_bounds_roundtrip_preserve_boxes_content_and_file_bytes(
         result = page.get_content_bounds(dpi=dpi)
         assert result == pytest.approx(INK)
         assert isinstance(result, tuple) and len(result) == 4
-        assert document.get_content_bounds(dpi=dpi) == {0: result}
+        assert document.get_content_bounds(dpi=dpi) == {1: result}
         assert (page.media_box, page.crop_box, page.rotation) == (MEDIA, CROP, rotation)
         assert (page.bleed_box, page.trim_box, page.art_box) == (MEDIA, CROP, INK)
         assert _bytes(document) == before
@@ -86,8 +86,8 @@ def test_unrotated_bounds_roundtrip_preserve_boxes_content_and_file_bytes(
     assert result == pytest.approx(INK)
     for source in (before, path):
         with Document(source) as reopened:
-            assert reopened.pages[0].get_content_bounds(dpi=dpi) == pytest.approx(INK)
-            assert reopened.pages[0].crop_box == CROP
+            assert reopened.pages[1].get_content_bounds(dpi=dpi) == pytest.approx(INK)
+            assert reopened.pages[1].crop_box == CROP
 
 
 @pytest.mark.parametrize(
@@ -126,7 +126,7 @@ def test_blank_looking_pages_return_none_without_adding_crop_entries(kind):
                 page.draw_rectangle(0, 0, 64, 64, fill_color="#000", stroke_color=None)
         before = _bytes(document)
         assert page.get_content_bounds() is None
-        assert document.get_content_bounds() == {0: None}
+        assert document.get_content_bounds() == {1: None}
         assert _bytes(document) == before
         if kind != "cropped_out":
             assert (
@@ -198,10 +198,10 @@ def test_inherited_boxes_and_rotation_stay_inherited_after_inspection():
         crop = PdfArray([PdfNumber(v) for v in CROP])
         parent.mapping[PdfName("CropBox")] = crop
         parent.mapping[PdfName("Rotate")] = PdfNumber(450)
-        page = document.pages[0]
+        page = document.pages[1]
         page.draw_rectangle(6, 46, 60, 84, fill_color="#000", stroke_color=None)
         before = _bytes(document)
-        assert document.get_content_bounds() == {0: INK, 1: None}
+        assert document.get_content_bounds() == {1: INK, 2: None}
         assert parent.mapping[PdfName("CropBox")] is crop
         assert all(
             PdfName("CropBox") not in pdf._get_page_dict(i).mapping for i in range(2)
@@ -284,7 +284,7 @@ def test_widget_appearances_and_text_are_detected_without_moving_them():
     with Document() as document:
         page = document.pages.add(size=(100, 100))
         field = document.form.add_text_field(
-            "value", 0, (10, 20, 90, 50), value="A field"
+            "value", 1, (10, 20, 90, 50), value="A field"
         )
         document.generate_field_appearances()
         before = _bytes(document)
@@ -319,10 +319,10 @@ def test_batch_selection_is_validated_deduplicated_ordered_and_detached(monkeypa
     with Document() as document:
         for _ in range(3):
             document.pages.add(size=(30, 30))
-        document.pages[0].draw_rectangle(
+        document.pages[1].draw_rectangle(
             5, 6, 10, 12, fill_color="#000", stroke_color=None
         )
-        document.pages[2].draw_rectangle(
+        document.pages[3].draw_rectangle(
             2, 3, 4, 5, fill_color="#000", stroke_color=None
         )
         render = Page.render
@@ -333,9 +333,9 @@ def test_batch_selection_is_validated_deduplicated_ordered_and_detached(monkeypa
             return render(page, **options)
 
         monkeypatch.setattr(Page, "render", track)
-        bounds = document.get_content_bounds(pages=iter([2, 0, 2, 1]))
-        assert list(bounds) == visited == [2, 0, 1]
-        assert bounds == {2: (2, 3, 6, 8), 0: (5, 6, 15, 18), 1: None}
+        bounds = document.get_content_bounds(pages=(number + 1 if type(number) is int else number for number in (iter([2, 0, 2, 1]))))
+        assert list(bounds) == visited == [3, 1, 2]
+        assert bounds == {3: (2, 3, 6, 8), 1: (5, 6, 15, 18), 2: None}
         visited.clear()
         assert document.get_content_bounds(pages=[]) == {} and not visited
         for pages in ([0, 3], [-1], [True], [0.0], "0", 0):
@@ -343,9 +343,9 @@ def test_batch_selection_is_validated_deduplicated_ordered_and_detached(monkeypa
                 document.get_content_bounds(pages=pages)
         assert not visited
         bounds.clear()
-        assert document.pages[0].get_content_bounds() == (5, 6, 15, 18)
-        detached = document.get_content_bounds(pages=[0])
-    assert detached == {0: (5, 6, 15, 18)}
+        assert document.pages[1].get_content_bounds() == (5, 6, 15, 18)
+        detached = document.get_content_bounds(pages=[1])
+    assert detached == {1: (5, 6, 15, 18)}
 
 
 @pytest.mark.parametrize(
@@ -398,7 +398,7 @@ def test_resource_failures_unbounded_selection_and_failed_second_page_do_not_edi
     with Document(limits=PdfLoadLimits(max_container_items=20)) as document:
         document.pages.add(size=(10, 10))
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            document.get_content_bounds(pages=repeat(0))
+            document.get_content_bounds(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
     with Document() as document:
         for _ in range(2):
             document.pages.add(size=(10, 10))
@@ -406,7 +406,7 @@ def test_resource_failures_unbounded_selection_and_failed_second_page_do_not_edi
         render = Page.render
 
         def fail_second(page, **options):
-            if page.index == 1:
+            if page.index == 2:
                 raise PdfParseException("Cannot render page")
             return render(page, **options)
 
@@ -420,7 +420,7 @@ def test_batches_release_each_raster_before_rendering_the_next(monkeypatch):
     with Document() as document:
         for _ in range(3):
             document.pages.add(size=(10, 10))
-        document.pages[1].draw_rectangle(
+        document.pages[2].draw_rectangle(
             2, 3, 4, 5, fill_color="#000", stroke_color=None
         )
         previous = []
@@ -433,7 +433,7 @@ def test_batches_release_each_raster_before_rendering_the_next(monkeypatch):
             return raster
 
         monkeypatch.setattr(Page, "render", track)
-        assert document.get_content_bounds() == {0: None, 1: (2, 3, 6, 8), 2: None}
+        assert document.get_content_bounds() == {1: None, 2: (2, 3, 6, 8), 3: None}
         assert all(ref() is None for ref in previous)
 
 
@@ -476,12 +476,12 @@ def test_scans_stream_lazily_and_preserve_files_cursors_and_metadata(
             return read(index)
 
         monkeypatch.setattr(pdf, "get_page_content", selected)
-        assert document.get_content_bounds(pages=[1, 1]) == {1: (20, 35, 60, 65)}
+        assert document.get_content_bounds(pages=[2, 2]) == {2: (20, 35, 60, 65)}
         assert visited == [1]
         assert (pdf._image_cursor, pdf._image_names) == cursor
         assert pdf.page_contents == contents and pdf._extracted_text is text
         assert document.is_encrypted is protection
-        assert document.pages[1].crop_box == (0, 0, 100, 80)
+        assert document.pages[2].crop_box == (0, 0, 100, 80)
         assert document.info["Title"] == "Keep title" and document.attachments == {
             "keep.txt": b"keep"
         }
@@ -492,7 +492,7 @@ def test_empty_documents_deleted_pages_and_disposal_guards():
     with Document() as document:
         assert document.get_content_bounds() == {}
         page = document.pages.add(size=(10, 10))
-        document.pages.delete(0)
+        document.pages.delete(1)
         with pytest.raises(IndexError):
             page.get_content_bounds()
     with pytest.raises(AsposePdfException, match="disposed"):

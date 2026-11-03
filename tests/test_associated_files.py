@@ -30,7 +30,7 @@ AF_ARRAY = re.compile(rb"/AF \[([^\]]*)\]")
 def _saved(level: str | None = None, attachments=("data.bin",)) -> bytes:
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720)
+    document.pages[1].add_text("Heading", 50, 720)
     for name in attachments:
         document.add_attachment(name, b"payload-" + name.encode())
     document.info["Title"] = "A Title"
@@ -93,7 +93,7 @@ def test_removing_the_last_attachment_takes_the_array_with_it():
 def test_a_document_with_no_attachments_gets_no_array():
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720)
+    document.pages[1].add_text("Heading", 50, 720)
     buffer = io.BytesIO()
     document.save(buffer)
     assert _af_refs(buffer.getvalue()) == []
@@ -148,7 +148,7 @@ def test_pdfa_1_and_2_remove_an_attachment_added_in_this_session(level):
     """
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720)
+    document.pages[1].add_text("Heading", 50, 720)
     document.add_attachment("data.bin", b"payload")
     document.info["Title"] = "A Title"
     warnings = document.convert_to_pdfa(level)
@@ -185,7 +185,7 @@ def test_an_attachment_already_in_the_graph_is_dropped_for_pdfa_1():
 def _part_four_with(payload: bytes, *, level: str = "PDF/A-4", mime: str | None = None):
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Outer", 50, 720)
+    document.pages[1].add_text("Outer", 50, 720)
     document.add_attachment("inner", payload, **({"mime": mime} if mime else {}))
     document.convert_to_pdfa(level)
     return document
@@ -194,7 +194,7 @@ def _part_four_with(payload: bytes, *, level: str = "PDF/A-4", mime: str | None 
 def _conforming_pdfa() -> bytes:
     inner = Document()
     inner.pages.add()
-    inner.pages[0].add_text("Inner", 50, 700)
+    inner.pages[1].add_text("Inner", 50, 700)
     inner.info["Title"] = "Inner"
     inner.convert_to_pdfa("PDF/A-2B")
     buffer = io.BytesIO()

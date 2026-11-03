@@ -102,7 +102,7 @@ def test_public_edit_and_save_preserves_generations(stream, incremental, tmp_pat
     original = source(stream=stream)
     with Document(io.BytesIO(original)) as document:
         document.info["Title"] = "Updated title"
-        document.pages[0].add_text("Added text", 20, 50)
+        document.pages[1].add_text("Added text", 20, 50)
         target = tmp_path / "edited.pdf"
         document.save(target, incremental=incremental)
     result = target.read_bytes()
@@ -112,8 +112,8 @@ def test_public_edit_and_save_preserves_generations(stream, incremental, tmp_pat
     with Document(target) as reopened:
         assert reopened.page_count == 1
         assert reopened.info["Title"] == "Updated title"
-        assert "Generation text" in reopened.pages[0].extract_text()
-        assert "Added text" in reopened.pages[0].extract_text()
+        assert "Generation text" in reopened.pages[1].extract_text()
+        assert "Added text" in reopened.pages[1].extract_text()
     assert_generations(result)
 
 
@@ -144,7 +144,7 @@ def test_encryption_uses_the_preserved_generation(algorithm, incremental):
         document.save(output, incremental=incremental)
     with Document(io.BytesIO(output.getvalue()), password="user") as reopened:
         assert reopened.info["Title"] == "Resaved encrypted title"
-        assert "Generation text" in reopened.pages[0].extract_text()
+        assert "Generation text" in reopened.pages[1].extract_text()
 
 
 def test_generation_changes_with_a_reused_object_number():

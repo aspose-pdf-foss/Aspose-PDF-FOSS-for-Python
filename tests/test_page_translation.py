@@ -52,30 +52,30 @@ def test_translation_matches_authored_positions_and_preserves_other_pages_and_bo
         else Document(source if source_kind == "file" else raw)
     )
     with loaded as document, Document() as expected:
-        page = document.pages[1]
+        page = document.pages[2]
         page.trim_box = (1, 2, 59, 48)
         boxes = page.media_box, page.crop_box, page.trim_box, page.bleed_box, page.art_box
         expected_page = expected.pages.add(size=(60, 50))
         _draw(expected_page, dx, dy)
         expected_page.rotation = rotation
         wanted = expected_page.render(antialias=False).pixels
-        original = document.pages[0].render(antialias=False).pixels
+        original = document.pages[1].render(antialias=False).pixels
         text = document.extract_text()
         assert page.translate_content(dx, dy) is page
         assert page.render(antialias=False).pixels == wanted
-        assert document.pages[0].render(antialias=False).pixels == original
+        assert document.pages[1].render(antialias=False).pixels == original
         assert (page.media_box, page.crop_box, page.trim_box, page.bleed_box, page.art_box) == boxes
         assert page.rotation == rotation
         assert document.extract_text() == text
         with io.BytesIO() as output:
             document.save(output, incremental=incremental)
             with Document(output.getvalue()) as reopened:
-                assert reopened.pages[1].render(antialias=False).pixels == wanted
-                assert reopened.pages[0].render(antialias=False).pixels == original
+                assert reopened.pages[2].render(antialias=False).pixels == wanted
+                assert reopened.pages[1].render(antialias=False).pixels == original
         target = tmp_path / "translated.pdf"
         document.save(target)
         with Document(target) as reopened:
-            assert reopened.pages[1].render(antialias=False).pixels == wanted
+            assert reopened.pages[2].render(antialias=False).pixels == wanted
 
 
 def test_annotation_points_widgets_and_insets_move_correctly_after_roundtrip():
@@ -102,13 +102,13 @@ def test_annotation_points_widgets_and_insets_move_correctly_after_roundtrip():
         assert page.annotations[-1].get_property("QuadPoints") == [15, 33, 35, 33, 15, 13, 35, 13]
         document.save(output)
         with Document(output.getvalue()) as reopened:
-            assert reopened.pages[0].annotations[0].rect == (13, 11, 37, 35)
+            assert reopened.pages[1].annotations[0].rect == (13, 11, 37, 35)
             assert reopened.form["answer"].rect == (15, 68, 55, 83)
 
 
 def test_image_placement_metadata_and_repeated_translations_follow_the_drawing():
     with Document(_pdf()) as document, io.BytesIO() as output:
-        page = document.pages[1]
+        page = document.pages[2]
         absorber = ImagePlacementAbsorber()
         absorber.visit(page)
         assert absorber.image_placements[0].matrix == (6, 0, 0, 4, 25, 10)
@@ -119,7 +119,7 @@ def test_image_placement_metadata_and_repeated_translations_follow_the_drawing()
         assert (rectangle.x, rectangle.y, rectangle.width, rectangle.height) == (27.5, 11.25, 6, 4)
         document.save(output)
         with Document(output.getvalue()) as reopened:
-            absorber.visit(reopened.pages[1])
+            absorber.visit(reopened.pages[2])
             assert absorber.image_placements[0].matrix == (6, 0, 0, 4, 27.5, 11.25)
 
 
@@ -158,7 +158,7 @@ def test_streaming_transforms_decode_only_the_selected_page_and_stay_lazy(
             return original(extractor, page_index)
 
         monkeypatch.setattr(CosExtractor, "get_page_content", guarded)
-        page = document.pages[1]
+        page = document.pages[2]
         if operation == "translate":
             page.translate_content(3, 4)
         elif operation == "scale":
@@ -179,8 +179,8 @@ def test_a_streaming_translation_survives_later_edits_extraction_and_iteration(t
     source = tmp_path / "source.pdf"
     source.write_bytes(_pdf())
     with Document.open_streaming(source) as document, Document() as expected:
-        page = document.pages[1]
-        original_first = document.pages[0].content
+        page = document.pages[2]
+        original_first = document.pages[1].content
         page.translate_content(5, 7)
         page.add_text("Later", 2, 43, font_size=5)
         expected_page = expected.pages.add(size=(60, 50))
@@ -190,8 +190,8 @@ def test_a_streaming_translation_survives_later_edits_extraction_and_iteration(t
         streams = list(document.iter_page_content_streams())
         assert streams[0] == original_first
         assert streams[1] == page.content
-        with document.extract_pages([1]) as extracted:
-            assert extracted.pages[0].render(antialias=False).pixels == expected_page.render(antialias=False).pixels
+        with document.extract_pages([2]) as extracted:
+            assert extracted.pages[1].render(antialias=False).pixels == expected_page.render(antialias=False).pixels
 
 
 def test_shared_content_streams_are_not_changed_on_other_pages():
@@ -201,10 +201,10 @@ def test_shared_content_streams_are_not_changed_on_other_pages():
         second.mapping[PdfName("Contents")] = first.mapping[PdfName("Contents")]
         document.save(output)
         with Document(output.getvalue()) as reopened:
-            before = reopened.pages[0].content
-            reopened.pages[1].translate_content(5, 7)
-            assert reopened.pages[0].content == before
-            assert reopened.pages[1].content != before
+            before = reopened.pages[1].content
+            reopened.pages[2].translate_content(5, 7)
+            assert reopened.pages[1].content == before
+            assert reopened.pages[2].content != before
 
 
 @pytest.mark.parametrize("algorithm", ["AES-256", "AES-128", "RC4"])
@@ -221,7 +221,7 @@ def test_encrypted_content_can_be_translated_and_saved_without_losing_protection
         else Document(raw, password="secret")
     )
     with loaded as document, Document() as expected, io.BytesIO() as output:
-        page = document.pages[1]
+        page = document.pages[2]
         page.translate_content(5, 7)
         expected_page = expected.pages.add(size=(60, 50))
         _draw(expected_page, 5, 7)
@@ -231,8 +231,8 @@ def test_encrypted_content_can_be_translated_and_saved_without_losing_protection
         with pytest.raises(PdfSecurityException):
             Document(output.getvalue())
         with Document(output.getvalue(), password="secret") as reopened:
-            assert reopened.pages[1].render(antialias=False).pixels == wanted
-            assert reopened.pages[0].extract_text() == "Body"
+            assert reopened.pages[2].render(antialias=False).pixels == wanted
+            assert reopened.pages[1].extract_text() == "Body"
 
 
 @pytest.mark.parametrize("algorithm", [None, "AES-128"])
@@ -247,7 +247,7 @@ def test_identity_translation_reads_no_content_and_preserves_original_bytes(
             pytest.fail("Identity translation must not read content")
 
         monkeypatch.setattr(CosExtractor, "get_page_content", forbidden)
-        document.pages[1].translate_content(0, 0)
+        document.pages[2].translate_content(0, 0)
         with io.BytesIO() as output:
             document.save(output, incremental=True)
             assert output.getvalue() == raw
@@ -282,7 +282,7 @@ def test_transformed_content_stays_within_resource_limits(tmp_path):
         document.pages.add(((0, 0, 30, 30), b"0 0 2 2 re f"))
         document.save(target)
     with Document.open_streaming(target, limits=PdfLoadLimits(max_content_stream_bytes=20)) as document:
-        page = document.pages[0]
+        page = document.pages[1]
         before = page.content
         with pytest.raises(PdfResourceLimitException, match="max_content_stream_bytes"):
             page.translate_content(5, 7)

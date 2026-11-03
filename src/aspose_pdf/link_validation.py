@@ -9,7 +9,7 @@ __all__ = ["LinkValidationIssue"]
 
 @dataclass(frozen=True, slots=True)
 class LinkValidationIssue:
-    """One local navigation problem, with zero-based source coordinates.
+    """One local navigation problem, with a one-based page number and zero-based annotation indices.
 
     ``source`` is ``annotation``, ``outline`` or ``named_destination``.
     ``outline_path`` contains sibling indices from the root to the bookmark.

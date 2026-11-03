@@ -17,7 +17,7 @@ __all__ = ["ExtractedTable"]
 class ExtractedTable:
     """An inferred table, independent of the document it came from.
 
-    ``page_index`` is zero-based. ``rows`` is a rectangular tuple of tuples;
+    ``page_index`` is one-based. ``rows`` is a rectangular tuple of tuples;
     :meth:`to_list` returns editable lists. A missing cell is an empty string.
     A horizontal merge keeps its text in the first column and leaves covered
     columns empty. ``column_spans`` has the same shape as ``rows`` and records

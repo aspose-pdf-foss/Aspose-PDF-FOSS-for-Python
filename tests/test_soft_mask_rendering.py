@@ -72,7 +72,7 @@ def _render(page_box, content, resources_builder, antialias=False, limits=None):
     pdf._get_page_dict(0).mapping[PdfName("Resources")] = resources
     doc = Document()
     doc._engine_pdf = pdf
-    return doc.pages[0].render(antialias=antialias)
+    return doc.pages[1].render(antialias=antialias)
 
 
 # --- image /SMask ----------------------------------------------------------

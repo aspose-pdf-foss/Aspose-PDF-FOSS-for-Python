@@ -33,10 +33,10 @@ def _source(pages: int = 2) -> Document:
     for index in range(pages):
         label = f"p{index}"
         document.pages.add()
-        with document.pages[index].layer(document.layers.add(f"layer {label}")):
-            document.pages[index].add_text(f"{label} text", x=40, y=700)
+        with document.pages[(index) + 1].layer(document.layers.add(f"layer {label}")):
+            document.pages[(index) + 1].add_text(f"{label} text", x=40, y=700)
         document.form.add_text_field(
-            f"{label}_field", index, (40, 500, 300, 530), value=label
+            f"{label}_field", (index) + 1, (40, 500, 300, 530), value=label
         )
     return document
 
@@ -177,7 +177,7 @@ def test_a_whole_merge_keeps_a_layer_nothing_is_on():
 def test_a_whole_merge_keeps_a_field_with_no_widget_placed():
     other = Document()
     other.pages.add()
-    other.form.add_text_field("placed", 0, (40, 500, 300, 530), value="x")
+    other.form.add_text_field("placed", 1, (40, 500, 300, 530), value="x")
     engine = other._engine_pdf
     root = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
     acro = engine._resolve(root.mapping[PdfName("AcroForm")])

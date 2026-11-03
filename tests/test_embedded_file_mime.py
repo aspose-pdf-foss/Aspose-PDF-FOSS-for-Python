@@ -30,7 +30,7 @@ from aspose_pdf import Document
 def _with_attachment(mime: str | None = None, level: str | None = None) -> bytes:
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720)
+    document.pages[1].add_text("Heading", 50, 720)
     document.add_attachment(
         "data.bin", b"payload", **({"mime": mime} if mime else {})
     )

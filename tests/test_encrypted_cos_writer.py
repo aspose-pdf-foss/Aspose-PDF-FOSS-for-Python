@@ -121,13 +121,13 @@ def _page_of_everything() -> bytes:
     page = document.pages.add()
     page.add_text("Heading", 60, 720, font_size=20)
     page.add_text("Body text that runs on for a while.", 60, 700, font_size=11)
-    document.outlines.add(OutlineItem("Chapter one", 0))
-    document.form.add_text_field("nickname", 0, (60, 100, 260, 130), value="typed")
+    document.outlines.add(OutlineItem("Chapter one", 1))
+    document.form.add_text_field("nickname", 1, (60, 100, 260, 130), value="typed")
     document.add_attachment("notes.txt", b"an attachment", mime="text/plain")
     document.info["Title"] = "Sealed but structured"
     watermark = document.layers.add("Watermark")
-    with document.pages[0].layer(watermark):
-        document.pages[0].add_text("DRAFT", 100, 400, font_size=40)
+    with document.pages[1].layer(watermark):
+        document.pages[1].add_text("DRAFT", 100, 400, font_size=40)
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
@@ -491,12 +491,12 @@ def test_a_stream_authored_after_load_is_not_deciphered_as_if_it_were_stored(pla
     """
     sealed = _sealed(plain, "AES-128")
     document = Document(io.BytesIO(sealed), password="u")
-    document.pages[0].add_text("Added after opening", 60, 660, font_size=11)
+    document.pages[1].add_text("Added after opening", 60, 660, font_size=11)
     buffer = io.BytesIO()
     document.save(buffer)
 
     reopened = Document(io.BytesIO(buffer.getvalue()), password="u")
-    content = reopened.pages[0].content
+    content = reopened.pages[1].content
     assert b"Added after opening" in content
     assert b"Body text that runs on" in content
 
@@ -607,7 +607,7 @@ def test_decrypt_writes_a_plain_file_and_keeps_nothing_behind(plain, algorithm):
     reopened = Document(io.BytesIO(data))
     assert reopened.info["Title"] == "Sealed but structured"
     assert [field.name for field in reopened.form] == ["nickname"]
-    assert b"Body text that runs on" in reopened.pages[0].content
+    assert b"Body text that runs on" in reopened.pages[1].content
 
 
 # ---------------------------------------------------------------------------

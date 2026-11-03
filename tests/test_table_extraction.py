@@ -96,10 +96,10 @@ def test_extract_table_from_public_text_api_and_pdf_round_trips(source, tmp_path
         try:
             (table,) = document.extract_tables()
             assert isinstance(table, ExtractedTable)
-            assert table.page_index == 0
+            assert table.page_index == 1
             assert table.row_count == 3 and table.column_count == 3
             assert table.to_list() == ROWS
-            assert document.pages[0].extract_tables() == [table]
+            assert document.pages[1].extract_tables() == [table]
             assert list(csv.reader(io.StringIO(table.to_csv(), newline=""))) == ROWS
         finally:
             if document is not original:
@@ -138,15 +138,15 @@ def test_page_selection_order_repeats_generator_and_original_page_indices():
     with Document() as document:
         for number in range(3):
             _grid(document.pages.add(), [["N", "V"], [str(number), "x"]], xs=(60, 85))
-        tables = document.extract_tables(pages=(i for i in [2, 0, 2]))
-        assert [table.page_index for table in tables] == [2, 0, 2]
+        tables = document.extract_tables(pages=(number + 1 if type(number) is int else number for number in ((i for i in [2, 0, 2]))))
+        assert [table.page_index for table in tables] == [3, 1, 3]
         assert [table.rows[1][0] for table in tables] == ["2", "0", "2"]
-        assert document.pages[1].extract_tables()[0].page_index == 1
-        assert [table.page_index for table in document.extract_tables()] == [0, 1, 2]
+        assert document.pages[2].extract_tables()[0].page_index == 2
+        assert [table.page_index for table in document.extract_tables()] == [1, 2, 3]
         assert document.extract_tables(pages=[]) == []
 
 
-@pytest.mark.parametrize("pages", [0, "0", b"0", [True], [False], [0.0], ["0"], [None], [-1], [1]])
+@pytest.mark.parametrize("pages", [0, "0", b"0", [True], [False], [0.0], ["0"], [None], [-1], [2]])
 def test_invalid_page_selection_is_rejected(pages):
     with Document() as document:
         _grid(document.pages.add())
@@ -163,7 +163,7 @@ def test_all_page_indices_are_validated_before_decoding(monkeypatch):
 
         monkeypatch.setattr(document._engine_pdf, "get_page_content", no_decode)
         with pytest.raises(PdfValidationException, match="out of range"):
-            document.extract_tables(pages=[0, 100])
+            document.extract_tables(pages=[1, 101])
         assert document.extract_tables(pages=[]) == []
 
 
@@ -230,7 +230,7 @@ def test_snapshots_survive_document_edits_and_disposal():
     assert table.to_list() == ROWS
     assert "Widget" in table.to_csv()
     with pytest.raises(FrozenInstanceError):
-        table.page_index = 2
+        table.page_index = 3
     with pytest.raises(TypeError):
         table.rows[0][0] = "changed"
     with pytest.raises(AsposePdfException, match="disposed"):
@@ -318,9 +318,9 @@ def test_selected_streaming_page_does_not_decode_other_pages(tmp_path):
     path = tmp_path / "streaming.pdf"
     path.write_bytes(_pdf(objects))
     with Document.open_streaming(path, limits=PdfLoadLimits(max_decoded_stream_bytes=1000)) as document:
-        assert document.extract_tables(pages=[0])[0].to_list() == ROWS
+        assert document.extract_tables(pages=[1])[0].to_list() == ROWS
         with pytest.raises(PdfResourceLimitException, match="max_decoded_stream_bytes"):
-            document.extract_tables(pages=[1])
+            document.extract_tables(pages=[2])
 
 
 def test_images_and_unused_forms_are_not_decoded_or_ocr_processed(tmp_path):
@@ -369,7 +369,7 @@ def test_csv_quotes_delimiters_quotes_newlines_unicode_and_empty_cells(delimiter
         ['a,b;c\td|e "quoted"', "Привет\nsecond\rthird\r\nfourth", ""],
         ["001", "=SUM(A1:A2)", "<x>&y"],
     ]
-    table = ExtractedTable(2, rows)
+    table = ExtractedTable(3, rows)
     csv_text = table.to_csv(delimiter=delimiter)
     assert list(csv.reader(io.StringIO(csv_text, newline=""), delimiter=delimiter)) == rows
     assert csv_text.endswith("\r\n")
@@ -379,11 +379,11 @@ def test_csv_quotes_delimiters_quotes_newlines_unicode_and_empty_cells(delimiter
 @pytest.mark.parametrize("delimiter", [None, 1, "", "::", '"', "\r", "\n", "\x00"])
 def test_csv_rejects_invalid_delimiters(delimiter):
     with pytest.raises(PdfValidationException, match="delimiter"):
-        ExtractedTable(0, [["x"]]).to_csv(delimiter=delimiter)
+        ExtractedTable(1, [["x"]]).to_csv(delimiter=delimiter)
 
 
 def test_csv_save_utf8_bom_directories_and_overwrite_protection(tmp_path):
-    table = ExtractedTable(0, [["Key", "Value"], ["café", "Привет"]])
+    table = ExtractedTable(1, [["Key", "Value"], ["café", "Привет"]])
     path = tmp_path / "nested" / "table.csv"
     assert table.save_csv(path) == path
     assert path.read_bytes() == table.to_csv().encode("utf-8")
@@ -396,7 +396,7 @@ def test_csv_save_utf8_bom_directories_and_overwrite_protection(tmp_path):
 
 
 def test_csv_encoding_failure_preserves_existing_file_and_creates_no_directories(tmp_path):
-    table = ExtractedTable(0, [["Привет"]])
+    table = ExtractedTable(1, [["Привет"]])
     path = tmp_path / "table.csv"
     path.write_bytes(b"original")
     with pytest.raises(UnicodeEncodeError):
@@ -418,18 +418,18 @@ def test_csv_write_failure_preserves_existing_file_and_cleans_staging(tmp_path, 
 
     monkeypatch.setattr(output.os, "replace", fail_replace)
     with pytest.raises(OSError, match="simulated disk failure"):
-        ExtractedTable(0, [["new"]]).save_csv(path)
+        ExtractedTable(1, [["new"]]).save_csv(path)
     assert path.read_bytes() == b"original"
     assert list(tmp_path.iterdir()) == [path]
 
 
 def test_empty_snapshot_and_mutable_constructor_inputs():
-    table = ExtractedTable(0, [])
+    table = ExtractedTable(1, [])
     assert table.to_list() == [] and table.to_csv() == ""
     assert table.row_count == table.column_count == 0
     rows = [["a", "b"]]
     spans = [[1, 1]]
-    table = ExtractedTable(0, rows, spans)
+    table = ExtractedTable(1, rows, spans)
     rows[0][0] = "changed"
     spans[0][0] = 2
     assert table.rows == (("a", "b"),)

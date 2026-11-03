@@ -43,7 +43,7 @@ ALGORITHMS = ["RC4", "AES-128", "AES-256"]
 def _encrypted(tmp_path, algorithm: str, user: str, owner: str = "owner") -> Path:
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("SECRET42", 50, 700)
+    document.pages[1].add_text("SECRET42", 50, 700)
     document.encrypt(user, owner, algorithm=algorithm)
     path = tmp_path / f"{algorithm}-{len(user)}.pdf"
     document.save(path)
@@ -55,7 +55,7 @@ def _encrypted(tmp_path, algorithm: str, user: str, owner: str = "owner") -> Pat
 def test_the_owner_password_opens_it(tmp_path, algorithm, length):
     path = _encrypted(tmp_path, algorithm, "x" * length)
     with Document(path, password="owner") as document:
-        assert "SECRET42" in document.pages[0].extract_text()
+        assert "SECRET42" in document.pages[1].extract_text()
 
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
@@ -63,7 +63,7 @@ def test_the_owner_password_opens_it(tmp_path, algorithm, length):
 def test_the_user_password_still_opens_it(tmp_path, algorithm, length):
     path = _encrypted(tmp_path, algorithm, "x" * length)
     with Document(path, password="x" * length) as document:
-        assert "SECRET42" in document.pages[0].extract_text()
+        assert "SECRET42" in document.pages[1].extract_text()
 
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
@@ -81,7 +81,7 @@ def test_a_user_password_containing_the_paddings_first_bytes(tmp_path, algorithm
     path = _encrypted(tmp_path, algorithm, user)
     for password in ("owner", user):
         with Document(path, password=password) as document:
-            assert "SECRET42" in document.pages[0].extract_text()
+            assert "SECRET42" in document.pages[1].extract_text()
 
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
@@ -107,7 +107,7 @@ def test_a_password_past_the_truncation_point_is_the_same_password(tmp_path):
     path = _encrypted(tmp_path, "RC4", "x" * 40)
     for same in ("x" * 39, "x" * 40, "x" * 41, "x" * 32):
         with Document(path, password=same) as document:
-            assert "SECRET42" in document.pages[0].extract_text()
+            assert "SECRET42" in document.pages[1].extract_text()
     with pytest.raises(PdfSecurityException):
         Document(path, password="x" * 31)
 
@@ -154,4 +154,4 @@ def test_the_owner_check_is_not_satisfied_by_a_near_miss():
 @pytest.mark.parametrize("password", ["user", "owner"])
 def test_the_third_party_fixtures_are_unaffected(name, password):
     with Document(FIXTURES / name, password=password) as document:
-        assert b"SECRET42" in document.pages[0].content
+        assert b"SECRET42" in document.pages[1].content

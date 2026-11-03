@@ -31,8 +31,8 @@ Supported:
   `AnnotationCollection`, `Field`, `Form`, `OutlineItem`, `OutlineCollection`,
   `Layer`, `LayerConfiguration` and `LayerCollection` declare their attributes,
   so a misspelling is refused rather than accepted and dropped. It matters most
-  on `Page`, which is rebuilt on every access -- `pages[0] is pages[0]` is
-  `False` -- so `pages[0].rotate = 270` (the property is `rotation`) used to
+  on `Page`, which is rebuilt on every access -- `pages[1] is pages[1]` is
+  `False` -- so `pages[1].rotate = 270` (the property is `rotation`) used to
   take the value, lose it with the throwaway object, and save the page upright
   without a word.
 - Create empty PDF documents.
@@ -612,7 +612,7 @@ Supported:
   returns its total number of nodes (roots and descendants). No extra dependency
   is required. Both APIs operate on bookmark metadata without decoding page
   content or appearance streams, including for streaming/encrypted documents.
-  - The top-level object is `{"schema_version": 1, "bookmarks": [...]}`.
+  - The top-level object is `{"schema_version": 2, "bookmarks": [...]}`.
     Every node has exactly `title`, `target`, `is_bold`, `is_italic`, `color`,
     `open`, `children`. Children are arrays in sibling order. Titles are Unicode;
     flags are booleans, and `color` is null or three finite RGB components in
@@ -620,8 +620,8 @@ Supported:
     heading. `open` matters for parents; the PDF format has no open-state entry
     on a leaf, so a leaf reloads with `open=False` after PDF serialization.
   - Supported target shapes (all fields listed are required):
-    - Local page: `{"kind":"page","page_index":0,"view":"XYZ",
-      "parameters":[0,700,null]}`. Indices are zero-based; the eight view names
+    - Local page: `{"kind":"page","page_index":1,"view":"XYZ",
+      "parameters":[0,700,null]}`. Indices are one-based; the eight view names
       and exact parameter counts are `Fit/FitB` (0), `XYZ` (3),
       `FitH/FitBH/FitV/FitBV` (1), `FitR` (4). Parameters are finite numbers;
       null is allowed except for FitR, XYZ zoom is non-negative, and FitR
@@ -636,7 +636,7 @@ Supported:
       "is_map":null}`; `is_map` is null (absent) or a boolean.
     - Remote GoToR: `{"kind":"remote","file":"other.pdf",
       "destination":...,"new_window":null}`. The destination is a page shape
-      whose `page_index` is a remote page number (0..2147483647), or a name
+      whose `page_index` is a remote page number (1..2147483648), or a name
       shape. It is never resolved/remapped against this PDF. `new_window` is
       null (absent) or a boolean; file specifications must be plain strings.
     - Named action: `{"kind":"named_action","name":"NextPage"}`.
@@ -751,7 +751,7 @@ Supported:
     skipped. Title whitespace is collapsed to one space, retaining the matched
     case and Unicode. Zero-width matches with empty titles are skipped; a
     lookahead with a nonempty selected capture can still create a bookmark.
-  - `pages` contains zero-based indices, preserving order and repetitions.
+  - `pages` contains one-based indices, preserving order and repetitions.
     `None` selects all pages; `[]` selects none. `clip`, `exclude_regions` and
     `skip_artifacts` have the same meaning as plain-text extraction, including
     geometry/ActualText limitations when filtering by region. Optional-content
@@ -866,7 +866,7 @@ with Document() as document:
     document.load_from("input.pdf", limits=limits)
 
 with Document.open_streaming("input.pdf", limits=limits) as lazy_document:
-    first_page_bytes = lazy_document.pages[0].content
+    first_page_bytes = lazy_document.pages[1].content
 ```
 
 The effective policy is available as `document.load_limits`. Passing no policy
@@ -1126,13 +1126,33 @@ Boundaries:
   glyph. Resolution falls back to leaving the font whole for any used code it
   cannot map exactly, so a used glyph is never erased.
 
+## Page-numbering compatibility
+
+Public page identifiers, including `pages`, `page_index`, destinations, forms,
+comparison/extraction results and layout result page lists, start at **1**.
+Counts, offsets and indices of annotations, tables and outline children are
+unchanged. `Document.page_labels` retains zero-based indices, as in .NET.
+The engine, COS structures and standard XFDF page attributes remain zero-based.
+
+Affected JSON exports and ZIP manifests use `schema_version: 2` and one-based
+page fields. Bookmark and annotation JSON importers accept version 1 (zero-based)
+and version 2 (one-based). Public `page_map` keys and values are always one-based.
+Schemas without page identifiers retain their existing version.
+
 ## Pages
 
 Supported:
 
 - `Document.pages` exposes a mutable `PageCollection`.
+- `pages.add(other.pages)` imports the complete source collection together,
+  preserving resources, forms and references between imported pages. It returns
+  `None`; an empty collection is a no-op. Adding the document's own collection
+  copies the original pages once. Single-page calls continue to return a `Page`.
 - Get page count with `len(document.pages)` or `document.page_count`.
-- Iterate, index, slice, and use negative indexing for pages.
+- Iterate pages in document order and access them by numbers `1..N`.
+  `Page.number` and `Page.index` are one-based. Zero, negative numbers and
+  collection slices are rejected; insertion positions are `1..N+1`.
+  `index_of(page)` returns its number, or `0` when the page is absent.
 - Add a blank page, **of any size**: `pages.add()` is US Letter, and
   `pages.add(PageSize.A4)`, `pages.add(size=PageSize.A4.landscape())`,
   `pages.add(size="legal")` or `pages.add(size=(300, 400))` give the size asked
@@ -1163,14 +1183,16 @@ Supported:
   one call each, since every import walks the other document's forms, outlines
   and structure tree. The page-label rule is `merge`'s: a document with no
   labels of its own contributes empty ones rather than numbers it never had.
-- Delete pages by index and clear all pages.
+- Delete a page by number, pass an iterable of original page numbers, or use
+  `pages.delete()` / `pages.clear()` to delete all pages. Batch selections are
+  validated before changes; repeated numbers are deleted once.
 - **Select pages using familiar range expressions.**
   `parse_page_range("1-3,7,10-", page_count)` (exported from `aspose_pdf`)
-  returns a tuple of zero-based indices for text extraction, page rendering
+  returns a tuple of one-based indices for text extraction, page rendering
   exports, comparisons and other APIs with a `pages` argument. Comma-separated
   numbers select individual pages; ranges include both endpoints; a missing
   end means the last page of that document. Ranges may descend: `"4-2"`
-  returns indices `(3, 2, 1)`. Case-insensitive `odd` and `even` select physical
+  returns page numbers `(4, 3, 2)`. Case-insensitive `odd` and `even` select physical
   pages 1, 3, 5, ... and 2, 4, 6, ... respectively, regardless of page labels or
   the numeric indexing mode. `last` names the final page and works as either
   endpoint: `"2-last"` selects page 2 onward, and `"last-1"` reverses the
@@ -1178,10 +1200,11 @@ Supported:
   preserved, including overlaps such as `"odd,last"`. Whitespace around items
   and hyphens is ignored.
   Expressions use **one-based** page numbers by default; `one_based=False`
-  explicitly interprets them as zero-based. The result is always zero-based;
-  add one to each index for facades expecting one-based page numbers.
+  explicitly interprets input numbers as zero-based. The result is always
+  one-based and can be passed directly to document APIs and facades.
   `Document.extract_pages("1-3,7,10-")` accepts a one-based expression directly,
-  while existing integer selections and slices retain their zero-based meaning.
+  integer selections also use one-based page numbers. Slices and negative
+  indices are not accepted.
   `SplitOptions(selections=["odd", "even", "last-1"])` also accepts these
   expressions, resolving keywords and open ends separately for each input.
   Empty items, unsupported syntax and pages outside the document are rejected.
@@ -1211,7 +1234,7 @@ Supported:
 - **Find visually blank pages, including scanned sides.**
   `Page.is_blank(dpi=72, white_threshold=250, max_ink_ratio=0,
   include_annotations=True)` returns a boolean;
-  `Document.find_blank_pages(pages=None, ...)` returns zero-based blank-page
+  `Document.find_blank_pages(pages=None, ...)` returns one-based blank-page
   indices without modifying or deleting any page. This helps locate blank
   scanner passes before choosing which pages to retain.
   - Each selected page is rendered on white paper without antialiasing. A
@@ -1250,7 +1273,7 @@ Supported:
 - **Remove visually blank pages in one operation.**
   `Document.remove_blank_pages(pages=None, dpi=72, white_threshold=250,
   max_ink_ratio=0, include_annotations=True, dry_run=False)` edits the open
-  document and returns the removed pages' **original zero-based indices**.
+  document and returns the removed pages' **original one-based indices**.
   It shares `find_blank_pages`'s selection, rendering and threshold rules.
   Results retain selection order, with repeats reported once; deletion runs
   in descending index order so the surviving pages retain their original order.
@@ -1285,10 +1308,10 @@ Supported:
   objects, form data or earlier PDF revisions.
 - **Find visually duplicate pages.**
   `Document.find_duplicate_pages(pages=None, dpi=72,
-  include_annotations=True)` returns groups such as `[[0, 3], [1, 4, 7]]`.
+  include_annotations=True)` returns groups such as `[[1, 4], [2, 5, 8]]`.
   This helps identify repeated scans or repeated page views when PDF streams,
   resource names or invisible OCR text differ. It does not edit or delete pages.
-  - A group contains at least two distinct zero-based indices, including the
+  - A group contains at least two distinct one-based indices, including the
     first occurrence. Groups are ordered by their first member's occurrence
     in the selection; members retain selection order. Unique pages are omitted.
     Explicit selections may be generators, and repeated indices are included
@@ -1332,7 +1355,7 @@ Supported:
 - **Remove repeated page views in one operation.**
   `Document.remove_duplicate_pages(pages=None, keep="first", dpi=72,
   include_annotations=True, dry_run=False)` removes visually duplicate pages
-  from the open document and returns their original zero-based indices in
+  from the open document and returns their original one-based indices in
   ascending document order. This streamlines cleanup of repeated scans and
   assembled reports without manually deleting each detected copy.
   - Detection uses `find_duplicate_pages`'s exact rendered comparison, resource
@@ -1375,7 +1398,7 @@ Supported:
   additional dependency.
   - `other` is an open `Document`. The two page selectors are independent:
     `None` means all pages in that document; explicit iterables contain
-    zero-based indices, keeping order and repetitions. Entries are paired by
+    one-based indices, keeping order and repetitions. Entries are paired by
     position, without automatic page matching. The shorter selection produces
     missing-page results on its remaining pairs, with `None` indices/sizes.
     Two empty selections return `[]`; one empty selection reports every page
@@ -1485,7 +1508,7 @@ Supported:
     `max_diff_ratio` are labeled **Within tolerance** and text matches after
     normalization are labeled **Normalized text match**, rather than implying
     exact source equality. A combined pair matches only when both checks do.
-  - Selectors are zero-based, preserve order and repetitions, and pair by
+  - Selectors are one-based, preserve order and repetitions, and pair by
     position, with missing tails reported explicitly. Displayed page numbers
     are one-based. `None` selects all pages; two empty selections produce an
     empty report. There is no automatic page alignment. Titles, source labels and
@@ -1522,7 +1545,7 @@ Supported:
   include_annotations=True)` returns `(x0, y0, x1, y1)` around rendered ink,
   or `None` for a visually blank page. `Document.get_content_bounds(pages=None,
   dpi=72, white_threshold=250, include_annotations=True)` returns a dictionary
-  from zero-based page indices to those bounds, retaining blank entries as
+  from one-based page indices to those bounds, retaining blank entries as
   `None`. This lets processing teams review white margins, preview crop regions
   and prepare consistent document layouts before committing page edits.
   - Document selections retain first-selected order and measure repeated
@@ -1611,7 +1634,7 @@ Supported:
 - **Trim a document or page selection with one planned operation.**
   `Document.auto_crop(margin=0, pages=None, uniform=False, dpi=72,
   white_threshold=250, include_annotations=True, dry_run=False)` returns a
-  dictionary of changed CropBoxes, keyed by original zero-based page index in
+  dictionary of changed CropBoxes, keyed by original one-based page index in
   first-selected order. Each value is an unrotated `(x0, y0, x1, y1)` tuple in
   page user units. Repeated indices count once; `None` selects all pages.
   Empty inputs and plans return `{}`. The returned dictionary is detached.
@@ -1720,7 +1743,7 @@ Supported:
   from aspose_pdf import Document
 
   with Document.open_streaming("scans.pdf") as document:
-      document.pages[0].translate_content(18, -6)
+      document.pages[1].translate_content(18, -6)
       document.save("aligned.pdf")
   ```
 
@@ -1794,7 +1817,7 @@ Supported:
   with Document("book.pdf") as document:
       indices = document.page_labels.find_pages("A-12")
       if indices:
-          with document.extract_pages(indices) as selected:
+          with document.extract_pages(index + 1 for index in indices) as selected:
               selected.save("appendix-pages.pdf")
   ```
 - **How the document asks to be opened and shown** (ISO 32000-1 tables 28 and
@@ -1814,8 +1837,7 @@ Supported:
   do, all three agreeing on a missing one with MuPDF. `/PrintPageRange` is
   ignored altogether unless it is an even-length array of ascending whole page
   numbers the document has, exactly as pdf.js treats it, and it is handed out
-  and taken as the 0-based page indices used everywhere else rather than the
-  1-based numbers the file holds. Writing was checked by reading the result
+  and taken as one-based page numbers, matching the numbers the file holds. Writing was checked by reading the result
   back with all three references; setting a value outside a table's list, a
   copy count below one, or a print range naming pages the document does not
   have raises rather than writing nonsense.
@@ -1875,8 +1897,8 @@ Supported:
 
   ```python
   with Document("application.pdf") as document:
-      document.pages[0].tab_order = "row"
-      document.pages[1].tab_order = "column"
+      document.pages[1].tab_order = "row"
+      document.pages[2].tab_order = "column"
       document.save("keyboard-navigation.pdf")
   ```
 - **Read and set the page crop box through `Page.crop_box`, which reports the
@@ -2266,7 +2288,7 @@ Supported:
   dither=False, quality=85, lossless=False, method=4, compression="deflate",
   compresslevel=6, include_manifest=False, overwrite=True)` returns ZIP bytes
   and optionally writes a file or binary stream.
-  - Page selection uses zero-based indices, preserving order and repetitions;
+  - Page selection uses one-based indices, preserving order and repetitions;
     `None` selects all pages. Generated flat names `page-0001.png`, etc. follow
     output position, including repeated source pages. Empty documents or
     selections produce valid empty archives, or a manifest with an empty list.
@@ -2288,9 +2310,9 @@ Supported:
     lossless mode preserves their pixels. PNG ignores quality; quality is still
     validated as a finite number 0-100. All flags/options are checked even for
     empty selections and when the current format does not use them.
-  - `include_manifest=True` adds `manifest.json` with `schema_version: 1`,
+  - `include_manifest=True` adds `manifest.json` with `schema_version: 2`,
     normalized `image_format` and `mode`, `dpi`, and a `pages` array. Every record
-    contains `archive_name`, zero-based `page_index`, pixel `width`/`height` and
+    contains `archive_name`, one-based `page_index`, pixel `width`/`height` and
     encoded `size` in bytes. ZIP compression is `deflate` or `stored`, with
     integer `compresslevel` 0-9. Fixed timestamps (1980-01-01) and regular-file
     permissions give deterministic archives in the same runtime/codecs.
@@ -2319,7 +2341,7 @@ Supported:
   layout="horizontal", reverse=False, split_ratio=0.5, gutter=0,
   flatten_fields=True)` returns an independent `Document` suitable for scan and
   book preparation. No rasterization or new dependency is required.
-  - `pages` selects zero-based source indices to split; unselected pages are
+  - `pages` selects one-based source indices to split; unselected pages are
     retained once in source order. Repeated selections split a page once and
     selection order does not reorder the document. `None` splits all pages,
     `[]` copies the document, and an empty source returns an empty document.
@@ -2402,7 +2424,7 @@ Supported:
     PDF points; `/UserUnit` does not rescale the argument. Cells must have positive
     area and remain positive at the writer's six-decimal coordinate precision.
     All selected geometry is checked before importing pages.
-  - `pages` contains zero-based source indices. Unselected pages remain once in
+  - `pages` contains one-based source indices. Unselected pages remain once in
     source order, each selected page's tiles stay together, and repeats select a
     page once. Selection order does not reorder source pages. `None` selects all,
     `[]` returns an independent copy, and an empty source returns an empty PDF.
@@ -2438,7 +2460,7 @@ Supported:
   an independent image-only `Document`.
   This supports static handoffs and viewing workflows that need page pictures
   instead of the original fonts, vector paths and interactive objects.
-  - `pages=None` selects all pages; explicit iterables contain zero-based
+  - `pages=None` selects all pages; explicit iterables contain one-based
     indices, preserving order and repetitions. Empty selections and documents
     return a new empty document. Every option, index, selected page's geometry
     and planned output budget is checked before rendering or creating output.
@@ -2511,7 +2533,7 @@ Supported:
   `Document.save_contact_sheet(destination, ...)` saves it as PNG, TIFF, JPEG or
   optional WebP. This provides document overviews, scan inspection and review
   previews without a separate imaging library for PNG/TIFF/JPEG.
-  - `pages=None` selects all pages; an iterable selects zero-based indices,
+  - `pages=None` selects all pages; an iterable selects one-based indices,
     preserving their order and repetitions. Empty selections/documents raise
     `PdfValidationException`. The entire selection is checked before rendering.
   - `columns=4` is the maximum number of columns; fewer selected pages reduce
@@ -2970,7 +2992,7 @@ Boundaries:
   No HTML/Markdown conversion or page rasterization is involved; recognition
   reuses their layout analysis. The immutable snapshots remain usable after
   source edits and disposal.
-  - Every snapshot exposes zero-based `page_index`, `kind` (`heading`,
+  - Every snapshot exposes one-based `page_index`, `kind` (`heading`,
     `paragraph`, `list`, `table`, or opt-in `figure`), `x`, `y`, `text`, `level`,
     `items`, `rows`, `column_spans`, `ordered`, `alt` and `image`. Text blocks
     carry normalized text; headings have inferred levels, with zero elsewhere.
@@ -2999,7 +3021,7 @@ Boundaries:
     by `max_codec_work_bytes` while escaping text and encoding images.
   - `Document.export_blocks_json(destination=None, ..., overwrite=True)` and
     `Page.export_blocks_json(...)` return deterministic UTF-8 bytes with a
-    trailing newline. Version 1 is `{"schema_version": 1, "blocks": [...]}`;
+    trailing newline. Version 2 is `{"schema_version": 2, "blocks": [...]}`;
     every block has the fields listed above, with tuples represented as arrays,
     absent images as `null`, and PNG bytes as `data:image/png;base64,...`.
     `block.to_dict()` returns an independent dictionary in the same format.
@@ -3020,7 +3042,7 @@ Boundaries:
   `Page.extract_tables(clip_to_page=True)` return `list[ExtractedTable]`, using
   the same layout analysis as HTML/Markdown without converting through either
   format. `ExtractedTable` is importable from `aspose_pdf` and
-  `aspose_pdf.table_extraction`. Its `page_index` is zero-based; immutable
+  `aspose_pdf.table_extraction`. Its `page_index` is one-based; immutable
   `rows` and `column_spans` are rectangular tuples of tuples. `to_list()`
   returns fresh editable row lists. `row_count` includes every row, including
   the first; `column_count` includes blank and covered columns. No header is
@@ -3067,9 +3089,9 @@ Boundaries:
     Compression is `"deflate"` (level 0..9) or `"stored"`; timestamps and regular
     file permissions are fixed for deterministic archives. Flat generated names
     contain no source filenames or path components.
-    `include_manifest=True` adds UTF-8 `manifest.json` with `schema_version: 1`,
+    `include_manifest=True` adds UTF-8 `manifest.json` with `schema_version: 2`,
     `delimiter`, `encoding` and a `tables` array. Records contain `archive_name`,
-    original zero-based `page_index`, zero-based `table_index` within that page,
+    original one-based `page_index`, one-based `table_index` within that page,
     `row_count`, `column_count` and uncompressed CSV byte `size`.
     Selection, entry/table counts, row/cell counts, member bytes and cumulative
     CSV/manifest bytes obey `PdfLoadLimits`; the ZIP buffer is bounded by
@@ -3082,7 +3104,7 @@ Boundaries:
     ```python
     with Document("report.pdf") as document:
         document.export_tables_zip(
-            "tables.zip", pages=[0, 2], delimiter=";",
+            "tables.zip", pages=[1, 3], delimiter=";",
             encoding="utf-8-sig", include_manifest=True,
         )
     ```
@@ -3255,7 +3277,7 @@ Supported:
   `list[PageTextComparison]` for reviewing text changes without differences
   in colors or drawing positions.
   - `other` must be an open `Document`. Selectors independently accept
-    zero-based page indices, preserving order and repetitions; `None` means
+    one-based page indices, preserving order and repetitions; `None` means
     every page. Selected pages are paired by position, without searching for
     matching pages or aligning insertions. The shorter side produces missing
     pages for the remaining pairs. Two empty selections return `[]`. Both
@@ -3323,7 +3345,7 @@ Supported:
   `Page.extract_words(clip=None, skip_artifacts=False)` return a list of
   detached `TextWord` snapshots. This supports indexing, region analysis and
   custom annotation placement without converting through HTML or Markdown.
-  - Each result contains `text`, its original zero-based `page_index`,
+  - Each result contains `text`, its original one-based `page_index`,
     `rect=(x0, y0, x1, y1)` (also `bbox`) and a four-point `quad`. Coordinates
     are PDF points in unrotated user space with a lower-left origin, independent
     of page rotation, MediaBox/CropBox origin and visible cropping. The quad
@@ -3362,7 +3384,7 @@ Supported:
     cannot reliably be assigned to individual glyphs. Structure-tree logical
     replacements are not reconstructed. Thus the result can contain fewer
     words than plain text extraction; it is not an OCR or accessibility reader.
-  - `pages=None` selects all pages; explicit zero-based selections preserve
+  - `pages=None` selects all pages; explicit one-based selections preserve
     order and repetitions. Empty documents or selections return `[]`. All
     indices, clip options and the boolean artifact flag are validated before
     content is decoded. Streaming and password-protected sources are supported;
@@ -3385,8 +3407,8 @@ Supported:
 - Read all extracted text at once with `PdfExtractor.get_text()`.
 - **Choose pages when extracting text.**
   `Document.extract_text(pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` accepts an iterable of
-  zero-based integer page indices: lists, tuples, `range(...)` and generators
-  retain their order and repeated entries. `pages=[2, 0, 2]` reads the third,
+  one-based integer page indices: lists, tuples, `range(...)` and generators
+  retain their order and repeated entries. `pages=[3, 1, 3]` reads the third,
   first, then third page. `None` keeps the existing all-pages behavior; an
   empty iterable returns `""`. One newline separates each selected occurrence,
   including empty pages, and each page's own line breaks and whitespace are
@@ -3401,7 +3423,7 @@ Supported:
     partial results from a failed run are not published. An unbound extractor
     accepts the all-pages or empty selection as empty text, but explicit page
     numbers are out of range.
-  - `TextExtractorOptions(limits=None, pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` uses **zero-based**
+  - `TextExtractorOptions(limits=None, pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` uses **one-based**
     indices. `options.pages` is a tuple snapshot (or `None`), also when assigned
     later, so a generator or an externally edited list cannot change later
     inputs/runs. The first positional argument remains the resource policy.
@@ -3423,7 +3445,7 @@ Supported:
 - **Iterate page text and stream TXT exports.**
   `Document.iter_text_pages(pages=None, clip=None, skip_artifacts=False,
   exclude_regions=None)` yields one text string per selected page as the caller
-  advances. Page indices are zero-based, preserving order, repetitions and
+  advances. Page indices are one-based, preserving order, repetitions and
   empty pages. Options are validated and snapshotted when the method is called;
   page text is read only on demand. Close the iterator to stop early, and keep
   the source open with its page order unchanged while iterating. Yielded strings
@@ -3461,7 +3483,7 @@ Supported:
   from aspose_pdf import Document
 
   with Document.open_streaming("report.pdf") as document:
-      with closing(document.iter_text_pages(pages=[2, 0])) as pages:
+      with closing(document.iter_text_pages(pages=[3, 1])) as pages:
           for text in pages:
               print(text)
       document.save_as_text("report.txt", page_separator="\f", encoding="utf-8-sig")
@@ -3683,6 +3705,20 @@ Supported:
   offsets/page indices. A *document* is taken page by page, which is the only
   way a fragment can say which page it came from; an object whose pages are not
   themselves extractable answers for its own text as a whole.
+- `TextFragmentAbsorber` reads the current `phrase` and `text_search_options`
+  before each visit, including options assigned after construction and in-place
+  changes to regex mode or case sensitivity. Invalid updated regexes raise
+  `re.error` before collecting more results.
+- Assigning `fragment.text` on a fragment collected from a real PDF page edits
+  that occurrence in the page content and survives save/reload. Repeated
+  occurrences can be edited independently and in any order. Replacements are
+  literal strings, retain existing fonts and do not reflow layout. Character
+  offsets describe the original visit; geometry is invalidated after editing.
+  An unrelated content edit or page deletion requires collecting again.
+  Ambiguous mappings (including uneditable form-XObject matches), overlapping
+  edits, empty matches and unencodable replacements raise before changing page
+  content. Detached fragments remain ordinary data objects. The .NET
+  `TextFragment.text_state` formatting interface is not implemented.
 - **A fragment says where it is and what it is set in.** Visiting a page (or a
   document's pages) gives each `TextFragment` a `rect` and `quads` in default
   user space -- one quadrilateral per baseline it covers -- plus `font_name`
@@ -3699,7 +3735,7 @@ Supported:
   than being given a box that is not its own.
 - **Highlight search matches in one operation**: `Document.highlight_text(search,
   page_index=None, case_sensitive=True, max_count=0, regex=False, color=(1, 1, 0),
-  opacity=0.5, contents="", title=None)` scans every page or one zero-based page
+  opacity=0.5, contents="", title=None)` scans every page or one one-based page
   index; `Page.highlight_text(...)` limits the same operation to that page.
   Strings are literal unless `regex=True`; compiled text `re.Pattern` objects
   retain their flags, and `case_sensitive=False` adds `IGNORECASE`. Search runs
@@ -3784,10 +3820,10 @@ Supported:
     `annotations`, `skipped_fragments` for uncertain geometry, and
     `existing_fragments` for addresses covered by existing links. Counts are
     `linked_count`, `skipped_count`, `existing_count`, and their sum,
-    `matched_count`. Fragments contain exact matched text, a zero-based page
+    `matched_count`. Fragments contain exact matched text, a one-based page
     index and start/end offsets in full-page extraction; placed fragments
     also carry their rectangle and quads.
-  - `pages` accepts zero-based integer iterables, retaining order/repetitions;
+  - `pages` accepts one-based integer iterables, retaining order/repetitions;
     `None` selects all and an empty iterable does nothing. `max_count=0` is
     unlimited; a positive count caps addresses **considered**, including skips
     and already covered addresses, across pages. Later pages are not read after
@@ -4210,7 +4246,7 @@ Supported:
   and `has_differences`, `embedded` with `program_key`, `program_format`,
   `program_bytes` (the program with its filters undone) and `stored_bytes`
   (what it costs this file), `is_subset`, `is_standard_14`, `has_to_unicode`,
-  and the `page_indexes` (zero-based) and `locations` it is used at.
+  and the `page_indexes` (one-based) and `locations` it is used at.
   - The walk is `_rendering_font_occurrences`, the same one the PDF/A, PDF/UA
     and PDF/X checks read, so the inventory and the conformance reports cannot
     disagree about which fonts a document has. A font reached only through the
@@ -4331,7 +4367,7 @@ Supported:
   inspection and avoidable document rework. It does not modify the PDF.
   - The threshold must be a finite positive number. A placement is reported
     when either image axis is strictly below it; equality passes. `pages=None`
-    scans all pages; explicit zero-based selections preserve order and repeats.
+    scans all pages; explicit one-based selections preserve order and repeats.
     Empty documents or selections return an empty list. All options and the
     complete selection are validated before content is inspected.
   - Inspection follows actual `Do` paints through inherited page resources
@@ -4349,7 +4385,7 @@ Supported:
     Decimal transform composition and axis calculations avoid false findings
     at exact thresholds. Singular transforms have no painted area and are
     skipped. Nonfinite or unrepresentable numeric results raise exceptions.
-  - Reports contain zero-based `page_index` and `placement_index`, a tuple
+  - Reports contain one-based `page_index` and `placement_index`, a tuple
     `resource_path`, `pixel_width`, `pixel_height`, `dpi_x`, `dpi_y`, `bbox`,
     and `is_inline`. `effective_dpi` is the lower axis DPI; `image_name` is the
     last resource name, or `None` for inline images. `placement_index` counts
@@ -4384,7 +4420,7 @@ Supported:
   overwrite=True)` returns ZIP bytes and optionally writes a file or binary
   stream. This reduces manual extraction and packaging when reusing photos,
   illustrations or scans, migrating content, or handing assets to another team.
-  - `pages=None` selects all pages; explicit iterables contain zero-based
+  - `pages=None` selects all pages; explicit iterables contain one-based
     indices. First-selected page order is retained, repeated pages are visited
     once, and resources are ordered by their name paths. Shared image objects
     produce one file with multiple manifest occurrences; distinct objects
@@ -4418,10 +4454,10 @@ Supported:
   - Members have generated flat names `image-0001.png`, etc.; PDF resource
     names never become archive paths, preventing traversal and naming
     collisions. `include_manifest=True` appends ASCII-escaped `manifest.json`
-    with `schema_version: 1` and an `images` array. Records contain
+    with `schema_version: 2` and an `images` array. Records contain
     `archive_name`, encoded file `size`, declared `width`/`height`,
     `bits_per_component`, terminal `source_filter`, `has_soft_mask`, and
-    `occurrences` containing zero-based `page_index` and `resource_path`
+    `occurrences` containing one-based `page_index` and `resource_path`
     arrays of original PDF names. Occurrences follow selected-page/path order.
   - `compression` accepts `"deflate"` or `"stored"`; `compresslevel` is an
     integer 0-9 and is ignored for stored output. Flags require booleans.
@@ -5249,7 +5285,7 @@ with Document("application.pdf") as document:
   `Form.add_text_field()`, `add_checkbox()`, `add_radio_group()`,
   `add_list_box()`, `add_combo_box()`, `add_push_button()`, and
   `remove_field()` (also available as `Field.remove()`). Pages may be supplied
-  as a `Page` or zero-based page index; dotted names create non-terminal field
+  as a `Page` or one-based page index; dotted names create non-terminal field
   parents. The writer emits indirect terminal fields and widget annotations,
   widget `/Parent` and page `/P` links, page `/Annots`, AcroForm `/Fields`,
   `/DR` and `/DA`, common/type-specific flags, choice `/Opt` and multiselect
@@ -5348,7 +5384,7 @@ with Document("application.pdf") as document:
   The legacy no-argument calls still bake both fields and non-widget annotations.
   Set `annotations=False` for fields only, `fields=False` for annotations only,
   or pass an iterable of fully qualified terminal field names as `fields`.
-  `pages` is an iterable of zero-based indices, intersected with the field
+  `pages` is an iterable of one-based indices, intersected with the field
   selection; omitted means all pages. Duplicates are ignored, empty selections
   do nothing for that category, and invalid indices/types are rejected before
   edits. Unknown field names raise `KeyError` unless `strict=False`.
@@ -5359,7 +5395,7 @@ with Document("application.pdf") as document:
   document.flatten(
       fields=["applicant.name", "applicant.address"],
       annotations=False,
-      pages=[0],
+      pages=[1],
   )
   ```
 
@@ -5542,7 +5578,7 @@ Supported:
 
   with Document("report.pdf") as document:
       source = FileSpecification("source.csv", b"item,total\nA,42\n", mime_type="text/csv")
-      document.pages[0].annotations.add_file_attachment(
+      document.pages[1].annotations.add_file_attachment(
           (72, 650, 96, 674), source, "Open the source data", icon="Paperclip"
       )
       document.save("report-with-source.pdf")
@@ -5557,7 +5593,7 @@ Supported:
   without `pages`. This helps teams remove outdated review rounds or a
   specific reviewer's superseded notes before handoff, reducing manual cleanup
   while retaining other reviewers' comments and normal document navigation.
-  - Pages use zero-based indices; None selects all and repeats are inspected
+  - Pages use one-based indices; None selects all and repeats are inspected
     once. An empty page/author/subtype selection matches nothing. Authors
     accept one string or an iterable of alternatives; None disables author
     filtering. Exact matching is case-sensitive by default; false uses Unicode
@@ -5629,11 +5665,11 @@ Supported:
   ordering and diagnostics: one row/record per target or action, including
   malformed targets and action chains. Repeated page selections are inspected
   once in first-selected order. No optional dependency is needed.
-  - JSON is UTF-8 with `{"schema_version": 1, "links": [...]}`. Each record
+  - JSON is UTF-8 with `{"schema_version": 2, "links": [...]}`. Each record
     contains `page_index`, `annotation_index`, `rect`, `action_type`,
     `action_path`, `uri`, `resolved_uri`, `destination`, `destination_name`,
     `target_page_index`, `file`, `named_action` and `issues`. Indices are
-    zero-based; rectangles and issue tuples become arrays. Missing values are
+    one-based; rectangles and issue tuples become arrays. Missing values are
     `null`. A destination is `{page_index, view, parameters}` with all numeric
     and null view parameters preserved. For `GoToR` its page index is remote;
     `target_page_index` reports local destinations only.
@@ -5642,7 +5678,7 @@ Supported:
     `remote_page_number`, `destination_name`, `destination_view`,
     `destination_parameters`, `file`, `named_action`, `x0`, `y0`, `x1`, `y1`,
     `issues`. All page numbers are one-based; annotation indices remain
-    zero-based. Local and remote targets occupy separate columns. Parameters
+    one-based. Local and remote targets occupy separate columns. Parameters
     and issues are JSON arrays within CSV cells; other absent values are empty
     cells. Standard quoting preserves Unicode, delimiters, quotes and embedded
     newlines with CRLF records. `encoding="utf-8-sig"` adds a spreadsheet BOM.
@@ -5667,7 +5703,7 @@ Supported:
   file targets with source coordinates. Content and publishing teams can audit
   references, prepare link migrations and locate items needing review without
   manually opening every link. No optional dependency or network is needed.
-  - All pages are selected by default. Explicit selections contain zero-based
+  - All pages are selected by default. Explicit selections contain one-based
     indices and are fully validated before metadata reads. First-selected
     order is retained and repeated pages are inspected once. Records follow
     annotation order, direct `Dest` before `A`, then action `Next` preorder.
@@ -5676,7 +5712,7 @@ Supported:
     occurrence. A shared action is reported for each chain path; a cycle
     produces a diagnostic record instead of recursing forever.
   - `ExtractedLink` is frozen and detached, available from `aspose_pdf` and
-    `aspose_pdf.link_extraction`. It contains zero-based `page_index` and
+    `aspose_pdf.link_extraction`. It contains one-based `page_index` and
     `annotation_index`, normalized `rect=(x0,y0,x1,y1)`, `action_type`,
     `action_path`, `uri`, `resolved_uri`, `destination`, `destination_name`,
     `file`, `named_action` and a tuple of `issues`. Unrelated fields are `None`.
@@ -5714,7 +5750,7 @@ Supported:
     ```python
     with Document("manual.pdf") as document:
         document.base_uri = "https://example.com/manuals/"
-        document.pages[0].add_link((60, 700, 200, 720), URIAction("appendix.pdf"))
+        document.pages[1].add_link((60, 700, 200, 720), URIAction("appendix.pdf"))
         document.save("relocated-manual.pdf")
     ```
   - Direct `Dest` and `GoTo` resolve explicit targets, named aliases,
@@ -5727,7 +5763,7 @@ Supported:
     All eight standard views use the same exact arity/parameter validation as
     `validate_links()`; unresolved or malformed targets retain diagnostics.
   - `GoToR` exposes its declared `file` and either a typed destination whose
-    page is a remote zero-based number or a remote `destination_name`, without
+    page is a remote one-based number or a remote `destination_name`, without
     looking that name up locally. `Launch` and `SubmitForm` expose common
     string/file-dictionary targets; file dictionaries prefer `/UF` over `/F`.
     Paths remain as declared, without filesystem lookup or normalization.
@@ -5772,7 +5808,7 @@ Supported:
     replacements can remove a component, but an empty resulting URL is refused.
     PDF URL strings use BOM-aware Unicode decoding and the existing Latin-1
     fallback; malformed BOM-encoded text is rejected.
-  - `pages` contains zero-based indices; None selects all and `[]` selects
+  - `pages` contains one-based indices; None selects all and `[]` selects
     none. Repetitions are inspected once in first-selected order. The return
     value counts distinct changed annotation dictionaries, not replacement
     occurrences or unique URL strings. No-op substitutions are not counted.
@@ -5819,7 +5855,7 @@ Supported:
   names as needed. No optional dependency or network access is needed.
   - Issues are frozen, detached values available from `aspose_pdf` and
     `aspose_pdf.link_validation`. `source` is `annotation`, `outline` or
-    `named_destination`; `page_index`/`annotation_index` are zero-based, and
+    `named_destination`; `page_index`/`annotation_index` are one-based, and
     `outline_path` is a tuple of zero-based sibling indices from the root.
     `destination_name` identifies a referenced name or a definition being
     checked; byte-string names use Latin-1 as in `NamedDestinationCollection`.
@@ -5862,7 +5898,7 @@ Supported:
     `Dest`/`A` conflict discarded by bookmark loading are outside this check.
     Current page references, rather than stale cached page indices, decide
     whether loaded targets still exist after page edits.
-  - `pages` accepts an iterable of zero-based indices; order is retained and
+  - `pages` accepts an iterable of one-based indices; order is retained and
     duplicates are checked once. Options and selections are validated before
     metadata reads. `pages=[]` skips page annotations while retaining enabled
     global checks; disabling both flags then returns an empty report directly.
@@ -5883,8 +5919,8 @@ Supported:
   detached dictionaries without JSON encoding. Each call reads current values;
   editing a snapshot does not edit the PDF, and snapshots remain usable after
   the document is disposed. No optional dependency is required.
-  - The top-level object is `{"schema_version": 1, "annotations": [...]}`.
-    Records contain `id`, zero-based `page_index` and `annotation_index` (the
+  - The top-level object is `{"schema_version": 2, "annotations": [...]}`.
+    Records contain `id`, one-based `page_index` and `annotation_index` (the
     original `/Annots` position), `subtype`, `rect`, `contents`, `author`,
     `properties` and `links`. `contents` and `author` read `/Contents` and `/T`,
     with an empty string when absent. A merged form widget's `/T` can be its
@@ -5911,7 +5947,7 @@ Supported:
     References are never recursively embedded, so reply/popup cycles remain
     finite. Links across pages or to filtered-out annotations retain their
     object IDs even when the target is outside the output.
-  - `pages` is an iterable of zero-based integer indices. Order is preserved;
+  - `pages` is an iterable of one-based integer indices. Order is preserved;
     duplicate page selections are exported once. `subtypes` accepts a string,
     `AnnotationType`, or an iterable of either; a leading `/` is accepted and
     matching is case-sensitive. `None` includes all pages/types, including
@@ -5945,7 +5981,7 @@ Supported:
     `popup`, `parent`. **Page numbers are one-based** for review in a spreadsheet;
     `annotation_index` retains the original zero-based `/Annots` position.
     A page report keeps that page's number in the source PDF. `pages` input
-    remains zero-based and follows JSON export: selection order is retained,
+    remains one-based and follows JSON export: selection order is retained,
     repeated pages are included once, and annotation order is unchanged.
   - Subtype selection matches JSON: strings, `AnnotationType` values or iterables
     of either, optional leading `/`, and case-sensitive matching. By default
@@ -6003,7 +6039,7 @@ Supported:
     Polygon, PolyLine, Highlight, Underline, Squiggly, StrikeOut, Stamp, Caret,
     Ink, Popup and Redact. Widgets, links, file attachments, media and unknown
     subtypes are skipped, including when requested explicitly.
-  - Filters match JSON export: zero-based page indices, first occurrence of
+  - Filters match JSON export: one-based page indices, first occurrence of
     repeated pages, selected page/annotation order, and a case-sensitive subtype
     string, `AnnotationType` or iterable, with optional leading `/`. Empty
     selections produce valid XFDF with an empty `annots` collection. All
@@ -6073,7 +6109,7 @@ Supported:
     QuadPoints, vertices, ink strokes, FreeText appearance/style strings,
     justification and FreeText/Stamp rotation. Export's RGB conversion and
     omitted properties cannot be reversed. Redact imports markup only.
-  - Source pages use zero-based indices. `page_map` has the same validation and
+  - Source pages use one-based indices. `page_map` has the same validation and
     remapping rules as JSON import below. `Page.annotations.import_xfdf(source)`
     retargets one source page's annotations to that page and rejects input
     spanning multiple source pages. No pages are created. Coordinates retain
@@ -6134,7 +6170,7 @@ Supported:
     order within each page, existing annotations are preserved, and importing
     the same file twice adds duplicates. There is no merge, update, replacement,
     deduplication or automatic page creation.
-  - Without `page_map`, zero-based source page indices must already exist in
+  - Without `page_map`, one-based source page indices must already exist in
     the destination. An explicit mapping must cover every source page used in
     the JSON; values must be valid destination indices. Several source pages
     may map to one destination. `Page.annotations.import_json(source) -> int`
@@ -7583,13 +7619,11 @@ Supported:
 - `Splitter` emits one document per page from every input, preserving input and
   page order -- or, with `SplitOptions(selections=[...])`, one document per
   **selection**: each entry is what `Document.extract_pages` takes, an iterable of
-  0-based page indexes, a `slice`, or a **one-based** range string.
-  Both `[range(0, 3), [3, 4], slice(5, None)]` and `["1-3", "4-5", "6-"]`
-  cut a document into three. A slice or open-ended string range is resolved
-  against each input's own length; string expansion obeys the plugin's limits.
-  For integer selections,
-  a negative index counts from the end, and a selection naming a page the document
-  does not have is refused rather than trimmed.
+  positive one-based page numbers or a **one-based** range string.
+  Both `[range(1, 4), [4, 5], "6-"]` and `["1-3", "4-5", "6-"]`
+  cut a document into three. Open-ended ranges are resolved against each
+  input's own length; expansion obeys the plugin's limits. Slices and negative
+  indices are rejected, as are selections naming pages the document does not have.
   `SplitOptions(pages_per_part=N)` instead produces consecutive batches of at
   most N pages, with a shorter final batch, following `Document.split_every`.
   Grouping restarts for every input PDF; results keep input order and page order.
@@ -7815,7 +7849,7 @@ Save a PDF page as a WebP preview, or keep its rendered pixels exactly:
 from aspose_pdf import Document
 
 with Document("report.pdf") as document:
-    document.pages[0].save_as_image("preview.webp", dpi=96, quality=75)
+    document.pages[1].save_as_image("preview.webp", dpi=96, quality=75)
     document.save_page_as_image(0, "page.webp", dpi=150, lossless=True, method=6)
 ```
 

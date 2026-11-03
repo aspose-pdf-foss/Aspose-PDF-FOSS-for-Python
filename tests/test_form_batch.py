@@ -55,7 +55,7 @@ def _template(title="Template"):
         form.add_signature_field("sig", page, (20, 50, 140, 74))
         page.add_link((230, 50, 300, 74), URIAction("https://example.test"))
         page.annotations.add("Text", (240, 80, 260, 100), "Review note")
-        document.outlines.add(OutlineItem("Start", 0))
+        document.outlines.add(OutlineItem("Start", 1))
         document.add_attachment("help.txt", b"Instructions")
         return _bytes(document)
 
@@ -151,7 +151,7 @@ def test_copies_preserve_template_metadata_bookmarks_links_and_attachments(tmp_p
         assert document.outlines[0].title == "Start"
         assert document.extract_links()[0].uri == "https://example.test"
         assert document.attachments["help.txt"] == b"Instructions"
-        assert document.pages[0].size.width == 320
+        assert document.pages[1].size.width == 320
 
 
 def test_configured_file_and_stream_outputs_receive_matching_results(tmp_path):
@@ -171,7 +171,7 @@ def test_flatten_bakes_fields_and_keeps_links_and_other_annotations():
     with Document(FormFiller().process(options)[0].to_array()) as document:
         assert len(document.form) == 0
         assert document.extract_links()[0].uri == "https://example.test"
-        assert any(annotation.contents == "Review note" for annotation in document.pages[0].annotations)
+        assert any(annotation.contents == "Review note" for annotation in document.pages[1].annotations)
         assert "Alice" in document.extract_text()
 
 
@@ -369,16 +369,16 @@ def test_all_working_documents_close_on_late_load_failure(monkeypatch):
 def test_filled_appearances_change_and_survive_independent_round_trips():
     raw = _tiny_template()
     with Document(raw) as template:
-        before = template.pages[0].render(dpi=36, antialias=False).pixels
+        before = template.pages[1].render(dpi=36, antialias=False).pixels
     results = FormFiller().process(FormFillerOptions([
         {"name": "First"}, {"name": "Second"},
     ]).add_input(ByteArrayDataSource(raw)))
     pixels = []
     for result in results:
         with Document(result.to_array()) as document:
-            pixels.append(document.pages[0].render(dpi=36, antialias=False).pixels)
+            pixels.append(document.pages[1].render(dpi=36, antialias=False).pixels)
             with Document(_bytes(document)) as reopened:
-                assert reopened.pages[0].render(dpi=36, antialias=False).pixels == pixels[-1]
+                assert reopened.pages[1].render(dpi=36, antialias=False).pixels == pixels[-1]
     assert pixels[0] != pixels[1] and all(pixel != before for pixel in pixels)
 
 

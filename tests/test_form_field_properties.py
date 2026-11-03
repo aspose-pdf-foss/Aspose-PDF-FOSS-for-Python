@@ -87,10 +87,10 @@ def test_choices_and_buttons(authored):
 
 
 def test_widgets_say_where_the_field_is(authored):
-    assert _field(authored, "person.city").widgets == [FieldWidget(1, (72.0, 700.0, 272.0, 724.0))]
+    assert _field(authored, "person.city").widgets == [FieldWidget(2, (72.0, 700.0, 272.0, 724.0))]
     size = _field(authored, "size")
     assert [widget.rect for widget in size.widgets] == [(72.0, 600.0, 90.0, 618.0), (100.0, 600.0, 118.0, 618.0)]
-    assert (size.page_index, size.rect) == (0, (72.0, 600.0, 90.0, 618.0))
+    assert (size.page_index, size.rect) == (1, (72.0, 600.0, 90.0, 618.0))
 
 
 # --- fields other producers write -------------------------------------------------------------------
@@ -221,8 +221,8 @@ def test_inherited_attributes(crafted):
 def test_a_field_with_separate_widgets(crafted):
     twice = _field(crafted, "twice")
     assert twice.widgets == [
-        FieldWidget(0, (300.0, 700.0, 400.0, 724.0)),
-        FieldWidget(1, (300.0, 600.0, 400.0, 624.0)),  # found by /Annots, corners in order
+        FieldWidget(1, (300.0, 700.0, 400.0, 724.0)),
+        FieldWidget(2, (300.0, 600.0, 400.0, 624.0)),  # found by /Annots, corners in order
     ]
     assert (twice.alternate_name, twice.mapping_name) == ("Tooltip ü", "export_name")
 
@@ -279,7 +279,7 @@ def test_only_widget_annotations_are_widgets_and_a_parent_loop_ends():
     catalog = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
     catalog.mapping[PdfName("AcroForm")] = PdfDictionary({PdfName("Fields"): PdfArray([field])})
     looped = _field(_reloaded(document), "looped")
-    assert looped.widgets == [FieldWidget(0, (72.0, 700.0, 272.0, 724.0))]
+    assert looped.widgets == [FieldWidget(1, (72.0, 700.0, 272.0, 724.0))]
     assert looped.max_length is None and looped.flags == 0
 
 

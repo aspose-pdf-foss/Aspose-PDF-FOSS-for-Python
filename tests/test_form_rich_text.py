@@ -41,7 +41,7 @@ def document():
 
 def _text(document, name="notes", **kwargs):
     return document.form.add_text_field(
-        name, 0, (20, 90, 300, 180), value="Template", multiline=True, **kwargs
+        name, 1, (20, 90, 300, 180), value="Template", multiline=True, **kwargs
     )
 
 
@@ -52,7 +52,7 @@ def _bytes(document):
 
 
 def _appearance(document, index=0):
-    return document.pages[0].annotations[index].appearance_normal
+    return document.pages[1].annotations[index].appearance_normal
 
 
 @pytest.mark.parametrize("on_disk", [False, True])
@@ -68,7 +68,7 @@ def test_rich_and_plain_values_and_appearance_survive_save(document, tmp_path, o
     assert not document.form.validate()
     content = _appearance(document)
     assert b"/HeBo " in content and b"/HeOb " in content and b"1 0 0 rg" in content
-    before = document.pages[0].render(antialias=False).pixels
+    before = document.pages[1].render(antialias=False).pixels
     if on_disk:
         source = tmp_path / "rich.pdf"
         document.save(source)
@@ -78,12 +78,12 @@ def test_rich_and_plain_values_and_appearance_survive_save(document, tmp_path, o
         assert reopened.form["notes"].rich_text == MARKUP
         assert reopened.form["notes"].value == PLAIN
         assert _appearance(reopened) == content
-        assert reopened.pages[0].render(antialias=False).pixels == before
+        assert reopened.pages[1].render(antialias=False).pixels == before
         reopened.form.generate_appearances()
-        assert reopened.pages[0].render(antialias=False).pixels == before
+        assert reopened.pages[1].render(antialias=False).pixels == before
         reopened.form.flatten()
         assert len(reopened.form) == 0
-        assert reopened.pages[0].render(antialias=False).pixels == before
+        assert reopened.pages[1].render(antialias=False).pixels == before
 
 
 def test_entities_unicode_and_paragraphs_use_the_shared_parser(document):
@@ -249,9 +249,9 @@ def test_rich_text_rejects_non_strings(document, value):
     "kind", ["checkbox", "radio", "listbox", "combobox", "pushbutton", "signature"]
 )
 def test_other_field_types_report_none_and_reject_edits(document, kind):
-    args = ("other", 0, (5, 5, 40, 40))
+    args = ("other", 1, (5, 5, 40, 40))
     if kind == "radio":
-        field = document.form.add_radio_group("other", 0, [("A", (5, 5, 40, 40))])
+        field = document.form.add_radio_group("other", 1, [("A", (5, 5, 40, 40))])
     elif kind in ("listbox", "combobox"):
         factory = (
             document.form.add_list_box

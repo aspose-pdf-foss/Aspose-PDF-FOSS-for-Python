@@ -41,7 +41,7 @@ def _page_link_annots(engine: SimplePdf, page_index: int) -> list[PdfDictionary]
 
 def test_link_with_uri_action():
     doc = _two_page_doc()
-    doc.pages[0].add_link((10, 700, 200, 720), URIAction("https://example.com"))
+    doc.pages[1].add_link((10, 700, 200, 720), URIAction("https://example.com"))
     (link,) = _page_link_annots(doc._engine_pdf, 0)
     action = doc._engine_pdf._resolve(link.mapping.get(PdfName("A")))
     assert doc._engine_pdf._get_name(action.mapping.get(PdfName("S"))) == "URI"
@@ -50,9 +50,9 @@ def test_link_with_uri_action():
 
 def test_link_with_goto_xyz_destination():
     doc = _two_page_doc()
-    doc.pages[0].add_link(
+    doc.pages[1].add_link(
         (10, 650, 200, 670),
-        GoToAction(XYZDestination(page=1, left=0, top=792, zoom=2.0)),
+        GoToAction(XYZDestination(page=2, left=0, top=792, zoom=2.0)),
     )
     (link,) = _page_link_annots(doc._engine_pdf, 0)
     action = doc._engine_pdf._resolve(link.mapping.get(PdfName("A")))
@@ -64,7 +64,7 @@ def test_link_with_goto_xyz_destination():
 
 def test_bare_destination_link():
     doc = _two_page_doc()
-    doc.pages[0].add_link((10, 600, 200, 620), XYZDestination(page=1, top=400))
+    doc.pages[1].add_link((10, 600, 200, 620), XYZDestination(page=2, top=400))
     (link,) = _page_link_annots(doc._engine_pdf, 0)
     dest = doc._engine_pdf._resolve(link.mapping.get(PdfName("Dest")))
     assert isinstance(dest, PdfArray)
@@ -74,7 +74,7 @@ def test_bare_destination_link():
 def test_outline_typed_destinations_round_trip():
     doc = _two_page_doc()
     doc.outlines.add(
-        OutlineItem("Zoom p2", destination=XYZDestination(page=1, top=792, zoom=1.5))
+        OutlineItem("Zoom p2", destination=XYZDestination(page=2, top=792, zoom=1.5))
     )
     doc.outlines.add(OutlineItem("Web", destination=URIAction("https://ex.com")))
     buffer = io.BytesIO()
@@ -104,7 +104,7 @@ def test_push_button_action():
     doc = _two_page_doc()
     doc.form.add_push_button(
         "btn",
-        doc.pages[0],
+        doc.pages[1],
         (100, 100, 200, 130),
         caption="Open",
         action=URIAction("https://ex.com"),
@@ -124,9 +124,9 @@ def test_push_button_action():
 
 def test_goto_remote_uses_page_number_not_ref():
     doc = _two_page_doc()
-    doc.pages[0].add_link(
+    doc.pages[1].add_link(
         (10, 500, 100, 520),
-        GoToRAction("other.pdf", XYZDestination(page=2, top=100)),
+        GoToRAction("other.pdf", XYZDestination(page=3, top=100)),
     )
     (link,) = _page_link_annots(doc._engine_pdf, 0)
     action = doc._engine_pdf._resolve(link.mapping.get(PdfName("A")))
@@ -141,8 +141,8 @@ def test_goto_remote_uses_page_number_not_ref():
 def test_goto_remote_rejects_invalid_page_numbers(page):
     doc = _two_page_doc()
 
-    with pytest.raises(ValueError, match="non-negative integer"):
-        doc.pages[0].add_link(
+    with pytest.raises(ValueError, match="positive integer"):
+        doc.pages[1].add_link(
             (10, 500, 100, 520),
             GoToRAction("other.pdf", XYZDestination(page=page, top=100)),
         )

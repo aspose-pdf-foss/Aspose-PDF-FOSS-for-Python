@@ -103,7 +103,7 @@ def test_repoint_and_remove_base_change_resolved_addresses_without_rewriting_lin
 
 
 def test_absolute_links_ignore_the_base_and_link_reports_use_it(document):
-    document.pages[0].add_link(
+    document.pages[1].add_link(
         (20, 60, 120, 80), URIAction("https://external.test/page")
     )
     document.base_uri = "https://example.test/docs/"

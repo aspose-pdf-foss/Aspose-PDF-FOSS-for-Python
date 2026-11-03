@@ -927,19 +927,19 @@ class PdfFileInfo(_BoundFacade):
 
     def get_page_width(self, page_number: int) -> float:
         """The width of a page in points, from its media box."""
-        return self.document.pages[self._page_index(page_number)].size.width
+        return self.document._page_at(self._page_index(page_number)).size.width
 
     def get_page_height(self, page_number: int) -> float:
         """The height of a page in points, from its media box."""
-        return self.document.pages[self._page_index(page_number)].size.height
+        return self.document._page_at(self._page_index(page_number)).size.height
 
     def get_page_rotation(self, page_number: int) -> int:
         """A page's clockwise rotation in degrees."""
-        return self.document.pages[self._page_index(page_number)].rotation
+        return self.document._page_at(self._page_index(page_number)).rotation
 
     def get_page_box(self, page_number: int, boundary: str = "MediaBox"):
         """One of a page's five boxes, as ``(x0, y0, x1, y1)``."""
-        return self.document.pages[self._page_index(page_number)].get_box(boundary)
+        return self.document._page_at(self._page_index(page_number)).get_box(boundary)
 
 
 def _info_property(key: str) -> property:
@@ -1090,7 +1090,7 @@ class PdfBookmarkEditor(_BoundFacade):
         from aspose_pdf.outlines import OutlineItem
 
         index = self._page_index(page_number)
-        return self.document.outlines.add(OutlineItem(title, index, **options))
+        return self.document.outlines.add(OutlineItem(title, index + 1, **options))
 
     def create_bookmarks(self, titles: Any) -> list[Any]:
         """Add a bookmark per ``(title, page_number)`` pair, in order."""
@@ -1135,7 +1135,7 @@ class PdfAnnotationEditor(_BoundFacade):
             wanted = {str(subtype).lstrip("/") for subtype in subtypes}
         found: list[Any] = []
         for index in self._page_indices(page_numbers):
-            for annotation in self.document.pages[index].annotations:
+            for annotation in self.document._page_at(index).annotations:
                 if wanted is None or annotation.subtype in wanted:
                     found.append(annotation)
         return found
@@ -1152,7 +1152,7 @@ class PdfAnnotationEditor(_BoundFacade):
         wanted = None if subtype is None else str(subtype).lstrip("/")
         deleted = 0
         for index in self._page_indices(page_numbers):
-            annotations = self.document.pages[index].annotations
+            annotations = self.document._page_at(index).annotations
             if wanted is None:
                 deleted += len(annotations)
                 annotations.clear()
@@ -1173,7 +1173,7 @@ class PdfAnnotationEditor(_BoundFacade):
         self._ensure_not_disposed()
         self._operation_start()
         try:
-            self.document.flatten()
+            self.document._api_flatten()
             return True
         except PDF_OPERATION_ERRORS as exc:
             return self._operation_fail(exc)
@@ -1195,7 +1195,7 @@ class PdfFileStamp(_BoundFacade):
         self._ensure_not_disposed()
         self._operation_start()
         try:
-            self.document.add_stamp(stamp, self._page_indices(page_numbers))
+            self.document._api_add_stamp(stamp, self._page_indices(page_numbers))
             return True
         except PDF_OPERATION_ERRORS as exc:
             return self._operation_fail(exc)
@@ -1298,7 +1298,7 @@ class PdfPageEditor(_BoundFacade):
         self._operation_start()
         try:
             for index in self._page_indices(page_numbers):
-                page = self.document.pages[index]
+                page = self.document._page_at(index)
                 page.rotation = page.rotation + degrees if relative else degrees
             return True
         except PDF_OPERATION_ERRORS as exc:
@@ -1323,7 +1323,7 @@ class PdfPageEditor(_BoundFacade):
         self._operation_start()
         try:
             for index in self._page_indices(page_numbers):
-                page = self.document.pages[index]
+                page = self.document._page_at(index)
                 if scale_content:
                     page.resize(page_size, mode=mode)
                 else:
@@ -1338,7 +1338,7 @@ class PdfPageEditor(_BoundFacade):
         self._operation_start()
         try:
             for index in self._page_indices(page_numbers):
-                self.document.pages[index].crop_box = rect
+                self.document._page_at(index).crop_box = rect
             return True
         except PDF_OPERATION_ERRORS as exc:
             return self._operation_fail(exc)
@@ -1366,11 +1366,11 @@ class PdfPageEditor(_BoundFacade):
             # the destination itself and the page lands one short of where it was
             # asked for.
             if destination > index:
-                pages.insert(destination + 1, pages[index])
-                pages.delete(index)
-            else:
-                pages.insert(destination, pages[index])
+                pages.insert(destination + 2, pages[index + 1])
                 pages.delete(index + 1)
+            else:
+                pages.insert(destination + 1, pages[index + 1])
+                pages.delete(index + 2)
             return True
         except PDF_OPERATION_ERRORS as exc:
             return self._operation_fail(exc)
@@ -1386,7 +1386,7 @@ class PdfPageEditor(_BoundFacade):
                     "Removing every page would leave no document behind"
                 )
             for index in indices:
-                self.document.pages.delete(index)
+                self.document.pages.delete((index) + 1)
             return True
         except PDF_OPERATION_ERRORS as exc:
             return self._operation_fail(exc)
@@ -1500,7 +1500,7 @@ class PdfConverter(_BoundFacade):
             self._image_index = 0
             kind = str(image_format).strip().lower().lstrip(".")
             for index in self._page_indices(page_numbers):
-                raster = self.document.render_page(index, dpi=self._dpi)
+                raster = self.document._api_render_page(index, dpi=self._dpi)
                 if kind in ("jpg", "jpeg"):
                     self._images.append(raster.to_jpeg(quality=quality, mode=mode, threshold=threshold, dither=dither))
                 elif kind in ("tif", "tiff"):
@@ -1552,7 +1552,7 @@ class PdfConverter(_BoundFacade):
         self._ensure_not_disposed()
         self._operation_start()
         try:
-            self.document.save_as_tiff(
+            self.document._api_save_as_tiff(
                 destination,
                 pages=self._page_indices(page_numbers),
                 dpi=self._dpi,

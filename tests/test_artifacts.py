@@ -112,7 +112,7 @@ class TestWrapArtifact:
 def _stamped(stamp, size: PageSize = PageSize.A4) -> tuple[Document, bytes]:
     document, _page_object = _page(size)
     document.add_stamp(stamp)
-    return document, document.pages[0].content
+    return document, document.pages[1].content
 
 
 class TestStampArtifacts:
@@ -183,7 +183,7 @@ class TestStampArtifacts:
         document, _page_object = _page()
         with pytest.raises(PdfValidationException, match="artifact type is one of"):
             document.add_stamp(TextStamp(value="x", artifact_type="Nonsense"))
-        assert b"Artifact" not in document.pages[0].content
+        assert b"Artifact" not in document.pages[1].content
         document.close()
 
     def test_the_box_is_where_the_stamp_landed(self):
@@ -212,8 +212,8 @@ class TestStampArtifacts:
         document.pages.add(PageSize.A4)
         document.pages.add(PageSize.A5)
         document.add_stamp(TextStamp(value="DRAFT"))
-        first = _bbox(_artifacts(document.pages[0].content)[0])
-        second = _bbox(_artifacts(document.pages[1].content)[0])
+        first = _bbox(_artifacts(document.pages[1].content)[0])
+        second = _bbox(_artifacts(document.pages[2].content)[0])
         assert first != second  # the pages are not the same size
         document.close()
 
@@ -251,7 +251,7 @@ class TestImpositionStaysContent:
     def test_n_up_marks_nothing(self):
         with self._source() as document:
             sheets = document.n_up(2, 2)
-            content = sheets.pages[0].content
+            content = sheets.pages[1].content
             assert b"/Artifact" not in content
             assert content.count(b"Do Q") == 4
             sheets.close()
@@ -259,7 +259,7 @@ class TestImpositionStaysContent:
     def test_a_booklet_marks_nothing(self):
         with self._source() as document:
             booklet = document.booklet()
-            assert b"/Artifact" not in booklet.pages[0].content
+            assert b"/Artifact" not in booklet.pages[1].content
             booklet.close()
 
 
@@ -275,8 +275,8 @@ class TestRedactionBars:
         document.save(buffer)
         document.close()
         reopened = Document(buffer.getvalue())
-        reopened.pages[0].redact_text("123-45-6789", overlay=True)
-        return reopened, reopened.pages[0].content
+        reopened.pages[1].redact_text("123-45-6789", overlay=True)
+        return reopened, reopened.pages[1].content
 
     def test_the_bars_are_a_layout_artifact(self):
         document, content = self._redacted()
@@ -643,7 +643,7 @@ def test_a_stamped_tagged_document_survives_a_round_trip(tmp_path):
         assert not [
             w for w in result.warnings if "neither tagged nor an artifact" in w
         ]
-        content = reopened.pages[0].content
+        content = reopened.pages[1].content
     assert content.count(b"/Artifact") == 2
     assert b"/Subtype /Watermark" in content
     assert b"/Subtype /Footer" in content

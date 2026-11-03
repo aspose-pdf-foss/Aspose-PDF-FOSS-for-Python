@@ -77,7 +77,7 @@ def _saved(document: Document) -> bytes:
 def test_a_page_of_another_document_is_stamped_onto_a_page():
     document = _source(2)
     letterhead = Document(io.BytesIO(_letterhead()))
-    document.add_stamp(PageStamp(letterhead.pages[0]))
+    document.add_stamp(PageStamp(letterhead.pages[1]))
     reloaded = _roundtrip(document)
     for page in reloaded.pages:
         text = page.extract_text()
@@ -90,12 +90,12 @@ def test_everything_the_stamped_page_draws_with_comes_across():
     # left a reference behind rather than copying, there would be nothing to write.
     document = _source(1)
     letterhead = Document(io.BytesIO(_letterhead()))
-    document.add_stamp(PageStamp(letterhead.pages[0], background=True))
+    document.add_stamp(PageStamp(letterhead.pages[1], background=True))
     letterhead.dispose()
 
     reloaded = _roundtrip(document)
-    assert "ACME CORP" in reloaded.pages[0].extract_text()
-    raster = reloaded.pages[0].render(dpi=72)
+    assert "ACME CORP" in reloaded.pages[1].extract_text()
+    raster = reloaded.pages[1].render(dpi=72)
     assert raster.get_pixel(100, 40) == (0, 51, 102)  # the letterhead bar
     assert raster.get_pixel(380, 595 - 557) == (255, 204, 0)  # its circle
 
@@ -103,7 +103,7 @@ def test_everything_the_stamped_page_draws_with_comes_across():
 def test_a_background_page_stamp_goes_under_the_pages_own_content():
     document = _source(1)
     source = Document(io.BytesIO(_letterhead()))
-    document.add_stamp(PageStamp(source.pages[0], background=True))
+    document.add_stamp(PageStamp(source.pages[1], background=True))
     data = _saved(document)
     # A background stamp is put in front of the page's content, which makes the
     # page's /Contents an array with the stamp first.
@@ -113,7 +113,7 @@ def test_a_background_page_stamp_goes_under_the_pages_own_content():
 def test_one_form_serves_every_page_it_is_stamped_on():
     document = _source(4)
     source = Document(io.BytesIO(_letterhead()))
-    document.add_stamp(PageStamp(source.pages[0]))
+    document.add_stamp(PageStamp(source.pages[1]))
     data = _saved(document)
     # One form, invoked from each page: the import happens once.
     assert data.count(b"/Subtype /Form") == 1
@@ -125,7 +125,7 @@ def test_a_page_stamp_takes_the_placement_every_stamp_takes():
     source = Document(io.BytesIO(_letterhead()))
     document.add_stamp(
         PageStamp(
-            source.pages[0],
+            source.pages[1],
             zoom=0.5,
             rotate=90,
             opacity=0.5,
@@ -138,35 +138,35 @@ def test_a_page_stamp_takes_the_placement_every_stamp_takes():
     data = _saved(document)
     assert b"/ca 0.5" in data
     assert b"Do Q" in data
-    assert "ACME CORP" in _roundtrip(document).pages[0].extract_text()
+    assert "ACME CORP" in _roundtrip(document).pages[1].extract_text()
 
 
 def test_a_page_of_the_same_document_can_be_stamped_on_another():
     document = _source(2)
-    document.add_stamp(PageStamp(document.pages[0]), pages=[1])
+    document.add_stamp(PageStamp(document.pages[1]), pages=[2])
     reloaded = _roundtrip(document)
-    assert reloaded.pages[1].extract_text().count("PAGE 1") == 1
-    assert "PAGE 2" in reloaded.pages[1].extract_text()
+    assert reloaded.pages[2].extract_text().count("PAGE 1") == 1
+    assert "PAGE 2" in reloaded.pages[2].extract_text()
 
 
 def test_a_document_and_a_page_index_are_accepted_as_well_as_a_page():
     document = _source(1)
     source = Document(io.BytesIO(_letterhead()))
-    document.add_stamp(PageStamp(source, page_index=0))
-    assert "ACME CORP" in _roundtrip(document).pages[0].extract_text()
+    document.add_stamp(PageStamp(source, page_index=1))
+    assert "ACME CORP" in _roundtrip(document).pages[1].extract_text()
 
 
 def test_the_rotation_of_the_stamped_page_is_applied():
     # A page with /Rotate 90 is *shown* turned, so what is placed is the turned
     # page -- and for a quarter turn the form's width and height swap.
     source = _source(1)
-    source.pages[0].rotation = 90
+    source.pages[1].rotation = 90
     buffer = io.BytesIO()
     source.save(buffer)
     turned = Document(io.BytesIO(buffer.getvalue()))
 
     document = _source(1)
-    document.add_stamp(PageStamp(turned.pages[0]))
+    document.add_stamp(PageStamp(turned.pages[1]))
     data = _saved(document)
     # The form's box is the page's displayed size: A5 turned is landscape.
     assert b"/BBox [ 0 0 595.275591 419.527559 ]" in data
@@ -178,7 +178,7 @@ def test_a_page_stamp_needs_a_page():
         document.add_stamp(PageStamp())
     with pytest.raises(PdfValidationException, match="places a Page or a Document"):
         document.add_stamp(PageStamp("letterhead.pdf"))
-    with pytest.raises(PdfValidationException, match="page number from zero"):
+    with pytest.raises(PdfValidationException, match="page number from one"):
         document.add_stamp(PageStamp(document, page_index=-1))
 
 
@@ -186,7 +186,7 @@ def test_a_page_the_source_does_not_have_is_refused():
     document = _source(1)
     source = Document(io.BytesIO(_letterhead()))
     with pytest.raises(Exception, match=r"(?i)page index|out of range"):
-        document.add_stamp(PageStamp(source, page_index=7))
+        document.add_stamp(PageStamp(source, page_index=8))
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ def test_four_pages_go_on_a_sheet_the_size_of_one():
     document = _source(6)
     imposed = document.n_up(2, 2)
     assert imposed.page_count == 2  # six pages, four to a sheet
-    assert imposed.pages[0].size == PageSize.A5
+    assert imposed.pages[1].size == PageSize.A5
 
 
 def test_every_page_lands_on_a_sheet():
@@ -253,14 +253,14 @@ def test_column_order_goes_down_each_column():
 def test_a_sheet_size_is_taken_as_given():
     document = _source(2)
     imposed = document.n_up(1, 2, page_size=PageSize.A4.landscape())
-    assert imposed.pages[0].size == PageSize.A4.landscape()
+    assert imposed.pages[1].size == PageSize.A4.landscape()
     assert imposed.page_count == 1
 
 
 def test_a_sheet_size_may_be_a_plain_pair():
     document = _source(2)
     imposed = document.n_up(1, 2, page_size=(800, 400))
-    assert imposed.pages[0].size.width == 800.0
+    assert imposed.pages[1].size.width == 800.0
 
 
 def test_each_page_is_scaled_proportionally_and_centred():
@@ -318,7 +318,7 @@ def test_the_imposed_document_is_independent_of_the_one_it_came_from():
     document = _source(4)
     imposed = document.n_up(2, 2)
     document.dispose()
-    assert "PAGE 1" in _roundtrip(imposed).pages[0].extract_text()
+    assert "PAGE 1" in _roundtrip(imposed).pages[1].extract_text()
 
 
 # ---------------------------------------------------------------------------
@@ -346,8 +346,8 @@ def test_a_booklet_is_two_pages_to_a_sheet():
     document = _source(4)
     imposed = document.booklet()
     assert imposed.page_count == 2
-    assert imposed.pages[0].size.width == pytest.approx(PageSize.A5.width * 2)
-    assert imposed.pages[0].size.height == pytest.approx(PageSize.A5.height)
+    assert imposed.pages[1].size.width == pytest.approx(PageSize.A5.width * 2)
+    assert imposed.pages[1].size.height == pytest.approx(PageSize.A5.height)
 
 
 def test_a_booklet_pads_to_a_multiple_of_four():
@@ -372,14 +372,14 @@ def test_the_two_pages_of_a_booklet_sheet_are_side_by_side():
 def test_a_booklet_sheet_size_can_be_given():
     document = _source(4)
     imposed = document.booklet(page_size=PageSize.A4.landscape(), margin=10)
-    assert imposed.pages[0].size == PageSize.A4.landscape()
+    assert imposed.pages[1].size == PageSize.A4.landscape()
 
 
 def test_a_booklet_of_one_page_is_one_sheet_of_four_places():
     document = _source(1)
     imposed = document.booklet()
     assert imposed.page_count == 2  # four places, two sheets
-    assert "PAGE 1" in _roundtrip(imposed).pages[0].extract_text()
+    assert "PAGE 1" in _roundtrip(imposed).pages[1].extract_text()
 
 
 # ---------------------------------------------------------------------------

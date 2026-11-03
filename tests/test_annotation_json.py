@@ -130,9 +130,9 @@ def test_versioned_unicode_json_and_page_collection_match_after_pdf_round_trips(
         assert isinstance(data, bytes) and data.endswith(b"\n")
         assert not data.startswith(b"\xef\xbb\xbf")
         assert "Иванова".encode() in data
-        assert payload["schema_version"] == 1
+        assert payload["schema_version"] == 2
         assert list(payload) == ["schema_version", "annotations"]
-        assert [a["page_index"] for a in payload["annotations"]] == [0, 0, 0, 0, 1]
+        assert [a["page_index"] for a in payload["annotations"]] == [1, 1, 1, 1, 2]
         note = payload["annotations"][0]
         assert note["annotation_index"] == 0 and note["subtype"] == "Text"
         assert note["rect"] == [10, 20, 30, 40]
@@ -147,10 +147,10 @@ def test_versioned_unicode_json_and_page_collection_match_after_pdf_round_trips(
             "NM": "comment-1",
             "Subj": "Review",
         }
-        page_records = reopened.pages[0].annotations.to_list()
+        page_records = reopened.pages[1].annotations.to_list()
         assert page_records == payload["annotations"][:4]
         assert (
-            json.loads(reopened.pages[0].annotations.export_json())["annotations"]
+            json.loads(reopened.pages[1].annotations.export_json())["annotations"]
             == page_records
         )
         assert reopened.export_annotations_json() == data
@@ -160,14 +160,14 @@ def test_versioned_unicode_json_and_page_collection_match_after_pdf_round_trips(
 
 
 def test_reply_and_popup_links_are_ids_without_recursive_objects(document):
-    note, reply, nested, popup = document.pages[0].annotations.to_list()
+    note, reply, nested, popup = document.pages[1].annotations.to_list()
     assert reply["links"]["in_reply_to"] == note["id"]
     assert nested["links"]["in_reply_to"] == reply["id"]
     assert note["links"]["popup"] == popup["id"]
     assert popup["links"]["parent"] == note["id"]
     assert reply["properties"]["RT"] == "Reply"
     assert popup["properties"]["Open"] is True
-    assert len({a["id"] for a in document.pages[0].annotations.to_list()}) == 4
+    assert len({a["id"] for a in document.pages[1].annotations.to_list()}) == 4
     filtered = json.loads(document.export_annotations_json(subtypes="Popup"))[
         "annotations"
     ]
@@ -192,23 +192,23 @@ def test_subtype_strings_enums_and_generators_select_original_indices(
         "annotations"
     ]
     assert len(records) == 1
-    assert records[0]["subtype"] == "Highlight" and records[0]["page_index"] == 1
-    popup = document.pages[0].annotations.to_list(subtypes="Popup")
+    assert records[0]["subtype"] == "Highlight" and records[0]["page_index"] == 2
+    popup = document.pages[1].annotations.to_list(subtypes="Popup")
     assert len(popup) == 1 and popup[0]["annotation_index"] == 3
 
 
 def test_page_selection_order_and_duplicates_empty_and_unknown_filters(document):
-    data = document.export_annotations_json(pages=(i for i in [1, 0, 1]))
-    assert [a["page_index"] for a in json.loads(data)["annotations"]] == [1, 0, 0, 0, 0]
+    data = document.export_annotations_json(pages=(number + 1 if type(number) is int else number for number in ((i for i in [1, 0, 1]))))
+    assert [a["page_index"] for a in json.loads(data)["annotations"]] == [2, 1, 1, 1, 1]
     for options in ({"pages": []}, {"subtypes": []}, {"subtypes": "VendorType"}):
         assert (
             json.loads(document.export_annotations_json(**options))["annotations"] == []
         )
-    assert document.pages[0].annotations.to_list(subtypes=[]) == []
+    assert document.pages[1].annotations.to_list(subtypes=[]) == []
 
 
 @pytest.mark.parametrize(
-    "pages", [0, "0", b"", bytearray(), [True], [0.0], ["0"], [None], [-1], [2]]
+    "pages", [0, "0", b"", bytearray(), [True], [0.0], ["0"], [None], [-1], [4]]
 )
 def test_invalid_page_selections_leave_existing_output_intact(
     document, pages, tmp_path
@@ -236,7 +236,7 @@ def test_selection_is_validated_before_reading_any_annotations(document, monkeyp
 
     monkeypatch.setattr(document._engine_pdf, "_get_page_dict", no_metadata)
     with pytest.raises(PdfValidationException):
-        document.export_annotations_json(pages=[0, 100])
+        document.export_annotations_json(pages=[1, 101])
     with pytest.raises(PdfValidationException):
         document.export_annotations_json(subtypes=["Text", None])
     assert json.loads(document.export_annotations_json(pages=[]))["annotations"] == []
@@ -248,7 +248,7 @@ def test_selection_is_validated_before_reading_any_annotations(document, monkeyp
 def test_empty_document_and_page_export_a_valid_empty_schema():
     with Document() as document:
         assert json.loads(document.export_annotations_json()) == {
-            "schema_version": 1,
+            "schema_version": 2,
             "annotations": [],
         }
         page = document.pages.add()
@@ -257,7 +257,7 @@ def test_empty_document_and_page_export_a_valid_empty_schema():
 
 
 def test_snapshots_are_deeply_detached_fresh_and_survive_disposal(document):
-    page = document.pages[1]
+    page = document.pages[2]
     snapshot = page.annotations.to_list()
     snapshot[0]["rect"][0] = 999
     snapshot[0]["properties"]["QuadPoints"][0] = 999
@@ -281,11 +281,11 @@ def test_snapshots_are_deeply_detached_fresh_and_survive_disposal(document):
 
 def test_export_does_not_change_pdf_bytes_or_generate_appearances(document):
     before = _saved(document)
-    assert not document.pages[0].annotations[0].has_appearance
+    assert not document.pages[1].annotations[0].has_appearance
     document.export_annotations_json()
-    document.pages[0].annotations.to_list()
+    document.pages[1].annotations.to_list()
     assert _saved(document) == before
-    assert not document.pages[0].annotations[0].has_appearance
+    assert not document.pages[1].annotations[0].has_appearance
 
 
 @pytest.mark.parametrize(
@@ -364,9 +364,9 @@ def test_streaming_export_does_not_decode_content_appearances_rich_text_or_attac
 
         monkeypatch.setattr(document._engine_pdf, "_decode_cos_stream", no_decoding)
         monkeypatch.setattr(document._engine_pdf, "get_page_content", no_decoding)
-        record = document.pages[0].annotations.to_list()[0]
+        record = document.pages[1].annotations.to_list()[0]
         assert record["contents"] == "note" and record["properties"] == {}
-        data = document.export_annotations_json(pages=[0])
+        data = document.export_annotations_json(pages=[1])
         assert b"private-action-text" not in data and b"secret.bin" not in data
         assert b"Custom" not in data and b"RC" not in data and b"AP" not in data
         assert json.loads(data)["annotations"] == [record]
@@ -380,7 +380,7 @@ def test_cross_page_reply_links_remain_identifiable_with_parent_outside_selectio
     with Document.open_streaming(path) as document:
         parent, reply = json.loads(document.export_annotations_json())["annotations"]
         assert reply["links"]["in_reply_to"] == parent["id"]
-        assert json.loads(document.export_annotations_json(pages=[1]))[
+        assert json.loads(document.export_annotations_json(pages=[2]))[
             "annotations"
         ] == [reply]
 
@@ -398,13 +398,13 @@ def test_reference_ids_keep_nonzero_object_generations():
 
 @pytest.mark.parametrize("streaming", [False, True])
 def test_export_reads_decrypted_annotation_metadata(document, tmp_path, streaming):
-    expected = document.pages[0].annotations.to_list()
+    expected = document.pages[1].annotations.to_list()
     document.encrypt(user_password="secret", owner_password="owner")
     path = tmp_path / "encrypted.pdf"
     document.save(path)
     opener = Document.open_streaming if streaming else Document
     with opener(path, password="secret") as reopened:
-        actual = json.loads(reopened.export_annotations_json(pages=[0]))["annotations"]
+        actual = json.loads(reopened.export_annotations_json(pages=[1]))["annotations"]
         assert actual == expected
 
 
@@ -427,7 +427,7 @@ def test_inline_annotations_and_missing_optional_fields_export():
         b"<< /Type /Page /Parent 2 0 R /Annots [<< /Subtype /Text /Rect [1 2 3 4] >>] >>"
     )
     with Document(_pdf(objects)) as document:
-        (record,) = document.pages[0].annotations.to_list()
+        (record,) = document.pages[1].annotations.to_list()
         assert record["id"] == "page-0-annotation-0"
         assert record["author"] == record["contents"] == ""
         assert record["links"] == {"in_reply_to": None, "popup": None, "parent": None}
@@ -443,9 +443,9 @@ def test_file_export_overwrite_and_page_export_to_binary_stream(document, tmp_pa
     assert document.export_annotations_json(path, pages=[]) == path.read_bytes()
     output = io.BytesIO(b"prefix")
     output.seek(0, io.SEEK_END)
-    data = document.pages[1].annotations.export_json(output)
+    data = document.pages[2].annotations.export_json(output)
     assert output.getvalue() == b"prefix" + data and not output.closed
-    assert json.loads(data)["annotations"][0]["page_index"] == 1
+    assert json.loads(data)["annotations"][0]["page_index"] == 2
 
 
 def test_short_stream_writes_are_retried(document):
@@ -508,7 +508,7 @@ def test_malformed_annotation_metadata_is_rejected_before_writing(entry, tmp_pat
     path.write_bytes(b"original")
     with Document(_pdf(objects)) as document:
         with pytest.raises(PdfValidationException):
-            document.export_annotations_json(path, pages=[0])
+            document.export_annotations_json(path, pages=[1])
     assert path.read_bytes() == b"original"
 
 
@@ -550,7 +550,7 @@ def test_metadata_conversion_and_selector_work_respect_resource_limits():
         with pytest.raises(PdfResourceLimitException, match="annotation export values"):
             document.export_annotations_json()
         with pytest.raises(PdfResourceLimitException, match="page selection"):
-            document.export_annotations_json(pages=[0] * 21)
+            document.export_annotations_json(pages=(number + 1 if type(number) is int else number for number in ([0] * 21)))
         with pytest.raises(PdfResourceLimitException, match="subtype selection"):
             document.export_annotations_json(subtypes=["Text"] * 21)
     with Document(limits=PdfLoadLimits(max_nesting_depth=4)) as document:

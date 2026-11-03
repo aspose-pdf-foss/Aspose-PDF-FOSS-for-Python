@@ -139,11 +139,11 @@ def test_selected_spreads_stay_in_source_order_with_unselected_covers():
         source.pages.add(size=(10, 20)).add_text("Cover", 1, 10, font_size=2)
         _spread(source)
         source.pages.add(size=(10, 20)).add_text("Back", 1, 10, font_size=2)
-        with source.split_spreads(pages=(index for index in (1, 1))) as result:
+        with source.split_spreads(pages=(number + 1 if type(number) is int else number for number in ((index for index in (1, 1))))) as result:
             assert result.page_count == 4
             assert (
-                "Cover" in result.pages[0].extract_text()
-                and "Back" in result.pages[3].extract_text()
+                "Cover" in result.pages[1].extract_text()
+                and "Back" in result.pages[4].extract_text()
             )
             assert [page.size.width for page in result.pages] == [10, 20, 20, 10]
         with source.split_spreads(pages=[]) as result:
@@ -151,7 +151,7 @@ def test_selected_spreads_stay_in_source_order_with_unselected_covers():
             assert [page.crop_box for page in result.pages] == [
                 page.crop_box for page in source.pages
             ]
-            result.pages[0].add_text("Output only", 1, 15, font_size=2)
+            result.pages[1].add_text("Output only", 1, 15, font_size=2)
             assert "Output only" not in source.extract_text()
 
 
@@ -171,11 +171,11 @@ def test_content_remains_vector_and_searchable_and_cropping_does_not_redact(
         for page in result.pages:
             assert "LEFT" in page.extract_text() and "RIGHT" in page.extract_text()
             assert "figure" not in {block.kind for block in page.extract_blocks()}
-        assert "LEFT" in result.pages[0].extract_text(clip=result.pages[0].crop_box)
-        assert "RIGHT" not in result.pages[0].extract_text(
-            clip=result.pages[0].crop_box
+        assert "LEFT" in result.pages[1].extract_text(clip=result.pages[1].crop_box)
+        assert "RIGHT" not in result.pages[1].extract_text(
+            clip=result.pages[1].crop_box
         )
-        assert "RIGHT" in result.pages[1].extract_text(clip=result.pages[1].crop_box)
+        assert "RIGHT" in result.pages[2].extract_text(clip=result.pages[2].crop_box)
 
 
 def test_metadata_attachments_bookmarks_labels_links_and_fields_on_covers_survive(
@@ -189,16 +189,16 @@ def test_metadata_attachments_bookmarks_labels_links_and_fields_on_covers_surviv
         source.info["Title"] = "Book"
         source.add_attachment("guide.txt", b"Keep")
         source.page_labels[0] = PageLabel(style=NumberingStyle.NUMERALS_ROMAN_LOWERCASE)
-        source.outlines.add(OutlineItem("Cover", 0))
-        source.outlines.add(OutlineItem("Spread", destination=FitDestination(1)))
-        source.outlines.add(OutlineItem("Last", 2))
-        source.pages[1].add_link((1, 1, 5, 5), FitDestination(2))
-        source.pages[2].add_link((1, 1, 5, 5), URIAction("https://example.test"))
-        labels = [source.pages[index].label for index in range(3)]
+        source.outlines.add(OutlineItem("Cover", 1))
+        source.outlines.add(OutlineItem("Spread", destination=FitDestination(2)))
+        source.outlines.add(OutlineItem("Last", 3))
+        source.pages[2].add_link((1, 1, 5, 5), FitDestination(3))
+        source.pages[3].add_link((1, 1, 5, 5), URIAction("https://example.test"))
+        labels = [source.pages[(index) + 1].label for index in range(3)]
         original_outlines = [
             (item.title, item.page_index, item.destination) for item in source.outlines
         ]
-        with source.split_spreads(pages=[2, 1]) as result:
+        with source.split_spreads(pages=[3, 2]) as result:
             assert result.page_count == 5
             assert (
                 result.info["Title"] == "Book"
@@ -212,9 +212,9 @@ def test_metadata_attachments_bookmarks_labels_links_and_fields_on_covers_surviv
                 labels[2],
             ]
             assert [(item.title, item.page_index) for item in result.outlines] == [
-                ("Cover", 0),
-                ("Spread", 1),
-                ("Last", 3),
+                ("Cover", 1),
+                ("Spread", 2),
+                ("Last", 4),
             ]
             assert result.form["cover"].value == "Keep"
             assert result.validate_links() == []
@@ -224,7 +224,7 @@ def test_metadata_attachments_bookmarks_labels_links_and_fields_on_covers_surviv
                 assert reopened.validate() and reopened.validate_links() == []
                 assert [
                     (item.title, item.page_index) for item in reopened.outlines
-                ] == [("Cover", 0), ("Spread", 1), ("Last", 3)]
+                ] == [("Cover", 1), ("Spread", 2), ("Last", 4)]
                 assert reopened.form["cover"].value == "Keep"
         assert [
             (item.title, item.page_index, item.destination) for item in source.outlines
@@ -243,7 +243,7 @@ def test_page_annotations_have_independent_threads_on_both_halves():
             second[0].contents = "Changed"
             assert (
                 first[0].contents == "Note"
-                and source.pages[0].annotations[0].contents == "Note"
+                and source.pages[1].annotations[0].contents == "Note"
             )
             for annotations in (first, second):
                 assert annotations[1].in_reply_to.contents == annotations[0].contents
@@ -254,7 +254,7 @@ def test_page_annotations_have_independent_threads_on_both_halves():
             assert len(result.export_annotations_xfdf()) > 0
             with Document(_bytes(result)) as reopened:
                 assert (
-                    reopened.pages[1].annotations[1].in_reply_to.contents == "Changed"
+                    reopened.pages[2].annotations[1].in_reply_to.contents == "Changed"
                 )
 
 
@@ -315,7 +315,7 @@ def test_image_resources_stay_available_after_source_disposal_and_round_trip():
         {"pages": "0"},
         {"pages": [True]},
         {"pages": [-1]},
-        {"pages": [0, 3]},
+        {"pages": [1, 4]},
     ],
 )
 @pytest.mark.parametrize("empty", [False, True])
@@ -368,7 +368,7 @@ def test_output_count_and_unending_selection_obey_resource_limits(monkeypatch):
         with pytest.raises(PdfResourceLimitException, match="max_pages"):
             source.split_spreads()
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            source.split_spreads(pages=repeat(0))
+            source.split_spreads(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
 
 
 def test_unrepresentable_half_box_is_rejected_before_import(monkeypatch):
@@ -450,7 +450,7 @@ def test_loaded_sources_survive_independently_and_keep_streaming_caches_lazy(
         raw if kind == "bytes" else path, password="user" if encrypted else None
     ) as source:
         protected = source.is_encrypted
-        result = source.split_spreads(pages=[1], reverse=True)
+        result = source.split_spreads(pages=[2], reverse=True)
         assert source.is_encrypted is protected and source.page_count == 2
         assert source.info["Title"] == "Original"
         if kind == "streaming":
@@ -513,7 +513,7 @@ def test_hidden_widgets_are_refused_without_removing_source_field():
     with Document() as source:
         page = _spread(source)
         source.form.add_text_field("hidden", page, (1, 1, 5, 5), value="Keep")
-        source.pages[0].annotations[0].set_property("F", 2)
+        source.pages[1].annotations[0].set_property("F", 2)
         with pytest.raises(UnsupportedFeatureException, match="could not be flattened"):
             source.split_spreads()
         assert source.form["hidden"].value == "Keep"

@@ -13,7 +13,7 @@ __all__ = ["ExtractedLink"]
 
 @dataclass(frozen=True, slots=True)
 class ExtractedLink:
-    """One target or action, with its zero-based source annotation location.
+    """One target or action, with its one-based source page and zero-based annotation index.
 
     ``rect`` is normalized ``(x0, y0, x1, y1)`` in unrotated page user space,
     or None for malformed geometry. ``action_type`` keeps the PDF action name;

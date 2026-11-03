@@ -97,10 +97,15 @@ def _read(source: Any, budget: _LoadBudget) -> dict[str, Any]:
         _fail("the root must be an object")
     if set(result) != {"schema_version", "annotations"}:
         _fail("expected schema_version and annotations")
-    if type(result["schema_version"]) is not int or result["schema_version"] != 1:
-        _fail("unsupported schema_version (expected 1)")
+    if type(result["schema_version"]) is not int or result["schema_version"] not in (1, 2):
+        _fail("unsupported schema_version (expected 1 or 2)")
     if not isinstance(result["annotations"], list):
         _fail("annotations must be an array")
+    if result["schema_version"] == 2:
+        for record in result["annotations"]:
+            if not isinstance(record, dict) or type(record.get("page_index")) is not int or record["page_index"] < 1:
+                _fail("page_index must be a positive page number")
+            record["page_index"] -= 1
     return result
 
 

@@ -66,7 +66,7 @@ def _field_doc() -> Document:
     doc = Document()
     doc._engine_pdf = pdf
     doc.form.add_text_field(
-        "nm", doc.pages[0], (20, 150, 280, 180), value=_VALUE, font=_cyrillic_font()
+        "nm", doc.pages[1], (20, 150, 280, 180), value=_VALUE, font=_cyrillic_font()
     )
     return doc
 
@@ -141,7 +141,7 @@ def test_plain_ascii_field_still_uses_standard14():
     pdf._ensure_cos()
     doc = Document()
     doc._engine_pdf = pdf
-    doc.form.add_text_field("plain", doc.pages[0], (20, 150, 280, 180), value="Hi")
+    doc.form.add_text_field("plain", doc.pages[1], (20, 150, 280, 180), value="Hi")
     field_obj = doc._engine_pdf.get_form_fields()["plain"]
     da = field_obj.get("DA", "") if isinstance(field_obj, dict) else ""
     # No Type0 embedding for a default field.

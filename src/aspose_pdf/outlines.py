@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
+from aspose_pdf._page_numbers import page_index as _index
+
 
 class OutlineItem:
     """A single bookmark entry in a PDF outline tree.
@@ -46,7 +48,7 @@ class OutlineItem:
     def __init__(
         self,
         title: str,
-        page_index: int | None = 0,
+        page_index: int | None = 1,
         *,
         is_bold: bool = False,
         is_italic: bool = False,
@@ -65,7 +67,7 @@ class OutlineItem:
         # two public ways of naming a target drop it, because the caller has
         # then said where the bookmark goes.
         self._loaded_target: tuple[str, object] | None = None
-        self._page_index = None if page_index is None else int(page_index)
+        self._page_index = None if page_index is None else _index(page_index)
         self._destination = destination
         self.children: list[OutlineItem] = []
 
@@ -100,7 +102,7 @@ class OutlineItem:
 
     @property
     def page_index(self) -> int | None:
-        """Zero-based index of the page the bookmark lands on.
+        """One-based number of the page the bookmark lands on.
 
         ``None`` when it lands on no page of this document: it has no target,
         its action goes elsewhere (a URI, a script), or it names a destination
@@ -108,11 +110,11 @@ class OutlineItem:
         and saving wrote a jump to page 1 into one that had no target at all.
         Setting ``None`` makes a bookmark with no target.
         """
-        return self._page_index
+        return None if self._page_index is None else self._page_index + 1
 
     @page_index.setter
     def page_index(self, value: int | None) -> None:
-        self._page_index = None if value is None else int(value)
+        self._page_index = None if value is None else _index(value)
         self._destination = None
         self._loaded_target = None
 
@@ -185,7 +187,7 @@ class OutlineItem:
     def _from_dict(cls, d: dict) -> OutlineItem:
         item = cls(
             title=d.get("title", ""),
-            page_index=d.get("page_index", 0),
+            page_index=None if d.get("page_index") is None else d["page_index"] + 1,
             is_bold=d.get("is_bold", False),
             is_italic=d.get("is_italic", False),
             color=d.get("color"),

@@ -99,15 +99,15 @@ def test_visible_content_is_classified_before_and_after_round_trip(
             )
         original = _bytes(document)
         assert page.is_blank() is expected
-        assert document.find_blank_pages() == ([0] if expected else [])
+        assert document.find_blank_pages() == (list(number + 1 for number in ([0] if expected else [])))
         assert _bytes(document) == original
         source = original
         if on_disk:
             source = tmp_path / "scan.pdf"
             document.save(source)
         with Document(source) as loaded:
-            assert loaded.pages[0].is_blank() is expected
-            assert loaded.find_blank_pages() == ([0] if expected else [])
+            assert loaded.pages[1].is_blank() is expected
+            assert loaded.find_blank_pages() == (list(number + 1 for number in ([0] if expected else [])))
 
 
 @pytest.mark.parametrize(
@@ -139,7 +139,7 @@ def test_ink_ratio_boundary_and_noise_tolerance_are_exact():
         assert page.is_blank() is False
         assert page.is_blank(max_ink_ratio=ratio) is True
         assert page.is_blank(max_ink_ratio=math.nextafter(ratio, 0)) is False
-        assert document.find_blank_pages(max_ink_ratio=ratio) == [0]
+        assert document.find_blank_pages(max_ink_ratio=ratio) == [1]
         page.draw_rectangle(1, 0, 1, 1, fill_color="#000", stroke_color=None)
         assert page.is_blank(max_ink_ratio=ratio) is False
         assert page.is_blank(max_ink_ratio=1) is True
@@ -200,14 +200,14 @@ def test_annotations_count_by_default_and_can_be_excluded(hidden):
         original = _bytes(document)
         assert page.is_blank() is hidden
         assert page.is_blank(include_annotations=False) is True
-        assert document.find_blank_pages(include_annotations=False) == [0]
+        assert document.find_blank_pages(include_annotations=False) == [1]
         assert _bytes(document) == original
 
 
 def test_form_widget_appearance_counts_as_visible_content():
     with Document() as document:
         page = document.pages.add(size=(100, 64))
-        document.form.add_text_field("value", 0, (5, 10, 90, 35), value="Filled field")
+        document.form.add_text_field("value", 1, (5, 10, 90, 35), value="Filled field")
         document.generate_field_appearances()
         assert page.is_blank() is False
         assert page.is_blank(include_annotations=False) is True
@@ -227,16 +227,16 @@ def test_document_selection_is_snapshot_validated_and_deduplicated(monkeypatch):
             return original(page, **options)
 
         monkeypatch.setattr(Page, "render", render)
-        assert document.find_blank_pages(pages=(i for i in (3, 1, 0, 3, 2))) == [
+        assert document.find_blank_pages(pages=(number + 1 if type(number) is int else number for number in ((i for i in (3, 1, 0, 3, 2))))) == [
+            4,
+            1,
             3,
-            0,
-            2,
         ]
-        assert visited == [3, 1, 0, 2]
+        assert visited == [4, 2, 1, 3]
 
 
 @pytest.mark.parametrize(
-    "pages", [True, 1, "0", b"0", [True], [0.0], [None], [-1], [0, 5]]
+    "pages", [True, 1, "0", b"0", [True], [0.0], [None], [-1], [0, 6]]
 )
 def test_invalid_selection_fails_before_any_render(pages, monkeypatch):
     with Document() as document:
@@ -307,7 +307,7 @@ def test_empty_document_and_empty_selection_return_no_matches(monkeypatch):
 def test_disposed_documents_and_stale_pages_are_rejected():
     with Document() as document:
         page = document.pages.add(size=(10, 10))
-        document.pages.delete(0)
+        document.pages.delete(1)
         with pytest.raises(IndexError):
             page.is_blank()
     with pytest.raises(AsposePdfException, match="disposed"):
@@ -324,7 +324,7 @@ def test_render_failures_propagate_and_do_not_modify_the_document(monkeypatch):
         original = Page.render
 
         def render(page, **options):
-            if page.index == 1:
+            if page.index == 2:
                 raise PdfParseException("Cannot render page")
             return original(page, **options)
 
@@ -352,7 +352,7 @@ def test_resource_limits_bound_rasters_and_selection_before_work(monkeypatch):
         monkeypatch.setattr(Page, "render", unexpected)
         for selection in (None, [0, 1, 2], (0 for _ in range(3))):
             with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-                document.find_blank_pages(pages=selection)
+                document.find_blank_pages(pages=(None if selection is None else (number + 1 if type(number) is int else number for number in (selection))))
 
 
 def test_each_raster_is_released_before_rendering_the_next(monkeypatch):
@@ -370,7 +370,7 @@ def test_each_raster_is_released_before_rendering_the_next(monkeypatch):
             return raster
 
         monkeypatch.setattr(Page, "render", render)
-        assert document.find_blank_pages() == [0, 1, 2]
+        assert document.find_blank_pages() == [1, 2, 3]
         assert previous() is None
 
 
@@ -394,9 +394,9 @@ def test_streaming_content_limit_is_enforced_only_when_that_page_is_selected(tmp
     with Document.open_streaming(
         path, limits=PdfLoadLimits(max_content_stream_bytes=32)
     ) as document:
-        assert document.find_blank_pages(pages=[1]) == [1]
+        assert document.find_blank_pages(pages=[2]) == [2]
         with pytest.raises(PdfResourceLimitException, match="max_content_stream_bytes"):
-            document.find_blank_pages(pages=[0])
+            document.find_blank_pages(pages=[1])
         assert document._engine_pdf.page_contents == []
 
 
@@ -426,7 +426,7 @@ def test_selected_scanned_pages_work_with_streaming_and_encryption(
             return original(index)
 
         monkeypatch.setattr(document._engine_pdf, "get_page_content", content)
-        assert document.find_blank_pages(pages=[2, 0, 2]) == [2, 0]
+        assert document.find_blank_pages(pages=[3, 1, 3]) == [3, 1]
         assert set(visited) == {0, 2}
         if streaming:
             assert document._engine_pdf.page_contents == []

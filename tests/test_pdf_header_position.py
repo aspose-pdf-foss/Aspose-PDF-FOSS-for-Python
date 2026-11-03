@@ -59,7 +59,7 @@ def _open(data: bytes, caplog: pytest.LogCaptureFixture) -> Document:
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="aspose_pdf"):
         document = Document(io.BytesIO(data))
-        document.pages[0].extract_text()
+        document.pages[1].extract_text()
     assert "reconstruction" not in caplog.text, "offsets were not followed"
     return document
 
@@ -77,7 +77,7 @@ def test_offsets_short_by_a_prepended_prefix_are_moved(make, title, text, caplog
     document = _open(_PREFIX + make(), caplog)
     assert document._engine_pdf._cos_doc.offset_shift == len(_PREFIX)
     assert document.info.get("Title") == title
-    assert document.pages[0].extract_text().strip() == text
+    assert document.pages[1].extract_text().strip() == text
     assert document._engine_pdf.pdf_version in {"1.4", "1.5", "1.7"}
 
 
@@ -130,4 +130,4 @@ def test_a_shifted_file_opens_in_streaming_mode(tmp_path):
     path.write_bytes(_PREFIX + _written())
     with Document.open_streaming(path) as document:
         assert document.info.get("Title") == "First"
-        assert document.pages[0].extract_text().strip() == "Behind a prefix"
+        assert document.pages[1].extract_text().strip() == "Behind a prefix"

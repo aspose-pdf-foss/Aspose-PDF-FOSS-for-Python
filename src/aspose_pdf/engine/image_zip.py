@@ -219,7 +219,7 @@ def _manifest(records, budget, total):
     with _BoundedBuffer(
         budget, "max_object_bytes", "image ZIP manifest bytes", decoded_prefix=total
     ) as output:
-        output.write(b'{"schema_version":1,"images":[')
+        output.write(b'{"schema_version":2,"images":[')
         for position, record in enumerate(records):
             if position:
                 output.write(b",")
@@ -245,7 +245,7 @@ def _manifest(records, budget, total):
                 if occurrence:
                     output.write(b",")
                 output.write(b'{"page_index":')
-                _json_value(output, page)
+                _json_value(output, page + 1)
                 output.write(b',"resource_path":[')
                 for component, name in enumerate(path):
                     if component:

@@ -141,7 +141,7 @@ def test_page_content_property_lazy_mode(tmp_path):
     path = _write_pdf(tmp_path, page_count=2)
     with Document.open_streaming(path) as doc:
         for i in range(doc.page_count):
-            page = next(p for p in doc.iter_pages() if p.index == i)
+            page = next(p for p in doc.iter_pages() if p.index == i + 1)
             assert page.content is not None
             assert isinstance(page.content, bytes)
 
@@ -206,7 +206,7 @@ def test_iter_pages_indices_are_sequential(tmp_path):
     path = _write_pdf(tmp_path, page_count=4)
     with Document.open_streaming(path) as doc:
         indices = [p.index for p in doc.iter_pages()]
-    assert indices == [0, 1, 2, 3]
+    assert indices == [1, 2, 3, 4]
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +375,7 @@ def _numbered_pdf(tmp_path: Path, count: int = 6) -> Path:
 def _text_after(path: Path, deletions, opener) -> list[str]:
     doc = opener(str(path))
     for index in deletions:
-        doc.pages.delete(index)
+        doc.pages.delete((index) + 1)
     out = path.with_name(f"out_{id(doc)}.pdf")
     doc.save(str(out))
     return [page.extract_text().strip() for page in Document(str(out)).pages]
@@ -384,7 +384,7 @@ def _text_after(path: Path, deletions, opener) -> list[str]:
 def test_deleting_a_page_from_a_streamed_document_works(tmp_path):
     path = _numbered_pdf(tmp_path, 3)
     with Document.open_streaming(path) as doc:
-        doc.pages.delete(1)
+        doc.pages.delete(2)
         assert doc.page_count == 2
 
 
@@ -404,8 +404,8 @@ def test_deleting_a_page_does_not_decode_the_whole_document(tmp_path):
     page of the file the caller opened this way to avoid loading."""
     path = _numbered_pdf(tmp_path)
     with Document.open_streaming(path) as doc:
-        doc.pages.delete(2)
-        doc.pages.delete(0)
+        doc.pages.delete(3)
+        doc.pages.delete(1)
         assert doc._engine_pdf._lazy is True
         assert doc._engine_pdf.page_contents == []
 
@@ -438,7 +438,7 @@ def test_the_page_text_cursor_walks_a_streamed_document(tmp_path):
 def test_extracting_text_does_not_decode_the_whole_document(tmp_path):
     path = _numbered_pdf(tmp_path, 4)
     with Document.open_streaming(path) as doc:
-        doc.pages[1].extract_text()
+        doc.pages[2].extract_text()
         assert doc._engine_pdf._lazy is True
         assert doc._engine_pdf.page_contents == []
 
@@ -446,7 +446,7 @@ def test_extracting_text_does_not_decode_the_whole_document(tmp_path):
 def test_content_still_follows_the_pages_after_a_streamed_deletion(tmp_path):
     path = _numbered_pdf(tmp_path, 4)
     with Document.open_streaming(path) as doc:
-        doc.pages.delete(1)
+        doc.pages.delete(2)
         assert [page.extract_text().strip() for page in doc.pages] == [
             "PAGE-0",
             "PAGE-2",
@@ -513,7 +513,7 @@ def test_converting_a_streamed_document_to_pdfa_rewrites_its_cmyk(tmp_path):
         doc.save(str(out))
 
     converted = Document(str(out))
-    assert _colour_operators(converted.pages[0].content) == {b"rg", b"RG"}
+    assert _colour_operators(converted.pages[1].content) == {b"rg", b"RG"}
     assert converted.validate_pdfa("1b").is_valid
 
 
@@ -525,7 +525,7 @@ def test_a_streamed_conversion_writes_what_an_eager_one_writes(tmp_path):
         doc.convert_to_pdfa("1b")
         out = tmp_path / f"converted_{len(contents)}.pdf"
         doc.save(str(out))
-        contents.append(Document(str(out)).pages[0].content)
+        contents.append(Document(str(out)).pages[1].content)
     assert contents[0] == contents[1]
 
 

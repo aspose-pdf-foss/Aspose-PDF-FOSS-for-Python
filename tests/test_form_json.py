@@ -124,14 +124,14 @@ def test_null_clears_fields_and_non_value_fields_are_skipped(document):
 
 
 def test_fill_updates_visible_checkbox_and_text_appearances(document):
-    before = document.pages[0].render(dpi=36, antialias=False).pixels
+    before = document.pages[1].render(dpi=36, antialias=False).pixels
     document.form.fill({"person.name": "After", "agree": True, "size": "M"})
-    after = document.pages[0].render(dpi=36, antialias=False).pixels
+    after = document.pages[1].render(dpi=36, antialias=False).pixels
     assert before != after
     buffer = io.BytesIO()
     document.save(buffer)
     with Document(buffer.getvalue()) as reopened:
-        assert reopened.pages[0].render(dpi=36, antialias=False).pixels == after
+        assert reopened.pages[1].render(dpi=36, antialias=False).pixels == after
 
 
 def test_unknown_names_are_strict_by_default_and_can_be_skipped(document):

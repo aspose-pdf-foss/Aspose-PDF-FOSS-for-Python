@@ -78,7 +78,7 @@ def _only_placement(document: Document) -> ImagePlacement:
 
 def _colours(document: Document, page: int = 0) -> dict[str, int]:
     """How many pixels of each colour the page renders."""
-    raster = document.pages[page].render(antialias=False)
+    raster = document.pages[(page) + 1].render(antialias=False)
     counts = {"red": 0, "green": 0, "blue": 0}
     for y in range(raster.height):
         for x in range(raster.width):
@@ -239,7 +239,7 @@ def test_one_image_drawn_on_two_pages_changes_on_both():
 
     absorber = ImagePlacementAbsorber()
     absorber.visit(document)
-    assert [placement.page_index for placement in absorber.image_placements] == [0, 1]
+    assert [placement.page_index for placement in absorber.image_placements] == [1, 2]
     # An image XObject is one object: changing it through either page changes it.
     assert absorber.image_placements[0].replace(_png((255, 0, 0))) is True
     reopened = _reloaded(document)
@@ -256,7 +256,7 @@ def test_a_placement_of_one_page_leaves_the_other_pages_image_alone():
     document = _reloaded(document)
 
     absorber = ImagePlacementAbsorber()
-    absorber.visit(document.pages[0])
+    absorber.visit(document.pages[1])
     assert len(absorber.image_placements) == 1
     absorber.image_placements[0].replace(_png((255, 0, 0)))
 
@@ -406,4 +406,4 @@ def test_engine_resource_name_updates_only_the_matching_public_image_view(
             absorber = ImagePlacementAbsorber()
             absorber.visit(document)
             by_page = {p.page_index: p.image_data for p in absorber.image_placements}
-            assert by_page == {0: b"\xff\x00\x00" * 16, 1: b"\x00\xff\x00" * 16}
+            assert by_page == {1: b"\xff\x00\x00" * 16, 2: b"\x00\xff\x00" * 16}

@@ -24,7 +24,7 @@ def _save(document, tmp_path, on_disk):
 
 def _flattened_text(document):
     document.flatten()
-    return " ".join(document.pages[0].extract_text().split())
+    return " ".join(document.pages[1].extract_text().split())
 
 
 @pytest.mark.parametrize("subtype", ["FreeText", "Stamp"])
@@ -35,7 +35,7 @@ def test_annotation_winansi_text_survives_flattening(tmp_path, subtype, on_disk)
         annotation = page.annotations.add(subtype, (20, 600, 590, 750), TEXT)
         assert annotation.generate_appearance()
         with Document(_save(document, tmp_path, on_disk)) as reopened:
-            assert reopened.pages[0].annotations[0].contents == TEXT
+            assert reopened.pages[1].annotations[0].contents == TEXT
             assert _flattened_text(reopened) == TEXT
 
 
@@ -64,14 +64,14 @@ def test_field_winansi_text_survives_flattening(tmp_path, kind, on_disk):
         form = document.form
         rect = (20, 600, 590, 750)
         if kind == "text":
-            field = form.add_text_field("field", 0, rect, value="before")
+            field = form.add_text_field("field", 1, rect, value="before")
             field.value = TEXT
         elif kind == "combobox":
-            form.add_combo_box("field", 0, rect, [("export", TEXT)], value="export")
+            form.add_combo_box("field", 1, rect, [("export", TEXT)], value="export")
         elif kind == "listbox":
-            form.add_list_box("field", 0, rect, [("export", TEXT)], value="export")
+            form.add_list_box("field", 1, rect, [("export", TEXT)], value="export")
         else:
-            form.add_push_button("field", 0, rect, caption=TEXT)
+            form.add_push_button("field", 1, rect, caption=TEXT)
         with Document(_save(document, tmp_path, on_disk)) as reopened:
             assert _flattened_text(reopened) == TEXT
 

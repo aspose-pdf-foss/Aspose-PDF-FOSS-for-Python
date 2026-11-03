@@ -44,7 +44,7 @@ def _both_ways(path):
 def with_attachment(tmp_path):
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Body", 50, 700)
+    document.pages[1].add_text("Body", 50, 700)
     document.add_attachment("note.txt", b"payload")
     path = tmp_path / "attached.pdf"
     document.save(path)
@@ -76,7 +76,7 @@ def signed(tmp_path):
 
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Signed", 50, 700)
+    document.pages[1].add_text("Signed", 50, 700)
     document.sign(certificate=certificate, private_key=key, reason="R", location="L")
     path = tmp_path / "signed.pdf"
     document.save(path)
@@ -173,8 +173,8 @@ def test_a_streamed_save_still_appends_to_a_signed_document(signed):
 def with_a_field(tmp_path):
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Body", 50, 700)
-    document.form.add_text_field("name", 0, (50, 500, 250, 525), value="Value")
+    document.pages[1].add_text("Body", 50, 700)
+    document.form.add_text_field("name", 1, (50, 500, 250, 525), value="Value")
     path = tmp_path / "field.pdf"
     document.save(path)
     return path
@@ -222,7 +222,7 @@ def test_a_streamed_document_stays_lazy(with_attachment):
     engine = streamed._engine_pdf
     assert engine._lazy is True
     assert engine.page_contents == []        # nothing decoded yet
-    assert streamed.pages[0].extract_text().strip() == "Body"
+    assert streamed.pages[1].extract_text().strip() == "Body"
     assert engine.page_contents == []        # and still nothing cached
 
 

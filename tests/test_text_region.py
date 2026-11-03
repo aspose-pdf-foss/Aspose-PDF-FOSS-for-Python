@@ -57,7 +57,7 @@ def test_selects_part_of_a_string_and_preserves_full_text(round_trip, tmp_path):
             document.save(source)
             with Document(source) as reopened:
                 assert (
-                    reopened.pages[0].extract_text(clip=(78.1, 690, 96, 710)) == "BCD"
+                    reopened.pages[1].extract_text(clip=(78.1, 690, 96, 710)) == "BCD"
                 )
         original = page.content
         assert page.extract_text(clip=(78.1, 690, 96, 710)) == "BCD"
@@ -80,7 +80,7 @@ def test_document_region_does_not_poison_full_text_cache_or_page_cursor():
         assert document.extract_text(clip=(0, 680, 300, 730)) == "First\nSecond\nThird"
         assert document.extract_text(clip=(0, 200, 1, 201)) == "\n\n"
         assert document.extract_text() == expected
-        assert document.pages[1].extract_text(clip=(0, 0, 300, 150)) == "Footer"
+        assert document.pages[2].extract_text(clip=(0, 0, 300, 150)) == "Footer"
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
@@ -132,7 +132,7 @@ def test_coordinates_stay_in_unrotated_pdf_space(rotation):
 )
 def test_positioning_and_encoded_operands(content, clip, expected):
     with _content_document(content) as document:
-        assert document.pages[0].extract_text(clip=clip) == expected
+        assert document.pages[1].extract_text(clip=clip) == expected
 
 
 def test_embedded_unicode_code_units_are_selected_whole():
@@ -148,7 +148,7 @@ def test_embedded_unicode_code_units_are_selected_whole():
             font=load_substitute_sfnt("sans-regular"),
         )
         with Document(io.BytesIO(_bytes(document))) as reopened:
-            page = reopened.pages[0]
+            page = reopened.pages[1]
             assert page.extract_text(clip=(0, 680, 300, 730)) == "café Ångström"
             selected = page.extract_text(clip=(72, 690, 80, 715))
             assert selected and "café Ångström".startswith(selected)
@@ -161,7 +161,7 @@ def test_actual_text_is_included_only_when_its_underlying_glyphs_are_selected():
         b"/Span /Logical BDC BT /F1 10 Tf 72 700 Td (ABC) Tj ET EMC "
         b"/Span /Excluded BDC BT /F1 10 Tf 72 600 Td (Outside) Tj ET EMC"
     ) as document:
-        page = document.pages[0]
+        page = document.pages[1]
         resources = document._engine_pdf._resolve_resources_cos(
             document._engine_pdf._get_page_dict(0)
         )
@@ -192,7 +192,7 @@ def test_simple_font_to_unicode_ligatures_are_not_split():
             b"3 beginbfchar <41> <0041> <42> <006600660069> <43> <0043> endbfchar endcmap",
             {},
         )
-        assert document.pages[0].extract_text(clip=(79, 690, 83, 710)) == "ffi"
+        assert document.pages[1].extract_text(clip=(79, 690, 83, 710)) == "ffi"
 
 
 def test_decoding_uses_the_font_restored_by_graphics_state():
@@ -213,8 +213,8 @@ def test_decoding_uses_the_font_restored_by_graphics_state():
                 + b"> endbfchar endcmap",
                 {},
             )
-        assert document.pages[0].extract_text(clip=(0, 680, 300, 730)) == "SecondFirst"
-        assert document.pages[0].extract_text(clip=(79, 690, 83, 710)) == "First"
+        assert document.pages[1].extract_text(clip=(0, 680, 300, 730)) == "SecondFirst"
+        assert document.pages[1].extract_text(clip=(79, 690, 83, 710)) == "First"
 
 
 def test_hidden_layers_are_omitted_even_when_every_glyph_overlaps():
@@ -277,7 +277,7 @@ def test_forms_use_each_placement_matrix_and_their_own_font_scope():
             resources=resources,
         )
         with Document(io.BytesIO(_bytes(document))) as reopened:
-            page = reopened.pages[0]
+            page = reopened.pages[1]
             assert page.extract_text(clip=(84, 690, 96, 720)) == "B"
             assert page.extract_text(clip=(184, 690, 196, 720)) == "B"
             assert page.extract_text(clip=(70, 690, 200, 720)) == "AB\nAB"
@@ -295,7 +295,7 @@ def test_nested_and_recursive_forms_terminate_without_losing_text():
         outer.mapping[PdfName("Resources")].mapping[PdfName("XObject")] = PdfDictionary(
             {PdfName("Child"): inner_ref}
         )
-        assert document.pages[0].extract_text(clip=(78, 690, 84, 710)) == "B"
+        assert document.pages[1].extract_text(clip=(78, 690, 84, 710)) == "B"
 
 
 def test_forms_resolve_hidden_properties_in_their_own_resources():
@@ -315,16 +315,16 @@ def test_forms_resolve_hidden_properties_in_their_own_resources():
             document, "HiddenForm", b"BT /F1 10 Tf 72 700 Td (Secret) Tj ET"
         )
         hidden_form.mapping[PdfName("OC")] = hidden
-        assert document.pages[0].extract_text(clip=(0, 0, 500, 800)) == "Visible"
+        assert document.pages[1].extract_text(clip=(0, 0, 500, 800)) == "Visible"
         document.layers["Draft"].visible = True
         assert (
-            document.pages[0].extract_text(clip=(0, 680, 500, 730)) == "Hidden\nSecret"
+            document.pages[1].extract_text(clip=(0, 680, 500, 730)) == "Hidden\nSecret"
         )
 
 
 def test_regions_allow_negative_coordinates_and_normalize_lists():
     with _content_document(b"BT /F1 10 Tf -20 -20 Td (AB) Tj ET") as document:
-        assert document.pages[0].extract_text(clip=[-20, -25, -14, -10]) == "A"
+        assert document.pages[1].extract_text(clip=[-20, -25, -14, -10]) == "A"
         assert document.extract_text(clip=[-20, -25, -14, -10]) == "A"
 
 
@@ -338,7 +338,7 @@ def test_inline_image_samples_cannot_change_text_geometry():
         + b" EI "
     )
     with _content_document(image + b"BT /F1 10 Tf 72 700 Td (ABC) Tj ET") as document:
-        assert document.pages[0].extract_text(clip=(70, 690, 100, 720)) == "ABC"
+        assert document.pages[1].extract_text(clip=(70, 690, 100, 720)) == "ABC"
 
 
 @pytest.mark.parametrize(
@@ -351,7 +351,7 @@ def test_inline_image_samples_cannot_change_text_geometry():
 )
 def test_unplaceable_text_never_uses_a_raw_recovery_fallback(content):
     with _content_document(content) as document:
-        assert document.pages[0].extract_text(clip=(0, 0, 1000, 1000)) == ""
+        assert document.pages[1].extract_text(clip=(0, 0, 1000, 1000)) == ""
 
 
 def test_facade_and_lowcode_expose_the_same_region_option():
@@ -453,7 +453,7 @@ def test_streaming_page_selection_reads_only_the_requested_page(tmp_path, monkey
             return original(index)
 
         monkeypatch.setattr(engine, "get_page_content", selected_only)
-        assert document.pages[1].extract_text(clip=(0, 680, 300, 730)) == "Second"
+        assert document.pages[2].extract_text(clip=(0, 680, 300, 730)) == "Second"
         assert accessed == [1]
         assert engine.page_contents == []
 
@@ -473,4 +473,4 @@ def test_uninvoked_forms_and_images_are_not_decoded(monkeypatch):
             pytest.fail("Region extraction decoded an unrelated form or image")
 
         monkeypatch.setattr(engine, "_decode_cos_stream", forbidden)
-        assert document.pages[0].extract_text(clip=(70, 690, 100, 720)) == "ABC"
+        assert document.pages[1].extract_text(clip=(70, 690, 100, 720)) == "ABC"

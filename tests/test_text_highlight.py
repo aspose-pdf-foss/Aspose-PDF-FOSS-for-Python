@@ -93,14 +93,14 @@ def test_literal_highlights_survive_round_trips_and_preserve_text(
 
 
 def test_page_method_and_document_page_selection(document):
-    result = document.pages[1].highlight_text("HELLO")
+    result = document.pages[2].highlight_text("HELLO")
     assert result.highlighted_count == 1
     assert [len(page.annotations) for page in document.pages] == [0, 1]
-    result = document.highlight_text("Hello", page_index=0)
+    result = document.highlight_text("Hello", page_index=1)
     assert result.highlighted_count == 1
     assert [len(page.annotations) for page in document.pages] == [1, 1]
     result.annotations[0].contents = "Edited"
-    assert document.pages[0].annotations[0].contents == "Edited"
+    assert document.pages[1].annotations[0].contents == "Edited"
 
 
 @pytest.mark.parametrize(
@@ -120,11 +120,11 @@ def test_literal_regex_and_case_options(document, search, options, counts):
 
 
 def test_regex_context_places_only_the_selected_repeated_word(document):
-    result = document.pages[0].highlight_text(r"(?<=Hello )world", regex=True)
+    result = document.pages[1].highlight_text(r"(?<=Hello )world", regex=True)
     assert (result.highlighted_count, result.skipped_count) == (1, 0)
     first = result.annotations[0].quad_points[0]
     last = (
-        document.pages[0]
+        document.pages[1]
         .highlight_text(re.compile(r"world$", re.MULTILINE))
         .annotations[0]
         .quad_points[0]
@@ -168,7 +168,7 @@ def test_max_count_applies_across_pages(document):
     ],
 )
 def test_highlight_style_and_rendering(document, color, expected):
-    page = document.pages[0]
+    page = document.pages[1]
     before = page.render(dpi=36, antialias=False).pixels
     result = page.highlight_text("Hello", color=color, opacity=0.75)
     annotation = result.annotations[0]
@@ -200,9 +200,9 @@ def test_unmeasurable_matches_are_reported_with_page_and_offsets():
             result.skipped_count,
         ) == (2, 1, 1)
         [fragment] = result.skipped_fragments
-        assert fragment.page_index == 0 and fragment.text == "Unknown"
+        assert fragment.page_index == 1 and fragment.text == "Unknown"
         assert (
-            doc.pages[0].extract_text()[fragment.start : fragment.end] == fragment.text
+            doc.pages[1].extract_text()[fragment.start : fragment.end] == fragment.text
         )
         assert fragment.quads is None and fragment.rect is None
 
@@ -218,7 +218,7 @@ def test_max_count_counts_skipped_matches():
             result.highlighted_count,
             result.skipped_count,
         ) == (1, 0, 1)
-        assert len(doc.pages[0].annotations) == 0
+        assert len(doc.pages[1].annotations) == 0
 
 
 def test_ambiguous_repeated_text_does_not_borrow_another_occurrences_geometry():
@@ -232,7 +232,7 @@ def test_ambiguous_repeated_text_does_not_borrow_another_occurrences_geometry():
             "Repeat",
             "Repeat",
         ]
-        assert len(doc.pages[0].annotations) == 0
+        assert len(doc.pages[1].annotations) == 0
 
 
 def test_text_inside_form_xobjects_is_reported_as_unplaced():
@@ -295,7 +295,7 @@ def test_cross_line_match_without_a_single_run_is_reported():
         ("Hello", {"regex": 1}, TypeError),
         ("Hello", {"case_sensitive": 0}, TypeError),
         ("Hello", {"page_index": -1}, IndexError),
-        ("Hello", {"page_index": 2}, IndexError),
+        ("Hello", {"page_index": 3}, IndexError),
         ("Hello", {"page_index": True}, TypeError),
         ("Hello", {"opacity": -0.1}, PdfValidationException),
         ("Hello", {"opacity": float("nan")}, PdfValidationException),
@@ -315,7 +315,7 @@ def test_empty_results_and_disposed_documents(document):
     assert document.highlight_text("missing") == TextHighlightResult()
     with Document() as empty:
         assert empty.highlight_text("Hello") == TextHighlightResult()
-    page = document.pages[0]
+    page = document.pages[1]
     document.dispose()
     with pytest.raises(AsposePdfException, match="disposed"):
         document.highlight_text("Hello")
@@ -328,7 +328,7 @@ def test_search_obeys_resource_limits_before_adding_annotations():
         doc.pages.add().add_text(" ".join(["one"] * 17), 72, 700)
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             doc.highlight_text("one")
-        assert len(doc.pages[0].annotations) == 0
+        assert len(doc.pages[1].annotations) == 0
 
 
 def test_page_selection_does_not_read_other_streaming_page_content(
@@ -346,7 +346,7 @@ def test_page_selection_does_not_read_other_streaming_page_content(
             return original(index)
 
         monkeypatch.setattr(reopened._engine_pdf, "get_page_content", selected_only)
-        result = reopened.highlight_text("world", page_index=1)
+        result = reopened.highlight_text("world", page_index=2)
         assert result.highlighted_count == 1 and accessed
 
 
@@ -397,8 +397,8 @@ def test_markup_styles_survive_round_trips_without_changing_text(
 def test_markup_page_search_keeps_regex_context_and_live_annotation_handles(
     document, kind
 ):
-    first = document.pages[0].markup_text(r"(?<=Hello )world", kind=kind, regex=True)
-    last = document.pages[0].markup_text(
+    first = document.pages[1].markup_text(r"(?<=Hello )world", kind=kind, regex=True)
+    last = document.pages[1].markup_text(
         re.compile(r"world$", re.MULTILINE), kind=kind
     )
     assert (first.marked_count, first.skipped_count) == (1, 0)
@@ -407,8 +407,8 @@ def test_markup_page_search_keeps_regex_context_and_live_annotation_handles(
         < last.annotations[0].quad_points[0][0][0]
     )
     first.annotations[0].contents = "Updated review"
-    assert document.pages[0].annotations[0].contents == "Updated review"
-    assert len(document.pages[1].annotations) == 0
+    assert document.pages[1].annotations[0].contents == "Updated review"
+    assert len(document.pages[2].annotations) == 0
 
 
 @pytest.mark.parametrize("kind", ["underline", "strike_out", "squiggly"])
@@ -455,7 +455,7 @@ def test_markup_skips_unknown_geometry_and_counts_skips_toward_limit(kind):
             skipped.marked_count, skipped.skipped_count, skipped.matched_count
         ) == (0, 1, 1)
         assert skipped.skipped_fragments[0].text == "Unknown"
-        assert len(document.pages[0].annotations) == 0
+        assert len(document.pages[1].annotations) == 0
         result = document.markup_text(r"Unknown|Known", kind=kind, regex=True)
         assert (
             result.marked_count, result.skipped_count, result.matched_count
@@ -487,7 +487,7 @@ def test_markup_selected_page_stays_lazy(document, tmp_path, monkeypatch, kind):
             return original(index)
 
         monkeypatch.setattr(reopened._engine_pdf, "get_page_content", selected_only)
-        result = reopened.markup_text("world", kind=kind, page_index=1)
+        result = reopened.markup_text("world", kind=kind, page_index=2)
         assert result.marked_count == 1 and accessed
 
 
@@ -497,7 +497,7 @@ def test_markup_resource_limits_apply_before_adding_page_annotations(kind):
         document.pages.add().add_text(" ".join(["one"] * 17), 72, 700)
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             document.markup_text("one", kind=kind)
-        assert len(document.pages[0].annotations) == 0
+        assert len(document.pages[1].annotations) == 0
 
 
 def test_markup_empty_results_defaults_and_disposed_documents(document):
@@ -507,7 +507,7 @@ def test_markup_empty_results_defaults_and_disposed_documents(document):
     assert annotation.color == (1.0, 1.0, 0.0)
     with Document() as empty:
         assert empty.markup_text("Hello", kind="underline") == TextMarkupResult()
-    page = document.pages[0]
+    page = document.pages[1]
     document.dispose()
     with pytest.raises(AsposePdfException, match="disposed"):
         document.markup_text("Hello", kind="underline")

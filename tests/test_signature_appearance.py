@@ -226,7 +226,7 @@ def test_an_argument_that_is_not_what_it_should_be_is_refused(kwargs, match):
 
 def test_a_page_without_a_rect_says_nothing_about_where_to_draw():
     with pytest.raises(PdfValidationException, match="needs a rect"):
-        SignatureAppearance(page=2)
+        SignatureAppearance(page=3)
 
 
 @pytest.mark.parametrize(
@@ -630,7 +630,7 @@ def test_an_appearance_can_place_the_field_it_is_drawn_in(signer):
     doc.sign(
         certificate=certificate,
         private_key=key,
-        appearance=SignatureAppearance(page=1, rect=(40, 500, 300, 580)),
+        appearance=SignatureAppearance(page=2, rect=(40, 500, 300, 580)),
     )
     data = _signed(doc)
     opened, engine, widget = _widget(data, page_index=1)
@@ -662,7 +662,7 @@ def test_a_page_the_document_does_not_have_is_refused(signer):
         doc.sign(
             certificate=certificate,
             private_key=key,
-            appearance=SignatureAppearance(page=4, rect=(10, 10, 100, 60)),
+            appearance=SignatureAppearance(page=5, rect=(10, 10, 100, 60)),
         )
     doc.close()
 
@@ -670,7 +670,7 @@ def test_a_page_the_document_does_not_have_is_refused(signer):
 def test_a_field_with_no_area_cannot_show_an_appearance(signer):
     certificate, key = signer
     doc = _document(rect=None)
-    doc.form.add_signature_field("Approval", doc.pages[0], [10, 10, 10, 10])
+    doc.form.add_signature_field("Approval", doc.pages[1], [10, 10, 10, 10])
     doc.sign(
         "Approval",
         certificate=certificate,
@@ -704,8 +704,8 @@ def test_a_field_shown_on_two_pages_is_drawn_on_both(signer):
         "Approval",
         "signature",
         [
-            {"page_index": first.index, "rect": (50, 600, 300, 680)},
-            {"page_index": second.index, "rect": (50, 600, 300, 680)},
+            {"page_index": first.index - 1, "rect": (50, 600, 300, 680)},
+            {"page_index": second.index - 1, "rect": (50, 600, 300, 680)},
         ],
     )
     doc.sign(

@@ -94,7 +94,7 @@ def _landings(document: Document) -> list[tuple[str, int | None]]:
     return [(item.title, item.page_index) for item in document.outlines]
 
 
-_EXPECTED = [(title.decode(), page) for title, _target, page in _TARGETS]
+_EXPECTED = [(title.decode(), None if page is None else page + 1) for title, _target, page in _TARGETS]
 
 
 def _cos_items(document: Document) -> list[PdfDictionary]:
@@ -134,7 +134,7 @@ def test_a_bookmark_can_be_given_no_target():
     document.outlines.add(OutlineItem("first page"))
     again = _saved(document)
 
-    assert _landings(again) == [("heading only", None), ("first page", 0)]
+    assert _landings(again) == [("heading only", None), ("first page", 1)]
     heading, first = _cos_items(again)
     assert PdfName("Dest") not in heading.mapping and PdfName("A") not in heading.mapping
     assert isinstance(first.mapping[PdfName("Dest")], PdfArray)
@@ -184,4 +184,4 @@ def test_a_document_assembled_in_memory_leaves_a_page_less_bookmark_without_a_ta
     ]
     written = Document(io.BytesIO(pdf.to_bytes()))
 
-    assert _landings(written) == [("heading only", None), ("second page", 1)]
+    assert _landings(written) == [("heading only", None), ("second page", 2)]

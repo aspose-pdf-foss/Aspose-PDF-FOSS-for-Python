@@ -286,7 +286,7 @@ def test_render_fills_real_glyph_outline_not_box():
     doc = Document()
     doc._engine_pdf = _make_type0_pdf(font, content)
 
-    raster = doc.pages[0].render()
+    raster = doc.pages[1].render()
 
     bottom = _count_black(raster, 8, 27, 33, 35)
     top = _count_black(raster, 8, 9, 33, 19)
@@ -303,7 +303,7 @@ def test_render_glyph_counter_stays_open():
     doc = Document()
     doc._engine_pdf = _make_type0_pdf(font, content)
 
-    raster = doc.pages[0].render()
+    raster = doc.pages[1].render()
 
     assert raster.get_pixel(20, 20) == (255, 255, 255)  # counter (hole)
     # Ring body: sample the left wall of the glyph (around x in font units ~200).
@@ -316,7 +316,7 @@ def test_render_type0_glyph_marks_expected_pixels():
     doc = Document()
     doc._engine_pdf = _make_type0_pdf(font, content)
 
-    raster = doc.pages[0].render()
+    raster = doc.pages[1].render()
 
     # Centre of the glyph cell is inside the filled box.
     assert raster.get_pixel(20, 20) == (0, 0, 0)
@@ -364,7 +364,7 @@ def test_render_simple_truetype_via_symbol_cmap():
     doc = Document()
     doc._engine_pdf = pdf
 
-    raster = doc.pages[0].render()
+    raster = doc.pages[1].render()
 
     assert raster.get_pixel(20, 20) == (0, 0, 0)
 
@@ -377,6 +377,6 @@ def test_render_falls_back_to_box_for_standard14_font():
         page_contents=[b"0 g BT /F1 8 Tf 1 0 0 1 22 10 Tm (Hi) Tj ET"],
     )
 
-    raster = doc.pages[0].render()
+    raster = doc.pages[1].render()
 
     assert raster.get_pixel(24, 17) == (0, 0, 0)

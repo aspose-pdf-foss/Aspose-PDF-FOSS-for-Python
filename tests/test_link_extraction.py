@@ -72,7 +72,7 @@ def _catalog(doc):
 
 
 def _entry(doc, page=0, **entries):
-    doc.pages[page].add_link(RECT, FitDestination(0))
+    doc.pages[(page) + 1].add_link(RECT, FitDestination(1))
     pdf = doc._engine_pdf
     annotation = pdf._resolve(pdf._annotation_refs(page)[-1])
     annotation.mapping.pop(PdfName("Dest"), None)
@@ -126,13 +126,13 @@ def _names(doc, pairs):
 )
 def test_public_uri_records_are_frozen_detached_and_keep_each_occurrence(document, uri):
     assert ModuleLink is ExtractedLink
-    document.pages[1].add_link(RECT, URIAction(uri))
-    document.pages[1].add_link(RECT, URIAction(uri))
-    records = document.pages[1].extract_links()
+    document.pages[2].add_link(RECT, URIAction(uri))
+    document.pages[2].add_link(RECT, URIAction(uri))
+    records = document.pages[2].extract_links()
     assert len(records) == 2
     assert [r.annotation_index for r in records] == [0, 1]
     for record in records:
-        assert record.page_index == 1 and record.rect == RECT
+        assert record.page_index == 2 and record.rect == RECT
         assert record.action_type == "URI" and record.action_path == "A"
         assert record.uri == record.resolved_uri == uri
         assert record.target_page_index is None and record.issues == ()
@@ -145,19 +145,19 @@ def test_public_uri_records_are_frozen_detached_and_keep_each_occurrence(documen
 @pytest.mark.parametrize(
     "target",
     [
-        FitDestination(1),
-        FitBDestination(2),
-        XYZDestination(0, None, 100, 0),
-        FitHDestination(1, 100),
-        FitBHDestination(1),
-        FitVDestination(1, 20),
-        FitBVDestination(2),
-        FitRDestination(2, 1, 2, 10, 20),
+        FitDestination(2),
+        FitBDestination(3),
+        XYZDestination(1, None, 100, 0),
+        FitHDestination(2, 100),
+        FitBHDestination(2),
+        FitVDestination(2, 20),
+        FitBVDestination(3),
+        FitRDestination(3, 1, 2, 10, 20),
     ],
 )
 @pytest.mark.parametrize("action", [False, True])
 def test_all_local_views_roundtrip_and_typed_targets(document, target, action):
-    document.pages[0].add_link(RECT, GoToAction(target) if action else target)
+    document.pages[1].add_link(RECT, GoToAction(target) if action else target)
     before = document.extract_links()
     (record,) = before
     assert record.destination == target
@@ -180,9 +180,9 @@ def test_both_named_formats_aliases_dictionary_and_reference_targets(document):
     _entry(document, Dest=PdfString("alias"))
     _entry(document, A=_action(D=PdfString(b"binary\xe9\x00")))
     first, second = document.extract_links()
-    assert first.destination_name == "alias" and first.target_page_index == 2
-    assert second.destination_name == "binaryé\x00" and second.target_page_index == 2
-    assert first.destination == second.destination == XYZDestination(2, 10, 400, None)
+    assert first.destination_name == "alias" and first.target_page_index == 3
+    assert second.destination_name == "binaryé\x00" and second.target_page_index == 3
+    assert first.destination == second.destination == XYZDestination(3, 10, 400, None)
     assert not first.issues and not second.issues
 
 
@@ -197,30 +197,30 @@ def test_name_string_priorities_and_literal_slash_names(document):
     _entry(document, Dest=PdfString("same"))
     _entry(document, Dest=PdfName("same"))
     _entry(document, Dest=PdfName("//chapter"))
-    assert [r.target_page_index for r in document.extract_links()] == [1, 2, 1]
+    assert [r.target_page_index for r in document.extract_links()] == [2, 3, 2]
     assert document.extract_links()[2].destination_name == "/chapter"
 
 
 def test_local_page_resolution_follows_unsaved_insertions(document):
-    document.pages[0].add_link(RECT, FitDestination(2))
-    document.pages.insert(1)
+    document.pages[1].add_link(RECT, FitDestination(3))
+    document.pages.insert(2)
     (record,) = document.extract_links()
-    assert record.target_page_index == 3 and record.destination == FitDestination(3)
+    assert record.target_page_index == 4 and record.destination == FitDestination(4)
 
 
 def test_remote_launch_named_submit_and_unknown_actions(document):
     actions = [
-        GoToRAction("next.pdf", XYZDestination(7, 10, 200, 1)),
+        GoToRAction("next.pdf", XYZDestination(8, 10, 200, 1)),
         LaunchAction("notes.txt"),
         NamedAction("NextPage"),
         SubmitFormAction("https://example.test/submit"),
         JavaScriptAction("secret()"),
     ]
     for action in actions:
-        document.pages[0].add_link(RECT, action)
+        document.pages[1].add_link(RECT, action)
     remote, launch, named, submit, script = document.extract_links()
     assert remote.file == "next.pdf" and remote.destination == XYZDestination(
-        7, 10, 200, 1
+        8, 10, 200, 1
     )
     assert remote.target_page_index is None and not remote.issues
     assert launch.file == "notes.txt" and not launch.issues
@@ -264,7 +264,7 @@ def test_relative_uri_resolution_uses_catalog_base_without_fetching(
     _catalog(document).mapping[PdfName("URI")] = PdfDictionary(
         {PdfName("Base"): PdfString("https://example.test/docs/index.html")}
     )
-    document.pages[0].add_link(RECT, URIAction(uri))
+    document.pages[1].add_link(RECT, URIAction(uri))
     (record,) = document.extract_links()
     assert record.uri == uri and record.resolved_uri == expected and not record.issues
 
@@ -349,7 +349,7 @@ def test_rectangle_normalization_and_invalid_geometry(document, rect, expected, 
     assert (
         record.rect == expected
         and record.issues == issues
-        and record.target_page_index == 1
+        and record.target_page_index == 2
     )
 
 
@@ -376,12 +376,12 @@ def test_invalid_actions_and_siblings_do_not_hide_valid_targets(document):
 def test_selection_page_wrapper_order_nonlinks_and_empty_documents(
     document, monkeypatch
 ):
-    document.pages[0].add_link(RECT, FitDestination(1))
-    document.pages[2].add_link(RECT, URIAction("https://example.test/"))
+    document.pages[1].add_link(RECT, FitDestination(2))
+    document.pages[3].add_link(RECT, URIAction("https://example.test/"))
     _entry(document, page=2, Subtype=PdfName("Text"), Dest=_destination(document))
-    records = document.extract_links(pages=iter([2, 0, 2]))
-    assert [(r.page_index, r.annotation_index) for r in records] == [(2, 0), (0, 0)]
-    assert document.pages[2].extract_links() == records[:1]
+    records = document.extract_links(pages=(number + 1 if type(number) is int else number for number in (iter([2, 0, 2]))))
+    assert [(r.page_index, r.annotation_index) for r in records] == [(3, 0), (1, 0)]
+    assert document.pages[3].extract_links() == records[:1]
     assert document.extract_links(pages=[]) == []
     monkeypatch.setattr(
         document._engine_pdf,
@@ -404,11 +404,11 @@ def test_roundtrip_encryption_streaming_no_content_decoding_or_mutation(
     with Document() as source:
         for _ in range(3):
             source.pages.add()
-        source.pages[2].add_link(RECT, URIAction("https://example.test/資料"))
-        source.pages[2].add_link(RECT, FitDestination(1))
+        source.pages[3].add_link(RECT, URIAction("https://example.test/資料"))
+        source.pages[3].add_link(RECT, FitDestination(2))
         source.info["Title"] = "Keep title"
         source.add_attachment("keep.txt", b"keep")
-        expected = source.pages[2].extract_links()
+        expected = source.pages[3].extract_links()
         if encrypted:
             source.encrypt("secret", "owner")
         source.save(path)
@@ -427,7 +427,7 @@ def test_roundtrip_encryption_streaming_no_content_decoding_or_mutation(
         monkeypatch.setattr(
             pdf, "get_page_content", lambda *a: pytest.fail("no page content")
         )
-        assert reopened.extract_links(pages=[2]) == expected
+        assert reopened.extract_links(pages=[3]) == expected
         assert (pdf._image_cursor, pdf._image_names) == cursor
         assert pdf.page_contents == content and pdf._extracted_text is text
         assert (
@@ -445,7 +445,7 @@ def test_resource_limits_bound_selection_metadata_depth_and_report_text():
         limits = replace(document.load_limits, max_container_items=10)
         document._load_limits = document._engine_pdf._load_limits = limits
         with pytest.raises(PdfResourceLimitException):
-            document.extract_links(pages=repeat(0))
+            document.extract_links(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
         document._load_limits = document._engine_pdf._load_limits = PdfLoadLimits(
             max_object_bytes=8
         )
@@ -482,18 +482,18 @@ def test_malformed_annotation_containers_raise_and_disposed_guard(document):
 @pytest.mark.parametrize(
     "target",
     [
-        FitDestination(0),
-        FitBDestination(5),
-        XYZDestination(7),
-        FitHDestination(9),
-        FitBHDestination(8, 100),
-        FitVDestination(2),
-        FitBVDestination(3, 20),
-        FitRDestination(6, 1, 2, 10, 20),
+        FitDestination(1),
+        FitBDestination(6),
+        XYZDestination(8),
+        FitHDestination(10),
+        FitBHDestination(9, 100),
+        FitVDestination(3),
+        FitBVDestination(4, 20),
+        FitRDestination(7, 1, 2, 10, 20),
     ],
 )
 def test_remote_views_keep_remote_page_numbers_across_roundtrip(document, target):
-    document.pages[0].add_link(RECT, GoToRAction("other.pdf", target))
+    document.pages[1].add_link(RECT, GoToRAction("other.pdf", target))
     records = document.extract_links()
     (record,) = records
     assert record.destination == target and record.target_page_index is None
@@ -538,19 +538,19 @@ def test_bad_file_does_not_hide_valid_remote_destination_and_uf_null_falls_back(
         ),
     )
     first, second = document.extract_links()
-    assert first.destination == FitDestination(4) and first.file is None
+    assert first.destination == FitDestination(5) and first.file is None
     assert first.issues == ("invalid_file",)
     assert second.file == "fallback.txt" and not second.issues
 
 
 def test_bad_uri_base_keeps_raw_url_and_other_targets(document):
     _catalog(document).mapping[PdfName("URI")] = PdfNumber(1)
-    document.pages[0].add_link(RECT, URIAction("relative.pdf"))
-    document.pages[0].add_link(RECT, FitDestination(1))
+    document.pages[1].add_link(RECT, URIAction("relative.pdf"))
+    document.pages[1].add_link(RECT, FitDestination(2))
     first, second = document.extract_links()
     assert first.uri == "relative.pdf" and first.resolved_uri is None
     assert first.issues == ("invalid_uri_base",)
-    assert second.target_page_index == 1 and not second.issues
+    assert second.target_page_index == 2 and not second.issues
 
 
 def test_unknown_actions_hide_executable_streams_and_additional_actions(
@@ -630,8 +630,8 @@ def test_shared_action_expansion_and_long_action_names_obey_limits(document):
 def test_inventory_preserves_serialized_bytes_and_ignores_unselected_bad_pages(
     document,
 ):
-    document.pages[0].add_link(RECT, URIAction("https://example.test/"))
-    document.pages[0].add_link(RECT, FitDestination(2))
+    document.pages[1].add_link(RECT, URIAction("https://example.test/"))
+    document.pages[1].add_link(RECT, FitDestination(3))
     before = _save(document)
     records = document.extract_links()
     assert _save(document) == before
@@ -639,7 +639,7 @@ def test_inventory_preserves_serialized_bytes_and_ignores_unselected_bad_pages(
         assert reopened.extract_links() == records
     page = document._engine_pdf._get_page_dict(2)
     page.mapping[PdfName("Annots")] = PdfString("malformed unselected metadata")
-    assert document.extract_links(pages=[0]) == records
+    assert document.extract_links(pages=[1]) == records
 
 
 def test_cyclic_action_type_reference_does_not_hide_next_target(document):

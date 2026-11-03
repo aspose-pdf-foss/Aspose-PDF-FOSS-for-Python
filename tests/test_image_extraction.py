@@ -54,7 +54,7 @@ def test_image_placement_rect_resolution_rotation_matrix():
     p2 = ImagePlacement(
         name="img2",
         image_data=b"xxx",
-        page_index=1,
+        page_index=2,
         rect=rect,
         resolution=(150.0, 150.0),
         rotation=90,

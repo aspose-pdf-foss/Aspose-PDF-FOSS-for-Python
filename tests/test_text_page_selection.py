@@ -102,10 +102,10 @@ def test_document_selection_survives_pdf_round_trips_and_does_not_change_full_te
                 path
             )
         try:
-            assert document.extract_text(pages=[2, 0, 2]) == "Third\nFirst\nThird"
+            assert document.extract_text(pages=[3, 1, 3]) == "Third\nFirst\nThird"
             assert document.extract_text() == "First\nSecond\nThird"
-            assert document.extract_text(pages=(i for i in [1])) == "Second"
-            assert document.extract_text(pages=range(2)) == "First\nSecond"
+            assert document.extract_text(pages=(number + 1 if type(number) is int else number for number in ((i for i in [1])))) == "Second"
+            assert document.extract_text(pages=range(1, (2) + 1)) == "First\nSecond"
             assert document.extract_text(pages=[]) == ""
             assert document.extract_text() == "First\nSecond\nThird"
         finally:
@@ -116,13 +116,13 @@ def test_document_selection_survives_pdf_round_trips_and_does_not_change_full_te
 def test_page_breaks_preserve_empty_pages_and_original_line_breaks():
     with Document() as document:
         _add_pages(document, ("First", "", "Third"))
-        document.pages[2].add_text("Another line", 72, 680)
+        document.pages[3].add_text("Another line", 72, 680)
         assert (
-            document.extract_text(pages=[1, 2, 1, 0])
+            document.extract_text(pages=[2, 3, 2, 1])
             == "\nThird\nAnother line\n\nFirst"
         )
-        assert document.extract_text(pages=[1, 1]) == "\n"
-        assert document.extract_text(pages=[1]) == ""
+        assert document.extract_text(pages=[2, 2]) == "\n"
+        assert document.extract_text(pages=[2]) == ""
 
 
 def test_selection_and_clip_work_together_in_every_text_api():
@@ -131,15 +131,15 @@ def test_selection_and_clip_work_together_in_every_text_api():
     with Document(raw) as document:
         full = document.extract_text()
         assert (
-            document.extract_text(pages=[2, 0, 2], clip=clip) == "Third\nFirst\nThird"
+            document.extract_text(pages=[3, 1, 3], clip=clip) == "Third\nFirst\nThird"
         )
-        assert document.extract_text(pages=[0, 2], clip=(0, 200, 1, 201)) == "\n"
+        assert document.extract_text(pages=[1, 3], clip=(0, 200, 1, 201)) == "\n"
         assert document.extract_text() == full
     with PdfExtractor() as extractor:
         extractor.bind_pdf(raw)
         extractor.extract_text(page_numbers=[3, 1, 3], clip=clip)
         assert extractor.get_text() == "Third\nFirst\nThird"
-    options = TextExtractorOptions(PdfLoadLimits(), pages=[2, 0, 2], clip=clip)
+    options = TextExtractorOptions(PdfLoadLimits(), pages=[3, 1, 3], clip=clip)
     options.add_input(ByteArrayDataSource(raw))
     assert TextExtractor().process(options)[0].to_string() == "Third\nFirst\nThird"
 
@@ -158,7 +158,7 @@ def test_selection_and_clip_work_together_in_every_text_api():
         ["0"],
         [None],
         [-1],
-        [3],
+        [4],
         slice(0, 2),
     ],
 )
@@ -186,7 +186,7 @@ def test_later_invalid_index_is_checked_even_when_full_text_is_cached(monkeypatc
 
         monkeypatch.setattr(document._engine_pdf, "extract_page_text", no_extraction)
         with pytest.raises(PdfValidationException, match="out of range"):
-            document.extract_text(pages=(i for i in [0, 99]))
+            document.extract_text(pages=(number + 1 if type(number) is int else number for number in ((i for i in [0, 99]))))
         assert document.extract_text() == expected
 
 
@@ -212,11 +212,11 @@ def test_streaming_document_decodes_only_selected_pages_and_propagates_limits(
     with Document.open_streaming(
         path, limits=PdfLoadLimits(max_decoded_stream_bytes=1000)
     ) as document:
-        assert document.extract_text(pages=[0, 0], clip=clip) == "Selected\nSelected"
+        assert document.extract_text(pages=[1, 1], clip=clip) == "Selected\nSelected"
         assert document._engine_pdf.page_contents == []
         with pytest.raises(PdfResourceLimitException, match="max_decoded_stream_bytes"):
-            document.extract_text(pages=[1], clip=clip)
-        assert document.extract_text(pages=[0], clip=clip) == "Selected"
+            document.extract_text(pages=[2], clip=clip)
+        assert document.extract_text(pages=[1], clip=clip) == "Selected"
 
 
 def test_streaming_selection_does_not_touch_other_page_content(tmp_path, monkeypatch):
@@ -232,7 +232,7 @@ def test_streaming_selection_does_not_touch_other_page_content(tmp_path, monkeyp
             return original(index)
 
         monkeypatch.setattr(document._engine_pdf, "get_page_content", selected_only)
-        assert document.extract_text(pages=[2, 0, 2]) == "Third\nFirst\nThird"
+        assert document.extract_text(pages=[3, 1, 3]) == "Third\nFirst\nThird"
         assert seen == [2, 0, 2]
 
 
@@ -303,10 +303,10 @@ def test_unselected_text_token_limits_are_not_triggered_in_facade_or_lowcode():
         with pytest.raises(PdfResourceLimitException, match="max_content_tokens"):
             extractor.extract_text(page_numbers=[2])
         assert extractor.get_text() == "Selected"
-    options = TextExtractorOptions(limits, pages=[0])
+    options = TextExtractorOptions(limits, pages=[1])
     options.add_input(ByteArrayDataSource(raw))
     assert TextExtractor().process(options)[0].to_string() == "Selected"
-    options.pages = [1]
+    options.pages = [2]
     with pytest.raises(PdfResourceLimitException, match="max_content_tokens"):
         TextExtractor().process(options)
 
@@ -326,7 +326,7 @@ def test_unbound_empty_and_disposed_objects_validate_selection():
     with Document() as document:
         assert document.extract_text(pages=[]) == document.extract_text() == ""
         with pytest.raises(PdfValidationException):
-            document.extract_text(pages=[0])
+            document.extract_text(pages=[1])
     with pytest.raises(AsposePdfException, match="disposed"):
         document.extract_text(pages=[])
     with PdfExtractor() as extractor:
@@ -339,25 +339,25 @@ def test_unbound_empty_and_disposed_objects_validate_selection():
 
 
 def test_lowcode_generator_selection_is_reusable_across_inputs_and_runs():
-    options = TextExtractorOptions(pages=(i for i in [2, 0, 2]))
+    options = TextExtractorOptions(pages=(number + 1 if type(number) is int else number for number in ((i for i in [2, 0, 2]))))
     options.add_input(ByteArrayDataSource(_source_bytes(("A0", "A1", "A2"))))
     options.add_input(ByteArrayDataSource(_source_bytes(("B0", "B1", "B2"))))
     for _ in range(2):
         result = TextExtractor().process(options)
         assert [item.to_string() for item in result] == ["A2\nA0\nA2", "B2\nB0\nB2"]
-    options.pages = (i for i in [1, 0])
+    options.pages = (i for i in [2, 1])
     for _ in range(2):
         assert TextExtractor().process(options)[0].to_string() == "A1\nA0"
 
 
 def test_lowcode_options_snapshot_mutable_input_and_validate_reassignments():
     pages = [1, 0]
-    options = TextExtractorOptions(pages=pages)
+    options = TextExtractorOptions(pages=(None if pages is None else (number + 1 if type(number) is int else number for number in (pages))))
     pages[0] = 999
-    assert options.pages == (1, 0)
+    assert options.pages == (2, 1)
     with pytest.raises(PdfValidationException):
         options.pages = [True]
-    assert options.pages == (1, 0)
+    assert options.pages == (2, 1)
     options.pages = None
     assert options.pages is None
 
@@ -373,7 +373,7 @@ def test_lowcode_input_and_output_sources_support_page_selection(tmp_path, sourc
         source = StreamDataSource(io.BytesIO(raw))
     else:
         source = ByteArrayDataSource(raw)
-    options = TextExtractorOptions(pages=[1, 0])
+    options = TextExtractorOptions(pages=[2, 1])
     options.add_input(source)
     sink = ByteArrayDataSource(b"original")
     options.add_output(sink)
@@ -392,7 +392,7 @@ def test_lowcode_empty_selection_emits_one_empty_result_per_input():
 
 
 def test_lowcode_validates_selection_against_each_input_before_emitting_outputs():
-    options = TextExtractorOptions(pages=[2])
+    options = TextExtractorOptions(pages=[3])
     options.add_input(ByteArrayDataSource(_source_bytes()))
     options.add_input(ByteArrayDataSource(_source_bytes(("Only",))))
     sinks = [ByteArrayDataSource(b"original") for _ in range(2)]
@@ -412,11 +412,11 @@ def test_lowcode_options_reject_invalid_page_values(pages):
 def test_page_selection_resource_limits_apply_before_page_extraction():
     limits = PdfLoadLimits(max_container_items=3)
     with pytest.raises(PdfResourceLimitException, match="page selection"):
-        TextExtractorOptions(limits, pages=(0 for _ in range(4)))
+        TextExtractorOptions(limits, pages=(number + 1 if type(number) is int else number for number in ((0 for _ in range(4)))))
     with Document(limits=limits) as document:
         document.pages.add()
         with pytest.raises(PdfResourceLimitException, match="page selection"):
-            document.extract_text(pages=[0] * 4)
+            document.extract_text(pages=(number + 1 if type(number) is int else number for number in ([0] * 4)))
     with PdfExtractor() as extractor:
         extractor.bind_pdf(
             _source_bytes(), limits=PdfLoadLimits(max_container_items=20)
@@ -438,7 +438,7 @@ def test_encrypted_pdf_selection_and_unicode_survive_reload(tmp_path, streaming)
     with (Document.open_streaming if streaming else Document)(
         path, password="secret"
     ) as document:
-        assert document.extract_text(pages=[1, 1]) == "café Ångström\ncafé Ångström"
+        assert document.extract_text(pages=[2, 2]) == "café Ångström\ncafé Ångström"
     with PdfExtractor() as extractor:
         extractor.bind_pdf(path, password="secret")
         extractor.extract_text(page_numbers=[2])
@@ -451,8 +451,8 @@ def test_selected_damaged_content_keeps_existing_recovery_behavior():
     data[offset : offset + 2] = b"B?"
     with Document(bytes(data)) as document:
         assert (
-            document.extract_text(pages=[0])
-            == document.pages[0].extract_text()
+            document.extract_text(pages=[1])
+            == document.pages[1].extract_text()
             == "First"
         )
 
@@ -461,6 +461,6 @@ def test_selected_extraction_does_not_change_pdf_bytes():
     with Document() as document:
         _add_pages(document)
         before = _bytes(document)
-        document.extract_text(pages=[2, 0, 2])
-        document.extract_text(pages=[1], clip=(0, 680, 300, 730))
+        document.extract_text(pages=[3, 1, 3])
+        document.extract_text(pages=[2], clip=(0, 680, 300, 730))
         assert _bytes(document) == before

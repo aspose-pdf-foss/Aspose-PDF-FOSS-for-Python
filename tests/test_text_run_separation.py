@@ -65,7 +65,7 @@ def _document(content: str, *, extra_objects=(), resources_extra: str = "") -> D
 def _text(content: str, **kwargs) -> str:
     document = _document(content, **kwargs)
     try:
-        return document.pages[0].extract_text()
+        return document.pages[1].extract_text()
     finally:
         document.dispose()
 

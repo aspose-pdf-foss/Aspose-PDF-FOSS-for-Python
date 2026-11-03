@@ -110,7 +110,7 @@ def _colour_counts(raster) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 def test_hidden_layer_is_not_painted() -> None:
     with Document(io.BytesIO(_layered_pdf())) as document:
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
 
     assert counts["red"] > 2000  # layer on
     assert counts["green"] > 2000  # no layer at all
@@ -120,7 +120,7 @@ def test_hidden_layer_is_not_painted() -> None:
 def test_base_state_off_hides_every_group_not_switched_on() -> None:
     config = b"<< /BaseState /OFF /ON [5 0 R] >>"
     with Document(io.BytesIO(_layered_pdf(config))) as document:
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
 
     assert counts["red"] > 2000
     assert counts["blue"] == 0
@@ -130,14 +130,14 @@ def test_base_state_off_hides_every_group_not_switched_on() -> None:
 def test_switching_a_layer_on_paints_it() -> None:
     with Document(io.BytesIO(_layered_pdf())) as document:
         document.layers["Draft"].visible = True
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
     assert counts["blue"] > 2000
 
 
 def test_switching_a_layer_off_hides_it() -> None:
     with Document(io.BytesIO(_layered_pdf())) as document:
         document.layers["Base"].visible = False
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
     assert counts["red"] == 0
 
 
@@ -161,12 +161,12 @@ def test_hidden_image_xobject_is_not_painted() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
     assert counts["red"] == 0
 
     with Document(io.BytesIO(data)) as document:
         document.layers["Stamp"].visible = True
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
     assert counts["red"] > 2000
 
 
@@ -201,11 +201,11 @@ def test_text_of_a_layer_switched_on_is_extracted(tmp_path: Path) -> None:
 def test_graphics_absorber_skips_hidden_layers() -> None:
     with Document(io.BytesIO(_layered_pdf())) as document:
         absorber = GraphicsAbsorber()
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
         hidden = [round(e.rectangle.x, 1) for e in absorber.elements]
 
         document.layers["Draft"].visible = True
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
         shown = [round(e.rectangle.x, 1) for e in absorber.elements]
 
     assert hidden == [10.0, 130.0]
@@ -277,7 +277,7 @@ def test_ocmd_policies(policy: bytes, visible: bool) -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
     assert (counts["red"] > 2000) is visible
 
 
@@ -296,7 +296,7 @@ def test_visibility_expression_negates_a_group() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
     assert counts["red"] > 2000  # NOT(off) is visible
 
 
@@ -317,6 +317,6 @@ def test_nested_marked_content_inside_a_hidden_layer_stays_hidden() -> None:
         }
     )
     with Document(io.BytesIO(data)) as document:
-        counts = _colour_counts(document.pages[0].render(dpi=72, antialias=False))
+        counts = _colour_counts(document.pages[1].render(dpi=72, antialias=False))
     assert counts["blue"] == 0
     assert counts["green"] > 2000  # the outer EMC did not end the hidden run early

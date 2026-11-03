@@ -71,14 +71,14 @@ def test_groups_contain_first_occurrences_and_survive_round_trips(
             _page(document, color)
         document.info["Title"] = "Original batch"
         before = _bytes(document)
-        assert document.find_duplicate_pages(dpi=dpi) == [[0, 2], [1, 5], [3, 4]]
+        assert document.find_duplicate_pages(dpi=dpi) == [[1, 3], [2, 6], [4, 5]]
         assert _bytes(document) == before and document.page_count == 7
         source = before
         if on_disk:
             source = tmp_path / "batch.pdf"
             document.save(source)
         with Document(source) as loaded:
-            assert loaded.find_duplicate_pages(dpi=dpi) == [[0, 2], [1, 5], [3, 4]]
+            assert loaded.find_duplicate_pages(dpi=dpi) == [[1, 3], [2, 6], [4, 5]]
             assert loaded.info["Title"] == "Original batch"
 
 
@@ -90,7 +90,7 @@ def test_different_pdf_content_can_have_the_same_rendered_view():
         scanned.add_image(_png((255, 0, 0)), 0, 0, width=24, height=24)
         assert filled.content != scanned.content
         before = _bytes(document)
-        assert document.find_duplicate_pages() == [[0, 1]]
+        assert document.find_duplicate_pages() == [[1, 2]]
         assert _bytes(document) == before
 
 
@@ -112,7 +112,7 @@ def test_invisible_data_hidden_layers_and_transparency_do_not_prevent_a_match():
             hidden.add_text("Hidden", 5, 10)
         _page(document, "#000")
         before = _bytes(document)
-        assert document.find_duplicate_pages() == [[0, 1, 2, 3, 4]]
+        assert document.find_duplicate_pages() == [[1, 2, 3, 4, 5]]
         assert "Stored OCR" in ocr.extract_text()
         assert _bytes(document) == before
 
@@ -129,7 +129,7 @@ def test_rotation_is_applied_to_the_visible_view_instead_of_compared_as_metadata
             page = document.pages.add(size=size)
             page.rotation = rotation
             page.draw_rectangle(*rectangle, fill_color="#000", stroke_color=None)
-        assert document.find_duplicate_pages(dpi=dpi) == [[0, 1, 2, 3]]
+        assert document.find_duplicate_pages(dpi=dpi) == [[1, 2, 3, 4]]
         assert [page.rotation for page in document.pages] == [0, 90, 180, 270]
 
 
@@ -142,7 +142,7 @@ def test_only_the_current_crop_counts_and_box_origins_are_not_compared():
         second = document.pages.add(((100, 200, 180, 260), b""))
         second.crop_box = (110, 210, 158, 234)
         second.draw_rectangle(116, 216, 12, 6, fill_color="#000", stroke_color=None)
-        assert document.find_duplicate_pages() == [[0, 1]]
+        assert document.find_duplicate_pages() == [[1, 2]]
         assert first.crop_box == (10, 10, 58, 34)
         assert second.crop_box == (110, 210, 158, 234)
 
@@ -171,7 +171,7 @@ def test_annotation_visibility_and_exclusion_control_the_comparison(
         for _ in range(3):
             _page(document, None)
         for index in (1, 2):
-            document.pages[index].annotations.add(
+            document.pages[(index) + 1].annotations.add(
                 "Square",
                 (5, 5, 20, 15),
                 f"Different note {index}",
@@ -181,7 +181,7 @@ def test_annotation_visibility_and_exclusion_control_the_comparison(
         expected = [[1, 2]] if include_annotations and hidden == 0 else [[0, 1, 2]]
         assert (
             document.find_duplicate_pages(include_annotations=include_annotations)
-            == expected
+            == [[number + 1 for number in group] for group in (expected)]
         )
         assert _bytes(document) == before
 
@@ -192,13 +192,13 @@ def test_visible_widget_appearances_count_while_field_names_do_not():
             document.pages.add(size=(100, 64))
         for index, value in ((1, "Same"), (2, "Other"), (3, "Same")):
             document.form.add_text_field(
-                f"field-{index}", index, (5, 10, 90, 35), value=value
+                f"field-{index}", (index) + 1, (5, 10, 90, 35), value=value
             )
         document.generate_field_appearances()
         before = _bytes(document)
-        assert document.find_duplicate_pages() == [[1, 3]]
+        assert document.find_duplicate_pages() == [[2, 4]]
         assert document.find_duplicate_pages(include_annotations=False) == [
-            [0, 1, 2, 3]
+            [1, 2, 3, 4]
         ]
         assert _bytes(document) == before
 
@@ -207,11 +207,11 @@ def test_selection_is_validated_deduplicated_and_keeps_first_occurrence_order():
     with Document() as document:
         for color in ("#000", "#00f", "#000", "#00f", "#000", "#f00"):
             _page(document, color)
-        assert document.find_duplicate_pages(pages=(i for i in (3, 4, 1, 2, 4, 0))) == [
-            [3, 1],
-            [4, 2, 0],
+        assert document.find_duplicate_pages(pages=(number + 1 if type(number) is int else number for number in ((i for i in (3, 4, 1, 2, 4, 0))))) == [
+            [4, 2],
+            [5, 3, 1],
         ]
-        assert document.find_duplicate_pages(pages=[4, 4]) == []
+        assert document.find_duplicate_pages(pages=[5, 5]) == []
 
 
 @pytest.mark.parametrize(
@@ -268,7 +268,7 @@ def test_empty_and_single_distinct_page_selections_do_not_render(monkeypatch):
         _page(document, None)
         assert document.find_duplicate_pages() == []
         assert document.find_duplicate_pages(pages=[]) == []
-        assert document.find_duplicate_pages(pages=[0, 0]) == []
+        assert document.find_duplicate_pages(pages=[1, 1]) == []
 
 
 def test_disposed_document_is_rejected():
@@ -285,7 +285,7 @@ def test_hash_collisions_are_verified_against_all_representatives(monkeypatch):
     with Document() as document:
         for color in ("#000", "#00f", "#000", "#f00", "#00f"):
             _page(document, color)
-        assert document.find_duplicate_pages() == [[0, 2], [1, 4]]
+        assert document.find_duplicate_pages() == [[1, 3], [2, 5]]
 
 
 def test_raster_dimensions_are_part_of_the_fingerprint_even_with_identical_pixel_bytes(
@@ -295,7 +295,7 @@ def test_raster_dimensions_are_part_of_the_fingerprint_even_with_identical_pixel
 
     def render(page, **options):
         visited.append(page.index)
-        width, height = (2, 3) if page.index == 0 else (3, 2)
+        width, height = (2, 3) if page.index == 1 else (3, 2)
         return RasterizedPage(width, height, b"\xff" * 18)
 
     with Document() as document:
@@ -303,7 +303,7 @@ def test_raster_dimensions_are_part_of_the_fingerprint_even_with_identical_pixel
             _page(document, None)
         monkeypatch.setattr(Page, "render", render)
         assert document.find_duplicate_pages() == []
-        assert visited == [0, 1]
+        assert visited == [1, 2]
 
 
 def test_at_most_two_rasters_are_live_and_all_are_released_after_success(monkeypatch):
@@ -320,7 +320,7 @@ def test_at_most_two_rasters_are_live_and_all_are_released_after_success(monkeyp
         for color in ("#000", "#00f", "#000", "#00f", "#000"):
             _page(document, color)
         monkeypatch.setattr(Page, "render", render)
-        assert document.find_duplicate_pages() == [[0, 2, 4], [1, 3]]
+        assert document.find_duplicate_pages() == [[1, 3, 5], [2, 4]]
         assert all(reference() is None for reference in references)
 
 
@@ -337,7 +337,7 @@ def test_render_failures_do_not_return_partial_groups_or_modify_the_pdf(
         seen = set()
 
         def render(page, **options):
-            if (failure == "selected" and page.index == 3) or (
+            if (failure == "selected" and page.index == 4) or (
                 failure == "reference" and page.index in seen
             ):
                 raise error("Rendering failed")
@@ -357,7 +357,7 @@ def test_raster_and_selection_limits_are_enforced_before_comparison(monkeypatch)
             document.pages.add(size=(10, 10))
         with pytest.raises(PdfResourceLimitException, match="max_raster_pixels"):
             document.find_duplicate_pages()
-        assert document.find_duplicate_pages(dpi=36) == [[0, 1]]
+        assert document.find_duplicate_pages(dpi=36) == [[1, 2]]
     with Document(limits=PdfLoadLimits(max_container_items=2)) as document:
         for _ in range(3):
             _page(document, None)
@@ -368,7 +368,7 @@ def test_raster_and_selection_limits_are_enforced_before_comparison(monkeypatch)
         monkeypatch.setattr(Page, "render", forbidden)
         for pages in (None, [0, 1, 2], (0 for _ in range(3))):
             with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-                document.find_duplicate_pages(pages=pages)
+                document.find_duplicate_pages(pages=(None if pages is None else (number + 1 if type(number) is int else number for number in (pages))))
 
 
 def test_streaming_limits_apply_only_to_selected_content(tmp_path):
@@ -381,9 +381,9 @@ def test_streaming_limits_apply_only_to_selected_content(tmp_path):
     with Document.open_streaming(
         path, limits=PdfLoadLimits(max_content_stream_bytes=32)
     ) as document:
-        assert document.find_duplicate_pages(pages=[2, 1]) == [[2, 1]]
+        assert document.find_duplicate_pages(pages=[3, 2]) == [[3, 2]]
         with pytest.raises(PdfResourceLimitException, match="max_content_stream_bytes"):
-            document.find_duplicate_pages(pages=[0, 1])
+            document.find_duplicate_pages(pages=[1, 2])
         assert document._engine_pdf.page_contents == []
 
 
@@ -417,7 +417,7 @@ def test_selected_scans_remain_lazy_and_keep_source_data_and_encryption(
 
         with monkeypatch.context() as patch:
             patch.setattr(document._engine_pdf, "get_page_content", content)
-            assert document.find_duplicate_pages(pages=[2, 0, 2]) == [[2, 0]]
+            assert document.find_duplicate_pages(pages=[3, 1, 3]) == [[3, 1]]
         assert set(visited) == {0, 2}
         assert document.is_encrypted == protected
         assert document.info["Title"] == "Original scans"
@@ -446,9 +446,9 @@ def test_render_options_and_reference_verification_are_explicit(monkeypatch):
             _page(document, None)
         monkeypatch.setattr(Page, "render", render)
         assert document.find_duplicate_pages(dpi=96, include_annotations=False) == [
-            [0, 1]
+            [1, 2]
         ]
-        assert visited == [0, 1, 0]
+        assert visited == [1, 2, 1]
 
 
 def test_invoked_form_xobjects_match_the_same_direct_drawing():
@@ -458,14 +458,14 @@ def test_invoked_form_xobjects_match_the_same_direct_drawing():
         stamped = _page(document, None)
         stamped.add_stamp(PageStamp(source=art))
         assert direct.content != stamped.content
-        assert document.find_duplicate_pages() == [[0, 1]]
+        assert document.find_duplicate_pages() == [[1, 2]]
 
 
 def test_identical_unrotated_content_with_different_visible_orientation_does_not_match():
     with Document() as document:
         for _ in range(2):
             _page(document, "#000")
-        document.pages[1].rotation = 180
+        document.pages[2].rotation = 180
         assert document.find_duplicate_pages() == []
 
 
@@ -473,7 +473,7 @@ def test_fractional_page_sizes_are_compared_at_the_chosen_raster_resolution():
     with Document() as document:
         for size in ((10.1, 10.1), (10.9, 10.9)):
             document.pages.add(size=size)
-        assert document.find_duplicate_pages() == [[0, 1]]
+        assert document.find_duplicate_pages() == [[1, 2]]
         assert document.find_duplicate_pages(dpi=144) == []
 
 
@@ -481,25 +481,25 @@ def test_new_calls_observe_page_edits_and_do_not_reuse_stale_fingerprints():
     with Document() as document:
         for _ in range(2):
             _page(document, "#000")
-        assert document.find_duplicate_pages() == [[0, 1]]
+        assert document.find_duplicate_pages() == [[1, 2]]
         layer = document.layers.add("Changed view", visible=False)
-        with document.pages[1].layer(layer):
-            document.pages[1].draw_rectangle(
+        with document.pages[2].layer(layer):
+            document.pages[2].draw_rectangle(
                 30, 10, 5, 5, fill_color="#f00", stroke_color=None
             )
-        assert document.find_duplicate_pages() == [[0, 1]]
+        assert document.find_duplicate_pages() == [[1, 2]]
         layer.visible = True
         assert document.find_duplicate_pages() == []
         layer.visible = False
-        assert document.find_duplicate_pages() == [[0, 1]]
+        assert document.find_duplicate_pages() == [[1, 2]]
 
 
 def test_group_order_uses_first_occurrence_instead_of_first_completed_pair():
     with Document() as document:
         for color in ("#000", "#00f", "#00f", "#000"):
             _page(document, color)
-        assert document.find_duplicate_pages() == [[0, 3], [1, 2]]
-        assert document.find_duplicate_pages(pages=[2, 3, 1, 0]) == [[2, 1], [3, 0]]
+        assert document.find_duplicate_pages() == [[1, 4], [2, 3]]
+        assert document.find_duplicate_pages(pages=[3, 4, 2, 1]) == [[3, 2], [4, 1]]
 
 
 def test_detection_preserves_live_outlines_full_text_cache_and_cursor():
@@ -510,10 +510,10 @@ def test_detection_preserves_live_outlines_full_text_cache_and_cursor():
         engine = document._engine_pdf
         engine._page_text_cursor = 1
         model = engine._outlines_data
-        bookmark = document.outlines.add(OutlineItem("Unsaved bookmark", 1))
-        assert document.find_duplicate_pages() == [[0, 1]]
+        bookmark = document.outlines.add(OutlineItem("Unsaved bookmark", 2))
+        assert document.find_duplicate_pages() == [[1, 2]]
         assert engine._outlines_data is model and engine._outlines_data == []
-        assert document.outlines[0] is bookmark and bookmark.page_index == 1
+        assert document.outlines[0] is bookmark and bookmark.page_index == 2
         assert engine._extracted_text is cached and engine._page_text_cursor == 1
 
 
@@ -533,6 +533,6 @@ def test_reference_verification_obeys_the_cumulative_decoding_limit(tmp_path):
     with Document.open_streaming(
         path, limits=PdfLoadLimits(max_total_decoded_bytes=12)
     ) as document:
-        assert document.find_duplicate_pages() == [[0, 1]]
+        assert document.find_duplicate_pages() == [[1, 2]]
         assert document._engine_pdf.page_contents == []
     assert path.read_bytes() == before

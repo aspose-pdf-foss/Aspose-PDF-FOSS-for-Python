@@ -183,9 +183,9 @@ def test_unsaved_range_changes_and_page_edits_are_visible_immediately():
         labels = document.page_labels
         original = labels.find_pages("A-2")
         assert original == [8]
-        document.pages.insert(0)
+        document.pages.insert(1)
         assert labels.find_pages("A-2") == [9]
-        document.pages.delete(0)
+        document.pages.delete(1)
         assert labels.find_pages("A-2") == [8]
         labels[7] = PageLabel(prefix="B-")
         assert labels.find_pages("A-2") == []
@@ -197,7 +197,7 @@ def test_unsaved_range_changes_and_page_edits_are_visible_immediately():
 
 
 def test_extracted_repeated_pages_and_merges_preserve_lookup_labels():
-    with _book() as source, source.extract_pages([8, 0, 8]) as selected:
+    with _book() as source, source.extract_pages([9, 1, 9]) as selected:
         assert selected.page_labels.find_pages("A-2") == [0, 2]
         assert selected.page_labels.find_pages("i") == [1]
         with _document(2) as unlabelled:
@@ -213,7 +213,7 @@ def test_round_trip_lookup_reads_tree_once_and_never_decodes_page_content(
 ):
     path = tmp_path / "book.pdf"
     with _book() as source:
-        source.pages[0].add_text("Content stays unread", 10, 10)
+        source.pages[1].add_text("Content stays unread", 10, 10)
         if encrypted:
             source.encrypt("secret", "owner")
         source.save(path)
@@ -240,7 +240,7 @@ def test_round_trip_lookup_reads_tree_once_and_never_decodes_page_content(
         monkeypatch.setattr(engine, "page_label_ranges", read)
         monkeypatch.setattr(engine, "get_page_content", forbidden)
         monkeypatch.setattr(engine, "extract_page_text", forbidden)
-        monkeypatch.setattr(document, "render_page", forbidden)
+        monkeypatch.setattr(document, "_api_render_page", forbidden)
         engine._page_text_cursor = 2
         cached = engine._extracted_text
         assert document.page_labels.find_pages("ii") == [1]
@@ -279,7 +279,7 @@ def test_match_count_and_comparison_work_obey_limits():
         document.page_labels[0] = PageLabel(NumberingStyle.NONE, "Cover")
         with pytest.raises(PdfResourceLimitException, match="page label matches"):
             document.page_labels.find_pages("Cover")
-        assert document.pages[0].label == "Cover"
+        assert document.pages[1].label == "Cover"
     with _document(1, limits=PdfLoadLimits(max_codec_work_bytes=3)) as document:
         document.page_labels[0] = PageLabel(NumberingStyle.NONE, "Cover")
         with pytest.raises(

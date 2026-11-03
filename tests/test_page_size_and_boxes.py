@@ -143,7 +143,7 @@ def test_two_sizes_are_equal_when_they_write_the_same_numbers():
     buffer = io.BytesIO()
     document.save(buffer)
     buffer.seek(0)
-    reloaded = Document(buffer).pages[0]
+    reloaded = Document(buffer).pages[1]
 
     assert reloaded.size != PageSize.A4.rotated()
     assert reloaded.size == PageSize.A4
@@ -177,9 +177,9 @@ def test_a_size_may_be_the_argument_or_the_keyword():
 def test_insert_takes_a_size_too():
     document = Document()
     document.pages.add()
-    first = document.pages.insert(0, size=PageSize.A4.landscape())
+    first = document.pages.insert(1, size=PageSize.A4.landscape())
     assert tuple(first.rect) == PageSize.A4.landscape().as_rect()
-    assert tuple(document.pages[1].rect) == LETTER
+    assert tuple(document.pages[2].rect) == LETTER
 
 
 def test_a_size_cannot_be_given_twice_or_alongside_a_page_to_copy():
@@ -220,7 +220,7 @@ def test_a_page_created_at_a4_renders_at_a4(tmp_path):
     out = page.save_as_image(tmp_path / "page.png", dpi=72)
     assert _png_size(out) == (596, 842)
     reloaded = _roundtrip(document)
-    out = reloaded.pages[0].save_as_image(tmp_path / "again.png", dpi=72)
+    out = reloaded.pages[1].save_as_image(tmp_path / "again.png", dpi=72)
     assert _png_size(out) == (596, 842)
 
 
@@ -243,7 +243,7 @@ def test_a_resized_page_renders_and_reopens_at_its_new_size(tmp_path):
     page.media_box = (0, 0, 300, 400)
     out = page.save_as_image(tmp_path / "page.png", dpi=72)
     assert _png_size(out) == (300, 400)
-    assert tuple(_roundtrip(document).pages[0].rect) == (0.0, 0.0, 300.0, 400.0)
+    assert tuple(_roundtrip(document).pages[1].rect) == (0.0, 0.0, 300.0, 400.0)
 
 
 def test_the_media_box_corners_may_be_named_in_either_order():
@@ -293,11 +293,11 @@ def test_setting_a_media_box_on_one_page_leaves_its_siblings_alone():
     document = Document()
     document.pages.add()
     document.pages.add()
-    document.pages[0].media_box = (0, 0, 300, 300)
-    assert tuple(document.pages[1].rect) == LETTER
+    document.pages[1].media_box = (0, 0, 300, 300)
+    assert tuple(document.pages[2].rect) == LETTER
     reloaded = _roundtrip(document)
-    assert tuple(reloaded.pages[0].rect) == (0.0, 0.0, 300.0, 300.0)
-    assert tuple(reloaded.pages[1].rect) == LETTER
+    assert tuple(reloaded.pages[1].rect) == (0.0, 0.0, 300.0, 300.0)
+    assert tuple(reloaded.pages[2].rect) == LETTER
 
 
 def test_a_page_overrides_a_media_box_it_was_inheriting():
@@ -315,12 +315,12 @@ def test_a_page_overrides_a_media_box_it_was_inheriting():
         [PdfNumber(v) for v in (0, 0, 612, 792)]
     )
 
-    document.pages[0].media_box = (0, 0, 300, 300)
+    document.pages[1].media_box = (0, 0, 300, 300)
     assert PdfName("MediaBox") in engine._get_page_dict(0).mapping
     assert PdfName("MediaBox") not in engine._get_page_dict(1).mapping
     reloaded = _roundtrip(document)
-    assert tuple(reloaded.pages[0].rect) == (0.0, 0.0, 300.0, 300.0)
-    assert tuple(reloaded.pages[1].rect) == LETTER
+    assert tuple(reloaded.pages[1].rect) == (0.0, 0.0, 300.0, 300.0)
+    assert tuple(reloaded.pages[2].rect) == LETTER
 
 
 def test_shrinking_the_media_box_clips_the_crop_box_that_was_inside_it():
@@ -353,7 +353,7 @@ def test_a_production_box_is_set_read_and_round_tripped(name):
     page = document.pages.add()
     setattr(page, name, (10, 20, 500, 700))
     assert tuple(getattr(page, name)) == (10.0, 20.0, 500.0, 700.0)
-    assert tuple(getattr(_roundtrip(document).pages[0], name)) == (10.0, 20.0, 500.0, 700.0)
+    assert tuple(getattr(_roundtrip(document).pages[1], name)) == (10.0, 20.0, 500.0, 700.0)
 
 
 @pytest.mark.parametrize("name", PRODUCTION)
@@ -378,7 +378,7 @@ def test_a_box_over_the_edge_is_reduced_for_a_loaded_file_too(name):
     # for a file that arrives from outside, not only for one assembled here.
     document = Document()
     setattr(document.pages.add(), name, (-100, -100, 2000, 2000))
-    assert tuple(getattr(_roundtrip(document).pages[0], name)) == LETTER
+    assert tuple(getattr(_roundtrip(document).pages[1], name)) == LETTER
 
 
 @pytest.mark.parametrize("name", PRODUCTION)
@@ -390,7 +390,7 @@ def test_a_production_box_survives_optimisation(name):
     page.add_text("x", 50, 50)
     setattr(page, name, (10, 20, 500, 700))
     document.optimize()
-    assert tuple(getattr(_roundtrip(document).pages[0], name)) == (10.0, 20.0, 500.0, 700.0)
+    assert tuple(getattr(_roundtrip(document).pages[1], name)) == (10.0, 20.0, 500.0, 700.0)
 
 
 @pytest.mark.parametrize("name", PRODUCTION)
@@ -451,7 +451,7 @@ def test_a_production_box_is_not_inherited_from_a_page_tree_node(entry):
     )
     assert PdfName(entry) not in page_dict.mapping
 
-    page = document.pages[0]
+    page = document.pages[1]
     assert tuple(page.get_box(entry)) == tuple(page.crop_box) == LETTER
 
 
@@ -471,7 +471,7 @@ def test_the_boxes_of_a_copied_page_come_with_it():
     page.trim_box = (10, 10, 400, 600)
     page.bleed_box = (8, 8, 450, 650)
     page.art_box = (20, 20, 300, 500)
-    copy = document.pages.insert(1, page)
+    copy = document.pages.insert(2, page)
     assert tuple(copy.rect) == PageSize.A4.as_rect()
     assert tuple(copy.trim_box) == (10.0, 10.0, 400.0, 600.0)
     assert tuple(copy.bleed_box) == (8.0, 8.0, 450.0, 650.0)

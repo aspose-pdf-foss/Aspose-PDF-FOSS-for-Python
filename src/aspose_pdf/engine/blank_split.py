@@ -38,7 +38,7 @@ def split_by_blank_pages(
     ranges = []
     start = None
     for index in range(count):
-        if _is_blank(document.pages[index], options):
+        if _is_blank(document._page_at(index), options):
             if start is not None:
                 ranges.append((start, index))
                 start = None

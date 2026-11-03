@@ -89,7 +89,7 @@ def _read(data: bytes, caplog: pytest.LogCaptureFixture) -> tuple:
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="aspose_pdf"):
         document = Document(io.BytesIO(data))
-        seen = (len(document.pages), document.info.get("Title"), document.pages[0].extract_text().strip())
+        seen = (len(document.pages), document.info.get("Title"), document.pages[1].extract_text().strip())
     assert "reconstruction" not in caplog.text
     return seen
 

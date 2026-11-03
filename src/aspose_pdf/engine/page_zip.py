@@ -33,7 +33,7 @@ def _dimensions(document, index, dpi):
 def _manifest(records, image_format, mode, dpi, budget, total):
     """Serialize small provenance records incrementally under the byte policy."""
     manifest = dict(
-        schema_version=1, image_format=image_format, mode=mode, dpi=dpi, pages=records
+        schema_version=2, image_format=image_format, mode=mode, dpi=dpi, pages=records
     )
     with _BoundedBuffer(
         budget, "max_object_bytes", "page ZIP manifest bytes", decoded_prefix=total
@@ -174,7 +174,7 @@ def export_zip(
             output, "w", compression=zip_method, compresslevel=compresslevel
         ) as archive:
             for number, (index, width, height) in enumerate(plan, 1):
-                raster = document.render_page(
+                raster = document._api_render_page(
                     index,
                     dpi=dpi,
                     background=background,
@@ -206,7 +206,7 @@ def export_zip(
                     records.append(
                         dict(
                             archive_name=name,
-                            page_index=index,
+                            page_index=index + 1,
                             width=width,
                             height=height,
                             size=len(data),

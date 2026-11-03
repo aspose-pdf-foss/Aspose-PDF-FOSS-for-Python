@@ -11,7 +11,7 @@ __all__ = ["ImageResolutionIssue"]
 class ImageResolutionIssue:
     """One image paint below the requested effective DPI on either image axis.
 
-    Indices are zero-based. ``placement_index`` counts all image paints on the
+    ``page_index`` is one-based; ``placement_index`` is zero-based. ``placement_index`` counts all image paints on the
     page in content order, including good and degenerate placements, descending
     into invoked forms. Repeated paints produce separate findings.
 

@@ -58,7 +58,7 @@ def test_removes_blank_pages_and_round_trips_with_original_indices(
             Document.open_streaming if source_kind == "streaming" else Document
         )(path)
     with document:
-        assert document.remove_blank_pages() == [0, 2, 4]
+        assert document.remove_blank_pages() == [1, 3, 5]
         assert document.page_count == 3
         assert [page.extract_text() for page in document.pages] == ["P1", "P3", "P5"]
         assert document.remove_blank_pages() == []
@@ -82,8 +82,8 @@ def test_selection_order_and_repeats_report_original_indices(monkeypatch):
             return original(page, **options)
 
         monkeypatch.setattr(Page, "render", render)
-        assert document.remove_blank_pages(pages=(i for i in (4, 1, 0, 4))) == [4, 0]
-        assert visits == [4, 1, 0]
+        assert document.remove_blank_pages(pages=(number + 1 if type(number) is int else number for number in ((i for i in (4, 1, 0, 4))))) == [5, 1]
+        assert visits == [5, 2, 1]
         assert [page.extract_text() for page in document.pages] == [
             "P1",
             "",
@@ -99,7 +99,7 @@ def test_empty_selection_empty_document_and_nonblank_documents_are_noops():
     with _document() as document:
         before = _bytes(document)
         assert document.remove_blank_pages(pages=[]) == []
-        assert document.remove_blank_pages(pages=[1, 3, 5]) == []
+        assert document.remove_blank_pages(pages=[2, 4, 6]) == []
         assert _bytes(document) == before
 
 
@@ -109,7 +109,7 @@ def test_all_blank_removal_is_refused_without_changes_but_can_be_previewed(count
         for _ in range(count):
             document.pages.add(size=(64, 64))
         before = _bytes(document)
-        assert document.remove_blank_pages(dry_run=True) == list(range(count))
+        assert document.remove_blank_pages(dry_run=True) == list(number + 1 for number in (list(range(count))))
         with pytest.raises(PdfValidationException, match="every page"):
             document.remove_blank_pages()
         assert document.page_count == count
@@ -120,24 +120,24 @@ def test_a_subset_of_a_blank_document_can_be_removed():
     with Document() as document:
         for _ in range(3):
             document.pages.add(size=(10, 10))
-        assert document.remove_blank_pages(pages=[2, 0, 2]) == [2, 0]
+        assert document.remove_blank_pages(pages=[3, 1, 3]) == [3, 1]
         assert document.page_count == 1
 
 
 def test_dry_run_preserves_live_outlines_text_cache_and_source_bytes():
     with _document() as document:
-        item = document.outlines.add(OutlineItem("Retained", 5))
+        item = document.outlines.add(OutlineItem("Retained", 6))
         text = document.extract_text()
         before = _bytes(document)
         engine = document._engine_pdf
         model = engine._outlines_data
         engine._page_text_cursor = 2
-        assert document.remove_blank_pages(dry_run=True) == [0, 2, 4]
+        assert document.remove_blank_pages(dry_run=True) == [1, 3, 5]
         assert document.page_count == 6
         assert engine._outlines_data is model
         assert engine._extracted_text == text
         assert engine._page_text_cursor == 2
-        assert document.outlines[0] is item and item.page_index == 5
+        assert document.outlines[0] is item and item.page_index == 6
         assert _bytes(document) == before
 
 
@@ -157,12 +157,12 @@ def test_bookmarks_labels_metadata_and_live_items_survive_cleanup(loaded):
         template.add_attachment("notes.txt", b"Keep this")
         template.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ROMAN_LOWERCASE)
         template.page_labels[2] = PageLabel(prefix="A-")
-        template.outlines.add(OutlineItem("Blank heading", 0)).add(
+        template.outlines.add(OutlineItem("Blank heading", 1)).add(
             OutlineItem(
-                "Zoomed", destination=XYZDestination(3, 4, 50, 1.5), is_bold=True
+                "Zoomed", destination=XYZDestination(4, 4, 50, 1.5), is_bold=True
             )
         )
-        template.outlines.add(OutlineItem("Last", 5))
+        template.outlines.add(OutlineItem("Last", 6))
         template.outlines.add(
             OutlineItem("External", destination=URIAction("https://example.com"))
         )
@@ -174,13 +174,13 @@ def test_bookmarks_labels_metadata_and_live_items_survive_cleanup(loaded):
             collection = document.outlines
             heading, last, external = collection
             zoomed = heading.children[0]
-            assert document.remove_blank_pages() == [0, 2, 4]
+            assert document.remove_blank_pages() == [1, 3, 5]
             assert document.outlines is collection
             assert collection[0] is heading and heading.children[0] is zoomed
             assert heading.page_index is None and heading.destination is None
-            assert zoomed.page_index == 1
-            assert zoomed.destination == XYZDestination(1, 4, 50, 1.5)
-            assert zoomed.is_bold and last.page_index == 2
+            assert zoomed.page_index == 2
+            assert zoomed.destination == XYZDestination(2, 4, 50, 1.5)
+            assert zoomed.is_bold and last.page_index == 3
             assert external.destination == URIAction("https://example.com")
             assert [page.label for page in document.pages] == ["i", "A-1", "A-2"]
             assert document.info["Title"] == "Report"
@@ -188,9 +188,9 @@ def test_bookmarks_labels_metadata_and_live_items_survive_cleanup(loaded):
             with Document(_bytes(document)) as reopened:
                 assert reopened.outlines[0].page_index is None
                 assert reopened.outlines[0].children[0].destination == XYZDestination(
-                    1, 4, 50, 1.5
+                    2, 4, 50, 1.5
                 )
-                assert reopened.outlines[1].page_index == 2
+                assert reopened.outlines[1].page_index == 3
                 assert [page.label for page in reopened.pages] == ["i", "A-1", "A-2"]
         finally:
             if document is not template:
@@ -199,29 +199,29 @@ def test_bookmarks_labels_metadata_and_live_items_survive_cleanup(loaded):
 
 def test_loaded_bookmarks_are_preserved_without_accessing_the_collection_first():
     with _document() as source:
-        source.outlines.add(OutlineItem("Last", 5))
+        source.outlines.add(OutlineItem("Last", 6))
         raw = _bytes(source)
     with Document(raw) as document:
         document.remove_blank_pages()
-        assert document.outlines[0].page_index == 2
-        assert document.outlines[0].destination == FitDestination(2)
+        assert document.outlines[0].page_index == 3
+        assert document.outlines[0].destination == FitDestination(3)
 
 
 def test_named_bookmarks_keep_names_and_local_links_keep_retained_targets():
     with _document() as document:
-        document.destinations["last"] = XYZDestination(5, 4, 50, 1.5)
-        document.destinations["blank"] = FitDestination(2)
+        document.destinations["last"] = XYZDestination(6, 4, 50, 1.5)
+        document.destinations["blank"] = FitDestination(3)
         document.outlines.add(OutlineItem("Last", destination="last"))
         document.outlines.add(OutlineItem("Blank", destination="blank"))
-        document.pages[1].add_link((1, 1, 5, 5), FitDestination(5))
-        document.pages[1].add_link((6, 1, 10, 5), FitDestination(2))
+        document.pages[2].add_link((1, 1, 5, 5), FitDestination(6))
+        document.pages[2].add_link((6, 1, 10, 5), FitDestination(3))
         document.remove_blank_pages()
         assert document.outlines[0].destination_name == "last"
-        assert document.outlines[0].page_index == 2
+        assert document.outlines[0].page_index == 3
         assert document.outlines[1].page_index is None
         assert document.outlines[1].destination_name is None
-        links = list(document.pages[0].annotations)
-        assert links[0].get_property("Dest") == FitDestination(2)
+        links = list(document.pages[1].annotations)
+        assert links[0].get_property("Dest") == FitDestination(3)
         assert links[1].get_property("Dest") is None
 
 
@@ -232,7 +232,7 @@ def test_annotation_visibility_and_noise_thresholds_are_forwarded(include):
         note = document.pages.add(size=(64, 64))
         note.annotations.add_square((5, 5, 25, 25), interior_color=(0, 0, 0))
         assert document.remove_blank_pages(include_annotations=include) == (
-            [] if include else [1]
+            list(number + 1 for number in ([] if include else [1]))
         )
     with Document() as document:
         document.pages.add(size=(10, 10)).draw_rectangle(
@@ -243,7 +243,7 @@ def test_annotation_visibility_and_noise_thresholds_are_forwarded(include):
         )
         assert document.remove_blank_pages(
             white_threshold=249, max_ink_ratio=0, dpi=144
-        ) == [1]
+        ) == [2]
 
 
 @pytest.mark.parametrize("encrypted", [False, True])
@@ -272,7 +272,7 @@ def test_streaming_cleanup_reads_only_selected_scans(tmp_path, monkeypatch, encr
 
         with monkeypatch.context() as patch:
             patch.setattr(engine, "get_page_content", read)
-            assert document.remove_blank_pages(pages=[2, 0, 2]) == [2, 0]
+            assert document.remove_blank_pages(pages=[3, 1, 3]) == [3, 1]
             assert set(visited) == {0, 2}
             assert engine.page_contents == []
             assert engine._extracted_text is None
@@ -286,19 +286,19 @@ def test_streaming_cleanup_reads_only_selected_scans(tmp_path, monkeypatch, encr
 
 def test_later_render_failure_leaves_every_page_and_live_bookmark_intact(monkeypatch):
     with _document() as document:
-        item = document.outlines.add(OutlineItem("Last", 5))
+        item = document.outlines.add(OutlineItem("Last", 6))
         before = _bytes(document)
         original = Page.render
 
         def render(page, **options):
-            if page.index == 4:
+            if page.index == 5:
                 raise PdfParseException("Cannot render page")
             return original(page, **options)
 
         monkeypatch.setattr(Page, "render", render)
         with pytest.raises(PdfParseException, match="Cannot render"):
             document.remove_blank_pages()
-        assert document.page_count == 6 and item.page_index == 5
+        assert document.page_count == 6 and item.page_index == 6
         assert _bytes(document) == before
 
 
@@ -310,7 +310,7 @@ def test_later_render_failure_leaves_every_page_and_live_bookmark_intact(monkeyp
         {"white_threshold": 256},
         {"max_ink_ratio": -1},
         {"include_annotations": 1},
-        {"pages": [0, 6]},
+        {"pages": [1, 7]},
         {"pages": [True]},
     ],
 )
@@ -340,7 +340,7 @@ def test_render_limits_preserve_pages_and_disposed_documents_are_rejected():
 
 def test_invalid_live_outline_tree_is_rejected_before_deletion():
     with _document() as document:
-        item = document.outlines.add(OutlineItem("Cycle", 5))
+        item = document.outlines.add(OutlineItem("Cycle", 6))
         item.children.append(item)
         with pytest.raises(PdfParseException, match="cycle"):
             document.remove_blank_pages()
@@ -356,20 +356,20 @@ def test_noise_tolerance_removes_a_speckled_page():
             0, 0, 1, 1, fill_color="#000", stroke_color=None
         )
         assert document.remove_blank_pages() == []
-        assert document.remove_blank_pages(max_ink_ratio=0.01) == [1]
+        assert document.remove_blank_pages(max_ink_ratio=0.01) == [2]
         assert document.page_count == 1
 
 
 def test_retained_form_fields_keep_their_page_and_value_after_cleanup():
     with _document() as document:
-        field = document.form.add_text_field("Value", 3, (5, 5, 55, 20), value="Keep")
+        field = document.form.add_text_field("Value", 4, (5, 5, 55, 20), value="Keep")
         document.generate_field_appearances()
         document.remove_blank_pages()
         assert document.form["Value"] is field
-        assert field.value == "Keep" and field.page_index == 1
+        assert field.value == "Keep" and field.page_index == 2
         with Document(_bytes(document)) as reopened:
             assert reopened.form["Value"].value == "Keep"
-            assert reopened.form["Value"].page_index == 1
+            assert reopened.form["Value"].page_index == 2
 
 
 def test_invalid_label_tree_is_checked_before_any_page_is_deleted(monkeypatch):

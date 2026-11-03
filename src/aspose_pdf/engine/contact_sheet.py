@@ -193,7 +193,7 @@ def render_contact_sheet(
     for position, (index, (scale, w, h)) in enumerate(zip(selection, plans)):
         x = margin + (position % columns) * (tw + spacing)
         y = margin + (position // columns) * (th + label_height + spacing)
-        raster = document.render_page(
+        raster = document._api_render_page(
             index,
             scale=scale,
             background=page_background,

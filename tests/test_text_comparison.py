@@ -54,7 +54,7 @@ def test_public_report_is_immutable_detached_and_ignores_drawing_changes():
         (result,) = left.compare_text(right)
         assert isinstance(result, PageTextComparison)
         assert aspose_pdf.__all__.count("PageTextComparison") == 1
-        assert result.page_index == result.other_page_index == 0
+        assert result.page_index == result.other_page_index == 1
         assert result.text == result.other_text == "Invoice 123"
         assert result.matches and result.unified_diff == ""
         with pytest.raises(FrozenInstanceError):
@@ -101,13 +101,13 @@ def test_excluded_headers_and_footers_leave_only_body_revisions(
     sources = paths if kind in ("file", "streaming") else results
     with opener(sources[0]) as left, opener(sources[1]) as right:
         if kind == "live":
-            left.pages[0].add_text("Live header", 5, 85, font_size=10)
+            left.pages[1].add_text("Live header", 5, 85, font_size=10)
         before = (
             [_bytes(document) for document in (left, right)]
             if kind != "streaming" else None
         )
         reports = left.compare_text(
-            right, pages=[1, 0, 1], other_pages=[1, 0, 1],
+            right, pages=[2, 1, 2], other_pages=[2, 1, 2],
             exclude_regions=(region for region in regions),
         )
         assert [result.text for result in reports] == ["Shared 1", "Shared 0", "Shared 1"]
@@ -303,7 +303,7 @@ def test_missing_pages_are_distinct_from_empty_text(reverse, text):
         (result,) = left.compare_text(right)
         assert not result.matches
         assert (result.page_index, result.other_page_index) == (
-            (None, 0) if reverse else (0, None)
+            (None, 1) if reverse else (1, None)
         )
         assert (result.text, result.other_text) == (
             (None, text) if reverse else (text, None)
@@ -320,13 +320,13 @@ def test_selections_keep_order_repeats_generators_and_missing_tail():
             _page(right, text)
         results = left.compare_text(
             right,
-            pages=(index for index in (2, 0, 2)),
-            other_pages=(index for index in (2, 1)),
+            pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))),
+            other_pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 1)))),
         )
         assert [(r.page_index, r.other_page_index) for r in results] == [
-            (2, 2),
-            (0, 1),
-            (2, None),
+            (3, 3),
+            (1, 2),
+            (3, None),
         ]
         assert [r.matches for r in results] == [True, False, False]
         assert results[2].text == "C"
@@ -405,21 +405,21 @@ def test_artifacts_hidden_ocr_layers_and_non_page_text_follow_extraction():
         _page(right, "Body")
         left._engine_pdf._set_page_content(
             0,
-            left.pages[0].content
+            left.pages[1].content
             + b" /Artifact BMC BT /F1 10 Tf 5 60 Td (Header) Tj ET EMC",
         )
         assert not left.compare_text(right)[0].matches
         assert left.compare_text(right, skip_artifacts=True)[0].matches
         right._engine_pdf._set_page_content(
-            0, right.pages[0].content + b" BT /F1 10 Tf 3 Tr 5 45 Td (OCR) Tj ET"
+            0, right.pages[1].content + b" BT /F1 10 Tf 3 Tr 5 45 Td (OCR) Tj ET"
         )
         assert not left.compare_text(right, skip_artifacts=True)[0].matches
-        right._engine_pdf._set_page_content(0, left.pages[0].content)
+        right._engine_pdf._set_page_content(0, left.pages[1].content)
         layer = right.layers.add("Hidden", visible=False)
-        with right.pages[0].layer(layer):
-            right.pages[0].add_text("HIDDEN", 5, 30)
-        right.form.add_text_field("Value", 0, (5, 5, 40, 20), value="Form")
-        right.pages[0].annotations.add("Text", (70, 5, 90, 20), "Comment")
+        with right.pages[1].layer(layer):
+            right.pages[1].add_text("HIDDEN", 5, 30)
+        right.form.add_text_field("Value", 1, (5, 5, 40, 20), value="Form")
+        right.pages[1].annotations.add("Text", (70, 5, 90, 20), "Comment")
         assert left.compare_text(right)[0].matches
         layer.visible = True
         assert not left.compare_text(right)[0].matches
@@ -452,7 +452,7 @@ def test_saved_inputs_preserve_sources_and_reports_survive_disposal(
             if kind != "streaming" and not encrypted
             else None
         )
-        results = left.compare_text(right, pages=[1, 0], other_pages=[1, 0])
+        results = left.compare_text(right, pages=[2, 1], other_pages=[2, 1])
         assert [result.matches for result in results] == [False, True]
         for document, protected in zip((left, right), protection):
             assert document.is_encrypted is protected
@@ -498,7 +498,7 @@ def test_only_selected_pages_are_extracted_and_cache_cursor_are_preserved(
             )
         assert (
             left.compare_text(
-                right, pages=[1], other_pages=[0], skip_artifacts=True,
+                right, pages=[2], other_pages=[1], skip_artifacts=True,
                 exclude_regions=exclude_regions,
             )[
                 0
@@ -550,7 +550,7 @@ def test_unbounded_selector_is_stopped_by_combined_limits():
         _page(left)
         _page(right)
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            left.compare_text(right, pages=repeat(0))
+            left.compare_text(right, pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
 
 
 @pytest.mark.parametrize("side", [0, 1])
@@ -657,7 +657,7 @@ def test_streaming_unselected_oversized_content_is_not_decoded(tmp_path, exclude
     with Document() as source:
         _page(source, "Selected")
         _page(source, "x" * 200)
-        limit = len(source.pages[0].content)
+        limit = len(source.pages[1].content)
         source.save(path)
     with (
         Document.open_streaming(
@@ -666,10 +666,10 @@ def test_streaming_unselected_oversized_content_is_not_decoded(tmp_path, exclude
         Document.open_streaming(path) as right,
     ):
         assert left.compare_text(
-            right, pages=[0], other_pages=[0], exclude_regions=exclude_regions
+            right, pages=[1], other_pages=[1], exclude_regions=exclude_regions
         )[0].matches
         assert left._engine_pdf.page_contents == right._engine_pdf.page_contents == []
         with pytest.raises(PdfResourceLimitException, match="max_content_stream_bytes"):
             left.compare_text(
-                right, pages=[1], other_pages=[1], exclude_regions=exclude_regions
+                right, pages=[2], other_pages=[2], exclude_regions=exclude_regions
             )

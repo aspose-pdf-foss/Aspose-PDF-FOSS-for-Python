@@ -140,7 +140,7 @@ def _by_name(fonts: list[DocumentFont]) -> dict[str, DocumentFont]:
 def test_one_font_used_on_several_pages_is_one_entry():
     fonts = inventory(_pdf_with({"A": _simple("Helvetica")}, pages=3))
     assert len(fonts) == 1
-    assert fonts[0].page_indexes == (0, 1, 2)
+    assert fonts[0].page_indexes == (1, 2, 3)
     assert fonts[0].pages == (1, 2, 3)
 
 
@@ -153,7 +153,7 @@ def test_a_document_that_repeats_a_font_dictionary_still_uses_one_font():
     with _reopen(document) as saved:
         helvetica = [f for f in saved.fonts if f.name == "Helvetica"]
         assert len(helvetica) == 1
-        assert helvetica[0].page_indexes == (0, 1, 2)
+        assert helvetica[0].page_indexes == (1, 2, 3)
 
 
 def test_two_subsets_of_one_family_stay_apart():
@@ -557,6 +557,6 @@ def test_the_same_face_embedded_twice_is_two_entries_until_optimized():
     saved.optimize()
     after = _reopen(saved)
     assert len(after.fonts) == 1
-    assert after.fonts[0].page_indexes == (0, 1, 2, 3)
+    assert after.fonts[0].page_indexes == (1, 2, 3, 4)
     assert sum(f.stored_bytes or 0 for f in after.fonts) < weight
     after.close()

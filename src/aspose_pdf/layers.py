@@ -72,6 +72,7 @@ class Layer:
         if page_index is None:
             page = getattr(content, "_page", None)
             page_index = getattr(page, "index", None)
+        page_index = page_index - 1 if isinstance(page_index, int) else None
         index = getattr(content, "_index", None)
         name = getattr(content, "name", None)
 
@@ -100,7 +101,7 @@ class Layer:
         to put a layer on something that is already in the document::
 
             watermark = document.layers.add("Watermark")
-            watermark.add(document.pages[0].annotations[0])
+            watermark.add(document.pages[1].annotations[0])
 
         Any tag already there is replaced, a membership dictionary included --
         asking for membership of one group is asking to trade that logic away.
@@ -262,8 +263,8 @@ class LayerCollection(Sequence[Layer]):
         ::
 
             draft = document.layers.add("Draft", visible=False)
-            with document.pages[0].layer(draft):
-                document.pages[0].add_text("DRAFT", 200, 400, font_size=64)
+            with document.pages[1].layer(draft):
+                document.pages[1].add_text("DRAFT", 200, 400, font_size=64)
         """
         from aspose_pdf.engine.optional_content import create_group
 

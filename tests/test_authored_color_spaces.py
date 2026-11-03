@@ -125,7 +125,7 @@ def test_each_space_renders_the_colour_it_names():
     page.draw_rectangle(0, 100, 150, 100, fill_color=(0, 0.2, 1, 0.05), stroke_color=None)
     page.draw_rectangle(150, 100, 150, 100, fill_color=Color.gray(0.25), stroke_color=None)
     page.draw_rectangle(0, 0, 150, 100, fill_color="#336699", stroke_color=None)
-    raster = Document(io.BytesIO(_saved(document))).pages[0].render(dpi=72)
+    raster = Document(io.BytesIO(_saved(document))).pages[1].render(dpi=72)
     assert raster.get_pixel(70, 50) == _cmyk_to_rgb(0, 0.2, 1, 0.05)
     assert raster.get_pixel(220, 50) == (64, 64, 64)
     assert raster.get_pixel(70, 150) == (51, 102, 153)
@@ -137,7 +137,7 @@ def test_the_same_colour_in_two_spaces_renders_the_same():
     document, page = _page()
     page.draw_rectangle(0, 100, 300, 100, fill_color=(0, 0, 0, 1), stroke_color=None)
     page.draw_rectangle(0, 0, 300, 100, fill_color=(0.0,), stroke_color=None)
-    raster = Document(io.BytesIO(_saved(document))).pages[0].render(dpi=72)
+    raster = Document(io.BytesIO(_saved(document))).pages[1].render(dpi=72)
     assert raster.get_pixel(150, 50) == raster.get_pixel(150, 150) == (0, 0, 0)
 
 

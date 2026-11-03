@@ -56,7 +56,7 @@ def _painted(content: str, **kwargs) -> set[tuple[int, int]]:
     """The device pixels *content* leaves non-white."""
     document = Document()
     document.load_from(_pdf(content.encode(), **kwargs))
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     pixels = {
         (x, y)
         for y in range(_PAGE)

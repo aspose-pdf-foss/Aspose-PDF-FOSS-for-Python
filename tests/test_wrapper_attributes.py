@@ -35,7 +35,7 @@ SLOTTED = [
 def document() -> Document:
     doc = Document()
     doc.pages.add()
-    doc.pages[0].add_text("X", 50, 700)
+    doc.pages[1].add_text("X", 50, 700)
     return doc
 
 
@@ -54,37 +54,37 @@ def test_no_wrapper_carries_an_instance_dict(cls):
 )
 def test_a_name_a_page_does_not_have_is_refused(document, name):
     with pytest.raises(AttributeError):
-        setattr(document.pages[0], name, 90)
+        setattr(document.pages[1], name, 90)
 
 
 def test_the_case_that_found_this(document):
     # `rotate` for `rotation`: it used to be taken and lost, and the page stayed
     # upright with nothing said.
     with pytest.raises(AttributeError, match="rotate"):
-        document.pages[0].rotate = 270
-    assert document.pages[0].rotation == 0
+        document.pages[1].rotate = 270
+    assert document.pages[1].rotation == 0
 
 
 def test_the_real_properties_still_work_and_persist(document):
-    document.pages[0].rotation = 90
-    document.pages[0].crop_box = (0, 0, 300, 400)
+    document.pages[1].rotation = 90
+    document.pages[1].crop_box = (0, 0, 300, 400)
     buffer = io.BytesIO()
     document.save(buffer)
 
     reloaded = Document(io.BytesIO(buffer.getvalue()))
-    assert reloaded.pages[0].rotation == 90
-    assert tuple(reloaded.pages[0].crop_box) == (0.0, 0.0, 300.0, 400.0)
+    assert reloaded.pages[1].rotation == 90
+    assert tuple(reloaded.pages[1].crop_box) == (0.0, 0.0, 300.0, 400.0)
 
 
 def test_an_outline_items_own_attributes_are_writable_and_typos_are_not():
-    item = OutlineItem("Title", 0)
+    item = OutlineItem("Title", 1)
     item.title = "Renamed"
     item.is_bold = True
     item.is_italic = True
-    item.children.append(OutlineItem("Child", 0))
-    item.page_index = 1          # a property
+    item.children.append(OutlineItem("Child", 1))
+    item.page_index = 2          # a property
     assert (item.title, item.is_bold, item.is_italic) == ("Renamed", True, True)
-    assert len(item.children) == 1 and item.page_index == 1
+    assert len(item.children) == 1 and item.page_index == 2
 
     for typo in ("bold", "italic", "titel", "page"):
         with pytest.raises(AttributeError):
@@ -92,7 +92,7 @@ def test_an_outline_items_own_attributes_are_writable_and_typos_are_not():
 
 
 def test_a_field_refuses_a_name_it_does_not_have(document):
-    document.form.add_text_field("name", 0, (10, 10, 100, 30), value="v")
+    document.form.add_text_field("name", 1, (10, 10, 100, 30), value="v")
     field = document.form["name"]
     field.value = "set through the property"
     assert document.form["name"].value == "set through the property"
@@ -103,9 +103,9 @@ def test_a_field_refuses_a_name_it_does_not_have(document):
 
 
 def test_an_annotation_refuses_a_name_it_does_not_have(document):
-    annotation = document.pages[0].annotations.add("Text", (10, 10, 30, 30), "note")
+    annotation = document.pages[1].annotations.add("Text", (10, 10, 30, 30), "note")
     annotation.title = "Author"          # a property, and it persists
-    assert document.pages[0].annotations[0].title == "Author"
+    assert document.pages[1].annotations[0].title == "Author"
 
     for typo in ("titl", "subtyp", "rectangle"):
         with pytest.raises(AttributeError):
@@ -115,9 +115,9 @@ def test_an_annotation_refuses_a_name_it_does_not_have(document):
 def test_a_lazily_built_annotation_collection_still_caches(document):
     # Page.annotations fills a slot on first use; an unset slot reads as absent,
     # so the `hasattr` guard behind it keeps working.
-    first = document.pages[0].annotations
-    assert document.pages[0].annotations is not first  # a new Page each time
-    page = document.pages[0]
+    first = document.pages[1].annotations
+    assert document.pages[1].annotations is not first  # a new Page each time
+    page = document.pages[1]
     assert page.annotations is page.annotations        # cached on one Page
 
 
@@ -126,9 +126,9 @@ def test_the_dict_helper_still_describes_a_slotted_object():
     # the declared names instead of falling back to a repr string.
     from aspose_pdf.utils import _object_to_dict, are_objects_json_equal
 
-    described = _object_to_dict(OutlineItem("T", 2, is_bold=True))
+    described = _object_to_dict(OutlineItem("T", 3, is_bold=True))
     assert described == {
         "title": "T", "is_bold": True, "is_italic": False, "open": False,
         "children": [],
     }
-    are_objects_json_equal(OutlineItem("T", 2), OutlineItem("T", 2))
+    are_objects_json_equal(OutlineItem("T", 3), OutlineItem("T", 3))

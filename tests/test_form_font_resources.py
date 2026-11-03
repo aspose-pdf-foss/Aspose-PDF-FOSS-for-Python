@@ -58,7 +58,7 @@ _SHARED_NAME = b"/Font << /F1 10 0 R >> /XObject << /Fm 5 0 R >>"
 
 
 def _pixels(document: Document) -> list:
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     return [raster.get_pixel(x, y) for y in range(200) for x in range(300)]
 
 
@@ -83,6 +83,6 @@ def test_graphics_absorber_measures_each_run_in_its_own_font():
     # 12 glyphs at 24 pt: Courier is 0.6 em each, Helvetica's run is 152 pt.
     for content in (_PAGE_TEXT + b" /Fm Do", b"/Fm Do " + _PAGE_TEXT):
         absorber = GraphicsAbsorber()
-        absorber.visit(_document(_SHARED_NAME, content, _FORM).pages[0])
+        absorber.visit(_document(_SHARED_NAME, content, _FORM).pages[1])
         widths = {round(e.rectangle.y): round(e.rectangle.width, 1) for e in absorber.elements if e.kind == "text"}
         assert widths == {144: 152.0, 54: 172.8}, content

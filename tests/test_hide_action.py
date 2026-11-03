@@ -27,7 +27,7 @@ from aspose_pdf.outlines import OutlineItem
 def document():
     with Document() as doc:
         doc.pages.add(size=(300, 200))
-        doc.form.add_push_button("toggle", 0, (10, 10, 110, 35), caption="Toggle")
+        doc.form.add_push_button("toggle", 1, (10, 10, 110, 35), caption="Toggle")
         yield doc
 
 
@@ -62,15 +62,15 @@ def test_button_authoring_and_all_action_owners_round_trip(
     assert HideAction is InteractiveHideAction
     # Forward references are allowed: a button can precede its target fields.
     button = document.form.add_push_button(
-        "author", 0, (130, 10, 230, 35), action=action
+        "author", 1, (130, 10, 230, 35), action=action
     )
-    document.form.add_text_field(names[0], 0, (10, 80, 250, 105), value="Alice")
-    document.form.add_text_field(names[1], 0, (10, 120, 250, 145))
+    document.form.add_text_field(names[0], 1, (10, 80, 250, 105), value="Alice")
+    document.form.add_text_field(names[1], 1, (10, 120, 250, 145))
     button.actions["mouse_up"] = action
-    document.pages[0].actions["open"] = action
+    document.pages[1].actions["open"] = action
     document.actions["will_print"] = action
     document.outlines.add(OutlineItem("Toggle details", destination=action))
-    document.pages[0].add_link((10, 160, 200, 185), action)
+    document.pages[1].add_link((10, 160, 200, 185), action)
     if on_disk:
         source = tmp_path / "hide.pdf"
         document.save(source)
@@ -79,11 +79,11 @@ def test_button_authoring_and_all_action_owners_round_trip(
     with Document(source) as reopened:
         assert reopened.form["author"].actions["A"] == action
         assert reopened.form["author"].actions["mouse_up"] == action
-        assert reopened.pages[0].actions["open"] == action
+        assert reopened.pages[1].actions["open"] == action
         assert reopened.actions["will_print"] == action
         assert reopened.outlines[0].destination == action
         link = next(
-            annot for annot in reopened.pages[0].annotations if annot.subtype == "Link"
+            annot for annot in reopened.pages[1].annotations if annot.subtype == "Link"
         )
         assert link.get_property("A")["T"] == names
         assert link.get_property("A")["H"] is hide
@@ -205,16 +205,16 @@ def test_unsupported_loaded_actions_are_preserved_when_other_triggers_change(
 
 def test_attaching_reading_and_saving_actions_does_not_execute_them(document):
     field = document.form.add_text_field(
-        "notes", 0, (10, 80, 250, 105), value="Visible"
+        "notes", 1, (10, 80, 250, 105), value="Visible"
     )
-    before = document.pages[0].render(antialias=False).pixels
+    before = document.pages[1].render(antialias=False).pixels
     _button(document).actions["A"] = HideAction(["notes"])
     _button(document).actions["mouse_up"] = HideAction(["notes"], hide=False)
-    assert document.pages[0].render(antialias=False).pixels == before
+    assert document.pages[1].render(antialias=False).pixels == before
     assert field.value == "Visible"
     with Document(_bytes(document)) as reopened:
         assert _button(reopened).actions["A"] == HideAction(["notes"])
-        assert reopened.pages[0].render(antialias=False).pixels == before
+        assert reopened.pages[1].render(antialias=False).pixels == before
 
 
 @pytest.mark.parametrize("encrypted", [False, True])

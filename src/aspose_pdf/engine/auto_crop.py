@@ -150,7 +150,7 @@ def auto_crop_document(
     shared_bounds = None
     canvas = None
     for index, (crop, rotation) in views.items():
-        raster = _render(document.pages[index], options)
+        raster = _render(document._page_at(index), options)
         bounds = _ink_bounds(raster, options.white_threshold)
         canvas = (0, 0, raster.width, raster.height)
         # Keep only small geometry tuples between renders, never page rasters.
@@ -178,5 +178,5 @@ def auto_crop_document(
                 planned[index] = result
     if not dry_run:
         for index, crop in planned.items():
-            document.pages[index].crop_box = crop
+            document._page_at(index).crop_box = crop
     return planned

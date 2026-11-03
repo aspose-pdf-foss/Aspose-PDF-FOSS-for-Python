@@ -19,7 +19,7 @@ def _base_pdf(page_count: int = 2) -> bytes:
     doc = Document()
     for _ in range(page_count):
         doc.pages.add()
-    doc.pages[0].draw_rectangle(10, 10, 40, 40, fill_color=(1, 0, 0))
+    doc.pages[1].draw_rectangle(10, 10, 40, 40, fill_color=(1, 0, 0))
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
@@ -69,7 +69,7 @@ def test_incremental_save_emits_only_changed_objects():
     doc = Document()
     doc.load_from(base)
     # Draw on the last page only: mutate that page dict + add one content stream.
-    doc.pages[2].draw_rectangle(5, 5, 10, 10, fill_color=(0, 1, 0))
+    doc.pages[3].draw_rectangle(5, 5, 10, 10, fill_color=(0, 1, 0))
     out = io.BytesIO()
     doc.save(out, incremental=True)
     whole = out.getvalue()
@@ -105,7 +105,7 @@ def test_incremental_save_to_path(tmp_path):
 
     doc = Document()
     doc.load_from(base)
-    doc.pages[0].draw_rectangle(1, 1, 2, 2, fill_color=(0, 0, 1))
+    doc.pages[1].draw_rectangle(1, 1, 2, 2, fill_color=(0, 0, 1))
     doc.save(target, incremental=True)
 
     written = target.read_bytes()
@@ -140,7 +140,7 @@ def test_incremental_save_keeps_an_encrypted_document_encrypted(algorithm):
     """
     base = _sealed_pdf(algorithm)
     doc = Document(io.BytesIO(base), password="u")
-    doc.pages[0].add_text("Appended after signing off", 60, 640, font_size=11)
+    doc.pages[1].add_text("Appended after signing off", 60, 640, font_size=11)
     out = io.BytesIO()
     doc.save(out, incremental=True)
     whole = out.getvalue()
@@ -151,7 +151,7 @@ def test_incremental_save_keeps_an_encrypted_document_encrypted(algorithm):
 
     reopened = Document(io.BytesIO(whole), password="u")
     assert reopened.info["Title"] == "Sealed base"
-    assert b"Appended after signing off" in reopened.pages[0].content
+    assert b"Appended after signing off" in reopened.pages[1].content
     # And the appended bytes really are enciphered.
     assert b"Appended after signing off" not in whole
 
@@ -182,7 +182,7 @@ def test_the_appended_trailer_still_names_the_encryption_dictionary(algorithm):
     """Dropping ``/Encrypt`` would tell a reader the new objects are plain."""
     base = _sealed_pdf(algorithm)
     doc = Document(io.BytesIO(base), password="u")
-    doc.pages[0].add_text("More", 60, 620, font_size=11)
+    doc.pages[1].add_text("More", 60, 620, font_size=11)
     out = io.BytesIO()
     doc.save(out, incremental=True)
 
@@ -308,7 +308,7 @@ def test_incremental_save_preserves_signed_byte_range():
 
     doc = Document()
     doc.load_from(signed)
-    doc.pages[0].draw_rectangle(1, 1, 5, 5, fill_color=(0, 0, 0))
+    doc.pages[1].draw_rectangle(1, 1, 5, 5, fill_color=(0, 0, 0))
     out = io.BytesIO()
     doc.save(out, incremental=True)
     whole = out.getvalue()

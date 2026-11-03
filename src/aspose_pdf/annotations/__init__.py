@@ -287,12 +287,12 @@ class Annotation:
         self._data = dict(data)
 
     def _sync(self) -> None:
-        annotations = self._page._document._engine_pdf.get_annotations(self._page.index)
+        annotations = self._page._document._engine_pdf.get_annotations(self._page._index)
         self._data = dict(annotations[self._index])
 
     def _update(self, **changes: Any) -> None:
         self._page._document._engine_pdf.update_annotation(
-            self._page.index, self._index, changes
+            self._page._index, self._index, changes
         )
         self._sync()
 
@@ -399,7 +399,7 @@ class Annotation:
     def _links(self) -> dict[str, Any]:
         """What this annotation says about the others around it, by index."""
         return self._page._document._engine_pdf.annotation_links(
-            self._page.index, self._index
+            self._page._index, self._index
         )
 
     @property
@@ -458,7 +458,7 @@ class Annotation:
         if properties:
             payload["Properties"] = dict(properties)
         index = self._page._document._engine_pdf.add_annotation_reply(
-            self._page.index, self._index, payload
+            self._page._index, self._index, payload
         )
         return self._page.annotations[index]
 
@@ -479,7 +479,7 @@ class Annotation:
             x0, y0, x1, y1 = self.rect
             rect = (x1, y0, x1 + max(144.0, x1 - x0), y0 + max(72.0, y1 - y0))
         index = self._page._document._engine_pdf.add_annotation_popup(
-            self._page.index,
+            self._page._index,
             self._index,
             tuple(float(value) for value in rect),
             is_open=is_open,
@@ -512,7 +512,7 @@ class Annotation:
         which case it is regenerated.
         """
         result = self._page._document._engine_pdf.generate_annotation_appearance(
-            self._page.index, self._index, force=force
+            self._page._index, self._index, force=force
         )
         self._sync()
         return result
@@ -946,7 +946,7 @@ class FileAttachmentAnnotation(MarkupAnnotation):
 
         document = self._page._document
         document._ensure_not_disposed()
-        return file_specification(document._engine_pdf, self._page.index, self._index)
+        return file_specification(document._engine_pdf, self._page._index, self._index)
 
     icon = _name_property(
         "Name",
@@ -1009,7 +1009,7 @@ class AnnotationCollection:
         self._page = page
 
     def _items(self) -> list[dict[str, Any]]:
-        return self._page._document._engine_pdf.get_annotations(self._page.index)
+        return self._page._document._engine_pdf.get_annotations(self._page._index)
 
     def to_list(
         self, *, subtypes: str | Iterable[str] | None = None
@@ -1020,7 +1020,8 @@ class AnnotationCollection:
         omitted data. Every call reads current annotation values; editing the
         result does not change the PDF.
         """
-        return self._page._document._annotation_records([self._page.index], subtypes)
+        records = self._page._document._annotation_records([self._page._index], subtypes)
+        return [{**record, "page_index": record["page_index"] + 1} for record in records]
 
     def export_json(
         self,
@@ -1037,7 +1038,7 @@ class AnnotationCollection:
         """
         return self._page._document.export_annotations_json(
             destination,
-            pages=[self._page.index],
+            pages=[self._page.number],
             subtypes=subtypes,
             overwrite=overwrite,
         )
@@ -1058,7 +1059,7 @@ class AnnotationCollection:
         """
         return self._page._document.export_annotations_csv(
             destination,
-            pages=[self._page.index],
+            pages=[self._page.number],
             subtypes=subtypes,
             delimiter=delimiter,
             encoding=encoding,
@@ -1079,7 +1080,7 @@ class AnnotationCollection:
         """
         return self._page._document.export_annotations_xfdf(
             destination,
-            pages=[self._page.index],
+            pages=[self._page.number],
             subtypes=subtypes,
             overwrite=overwrite,
         )
@@ -1096,7 +1097,7 @@ class AnnotationCollection:
 
         self._page._document._ensure_not_disposed()
         return import_json(
-            self._page._document._engine_pdf, source, target_page=self._page.index
+            self._page._document._engine_pdf, source, target_page=self._page._index
         )
 
     def import_xfdf(self, source: Any) -> int:
@@ -1110,7 +1111,7 @@ class AnnotationCollection:
 
         self._page._document._ensure_not_disposed()
         return import_xfdf(
-            self._page._document._engine_pdf, source, target_page=self._page.index
+            self._page._document._engine_pdf, source, target_page=self._page._index
         )
 
     def __len__(self) -> int:
@@ -1154,7 +1155,7 @@ class AnnotationCollection:
             payload["AP"] = {"N": bytes(appearance_normal)}
         if properties:
             payload["Properties"] = dict(properties)
-        self._page._document._engine_pdf.add_annotation(self._page.index, payload)
+        self._page._document._engine_pdf.add_annotation(self._page._index, payload)
         return self[len(self) - 1]
 
     def insert(
@@ -1180,7 +1181,7 @@ class AnnotationCollection:
         if properties:
             payload["Properties"] = dict(properties)
         self._page._document._engine_pdf.insert_annotation(
-            self._page.index, index, payload
+            self._page._index, index, payload
         )
         if index < 0:
             index = 0
@@ -1205,7 +1206,7 @@ class AnnotationCollection:
         date handling, popup/reply repair, dry-run semantics and boundaries.
         """
         return self._page._document.remove_annotations(
-            pages=[self._page.index],
+            pages=[self._page.number],
             authors=authors,
             before=before,
             after=after,
@@ -1219,10 +1220,10 @@ class AnnotationCollection:
         items = self._items()
         if index < 0 or index >= len(items):
             raise IndexError("Annotation index out of range")
-        self._page._document._engine_pdf.delete_annotation(self._page.index, index)
+        self._page._document._engine_pdf.delete_annotation(self._page._index, index)
 
     def clear(self) -> None:
-        self._page._document._engine_pdf.clear_annotations(self._page.index)
+        self._page._document._engine_pdf.clear_annotations(self._page._index)
 
     # -- one factory per subtype ------------------------------------------
     #
@@ -1271,7 +1272,7 @@ class AnnotationCollection:
         document = self._page._document
         document._ensure_not_disposed()
         index = add_file_attachment(
-            document._engine_pdf, self._page.index, rect, file,
+            document._engine_pdf, self._page._index, rect, file,
             contents=contents, title=title, icon=icon, compress=compress,
         )
         return self[index]  # type: ignore[return-value]
@@ -1676,5 +1677,5 @@ class AnnotationCollection:
         have one.
         """
         return self._page._document._engine_pdf.generate_appearances(
-            self._page.index, force=force
+            self._page._index, force=force
         )

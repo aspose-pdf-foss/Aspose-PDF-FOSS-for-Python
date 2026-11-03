@@ -43,10 +43,10 @@ def test_identical_views_ignore_different_streams_and_hidden_ocr_data():
                 b"1 0 0 rg 0 0 10 10 re f BT 3 Tr /F1 5 Tf 1 2 Td (hidden) Tj ET",
             )
         )
-        assert left.pages[0].content != page.content
+        assert left.pages[1].content != page.content
         (result,) = left.compare_visual(right)
         assert isinstance(result, PageVisualComparison)
-        assert result.page_index == result.other_page_index == 0
+        assert result.page_index == result.other_page_index == 1
         assert result.size == result.other_size == (10, 10)
         assert result.matches and result.changed_pixels == result.difference_ratio == 0
         assert result.total_pixels == 100 and result.bbox is None
@@ -88,7 +88,7 @@ def test_diff_image_shows_unchanged_content_as_pale_gray_and_outlives_documents(
             _page(document).draw_rectangle(
                 0, 0, 2, 2, fill_color="#000", stroke_color=None
             )
-        right.pages[0].draw_rectangle(4, 4, 2, 2, fill_color="#f00", stroke_color=None)
+        right.pages[1].draw_rectangle(4, 4, 2, 2, fill_color="#f00", stroke_color=None)
         (report,) = left.compare_visual(right, include_diff_images=True)
     assert report.diff_image.get_pixel(0, 9) == (192, 192, 192)
     assert report.diff_image.get_pixel(4, 4) == (255, 0, 0)
@@ -183,8 +183,8 @@ def test_added_and_removed_blank_pages_never_match(extra_on_left):
         report = results[1]
         assert not report.matches and report.changed_pixels == report.total_pixels == 35
         assert report.difference_ratio == 1 and report.bbox == (0, 0, 5, 7)
-        assert report.page_index == (1 if extra_on_left else None)
-        assert report.other_page_index == (None if extra_on_left else 1)
+        assert report.page_index == ((2 if extra_on_left else None))
+        assert report.other_page_index == ((None if extra_on_left else 2))
         assert report.diff_image.pixels == b"\xff\x00\x00" * 35
 
 
@@ -195,12 +195,12 @@ def test_independent_page_selections_preserve_order_repeats_and_missing_tail():
         for color in ("#00f", "#0f0", "#f00"):
             _page(right, color)
         results = left.compare_visual(
-            right, pages=(i for i in (1, 0, 1)), other_pages=(i for i in (0, 2))
+            right, pages=(number + 1 if type(number) is int else number for number in ((i for i in (1, 0, 1)))), other_pages=(number + 1 if type(number) is int else number for number in ((i for i in (0, 2))))
         )
         assert [(r.page_index, r.other_page_index, r.matches) for r in results] == [
-            (1, 0, True),
-            (0, 2, True),
-            (1, None, False),
+            (2, 1, True),
+            (1, 3, True),
+            (2, None, False),
         ]
         assert len(left.compare_visual(right, pages=[])) == 3
         assert left.compare_visual(right, pages=[], other_pages=[]) == []
@@ -270,13 +270,13 @@ def test_visible_text_changes_and_form_widget_appearances_are_compared():
         for document in (left, right):
             _page(document, size=(120, 60)).add_text("Invoice", 5, 40, font_size=12)
         assert left.compare_visual(right)[0].matches
-        right.pages[0].add_text("Paid", 5, 5, font_size=12)
+        right.pages[1].add_text("Paid", 5, 5, font_size=12)
         (result,) = left.compare_visual(right)
         assert not result.matches and result.changed_pixels > 0
     with Document() as left, Document() as right:
         _page(left, size=(120, 60))
         _page(right, size=(120, 60))
-        right.form.add_text_field("Review", 0, (5, 10, 100, 35), value="Approved")
+        right.form.add_text_field("Review", 1, (5, 10, 100, 35), value="Approved")
         assert not left.compare_visual(right)[0].matches
         assert left.compare_visual(right, include_annotations=False)[0].matches
 
@@ -393,7 +393,7 @@ def test_selection_limit_uses_stricter_document_for_all_pages_or_repeats(
         for document in (left, right):
             _page(document)
             _page(document)
-        options = dict(pages=[0, 0], other_pages=[0, 0]) if selected else {}
+        options = dict(pages=[1, 1], other_pages=[1, 1]) if selected else {}
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             left.compare_visual(right, **options)
 
@@ -562,7 +562,7 @@ def test_scans_round_trip_and_only_selected_streams_are_read(
         restrict(left, 0, {0, 1})
         restrict(right, 1, {1, 2})
         results = left.compare_visual(
-            right, pages=[0, 1], other_pages=[2, 1], include_diff_images=True
+            right, pages=[1, 2], other_pages=[3, 2], include_diff_images=True
         )
         assert all(result.matches for result in results)
         assert visited == [{0, 1}, {1, 2}]

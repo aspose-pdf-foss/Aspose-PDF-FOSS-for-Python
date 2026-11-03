@@ -107,7 +107,7 @@ def markup_text(
     skipped: list[TextFragment] = []
     considered = 0
     for index in indexes:
-        page = document.pages[index]
+        page = document._page_at(index)
         text = page.extract_text()
         fragments: list[TextFragment] = []
         by_text: dict[str, list[TextFragment]] = defaultdict(list)

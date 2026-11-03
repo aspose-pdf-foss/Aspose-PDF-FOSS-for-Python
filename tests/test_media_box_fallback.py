@@ -85,15 +85,15 @@ def _png_size(path) -> tuple[int, int]:
 def test_the_page_reports_a_size_it_can_have(shape):
     media_box, expected = SHAPES[shape]
     document = Document(io.BytesIO(_pdf_with_media_box(media_box)))
-    assert tuple(document.pages[0].rect) == expected
-    assert tuple(document.pages[0].media_box) == expected
+    assert tuple(document.pages[1].rect) == expected
+    assert tuple(document.pages[1].media_box) == expected
 
 
 @pytest.mark.parametrize("shape", sorted(SHAPES))
 def test_the_page_renders(shape, tmp_path):
     media_box, expected = SHAPES[shape]
     document = Document(io.BytesIO(_pdf_with_media_box(media_box)))
-    out = document.pages[0].save_as_image(tmp_path / "page.png", dpi=72)
+    out = document.pages[1].save_as_image(tmp_path / "page.png", dpi=72)
     width = round(expected[2] - expected[0])
     height = round(expected[3] - expected[1])
     assert _png_size(out) == (width, height)
@@ -110,19 +110,19 @@ def test_the_media_box_in_the_file_is_left_as_it_was():
     assert b"/MediaBox [ 0 0 0 0 ]" in data
     assert b"/MediaBox [ 0 0 612 792 ]" not in data
     # And reading it back gives the substitution again.
-    assert tuple(Document(io.BytesIO(data)).pages[0].rect) == LETTER
+    assert tuple(Document(io.BytesIO(data)).pages[1].rect) == LETTER
 
 
 def test_everything_that_needs_a_page_size_works_on_such_a_page(tmp_path):
     data = _pdf_with_media_box(b"[0 0 0 0]")
 
-    assert Document(io.BytesIO(data)).pages[0].extract_text() == ""
-    assert Document(io.BytesIO(data)).pages[0].save_as_svg(tmp_path / "p.svg").exists()
+    assert Document(io.BytesIO(data)).pages[1].extract_text() == ""
+    assert Document(io.BytesIO(data)).pages[1].save_as_svg(tmp_path / "p.svg").exists()
     assert Document(io.BytesIO(data)).to_html()
 
     stamped = Document(io.BytesIO(data))
-    stamped.pages[0].add_stamp(TextStamp("MARK", font_size=18))
-    assert "MARK" in stamped.pages[0].extract_text()
+    stamped.pages[1].add_stamp(TextStamp("MARK", font_size=18))
+    assert "MARK" in stamped.pages[1].extract_text()
 
 
 def test_an_in_memory_page_of_no_area_renders_too():

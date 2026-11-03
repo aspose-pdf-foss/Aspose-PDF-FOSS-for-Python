@@ -163,30 +163,30 @@ def test_disposed_input_is_rejected():
 def test_outputs_and_sources_can_be_edited_and_disposed_independently():
     with _source("F", 2) as first, _source("B", 2) as second:
         result = first.interleave(second, reverse_other=True)
-        result.pages[0].add_text("OUTPUT ONLY", 72, 650)
+        result.pages[1].add_text("OUTPUT ONLY", 72, 650)
         assert "OUTPUT ONLY" not in first.extract_text()
-        first.pages[1].add_text("INPUT ONLY", 72, 650)
+        first.pages[2].add_text("INPUT ONLY", 72, 650)
         assert "INPUT ONLY" not in result.extract_text()
         second.dispose()
-        assert "B1" in result.pages[1].extract_text()
+        assert "B1" in result.pages[2].extract_text()
     with result:
-        result.pages[1].add_text("AFTER CLOSE", 72, 600)
+        result.pages[2].add_text("AFTER CLOSE", 72, 600)
         with Document(_bytes(result)) as reopened:
-            assert "AFTER CLOSE" in reopened.pages[1].extract_text()
+            assert "AFTER CLOSE" in reopened.pages[2].extract_text()
 
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_local_links_named_destinations_and_actions_follow_source_pages(reverse):
     with _source("F", 3) as first, _source("B", 3) as second:
         for source in (first, second):
-            page = source.pages[0]
-            page.add_link((10, 10, 100, 30), FitDestination(2))
-            source.destinations["same-name"] = XYZDestination(1, 10, 700, 1.5)
+            page = source.pages[1]
+            page.add_link((10, 10, 100, 30), FitDestination(3))
+            source.destinations["same-name"] = XYZDestination(2, 10, 700, 1.5)
             page.add_link((10, 40, 100, 60), "same-name")
-            page.add_link((10, 70, 100, 90), GoToAction(FitDestination(1)))
+            page.add_link((10, 70, 100, 90), GoToAction(FitDestination(2)))
             page.add_link((10, 100, 100, 120), URIAction("https://example.org"))
             page.add_link(
-                (10, 130, 100, 150), GoToRAction("remote.pdf", FitDestination(2))
+                (10, 130, 100, 150), GoToRAction("remote.pdf", FitDestination(3))
             )
         with first.interleave(second, reverse_other=reverse) as result:
             for document in (result, Document(_bytes(result))):
@@ -197,13 +197,13 @@ def test_local_links_named_destinations_and_actions_follow_source_pages(reverse)
                     ):
                         properties = [
                             annotation.properties
-                            for annotation in document.pages[page_index].annotations
+                            for annotation in document.pages[(page_index) + 1].annotations
                         ]
-                        assert properties[0]["Dest"] == FitDestination(last)
+                        assert properties[0]["Dest"] == FitDestination((last) + 1)
                         assert properties[1]["Dest"] == XYZDestination(
-                            middle, 10, 700, 1.5
+                            (middle) + 1, 10, 700, 1.5
                         )
-                        assert properties[2]["A"]["D"] == FitDestination(middle)
+                        assert properties[2]["A"]["D"] == FitDestination((middle) + 1)
                         assert properties[3]["A"]["URI"] == "https://example.org"
                         assert properties[4]["A"]["F"] == "remote.pdf"
                         assert properties[4]["A"]["D"] == [2, "Fit"]
@@ -221,10 +221,10 @@ def test_live_and_loaded_bookmarks_follow_pages_without_changing_source_models(
         for source, label in ((first, "F"), (second, "B")):
             root = source.outlines.add(
                 OutlineItem(
-                    label, destination=GoToAction(XYZDestination(1, 10, 700, 2))
+                    label, destination=GoToAction(XYZDestination(2, 10, 700, 2))
                 )
             )
-            root.add(OutlineItem(label + " child", destination=FitDestination(0)))
+            root.add(OutlineItem(label + " child", destination=FitDestination(1)))
             source.outlines.add(
                 OutlineItem(
                     label + " web", destination=URIAction("https://example.org")
@@ -240,15 +240,15 @@ def test_live_and_loaded_bookmarks_follow_pages_without_changing_source_models(
             for document in (result, stack.enter_context(Document(_bytes(result)))):
                 assert [
                     (item.title, item.page_index) for item in document.outlines
-                ] == [("F", 2), ("F web", None), ("B", 1), ("B web", None)]
+                ] == [("F", 3), ("F web", None), ("B", 2), ("B web", None)]
                 assert document.outlines[0].destination == GoToAction(
-                    XYZDestination(2, 10, 700, 2)
+                    XYZDestination(3, 10, 700, 2)
                 )
                 assert document.outlines[2].destination == GoToAction(
-                    XYZDestination(1, 10, 700, 2)
+                    XYZDestination(2, 10, 700, 2)
                 )
-                assert document.outlines[0].children[0].destination == FitDestination(0)
-                assert document.outlines[2].children[0].destination == FitDestination(3)
+                assert document.outlines[0].children[0].destination == FitDestination(1)
+                assert document.outlines[2].children[0].destination == FitDestination(4)
         assert first._engine_pdf._outlines_data is originals[0]
         assert second._engine_pdf._outlines_data is originals[1]
 
@@ -291,8 +291,8 @@ def test_unlabelled_pages_retain_importer_blank_label_semantics(label_first):
 
 def test_field_name_collisions_keep_distinct_widgets_on_their_pages():
     with _source("F", 2) as first, _source("B", 2) as second:
-        first.form.add_text_field("answer", 0, (50, 400, 200, 425), value="front")
-        second.form.add_text_field("answer", 0, (50, 400, 200, 425), value="back")
+        first.form.add_text_field("answer", 1, (50, 400, 200, 425), value="front")
+        second.form.add_text_field("answer", 1, (50, 400, 200, 425), value="back")
         with first.interleave(second, reverse_other=True) as result:
             for document in (result, Document(_bytes(result))):
                 try:
@@ -301,8 +301,8 @@ def test_field_name_collisions_keep_distinct_widgets_on_their_pages():
                         len(by_value) == 2
                         and len({field.name for field in document.form}) == 2
                     )
-                    assert by_value["front"].page_index == 0
-                    assert by_value["back"].page_index == 3
+                    assert by_value["front"].page_index == 1
+                    assert by_value["back"].page_index == 4
                     by_value["back"].value = "edited"
                 finally:
                     if document is not result:
@@ -316,15 +316,15 @@ def test_images_fonts_rotation_and_boxes_render_identically_after_interleaving()
         _source("F", 2, font="Helvetica") as first,
         _source("B", 2, font="Courier") as second,
     ):
-        first.pages[0].add_image(_png((255, 0, 0)), 20, 100, width=30, height=40)
-        second.pages[0].add_image(_png((0, 0, 255)), 60, 200, width=50, height=60)
-        first.pages[1].rotation = 90
-        second.pages[1].crop_box = (10, 10, 400, 700)
-        expected = [first.pages[0], second.pages[1], first.pages[1], second.pages[0]]
+        first.pages[1].add_image(_png((255, 0, 0)), 20, 100, width=30, height=40)
+        second.pages[1].add_image(_png((0, 0, 255)), 60, 200, width=50, height=60)
+        first.pages[2].rotation = 90
+        second.pages[2].crop_box = (10, 10, 400, 700)
+        expected = [first.pages[1], second.pages[2], first.pages[2], second.pages[1]]
         pixels = [page.render(dpi=18, antialias=False).pixels for page in expected]
         with first.interleave(second, reverse_other=True) as result:
             for index, original in enumerate(expected):
-                page = result.pages[index]
+                page = result.pages[(index) + 1]
                 assert page.rotation == original.rotation
                 assert (
                     page.media_box == original.media_box
@@ -337,21 +337,21 @@ def test_images_fonts_rotation_and_boxes_render_identically_after_interleaving()
                 placement.page_index: placement
                 for placement in absorber.image_placements
             }
-            assert set(placements) == {0, 3}
-            assert (placements[0].rectangle.x, placements[0].rectangle.y) == (20, 100)
-            assert (placements[3].rectangle.width, placements[3].rectangle.height) == (
+            assert set(placements) == {1, 4}
+            assert (placements[1].rectangle.x, placements[1].rectangle.y) == (20, 100)
+            assert (placements[4].rectangle.width, placements[4].rectangle.height) == (
                 50,
                 60,
             )
-            assert placements[3].matrix == (50, 0, 0, 60, 60, 200)
+            assert placements[4].matrix == (50, 0, 0, 60, 60, 200)
 
 
 def test_layers_keep_visibility_and_remain_independent():
     with _source("F", 1) as first, _source("B", 1) as second:
         for source, label in ((first, "F"), (second, "B")):
             layer = source.layers.add(label + " hidden", visible=False)
-            with source.pages[0].layer(layer):
-                source.pages[0].add_text(label + " secret", 72, 650)
+            with source.pages[1].layer(layer):
+                source.pages[1].add_text(label + " secret", 72, 650)
         with first.interleave(second) as result:
             assert _texts(result) == ["F0", "B0"]
             assert {layer.name for layer in result.layers} == {"F hidden", "B hidden"}
@@ -439,17 +439,17 @@ def test_metadata_version_and_imported_attachments_follow_the_document_contract(
 
 def test_a_document_can_be_interleaved_with_an_independent_copy_of_itself():
     with _source("P", 2) as source:
-        source.pages[0].add_link((10, 10, 30, 30), FitDestination(1))
+        source.pages[1].add_link((10, 10, 30, 30), FitDestination(2))
         with source.interleave(source, reverse_other=True) as result:
             assert _texts(result) == ["P0", "P1", "P1", "P0"]
-            assert result.pages[0].annotations[0].get_property(
+            assert result.pages[1].annotations[0].get_property(
+                "Dest"
+            ) == FitDestination(3)
+            assert result.pages[4].annotations[0].get_property(
                 "Dest"
             ) == FitDestination(2)
-            assert result.pages[3].annotations[0].get_property(
-                "Dest"
-            ) == FitDestination(1)
-            result.pages[0].add_text("ONE COPY", 72, 650)
-            assert "ONE COPY" not in result.pages[3].extract_text()
+            result.pages[1].add_text("ONE COPY", 72, 650)
+            assert "ONE COPY" not in result.pages[4].extract_text()
         assert _texts(source) == ["P0", "P1"]
 
 
@@ -479,7 +479,7 @@ def test_output_object_and_content_limits_apply_to_the_second_source_too():
         _source("F", 1, limits=PdfLoadLimits(max_content_stream_bytes=200)) as first,
         _source("B", 1) as second,
     ):
-        second.pages[0].add_text("x" * 500, 72, 650)
+        second.pages[1].add_text("x" * 500, 72, 650)
         with pytest.raises(PdfResourceLimitException, match="max_content_stream_bytes"):
             first.interleave(second)
 
@@ -491,9 +491,9 @@ def test_bookmark_depth_and_combined_node_limits_are_enforced():
     ):
         first.pages.add()
         second.pages.add()
-        item = second.outlines.add(OutlineItem("Root", 0))
+        item = second.outlines.add(OutlineItem("Root", 1))
         for _ in range(3):
-            item = item.add(OutlineItem("Child", 0))
+            item = item.add(OutlineItem("Child", 1))
         with pytest.raises(PdfResourceLimitException, match="max_nesting_depth"):
             first.interleave(second)
     with (
@@ -503,15 +503,15 @@ def test_bookmark_depth_and_combined_node_limits_are_enforced():
         for source in (first, second):
             source.pages.add()
             for index in range(5):
-                source.outlines.add(OutlineItem(str(index), 0))
+                source.outlines.add(OutlineItem(str(index), 1))
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             first.interleave(second)
 
 
 def test_partial_import_failures_restore_sources_and_dispose_the_output(monkeypatch):
     with _source("F", 1) as first, _source("B", 1) as second:
-        first.outlines.add(OutlineItem("Front", 0))
-        second.outlines.add(OutlineItem("Back", 0))
+        first.outlines.add(OutlineItem("Front", 1))
+        second.outlines.add(OutlineItem("Back", 1))
         original_models = (
             first._engine_pdf._outlines_data,
             second._engine_pdf._outlines_data,
@@ -569,15 +569,15 @@ def test_output_object_limit_includes_bookmark_objects_created_for_saving():
         _source("F", 1, limits=PdfLoadLimits(max_objects=8)) as first,
         _source("B", 1) as second,
     ):
-        first.outlines.add(OutlineItem("One", 0))
-        first.outlines.add(OutlineItem("Two", 0))
+        first.outlines.add(OutlineItem("One", 1))
+        first.outlines.add(OutlineItem("Two", 1))
         with pytest.raises(PdfResourceLimitException, match="max_objects"):
             first.interleave(second)
 
 
 def test_a_cycle_in_live_bookmarks_is_rejected_without_replacing_the_model():
     with _source("F", 1) as first, _source("B", 1) as second:
-        item = first.outlines.add(OutlineItem("Cycle", 0))
+        item = first.outlines.add(OutlineItem("Cycle", 1))
         item.children.append(item)
         original = first._engine_pdf._outlines_data
         with pytest.raises(PdfParseException, match="cycle"):
@@ -591,7 +591,7 @@ def test_first_source_decoded_stream_policy_also_bounds_the_second_source():
         _source("F", 1, limits=PdfLoadLimits(max_decoded_stream_bytes=200)) as first,
         _source("B", 1) as second,
     ):
-        second.pages[0].add_text("x" * 500, 72, 650)
+        second.pages[1].add_text("x" * 500, 72, 650)
         with pytest.raises(PdfResourceLimitException, match="max_decoded_stream_bytes"):
             first.interleave(second)
 
@@ -631,10 +631,10 @@ def test_scanned_images_still_render_after_streaming_inputs_close(tmp_path, encr
         assert result.page_count == 2
         for index, expected in enumerate(pixels):
             assert (
-                result.pages[index].render(dpi=18, antialias=False).pixels == expected
+                result.pages[(index) + 1].render(dpi=18, antialias=False).pixels == expected
             )
         with Document(_bytes(result)) as reopened:
-            assert reopened.pages[1].render(dpi=18, antialias=False).pixels == pixels[1]
+            assert reopened.pages[2].render(dpi=18, antialias=False).pixels == pixels[1]
 
 
 @pytest.mark.parametrize("reload_sources", [False, True])
@@ -652,33 +652,33 @@ def test_colliding_image_names_remain_editable_before_and_after_save(
                 stack.enter_context(Document(_bytes(source))) for source in sources
             ]
         originals = [_bytes(source) for source in sources]
-        front_pixels = sources[0].pages[0].render(dpi=18, antialias=False).pixels
-        blank_pixels = sources[0].pages[1].render(dpi=18, antialias=False).pixels
+        front_pixels = sources[0].pages[1].render(dpi=18, antialias=False).pixels
+        blank_pixels = sources[0].pages[2].render(dpi=18, antialias=False).pixels
         result = stack.enter_context(
             sources[0].interleave(sources[1], reverse_other=reverse)
         )
         target_page = 3 if reverse else 1
         for document in (result, stack.enter_context(Document(_bytes(result)))):
             absorber = ImagePlacementAbsorber()
-            absorber.visit(document.pages[target_page])
+            absorber.visit(document.pages[(target_page) + 1])
             [placement] = absorber.image_placements
             assert placement.replace(_png((0, 255, 0))) is True
             assert placement.image_data == b"\x00\xff\x00"
             assert placement.hide() is True
             assert (
-                document.pages[target_page].render(dpi=18, antialias=False).pixels
+                document.pages[(target_page) + 1].render(dpi=18, antialias=False).pixels
                 == blank_pixels
             )
             assert placement.replace(_png((0, 255, 0))) is True
-            absorber.visit(document.pages[target_page])
+            absorber.visit(document.pages[(target_page) + 1])
             assert absorber.image_placements[-1].image_data == b"\x00\xff\x00"
             with Document(_bytes(document)) as saved:
                 assert (
-                    saved.pages[target_page].render(dpi=18, antialias=False).pixels
+                    saved.pages[(target_page) + 1].render(dpi=18, antialias=False).pixels
                     != blank_pixels
                 )
                 assert (
-                    saved.pages[0].render(dpi=18, antialias=False).pixels
+                    saved.pages[1].render(dpi=18, antialias=False).pixels
                     == front_pixels
                 )
         assert [_bytes(source) for source in sources] == originals
@@ -694,13 +694,13 @@ def test_interleaving_the_same_scan_keeps_image_edits_independent():
             assert first.replace(_png((0, 255, 0))) is True
             absorber.visit(result)
             by_page = {item.page_index: item for item in absorber.image_placements}
-            assert by_page[0].image_data == b"\x00\xff\x00"
-            assert by_page[1].image_data == b"\x00\x00\xff"
+            assert by_page[1].image_data == b"\x00\xff\x00"
+            assert by_page[2].image_data == b"\x00\x00\xff"
             assert second.hide() is True
             assert first.replace(_png((255, 0, 0))) is True
             with Document(_bytes(result)) as saved:
-                assert saved.pages[0].render(dpi=18, antialias=False).pixels != (
-                    saved.pages[1].render(dpi=18, antialias=False).pixels
+                assert saved.pages[1].render(dpi=18, antialias=False).pixels != (
+                    saved.pages[2].render(dpi=18, antialias=False).pixels
                 )
 
 
@@ -721,9 +721,9 @@ def test_every_scanned_page_has_its_own_editable_image(reload_sources):
             absorber = ImagePlacementAbsorber()
             absorber.visit(result)
             placements = {item.page_index: item for item in absorber.image_placements}
-            expected = dict(enumerate(bytes(colors[i]) for i in (0, 3, 1, 2)))
+            expected = dict(enumerate((bytes(colors[i]) for i in (0, 3, 1, 2)), 1))
             assert {i: p.image_data for i, p in placements.items()} == expected
-            for index in range(4):
+            for index in range(1, 5):
                 assert placements[index].replace(_png((0, 255, 0))) is True
                 expected[index] = b"\x00\xff\x00"
                 absorber.visit(result)
@@ -744,14 +744,14 @@ def test_public_image_alias_does_not_edit_a_literal_resource_with_the_same_name(
         pixels = expected_page.render(dpi=18, antialias=False).pixels
         with first.interleave(second) as result:
             absorber = ImagePlacementAbsorber()
-            absorber.visit(result.pages[1])
+            absorber.visit(result.pages[2])
             blue = next(
                 p for p in absorber.image_placements if p.image_data == b"\0\0\xff"
             )
             assert blue.replace(_png((0, 255, 0))) is True
-            assert result.pages[1].render(dpi=18, antialias=False).pixels == pixels
+            assert result.pages[2].render(dpi=18, antialias=False).pixels == pixels
             with Document(_bytes(result)) as saved:
-                assert saved.pages[1].render(dpi=18, antialias=False).pixels == pixels
+                assert saved.pages[2].render(dpi=18, antialias=False).pixels == pixels
 
 
 @pytest.mark.parametrize("source_state", ["authored", "loaded", "edited"])

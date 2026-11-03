@@ -103,16 +103,16 @@ def test_every_place_text_lives_keeps_it(text):
     document = Document()
     document.pages.add()
     document.info["Title"] = text
-    document.outlines.add(OutlineItem(text, 0))
-    document.pages[0].annotations.add("Text", (10, 10, 40, 40), text, title=text)
+    document.outlines.add(OutlineItem(text, 1))
+    document.pages[1].annotations.add("Text", (10, 10, 40, 40), text, title=text)
     document.add_attachment(f"{text}.txt", b"x", description=text)
 
     again = _reloaded(document)
 
     assert again.info.get("Title") == text
     assert again.outlines[0].title == text
-    assert again.pages[0].annotations[0].contents == text
-    assert again.pages[0].annotations[0].title == text
+    assert again.pages[1].annotations[0].contents == text
+    assert again.pages[1].annotations[0].title == text
     assert sorted(again.attachments) == [f"{text}.txt"]
     assert again.get_embedded_file(f"{text}.txt").description == text
 
@@ -123,7 +123,7 @@ def test_a_field_keeps_the_value_set_on_it_whatever_it_is_called(name):
     setting the value found no field, wrote nothing, and said nothing."""
     document = Document()
     document.pages.add()
-    document.form.add_text_field(name, 0, (10, 10, 200, 30))
+    document.form.add_text_field(name, 1, (10, 10, 200, 30))
     document.form[name].value = "V"
 
     assert [(f.name, f.value) for f in _reloaded(document).form] == [(name, "V")]
@@ -137,9 +137,9 @@ def test_nothing_is_written_as_bare_utf_8():
     document = Document()
     document.pages.add()
     document.info["Title"] = text
-    document.outlines.add(OutlineItem(text, 0))
-    document.pages[0].annotations.add("Text", (10, 10, 40, 40), text, title=text)
-    document.form.add_text_field(text, 0, (10, 10, 200, 30))
+    document.outlines.add(OutlineItem(text, 1))
+    document.pages[1].annotations.add("Text", (10, 10, 40, 40), text, title=text)
+    document.form.add_text_field(text, 1, (10, 10, 200, 30))
     document.add_attachment(f"{text}.txt", b"x", description=text)
 
     data = _saved(document)
@@ -156,11 +156,11 @@ def test_a_generic_annotation_property_keeps_its_text():
     through the generic property channel, which decodes for itself."""
     document = Document()
     document.pages.add()
-    document.pages[0].annotations.add(
+    document.pages[1].annotations.add(
         "Text", (10, 10, 40, 40), "x", properties={"Subj": "Тема"}
     )
 
-    assert _reloaded(document).pages[0].annotations[0].properties["Subj"] == "Тема"
+    assert _reloaded(document).pages[1].annotations[0].properties["Subj"] == "Тема"
 
 
 def test_a_conformance_message_names_the_attachment_it_is_about():
@@ -206,7 +206,7 @@ def test_an_unchanged_document_with_non_ascii_text_still_saves_byte_for_byte():
     document = Document()
     document.pages.add()
     document.info["Title"] = "Привет"
-    document.outlines.add(OutlineItem("日本語", 0))
+    document.outlines.add(OutlineItem("日本語", 1))
     base = _saved(document)
 
     assert _saved(Document(io.BytesIO(base))) == base

@@ -321,7 +321,7 @@ def _prepare_cell_link(pdf: Any, cell: _CellBox) -> Any:
         if (
             isinstance(page, bool)
             or not isinstance(page, int)
-            or not 0 <= page < len(pdf.pages)
+            or not 1 <= page <= len(pdf.pages)
         ):
             raise PdfValidationException(
                 "A cell link destination must name an existing page"

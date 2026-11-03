@@ -98,7 +98,7 @@ def _document(*fields: tuple[str, str, tuple[float, float, float, float]]) -> Do
     program = _font()
     for name, value, rect in fields:
         document.form.add_text_field(
-            name, document.pages[0], rect, value=value, font=program
+            name, document.pages[1], rect, value=value, font=program
         )
     return document
 
@@ -207,7 +207,7 @@ def _unreachable(document: Document) -> set[int]:
 
 
 def _ink(document: Document) -> int:
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     return sum(
         1
         for y in range(int(_PAGE[3]))
@@ -325,7 +325,7 @@ def test_a_wider_font_reports_its_own_advances():
     document = _blank()
     document.form.add_text_field(
         "nm",
-        document.pages[0],
+        document.pages[1],
         _RECT,
         value=_VALUE,
         font=_font(advance=712),

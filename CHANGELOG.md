@@ -7,6 +7,30 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: public page numbers now start at 1, matching Aspose.PDF .NET.**
+  Page collection access, insertion and deletion, numeric selections, page
+  properties, destinations, forms and returned page identifiers use one-based
+  numbering. Zero/negative page indices and page-selection slices are rejected.
+  Page-label collection indices retain the .NET zero-based convention.
+- Page-bearing JSON exports and ZIP manifests now use schema version 2.
+  Annotation/bookmark imports accept both versions; public page maps are
+  one-based. PDF/COS and XFDF numbering remains unchanged.
+
+### Fixed
+
+- Import every page and its resources for `pages.add(other.pages)` instead of
+  silently appending a blank page; preserve forms and inter-page destinations.
+- Refresh text-absorber regexes after search options or phrases change, and
+  persist `fragment.text` edits to the matched PDF occurrence rather than only
+  changing the extracted result. Stale or ambiguous edits fail explicitly.
+- Support all ten .NET split-document scenarios, including deletion by an
+  iterable of original page numbers. Batch deletion validates before editing,
+  ignores duplicate numbers and supports deleting every page with `delete()`.
+- Expose `Page.number`; return zero from `PageCollection.index_of()` when a
+  page is absent, following the original API.
+
 ### Added
 
 - **Turn scanned spreads into individual PDF pages.**

@@ -52,7 +52,7 @@ def _saved(document: Document) -> Document:
 
 def test_notes_popups_and_replies_can_be_read():
     for popup_type in (b"/Type /Annot ", b""):  # /Type is optional on an annotation
-        annotations = list(Document(io.BytesIO(_pdf(popup_type))).pages[0].annotations)
+        annotations = list(Document(io.BytesIO(_pdf(popup_type))).pages[1].annotations)
         assert [(a.subtype, a.contents) for a in annotations] == [
             ("Text", "note"),
             ("Popup", ""),
@@ -66,7 +66,7 @@ def test_notes_popups_and_replies_can_be_read():
 
 def test_editing_a_note_keeps_its_popup_and_reply_linked():
     document = Document(io.BytesIO(_pdf()))
-    note, _popup, reply, _ = document.pages[0].annotations
+    note, _popup, reply, _ = document.pages[1].annotations
     note.contents = "edited"
     reply.set_property("C", [0, 0, 1])
     reopened = _saved(document)
@@ -86,7 +86,7 @@ def test_editing_a_note_keeps_its_popup_and_reply_linked():
     assert points_at(reply_dict.mapping[PdfName("IRT")], note_ref)
     assert points_at(reply_dict.mapping[PdfName("Popup")], reply_popup_ref)
     assert points_at(reply_popup.mapping[PdfName("Parent")], reply_ref)
-    reread = list(reopened.pages[0].annotations)
+    reread = list(reopened.pages[1].annotations)
     assert (reread[0].subtype, reread[0].contents) == ("Text", "edited")
     assert reread[2].properties["C"] == [0, 0, 1]
 
@@ -97,5 +97,5 @@ def test_a_page_with_comments_can_be_flattened_and_edited():
     _saved(document)
 
     document = Document(io.BytesIO(_pdf()))
-    document.pages[0].annotations.delete(3)
-    assert [a.subtype for a in _saved(document).pages[0].annotations] == ["Text", "Popup", "Text"]
+    document.pages[1].annotations.delete(3)
+    assert [a.subtype for a in _saved(document).pages[1].annotations] == ["Text", "Popup", "Text"]

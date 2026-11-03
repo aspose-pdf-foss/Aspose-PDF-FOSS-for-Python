@@ -208,7 +208,7 @@ def test_regions_are_relative_to_the_rotated_visible_crop_not_pdf_origin(rotatio
             page = _page(document, size=(40, 30))
             page.crop_box = (10, 5, 30, 25)
             page.rotation = rotation
-        right.pages[0].draw_rectangle(
+        right.pages[1].draw_rectangle(
             12, 17, 4, 4, fill_color="#000", stroke_color=None
         )
         bounds = {
@@ -234,7 +234,7 @@ def test_none_empty_and_outside_regions_preserve_existing_behavior():
             assert result == baseline and result.ignored_pixels == 0
             assert result.diff_image.pixels == baseline.diff_image.pixels
         assert (
-            PageVisualComparison(0, 0, (1, 1), (1, 1), 0, 1, None, True).ignored_pixels
+            PageVisualComparison(1, 0, (1, 1), (1, 1), 0, 1, None, True).ignored_pixels
             == 0
         )
 
@@ -262,7 +262,7 @@ def test_region_generator_is_consumed_once_and_snapshotted_for_every_selected_pa
 
         monkeypatch.setattr(Page, "render", render)
         results = left.compare_visual(
-            right, pages=[1, 0, 1], other_pages=[0, 1], ignore_regions=regions()
+            right, pages=[2, 1, 2], other_pages=[1, 2], ignore_regions=regions()
         )
         assert [result.ignored_pixels for result in results] == [4, 4, 4]
         assert [result.matches for result in results] == [True, True, False]
@@ -458,7 +458,7 @@ def test_full_exclusions_do_not_bypass_render_failures_or_modify_sources(monkeyp
         original = Page.render
 
         def render(page, **options):
-            if page.index == 1:
+            if page.index == 2:
                 raise PdfValidationException("Unreadable ignored page")
             return original(page, **options)
 

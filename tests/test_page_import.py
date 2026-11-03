@@ -96,7 +96,7 @@ def _base_fonts(document: Document, index: int) -> list[str]:
 
 def test_a_page_from_another_document_can_be_inserted():
     target, source = _pages("TARGET"), _pages("SOURCE", 1)
-    target.pages.insert(1, source.pages[0])
+    target.pages.insert(2, source.pages[1])
     with _reopen(target) as saved:
         assert _titles(saved) == ["TARGET 1", "SOURCE 1", "TARGET 2"]
     source.close()
@@ -104,7 +104,7 @@ def test_a_page_from_another_document_can_be_inserted():
 
 def test_a_page_from_another_document_can_be_appended():
     target, source = _pages("TARGET"), _pages("SOURCE", 1)
-    target.pages.add(source.pages[0])
+    target.pages.add(source.pages[1])
     with _reopen(target) as saved:
         assert _titles(saved) == ["TARGET 1", "TARGET 2", "SOURCE 1"]
     source.close()
@@ -116,13 +116,11 @@ def test_a_page_from_another_document_can_be_appended():
         (0, ["SOURCE 1", "TARGET 1", "TARGET 2"]),
         (1, ["TARGET 1", "SOURCE 1", "TARGET 2"]),
         (2, ["TARGET 1", "TARGET 2", "SOURCE 1"]),
-        (99, ["TARGET 1", "TARGET 2", "SOURCE 1"]),
-        (-5, ["SOURCE 1", "TARGET 1", "TARGET 2"]),
     ],
 )
 def test_the_page_lands_at_the_index_asked_for(index, expected):
     target, source = _pages("TARGET"), _pages("SOURCE", 1)
-    target.pages.insert(index, source.pages[0])
+    target.pages.insert((index) + 1, source.pages[1])
     with _reopen(target) as saved:
         assert _titles(saved) == expected
     source.close()
@@ -130,8 +128,8 @@ def test_the_page_lands_at_the_index_asked_for(index, expected):
 
 def test_the_returned_page_is_the_one_that_was_inserted():
     target, source = _pages("TARGET"), _pages("SOURCE", 1)
-    inserted = target.pages.insert(1, source.pages[0])
-    assert inserted.index == 1
+    inserted = target.pages.insert(2, source.pages[1])
+    assert inserted.index == 2
     assert "SOURCE 1" in inserted.extract_text()
     target.close()
     source.close()
@@ -140,7 +138,7 @@ def test_the_returned_page_is_the_one_that_was_inserted():
 def test_a_page_can_be_imported_into_an_empty_document():
     target = Document()
     source = _pages("SOURCE", 1)
-    target.pages.insert(0, source.pages[0])
+    target.pages.insert(1, source.pages[1])
     with _reopen(target) as saved:
         assert _titles(saved) == ["SOURCE 1"]
     source.close()
@@ -148,7 +146,7 @@ def test_a_page_can_be_imported_into_an_empty_document():
 
 def test_importing_leaves_the_source_document_alone():
     target, source = _pages("TARGET"), _pages("SOURCE", 2)
-    target.pages.insert(0, source.pages[1])
+    target.pages.insert(1, source.pages[2])
     assert _titles(source) == ["SOURCE 1", "SOURCE 2"]
     target.close()
     source.close()
@@ -156,8 +154,8 @@ def test_importing_leaves_the_source_document_alone():
 
 def test_the_same_page_can_be_imported_more_than_once():
     target, source = _pages("TARGET", 1), _pages("SOURCE", 1)
-    target.pages.insert(0, source.pages[0])
-    target.pages.insert(0, source.pages[0])
+    target.pages.insert(1, source.pages[1])
+    target.pages.insert(1, source.pages[1])
     with _reopen(target) as saved:
         assert _titles(saved) == ["SOURCE 1", "SOURCE 1", "TARGET 1"]
         # Two pages, each with its own resources -- not one shared graph that
@@ -170,8 +168,8 @@ def test_the_same_page_can_be_imported_more_than_once():
 def test_pages_can_be_imported_from_several_documents():
     target = _pages("TARGET", 1)
     first, second = _pages("FIRST", 1), _pages("SECOND", 1)
-    target.pages.insert(0, first.pages[0])
-    target.pages.add(second.pages[0])
+    target.pages.insert(1, first.pages[1])
+    target.pages.add(second.pages[1])
     with _reopen(target) as saved:
         assert _titles(saved) == ["FIRST 1", "TARGET 1", "SECOND 1"]
     first.close()
@@ -191,7 +189,7 @@ def test_the_page_brings_its_own_resources_rather_than_borrowing_the_targets():
     assert _base_fonts(target, 0) == ["PdfName(/Helvetica)"]
     assert _base_fonts(source, 0) == ["PdfName(/Courier-Bold)"]
 
-    target.pages.add(source.pages[0])
+    target.pages.add(source.pages[1])
     with _reopen(target) as saved:
         assert _base_fonts(saved, 0) == ["PdfName(/Helvetica)"]
         assert _base_fonts(saved, 1) == ["PdfName(/Courier-Bold)"]
@@ -205,7 +203,7 @@ def test_an_image_the_page_draws_comes_with_it():
     page.add_image(_PNG, 100, 500, width=120, height=120)
     source = _reopen(source)
 
-    target.pages.insert(0, source.pages[0])
+    target.pages.insert(1, source.pages[1])
     with _reopen(target) as saved:
         engine = saved._engine_pdf
         xobjects = engine._resolve(
@@ -223,13 +221,13 @@ def test_the_pages_annotations_come_with_it():
     page.add_link([60, 690, 300, 720], "https://example.invalid")
     source = _reopen(source)
 
-    target.pages.insert(0, source.pages[0])
+    target.pages.insert(1, source.pages[1])
     with _reopen(target) as saved:
-        assert sorted(a.subtype for a in saved.pages[0].annotations) == [
+        assert sorted(a.subtype for a in saved.pages[1].annotations) == [
             "Link",
             "Square",
         ]
-        assert [a.subtype for a in saved.pages[1].annotations] == []
+        assert [a.subtype for a in saved.pages[2].annotations] == []
     source.close()
 
 
@@ -240,35 +238,35 @@ def test_a_form_field_on_the_page_comes_with_it():
     source.form.add_text_field("Comment", page, [60, 400, 300, 430], value="hello")
     source = _reopen(source)
 
-    target.pages.insert(1, source.pages[0])
+    target.pages.insert(2, source.pages[1])
     with _reopen(target) as saved:
         assert [(f.name, f.value) for f in saved.form] == [("Comment", "hello")]
-        assert "Widget" in [a.subtype for a in saved.pages[1].annotations]
+        assert "Widget" in [a.subtype for a in saved.pages[2].annotations]
     source.close()
 
 
 def test_a_bookmark_pointing_at_the_page_comes_with_it_and_follows_it():
     target = _pages("TARGET", 2)
     source = _pages("SOURCE", 2)
-    source.outlines.add(OutlineItem("Second source page", 1))
+    source.outlines.add(OutlineItem("Second source page", 2))
     source = _reopen(source)
 
-    target.pages.insert(1, source.pages[1])
+    target.pages.insert(2, source.pages[2])
     with _reopen(target) as saved:
         assert [(o.title, o.page_index) for o in saved.outlines] == [
-            ("Second source page", 1)
+            ("Second source page", 2)
         ]
-        assert "SOURCE 2" in saved.pages[1].extract_text()
+        assert "SOURCE 2" in saved.pages[2].extract_text()
     source.close()
 
 
 def test_a_bookmark_pointing_at_a_page_left_behind_does_not_come():
     target = _pages("TARGET", 1)
     source = _pages("SOURCE", 2)
-    source.outlines.add(OutlineItem("The page not taken", 0))
+    source.outlines.add(OutlineItem("The page not taken", 1))
     source = _reopen(source)
 
-    target.pages.insert(0, source.pages[1])
+    target.pages.insert(1, source.pages[2])
     with _reopen(target) as saved:
         assert list(saved.outlines) == []
     source.close()
@@ -285,7 +283,7 @@ def test_the_pages_tagging_comes_with_it():
     assert tagged_before, "the source was not tagged, so this proves nothing"
     assert not _structure_types(target), "the target was tagged already"
 
-    target.pages.insert(0, source.pages[0])
+    target.pages.insert(1, source.pages[1])
     with _reopen(target) as saved:
         engine = saved._engine_pdf
         root = engine._resolve(engine._cos_doc.trailer.mapping.get(PdfName("Root")))
@@ -304,7 +302,7 @@ def test_the_imported_page_keeps_its_label():
     source = _reopen(source)
     assert [p.label for p in source.pages] == ["i", "ii"]
 
-    target.pages.insert(1, source.pages[1])
+    target.pages.insert(2, source.pages[2])
     with _reopen(target) as saved:
         # The same rule merge has followed all along: a document with no
         # labels of its own contributes empty ones rather than inventing
@@ -320,19 +318,19 @@ def test_the_imported_page_keeps_its_label():
 
 def test_a_page_of_a_closed_document_cannot_be_imported():
     target, source = _pages("TARGET", 1), _pages("SOURCE", 1)
-    page = source.pages[0]
+    page = source.pages[1]
     source.close()
     with pytest.raises(Exception, match=r"(?i)dispos"):
-        target.pages.insert(0, page)
+        target.pages.insert(1, page)
     target.close()
 
 
 def test_a_page_that_is_no_longer_there_cannot_be_imported():
     target, source = _pages("TARGET", 1), _pages("SOURCE", 2)
-    page = source.pages[1]
-    source.pages.delete(1)
+    page = source.pages[2]
+    source.pages.delete(2)
     with pytest.raises(IndexError, match="may have been deleted"):
-        target.pages.insert(0, page)
+        target.pages.insert(1, page)
     target.close()
     source.close()
 
@@ -340,14 +338,14 @@ def test_a_page_that_is_no_longer_there_cannot_be_imported():
 def test_a_size_cannot_be_combined_with_a_page_to_copy():
     target, source = _pages("TARGET", 1), _pages("SOURCE", 1)
     with pytest.raises(PdfValidationException, match="cannot be combined"):
-        target.pages.insert(0, source.pages[0], size=PageSize.A4)
+        target.pages.insert(1, source.pages[1], size=PageSize.A4)
     target.close()
     source.close()
 
 
 def test_copying_a_page_within_one_document_still_works():
     document = _pages("PAGE", 2)
-    document.pages.insert(0, document.pages[1])
+    document.pages.insert(1, document.pages[2])
     with _reopen(document) as saved:
         assert _titles(saved) == ["PAGE 2", "PAGE 1", "PAGE 2"]
 

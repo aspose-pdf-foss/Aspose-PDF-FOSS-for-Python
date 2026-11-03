@@ -16,7 +16,7 @@ def document():
 
 
 def _add_text(document, name="name", value="before"):
-    return document.form.add_text_field(name, 0, (20, 20, 200, 40), value=value)
+    return document.form.add_text_field(name, 1, (20, 20, 200, 40), value=value)
 
 
 def _save(document, tmp_path, on_disk):

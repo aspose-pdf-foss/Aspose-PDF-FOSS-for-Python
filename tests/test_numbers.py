@@ -114,23 +114,23 @@ def test_something_that_is_not_a_number_at_all_is_refused(value):
 def test_a_crop_box_a_little_too_small_still_produces_a_readable_file():
     document = Document()
     document.pages.add()
-    document.pages[0].crop_box = (0, 0, 1e-5, 300.123456789)
+    document.pages[1].crop_box = (0, 0, 1e-5, 300.123456789)
 
     data = _saved(document)
 
     assert not EXPONENT.search(data)
-    assert Document(io.BytesIO(data)).pages[0].crop_box == (0.0, 0.0, 1e-05, 300.123457)
+    assert Document(io.BytesIO(data)).pages[1].crop_box == (0.0, 0.0, 1e-05, 300.123457)
 
 
 @pytest.mark.parametrize(
     "build",
     [
-        lambda d: d.pages[0].annotations.add("Text", (1e-5, 1e-5, 40, 40), "x"),
-        lambda d: setattr(d.pages[0], "crop_box", (0, 0, 1e-5, 1e-5)),
-        lambda d: d.pages[0].annotations.add(
+        lambda d: d.pages[1].annotations.add("Text", (1e-5, 1e-5, 40, 40), "x"),
+        lambda d: setattr(d.pages[1], "crop_box", (0, 0, 1e-5, 1e-5)),
+        lambda d: d.pages[1].annotations.add(
             "Text", (10, 10, 40, 40), "x", properties={"Zz": 1e-5}
         ),
-        lambda d: d.pages[0].annotations.add("Text", (0, 0, 1.5e20, 1.5e20), "x"),
+        lambda d: d.pages[1].annotations.add("Text", (0, 0, 1.5e20, 1.5e20), "x"),
     ],
     ids=["annot-rect", "crop-box", "annot-property", "huge-rect"],
 )
@@ -147,11 +147,11 @@ def test_a_huge_coordinate_does_not_delete_the_annotation_it_belongs_to():
     a reader resolves the whole annotation object to null."""
     document = Document()
     document.pages.add()
-    document.pages[0].annotations.add("Text", (0, 0, 1.5e20, 40), "x")
+    document.pages[1].annotations.add("Text", (0, 0, 1.5e20, 40), "x")
 
     reloaded = _reloaded(document)
 
-    assert [a.contents for a in reloaded.pages[0].annotations] == ["x"]
+    assert [a.contents for a in reloaded.pages[1].annotations] == ["x"]
     assert b"150000000000000000000.0" in _saved(document)
 
 
@@ -160,7 +160,7 @@ def test_a_nan_coordinate_is_refused_rather_than_written():
     document.pages.add()
 
     with pytest.raises(PdfValidationException, match="infinity or a NaN"):
-        document.pages[0].annotations.add(
+        document.pages[1].annotations.add(
             "Text", (10, 10, 40, 40), "x", properties={"Zz": float("nan")}
         )
         _saved(document)
@@ -183,8 +183,8 @@ def test_the_legacy_writer_follows_the_same_rule():
 def test_a_content_stream_and_a_cos_entry_spell_a_number_the_same_way():
     document = Document()
     document.pages.add()
-    document.pages[0].draw_rectangle(10.5, 20.25, 30.125, 40.0)
-    document.pages[0].annotations.add("Text", (10.5, 20.25, 30.125, 40.0), "x")
+    document.pages[1].draw_rectangle(10.5, 20.25, 30.125, 40.0)
+    document.pages[1].annotations.add("Text", (10.5, 20.25, 30.125, 40.0), "x")
 
     data = _saved(document)
 

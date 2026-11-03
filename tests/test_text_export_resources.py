@@ -156,7 +156,7 @@ def _images(output: str) -> list[bytes]:
 
 
 def test_inherited_font_decodes_through_tounicode(load, export):
-    output = export(load(_objects()), pages=[0], embed_images=False)
+    output = export(load(_objects()), pages=[1], embed_images=False)
     assert "Page" in output
 
 
@@ -167,7 +167,7 @@ def test_same_image_name_on_different_pages_keeps_its_own_pixels(load, export):
 def test_nested_forms_keep_their_fonts_and_images(load, export):
     objects = _objects()
     objects[4] = _stream(b"BT /F1 12 Tf 30 270 Td (A) Tj ET /Fm Do")
-    output = export(load(objects), pages=[0])
+    output = export(load(objects), pages=[1])
     assert output.index("Page") < output.index("Form") < output.index("Nested")
     assert _images(output) == [b"\x00\x00\xff", b"\xff\x00\x00"]
 
@@ -177,7 +177,7 @@ def test_form_without_resources_inherits_images(load, export, resources):
     objects = _objects()
     objects[4] = _stream(b"/Fm Do")
     objects[12] = _form(b"q 30 0 0 30 30 220 cm /Im0 Do Q", resources)
-    assert _images(export(load(objects), pages=[0])) == [b"\xff\x00\x00"]
+    assert _images(export(load(objects), pages=[1])) == [b"\xff\x00\x00"]
 
 
 def test_repeated_form_paints_are_preserved_and_transformed(load, export):
@@ -188,9 +188,9 @@ def test_repeated_form_paints_are_preserved_and_transformed(load, export):
     objects[12] = _form(
         b"q 30 0 0 30 30 10 cm /Im0 Do Q", b"/Resources << /XObject << /Im0 9 0 R >> >>"
     )
-    assert _images(export(load(objects), pages=[0])) == [b"\x00\x00\xff"] * 2
+    assert _images(export(load(objects), pages=[1])) == [b"\x00\x00\xff"] * 2
     assert (
-        _images(export(load(objects), pages=[0], clip_to_page=False))
+        _images(export(load(objects), pages=[1], clip_to_page=False))
         == [b"\x00\x00\xff"] * 3
     )
 
@@ -199,7 +199,7 @@ def test_cyclic_form_keeps_sibling_image_once(load, export):
     objects = _objects()
     objects[4] = _stream(b"/Fm Do")
     objects[12] = _form(b"q 30 0 0 30 30 110 cm /Im0 Do Q /Fm Do")
-    assert _images(export(load(objects), pages=[0])) == [b"\xff\x00\x00"]
+    assert _images(export(load(objects), pages=[1])) == [b"\xff\x00\x00"]
 
 
 def test_form_image_decoding_respects_limits(load, export):
@@ -212,8 +212,8 @@ def test_form_image_decoding_respects_limits(load, export):
     )
     document = load(objects, limits=PdfLoadLimits(max_image_pixels=50))
     with pytest.raises(PdfResourceLimitException, match="max_image_pixels"):
-        export(document, pages=[0])
-    assert not _images(export(document, pages=[0], embed_images=False))
+        export(document, pages=[1])
+    assert not _images(export(document, pages=[1], embed_images=False))
 
 
 def test_an_unused_form_stream_is_not_decoded(load, export):
@@ -223,7 +223,7 @@ def test_an_unused_form_stream_is_not_decoded(load, export):
         b"/Subtype /Form /BBox [0 0 300 300] /Filter /FlateDecode",
     )
     document = load(objects, limits=PdfLoadLimits(max_decoded_stream_bytes=1000))
-    assert "Page" in export(document, pages=[0], embed_images=False)
+    assert "Page" in export(document, pages=[1], embed_images=False)
 
 
 def test_repeated_empty_forms_count_towards_traversal_limit(load, export):
@@ -235,7 +235,7 @@ def test_repeated_empty_forms_count_towards_traversal_limit(load, export):
     objects[15] = _form(b"")
     document = load(objects, limits=PdfLoadLimits(max_container_items=60))
     with pytest.raises(PdfResourceLimitException, match="export layout traversal"):
-        export(document, pages=[0], embed_images=False)
+        export(document, pages=[1], embed_images=False)
 
 
 def test_a_selected_streaming_page_does_not_decode_other_pages(tmp_path, export):
@@ -246,9 +246,9 @@ def test_a_selected_streaming_page_does_not_decode_other_pages(tmp_path, export)
     with Document.open_streaming(
         path, limits=PdfLoadLimits(max_decoded_stream_bytes=1000)
     ) as document:
-        assert _images(export(document, pages=[0])) == [b"\xff\x00\x00"]
+        assert _images(export(document, pages=[1])) == [b"\xff\x00\x00"]
         with pytest.raises(PdfResourceLimitException, match="max_decoded_stream_bytes"):
-            export(document, pages=[1])
+            export(document, pages=[2])
 
 
 def test_form_resources_do_not_merge_with_parent_resources(load, export):
@@ -258,7 +258,7 @@ def test_form_resources_do_not_merge_with_parent_resources(load, export):
         b"BT /F1 12 Tf 30 200 Td (A) Tj ET /Im0 Do",
         b"/Resources << /Font << /F1 13 0 R >> /XObject << >> >>",
     )
-    output = export(load(objects), pages=[0])
+    output = export(load(objects), pages=[1])
     assert "Form" in output
     assert not _images(output)
 
@@ -271,7 +271,7 @@ def test_form_matrix_and_calling_ctm_determine_image_order(load, export):
         b"/Resources << /XObject << /Im0 9 0 R >> >> ",
         b"/Matrix [1 0 0 1 0 80]",
     )
-    assert _images(export(load(objects), pages=[0])) == [
+    assert _images(export(load(objects), pages=[1])) == [
         b"\x00\x00\xff",
         b"\xff\x00\x00",
     ]
@@ -309,7 +309,7 @@ def test_pdf_round_trip_preserves_export_resource_scopes(load, tmp_path, export)
     path = tmp_path / "round-trip.pdf"
     original.save(path)
     with Document(path) as reopened:
-        output = export(reopened, pages=[0])
+        output = export(reopened, pages=[1])
         assert output.index("Page") < output.index("Form") < output.index("Nested")
         assert _images(output) == [b"\x00\x00\xff", b"\xff\x00\x00"]
 
@@ -326,8 +326,8 @@ def test_named_image_colour_space_is_resolved_in_its_resource_scope(load, export
         b"/Resources << /ColorSpace << /CS1 /DeviceCMYK >> /XObject << /Im0 8 0 R >> >>",
     )
     document = load(objects)
-    assert _images(export(document, pages=[0])) == [b"\x00\xff\xff", b"\xff\x00\x00"]
-    assert _images(export(document, pages=[0])) == [b"\x00\xff\xff", b"\xff\x00\x00"]
+    assert _images(export(document, pages=[1])) == [b"\x00\xff\xff", b"\xff\x00\x00"]
+    assert _images(export(document, pages=[1])) == [b"\x00\xff\xff", b"\xff\x00\x00"]
 
 
 @pytest.mark.parametrize("algorithm", ["RC4", "AES-128", "AES-256"])
@@ -340,6 +340,6 @@ def test_encrypted_form_resources_export_after_unlock(tmp_path, export, algorith
         original.save(path)
     for opener in (Document, Document.open_streaming):
         with opener(path, password="user") as document:
-            output = export(document, pages=[0])
+            output = export(document, pages=[1])
             assert output.index("Page") < output.index("Form") < output.index("Nested")
             assert _images(output) == [b"\x00\x00\xff", b"\xff\x00\x00"]

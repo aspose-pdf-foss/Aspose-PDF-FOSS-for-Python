@@ -60,7 +60,7 @@ def _pixel(
 ) -> tuple[int, int, int]:
     raster = (
         _document(content, extgstate)
-        .pages[0]
+        .pages[1]
         .render(antialias=False, background=background)
     )
     return raster.get_pixel(*at)

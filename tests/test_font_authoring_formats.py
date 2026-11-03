@@ -183,7 +183,7 @@ def _name(engine: Any, dictionary: PdfDictionary, key: str) -> str | None:
 
 
 def _assert_visible(document: Document, *, x: int = 72, baseline: int = 700) -> None:
-    raster = document.pages[0].render(antialias=False)
+    raster = document.pages[1].render(antialias=False)
     y0 = max(0, raster.height - baseline - 45)
     y1 = min(raster.height, raster.height - baseline + 10)
     ink = sum(

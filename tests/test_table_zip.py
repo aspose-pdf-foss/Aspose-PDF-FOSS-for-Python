@@ -58,8 +58,8 @@ def document():
 
 def test_order_repeated_pages_and_manifest_match_extracted_tables(document):
     pages = [2, 0, 2]
-    tables = document.extract_tables(pages=pages)
-    data = document.export_tables_zip(pages=iter(pages), include_manifest=True)
+    tables = document.extract_tables(pages=(None if pages is None else (number + 1 if type(number) is int else number for number in (pages))))
+    data = document.export_tables_zip(pages=(number + 1 if type(number) is int else number for number in (iter(pages))), include_manifest=True)
     files = _files(data)
     names = [f"table-{index:04d}.csv" for index in range(1, 7)]
     assert list(files) == [*names, "manifest.json"]
@@ -67,7 +67,7 @@ def test_order_repeated_pages_and_manifest_match_extracted_tables(document):
         table.to_csv().encode() for table in tables
     ]
     assert json.loads(files["manifest.json"]) == {
-        "schema_version": 1,
+        "schema_version": 2,
         "delimiter": ",",
         "encoding": "utf-8",
         "tables": [
@@ -102,11 +102,11 @@ def test_default_export_and_metadata_are_deterministic(document, compression, me
 
 
 def test_page_export_retains_original_page_indices(document):
-    files = _files(document.pages[1].export_tables_zip(include_manifest=True))
+    files = _files(document.pages[2].export_tables_zip(include_manifest=True))
     assert list(files) == ["table-0001.csv", "table-0002.csv", "manifest.json"]
     assert [
         item["page_index"] for item in json.loads(files["manifest.json"])["tables"]
-    ] == [1, 1]
+    ] == [2, 2]
 
 
 @pytest.mark.parametrize("delimiter", [",", ";", "\t"])
@@ -115,7 +115,7 @@ def test_page_export_retains_original_page_indices(document):
 )
 def test_csv_quoting_encoding_and_bom_are_per_file(monkeypatch, delimiter, encoding):
     rows = [["Text", "Value"], ['café "quoted"\nnext', "=SUM(1,2)"], ["0007", ""]]
-    table = ExtractedTable(0, rows)
+    table = ExtractedTable(1, rows)
     monkeypatch.setattr(
         "aspose_pdf.table_extraction._page_tables", lambda *a: [table, table]
     )
@@ -173,7 +173,7 @@ def test_no_tables_produces_a_valid_empty_archive(include_manifest, kind):
         {"pages": "0"},
         {"pages": [True]},
         {"pages": [-1]},
-        {"pages": [0, 100]},
+        {"pages": [1, 101]},
     ],
 )
 def test_invalid_options_fail_before_extraction_or_output(
@@ -192,7 +192,7 @@ def test_invalid_options_fail_before_extraction_or_output(
 def test_selection_generators_are_bounded(document):
     document._load_limits = PdfLoadLimits(max_container_items=2)
     with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-        document.export_tables_zip(pages=repeat(0))
+        document.export_tables_zip(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
 
 
 def test_paths_streams_short_writes_and_late_failures_are_safe(
@@ -230,9 +230,9 @@ def test_paths_streams_short_writes_and_late_failures_are_safe(
 
 
 def test_clip_option_uses_the_existing_table_recognition(document):
-    document.pages[0].crop_box = (0, 0, 250, 100)
-    assert _files(document.export_tables_zip(pages=[0])) == {}
-    assert len(_files(document.export_tables_zip(pages=[0], clip_to_page=False))) == 2
+    document.pages[1].crop_box = (0, 0, 250, 100)
+    assert _files(document.export_tables_zip(pages=[1])) == {}
+    assert len(_files(document.export_tables_zip(pages=[1], clip_to_page=False))) == 2
 
 
 def test_streaming_reads_only_selected_pages_and_does_not_render(
@@ -254,7 +254,7 @@ def test_streaming_reads_only_selected_pages_and_does_not_render(
         monkeypatch.setattr(
             streamed, "render_page", lambda *a, **k: pytest.fail("No rendering")
         )
-        assert len(_files(streamed.export_tables_zip(pages=[1]))) == 2
+        assert len(_files(streamed.export_tables_zip(pages=[2]))) == 2
         assert reads == [1] and pdf._lazy and pdf.page_contents == []
 
 
@@ -277,7 +277,7 @@ def test_export_limits_preserve_the_output(document, limit):
 
 
 def test_cumulative_csv_and_manifest_bytes_are_bounded(monkeypatch):
-    table = ExtractedTable(0, [["A", "B"], ["1", "2"]])
+    table = ExtractedTable(1, [["A", "B"], ["1", "2"]])
     monkeypatch.setattr(
         "aspose_pdf.table_extraction._page_tables", lambda *a: [table, table]
     )
@@ -302,7 +302,7 @@ def test_cumulative_csv_and_manifest_bytes_are_bounded(monkeypatch):
 def test_each_csv_file_obeys_the_object_limit_before_output(
     monkeypatch, encoding, limit
 ):
-    table = ExtractedTable(0, [["a", "b", "c"], ["d", "e", "f"]])
+    table = ExtractedTable(1, [["a", "b", "c"], ["d", "e", "f"]])
     monkeypatch.setattr("aspose_pdf.table_extraction._page_tables", lambda *a: [table])
     with Document() as document:
         document.pages.add()
@@ -334,7 +334,7 @@ def test_encoding_failures_and_disposed_documents_are_rejected(document):
     with pytest.raises(PdfValidationException):
         document.export_tables_zip(output, delimiter="é", encoding="ascii")
     assert output.getvalue() == b"Keep"
-    page = document.pages[0]
+    page = document.pages[1]
     document.dispose()
     with pytest.raises(AsposePdfException):
         document.export_tables_zip()

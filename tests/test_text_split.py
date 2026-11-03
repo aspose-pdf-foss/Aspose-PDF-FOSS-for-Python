@@ -88,7 +88,7 @@ def test_matching_pages_start_parts_and_leave_no_gaps_or_duplicates(
                 with Document(data) as loaded:
                     assert _texts(loaded) == _texts(part)
                     assert loaded.validate()
-        parts[-1].pages[0].add_text("OUTPUT ONLY", 15, 80)
+        parts[-1].pages[1].add_text("OUTPUT ONLY", 15, 80)
         parts[-1].info["Title"] = "Edited part"
         assert "OUTPUT ONLY" not in source.extract_text()
     assert _bytes(source) == before
@@ -96,7 +96,7 @@ def test_matching_pages_start_parts_and_leave_no_gaps_or_duplicates(
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_header_clip_ignores_body_matches_and_preserves_whole_pages(source, rotation):
-    source.pages[2].add_text("INVOICE mentioned in details", 15, 80)
+    source.pages[3].add_text("INVOICE mentioned in details", 15, 80)
     for page in source.pages:
         page.rotation = rotation
         page.crop_box = (0, 0, 240, 120)
@@ -208,14 +208,14 @@ def test_text_split_reads_adjacent_text_operators_and_invisible_ocr():
         document.pages.add()
         with _parts(document) as parts:
             assert [part.page_count for part in parts] == [1, 2]
-            assert parts[1].pages[0].extract_text() == "INVOICE"
+            assert parts[1].pages[1].extract_text() == "INVOICE"
 
 
 def test_annotations_form_values_and_images_do_not_supply_search_text():
     with Document() as document:
         page = document.pages.add()
         page.annotations.add("Text", (10, 10, 40, 40), "INVOICE")
-        document.form.add_text_field("INVOICE", 0, (20, 50, 150, 80), value="INVOICE")
+        document.form.add_text_field("INVOICE", 1, (20, 50, 150, 80), value="INVOICE")
         document.generate_field_appearances()
         page.add_image(_PNG, 20, 100, width=20, height=20)
         with pytest.raises(PdfValidationException, match="No pages match"):
@@ -264,9 +264,9 @@ def test_unicode_search_uses_decoded_font_text_and_survives_round_trip(case_sens
                 case_sensitive=case_sensitive,
             ) as parts:
                 assert [part.page_count for part in parts] == [1, 1]
-                assert parts[1].pages[0].extract_text() == word
+                assert parts[1].pages[1].extract_text() == word
                 with Document(_bytes(parts[1])) as reopened:
-                    assert reopened.pages[0].extract_text() == word
+                    assert reopened.pages[1].extract_text() == word
 
 
 def test_invoked_forms_supply_text_but_hidden_layers_do_not():
@@ -282,7 +282,7 @@ def test_invoked_forms_supply_text_but_hidden_layers_do_not():
             last.add_text("INVOICE", 20, 700)
         with _parts(document) as parts:
             assert [part.page_count for part in parts] == [1, 2]
-            assert parts[1].pages[0].extract_text() == "INVOICE"
+            assert parts[1].pages[1].extract_text() == "INVOICE"
 
 
 def test_existing_full_text_cache_and_page_cursor_are_preserved(source):
@@ -353,32 +353,32 @@ def test_disposed_document_is_rejected(source):
 def test_live_and_loaded_bookmarks_follow_current_pages_and_promote_children(
     source, cached_outlines, action
 ):
-    root = source.outlines.add(OutlineItem("Parent", 2))
-    first = XYZDestination(1, 10, 135, 2)
+    root = source.outlines.add(OutlineItem("Parent", 3))
+    first = XYZDestination(2, 10, 135, 2)
     root.add(OutlineItem("First", destination=GoToAction(first) if action else first))
-    source.destinations["last"] = FitDestination(4)
+    source.destinations["last"] = FitDestination(5)
     root.add(OutlineItem("Last", destination="last"))
     with Document(_bytes(source)) as loaded:
         if cached_outlines:
-            assert loaded.outlines[0].children[0].page_index == 1
-        loaded.pages.delete(0)
-        loaded.destinations["last"] = XYZDestination(3, 5, 130, 1.5)
+            assert loaded.outlines[0].children[0].page_index == 2
+        loaded.pages.delete(1)
+        loaded.destinations["last"] = XYZDestination(4, 5, 130, 1.5)
         # Keep this edit live; the operation must not flush or discard it.
-        loaded.outlines.add(OutlineItem("Live edit", 2))
+        loaded.outlines.add(OutlineItem("Live edit", 3))
         original_model = loaded._engine_pdf._outlines_data
         with _parts(loaded) as parts:
             assert [part.page_count for part in parts] == [2, 1, 2]
             assert [(o.title, o.page_index) for o in parts[0].outlines] == [
-                ("Parent", 1)
+                ("Parent", 2)
             ]
-            expected = XYZDestination(0, 10, 135, 2)
+            expected = XYZDestination(1, 10, 135, 2)
             assert parts[0].outlines[0].children[0].destination == (
                 GoToAction(expected) if action else expected
             )
             assert [(o.title, o.page_index) for o in parts[1].outlines] == [
-                ("Live edit", 0)
+                ("Live edit", 1)
             ]
-            assert parts[2].outlines[0].destination == XYZDestination(0, 5, 130, 1.5)
+            assert parts[2].outlines[0].destination == XYZDestination(1, 5, 130, 1.5)
             assert loaded._engine_pdf._outlines_data is original_model
         assert loaded.outlines[-1].title == "Live edit"
 
@@ -391,16 +391,16 @@ def test_parts_keep_resources_boxes_fields_links_and_labels_after_source_disposa
 ):
     source.version = "2.0"
     source.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ARABIC, "Sheet-", 10)
-    source.pages[1].rotation = 90
-    source.pages[1].crop_box = (5, 5, 230, 155)
-    source.pages[1].add_image(_PNG, 50, 50, width=20, height=20)
-    source.pages[1].annotations.add_square((20, 30, 40, 50), interior_color=(0, 0, 1))
-    source.pages[1].add_link((10, 10, 30, 25), FitDestination(2))
-    source.pages[1].add_link((40, 10, 60, 25), FitDestination(4))
-    source.form.add_text_field("Editable", 2, (10, 60, 100, 80), value="Keep me")
+    source.pages[2].rotation = 90
+    source.pages[2].crop_box = (5, 5, 230, 155)
+    source.pages[2].add_image(_PNG, 50, 50, width=20, height=20)
+    source.pages[2].annotations.add_square((20, 30, 40, 50), interior_color=(0, 0, 1))
+    source.pages[2].add_link((10, 10, 30, 25), FitDestination(3))
+    source.pages[2].add_link((40, 10, 60, 25), FitDestination(5))
+    source.form.add_text_field("Editable", 3, (10, 60, 100, 80), value="Keep me")
     layer = source.layers.add("Private note", visible=False)
-    with source.pages[2].layer(layer):
-        source.pages[2].draw_rectangle(
+    with source.pages[3].layer(layer):
+        source.pages[3].draw_rectangle(
             0, 0, 20, 20, fill_color="#000", stroke_color=None
         )
     source.add_attachment("batch.txt", b"Document attachment")
@@ -411,7 +411,7 @@ def test_parts_keep_resources_boxes_fields_links_and_labels_after_source_disposa
     original = path.read_bytes()
     opener = Document.open_streaming if streaming else Document
     with opener(path, password="secret" if encrypted else None) as loaded:
-        reference = loaded.pages[1].render(antialias=False)
+        reference = loaded.pages[2].render(antialias=False)
         protected = loaded.is_encrypted
         parts = loaded.split_by_text("INVOICE", clip=clip)
         assert loaded.is_encrypted == protected
@@ -422,23 +422,23 @@ def test_parts_keep_resources_boxes_fields_links_and_labels_after_source_disposa
         for part in parts:
             stack.enter_context(part)
         invoice = parts[1]
-        assert invoice.pages[0].rotation == 90
-        assert invoice.pages[0].crop_box == (5, 5, 230, 155)
-        rendered = invoice.pages[0].render(antialias=False)
+        assert invoice.pages[1].rotation == 90
+        assert invoice.pages[1].crop_box == (5, 5, 230, 155)
+        rendered = invoice.pages[1].render(antialias=False)
         assert (rendered.width, rendered.height, rendered.pixels) == (
             reference.width,
             reference.height,
             reference.pixels,
         )
         assert [page.label for page in invoice.pages] == ["Sheet-11", "Sheet-12"]
-        assert invoice.form["Editable"].widgets[0].page_index == 1
+        assert invoice.form["Editable"].widgets[0].page_index == 2
         assert invoice.form["Editable"].value == "Keep me"
         assert not invoice.layers["Private note"].visible
         assert invoice.attachments == {} and invoice.version == "2.0"
         links = [
-            note for note in invoice.pages[0].annotations if note.subtype == "Link"
+            note for note in invoice.pages[1].annotations if note.subtype == "Link"
         ]
-        assert links[0].get_property("Dest") == FitDestination(1)
+        assert links[0].get_property("Dest") == FitDestination(2)
         assert links[1].get_property("Dest") == [None, "Fit"]
         assert "Editable" not in [field.name for field in parts[-1].form]
         invoice.form["Editable"].value = "Changed after source disposal"
@@ -447,7 +447,7 @@ def test_parts_keep_resources_boxes_fields_links_and_labels_after_source_disposa
         with Document(output) as reopened:
             assert not reopened.is_encrypted
             assert reopened.form["Editable"].value == "Changed after source disposal"
-            assert reopened.pages[0].crop_box == (5, 5, 230, 155)
+            assert reopened.pages[1].crop_box == (5, 5, 230, 155)
     assert path.read_bytes() == original
 
 
@@ -455,7 +455,7 @@ def test_parts_keep_resources_boxes_fields_links_and_labels_after_source_disposa
 def test_streaming_scans_each_page_in_order_without_joining_text_before_import(
     source, tmp_path, monkeypatch, clip
 ):
-    source.pages[2].add_image(_PNG, 30, 30, width=20, height=20)
+    source.pages[3].add_image(_PNG, 30, 30, width=20, height=20)
     path = tmp_path / "stream.pdf"
     source.save(path)
     with Document.open_streaming(path) as loaded:
@@ -514,7 +514,7 @@ def test_later_text_extraction_failure_does_not_import_earlier_matches(
 def test_partial_import_failure_disposes_results_and_restores_live_source(
     source, monkeypatch, error
 ):
-    source.outlines.add(OutlineItem("Live", 1))
+    source.outlines.add(OutlineItem("Live", 2))
     model = source._engine_pdf._outlines_data
     original = source._engine_pdf.extract_pages
     created = []
@@ -606,7 +606,7 @@ def test_imported_parts_are_checked_against_limits_and_disposed_on_failure(
 
 
 def test_invalid_live_outline_tree_is_rejected_without_import(source, monkeypatch):
-    root = source.outlines.add(OutlineItem("Loop", 1))
+    root = source.outlines.add(OutlineItem("Loop", 2))
     root.children.append(root)
 
     def forbidden(*args, **kwargs):

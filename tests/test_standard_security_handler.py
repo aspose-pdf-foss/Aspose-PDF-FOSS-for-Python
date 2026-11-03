@@ -44,7 +44,7 @@ READABLE = [
 @pytest.mark.parametrize("password", ["user", "owner"])
 def test_third_party_encrypted_pdf_opens(name: str, label: str, password: str) -> None:
     with Document(FIXTURES / name, password=password) as document:
-        assert b"SECRET42" in document.pages[0].content, label
+        assert b"SECRET42" in document.pages[1].content, label
 
 
 @pytest.mark.parametrize("name,label", READABLE)
@@ -56,13 +56,13 @@ def test_third_party_encrypted_pdf_rejects_wrong_password(name: str, label: str)
 def test_owner_only_document_opens_without_a_password() -> None:
     """An empty user password is a password: no reader asks for one."""
     with Document(FIXTURES / "fixtures_encrypted_owner_only.pdf") as document:
-        assert b"SECRET42" in document.pages[0].content
+        assert b"SECRET42" in document.pages[1].content
 
 
 def test_owner_only_document_opens_with_the_owner_password() -> None:
     path = FIXTURES / "fixtures_encrypted_owner_only.pdf"
     with Document(path, password="owner") as document:
-        assert b"SECRET42" in document.pages[0].content
+        assert b"SECRET42" in document.pages[1].content
 
 
 def test_encrypted_document_renders_its_images() -> None:
@@ -73,7 +73,7 @@ def test_encrypted_document_renders_its_images() -> None:
     survive, or every image and form XObject silently disappears from a render.
     """
     with Document(FIXTURES / "fixtures_encrypted_image.pdf", password="user") as doc:
-        raster = doc.pages[0].render(dpi=36)
+        raster = doc.pages[1].render(dpi=36)
     red = sum(
         1
         for i in range(0, len(raster.pixels), 3)
@@ -220,7 +220,7 @@ def test_encrypted_strings_round_trip(tmp_path: Path, algorithm: str) -> None:
     out.write_bytes(data)
     with Document(out, password="user") as document:
         assert document.info.get("Title") == "Encrypted title"
-        assert b"SECRET42" in document.pages[0].content
+        assert b"SECRET42" in document.pages[1].content
 
 
 @pytest.mark.parametrize("algorithm", ["RC4", "AES-128", "AES-256"])
@@ -302,7 +302,7 @@ def test_decrypt_accepts_either_of_the_document_s_passwords(
     document.decrypt(decrypted_with)
     plain = Document(str(_saved(document, tmp_path)))
     assert not plain.is_encrypted
-    assert b"SECRET42" in plain.pages[0].content
+    assert b"SECRET42" in plain.pages[1].content
 
 
 @pytest.mark.parametrize("name,label", READABLE)
@@ -319,7 +319,7 @@ def test_change_passwords_keeps_the_permissions_and_the_cipher(
     reopened = Document(str(out), password="new-user")
     assert reopened.permissions == permissions, label
     assert _cipher(reopened) == cipher, label
-    assert b"SECRET42" in reopened.pages[0].content
+    assert b"SECRET42" in reopened.pages[1].content
     Document(str(out), password="new-owner")
     with pytest.raises(PdfSecurityException):
         Document(str(out), password="user")

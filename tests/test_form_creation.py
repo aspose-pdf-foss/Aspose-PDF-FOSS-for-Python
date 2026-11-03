@@ -257,8 +257,8 @@ def test_publicly_created_form_flattens_every_widget_state():
     assert b"/AcroForm" not in output.getvalue()
     reopened = Document().load_from(output.getvalue())
     assert len(reopened.form) == 0
-    assert reopened.pages[0].content.count(b" Do") == 7
-    assert b"//FlatAnnot" not in reopened.pages[0].content
+    assert reopened.pages[1].content.count(b" Do") == 7
+    assert b"//FlatAnnot" not in reopened.pages[1].content
 
 
 def test_public_form_creation_validates_names_pages_values_and_duplicates():
@@ -267,7 +267,7 @@ def test_public_form_creation_validates_names_pages_values_and_duplicates():
     form = document.form
 
     with pytest.raises(IndexError):
-        form.add_text_field("bad", 1, (0, 0, 10, 10))
+        form.add_text_field("bad", 2, (0, 0, 10, 10))
     with pytest.raises(PdfValidationException):
         form.add_text_field("bad..name", page, (0, 0, 10, 10))
     with pytest.raises(PdfValidationException):

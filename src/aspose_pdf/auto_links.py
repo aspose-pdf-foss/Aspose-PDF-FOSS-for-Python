@@ -308,7 +308,7 @@ def _auto_link(
     considered = overlap_checks = 0
     budget = engine._load_budget
     for index in range(document.page_count) if indexes is None else indexes:
-        page = document.pages[index]
+        page = document._page_at(index)
         matches = []
         by_text = defaultdict(list)
         for start, end, value, uri in _candidates(page.extract_text(), urls, emails):

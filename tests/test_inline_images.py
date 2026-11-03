@@ -360,7 +360,7 @@ def _rendered(bi: bytes, data: bytes, resources: dict | None = None):
     )
     if resources is not None:
         doc._engine_pdf.page_resources = [resources]
-    return doc.pages[0].render(antialias=False)
+    return doc.pages[1].render(antialias=False)
 
 
 def test_an_inline_image_is_painted_where_the_matrix_puts_it():
@@ -390,7 +390,7 @@ def test_an_inline_image_reads_a_colour_space_out_of_the_page_resources():
         bytes([0, 85, 170, 255]),
         resources=b"/ColorSpace << /CsGray /DeviceGray >> ",
     )
-    raster = doc.pages[0].render(antialias=False)
+    raster = doc.pages[1].render(antialias=False)
     assert raster.get_pixel(15, 10) == (0, 0, 0)
     assert raster.get_pixel(25, 10) == (85, 85, 85)
     assert raster.get_pixel(15, 20) == (170, 170, 170)

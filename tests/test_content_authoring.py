@@ -9,7 +9,7 @@ from aspose_pdf.engine.simple_pdf import SimplePdf
 def test_page_authoring_text_shapes_and_raw_image_roundtrip() -> None:
     doc = Document()
     doc._engine_pdf = SimplePdf(pages=[(0.0, 0.0, 80.0, 60.0)], page_contents=[b""])
-    page = doc.pages[0]
+    page = doc.pages[1]
 
     page.draw_rectangle(5, 5, 12, 12, stroke_color=None, fill_color=(255, 0, 0))
     page.draw_line(0, 0, 20, 20, stroke_color=(0, 0, 255), line_width=2)
@@ -39,7 +39,7 @@ def test_page_authoring_text_shapes_and_raw_image_roundtrip() -> None:
     rendered_doc = Document()
     rendered_doc._engine_pdf = loaded
     # Exact-pixel placement check: disable anti-aliasing so edges stay crisp.
-    raster = rendered_doc.pages[0].render(antialias=False)
+    raster = rendered_doc.pages[1].render(antialias=False)
 
     assert raster.get_pixel(8, 49) == (255, 0, 0)
     assert raster.get_pixel(30, 39) == (255, 0, 0)
@@ -54,7 +54,7 @@ def test_authoring_appends_to_loaded_pdf_contents_array() -> None:
 
     doc = Document()
     doc.load_from(original)
-    doc.pages[0].add_text("Loaded edit", 12, 15, font_size=8)
+    doc.pages[1].add_text("Loaded edit", 12, 15, font_size=8)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -82,7 +82,7 @@ def test_page_add_image_accepts_png_bytes() -> None:
     doc._engine_pdf = SimplePdf(pages=[(0.0, 0.0, 20.0, 20.0)], page_contents=[b""])
     png = write_png(1, 1, "RGB", b"\x00\x80\xff")
 
-    name = doc.pages[0].add_image(png, 0, 0, 10, 10)
+    name = doc.pages[1].add_image(png, 0, 0, 10, 10)
     data = doc._engine_pdf.to_bytes()
     loaded = SimplePdf.from_bytes(data)
 
@@ -90,14 +90,14 @@ def test_page_add_image_accepts_png_bytes() -> None:
 
     rendered_doc = Document()
     rendered_doc._engine_pdf = loaded
-    raster = rendered_doc.pages[0].render()
+    raster = rendered_doc.pages[1].render()
     assert raster.get_pixel(5, 15) == (0, 128, 255)
 
 
 def test_tagged_authored_image_builds_pdfua_parent_tree_and_validates() -> None:
     doc = Document()
     doc._engine_pdf = SimplePdf(pages=[(0.0, 0.0, 20.0, 20.0)], page_contents=[b""])
-    page = doc.pages[0]
+    page = doc.pages[1]
 
     page.add_image(
         b"\x00\x80\xff",
@@ -144,7 +144,7 @@ def test_tagged_authored_text_records_actual_text_and_mcid() -> None:
     doc = Document()
     doc._engine_pdf = SimplePdf(pages=[(0.0, 0.0, 80.0, 40.0)], page_contents=[b""])
 
-    doc.pages[0].add_text(
+    doc.pages[1].add_text(
         "Visible",
         5,
         20,
@@ -154,7 +154,7 @@ def test_tagged_authored_text_records_actual_text_and_mcid() -> None:
     )
 
     engine = doc._engine_pdf
-    assert b"/P << /MCID 0 >> BDC" in doc.pages[0].content
+    assert b"/P << /MCID 0 >> BDC" in doc.pages[1].content
     catalog = engine._resolve(engine._cos_doc.trailer.get(PdfName("Root")))
     struct_root = engine._resolve(catalog.mapping.get(PdfName("StructTreeRoot")))
     kids = engine._resolve(struct_root.mapping.get(PdfName("K")))

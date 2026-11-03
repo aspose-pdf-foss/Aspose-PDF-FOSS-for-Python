@@ -200,7 +200,7 @@ def test_the_renderer_also_releases_the_clip_at_q():
     document = Document()
     document._engine_pdf = pdf
 
-    raster = document.pages[0].render(antialias=False)
+    raster = document.pages[1].render(antialias=False)
 
     assert raster.get_pixel(10, 30) == (255, 0, 0)  # inside the old clip
     assert raster.get_pixel(30, 10) == (0, 0, 255)  # outside it, drawn after Q
@@ -337,7 +337,7 @@ def test_content_in_a_hidden_layer_is_not_exported():
     from tests.test_optional_content import _layered_pdf
 
     with Document(_layered_pdf()) as document:  # layer 2 (blue) is /OFF
-        svg = document.pages[0].to_svg()
+        svg = document.pages[1].to_svg()
 
     fills = {path.get("fill") for path in _elements(svg, "path")}
     assert "#ff0000" in fills  # layer 1, on
@@ -354,7 +354,7 @@ def test_page_save_as_svg_writes_the_file(tmp_path: Path):
     document = Document()
     document.pages.add().add_text("Hello", 40, 700, font_size=18)
 
-    written = document.pages[0].save_as_svg(tmp_path / "page.svg")
+    written = document.pages[1].save_as_svg(tmp_path / "page.svg")
 
     assert written.exists()
     ElementTree.fromstring(written.read_text(encoding="utf-8"))
@@ -376,7 +376,7 @@ def test_a_single_page_keeps_the_name_it_was_given(tmp_path: Path):
     document.pages.add()
     document.pages.add()
 
-    written = document.save_as_svg(tmp_path / "just-one.svg", pages=[1])
+    written = document.save_as_svg(tmp_path / "just-one.svg", pages=[2])
 
     assert [path.name for path in written] == ["just-one.svg"]
 

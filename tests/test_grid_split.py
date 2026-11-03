@@ -144,23 +144,23 @@ def test_selection_keeps_covers_page_order_labels_destinations_and_editable_fiel
         _grid_page(source)
         _grid_page(source)
         source.pages.add(size=(20, 20)).add_text("Back", 1, 10, font_size=2)
-        source.form.add_text_field("cover", 0, (1, 1, 19, 9), value="Keep")
+        source.form.add_text_field("cover", 1, (1, 1, 19, 9), value="Keep")
         source.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ROMAN_LOWERCASE)
         source.info["Title"] = "Grid source"
         source.add_attachment("guide.txt", b"Original attachment")
-        source.outlines.add(OutlineItem("Cover", 0))
-        source.outlines.add(OutlineItem("First grid", destination=FitDestination(1)))
-        source.outlines.add(OutlineItem("Second grid", 2))
-        source.outlines.add(OutlineItem("Back", 3))
-        source.pages[1].add_link((1, 1, 5, 5), FitDestination(2))
+        source.outlines.add(OutlineItem("Cover", 1))
+        source.outlines.add(OutlineItem("First grid", destination=FitDestination(2)))
+        source.outlines.add(OutlineItem("Second grid", 3))
+        source.outlines.add(OutlineItem("Back", 4))
+        source.pages[2].add_link((1, 1, 5, 5), FitDestination(3))
         original = [
             (item.title, item.page_index, item.destination) for item in source.outlines
         ]
-        with source.split_grid(2, 3, pages=(index for index in (2, 1, 2))) as result:
+        with source.split_grid(2, 3, pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 1, 2))))) as result:
             assert result.page_count == 14
             assert (
-                "Cover" in result.pages[0].extract_text()
-                and "Back" in result.pages[-1].extract_text()
+                "Cover" in result.pages[1].extract_text()
+                and "Back" in result.pages[len(result.pages) + (-1) + 1].extract_text()
             )
             assert result.info["Title"] == "Grid source"
             assert result.attachments["guide.txt"] == b"Original attachment"
@@ -171,23 +171,23 @@ def test_selection_keeps_covers_page_order_labels_destinations_and_editable_fiel
                 "iv",
             ]
             assert [(item.title, item.page_index) for item in result.outlines] == [
-                ("Cover", 0),
-                ("First grid", 1),
-                ("Second grid", 7),
-                ("Back", 13),
+                ("Cover", 1),
+                ("First grid", 2),
+                ("Second grid", 8),
+                ("Back", 14),
             ]
             assert (
                 result.form["cover"].value == "Keep" and result.validate_links() == []
             )
-            for page in result.pages[1:7]:
-                assert page.annotations[0].get_property("Dest") == FitDestination(7)
+            for page in list(result.pages)[1:7]:
+                assert page.annotations[0].get_property("Dest") == FitDestination(8)
             path = tmp_path / "tiles.pdf"
             result.save(path)
             with Document(path) as reopened:
                 assert reopened.validate() and reopened.validate_links() == []
                 assert [
                     (item.title, item.page_index) for item in reopened.outlines
-                ] == [("Cover", 0), ("First grid", 1), ("Second grid", 7), ("Back", 13)]
+                ] == [("Cover", 1), ("First grid", 2), ("Second grid", 8), ("Back", 14)]
                 assert reopened.form["cover"].value == "Keep"
         assert [
             (item.title, item.page_index, item.destination) for item in source.outlines
@@ -199,7 +199,7 @@ def test_empty_selection_returns_an_independent_copy_with_interactive_fields():
         page = _grid_page(source)
         source.form.add_text_field("keep", page, (1, 1, 30, 15), value="Original")
         with source.split_grid(3, 4, pages=[]) as result:
-            assert result.page_count == 1 and result.pages[0].crop_box == page.crop_box
+            assert result.page_count == 1 and result.pages[1].crop_box == page.crop_box
             result.form["keep"].value = "Changed"
             assert source.form["keep"].value == "Original"
 
@@ -234,7 +234,7 @@ def test_annotation_threads_are_independent_on_every_tile():
         note.reply("Reply")
         note.add_popup((5, 1, 15, 8), is_open=True)
         with source.split_grid(2, 3) as result:
-            result.pages[4].annotations[0].contents = "Tile four"
+            result.pages[5].annotations[0].contents = "Tile four"
             for index, page in enumerate(result.pages):
                 annotations = page.annotations
                 text = "Tile four" if index == 4 else "Note"
@@ -242,12 +242,12 @@ def test_annotation_threads_are_independent_on_every_tile():
                 assert annotations[0].contents == text
                 assert annotations[1].in_reply_to.contents == text
                 assert annotations[0].popup.parent_annotation.contents == text
-            assert source.pages[0].annotations[0].contents == "Note"
+            assert source.pages[1].annotations[0].contents == "Note"
             with Document(_bytes(result)) as reopened:
                 assert (
-                    reopened.pages[4].annotations[1].in_reply_to.contents == "Tile four"
+                    reopened.pages[5].annotations[1].in_reply_to.contents == "Tile four"
                 )
-                assert reopened.pages[5].annotations[0].contents == "Note"
+                assert reopened.pages[6].annotations[0].contents == "Note"
 
 
 def test_selected_widgets_are_flattened_and_the_source_remains_interactive():
@@ -325,7 +325,7 @@ def test_image_resources_and_layers_survive_on_every_tile():
         {"pages": "0"},
         {"pages": [True]},
         {"pages": [-1]},
-        {"pages": [0, 5]},
+        {"pages": [1, 6]},
     ],
 )
 @pytest.mark.parametrize("empty", [False, True])
@@ -415,7 +415,7 @@ def test_unbounded_selection_and_copied_content_are_bounded(monkeypatch):
         _grid_page(source)
         source._load_limits = PdfLoadLimits(max_container_items=3)
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            source.split_grid(pages=repeat(0))
+            source.split_grid(pages=(number + 1 if type(number) is int else number for number in (repeat(0))))
         size = len(source._engine_pdf.get_page_content(0))
         source._load_limits = PdfLoadLimits(max_total_decoded_bytes=2 * size - 1)
         monkeypatch.setattr(
@@ -447,7 +447,7 @@ def test_loaded_sources_are_independent_and_streaming_caches_stay_lazy(
         original if kind == "bytes" else path, password="user" if encrypted else None
     ) as source:
         protected = source.is_encrypted
-        result = source.split_grid(2, 3, pages=[1])
+        result = source.split_grid(2, 3, pages=[2])
         assert source.page_count == 2 and source.is_encrypted == protected
         if kind == "streaming":
             assert (

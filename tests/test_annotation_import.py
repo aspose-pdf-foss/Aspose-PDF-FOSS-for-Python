@@ -90,7 +90,7 @@ def test_input_forms_append_preserve_existing_and_roundtrip(
     document.save(target)
     for source in (_saved(document), target):
         with Document(source) as reopened:
-            annotations = reopened.pages[0].annotations
+            annotations = reopened.pages[1].annotations
             assert [a.contents for a in annotations] == [
                 "existing",
                 _record()["contents"],
@@ -101,12 +101,12 @@ def test_input_forms_append_preserve_existing_and_roundtrip(
             assert note.rect == (10, 20, 30, 40)
             assert note.color == (1, 0, 0) and note.opacity == 0.5
             assert isinstance(note.get_property("Name"), Name)
-            assert len(reopened.pages[1].annotations) == 0
+            assert len(reopened.pages[2].annotations) == 0
 
 
 def test_export_import_preserves_review_properties_names_and_geometry(document):
-    document.pages[1].rotation = 90
-    document.pages[1].crop_box = (5, 5, 300, 400)
+    document.pages[2].rotation = 90
+    document.pages[2].crop_box = (5, 5, 300, 400)
     with Document() as source:
         annotations = source.pages.add().annotations
         annotations.add_line(
@@ -178,17 +178,17 @@ def test_export_import_preserves_review_properties_names_and_geometry(document):
             },
         )
         expected = annotations.to_list()
-        assert document.pages[1].annotations.import_json(
+        assert document.pages[2].annotations.import_json(
             annotations.export_json()
         ) == len(expected)
     with Document(_saved(document)) as reopened:
-        actual = reopened.pages[1].annotations.to_list()
+        actual = reopened.pages[2].annotations.to_list()
         for wanted, got in zip(expected, actual, strict=True):
             for key in ("subtype", "rect", "contents", "author", "properties"):
                 assert got[key] == wanted[key]
-        line = reopened.pages[1].annotations[0]
+        line = reopened.pages[2].annotations[0]
         assert all(isinstance(v, Name) for v in line.get_property("LE"))
-        props = reopened.pages[1].annotations[-1].properties
+        props = reopened.pages[2].annotations[-1].properties
         assert isinstance(props["BS"]["S"], Name)
         assert isinstance(props["Measure"]["X"][0]["F"], Name)
         assert not isinstance(props["State"], Name)
@@ -211,7 +211,7 @@ def test_links_use_new_ids_and_complete_popup_pairs_even_in_reverse_order(docume
     )
     assert document.import_annotations_json(_data(popup, nested, reply, note)) == 4
     with Document(_saved(document)) as reopened:
-        existing, popup, nested, reply, note = reopened.pages[0].annotations.to_list()
+        existing, popup, nested, reply, note = reopened.pages[1].annotations.to_list()
         assert note["links"]["popup"] == popup["id"]
         assert popup["links"]["parent"] == note["id"]
         assert reply["links"]["in_reply_to"] == note["id"]
@@ -220,7 +220,7 @@ def test_links_use_new_ids_and_complete_popup_pairs_even_in_reverse_order(docume
 
 
 def test_external_links_are_omitted_and_never_resolve_against_destination(document):
-    existing = document.pages[0].annotations.to_list()[0]["id"]
+    existing = document.pages[1].annotations.to_list()[0]["id"]
     assert (
         document.import_annotations_json(
             _data(
@@ -231,7 +231,7 @@ def test_external_links_are_omitted_and_never_resolve_against_destination(docume
         )
         == 1
     )
-    assert document.pages[0].annotations.to_list()[-1]["links"] == _record()["links"]
+    assert document.pages[1].annotations.to_list()[-1]["links"] == _record()["links"]
 
 
 def test_page_mapping_merges_reorders_and_links_across_pages(document):
@@ -243,21 +243,21 @@ def test_page_mapping_merges_reorders_and_links_across_pages(document):
             links={"in_reply_to": "one", "popup": None, "parent": None},
         ),
     ]
-    assert document.import_annotations_json(_data(*records), page_map={8: 1, 9: 0}) == 2
-    one = document.pages[1].annotations.to_list()[0]
-    two = document.pages[0].annotations.to_list()[-1]
+    assert document.import_annotations_json(_data(*records), page_map={9: 2, 10: 1}) == 2
+    one = document.pages[2].annotations.to_list()[0]
+    two = document.pages[1].annotations.to_list()[-1]
     assert two["links"]["in_reply_to"] == one["id"]
-    assert document.import_annotations_json(_data(*records), page_map={8: 1, 9: 1}) == 2
-    assert len(document.pages[1].annotations) == 3
+    assert document.import_annotations_json(_data(*records), page_map={9: 2, 10: 2}) == 2
+    assert len(document.pages[2].annotations) == 3
 
 
 def test_page_import_retargets_nonzero_source_index_and_rejects_multiple_pages(
     document,
 ):
-    assert document.pages[1].annotations.import_json(_data(_record(page_index=19))) == 1
+    assert document.pages[2].annotations.import_json(_data(_record(page_index=19))) == 1
     before = document.export_annotations_json()
     with pytest.raises(PdfValidationException, match="single source page"):
-        document.pages[1].annotations.import_json(
+        document.pages[2].annotations.import_json(
             _data(_record(id="a"), _record(id="b", page_index=1))
         )
     assert document.export_annotations_json() == before
@@ -269,7 +269,7 @@ def test_page_import_retargets_nonzero_source_index_and_rejects_multiple_pages(
 def test_rect_only_review_subtypes(document, subtype):
     assert document.import_annotations_json(_data(_record(subtype=subtype))) == 1
     with Document(_saved(document)) as reopened:
-        assert reopened.pages[0].annotations[-1].subtype == subtype
+        assert reopened.pages[1].annotations[-1].subtype == subtype
 
 
 @pytest.mark.parametrize(
@@ -296,7 +296,7 @@ def test_unsupported_subtypes_reject_entire_batch(document, subtype):
         b'{"schema_version":1,"annotations":[],}',
         b'{"schema_version":1,"schema_version":1,"annotations":[]}',
         b'{"schema_version":true,"annotations":[]}',
-        b'{"schema_version":2,"annotations":[]}',
+        b'{"schema_version":3,"annotations":[]}',
         b'{"schema_version":1,"annotations":{}}',
         b'{"schema_version":1,"annotations":[],"extra":0}',
         b'{"schema_version":1,"annotations":[NaN]}',
@@ -393,7 +393,7 @@ def test_explicit_nulls_survive_export_and_import(document):
         == 1
     )
     with Document(_saved(document)) as reopened:
-        assert reopened.pages[0].annotations.to_list()[-1]["properties"] == {
+        assert reopened.pages[1].annotations.to_list()[-1]["properties"] == {
             "NM": None,
             "BS": None,
             "CA": None,
@@ -450,12 +450,12 @@ def test_invalid_relationships_are_atomic(document, kind):
 
 def test_empty_json_bom_missing_fields_and_disposed_apis(document):
     assert document.import_annotations_json(b"\xef\xbb\xbf" + _data()) == 0
-    assert document.pages[0].annotations.import_json(_data()) == 0
+    assert document.pages[1].annotations.import_json(_data()) == 0
     record = _record()
     del record["author"]
     with pytest.raises(PdfValidationException):
         document.import_annotations_json(_data(record))
-    collection = document.pages[0].annotations
+    collection = document.pages[1].annotations
     document.dispose()
     for call in (document.import_annotations_json, collection.import_json):
         with pytest.raises(AsposePdfException, match="disposed"):
@@ -478,7 +478,7 @@ def test_input_size_limit(kind, tmp_path):
         document.pages.add()
         with pytest.raises(PdfResourceLimitException, match="max_input_bytes"):
             document.import_annotations_json(source)
-        assert len(document.pages[0].annotations) == 0
+        assert len(document.pages[1].annotations) == 0
 
 
 @pytest.mark.parametrize(
@@ -517,12 +517,12 @@ def test_malformed_destination_array_and_late_page_failure_are_atomic(document):
     page.mapping[PdfName("Annots")] = PdfNumber(42)
     engine = document._engine_pdf
     count = len(engine._cos_doc.objects)
-    before = document.pages[0].annotations.to_list()
+    before = document.pages[1].annotations.to_list()
     with pytest.raises(PdfValidationException, match="Annots"):
         document.import_annotations_json(
             _data(_record(id="a"), _record(id="b", page_index=1))
         )
-    assert document.pages[0].annotations.to_list() == before
+    assert document.pages[1].annotations.to_list() == before
     assert len(engine._cos_doc.objects) == count
 
 
@@ -546,7 +546,7 @@ def test_null_or_indirect_annots_arrays_are_supported_without_mutating_shared_ar
 
 
 def test_import_after_page_insert_uses_actual_page_tree(document):
-    document.pages.insert(0)
+    document.pages.insert(1)
     assert document.import_annotations_json(_data(_record(page_index=1))) == 1
     with Document(_saved(document)) as reopened:
         assert [len(p.annotations) for p in reopened.pages] == [0, 2, 0]
@@ -574,7 +574,7 @@ def test_streaming_import_is_lazy_and_survives_encrypted_save(
         output = tmp_path / "output.pdf"
         lazy.save(output)
     with Document(output, password=password) as reopened:
-        assert reopened.pages[1].annotations[0].contents == _record()["contents"]
+        assert reopened.pages[2].annotations[0].contents == _record()["contents"]
         if encrypted:
             with pytest.raises(PdfSecurityException):
                 Document(output)
@@ -587,9 +587,9 @@ def test_imported_markup_can_generate_visible_appearances(document):
         properties={"C": [1, 0, 0], "IC": [1, 0, 0]},
     )
     document.import_annotations_json(_data(record))
-    assert document.pages[0].annotations.generate_appearances() >= 1
+    assert document.pages[1].annotations.generate_appearances() >= 1
     with Document(_saved(document)) as reopened:
-        assert reopened.pages[0].annotations[-1].appearance_normal
+        assert reopened.pages[1].annotations[-1].appearance_normal
 
 
 def test_commit_failure_restores_objects_and_page_arrays(document):
@@ -625,7 +625,7 @@ def test_external_popup_link_is_cleared_before_rebuilding_internal_inverse(
     if reverse:
         records.reverse()
     assert document.import_annotations_json(_data(*records)) == 2
-    imported = document.pages[0].annotations.to_list()[1:]
+    imported = document.pages[1].annotations.to_list()[1:]
     note = next(record for record in imported if record["subtype"] == "Text")
     popup = next(record for record in imported if record["subtype"] == "Popup")
     assert note["links"]["popup"] == popup["id"]
@@ -726,7 +726,7 @@ def test_all_geometry_subtypes_survive_round_trip(document, subtype, properties)
         == 1
     )
     with Document(_saved(document)) as reopened:
-        record = reopened.pages[0].annotations.to_list()[-1]
+        record = reopened.pages[1].annotations.to_list()[-1]
         assert record["subtype"] == subtype
         assert record["properties"] == properties
 
@@ -745,7 +745,7 @@ def test_long_reply_chain_is_iterative_and_input_order_wins_over_annotation_indi
         records.append(record)
     assert document.import_annotations_json(_data(*records)) == 200
     with Document(_saved(document)) as reopened:
-        records = reopened.pages[0].annotations.to_list()[1:]
+        records = reopened.pages[1].annotations.to_list()[1:]
         assert [record["contents"] for record in records] == [
             str(index) for index in range(200)
         ]
@@ -782,12 +782,12 @@ def test_annotation_flags_keep_integer_type_at_pdf_integer_boundary(document):
         == 1
     )
     with Document(_saved(document)) as reopened:
-        flags = reopened.pages[0].annotations.to_list()[-1]["properties"]["F"]
+        flags = reopened.pages[1].annotations.to_list()[-1]["properties"]["F"]
         assert type(flags) is int and flags == 2**31 - 1
 
 
 def test_incremental_save_preserves_original_bytes_content_and_imported_links(document):
-    document.pages[0].add_text("Original page content", x=20, y=100)
+    document.pages[1].add_text("Original page content", x=20, y=100)
     original = _saved(document)
     with Document() as source:
         note = source.pages.add().annotations.add_text((10, 20, 30, 40), "Review")
@@ -802,7 +802,7 @@ def test_incremental_save_preserves_original_bytes_content_and_imported_links(do
         assert output.getvalue().startswith(original)
     with Document(output.getvalue()) as reopened:
         assert reopened.extract_text() == text
-        records = reopened.pages[0].annotations.to_list()[1:]
+        records = reopened.pages[1].annotations.to_list()[1:]
         assert records[1]["links"]["in_reply_to"] == records[0]["id"]
         assert records[0]["links"]["popup"] == records[2]["id"]
         assert records[2]["links"]["parent"] == records[0]["id"]

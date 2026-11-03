@@ -317,7 +317,7 @@ class TestDrawing:
     def test_a_bulleted_list_reads_back(self):
         document, page = _page()
         result = page.add_list(TextList(["first", "second"], width=400), 72, 700)
-        assert result == {"pages": [0], "bottom": pytest.approx(result["bottom"]),
+        assert result == {"pages": [1], "bottom": pytest.approx(result["bottom"]),
                           "items": 2}
         assert page.extract_text() == "• first\n• second"
         document.close()
@@ -419,7 +419,7 @@ class TestPageBreaking:
         document, page = _page()
         result = page.add_list(self._long(), 72, 740)
         assert document.page_count > 1
-        assert result["pages"] == list(range(document.page_count))
+        assert result["pages"] == list(number + 1 for number in (list(range(document.page_count))))
         document.close()
 
     def test_an_existing_page_is_used(self):
@@ -427,24 +427,24 @@ class TestPageBreaking:
         document.pages.add(PageSize.A4)
         result = page.add_list(self._long(12), 72, 300)
         assert document.page_count == 2  # the one that was already there
-        assert result["pages"] == [0, 1]
-        assert document.pages[1].extract_text().strip()
+        assert result["pages"] == [1, 2]
+        assert document.pages[2].extract_text().strip()
         document.close()
 
     def test_a_continuation_keeps_the_height_it_started_at(self):
         """As a table's and a text block's do: the top margin is the caller's."""
         document, page = _page()
         page.add_list(self._long(12), 72, 300)
-        top_of_second = max(y for _x, y in _positions(document.pages[1].content))
-        top_of_first = max(y for _x, y in _positions(document.pages[0].content))
+        top_of_second = max(y for _x, y in _positions(document.pages[2].content))
+        top_of_first = max(y for _x, y in _positions(document.pages[1].content))
         assert top_of_second == pytest.approx(top_of_first, abs=0.01)
         document.close()
 
     def test_the_continuation_starts_at_the_same_height(self):
         document, page = _page()
         page.add_list(self._long(), 72, 700)
-        first = _positions(document.pages[0].content)[0][1]
-        second = _positions(document.pages[1].content)[0][1]
+        first = _positions(document.pages[1].content)[0][1]
+        second = _positions(document.pages[2].content)[0][1]
         assert second == pytest.approx(first, abs=0.01)
         document.close()
 
@@ -453,7 +453,7 @@ class TestPageBreaking:
         document, page = _page()
         page.add_list(self._long(), 72, 740)
         for index in range(document.page_count):
-            marks = _marks(document.pages[index].content)
+            marks = _marks(document.pages[(index) + 1].content)
             # Every /Lbl is followed by the /LBody of the item it belongs to.
             for position, mark in enumerate(marks):
                 if mark == "Lbl":
@@ -469,7 +469,7 @@ class TestPageBreaking:
     def test_the_bottom_margin_is_honoured(self):
         document, page = _page()
         page.add_list(self._long(), 72, 700, bottom_margin=300)
-        lowest = min(y for _x, y in _positions(document.pages[0].content))
+        lowest = min(y for _x, y in _positions(document.pages[1].content))
         assert lowest >= 300
         document.close()
 
@@ -632,7 +632,7 @@ class TestTagging:
         )
         engine = document._engine_pdf
         for index in range(document.page_count):
-            content = document.pages[index].content
+            content = document.pages[(index) + 1].content
             ids = [int(m) for m in re.findall(rb"/MCID (\d+)", content)]
             parents = engine._parent_tree_array_for_page(
                 _struct_root(document), engine._get_page_dict(index)
@@ -703,7 +703,7 @@ def test_a_saved_list_reads_back_as_its_items(tmp_path):
     document.close()
 
     with Document(target) as reopened:
-        text = reopened.pages[0].extract_text()
+        text = reopened.pages[1].extract_text()
     assert text.split("\n") == [
         "1. Measure the room",
         "a. with the font's own advances",

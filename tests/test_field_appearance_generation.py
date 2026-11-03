@@ -541,7 +541,7 @@ def test_generated_field_appearance_survives_save_load():
     buf.seek(0)
     reopened = Document()
     reopened.load_from(buf)
-    assert reopened.pages[0].annotations[0].has_appearance
+    assert reopened.pages[1].annotations[0].has_appearance
 
 
 def test_flatten_inlines_generated_field_appearance():
@@ -979,25 +979,25 @@ def _flattened(data: bytes, edit=None) -> Document:
 
 
 def _is_red_at_the_widget(document: Document) -> bool:
-    raster = document.pages[0].render(dpi=72, antialias=False)
+    raster = document.pages[1].render(dpi=72, antialias=False)
     return raster.get_pixel(200, 50) == (255, 0, 0)  # (200, 50) is inside the widget
 
 
 def test_flattening_keeps_the_appearance_the_document_carries():
     flat = _flattened(_form_with_producer_appearance())
     assert _is_red_at_the_widget(flat)
-    assert "typed value" not in flat.pages[0].extract_text()
+    assert "typed value" not in flat.pages[1].extract_text()
 
 
 def test_need_appearances_asks_for_them_to_be_rebuilt():
     flat = _flattened(_form_with_producer_appearance(need_appearances=True))
-    assert "typed value" in flat.pages[0].extract_text()
+    assert "typed value" in flat.pages[1].extract_text()
     assert not _is_red_at_the_widget(flat)
 
 
 def test_a_widget_without_an_appearance_still_gets_one():
     flat = _flattened(_form_with_producer_appearance(with_ap=False))
-    assert "typed value" in flat.pages[0].extract_text()
+    assert "typed value" in flat.pages[1].extract_text()
 
 
 def test_a_value_changed_through_the_api_is_what_gets_flattened():
@@ -1007,7 +1007,7 @@ def test_a_value_changed_through_the_api_is_what_gets_flattened():
         document.form["name"].value = "changed here"
 
     flat = _flattened(_form_with_producer_appearance(), edit)
-    text = flat.pages[0].extract_text()
+    text = flat.pages[1].extract_text()
     assert "changed here" in text
     assert "typed value" not in text
 
@@ -1026,7 +1026,7 @@ def test_public_keep_existing_preserves_producer_appearance_and_fills_missing(
     engine = document._engine_pdf
     original = engine.get_annotations(0)[0]["AP_N"]
     document.form.add_text_field(
-        "missing", document.pages[0], (100, 10, 300, 30), value="new value"
+        "missing", document.pages[1], (100, 10, 300, 30), value="new value"
     )
     missing = field_dictionary(engine, "missing")
     widget = widget_dictionaries(engine, missing)[0]
@@ -1081,4 +1081,4 @@ def test_a_kid_widget_keeps_its_appearance_too():
     )
     flat = _flattened(data)
     assert _is_red_at_the_widget(flat)
-    assert "typed value" not in flat.pages[0].extract_text()
+    assert "typed value" not in flat.pages[1].extract_text()

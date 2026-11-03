@@ -36,7 +36,7 @@ TRAILER_INFO = re.compile(rb"/Info \d+ 0 R")
 def _converted(level: str, *, piece_info: bool = False, mod_date: str | None = None):
     document = Document()
     document.pages.add()
-    document.pages[0].add_text(
+    document.pages[1].add_text(
         "Heading", 50, 720, tag="H1" if level.endswith("A") else None
     )
     document.info["Title"] = "A Title"
@@ -101,7 +101,7 @@ def test_an_entry_the_view_cannot_see_is_dropped_by_the_conversion():
 
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720)
+    document.pages[1].add_text("Heading", 50, 720)
     engine = document._engine_pdf
     engine._ensure_cos()
     engine._cos_doc.trailer.mapping[PdfName("Info")] = engine._cos_doc.register_object(
@@ -127,7 +127,7 @@ def test_the_validator_sees_an_entry_only_the_cos_graph_holds():
 
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720)
+    document.pages[1].add_text("Heading", 50, 720)
     document.convert_to_pdfa("PDF/A-4")
 
     engine = document._engine_pdf
@@ -165,7 +165,7 @@ def test_the_validator_rejects_an_info_dictionary_on_part_four():
     # The other half: a part-4 file that carries /Info used to pass.
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720)
+    document.pages[1].add_text("Heading", 50, 720)
     document.convert_to_pdfa("PDF/A-4")
     document.info["Title"] = "Put back after converting"
 
@@ -187,7 +187,7 @@ def test_the_validator_rejects_more_than_mod_date_with_a_piece_info():
 def test_the_title_rule_still_bites_on_the_earlier_parts():
     document = Document()
     document.pages.add()
-    document.pages[0].add_text("Heading", 50, 720)
+    document.pages[1].add_text("Heading", 50, 720)
     document.convert_to_pdfa("PDF/A-2B")
     document.info.pop("Title", None)
     result = document.validate_pdfa("PDF/A-2B")

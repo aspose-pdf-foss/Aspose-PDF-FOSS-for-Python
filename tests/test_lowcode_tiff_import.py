@@ -68,8 +68,8 @@ def test_imports_all_frames_with_their_dimensions_and_colors(pillow, compression
             PageSize(6, 4),
             PageSize(3, 5),
         ]
-        assert document.pages[0].render().get_pixel(1, 1) == (255, 0, 0)
-        assert document.pages[1].render().get_pixel(1, 1) == (100, 100, 100)
+        assert document.pages[1].render().get_pixel(1, 1) == (255, 0, 0)
+        assert document.pages[2].render().get_pixel(1, 1) == (100, 100, 100)
 
 
 def test_single_document_false_emits_one_pdf_per_frame_in_source_order(pillow):
@@ -85,7 +85,7 @@ def test_single_document_false_emits_one_pdf_per_frame_in_source_order(pillow):
     for result in results:
         with Document(io.BytesIO(result.to_array())) as document:
             assert document.page_count == 1
-            colors.append(document.pages[0].render().get_pixel(1, 1))
+            colors.append(document.pages[1].render().get_pixel(1, 1))
     assert colors == [(0, 0, 255), (255, 0, 0), (100, 100, 100), (255, 255, 255)]
 
 
@@ -103,12 +103,12 @@ def test_mixed_inputs_are_combined_in_source_and_frame_order(pillow):
     results = ImagesToPdf().process(options)
     with Document(io.BytesIO(results[0].to_array())) as document:
         assert document.page_count == 4
-        assert [document.pages[i].render().get_pixel(1, 1) for i in range(3)] == [
+        assert [document.pages[(i) + 1].render().get_pixel(1, 1) for i in range(3)] == [
             (0, 0, 0),
             (255, 0, 0),
             (100, 100, 100),
         ]
-        assert document.pages[3].render().get_pixel(1, 1)[2] >= 250
+        assert document.pages[4].render().get_pixel(1, 1)[2] >= 250
 
 
 def test_tiff_file_and_stream_sources_and_pdf_file_output(pillow, tmp_path):
@@ -144,15 +144,15 @@ def test_dpi_applies_to_every_frame_and_overrides_tiff_metadata(pillow):
     for dpi in (72, 300):
         results = _convert(data, dpi=dpi)
         with Document(io.BytesIO(results[0].to_array())) as document:
-            assert document.pages[0].size.width == pytest.approx(6 * 72 / dpi)
-            assert document.pages[1].size.height == pytest.approx(5 * 72 / dpi)
+            assert document.pages[1].size.width == pytest.approx(6 * 72 / dpi)
+            assert document.pages[2].size.height == pytest.approx(5 * 72 / dpi)
 
 
 def test_fixed_page_size_and_margin_fit_each_frame(pillow):
     data = _tiff(pillow, [("RGB", (400, 200), (255, 0, 0))])
     results = _convert(data, page_size=(100, 100), margin=10)
     with Document(io.BytesIO(results[0].to_array())) as document:
-        page = document.pages[0]
+        page = document.pages[1]
         assert page.size == PageSize(100, 100)
         absorber = ImagePlacementAbsorber()
         absorber.visit(page)
@@ -177,7 +177,7 @@ def test_bilevel_scan_preserves_black_and_white(pillow, compression):
         frame.close()
     results = _convert(stream.getvalue())
     with Document(io.BytesIO(results[0].to_array())) as document:
-        raster = document.pages[0].render()
+        raster = document.pages[1].render()
         assert raster.get_pixel(1, 1) == (0, 0, 0)
         assert raster.get_pixel(2, 2) == (255, 255, 255)
 
@@ -192,7 +192,7 @@ def test_palette_tiff_expands_colors_losslessly(pillow):
         frame.close()
     results = _convert(stream.getvalue())
     with Document(io.BytesIO(results[0].to_array())) as document:
-        assert document.pages[0].render().get_pixel(1, 1) == (20, 40, 60)
+        assert document.pages[1].render().get_pixel(1, 1) == (20, 40, 60)
 
 
 @pytest.mark.parametrize("orientation", [3, 6, 8])
@@ -207,8 +207,8 @@ def test_tiff_orientation_is_applied_once(pillow, orientation):
     results = _convert(stream.getvalue())
     with Document(io.BytesIO(results[0].to_array())) as document:
         expected_size = (4, 2) if orientation == 3 else (2, 4)
-        assert document.pages[0].size == PageSize(*expected_size)
-        raster = document.pages[0].render()
+        assert document.pages[1].size == PageSize(*expected_size)
+        raster = document.pages[1].render()
         expected_red = {3: (3, 1), 6: (1, 0), 8: (0, 3)}[orientation]
         assert raster.get_pixel(*expected_red) == (255, 0, 0)
 
@@ -244,8 +244,8 @@ def test_big_endian_tiff_is_recognized(pillow):
     data += struct.pack(">I", 0) + bytes([50] * 4)
     results = _convert(data)
     with Document(io.BytesIO(results[0].to_array())) as document:
-        assert document.pages[0].size == PageSize(2, 2)
-        assert document.pages[0].render().get_pixel(1, 1) == (50, 50, 50)
+        assert document.pages[1].size == PageSize(2, 2)
+        assert document.pages[1].render().get_pixel(1, 1) == (50, 50, 50)
 
 
 @pytest.mark.parametrize("mode", ["CMYK", "I;16", "F"])
@@ -315,17 +315,17 @@ def test_transparent_tiff_matches_png_and_survives_pdf_round_trips(
     png = _reference_png(pillow, data)
     with Document(result[0].to_array()) as actual:
         with Document(_convert(png)[0].to_array()) as reference:
-            assert actual.pages[0].size == PageSize(4, 2)
+            assert actual.pages[1].size == PageSize(4, 2)
             for background in ((255, 255, 255), (0, 255, 0)):
-                expected = reference.pages[0].render(background=background, antialias=False)
-                assert actual.pages[0].render(
+                expected = reference.pages[1].render(background=background, antialias=False)
+                assert actual.pages[1].render(
                     background=background, antialias=False,
                 ).pixels == expected.pixels
             output = tmp_path / "transparent.pdf"
             actual.save(output)
             for value in (output, output.read_bytes()):
                 with Document(value) as reopened:
-                    assert reopened.pages[0].render(
+                    assert reopened.pages[1].render(
                         background=(0, 255, 0), antialias=False,
                     ).pixels == expected.pixels
     assert source.read_bytes() == data
@@ -337,10 +337,10 @@ def test_alpha_tiff_orientation_preserves_colors_and_transparency(pillow, mode, 
     data = _alpha_tiff(pillow, mode, orientation=orientation)
     with Document(_convert(data)[0].to_array()) as actual:
         with Document(_convert(_reference_png(pillow, data))[0].to_array()) as reference:
-            assert actual.pages[0].size == reference.pages[0].size
-            assert actual.pages[0].render(
+            assert actual.pages[1].size == reference.pages[1].size
+            assert actual.pages[1].render(
                 background=(0, 255, 0), antialias=False,
-            ).pixels == reference.pages[0].render(
+            ).pixels == reference.pages[1].render(
                 background=(0, 255, 0), antialias=False,
             ).pixels
 
@@ -351,9 +351,9 @@ def test_associated_rgba_alpha_is_not_applied_twice(pillow):
         assert image.tag_v2[338] == (1,)
     with Document(_convert(data)[0].to_array()) as actual:
         with Document(_convert(_reference_png(pillow, data))[0].to_array()) as reference:
-            assert actual.pages[0].render(
+            assert actual.pages[1].render(
                 background=(0, 255, 0), antialias=False,
-            ).pixels == reference.pages[0].render(
+            ).pixels == reference.pages[1].render(
                 background=(0, 255, 0), antialias=False,
             ).pixels
 
@@ -372,9 +372,9 @@ def test_mixed_opaque_and_alpha_frames_keep_their_order_and_dimensions(pillow, s
             for page in document.pages:
                 png = _reference_png(pillow, data, index)
                 with Document(_convert(png)[0].to_array()) as reference:
-                    assert page.size == reference.pages[0].size
+                    assert page.size == reference.pages[1].size
                     assert page.render(background=(0, 255, 0), antialias=False).pixels == (
-                        reference.pages[0].render(background=(0, 255, 0), antialias=False).pixels
+                        reference.pages[1].render(background=(0, 255, 0), antialias=False).pixels
                     )
                 index += 1
     assert index == 4
@@ -387,7 +387,7 @@ def test_fully_opaque_alpha_frames_do_not_create_soft_masks(pillow, mode, color)
     assert b"/SMask" not in result
     with Document(result) as document:
         expected = color[:3] if mode == "RGBA" else (100, 100, 100)
-        assert document.pages[0].render(antialias=False).get_pixel(1, 1) == expected
+        assert document.pages[1].render(antialias=False).get_pixel(1, 1) == expected
 
 
 @pytest.mark.parametrize("mode", ["RGBA", "LA"])
@@ -480,7 +480,7 @@ def test_png_import_still_works_without_pillow(monkeypatch):
     monkeypatch.setitem(sys.modules, "PIL", None)
     results = _convert(write_png(2, 2, "L", bytes([100] * 4)))
     with Document(io.BytesIO(results[0].to_array())) as document:
-        assert document.pages[0].render().get_pixel(1, 1) == (100, 100, 100)
+        assert document.pages[1].render().get_pixel(1, 1) == (100, 100, 100)
 
 
 @pytest.mark.parametrize("magic", [b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"])

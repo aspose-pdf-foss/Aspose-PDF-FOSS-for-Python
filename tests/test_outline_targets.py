@@ -129,10 +129,10 @@ def _hand_built(*targets: tuple[str, str, object], pages: int = 3) -> bytes:
 @pytest.mark.parametrize(
     "target",
     [
-        XYZDestination(2, 0.0, 700.0, 2.0),
-        FitDestination(2),
+        XYZDestination(3, 0.0, 700.0, 2.0),
+        FitDestination(3),
         URIAction("https://example.com"),
-        GoToRAction("other.pdf", FitDestination(1)),
+        GoToRAction("other.pdf", FitDestination(2)),
         NamedAction("NextPage"),
         JavaScriptAction("app.alert(1)"),
         LaunchAction("notes.txt"),
@@ -147,13 +147,13 @@ def test_a_bookmark_target_reads_back_as_itself(target):
 
 def test_a_zoom_is_not_flattened_to_fit_by_saving():
     document = _bookmarked(
-        OutlineItem("zoomed", destination=XYZDestination(2, 0.0, 700.0, 2.0))
+        OutlineItem("zoomed", destination=XYZDestination(3, 0.0, 700.0, 2.0))
     )
 
     again = _reloaded(document)
 
     assert _titles(again)["zoomed"].destination == XYZDestination(
-        page=2, left=0.0, top=700.0, zoom=2.0
+        page=3, left=0.0, top=700.0, zoom=2.0
     )
 
 
@@ -167,15 +167,15 @@ def test_an_action_is_not_replaced_by_a_jump_to_page_one():
 
 
 def test_children_keep_their_targets_too():
-    parent = OutlineItem("Chapter", destination=XYZDestination(1, 0.0, 700.0, 1.0))
-    parent.add(OutlineItem("Section", 2))
+    parent = OutlineItem("Chapter", destination=XYZDestination(2, 0.0, 700.0, 1.0))
+    parent.add(OutlineItem("Section", 3))
     parent.add(OutlineItem("Web", destination=URIAction("https://ex.com")))
 
     chapter = _titles(_reloaded(_bookmarked(parent)))["Chapter"]
 
-    assert chapter.destination == XYZDestination(1, 0.0, 700.0, 1.0)
+    assert chapter.destination == XYZDestination(2, 0.0, 700.0, 1.0)
     assert [child.destination for child in chapter.children] == [
-        FitDestination(page=2),
+        FitDestination(page=3),
         URIAction("https://ex.com"),
     ]
 
@@ -203,14 +203,14 @@ def test_an_action_this_api_does_not_model_is_kept():
 def test_a_goto_action_bookmark_follows_its_page_too():
     """Its page reference sits one level down, inside the action's ``/D``."""
     document = _bookmarked(
-        OutlineItem("go", destination=GoToAction(XYZDestination(3, 0.0, 700.0, 1.0)))
+        OutlineItem("go", destination=GoToAction(XYZDestination(4, 0.0, 700.0, 1.0)))
     )
-    document.pages.delete(0)
+    document.pages.delete(1)
 
     again = _reloaded(document)
     go = _titles(again)["go"]
 
-    assert go.destination == GoToAction(XYZDestination(2, 0.0, 700.0, 1.0))
+    assert go.destination == GoToAction(XYZDestination(3, 0.0, 700.0, 1.0))
     assert (
         again.pages[go.destination.destination.page].to_markdown().strip() == "PAGE 3"
     )
@@ -218,13 +218,13 @@ def test_a_goto_action_bookmark_follows_its_page_too():
 
 def test_a_goto_action_bookmark_to_a_deleted_page_keeps_being_an_action():
     """The fallback is the typed view, so only the page it names is given up."""
-    document = _bookmarked(OutlineItem("go", destination=GoToAction(FitDestination(3))))
-    document.pages.delete(3)
+    document = _bookmarked(OutlineItem("go", destination=GoToAction(FitDestination(4))))
+    document.pages.delete(4)
 
     again = _reloaded(document)
 
     assert _titles(again)["go"].destination == GoToAction(
-        FitDestination(page=len(again.pages) - 1)
+        FitDestination(page=(len(again.pages) - 1) + 1)
     )
 
 
@@ -313,17 +313,17 @@ def test_invalid_remote_page_numbers_stay_untyped(page):
 @pytest.mark.parametrize(
     ("edit", "label"),
     [
-        (lambda d: d.pages.delete(0), "delete before"),
-        (lambda d: d.pages.delete(1), "delete between"),
-        (lambda d: d.pages.insert(0), "insert before"),
-        (lambda d: d.pages.insert(2), "insert between"),
+        (lambda d: d.pages.delete(1), "delete before"),
+        (lambda d: d.pages.delete(2), "delete between"),
+        (lambda d: d.pages.insert(1), "insert before"),
+        (lambda d: d.pages.insert(3), "insert between"),
     ],
     ids=["delete-before", "delete-between", "insert-before", "insert-between"],
 )
 def test_a_bookmark_follows_its_page_through_an_edit(edit, label):
     document = _bookmarked(
-        OutlineItem("plain", 3),
-        OutlineItem("zoomed", destination=XYZDestination(3, 0.0, 700.0, 1.0)),
+        OutlineItem("plain", 4),
+        OutlineItem("zoomed", destination=XYZDestination(4, 0.0, 700.0, 1.0)),
     )
     edit(document)
 
@@ -336,22 +336,22 @@ def test_a_bookmark_follows_its_page_through_an_edit(edit, label):
 
 def test_the_page_index_reads_true_after_an_edit():
     """The index is a view of the reference, not a second source of truth."""
-    document = _bookmarked(OutlineItem("plain", 3))
-    document.pages.delete(0)
+    document = _bookmarked(OutlineItem("plain", 4))
+    document.pages.delete(1)
 
-    assert _titles(document)["plain"].page_index == 2
+    assert _titles(document)["plain"].page_index == 3
 
 
 def test_a_bookmark_to_a_deleted_page_falls_back_to_its_index():
     """Its page object survives deletion, so writing the reference back would
     keep the bookmark by making it dead."""
-    document = _bookmarked(OutlineItem("plain", 3), OutlineItem("early", 1))
-    document.pages.delete(3)
+    document = _bookmarked(OutlineItem("plain", 4), OutlineItem("early", 2))
+    document.pages.delete(4)
 
     again = _reloaded(document)
 
     assert _lands_on(again, _titles(again)["early"]) == "PAGE 1"
-    assert _titles(again)["plain"].page_index == len(again.pages) - 1
+    assert _titles(again)["plain"].page_index == (len(again.pages) - 1) + 1
 
 
 # ---------------------------------------------------------------------------
@@ -361,17 +361,17 @@ def test_a_bookmark_to_a_deleted_page_falls_back_to_its_index():
 
 def test_setting_the_page_index_replaces_the_loaded_target():
     document = _bookmarked(
-        OutlineItem("zoomed", destination=XYZDestination(3, 0.0, 700.0, 2.0))
+        OutlineItem("zoomed", destination=XYZDestination(4, 0.0, 700.0, 2.0))
     )
-    _titles(document)["zoomed"].page_index = 1
+    _titles(document)["zoomed"].page_index = 2
 
     zoomed = _titles(_reloaded(document))["zoomed"]
 
-    assert zoomed.destination == FitDestination(page=1)
+    assert zoomed.destination == FitDestination(page=2)
 
 
 def test_setting_the_destination_replaces_the_loaded_target():
-    document = _bookmarked(OutlineItem("plain", 3))
+    document = _bookmarked(OutlineItem("plain", 4))
     _titles(document)["plain"].destination = URIAction("https://example.com")
 
     plain = _titles(_reloaded(document))["plain"]
@@ -381,9 +381,9 @@ def test_setting_the_destination_replaces_the_loaded_target():
 
 def test_a_replaced_target_no_longer_follows_the_old_page():
     """Naming an index means an index, and the identity is given up with it."""
-    document = _bookmarked(OutlineItem("plain", 3))
-    _titles(document)["plain"].page_index = 3
-    document.pages.insert(0)
+    document = _bookmarked(OutlineItem("plain", 4))
+    _titles(document)["plain"].page_index = 4
+    document.pages.insert(1)
 
     again = _reloaded(document)
 
@@ -391,7 +391,7 @@ def test_a_replaced_target_no_longer_follows_the_old_page():
 
 
 def test_a_freshly_authored_bookmark_has_no_loaded_target():
-    item = OutlineItem("new", 2)
+    item = OutlineItem("new", 3)
 
     assert item._loaded_target is None
     assert item.destination is None
@@ -403,7 +403,7 @@ def test_a_freshly_authored_bookmark_has_no_loaded_target():
 
 
 def test_an_unchanged_document_with_typed_targets_saves_byte_for_byte():
-    parent = OutlineItem("Chapter", destination=XYZDestination(1, 0.0, 700.0, 1.0))
+    parent = OutlineItem("Chapter", destination=XYZDestination(2, 0.0, 700.0, 1.0))
     parent.add(OutlineItem("Web", destination=URIAction("https://ex.com")))
     base = _saved(_bookmarked(parent))
 
@@ -422,12 +422,12 @@ def test_a_remote_bookmark_keeps_its_remote_page_number():
     """`GoToR` counts pages in the other file; resolving it here would be
     a jump into this document instead."""
     document = _bookmarked(
-        OutlineItem("remote", destination=GoToRAction("other.pdf", FitDestination(2)))
+        OutlineItem("remote", destination=GoToRAction("other.pdf", FitDestination(3)))
     )
 
     remote = _titles(_reloaded(document))["remote"]
 
-    assert remote.destination == GoToRAction("other.pdf", FitDestination(page=2))
+    assert remote.destination == GoToRAction("other.pdf", FitDestination(page=3))
 
 
 def test_a_bookmark_whose_dest_array_is_malformed_is_kept_as_it_is():

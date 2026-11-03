@@ -114,7 +114,7 @@ def test_after_the_save_the_document_is_the_file_it_wrote(chain):
     _, _, leaf, key = chain
     document = _with_field()
     outlines = document.outlines
-    outlines.add(OutlineItem("Start", page_index=0))
+    outlines.add(OutlineItem("Start", page_index=1))
     assert [field.name for field in document.form.fields] == ["Approval"]
     document.sign(certificate=leaf, private_key=key)
     signed = _saved(document)
@@ -126,7 +126,7 @@ def test_after_the_save_the_document_is_the_file_it_wrote(chain):
     assert _saved(document) == signed
     # Edited -- through the bookmarks read before the save, too -- and saved:
     # a revision appended to the signed file, the signature intact.
-    outlines.add(OutlineItem("Later", page_index=0))
+    outlines.add(OutlineItem("Later", page_index=1))
     document.info["Title"] = "Edited after signing"
     edited = _saved(document)
     assert edited.startswith(signed)
@@ -139,7 +139,7 @@ def test_sign_without_a_field_adds_an_invisible_one(chain):
     _, _, leaf, key = chain
     document = Document()
     document.pages.add()
-    document.form.add_signature_field("Signature1", document.pages[0], (10, 10, 100, 50))
+    document.form.add_signature_field("Signature1", document.pages[1], (10, 10, 100, 50))
     document.sign(certificate=leaf, private_key=key)
     document.sign(certificate=leaf, private_key=key)
     reopened = Document(io.BytesIO(_saved(document)))
@@ -150,7 +150,7 @@ def test_sign_without_a_field_adds_an_invisible_one(chain):
 def test_a_signed_document_is_signed_again_without_breaking_the_first(chain):
     _, _, leaf, key = chain
     document = _with_field()
-    document.form.add_signature_field("Second", document.pages[0], (300, 500, 500, 580))
+    document.form.add_signature_field("Second", document.pages[1], (300, 500, 500, 580))
     once = sign_field(_saved(document), "Approval", leaf, key)
 
     loaded = Document(io.BytesIO(once))
@@ -235,7 +235,7 @@ def test_certify_makes_a_docmdp_signature(chain, level):
 def test_certification_has_to_be_the_first_signature(chain):
     _, _, leaf, key = chain
     document = _with_field()
-    document.form.add_signature_field("Second", document.pages[0], (300, 500, 500, 580))
+    document.form.add_signature_field("Second", document.pages[1], (300, 500, 500, 580))
     unsigned = _saved(document)
     signed = sign_field(unsigned, "Approval", leaf, key)
 
@@ -266,7 +266,7 @@ def test_a_signature_deep_in_the_field_tree_counts_as_signed(chain):
 def test_sign_rejects_a_field_it_cannot_fill(chain):
     _, _, leaf, key = chain
     document = _with_field()
-    document.form.add_text_field("Name", document.pages[0], (72, 600, 272, 624))
+    document.form.add_text_field("Name", document.pages[1], (72, 600, 272, 624))
     with pytest.raises(PdfValidationException, match="not found"):
         document.sign("Missing", certificate=leaf, private_key=key)
     with pytest.raises(PdfValidationException, match="not a signature field"):
@@ -384,7 +384,7 @@ def test_an_encrypted_document_is_signed_and_reopened(chain):
 
     # Opened with its password, signed again, and still protected.
     loaded = Document(io.BytesIO(data), password="owner")
-    loaded.form.add_signature_field("Second", loaded.pages[0], (300, 500, 500, 580))
+    loaded.form.add_signature_field("Second", loaded.pages[1], (300, 500, 500, 580))
     loaded.save(io.BytesIO(), incremental=True)  # an appendable, encrypted document
     loaded.sign("Second", certificate=leaf, private_key=key)
     resigned = _saved(loaded)

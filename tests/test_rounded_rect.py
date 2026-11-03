@@ -46,13 +46,13 @@ def test_saved_shape_has_four_curved_corners_and_exact_outer_bounds(tmp_path):
             with Document(source) as reopened:
                 assert reopened.validate()
                 absorber = GraphicsAbsorber()
-                absorber.visit(reopened.pages[0])
+                absorber.visit(reopened.pages[1])
                 assert len(absorber.elements) == 1
                 element = absorber.elements[0]
                 assert element.kind == "path" and element.operation == "fill"
                 box = element.rectangle
                 assert (box.x, box.y, box.width, box.height) == (10, 20, 80, 40)
-                raster = reopened.pages[0].render(antialias=False)
+                raster = reopened.pages[1].render(antialias=False)
                 for point in ((10, 20), (89, 20), (10, 59), (89, 59), (11, 21)):
                     assert raster.get_pixel(*point) == (255, 255, 255)
                 for point in ((50, 40), (50, 20), (10, 40), (50, 59), (13, 23)):
@@ -107,7 +107,7 @@ def test_rounding_can_be_used_as_a_clip_without_painting_the_clip():
         assert shape.current_point == (20, 20)
         reference = page.render(antialias=False)
         with Document(_bytes(clipped)) as reopened:
-            raster = reopened.pages[0].render(antialias=False)
+            raster = reopened.pages[1].render(antialias=False)
             assert raster.pixels == reference.pixels
             for point in ((10, 20), (89, 20), (10, 59), (89, 59), (11, 21)):
                 assert raster.get_pixel(*point) == (255, 255, 255)
@@ -142,7 +142,7 @@ def test_existing_stroke_transparency_and_transform_options_apply_after_round_tr
         )
         before = page.render(antialias=False)
         with Document(_bytes(document)) as reopened:
-            raster = reopened.pages[0].render(antialias=False)
+            raster = reopened.pages[1].render(antialias=False)
             assert raster.pixels == before.pixels
             center = raster.get_pixel(55, 45)
             border = raster.get_pixel(55, 25)

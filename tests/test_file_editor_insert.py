@@ -28,9 +28,9 @@ def _rich(path: Path, label: str) -> None:
     """A one-page document that draws with a font and carries interaction."""
     document = Document()
     document.pages.add()
-    document.pages[0].add_text(f"{label} text", x=40, y=700, font_size=18)
-    document.form.add_text_field(f"{label}_field", 0, (40, 500, 300, 530), value=label)
-    document.pages[0].add_link((40, 400, 200, 430), FitDestination(page=0))
+    document.pages[1].add_text(f"{label} text", x=40, y=700, font_size=18)
+    document.form.add_text_field(f"{label}_field", 1, (40, 500, 300, 530), value=label)
+    document.pages[1].add_link((40, 400, 200, 430), FitDestination(page=1))
     document.save(str(path))
 
 
@@ -45,7 +45,7 @@ def _facts(path: Path) -> dict:
         annots = engine._resolve(page.mapping.get(PdfName("Annots")))
         pages.append(
             {
-                "text": " ".join(document.pages[index].extract_text().split()),
+                "text": " ".join(document.pages[(index) + 1].extract_text().split()),
                 "resources": sorted(name.name for name in resources.mapping)
                 if isinstance(resources, PdfDictionary)
                 else [],
@@ -128,7 +128,7 @@ def test_several_pages_keep_their_order(tmp_path):
     document = Document()
     for index, label in enumerate(("one", "two", "three")):
         document.pages.add()
-        document.pages[index].add_text(f"{label} text", x=40, y=700)
+        document.pages[(index) + 1].add_text(f"{label} text", x=40, y=700)
     document.save(str(other))
 
     output = tmp_path / "out.pdf"
@@ -149,8 +149,8 @@ def test_a_bookmark_follows_its_page_to_where_it_landed(tmp_path):
     document = Document()
     for index, label in enumerate(("one", "two")):
         document.pages.add()
-        document.pages[index].add_text(f"{label} text", x=40, y=700)
-    document.outlines.add(OutlineItem("second", page_index=1))
+        document.pages[(index) + 1].add_text(f"{label} text", x=40, y=700)
+    document.outlines.add(OutlineItem("second", page_index=2))
     document.save(str(other))
 
     output = tmp_path / "out.pdf"
@@ -164,7 +164,7 @@ def test_a_bookmark_follows_its_page_to_where_it_landed(tmp_path):
         "base",
     ]
     (bookmark,) = [item for item in result.outlines if item.title == "second"]
-    assert bookmark.page_index == 1
+    assert bookmark.page_index == 2
 
 
 # --- the engine's own entry point -------------------------------------------

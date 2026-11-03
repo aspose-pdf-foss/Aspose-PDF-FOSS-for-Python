@@ -75,7 +75,7 @@ def _ink_columns(data: bytes, row: int) -> list[int]:
     document = Document()
     document.load_from(io.BytesIO(data))
     try:
-        raster = document.pages[0].render(dpi=72, antialias=False)
+        raster = document.pages[1].render(dpi=72, antialias=False)
         return [x for x in range(SIDE) if raster.get_pixel(x, row) != _WHITE]
     finally:
         document.dispose()
@@ -184,7 +184,7 @@ def test_a_shading_pattern_in_a_form_moves_with_it():
         document = Document()
         document.load_from(io.BytesIO(data))
         try:
-            raster = document.pages[0].render(dpi=72, antialias=False)
+            raster = document.pages[1].render(dpi=72, antialias=False)
             return raster.get_pixel(x, 60)[0]
         finally:
             document.dispose()

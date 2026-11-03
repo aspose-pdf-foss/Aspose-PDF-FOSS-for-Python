@@ -206,7 +206,7 @@ def test_outlines_is_outline_collection():
 
 def test_outlines_add_item():
     doc = Document()
-    item = OutlineItem("Chapter 1", page_index=0)
+    item = OutlineItem("Chapter 1", page_index=1)
     doc.outlines.add(item)
     assert len(doc.outlines) == 1
     assert doc.outlines[0].title == "Chapter 1"
@@ -214,8 +214,8 @@ def test_outlines_add_item():
 
 def test_outlines_remove_item():
     doc = Document()
-    item1 = OutlineItem("A", page_index=0)
-    item2 = OutlineItem("B", page_index=1)
+    item1 = OutlineItem("A", page_index=1)
+    item2 = OutlineItem("B", page_index=2)
     doc.outlines.add(item1)
     doc.outlines.add(item2)
     doc.outlines.remove(item1)
@@ -235,8 +235,8 @@ def test_outlines_add_and_save_reload(tmp_path):
     """Outlines survive a save/reload roundtrip."""
     doc = Document()
     doc.load_from(_minimal_pdf())
-    doc.outlines.add(OutlineItem("Introduction", page_index=0))
-    doc.outlines.add(OutlineItem("Conclusion", page_index=0))
+    doc.outlines.add(OutlineItem("Introduction", page_index=1))
+    doc.outlines.add(OutlineItem("Conclusion", page_index=1))
 
     reloaded = _save_and_reload(doc, tmp_path)
     assert len(reloaded.outlines) == 2
@@ -249,8 +249,8 @@ def test_outlines_nested_save_reload(tmp_path):
     """Nested (child) outlines survive a save/reload roundtrip."""
     doc = Document()
     doc.load_from(_minimal_pdf())
-    parent = OutlineItem("Part I", page_index=0)
-    child = OutlineItem("Section 1.1", page_index=0)
+    parent = OutlineItem("Part I", page_index=1)
+    child = OutlineItem("Section 1.1", page_index=1)
     parent.add(child)
     doc.outlines.add(parent)
 
@@ -265,7 +265,7 @@ def test_outlines_nested_save_reload(tmp_path):
 def test_outlines_bold_italic_preserved(tmp_path):
     doc = Document()
     doc.load_from(_minimal_pdf())
-    item = OutlineItem("Bold", page_index=0, is_bold=True, is_italic=True)
+    item = OutlineItem("Bold", page_index=1, is_bold=True, is_italic=True)
     doc.outlines.add(item)
 
     reloaded = _save_and_reload(doc, tmp_path)
@@ -288,8 +288,8 @@ def test_outlines_type_error_on_bad_item():
 
 
 def test_outline_item_add_child():
-    parent = OutlineItem("Parent", page_index=0)
-    child = OutlineItem("Child", page_index=1)
+    parent = OutlineItem("Parent", page_index=1)
+    child = OutlineItem("Child", page_index=2)
     returned = parent.add(child)
     assert returned is child
     assert len(parent.children) == 1

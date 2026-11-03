@@ -100,7 +100,7 @@ class DocumentFont:
         Whether the font carries a ``/ToUnicode`` map, which is what lets its
         text be extracted, searched and copied as characters rather than codes.
     page_indexes : tuple of int
-        The **zero-based** pages the font is used on, in order, matching
+        The **one-based** pages the font is used on, in order, matching
         ``document.pages[i]``. Empty for a font reached from nowhere on a page
         -- see *locations*.
     locations : tuple of str
@@ -136,7 +136,7 @@ class DocumentFont:
     @property
     def pages(self) -> tuple[int, ...]:
         """The **one-based** page numbers, for showing a person."""
-        return tuple(index + 1 for index in self.page_indexes)
+        return self.page_indexes
 
     def __str__(self) -> str:
         state = "embedded" if self.embedded else "not embedded"

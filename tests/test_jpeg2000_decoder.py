@@ -577,7 +577,7 @@ def _page_with_jpx(data: bytes, width: int, height: int) -> SimplePdf:
 def _render(pdf: SimplePdf):
     document = Document()
     document._engine_pdf = pdf
-    return document.pages[0].render(antialias=False)
+    return document.pages[1].render(antialias=False)
 
 
 def test_a_jpx_image_is_painted_on_the_page(monkeypatch):

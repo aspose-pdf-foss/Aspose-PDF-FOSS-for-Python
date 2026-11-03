@@ -55,7 +55,7 @@ def _stream(data: bytes, length: bytes) -> bytes:
 
 
 def _text(data: bytes) -> str:
-    return Document(io.BytesIO(data)).pages[0].extract_text().strip()
+    return Document(io.BytesIO(data)).pages[1].extract_text().strip()
 
 
 def test_a_content_stream_that_says_endobj_opens():

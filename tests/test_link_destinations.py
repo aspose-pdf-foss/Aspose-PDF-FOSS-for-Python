@@ -69,12 +69,12 @@ def _paged(count: int = 4) -> Document:
 
 def _linked(target, *, pages: int = 4) -> Document:
     document = _paged(pages)
-    document.pages[0].add_link((72, 600, 200, 620), target)
+    document.pages[1].add_link((72, 600, 200, 620), target)
     return _reloaded(document)
 
 
 def _properties(document: Document, page_index: int = 0, annot: int = 0) -> dict:
-    return document.pages[page_index].annotations[annot].properties
+    return document.pages[(page_index) + 1].annotations[annot].properties
 
 
 def _page_dict(document: Document, index: int) -> PdfDictionary:
@@ -109,25 +109,25 @@ def _dest_targets(data: bytes) -> list[int]:
 
 
 def test_a_link_into_this_document_can_be_read_at_all():
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
 
-    assert _properties(document)["Dest"] == FitDestination(page=2)
+    assert _properties(document)["Dest"] == FitDestination(page=3)
 
 
 def test_a_link_to_its_own_page_can_be_read():
     """The shortest cycle there is: the page lists the link that names it."""
     document = _paged(1)
-    document.pages[0].add_link((72, 600, 200, 620), FitDestination(0))
+    document.pages[1].add_link((72, 600, 200, 620), FitDestination(1))
 
-    assert _properties(_reloaded(document))["Dest"] == FitDestination(page=0)
+    assert _properties(_reloaded(document))["Dest"] == FitDestination(page=1)
 
 
 def test_one_unreadable_link_does_not_hide_the_other_annotations():
     document = _paged(2)
-    document.pages[0].add_link((72, 600, 200, 620), FitDestination(1))
-    document.pages[0].annotations.add("Text", (10, 10, 40, 40), "a note")
+    document.pages[1].add_link((72, 600, 200, 620), FitDestination(2))
+    document.pages[1].annotations.add("Text", (10, 10, 40, 40), "a note")
 
-    subtypes = [a.subtype for a in _reloaded(document).pages[0].annotations]
+    subtypes = [a.subtype for a in _reloaded(document).pages[1].annotations]
 
     assert subtypes == ["Link", "Text"]
 
@@ -135,14 +135,14 @@ def test_one_unreadable_link_does_not_hide_the_other_annotations():
 @pytest.mark.parametrize(
     "target",
     [
-        FitDestination(2),
-        FitBDestination(2),
-        XYZDestination(1, 10.0, 20.0, 1.5),
-        FitHDestination(3, 700.0),
-        FitBHDestination(3, 700.0),
-        FitVDestination(1, 40.0),
-        FitBVDestination(1, 40.0),
-        FitRDestination(2, 1.0, 2.0, 3.0, 4.0),
+        FitDestination(3),
+        FitBDestination(3),
+        XYZDestination(2, 10.0, 20.0, 1.5),
+        FitHDestination(4, 700.0),
+        FitBHDestination(4, 700.0),
+        FitVDestination(2, 40.0),
+        FitBVDestination(2, 40.0),
+        FitRDestination(3, 1.0, 2.0, 3.0, 4.0),
     ],
     ids=lambda t: type(t).__name__ + str(t.page),
 )
@@ -152,10 +152,10 @@ def test_every_destination_kind_reads_back_as_itself(target):
 
 def test_a_goto_action_carries_a_typed_destination():
     """A destination nests, as the ``/D`` of an action."""
-    action = _properties(_linked(GoToAction(FitDestination(2))))["A"]
+    action = _properties(_linked(GoToAction(FitDestination(3))))["A"]
 
     assert action["S"] == "GoTo"
-    assert action["D"] == FitDestination(page=2)
+    assert action["D"] == FitDestination(page=3)
 
 
 def test_a_remote_destination_stays_a_plain_page_number():
@@ -165,7 +165,7 @@ def test_a_remote_destination_stays_a_plain_page_number():
     index into this document and write back as a reference into this document,
     silently repointing the link at a local page.
     """
-    action = _properties(_linked(GoToRAction("other.pdf", FitDestination(2))))["A"]
+    action = _properties(_linked(GoToRAction("other.pdf", FitDestination(3))))["A"]
 
     assert action["F"] == "other.pdf"
     assert action["D"] == [2, "Fit"]
@@ -179,14 +179,14 @@ def test_a_uri_action_is_untouched():
 
 def test_a_destination_read_back_writes_the_same_page():
     """The property channel is also how a property is set."""
-    document = _linked(XYZDestination(2, 10.0, 20.0, 1.5))
-    document.pages[1].annotations.add(
+    document = _linked(XYZDestination(3, 10.0, 20.0, 1.5))
+    document.pages[2].annotations.add(
         "Link", (10, 10, 90, 30), "", properties=_properties(document)
     )
 
     copied = _properties(_reloaded(document), page_index=1)
 
-    assert copied["Dest"] == XYZDestination(page=2, left=10.0, top=20.0, zoom=1.5)
+    assert copied["Dest"] == XYZDestination(page=3, left=10.0, top=20.0, zoom=1.5)
 
 
 # ---------------------------------------------------------------------------
@@ -195,23 +195,23 @@ def test_a_destination_read_back_writes_the_same_page():
 
 
 def test_deleting_a_page_clears_a_link_destination_to_it():
-    document = _linked(FitDestination(3))
-    document.pages.delete(3)
+    document = _linked(FitDestination(4))
+    document.pages.delete(4)
 
     assert PdfName("Dest") not in _first_annotation(document).mapping
     assert "Dest" not in _properties(_reloaded(document))
 
 
 def test_deleting_a_page_clears_a_local_goto_action_to_it():
-    document = _linked(GoToAction(FitDestination(3)))
-    document.pages.delete(3)
+    document = _linked(GoToAction(FitDestination(4)))
+    document.pages.delete(4)
 
     assert PdfName("A") not in _first_annotation(document).mapping
     assert "A" not in _properties(_reloaded(document))
 
 
 def test_deleting_a_page_clears_a_named_link_destination_to_it():
-    document = _linked(FitDestination(3))
+    document = _linked(FitDestination(4))
     engine = document._engine_pdf
     catalog = engine._resolve(engine._cos_doc.trailer.mapping[PdfName("Root")])
     catalog.mapping[PdfName("Dests")] = PdfDictionary(
@@ -223,14 +223,14 @@ def test_deleting_a_page_clears_a_named_link_destination_to_it():
     )
     _first_annotation(document).mapping[PdfName("Dest")] = PdfName("Chapter")
 
-    document.pages.delete(3)
+    document.pages.delete(4)
 
     assert PdfName("Dest") not in _first_annotation(document).mapping
 
 
 def test_deleting_a_page_keeps_a_remote_goto_action():
-    document = _linked(GoToRAction("other.pdf", FitDestination(3)))
-    document.pages.delete(3)
+    document = _linked(GoToRAction("other.pdf", FitDestination(4)))
+    document.pages.delete(4)
 
     action = _properties(_reloaded(document))["A"]
     assert action["S"] == "GoToR"
@@ -238,7 +238,7 @@ def test_deleting_a_page_keeps_a_remote_goto_action():
 
 
 def test_an_undefined_destination_kind_is_not_surfaced():
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
     _first_annotation(document).mapping[PdfName("Dest")] = PdfArray(
         [_page_ref(document, 2), PdfName("Bogus")]
     )
@@ -247,7 +247,7 @@ def test_an_undefined_destination_kind_is_not_surfaced():
 
 
 def test_too_many_parameters_for_the_kind_is_not_surfaced():
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
     _first_annotation(document).mapping[PdfName("Dest")] = PdfArray(
         [_page_ref(document, 2), PdfName("Fit"), PdfNumber(1), PdfNumber(2)]
     )
@@ -257,7 +257,7 @@ def test_too_many_parameters_for_the_kind_is_not_surfaced():
 
 def test_a_short_rectangle_destination_is_not_surfaced():
     """``FitR`` is all four numbers or none of them."""
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
     _first_annotation(document).mapping[PdfName("Dest")] = PdfArray(
         [_page_ref(document, 2), PdfName("FitR"), PdfNumber(1), PdfNumber(2)]
     )
@@ -267,19 +267,19 @@ def test_a_short_rectangle_destination_is_not_surfaced():
 
 def test_a_short_xyz_destination_keeps_what_it_was_given():
     """Any of XYZ's three may be left out; a missing one means "keep"."""
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
     _first_annotation(document).mapping[PdfName("Dest")] = PdfArray(
         [_page_ref(document, 2), PdfName("XYZ"), PdfNumber(10)]
     )
 
     assert _properties(document)["Dest"] == XYZDestination(
-        page=2, left=10.0, top=None, zoom=None
+        page=3, left=10.0, top=None, zoom=None
     )
 
 
 def test_a_page_named_outside_a_destination_is_not_inlined():
     """A page is never a property *value*, wherever the reference turns up."""
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
     annotation = _first_annotation(document)
     annotation.mapping[PdfName("Zz")] = _page_ref(document, 1)
     annotation.mapping[PdfName("Yy")] = PdfArray([PdfNumber(1), _page_ref(document, 1)])
@@ -298,7 +298,7 @@ def test_a_page_given_directly_rather_than_by_reference_is_not_a_destination():
     comes back as what the reader could make of it -- the page dropped,
     because a page is never a property value.
     """
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
     _first_annotation(document).mapping[PdfName("Dest")] = PdfArray(
         [PdfDictionary({PdfName("Type"): PdfName("Page")}), PdfName("Fit")]
     )
@@ -312,7 +312,7 @@ def test_an_array_naming_something_other_than_a_page_is_left_alone():
     Without that test the reader would be guessing from the shape, and would
     quietly drop any other array that happened to start with a reference.
     """
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
     engine = document._engine_pdf
     other = engine._cos_doc.register_object(
         PdfDictionary({PdfName("Type"): PdfName("Whatever")})
@@ -325,7 +325,7 @@ def test_an_array_naming_something_other_than_a_page_is_left_alone():
 
 
 def test_a_destination_parameter_that_is_not_a_number_is_not_surfaced():
-    document = _linked(FitDestination(2))
+    document = _linked(FitDestination(3))
     _first_annotation(document).mapping[PdfName("Dest")] = PdfArray(
         [_page_ref(document, 2), PdfName("XYZ"), PdfString(b"left"), PdfNumber(20)]
     )
@@ -335,21 +335,21 @@ def test_a_destination_parameter_that_is_not_a_number_is_not_surfaced():
 
 def test_an_action_destination_read_back_writes_the_same_page():
     """The nested case: the destination is the ``/D`` of the action."""
-    document = _linked(GoToAction(XYZDestination(2, 10.0, 20.0, 1.5)))
-    document.pages[1].annotations.add(
+    document = _linked(GoToAction(XYZDestination(3, 10.0, 20.0, 1.5)))
+    document.pages[2].annotations.add(
         "Link", (10, 10, 90, 30), "", properties=_properties(document)
     )
 
     action = _properties(_reloaded(document), page_index=1)["A"]
 
     assert action["S"] == "GoTo"
-    assert action["D"] == XYZDestination(page=2, left=10.0, top=20.0, zoom=1.5)
+    assert action["D"] == XYZDestination(page=3, left=10.0, top=20.0, zoom=1.5)
 
 
 def test_a_bookmark_on_a_document_with_no_pages_is_simply_not_written():
     """There is nowhere for it to point, and nothing to raise about."""
     document = _paged(2)
-    document.outlines.add(OutlineItem("nowhere", 0))
+    document.outlines.add(OutlineItem("nowhere", 1))
     document.pages.clear()
 
     buffer = io.BytesIO()
@@ -361,7 +361,7 @@ def test_a_bookmark_on_a_document_with_no_pages_is_simply_not_written():
 def test_a_genuinely_cyclic_property_still_raises():
     """The guard stays; ordinary links simply no longer reach it."""
     document = _paged(1)
-    document.pages[0].annotations.add("Text", (10, 10, 40, 40), "a note")
+    document.pages[1].annotations.add("Text", (10, 10, 40, 40), "a note")
     loop = PdfArray([PdfNumber(1)])
     loop.items.append(loop)
     _first_annotation(document).mapping[PdfName("Zz")] = loop
@@ -377,41 +377,41 @@ def test_a_genuinely_cyclic_property_still_raises():
 
 def test_a_link_added_after_an_insert_points_at_the_page_named():
     document = _reloaded(_paged(3))
-    document.pages.insert(1)
-    document.pages[1].add_text("INSERTED", 72, 700, font_size=24)
-    document.pages[0].add_link((72, 600, 200, 620), FitDestination(3))
+    document.pages.insert(2)
+    document.pages[2].add_text("INSERTED", 72, 700, font_size=24)
+    document.pages[1].add_link((72, 600, 200, 620), FitDestination(4))
 
     reloaded = _reloaded(document)
 
-    assert _properties(reloaded)["Dest"] == FitDestination(page=3)
-    assert reloaded.pages[3].to_markdown().strip() == "PAGE 2"
+    assert _properties(reloaded)["Dest"] == FitDestination(page=4)
+    assert reloaded.pages[4].to_markdown().strip() == "PAGE 2"
 
 
 def test_a_link_to_a_freshly_inserted_page_is_not_a_reference_to_object_zero():
     """``0 0 R`` is the free-list head; a viewer following it arrives nowhere."""
     document = _paged(3)
-    document.pages.insert(1)
-    document.pages[0].add_link((72, 600, 200, 620), FitDestination(1))
+    document.pages.insert(2)
+    document.pages[1].add_link((72, 600, 200, 620), FitDestination(2))
 
     buffer = io.BytesIO()
     document.save(buffer)
     data = buffer.getvalue()
 
     assert 0 not in _dest_targets(data)
-    assert _properties(Document(io.BytesIO(data)))["Dest"] == FitDestination(page=1)
+    assert _properties(Document(io.BytesIO(data)))["Dest"] == FitDestination(page=2)
 
 
 def test_a_bookmark_added_after_an_insert_points_at_the_page_named():
     """Outlines had their own copy of the same broken lookup."""
     document = _paged(3)
-    document.pages.insert(1)
-    document.pages[1].add_text("INSERTED", 72, 700, font_size=24)
-    document.outlines.add(OutlineItem("last", 3))
+    document.pages.insert(2)
+    document.pages[2].add_text("INSERTED", 72, 700, font_size=24)
+    document.outlines.add(OutlineItem("last", 4))
 
     reloaded = _reloaded(document)
 
-    assert [(o.title, o.page_index) for o in reloaded.outlines] == [("last", 3)]
-    assert reloaded.pages[3].to_markdown().strip() == "PAGE 2"
+    assert [(o.title, o.page_index) for o in reloaded.outlines] == [("last", 4)]
+    assert reloaded.pages[4].to_markdown().strip() == "PAGE 2"
 
 
 def test_a_destination_resolves_through_a_nested_page_tree():
@@ -439,8 +439,8 @@ def test_a_destination_resolves_through_a_nested_page_tree():
     kids.items[2:] = [branch_ref]
     engine._page_cache_valid = False
 
-    document.pages[0].add_link((72, 600, 200, 620), FitDestination(3))
+    document.pages[1].add_link((72, 600, 200, 620), FitDestination(4))
     reloaded = _reloaded(document)
 
-    assert _properties(reloaded)["Dest"] == FitDestination(page=3)
-    assert reloaded.pages[3].to_markdown().strip() == "PAGE 3"
+    assert _properties(reloaded)["Dest"] == FitDestination(page=4)
+    assert reloaded.pages[4].to_markdown().strip() == "PAGE 3"

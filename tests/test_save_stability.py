@@ -41,12 +41,12 @@ def _base(*, nested: bool = False, attachments: int = 2) -> bytes:
     document = Document()
     document.pages.add()
     document.pages.add()
-    chapter = OutlineItem("Chapter one", 0)
+    chapter = OutlineItem("Chapter one", 1)
     if nested:
-        chapter.children.append(OutlineItem("Section A", 1))
-        chapter.children.append(OutlineItem("Section B", 1))
+        chapter.children.append(OutlineItem("Section A", 2))
+        chapter.children.append(OutlineItem("Section B", 2))
     document.outlines.add(chapter)
-    document.outlines.add(OutlineItem("Chapter two", 1))
+    document.outlines.add(OutlineItem("Chapter two", 2))
     for index in range(attachments):
         document.add_attachment(
             f"file{index}.txt",
@@ -126,7 +126,7 @@ def test_attachment_metadata_survives_a_round_trip():
 def test_adding_an_outline_item_costs_exactly_one_object():
     base = _base()
     document = Document(io.BytesIO(base))
-    document.outlines.add(OutlineItem("Chapter three", 0))
+    document.outlines.add(OutlineItem("Chapter three", 1))
     grown = _saved(document)
 
     assert len(_object_numbers(grown)) == len(_object_numbers(base)) + 1
@@ -222,7 +222,7 @@ def test_stability_returns_after_the_shape_changes():
     the file exactly -- otherwise the growth merely restarts.
     """
     document = Document(io.BytesIO(_base()))
-    document.outlines.add(OutlineItem("Chapter three", 0))
+    document.outlines.add(OutlineItem("Chapter three", 1))
     document.add_attachment("extra.txt", b"extra", mime="text/plain")
     grown = _saved(document)
 

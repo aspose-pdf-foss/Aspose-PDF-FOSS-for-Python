@@ -53,7 +53,7 @@ def _reloaded(document: Document) -> Document:
 
 
 def _pixels(document: Document, colour, page: int = 0) -> set[tuple[int, int]]:
-    raster = document.pages[page].render(antialias=False)
+    raster = document.pages[(page) + 1].render(antialias=False)
     return {
         (x, y)
         for y in range(raster.height)
@@ -112,7 +112,7 @@ def _png(
 
 def test_a_stamp_is_placed_inside_what_a_reader_shows():
     document = _document()
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         ImageStamp(
             _png((255, 0, 0)),
             width=20,
@@ -129,8 +129,8 @@ def test_a_stamp_is_placed_inside_what_a_reader_shows():
 
 def test_the_crop_box_is_what_a_stamp_is_placed_in():
     document = _document()
-    document.pages[0].crop_box = (20, 20, 60, 60)
-    document.pages[0].add_stamp(
+    document.pages[1].crop_box = (20, 20, 60, 60)
+    document.pages[1].add_stamp(
         ImageStamp(
             _png((255, 0, 0)),
             width=10,
@@ -140,7 +140,7 @@ def test_the_crop_box_is_what_a_stamp_is_placed_in():
         )
     )
     # The crop box's own bottom left, not the media box's.
-    raster = _reloaded(document).pages[0].render(antialias=False)
+    raster = _reloaded(document).pages[1].render(antialias=False)
     assert (raster.width, raster.height) == (40, 40)
     red = {
         (x, y)
@@ -153,7 +153,7 @@ def test_the_crop_box_is_what_a_stamp_is_placed_in():
 
 def test_an_indent_moves_a_stamp_off_its_alignment():
     document = _document()
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         ImageStamp(
             _png((255, 0, 0)),
             width=10,
@@ -171,7 +171,7 @@ def test_an_indent_moves_a_stamp_off_its_alignment():
 
 def test_zoom_scales_a_stamp_around_where_it_sits():
     document = _document()
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         ImageStamp(_png((255, 0, 0)), width=10, height=10, zoom=3)
     )
     red = _pixels(_reloaded(document), _red)
@@ -185,7 +185,7 @@ def test_zoom_is_taken_into_account_when_a_stamp_is_aligned():
     # stamp pushed into a corner still sits inside the page rather than half
     # off it.
     document = _document()
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         ImageStamp(
             _png((255, 0, 0)), width=10, height=10, zoom=3,
             horizontal_alignment=HorizontalAlignment.RIGHT,
@@ -200,7 +200,7 @@ def test_zoom_is_taken_into_account_when_a_stamp_is_aligned():
 
 def test_a_turned_stamp_still_sits_inside_the_page():
     document = _document()
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         ImageStamp(
             _png((255, 0, 0)),
             width=40,
@@ -222,8 +222,8 @@ def test_a_turned_stamp_still_sits_inside_the_page():
 
 def test_a_stamp_stands_upright_on_a_rotated_page():
     document = _document()
-    document.pages[0].rotation = 90
-    document.pages[0].add_stamp(
+    document.pages[1].rotation = 90
+    document.pages[1].add_stamp(
         ImageStamp(
             _png((255, 0, 0)),
             width=40,
@@ -243,8 +243,8 @@ def test_a_stamp_stands_upright_on_a_rotated_page():
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_every_rotation_puts_the_stamp_in_the_same_corner_on_screen(rotation):
     document = _document()
-    document.pages[0].rotation = rotation
-    document.pages[0].add_stamp(
+    document.pages[1].rotation = rotation
+    document.pages[1].add_stamp(
         ImageStamp(
             _png((255, 0, 0)),
             width=20,
@@ -253,7 +253,7 @@ def test_every_rotation_puts_the_stamp_in_the_same_corner_on_screen(rotation):
             vertical_alignment=VerticalAlignment.TOP,
         )
     )
-    raster = _reloaded(document).pages[0].render(antialias=False)
+    raster = _reloaded(document).pages[1].render(antialias=False)
     red = {
         (x, y)
         for y in range(raster.height)
@@ -284,10 +284,10 @@ def test_the_matrix_is_the_one_qpdf_writes():
 
 def _page_with_a_blue_bar(**stamp_args) -> Document:
     document = _document()
-    document.pages[0].draw_rectangle(
+    document.pages[1].draw_rectangle(
         20, 20, 60, 60, fill_color=(0, 0, 1), stroke_color=None
     )
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         ImageStamp(_png((255, 0, 0)), width=40, height=40, **stamp_args)
     )
     return _reloaded(document)
@@ -296,7 +296,7 @@ def _page_with_a_blue_bar(**stamp_args) -> Document:
 def _bar_alone() -> set[tuple[int, int]]:
     """The blue bar's pixels with nothing stamped on it."""
     document = _document()
-    document.pages[0].draw_rectangle(
+    document.pages[1].draw_rectangle(
         20, 20, 60, 60, fill_color=(0, 0, 1), stroke_color=None
     )
     return _pixels(_reloaded(document), _blue)
@@ -328,15 +328,15 @@ def _order_of(document: Document) -> tuple[int, int]:
 
 def test_a_background_stamp_goes_in_before_the_page_content():
     document = _document()
-    document.pages[0].add_text("BODY", 10, 50, font_size=12)
-    document.pages[0].add_stamp(TextStamp("MARK", background=True))
+    document.pages[1].add_text("BODY", 10, 50, font_size=12)
+    document.pages[1].add_stamp(TextStamp("MARK", background=True))
     stamp, body = _order_of(document)
     assert stamp < body
 
     # And the other way round for the foreground.
     document = _document()
-    document.pages[0].add_text("BODY", 10, 50, font_size=12)
-    document.pages[0].add_stamp(TextStamp("MARK"))
+    document.pages[1].add_text("BODY", 10, 50, font_size=12)
+    document.pages[1].add_stamp(TextStamp("MARK"))
     stamp, body = _order_of(document)
     assert stamp > body
 
@@ -345,10 +345,10 @@ def test_a_background_stamp_is_behind_before_anything_is_saved():
     # Rendering and extraction read the document as it stands, so the order has
     # to be right in memory too, not only in the file that is written from it.
     document = _document()
-    document.pages[0].draw_rectangle(
+    document.pages[1].draw_rectangle(
         20, 20, 60, 60, fill_color=(0, 0, 1), stroke_color=None
     )
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         ImageStamp(_png((255, 0, 0)), width=40, height=40, background=True)
     )
     assert _pixels(document, _blue) == _bar_alone()
@@ -362,7 +362,7 @@ def test_a_stamp_cannot_be_disturbed_by_the_page_it_goes_on():
     engine = document._engine_pdf
     engine._set_page_content(0, b"3 0 0 3 0 0 cm 0 0 1 rg 0 0 5 5 re f")
     document = _reloaded(document)
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         ImageStamp(
             _png((255, 0, 0)),
             width=10,
@@ -380,16 +380,16 @@ def test_a_stamp_cannot_be_disturbed_by_the_page_it_goes_on():
 
 def test_opacity_is_written_as_an_alpha_state():
     document = _document()
-    document.pages[0].add_stamp(ImageStamp(_png((255, 0, 0)), width=40, height=40, opacity=0.3))
+    document.pages[1].add_stamp(ImageStamp(_png((255, 0, 0)), width=40, height=40, opacity=0.3))
     document = _reloaded(document)
-    raster = document.pages[0].render(antialias=False)
+    raster = document.pages[1].render(antialias=False)
     # Red at three tenths over white: pdfium and MuPDF both render (255, 179, 179).
     assert raster.get_pixel(50, 50) == pytest.approx((255, 179, 179), abs=2)
 
 
 def test_a_fully_opaque_stamp_needs_no_alpha_state():
     document = _document()
-    document.pages[0].add_stamp(ImageStamp(_png((255, 0, 0)), width=10, height=10))
+    document.pages[1].add_stamp(ImageStamp(_png((255, 0, 0)), width=10, height=10))
     assert b"/GS0 gs" not in b"".join(_contents(document))
     forms = [
         stream
@@ -406,7 +406,7 @@ def test_a_text_stamp_is_as_wide_as_its_text():
     # "Page 1 of 10" in 10pt Helvetica is 56.71pt wide, from the font's own
     # metrics; the flat 600/1000 guess this used to have made it 72.
     document = _document(size=200)
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         TextStamp(
             "Page 1 of 10",
             font_size=10,
@@ -423,7 +423,7 @@ def test_a_text_stamp_is_as_tall_as_the_faces_own_bounds():
     # off a 'g'. Helvetica's own bounds run from 1075 to -299 thousandths, so
     # at 20pt the box is 27.48 tall with the baseline 5.98 up from its bottom.
     document = _document(size=60)
-    document.pages[0].add_stamp(
+    document.pages[1].add_stamp(
         TextStamp("gggg", font_size=20, vertical_alignment=VerticalAlignment.CENTER)
     )
     engine = document._engine_pdf
@@ -442,14 +442,14 @@ def test_a_text_stamp_is_as_tall_as_the_faces_own_bounds():
 def test_text_a_standard_font_cannot_write_is_refused():
     document = _document()
     with pytest.raises(PdfValidationException, match="cannot write"):
-        document.pages[0].add_stamp(TextStamp("中文"))
+        document.pages[1].add_stamp(TextStamp("中文"))
 
 
 def test_a_text_stamp_needs_one_of_the_standard_fonts():
     document = _document()
     with pytest.raises(PdfValidationException, match="standard 14"):
-        document.pages[0].add_stamp(TextStamp("X", font_name="Comic Sans"))
-    document.pages[0].add_stamp(TextStamp("X", font_name="Times-BoldItalic"))
+        document.pages[1].add_stamp(TextStamp("X", font_name="Comic Sans"))
+    document.pages[1].add_stamp(TextStamp("X", font_name="Times-BoldItalic"))
 
 
 @pytest.mark.parametrize(
@@ -457,33 +457,33 @@ def test_a_text_stamp_needs_one_of_the_standard_fonts():
 )
 def test_a_text_stamp_takes_any_of_the_three_colour_spaces(color):
     document = _document()
-    document.pages[0].add_stamp(TextStamp("X", font_size=40, color=color))
+    document.pages[1].add_stamp(TextStamp("X", font_size=40, color=color))
     assert _pixels(_reloaded(document), lambda pixel: sum(pixel) < 700)
 
 
 def test_a_colour_that_is_not_a_colour_is_refused():
     document = _document()
     with pytest.raises(PdfValidationException, match=r"1 \(grey\), 3 \(RGB\) or 4"):
-        document.pages[0].add_stamp(TextStamp("X", color=(1, 0)))
+        document.pages[1].add_stamp(TextStamp("X", color=(1, 0)))
     with pytest.raises(PdfValidationException, match=r"0\.\.1 or 0\.\.255"):
-        document.pages[0].add_stamp(TextStamp("X", color=(300, 0, 0)))
+        document.pages[1].add_stamp(TextStamp("X", color=(300, 0, 0)))
     with pytest.raises(PdfValidationException, match="CMYK"):
-        document.pages[0].add_stamp(TextStamp("X", color=(0, 2, 0, 0)))
+        document.pages[1].add_stamp(TextStamp("X", color=(0, 2, 0, 0)))
 
 
 def test_a_stamp_colour_takes_the_same_scales_the_page_api_takes():
     # One rule for colour: a stamp used to insist on 0..1 while Page.add_text
     # had always taken 0..255 as well. Both go through the same normaliser now.
     document = _document()
-    document.pages[0].add_stamp(TextStamp("X", font_size=40, color=(255, 0, 0)))
-    document.pages[0].add_stamp(TextStamp("Y", font_size=40, color="#ff0000"))
-    document.pages[0].add_stamp(TextStamp("Z", font_size=40, color=0.25))
+    document.pages[1].add_stamp(TextStamp("X", font_size=40, color=(255, 0, 0)))
+    document.pages[1].add_stamp(TextStamp("Y", font_size=40, color="#ff0000"))
+    document.pages[1].add_stamp(TextStamp("Z", font_size=40, color=0.25))
     assert _pixels(_reloaded(document), lambda pixel: sum(pixel) < 700)
 
 
 def test_a_stamps_text_survives_the_round_trip_as_text():
     document = _document(size=200)
-    document.pages[0].add_stamp(TextStamp("CONFIDENTIAL", font_size=12))
+    document.pages[1].add_stamp(TextStamp("CONFIDENTIAL", font_size=12))
     assert "CONFIDENTIAL" in _reloaded(document).extract_text()
 
 
@@ -495,7 +495,7 @@ def test_a_page_number_stamp_says_a_different_thing_on_each_page():
     document.add_stamp(PageNumberStamp("{page} of {total}", font_size=12))
     reopened = _reloaded(document)
     assert [
-        reopened.pages[index].extract_text().strip() for index in range(3)
+        reopened.pages[(index) + 1].extract_text().strip() for index in range(3)
     ] == ["1 of 3", "2 of 3", "3 of 3"]
 
 
@@ -503,13 +503,13 @@ def test_a_page_number_stamp_can_start_anywhere():
     document = _document(2, size=200)
     document.add_stamp(PageNumberStamp("{page}", font_size=12, starting_number=7))
     reopened = _reloaded(document)
-    assert [reopened.pages[i].extract_text().strip() for i in range(2)] == ["7", "8"]
+    assert [reopened.pages[(i) + 1].extract_text().strip() for i in range(2)] == ["7", "8"]
 
 
 def test_a_page_number_format_may_only_name_the_page_and_the_total():
     document = _document(size=200)
     with pytest.raises(PdfValidationException, match=r"page.*total"):
-        document.pages[0].add_stamp(PageNumberStamp("{chapter}"))
+        document.pages[1].add_stamp(PageNumberStamp("{chapter}"))
 
 
 # --- stamping many pages ----------------------------------------------------
@@ -535,7 +535,7 @@ def test_one_stamp_on_many_pages_is_one_object():
 
 def test_only_the_pages_asked_for_are_stamped():
     document = _document(4)
-    document.add_stamp(ImageStamp(_png((255, 0, 0)), width=10, height=10), pages=[1, 3])
+    document.add_stamp(ImageStamp(_png((255, 0, 0)), width=10, height=10), pages=[2, 4])
     reopened = _reloaded(document)
     assert [bool(_pixels(reopened, _red, page=index)) for index in range(4)] == [
         False,
@@ -547,7 +547,7 @@ def test_only_the_pages_asked_for_are_stamped():
 
 def test_pages_can_be_named_by_slice():
     document = _document(4)
-    document.add_stamp(ImageStamp(_png((255, 0, 0)), width=10, height=10), pages=slice(2, None))
+    document.add_stamp(ImageStamp(_png((255, 0, 0)), width=10, height=10), pages=range(3, len(document.pages) + 1))
     reopened = _reloaded(document)
     assert [bool(_pixels(reopened, _red, page=index)) for index in range(4)] == [
         False,
@@ -559,13 +559,13 @@ def test_pages_can_be_named_by_slice():
 
 def test_a_page_that_does_not_exist_is_refused():
     document = _document(2)
-    with pytest.raises(Exception, match=r"page|index"):
-        document.add_stamp(TextStamp("X"), pages=[5])
+    with pytest.raises(Exception, match=r"(?i)page|index"):
+        document.add_stamp(TextStamp("X"), pages=[6])
 
 
 def test_two_stamps_on_one_page_both_land():
     document = _document()
-    page = document.pages[0]
+    page = document.pages[1]
     page.add_stamp(
         ImageStamp(
             _png((255, 0, 0)), width=10, height=10,
@@ -601,20 +601,20 @@ def test_two_stamps_on_one_page_both_land():
 def test_a_stamp_that_cannot_be_drawn_is_refused(kwargs, message):
     document = _document()
     with pytest.raises(PdfValidationException, match=message):
-        document.pages[0].add_stamp(TextStamp("X", **kwargs))
+        document.pages[1].add_stamp(TextStamp("X", **kwargs))
 
 
 def test_an_image_stamp_keeps_the_images_proportions():
     # Four times as wide as it is tall: giving one side derives the other.
     document = _document(size=200)
     wide = _png((255, 0, 0), width=8, height=2)
-    document.pages[0].add_stamp(ImageStamp(wide, width=40))
+    document.pages[1].add_stamp(ImageStamp(wide, width=40))
     red = _pixels(_reloaded(document), _red)
     assert max(x for x, _ in red) - min(x for x, _ in red) == 39
     assert max(y for _, y in red) - min(y for _, y in red) == 9
 
     document = _document(size=200)
-    document.pages[0].add_stamp(ImageStamp(wide, height=20))
+    document.pages[1].add_stamp(ImageStamp(wide, height=20))
     red = _pixels(_reloaded(document), _red)
     assert max(x for x, _ in red) - min(x for x, _ in red) == 79
     assert max(y for _, y in red) - min(y for _, y in red) == 19
@@ -622,7 +622,7 @@ def test_an_image_stamp_keeps_the_images_proportions():
 
 def test_an_image_stamp_defaults_to_a_point_per_pixel():
     document = _document()
-    document.pages[0].add_stamp(ImageStamp(_png((255, 0, 0), size=12)))
+    document.pages[1].add_stamp(ImageStamp(_png((255, 0, 0), size=12)))
     red = _pixels(_reloaded(document), _red)
     assert max(x for x, _ in red) - min(x for x, _ in red) == 11
 
@@ -630,14 +630,14 @@ def test_an_image_stamp_defaults_to_a_point_per_pixel():
 def test_an_image_stamp_refuses_a_size_that_is_not_one():
     document = _document()
     with pytest.raises(PdfValidationException, match="width"):
-        document.pages[0].add_stamp(ImageStamp(_png((255, 0, 0)), width=0))
+        document.pages[1].add_stamp(ImageStamp(_png((255, 0, 0)), width=0))
     with pytest.raises(TypeError):
-        document.pages[0].add_stamp(ImageStamp(42))
+        document.pages[1].add_stamp(ImageStamp(42))
 
 
 def test_an_image_stamp_reads_a_file(tmp_path):
     path = tmp_path / "mark.png"
     path.write_bytes(_png((255, 0, 0), size=8))
     document = _document()
-    document.pages[0].add_stamp(ImageStamp(path, width=20, height=20))
+    document.pages[1].add_stamp(ImageStamp(path, width=20, height=20))
     assert len(_pixels(_reloaded(document), _red)) == 400

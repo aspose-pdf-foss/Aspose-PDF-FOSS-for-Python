@@ -421,7 +421,7 @@ class _Reader:
                 loaded, target, page, children = (
                     item._loaded_target,
                     item.destination,
-                    item.page_index,
+                    item._page_index,
                     item.children,
                 )
             elif isinstance(item, dict):
@@ -473,7 +473,7 @@ class _Reader:
             self.check(lambda: self.destination(raw), location, path)
         elif isinstance(target, Destination):
             dest = target
-            if type(dest.page) is not int or not 0 <= dest.page < self.pdf.page_count:
+            if type(dest.page) is not int or not 1 <= dest.page <= self.pdf.page_count:
                 raise _Problem("missing_page")
             try:
                 kind, params = dest._spec()
@@ -484,7 +484,7 @@ class _Reader:
             raw = PdfArray(
                 [
                     self.pdf._cos_doc.reference(
-                        self.pdf._page_reference_numbers()[dest.page]
+                        self.pdf._page_reference_numbers()[dest.page - 1]
                     ),
                     PdfName(kind),
                     *[

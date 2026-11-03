@@ -25,6 +25,7 @@ from aspose_pdf._compat_surface import (
 from aspose_pdf._compat_surface import (
     require_pdf_save_format as _require_pdf_save_format,
 )
+from aspose_pdf._page_numbers import numbered_records, page_api, page_mapping
 from aspose_pdf.actions import (
     DOCUMENT_TRIGGERS,
     ActionCollection,
@@ -419,8 +420,9 @@ class Document:
         self._engine_pdf._ensure_cos()
         engine_viewer_prefs.set_open_action(self._engine_pdf, value)
 
+    @page_api(selections=("pages",))
     def add_stamp(
-        self, stamp: Stamp, pages: Sequence[int] | slice | None = None
+        self, stamp: Stamp, pages: Sequence[int] | None = None
     ) -> Document:
         """Put *stamp* on *pages*, or on every page when none are named.
 
@@ -549,6 +551,7 @@ class Document:
         self._engine_pdf.attachment_read_meta.pop(name, None)
         return self
 
+    @page_api(selections=("pages",), result="records")
     def find_low_resolution_images(
         self,
         min_dpi: float = 150,
@@ -558,7 +561,7 @@ class Document:
         """Find image placements whose effective DPI is below ``min_dpi``.
 
         The finite, positive threshold applies to either image axis; equality
-        passes. ``pages`` contains zero-based indices, retaining order and
+        passes. ``pages`` contains one-based page numbers, retaining order and
         repeats; None scans all pages. Each image paint produces its own
         immutable ``ImageResolutionIssue``, in page/content order, even when
         the same image or form is reused at different sizes.
@@ -587,6 +590,7 @@ class Document:
             raise AsposePdfException("No document loaded")
         return find_low_resolution_images(self, min_dpi, pages)
 
+    @page_api(selections=("pages",))
     def export_images_zip(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -599,7 +603,7 @@ class Document:
     ) -> bytes:
         """Return selected page image resources as ZIP bytes, optionally saving them.
 
-        ``pages`` uses zero-based indices; ``None`` selects all pages. Selected
+        ``pages`` uses one-based page numbers; ``None`` selects all pages. Selected
         order is retained, but repeated pages and shared image objects export
         once. Distinct image objects with identical pixels remain distinct.
         Page resources and nested Form resources are scanned without reading
@@ -617,7 +621,7 @@ class Document:
         reconstruction propagates an exception instead of skipping an image.
 
         ``include_manifest=True`` appends a versioned ``manifest.json`` mapping
-        files to zero-based page indices and resource-name paths, with declared
+        files to one-based page indices and resource-name paths, with declared
         dimensions, sample depth, source filter, soft-mask presence and sizes.
         ``compression`` is ``"deflate"`` or ``"stored"``; ``compresslevel`` is
         an integer 0-9. ZIP metadata is fixed for deterministic output in the
@@ -1313,10 +1317,10 @@ class Document:
                 number += 1
             name = f"Signature{number}"
             if appearance is not None and appearance.places_its_own_field:
-                if appearance.page >= len(self.pages):
+                if appearance.page > len(self.pages):
                     raise PdfValidationException(
                         f"The appearance puts the signature on page "
-                        f"{appearance.page + 1}, and the document has "
+                        f"{appearance.page}, and the document has "
                         f"{len(self.pages)}."
                     )
                 self.form.add_signature_field(
@@ -1634,7 +1638,7 @@ class Document:
         live collection handles remain usable. A nonempty import requires at
         least one document page. ``page_map`` maps every explicit local source
         page to an existing destination page; names and remote pages are not
-        remapped. Indices are zero-based, coordinates are not transformed.
+        remapped. Indices are one-based, coordinates are not transformed.
 
         All JSON, target, style, page-map and combined-tree checks finish
         before the live tree is changed. Duplicate keys, unsupported versions,
@@ -1648,7 +1652,9 @@ class Document:
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
-        return import_json(self, source, replace, page_map)
+        return import_json(self, source, replace, page_mapping(
+            page_map, self.page_count, limits=self.load_limits
+        ))
 
     @property
     def permissions(self) -> Permissions:
@@ -1743,13 +1749,13 @@ class Document:
         Yields
         ------
         Page
-            Pages in document order, starting at index 0.
+            Pages in document order, starting at number 1.
         """
         self._ensure_not_disposed()
         from aspose_pdf.pages import Page
 
         for i in range(self.page_count):
-            yield Page(self, i)
+            yield Page._from_index(self, i)
 
     def iter_page_content_streams(self) -> Generator[bytes, None, None]:
         """Yield decoded content stream bytes for each page, one at a time.
@@ -1919,6 +1925,7 @@ class Document:
             options=sources, lookup_directory=directory
         )
 
+    @page_api(scalars=("page_index",))
     def render_page(
         self,
         page_index: int,
@@ -1934,7 +1941,7 @@ class Document:
     ) -> RasterizedPage:
         """Render a page to an RGB raster image.
 
-        ``page_index`` is zero-based. The result can be encoded with
+        ``page_index`` is one-based. The result can be encoded with
         :meth:`RasterizedPage.to_png`, :meth:`RasterizedPage.to_tiff`,
         :meth:`RasterizedPage.to_jpeg`, :meth:`RasterizedPage.to_webp`, or saved
         directly with :meth:`RasterizedPage.save`. ``antialias`` smooths edges by
@@ -1968,6 +1975,7 @@ class Document:
             font_substitution=font_substitution,
         )
 
+    @page_api(scalars=("page_index",))
     def save_page_as_image(
         self,
         page_index: int,
@@ -1995,7 +2003,7 @@ class Document:
         ``dither`` applies Floyd-Steinberg dithering when ``mode`` is ``"bilevel"``.
         ``clip`` selects a region as described in :meth:`render_page`.
         """
-        return self.render_page(
+        return self._api_render_page(
             page_index,
             dpi=dpi,
             scale=scale,
@@ -2013,6 +2021,7 @@ class Document:
             dither=dither,
         )
 
+    @page_api(selections=("pages",))
     def export_pages_zip(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -2036,7 +2045,7 @@ class Document:
     ) -> bytes:
         """Return rendered page images in a ZIP, optionally saving the archive.
 
-        ``pages`` uses zero-based indices, retaining order and repeats; ``None``
+        ``pages`` uses one-based page numbers, retaining order and repeats; ``None``
         selects all pages. Members are named ``page-0001.png``, etc., by output
         position. ``image_format`` is PNG, JPEG (also ``jpg``) or optional WebP.
         Rendering honors visible CropBox, rotation, layers and normal annotation
@@ -2091,6 +2100,7 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",))
     def rasterized_copy(
         self,
         *,
@@ -2105,7 +2115,7 @@ class Document:
     ) -> Document:
         """Return an independent image-only PDF of the selected visible pages.
 
-        ``pages`` uses zero-based indices, preserving order and repeats;
+        ``pages`` uses one-based page numbers, preserving order and repeats;
         ``None`` selects all pages. An empty selection returns a new empty
         document. All options, indices, page geometry and planned output limits
         are validated before any page renders or an output document is built.
@@ -2164,6 +2174,7 @@ class Document:
             dither=dither,
         )
 
+    @page_api(selections=("pages",))
     def render_contact_sheet(
         self,
         *,
@@ -2181,7 +2192,7 @@ class Document:
     ) -> RasterizedPage:
         """Render a page overview as one RGB image without changing the PDF.
 
-        ``pages`` selects zero-based indices; ``None`` selects all pages.
+        ``pages`` selects one-based page numbers; ``None`` selects all pages.
         Order and repeated indices are preserved. An empty selection raises
         ``PdfValidationException``. ``columns`` is the maximum number of cells
         per row; fewer selected pages produce fewer columns.
@@ -2227,6 +2238,7 @@ class Document:
             include_annotations=include_annotations,
         )
 
+    @page_api(selections=("pages",))
     def save_contact_sheet(
         self,
         destination: str | Path,
@@ -2259,7 +2271,7 @@ class Document:
         file replaces the destination atomically, after successful rendering
         and encoding. Return the resulting path.
         """
-        return self.render_contact_sheet(
+        return self._api_render_contact_sheet(
             pages=pages,
             columns=columns,
             thumbnail_size=thumbnail_size,
@@ -2282,6 +2294,7 @@ class Document:
             dither=dither,
         )
 
+    @page_api(selections=("pages",))
     def remove_annotations(
         self,
         *,
@@ -2300,7 +2313,7 @@ class Document:
         iterable of alternatives. None disables that filter; an empty author
         string matches an unset/empty author and an empty iterable matches none.
         ``case_sensitive=False`` uses Unicode casefolding, without trimming.
-        ``pages`` uses zero-based indices; repeated pages are inspected once.
+        ``pages`` uses one-based page numbers; repeated pages are inspected once.
 
         ``before`` and ``after`` are exclusive date bounds, accepting datetime,
         date, ISO strings or PDF date strings. Dates mean midnight; naive values
@@ -2363,6 +2376,7 @@ class Document:
             raise AsposePdfException("No document loaded")
         return records(self._engine_pdf, pages, subtypes)
 
+    @page_api(selections=("pages",))
     def export_annotations_json(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -2373,13 +2387,13 @@ class Document:
     ) -> bytes:
         """Return UTF-8 JSON annotation metadata, optionally writing it.
 
-        ``pages`` selects zero-based page indices in the requested order;
+        ``pages`` selects one-based page indices in the requested order;
         repeated indices are exported once. ``subtypes`` accepts a subtype
         string, ``AnnotationType`` or an iterable of either. ``None`` includes
         every annotation, including popups and form widgets; ``[]`` selects
         none. All selection arguments are validated before reading metadata.
 
-        Schema version 1 contains an ``annotations`` array with source page
+        Schema version 2 contains an ``annotations`` array with source page
         and annotation indices, subtype, rectangle, text, author, selected PDF
         properties and reference IDs for replies/popups. Coordinates remain in
         unrotated PDF space and date strings retain their original format.
@@ -2411,6 +2425,7 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",))
     def export_annotations_csv(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -2459,6 +2474,7 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",))
     def export_annotations_xfdf(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -2512,11 +2528,11 @@ class Document:
         *,
         page_map: Mapping[int, int] | None = None,
     ) -> int:
-        """Append version 1 JSON review annotations and return the number added.
+        """Append version 1 or 2 JSON review annotations and return the number added.
 
         Accept UTF-8 bytes, a path or a readable binary stream. Streams are
         read from their current position and left open. ``page_map`` maps
-        zero-based source page indices to existing destination pages; every
+        one-based source page indices to existing destination pages; every
         used source page must be mapped. Without it, page indices are retained.
         Input order is retained within each page; ``annotation_index`` is
         informational. Existing annotations are preserved and repeat imports
@@ -2543,7 +2559,9 @@ class Document:
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
-        return import_json(self._engine_pdf, source, page_map=page_map)
+        return import_json(self._engine_pdf, source, page_map=page_mapping(
+            page_map, self.page_count, limits=self.load_limits
+        ))
 
     def import_annotations_xfdf(
         self,
@@ -2571,8 +2589,11 @@ class Document:
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
-        return import_xfdf(self._engine_pdf, source, page_map=page_map)
+        return import_xfdf(self._engine_pdf, source, page_map=page_mapping(
+            page_map, self.page_count, limits=self.load_limits
+        ))
 
+    @page_api(selections=("pages",), result="records")
     def extract_links(
         self,
         *,
@@ -2580,7 +2601,7 @@ class Document:
     ) -> list[ExtractedLink]:
         """Inventory Link annotation targets without executing or fetching them.
 
-        ``pages`` selects zero-based source pages; None means all pages.
+        ``pages`` selects one-based source pages; None means all pages.
         Repeated selections are inspected once in first-selected order. Results
         follow annotation order, direct Dest before A, then action Next preorder.
         Every target/action has a detached immutable ``ExtractedLink`` with its
@@ -2612,6 +2633,7 @@ class Document:
             raise AsposePdfException("No document loaded")
         return extract(self, pages)
 
+    @page_api(selections=("pages",))
     def export_links_json(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -2622,9 +2644,9 @@ class Document:
         """Return a versioned UTF-8 JSON link report, optionally writing it.
 
         Selection, ordering, diagnostic codes and scope match
-        :meth:`extract_links`. Schema version 1 contains a ``links`` array
+        :meth:`extract_links`. Schema version 2 contains a ``links`` array
         with each inventory entry's fields and ``target_page_index``. Page
-        indices are zero-based. A destination is ``{page_index, view,
+        indices are one-based. A destination is ``{page_index, view,
         parameters}``; its page index is remote for GoToR. Null parameters
         and invalid targets are retained without executable action payloads.
 
@@ -2651,6 +2673,7 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",))
     def export_links_csv(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -2692,6 +2715,7 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",))
     def replace_link_urls(
         self,
         search: str | re.Pattern[str],
@@ -2709,7 +2733,7 @@ class Document:
         All occurrences are replaced in each URL. Regex replacement strings
         support Python backreferences; literal replacements stay literal.
 
-        ``pages`` contains zero-based indices; None selects all and repeats are
+        ``pages`` contains one-based page numbers; None selects all and repeats are
         inspected once. Return the number of distinct changed annotations,
         excluding no-op replacements. ``dry_run=True`` performs the same plan
         and checks without edits. Empty resulting URLs are rejected. Options,
@@ -2739,6 +2763,7 @@ class Document:
             case_sensitive=case_sensitive, dry_run=dry_run,
         )
 
+    @page_api(selections=("pages",), result="records")
     def validate_links(
         self,
         *,
@@ -2748,7 +2773,7 @@ class Document:
     ) -> list[LinkValidationIssue]:
         """Report broken local navigation without changing the document.
 
-        Inspect Link annotations on zero-based ``pages`` (all by default),
+        Inspect Link annotations on one-based ``pages`` (all by default),
         then bookmarks in preorder and named destination definitions. Repeated
         page selections are checked once, retaining their first occurrence.
         Both flags must be booleans; selection/options are validated before
@@ -2779,6 +2804,7 @@ class Document:
             raise AsposePdfException("No document loaded")
         return validate(self, pages, include_outlines, include_named_destinations)
 
+    @page_api(selections=("pages",), result="records")
     def extract_tables(
         self,
         *,
@@ -2787,7 +2813,7 @@ class Document:
     ) -> list[ExtractedTable]:
         """Extract regular text grids as detached :class:`ExtractedTable` values.
 
-        ``pages`` contains zero-based indices, in the requested order; repeats
+        ``pages`` contains one-based page numbers, in the requested order; repeats
         are retained and an empty iterable selects nothing. All indices must
         be integers within the document. Only selected pages are decoded.
         Tables follow the layout analyzer's reading order within each page;
@@ -2828,6 +2854,7 @@ class Document:
             for table in _page_tables(self._engine_pdf, index, clip_to_page)
         ]
 
+    @page_api(selections=("pages",))
     def export_tables_zip(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -2844,7 +2871,7 @@ class Document:
         """Return inferred text tables as separate CSV members in a ZIP archive.
 
         Names are ``table-0001.csv``, ``table-0002.csv``, and so on, following
-        the requested zero-based page order (including repeats) and each page's
+        the requested one-based page order (including repeats) and each page's
         table reading order. ``None`` selects all pages; ``[]`` selects none.
         Recognition and clipping follow :meth:`extract_tables`. Selected pages
         are read one at a time, without rendering or image decoding.
@@ -2886,6 +2913,7 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",), result="records")
     def extract_blocks(
         self,
         *,
@@ -2901,7 +2929,7 @@ class Document:
         adds figures with PNG bytes; otherwise figures and image decoding are
         omitted. No markup conversion, OCR or page rasterization is performed.
 
-        ``pages`` accepts zero-based indices, preserving order and repetitions.
+        ``pages`` accepts one-based page numbers, preserving order and repetitions.
         All options and indices are validated before decoding; streaming inputs
         read only selected pages and invoked forms. Empty selections return [].
         ``paragraph_gap`` is a finite positive baseline gap in font sizes, or
@@ -2916,6 +2944,7 @@ class Document:
             raise AsposePdfException("No document loaded")
         return extract_blocks(self, pages, include_images, paragraph_gap, clip_to_page)
 
+    @page_api(selections=("pages",))
     def export_blocks_json(
         self,
         destination: str | Path | BinaryIO | None = None,
@@ -2928,7 +2957,7 @@ class Document:
     ) -> bytes:
         """Return versioned UTF-8 block JSON, optionally writing a file or stream.
 
-        Schema version 1 contains ``schema_version`` and a flat ``blocks`` list.
+        Schema version 2 contains ``schema_version`` and a flat ``blocks`` list.
         Each entry is :meth:`ExtractedBlock.to_dict`: original ``page_index``,
         ``kind``, ``x``/``y`` anchor, ``text``, ``level``, ``items``, ``rows``,
         ``column_spans``, ``ordered``, ``alt`` and ``image``. Images are PNG data
@@ -2947,11 +2976,11 @@ class Document:
         self._ensure_not_disposed()
         if not isinstance(overwrite, bool):
             raise PdfValidationException("overwrite must be a boolean")
-        blocks = self.extract_blocks(
+        blocks = self._api_extract_blocks(
             pages=pages, include_images=include_images,
             paragraph_gap=paragraph_gap, clip_to_page=clip_to_page,
         )
-        data = to_json(blocks, _LoadBudget(self.load_limits))
+        data = to_json(numbered_records(blocks), _LoadBudget(self.load_limits))
         if destination is not None:
             if hasattr(destination, "write"):
                 write_all(destination, data)
@@ -2959,6 +2988,7 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",))
     def to_html(
         self,
         *,
@@ -2994,6 +3024,7 @@ class Document:
             embed_images=embed_images,
         )
 
+    @page_api(selections=("pages",))
     def to_markdown(
         self,
         *,
@@ -3068,6 +3099,7 @@ class Document:
             for index in indexes
         ]
 
+    @page_api(selections=("pages",))
     def save_as_html(
         self,
         destination: str | Path,
@@ -3133,6 +3165,7 @@ class Document:
         )
         return [path for path, _ in documents]
 
+    @page_api(selections=("pages",))
     def save_as_markdown(
         self,
         destination: str | Path,
@@ -3184,6 +3217,7 @@ class Document:
         )
         return target
 
+    @page_api(selections=("pages",))
     def save_as_svg(
         self,
         destination: str | Path,
@@ -3233,7 +3267,7 @@ class Document:
                 path = target.with_name(
                     f"{target.stem}-{index + 1}{target.suffix or '.svg'}"
                 )
-            svg = self.pages[index].to_svg(
+            svg = self._page_at(index).to_svg(
                 background=background,
                 draw_annotations=draw_annotations,
                 font_substitution=font_substitution,
@@ -3244,6 +3278,7 @@ class Document:
         files.write_files(outputs, overwrite)
         return [path for path, _ in outputs]
 
+    @page_api(selections=("pages",))
     def to_tiff(
         self,
         *,
@@ -3283,7 +3318,7 @@ class Document:
 
         def rendered() -> Iterator[Any]:
             for index in indexes:
-                raster = self.render_page(
+                raster = self._api_render_page(
                     index,
                     dpi=dpi,
                     scale=scale,
@@ -3304,6 +3339,7 @@ class Document:
         except ValueError as exc:
             raise PdfValidationException(str(exc)) from exc
 
+    @page_api(selections=("pages",))
     def save_as_tiff(
         self,
         destination: str | Path,
@@ -3327,7 +3363,7 @@ class Document:
         Path
             The path written.
         """
-        data = self.to_tiff(
+        data = self._api_to_tiff(
             pages=pages,
             dpi=dpi,
             scale=scale,
@@ -3343,6 +3379,7 @@ class Document:
         write_file_atomically(out, data)
         return out
 
+    @page_api(scalars=("page_index",))
     def replace_text(
         self,
         search: str | re.Pattern[str],
@@ -3398,6 +3435,7 @@ class Document:
             layout=layout,
         )
 
+    @page_api(selections=("pages",), result="records")
     def auto_link(
         self,
         *,
@@ -3411,7 +3449,7 @@ class Document:
         Recognize HTTP(S), ``www.`` (using HTTPS), and common ASCII email
         addresses (using ``mailto:``). Surrounding prose punctuation is removed
         from targets. No network requests or text/content changes are made.
-        ``pages`` selects zero-based pages in order, including repeats.
+        ``pages`` selects one-based pages in order, including repeats.
         ``max_count=0`` considers all addresses; a positive cap includes
         unplaceable addresses and those overlapping existing links.
 
@@ -3427,6 +3465,7 @@ class Document:
 
         return _auto_link(self, pages=pages, urls=urls, emails=emails, max_count=max_count)
 
+    @page_api(scalars=("page_index",), result="records")
     def markup_text(
         self,
         search: str | re.Pattern[str],
@@ -3466,6 +3505,7 @@ class Document:
             title=title,
         )
 
+    @page_api(scalars=("page_index",), result="records")
     def highlight_text(
         self,
         search: str | re.Pattern[str],
@@ -3481,7 +3521,7 @@ class Document:
     ) -> TextHighlightResult:
         """Add one highlight annotation per reliably placed text match.
 
-        Search all pages or one zero-based ``page_index``. A string is literal
+        Search all pages or one one-based ``page_index``. A string is literal
         unless ``regex=True``; compiled text patterns retain their flags.
         ``case_sensitive=False`` adds case-insensitive matching. Matches are
         non-overlapping, and zero-width regex matches are ignored.
@@ -3510,6 +3550,7 @@ class Document:
             title=title,
         )
 
+    @page_api(scalars=("page_index",))
     def redact_text(
         self,
         search: str | re.Pattern[str],
@@ -4174,13 +4215,14 @@ class Document:
             language=language, title=title, auto_tag=auto_tag, part=part
         )
 
+    @page_api(scalars=("at",), result="indices")
     def add_table_of_contents(
         self,
         *,
         title: str | None = "Contents",
         max_level: int = 3,
         prefer_structure: bool = True,
-        at: int = 0,
+        at: int = 1,
         size: Any = None,
         margin: float = 72.0,
         font_name: str = "Helvetica",
@@ -4389,14 +4431,14 @@ class Document:
             target: object | None = None
             if heading.x is not None and heading.y is not None:
                 target = XYZDestination(
-                    page=heading.page_index,
+                    page=heading.page_index + 1,
                     left=heading.x,
                     top=heading.y,
                     zoom=zoom,
                 )
             item = OutlineItem(
                 heading.text,
-                heading.page_index,
+                heading.page_index + 1,
                 destination=target,
                 open=heading.level <= int(open_to_level),
             )
@@ -4410,6 +4452,7 @@ class Document:
             created += 1
         return created
 
+    @page_api(selections=("pages",))
     def generate_outlines_from_text(
         self,
         pattern: str | re.Pattern[str],
@@ -4440,7 +4483,7 @@ class Document:
         Targets refer to page objects so inserting pages before a matched page
         does not redirect its bookmark when the document is saved.
 
-        ``pages`` accepts zero-based indices, preserving order and repetitions.
+        ``pages`` accepts one-based page numbers, preserving order and repetitions.
         ``clip``, ``exclude_regions`` and ``skip_artifacts`` follow
         :meth:`extract_text`. All options/indices are validated before reading
         selected pages. Streaming inputs read selected page content without
@@ -4590,16 +4633,16 @@ class Document:
             # default. An options object is honoured in full, or refused.
             if exporter == "html":
                 options = save_format if hasattr(save_format, "split_into_pages") else None
-                self.save_as_html(
+                self._api_save_as_html(
                     destination, overwrite=overwrite, **files.html_arguments(options)
                 )
             elif exporter == "markdown":
                 options = save_format if hasattr(save_format, "extract_images") else None
-                self.save_as_markdown(
+                self._api_save_as_markdown(
                     destination, overwrite=overwrite, **files.markdown_arguments(options)
                 )
             else:
-                self.save_as_svg(destination, overwrite=overwrite)
+                self._api_save_as_svg(destination, overwrite=overwrite)
             return self
         _require_pdf_save_format(save_format)
 
@@ -4670,6 +4713,7 @@ class Document:
         """Alias of :meth:`dispose` (matches .NET ``Close``)."""
         self.dispose()
 
+    @page_api(selections=("pages",))
     def extract_text(
         self,
         *,
@@ -4680,7 +4724,7 @@ class Document:
     ) -> str:
         """The text of all or selected pages, separated by one line break.
 
-        ``pages`` is an iterable of zero-based integer indices, preserving its
+        ``pages`` is an iterable of one-based integer indices, preserving its
         order and repetitions. ``None`` selects every page; an empty iterable
         returns an empty string. Invalid indices are rejected before any page
         is read. Streaming documents decode only the selected page content.
@@ -4708,6 +4752,7 @@ class Document:
             exclude_regions=exclude_regions,
         )
 
+    @page_api(selections=("pages",))
     def iter_text_pages(
         self,
         *,
@@ -4737,6 +4782,7 @@ class Document:
             exclude_regions=exclude_regions,
         )
 
+    @page_api(selections=("pages",))
     def save_as_text(
         self,
         destination: str | Path | BinaryIO,
@@ -4776,6 +4822,7 @@ class Document:
             encoding=encoding, overwrite=overwrite,
         )
 
+    @page_api(selections=("pages",), result="records")
     def extract_words(
         self,
         *,
@@ -4785,7 +4832,7 @@ class Document:
     ) -> list[TextWord]:
         """Return detached positioned words from selected pages in content order.
 
-        Results contain ``text``, zero-based ``page_index``, ``rect`` (also
+        Results contain ``text``, one-based ``page_index``, ``rect`` (also
         ``bbox``) and ``quad``. Coordinates are PDF points in unrotated user
         space, independent of CropBox and page rotation. Bounds use font
         advances, ascent and descent rather than visible glyph ink.
@@ -4883,6 +4930,7 @@ class Document:
                 if isinstance(catalog, PdfDictionary):
                     catalog.mapping.pop(PdfName("Outlines"), None)
 
+    @page_api(selections=("pages",), result="mapping")
     def get_content_bounds(
         self,
         *,
@@ -4893,7 +4941,7 @@ class Document:
     ) -> dict[int, tuple[float, float, float, float] | None]:
         """Measure visible content on selected pages without modifying the PDF.
 
-        Return a dictionary keyed by zero-based source page indices, in
+        Return a dictionary keyed by one-based source page indices, in
         first-selected order; repeated pages are measured once. None selects
         all pages, and an empty selection/document returns an empty dictionary.
         Blank-looking pages retain a None value. Other values are detached
@@ -4925,6 +4973,7 @@ class Document:
             include_annotations=include_annotations,
         )
 
+    @page_api(selections=("pages",), result="mapping")
     def auto_crop(
         self,
         margin: float = 0.0,
@@ -4939,7 +4988,7 @@ class Document:
         """Trim selected pages individually or apply one shared visible frame.
 
         Return changed CropBoxes as detached ``(x0, y0, x1, y1)`` tuples keyed
-        by original zero-based page index, in first-selected order. ``None``
+        by original one-based page index, in first-selected order. ``None``
         selects all pages; repeated indices count once. Empty documents,
         selections or plans return ``{}``. ``dry_run=True`` returns the same
         plan without writing any page boxes.
@@ -4981,6 +5030,7 @@ class Document:
             dry_run=dry_run,
         )
 
+    @page_api(selections=("pages",), result="indices")
     def find_blank_pages(
         self,
         *,
@@ -4992,7 +5042,7 @@ class Document:
     ) -> list[int]:
         """Find visually blank pages without changing this document.
 
-        Return zero-based indices in the selected order, ignoring repeats.
+        Return one-based page numbers in the selected order, ignoring repeats.
         ``pages=None`` checks all pages; an empty iterable checks none. All
         indices and options are validated before rendering. Streaming inputs
         read only selected pages, and each raster is released before the next.
@@ -5017,6 +5067,7 @@ class Document:
             include_annotations=include_annotations,
         )
 
+    @page_api(selections=("pages",), result="indices")
     def remove_blank_pages(
         self,
         *,
@@ -5027,7 +5078,7 @@ class Document:
         include_annotations: bool = True,
         dry_run: bool = False,
     ) -> list[int]:
-        """Remove visually blank pages and return their original zero-based indices.
+        """Remove visually blank pages and return their original one-based page numbers.
 
         Selection, detection settings and result order follow
         :meth:`find_blank_pages`. Every selected page is inspected before any
@@ -5062,6 +5113,7 @@ class Document:
             dry_run=dry_run,
         )
 
+    @page_api(selections=("pages",), result="groups")
     def find_duplicate_pages(
         self,
         *,
@@ -5071,7 +5123,7 @@ class Document:
     ) -> list[list[int]]:
         """Find groups of pages with identical rendered views without editing them.
 
-        Each group contains at least two distinct zero-based page indices,
+        Each group contains at least two distinct one-based page indices,
         including the first occurrence. Groups and their members follow first
         occurrence in the selection. ``pages=None`` selects all pages; explicit
         indices are validated in full and deduplicated before rendering. Fewer
@@ -5108,6 +5160,7 @@ class Document:
             include_annotations=include_annotations,
         )
 
+    @page_api(selections=("pages",), result="indices")
     def remove_duplicate_pages(
         self,
         *,
@@ -5124,7 +5177,7 @@ class Document:
         ``keep="last"`` retains the last. With ``pages=None``, this is document
         order. Only selected pages are compared. Repeated indices count once,
         unselected pages are retained, and surviving pages keep document order.
-        Results are sorted original zero-based indices, before any deletion.
+        Results are sorted original one-based page numbers, before any deletion.
 
         Every comparison finishes before deletion starts. Invalid options,
         selections, rendering failures and inspection limits leave pages intact.
@@ -5157,6 +5210,7 @@ class Document:
             dry_run=dry_run,
         )
 
+    @page_api(selections=("pages", "other_pages"), result="records")
     def compare_text(
         self,
         other: Document,
@@ -5170,7 +5224,7 @@ class Document:
     ) -> list[PageTextComparison]:
         """Compare extracted page text and return detached per-pair reports.
 
-        Select pages independently with zero-based iterables; order and repeats
+        Select pages independently with one-based iterables; order and repeats
         are retained. ``None`` means all pages. Pages are paired by position,
         without automatic alignment. Unpaired pages have a missing index/text
         on the other side and never match, even against blank pages. Two empty
@@ -5229,6 +5283,7 @@ class Document:
             exclude_regions=exclude_regions,
         )
 
+    @page_api(selections=("pages", "other_pages"), result="records")
     def compare_visual(
         self,
         other: Document,
@@ -5245,7 +5300,7 @@ class Document:
         """Compare rendered page pairs and optionally retain red difference images.
 
         ``other`` must be an open ``Document``. ``pages`` and ``other_pages``
-        independently select zero-based indices in their respective documents;
+        independently select one-based page numbers in their respective documents;
         ``None`` means all pages on that side. Order and repetitions are kept.
         Selections are paired by position; a shorter side produces missing-page
         results with a ``None`` index and size. Two empty selections return [].
@@ -5314,6 +5369,7 @@ class Document:
             ignore_regions=ignore_regions,
         )
 
+    @page_api(selections=("pages", "other_pages"))
     def export_comparison_html(
         self,
         other: Document,
@@ -5382,10 +5438,11 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
-    def extract_pages(self, selection: Iterable[int] | slice | str) -> Document:
+    @page_api(selections=("selection",))
+    def extract_pages(self, selection: Iterable[int] | str) -> Document:
         """Return an independent document containing selected pages in order.
 
-        *selection* is a zero-based iterable of page indexes or a slice, or a
+        *selection* is a one-based iterable of page numbers or a
         one-based range string such as ``"1-3,7,10-"``. String ranges include
         both endpoints and may descend (``"last-1"`` reverses all pages);
         an omitted end selects through the last page. ``odd`` and ``even``
@@ -5398,15 +5455,16 @@ class Document:
         if isinstance(selection, str):
             from aspose_pdf.page_ranges import parse_page_range
 
-            selection = parse_page_range(
+            selection = tuple(index - 1 for index in parse_page_range(
                 selection, self.page_count, limits=self._load_limits
-            )
+            ))
         self._flush_outlines()
         extracted = self._engine_pdf.extract_pages(selection)
         result = Document(limits=self._load_limits)
         result._engine_pdf = extracted
         return result
 
+    @page_api(selections=("pages",))
     def split_spreads(
         self,
         *,
@@ -5419,7 +5477,7 @@ class Document:
     ) -> Document:
         """Return a new PDF with each selected spread replaced by two page views.
 
-        ``pages`` selects zero-based source pages to split; other pages stay in
+        ``pages`` selects one-based source pages to split; other pages stay in
         source order. Repeats are split once and an empty selection copies the
         document. ``layout='horizontal'`` reads left then right in the displayed
         view; ``'vertical'`` reads top then bottom. ``reverse=True`` reverses
@@ -5464,6 +5522,7 @@ class Document:
         result._engine_pdf = engine
         return result
 
+    @page_api(selections=("pages",))
     def split_grid(
         self,
         rows: int = 2,
@@ -5890,12 +5949,13 @@ class Document:
         result._engine_pdf = imposed
         return result
 
+    @page_api(selections=("pages",))
     def resize_pages(
         self,
         size: Any,
         *,
         mode: str = "fit",
-        pages: Sequence[int] | slice | None = None,
+        pages: Sequence[int] | None = None,
     ) -> int:
         """Give *pages* a new sheet size and scale their drawing onto it.
 
@@ -5927,7 +5987,7 @@ class Document:
             indices = [int(index) for index in pages]
         resolved = 0
         for index in indices:
-            self.pages[index].resize(size, mode=mode)
+            self._page_at(index).resize(size, mode=mode)
             resolved += 1
         return resolved
 
@@ -6219,6 +6279,7 @@ class Document:
         self._engine_pdf.repair()
         return self
 
+    @page_api(selections=("pages",))
     def flatten(
         self,
         *,
@@ -6232,7 +6293,7 @@ class Document:
         By default both are flattened. Set ``annotations=False`` for fields
         only, ``fields=False`` for non-widget annotations only, or pass fully
         qualified terminal field names in ``fields``. ``pages`` contains
-        zero-based indices; omitted means all pages. Duplicate selections are
+        one-based page numbers; omitted means all pages. Duplicate selections are
         ignored. Unknown field names raise ``KeyError`` unless ``strict=False``;
         invalid selections are rejected before modifying the document.
 
@@ -6298,3 +6359,63 @@ class Document:
         if self._engine_pdf:
             self._engine_pdf.free_memory()
         return self
+
+    # Engine-facing implementations accept and return zero-based indices.
+    _api_add_stamp = add_stamp.__wrapped__
+    _api_find_low_resolution_images = find_low_resolution_images.__wrapped__
+    _api_export_images_zip = export_images_zip.__wrapped__
+    _api_render_page = render_page.__wrapped__
+    _api_save_page_as_image = save_page_as_image.__wrapped__
+    _api_export_pages_zip = export_pages_zip.__wrapped__
+    _api_rasterized_copy = rasterized_copy.__wrapped__
+    _api_render_contact_sheet = render_contact_sheet.__wrapped__
+    _api_save_contact_sheet = save_contact_sheet.__wrapped__
+    _api_remove_annotations = remove_annotations.__wrapped__
+    _api_export_annotations_json = export_annotations_json.__wrapped__
+    _api_export_annotations_csv = export_annotations_csv.__wrapped__
+    _api_export_annotations_xfdf = export_annotations_xfdf.__wrapped__
+    _api_extract_links = extract_links.__wrapped__
+    _api_export_links_json = export_links_json.__wrapped__
+    _api_export_links_csv = export_links_csv.__wrapped__
+    _api_replace_link_urls = replace_link_urls.__wrapped__
+    _api_validate_links = validate_links.__wrapped__
+    _api_extract_tables = extract_tables.__wrapped__
+    _api_export_tables_zip = export_tables_zip.__wrapped__
+    _api_extract_blocks = extract_blocks.__wrapped__
+    _api_export_blocks_json = export_blocks_json.__wrapped__
+    _api_to_html = to_html.__wrapped__
+    _api_to_markdown = to_markdown.__wrapped__
+    _api_save_as_html = save_as_html.__wrapped__
+    _api_save_as_markdown = save_as_markdown.__wrapped__
+    _api_save_as_svg = save_as_svg.__wrapped__
+    _api_to_tiff = to_tiff.__wrapped__
+    _api_save_as_tiff = save_as_tiff.__wrapped__
+    _api_replace_text = replace_text.__wrapped__
+    _api_auto_link = auto_link.__wrapped__
+    _api_markup_text = markup_text.__wrapped__
+    _api_highlight_text = highlight_text.__wrapped__
+    _api_redact_text = redact_text.__wrapped__
+    _api_add_table_of_contents = add_table_of_contents.__wrapped__
+    _api_generate_outlines_from_text = generate_outlines_from_text.__wrapped__
+    _api_extract_text = extract_text.__wrapped__
+    _api_iter_text_pages = iter_text_pages.__wrapped__
+    _api_save_as_text = save_as_text.__wrapped__
+    _api_extract_words = extract_words.__wrapped__
+    _api_get_content_bounds = get_content_bounds.__wrapped__
+    _api_auto_crop = auto_crop.__wrapped__
+    _api_find_blank_pages = find_blank_pages.__wrapped__
+    _api_remove_blank_pages = remove_blank_pages.__wrapped__
+    _api_find_duplicate_pages = find_duplicate_pages.__wrapped__
+    _api_remove_duplicate_pages = remove_duplicate_pages.__wrapped__
+    _api_compare_text = compare_text.__wrapped__
+    _api_compare_visual = compare_visual.__wrapped__
+    _api_export_comparison_html = export_comparison_html.__wrapped__
+    _api_extract_pages = extract_pages.__wrapped__
+    _api_split_spreads = split_spreads.__wrapped__
+    _api_split_grid = split_grid.__wrapped__
+    _api_resize_pages = resize_pages.__wrapped__
+    _api_flatten = flatten.__wrapped__
+
+    def _page_at(self, index: int) -> Page:
+        """Return an internal page view using a zero-based engine index."""
+        return self.pages[index + 1]

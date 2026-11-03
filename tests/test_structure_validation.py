@@ -67,7 +67,7 @@ def test_a_page_may_point_back_at_its_parent():
 def test_an_annotation_pointing_back_at_its_page_is_not_corruption():
     document = Document()
     document.pages.add()
-    document.pages[0].annotations.add("Text", (10, 10, 40, 40), "x")
+    document.pages[1].annotations.add("Text", (10, 10, 40, 40), "x")
 
     assert Document(io.BytesIO(_saved(document))).validate() is True
 
@@ -79,8 +79,8 @@ def test_a_document_with_bookmarks_is_valid():
     document = Document()
     document.pages.add()
     document.pages.add()
-    document.outlines.add(OutlineItem("one", 0))
-    document.outlines.add(OutlineItem("two", 1))
+    document.outlines.add(OutlineItem("one", 1))
+    document.outlines.add(OutlineItem("two", 2))
 
     assert Document(io.BytesIO(_saved(document))).validate() is True
 

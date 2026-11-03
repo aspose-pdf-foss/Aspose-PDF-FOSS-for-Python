@@ -188,8 +188,8 @@ def test_the_page_geometry_a_port_asks_for():
     document = Document()
     document.pages.add(PageSize.A5)
     document.pages.add(PageSize.A4)
-    document.pages[1].rotation = 90
-    document.pages[0].crop_box = (10, 10, 300, 400)
+    document.pages[2].rotation = 90
+    document.pages[1].crop_box = (10, 10, 300, 400)
     buffer = io.BytesIO()
     document.save(buffer)
 
@@ -274,7 +274,7 @@ def test_bookmarks_are_created_extracted_and_deleted():
     facade.bind_pdf(io.BytesIO(_document(3)))
     first = facade.create_bookmark_of_page("Chapter 1", 1)
     second = facade.create_bookmark_of_page("Chapter 2", 2, color="#cc3300", open=True)
-    second.add(OutlineItem("Section 2.1", 1))
+    second.add(OutlineItem("Section 2.1", 2))
 
     assert [item.title for item in facade.extract_bookmarks()] == [
         "Chapter 1",
@@ -285,10 +285,10 @@ def test_bookmarks_are_created_extracted_and_deleted():
         "Chapter 2",
         "Section 2.1",
     ]
-    assert first.page_index == 0  # 1-based in, 0-based on the item
+    assert first.page_index == 1  # 1-based in, 0-based on the item
     reloaded = Document(io.BytesIO(_saved(facade)))
     titles = [(item.title, item.page_index, item.open) for item in reloaded.outlines]
-    assert titles == [("Chapter 1", 0, False), ("Chapter 2", 1, True)]
+    assert titles == [("Chapter 1", 1, False), ("Chapter 2", 2, True)]
     assert reloaded.outlines[1].color == pytest.approx((0.8, 0.2, 0.0))
 
 
@@ -296,7 +296,7 @@ def test_bookmarks_are_created_in_bulk():
     facade = PdfBookmarkEditor()
     facade.bind_pdf(io.BytesIO(_document(3)))
     created = facade.create_bookmarks([("One", 1), ("Two", 2), ("Three", 3)])
-    assert [item.page_index for item in created] == [0, 1, 2]
+    assert [item.page_index for item in created] == [1, 2, 3]
     assert len(facade.extract_bookmarks()) == 3
 
 
@@ -352,7 +352,7 @@ def test_annotations_are_given_appearances_and_flattened():
     assert facade.generate_appearances() == 4
     assert facade.flatten_annotations() is True
     reloaded = Document(io.BytesIO(_saved(facade)))
-    assert len(reloaded.pages[0].annotations) == 0
+    assert len(reloaded.pages[1].annotations) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -367,11 +367,11 @@ def test_a_header_a_footer_and_a_page_number():
     assert facade.add_footer("Confidential") is True
     assert facade.add_page_number("{page} of {total}") is True
     reloaded = Document(io.BytesIO(_saved(facade)))
-    first = reloaded.pages[0].extract_text()
+    first = reloaded.pages[1].extract_text()
     assert "ACME CORP" in first
     assert "Confidential" in first
     assert "1 of 2" in first
-    assert "2 of 2" in reloaded.pages[1].extract_text()
+    assert "2 of 2" in reloaded.pages[2].extract_text()
 
 
 def test_a_header_sits_above_a_footer():
@@ -379,7 +379,7 @@ def test_a_header_sits_above_a_footer():
     facade.bind_pdf(io.BytesIO(_document(1)))
     facade.add_header("TOP")
     facade.add_footer("BOTTOM")
-    page = Document(io.BytesIO(_saved(facade))).pages[0]
+    page = Document(io.BytesIO(_saved(facade))).pages[1]
     # The extractor reads a page top-down, so the header comes first.
     text = page.extract_text()
     assert text.index("TOP") < text.index("BOTTOM")
@@ -390,9 +390,9 @@ def test_any_stamp_goes_on_through_the_facade():
     facade.bind_pdf(io.BytesIO(_document(3)))
     assert facade.add_stamp(TextStamp("DRAFT", font_size=40, opacity=0.2), [1, 3]) is True
     reloaded = Document(io.BytesIO(_saved(facade)))
-    assert "DRAFT" in reloaded.pages[0].extract_text()
-    assert "DRAFT" not in reloaded.pages[1].extract_text()
-    assert "DRAFT" in reloaded.pages[2].extract_text()
+    assert "DRAFT" in reloaded.pages[1].extract_text()
+    assert "DRAFT" not in reloaded.pages[2].extract_text()
+    assert "DRAFT" in reloaded.pages[3].extract_text()
 
 
 def test_a_stamp_on_a_page_that_is_not_there_is_a_failure():
@@ -419,8 +419,8 @@ def test_pages_are_rotated_resized_and_cropped():
 
     reloaded = Document(io.BytesIO(_saved(facade)))
     assert [page.rotation for page in reloaded.pages] == [180, 90, 0]
-    assert reloaded.pages[2].size == PageSize.A4
-    assert tuple(reloaded.pages[2].crop_box) == (10.0, 10.0, 300.0, 400.0)
+    assert reloaded.pages[3].size == PageSize.A4
+    assert tuple(reloaded.pages[3].crop_box) == (10.0, 10.0, 300.0, 400.0)
 
 
 def test_a_rotation_can_be_set_rather_than_added():
@@ -428,7 +428,7 @@ def test_a_rotation_can_be_set_rather_than_added():
     facade.bind_pdf(io.BytesIO(_document(1)))
     facade.rotate(90)
     facade.rotate(270, relative=False)
-    assert Document(io.BytesIO(_saved(facade))).pages[0].rotation == 270
+    assert Document(io.BytesIO(_saved(facade))).pages[1].rotation == 270
 
 
 @pytest.mark.parametrize(

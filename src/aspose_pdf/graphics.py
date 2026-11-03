@@ -73,8 +73,8 @@ class GraphicElement:
 
     @property
     def page_index(self) -> int:
-        """Zero-based index of the page this element was found on."""
-        return self._element.page_index
+        """One-based number of the page this element was found on."""
+        return self._element.page_index + 1
 
     @property
     def resource_name(self) -> str | None:
@@ -193,7 +193,7 @@ class GraphicsAbsorber:
     ::
 
         absorber = GraphicsAbsorber()
-        absorber.visit(document.pages[0])
+        absorber.visit(document.pages[1])
         for element in absorber.elements:
             print(element.kind, element.rectangle.width)
     """

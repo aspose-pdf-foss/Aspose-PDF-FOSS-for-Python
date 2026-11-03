@@ -46,7 +46,7 @@ def _saved(document):
 def document():
     with Document() as document:
         document.pages.add(size=(200, 200)).add_text("Original text", 10, 100)
-        document.pages[0].annotations.add_text((1, 2, 10, 20), "Existing")
+        document.pages[1].annotations.add_text((1, 2, 10, 20), "Existing")
         document.pages.add(size=(200, 200)).add_text("Second page", 10, 100)
         yield document
 
@@ -82,7 +82,7 @@ def test_input_forms_append_without_replacing_existing_annotations(
     document.save(destination)
     for source in (destination, _saved(document)):
         with Document(source) as reopened:
-            notes = reopened.pages[0].annotations
+            notes = reopened.pages[1].annotations
             assert [note.contents for note in notes] == ["Existing", "Review", "Review"]
             assert notes[1].rect == (1, 2, 30, 40)
             assert notes[1].title == "Reviewer"
@@ -156,7 +156,7 @@ def test_export_import_export_preserves_supported_review_data_and_threads(tmp_pa
         target.pages.add()
         assert target.import_annotations_xfdf(data) == expected_count
         assert target.export_annotations_xfdf() == data
-        notes = target.pages[0].annotations
+        notes = target.pages[1].annotations
         by_name = {annotation.get_property("NM"): annotation for annotation in notes}
         assert by_name["reply"].in_reply_to.get_property("NM") == "note"
         assert by_name["nested"].in_reply_to.get_property("NM") == "reply"
@@ -168,19 +168,19 @@ def test_export_import_export_preserves_supported_review_data_and_threads(tmp_pa
         with Document(source) as reopened:
             assert reopened.export_annotations_xfdf() == data
             free_text = next(
-                a for a in reopened.pages[0].annotations if a.subtype == "FreeText"
+                a for a in reopened.pages[1].annotations if a.subtype == "FreeText"
             )
             assert free_text.get_property("Rotate") == 90
             assert free_text.get_property("Q") == 2
 
 
 def test_json_annotation_exchange_also_preserves_rotation(document):
-    document.pages[0].annotations.add_free_text(
+    document.pages[1].annotations.add_free_text(
         (10, 20, 100, 50), "Rotated", properties={"Rotate": 90}
     )
-    data = document.pages[0].annotations.export_json()
-    assert document.pages[1].annotations.import_json(data) == 2
-    assert document.pages[1].annotations[1].get_property("Rotate") == 90
+    data = document.pages[1].annotations.export_json()
+    assert document.pages[2].annotations.import_json(data) == 2
+    assert document.pages[2].annotations[1].get_property("Rotate") == 90
 
 
 def test_page_mapping_and_page_api_keep_unrotated_geometry(document):
@@ -188,17 +188,17 @@ def test_page_mapping_and_page_api_keep_unrotated_geometry(document):
         _note(page="7", name="first")
         + _note(page="8", name="reply", inreplyto="first", replyType="Group")
     )
-    assert document.import_annotations_xfdf(data, page_map={7: 1, 8: 0}) == 2
-    reply = document.pages[0].annotations[1]
+    assert document.import_annotations_xfdf(data, page_map={8: 2, 9: 1}) == 2
+    reply = document.pages[1].annotations[1]
     rows = json.loads(document.export_annotations_json())["annotations"]
     by_name = {row["properties"].get("NM"): row for row in rows}
     assert by_name["reply"]["links"]["in_reply_to"] == by_name["first"]["id"]
     assert reply.get_property("RT") == Name("Group")
-    assert document.pages[1].annotations.import_xfdf(_xfdf(_note(page="25"))) == 1
-    assert document.pages[1].annotations[1].rect == (1, 2, 30, 40)
+    assert document.pages[2].annotations.import_xfdf(_xfdf(_note(page="25"))) == 1
+    assert document.pages[2].annotations[1].rect == (1, 2, 30, 40)
     before = document.export_annotations_json()
     with pytest.raises(PdfValidationException, match="single source page"):
-        document.pages[0].annotations.import_xfdf(data)
+        document.pages[1].annotations.import_xfdf(data)
     assert document.export_annotations_json() == before
 
 
@@ -207,11 +207,11 @@ def test_missing_names_and_external_reply_names_never_bind_to_existing_objects(
     document,
     reply_name,
 ):
-    document.pages[0].annotations[0].set_property("NM", "existing")
+    document.pages[1].annotations[0].set_property("NM", "existing")
     data = _xfdf(_note() + _note(name="reply", inreplyto=reply_name))
     assert document.import_annotations_xfdf(data) == 2
-    assert document.pages[0].annotations[1].get_property("NM") is None
-    assert document.pages[0].annotations[2].in_reply_to is None
+    assert document.pages[1].annotations[1].get_property("NM") is None
+    assert document.pages[1].annotations[2].in_reply_to is None
 
 
 def test_forward_replies_and_implicit_popup_page_are_supported(document):
@@ -220,7 +220,7 @@ def test_forward_replies_and_implicit_popup_page_are_supported(document):
         + '<text page="0" rect="1,2,30,40" name="parent"><popup rect="5,6,50,60" name="popup" open="yes"/></text>'
     )
     assert document.import_annotations_xfdf(data) == 3
-    reply, parent, popup = list(document.pages[0].annotations)[1:]
+    reply, parent, popup = list(document.pages[1].annotations)[1:]
     assert reply.in_reply_to.get_property("NM") == "parent"
     assert parent.popup.get_property("NM") == "popup"
     assert popup.parent_annotation.get_property("NM") == "parent"
@@ -284,7 +284,7 @@ def test_geometry_and_styles_map_to_pdf_properties(
         f'<{subtype} page="0" rect="1,2,30,40" {attributes}>{children}</{subtype}>'
     )
     assert document.import_annotations_xfdf(data) == 1
-    assert document.pages[0].annotations[-1].get_property(property_name) == expected
+    assert document.pages[1].annotations[-1].get_property(property_name) == expected
 
 
 @pytest.mark.parametrize(
@@ -421,17 +421,17 @@ def test_input_xml_text_and_nesting_limits_leave_annotations_unchanged(changes):
         )
         with pytest.raises(PdfResourceLimitException):
             document.import_annotations_xfdf(data)
-        assert len(document.pages[0].annotations) == 0
+        assert len(document.pages[1].annotations) == 0
 
 
 def test_imported_redact_markup_preserves_page_content(document):
-    before = document.pages[0].content
+    before = document.pages[1].content
     assert (
         document.import_annotations_xfdf(_xfdf('<redact page="0" rect="0,0,200,200"/>'))
         == 1
     )
-    assert document.pages[0].content == before
-    assert "Original text" in document.pages[0].extract_text()
+    assert document.pages[1].content == before
+    assert "Original text" in document.pages[1].extract_text()
 
 
 def test_imported_highlight_can_generate_visible_appearance():
@@ -465,15 +465,15 @@ def test_streaming_encrypted_import_does_not_decode_content_or_appearances(
             assert streamed.import_annotations_xfdf(_xfdf(_note(page="1"))) == 1
         data = _saved(streamed)
     with Document(data, password="user") as reopened:
-        assert reopened.pages[1].annotations[0].contents == "Review"
-        assert "Second page" in reopened.pages[1].extract_text()
+        assert reopened.pages[2].annotations[0].contents == "Review"
+        assert "Second page" in reopened.pages[2].extract_text()
     assert path.read_bytes() == original
 
 
 def test_empty_input_and_disposed_apis(document):
     assert document.import_annotations_xfdf(_xfdf()) == 0
-    assert document.pages[0].annotations.import_xfdf(_xfdf()) == 0
-    collection = document.pages[0].annotations
+    assert document.pages[1].annotations.import_xfdf(_xfdf()) == 0
+    collection = document.pages[1].annotations
     document.dispose()
     with pytest.raises(AsposePdfException, match="disposed"):
         document.import_annotations_xfdf(_xfdf())
@@ -487,7 +487,7 @@ def test_prefixed_namespace_is_accepted(document):
         "<x:contents>Review &amp; verify</x:contents></x:text></x:annots></x:xfdf>"
     ).encode()
     assert document.import_annotations_xfdf(data) == 1
-    assert document.pages[0].annotations[-1].contents == "Review & verify"
+    assert document.pages[1].annotations[-1].contents == "Review & verify"
 
 
 def test_empty_document_does_not_create_pages_for_import():
@@ -532,7 +532,7 @@ def test_large_coordinate_arrays_are_bounded_before_attachment():
         data = _xfdf(f'<highlight page="0" rect="1,2,3,4" coords="{coordinates}"/>')
         with pytest.raises(PdfResourceLimitException, match="max_container_items"):
             document.import_annotations_xfdf(data)
-        assert len(document.pages[0].annotations) == 0
+        assert len(document.pages[1].annotations) == 0
 
 
 def test_xml_text_size_limit_applies_across_parser_chunks():
@@ -546,7 +546,7 @@ def test_xml_text_size_limit_applies_across_parser_chunks():
         )
         with pytest.raises(PdfResourceLimitException, match="max_object_bytes"):
             document.import_annotations_xfdf(data)
-        assert len(document.pages[0].annotations) == 0
+        assert len(document.pages[1].annotations) == 0
 
 
 def test_imported_threads_survive_incremental_save_without_changing_original_bytes(
@@ -561,6 +561,6 @@ def test_imported_threads_survive_incremental_save_without_changing_original_byt
             result = output.getvalue()
     assert result.startswith(original)
     with Document(result) as reopened:
-        note, reply = list(reopened.pages[0].annotations)[1:]
+        note, reply = list(reopened.pages[1].annotations)[1:]
         assert reply.in_reply_to.get_property("NM") == note.get_property("NM")
-        assert "Original text" in reopened.pages[0].extract_text()
+        assert "Original text" in reopened.pages[1].extract_text()

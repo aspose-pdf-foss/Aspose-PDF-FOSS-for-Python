@@ -82,7 +82,7 @@ def _assert_intact(original: bytes, updated: bytes) -> None:
     assert new and min(new) > max(before), f"new objects {sorted(new)} against {max(before)}"
     document = Document(io.BytesIO(updated))
     assert len(document.pages) == 1
-    assert document.pages[0].extract_text().strip() == "Signed body"
+    assert document.pages[1].extract_text().strip() == "Signed body"
 
 
 @pytest.fixture(scope="module")
