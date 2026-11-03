@@ -786,8 +786,28 @@ Supported:
   the bookmark tree: each heading on a line of its own, indented by level, with
   dot leaders, the page it is on, and a link landing on the heading itself (an
   `/XYZ` at its coordinates, or the page alone where its place cannot be told).
-  It returns the indexes of the pages it inserted, and inserts **nothing** for a
+  It returns the page numbers it inserted, and inserts **nothing** for a
   document with no headings.
+  - `source="bookmarks"` builds entries from the current bookmark tree,
+    including documents with no searchable heading text. Local targets appear
+    in bookmark tree order, with indentation by original nesting depth and
+    filtering through `max_level` (1 to 6, default 3). Closed branches are
+    included. Multiple bookmarks on one page remain separate entries.
+    `source="headings"` is the default, with `prefer_structure` controlling
+    heading detection in that mode.
+  - Bookmark entries support direct local destinations, GoTo actions and
+    current named destination definitions. External actions, targetless
+    folders and unresolved targets are skipped. Local children remain eligible
+    at their original depth. Each contents entry links to its bookmark's page
+    with a page-width view. Existing bookmark views, styles and live object
+    handles follow their original pages through insertion. Unsaved title and
+    target edits are included. No usable entries returns `[]`.
+  - Bookmark discovery reads navigation metadata without extracting source
+    page text or rendering scans. Tree cycles, depth, item counts and title
+    sizes are checked before insertion. Retained title bytes and the resulting
+    page count obey `PdfLoadLimits`. Page labels and current page
+    identities are resolved before drawing. Layout, Standard-14 font encoding,
+    truncation and tagging follow the existing contents renderer.
   - **The page numbers include the contents itself.** Inserting it pushes every
     page it points at further back, so the numbers cannot be read off the
     document as it stands; they are not circular either, since the number of
@@ -802,14 +822,14 @@ Supported:
     than run under its own page number; the leader dots are right-aligned
     against the numbers so they line up down the page; the sheet defaults to
     the size of the page the contents goes in front of.
-  - `title`, `max_level`, `prefer_structure`, `at`, `size`, `margin`,
+  - `title`, `max_level`, `prefer_structure`, `source`, `at`, `size`, `margin`,
     `font_name`, `title_size`, `entry_size`, `indent`, `leader`, `links`,
     `page_numbers` and `tag` adjust it. `tag=True` marks the entries `/TOCI`
     **inside a `/TOC`** (table 333), since a row of `TOCI` at the root of the
     tree is not a table of contents.
   - It **inserts**, it does not replace: calling it twice puts a second
     contents in front of the first.
-  - Checked with qpdf: every link resolves to exactly the page its line prints,
+  - Heading-based contents were checked with qpdf. Every link resolves to the page its line prints,
     as an `/XYZ` at the heading's own coordinates, and `--check` is clean.
 - **Named destinations** (12.3.2.3) through `Document.destinations`, a mapping of
   name to destination. Both places a PDF keeps them are read -- the

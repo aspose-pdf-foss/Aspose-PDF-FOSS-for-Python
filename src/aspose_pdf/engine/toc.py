@@ -1,4 +1,4 @@
-"""Build a table of contents page from the document's own headings.
+"""Build a table of contents page from document headings or existing bookmarks.
 
 :mod:`~aspose_pdf.engine.headings` already answers *what the headings are and
 where*, which is what a bookmark tree is made of. A contents **page** is the
@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from aspose_pdf.exceptions import PDF_OPERATION_ERRORS
+from aspose_pdf.exceptions import PDF_OPERATION_ERRORS, PdfValidationException
 
 from .headings import Heading, find_headings
 
@@ -61,6 +61,7 @@ class Plan:
     first_page_lines: int
     other_page_lines: int
     size: tuple[float, float]
+    bookmarks: list[dict] | None = None
 
 
 def plan(
@@ -68,6 +69,8 @@ def plan(
     *,
     max_level: int = 3,
     prefer_structure: bool = True,
+    source: str = "headings",
+    outlines: list | None = None,
     at: int = 0,
     size: tuple[float, float] | None = None,
     margin: float = 72.0,
@@ -81,9 +84,35 @@ def plan(
     back to :func:`draw`, which is what keeps the page numbers right: they can
     only be known once the pages that shift them exist.
     """
-    headings = tuple(
-        find_headings(pdf, max_level=max_level, prefer_structure=prefer_structure)
-    )
+    if source not in ("headings", "bookmarks"):
+        raise PdfValidationException("source must be 'headings' or 'bookmarks'")
+    bookmarks = None
+    if source == "bookmarks":
+        from .bookmark_split import _snapshot
+
+        roots = pdf._outlines_data if outlines is None else outlines
+        bookmarks, _starts = _snapshot(pdf, roots, 1)
+        level_cap = max(1, min(int(max_level), 6))
+        selected = []
+        retained = 0
+        stack = [(item, 1) for item in reversed(bookmarks)]
+        while stack:
+            item, level = stack.pop()
+            if item["page_index"] is not None:
+                retained += len(item["title"].encode("utf-8"))
+                pdf._load_budget.check(
+                    retained, "max_total_decoded_bytes", "bookmark contents titles"
+                )
+                selected.append(
+                    Heading(level, item["title"], item["page_index"], None, None, "bookmarks")
+                )
+            if level < level_cap:
+                stack.extend((child, level + 1) for child in reversed(item["children"]))
+        headings = tuple(selected)
+    else:
+        headings = tuple(
+            find_headings(pdf, max_level=max_level, prefer_structure=prefer_structure)
+        )
     sheet = size or _sheet_of(pdf, at)
     usable = max(0.0, sheet[1] - 2.0 * margin)
     line = entry_size * LINE_HEIGHT
@@ -92,10 +121,13 @@ def plan(
     title_block = (title_size * LINE_HEIGHT * 2.0) if title else 0.0
     first = max(1, int(max(0.0, usable - title_block) // line)) if line > 0 else 1
     if not headings:
-        return Plan(headings, 0, first, other, sheet)
+        return Plan(headings, 0, first, other, sheet, bookmarks)
     remaining = len(headings) - first
     pages = 1 + (0 if remaining <= 0 else -(-remaining // other))
-    return Plan(headings, pages, first, other, sheet)
+    if bookmarks is not None:
+        pdf._load_budget.check_pages(len(pdf.pages) + pages)
+        pdf.page_label_ranges()
+    return Plan(headings, pages, first, other, sheet, bookmarks)
 
 
 def entries_for(pdf: Any, planned: Plan, *, at: int) -> list[Entry]:
@@ -358,6 +390,8 @@ def build(
     title: str | None = "Contents",
     max_level: int = 3,
     prefer_structure: bool = True,
+    source: str = "headings",
+    outlines: list | None = None,
     at: int = 0,
     size: tuple[float, float] | None = None,
     margin: float = 72.0,
@@ -375,6 +409,8 @@ def build(
         pdf,
         max_level=max_level,
         prefer_structure=prefer_structure,
+        source=source,
+        outlines=outlines,
         at=at,
         size=size,
         margin=margin,
@@ -386,6 +422,26 @@ def build(
         return []
     for offset in range(planned.page_count):
         document.pages.insert((at + offset) + 1, size=planned.size)
+    if planned.bookmarks is not None:
+        from .text_split import _refresh_targets
+
+        pending = list(planned.bookmarks)
+        while pending:
+            item = pending.pop()
+            index = item["page_index"]
+            if index is not None and index >= at:
+                item["page_index"] = index + planned.page_count
+            pending.extend(item["children"])
+        pdf._outlines_data = planned.bookmarks
+        _refresh_targets(pdf)
+        if document._outlines is not None:
+            live = list(zip(document._outlines._items, planned.bookmarks, strict=True))
+            while live:
+                item, entry = live.pop()
+                item._page_index = entry["page_index"]
+                item._destination = entry.get("target")
+                item._loaded_target = entry.get("loaded_target")
+                live.extend(zip(item.children, entry["children"], strict=True))
     entries = entries_for(pdf, planned, at=at)
     draw(
         pdf,

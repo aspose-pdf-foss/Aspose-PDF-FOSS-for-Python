@@ -587,11 +587,17 @@ with Document("report-sealed.pdf", certificate=auditor, private_key=key) as doc:
 from aspose_pdf import Document
 
 with Document("report.pdf") as document:
-    pages = document.add_table_of_contents(at=1)   # after the cover
-    document.generate_outlines()                   # and bookmarks from the same headings
-    print(f"contents on page {pages[1] + 1}")
+    pages = document.add_table_of_contents(source="bookmarks", at=2)
+    if pages:
+        print(f"contents on page {pages[0]}")
     document.save("report-with-contents.pdf")
 ```
+
+Use `source="bookmarks"` to build contents from an existing bookmark tree,
+including manually bookmarked scans. Entries keep tree order and nesting and
+link to the corresponding pages. Current named destinations and unsaved edits
+are included. Page numbers and labels account for the inserted contents pages.
+The default `source="headings"` uses tagged or inferred page headings.
 
 ### Create Bookmarks from Section Numbers or Invoice Labels
 
@@ -1922,7 +1928,7 @@ and delete workflows. 276 public types are organized by module below.
     `change_passwords(old_password, new_user_password, new_owner_password) -> Document`
   - `validate() -> bool` / `check() -> bool` / `repair() -> Document`
   - `validate_pdfa(level) -> PdfAValidationResult` / `convert_to_pdfa(level, font_lookup_directory) -> list[str]`
-  - `add_table_of_contents(title, max_level, prefer_structure, at, size, margin, font_name, title_size, entry_size, indent, leader, links, page_numbers, tag) -> list[int]`
+  - `add_table_of_contents(title, max_level, prefer_structure, source="headings", at, size, margin, font_name, title_size, entry_size, indent, leader, links, page_numbers, tag) -> list[int]`
   - `sanitize(metadata, javascript, attachments, hidden_layers, comments, links, forms) -> SanitizationReport`
   - `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, text, overwrite) -> list[Path]`
   - `fonts -> list[DocumentFont]` (name, subtype, encoding, embedded, program size, pages)

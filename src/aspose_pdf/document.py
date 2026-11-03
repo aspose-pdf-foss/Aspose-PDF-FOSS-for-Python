@@ -4222,6 +4222,7 @@ class Document:
         title: str | None = "Contents",
         max_level: int = 3,
         prefer_structure: bool = True,
+        source: str = "headings",
         at: int = 1,
         size: Any = None,
         margin: float = 72.0,
@@ -4236,12 +4237,14 @@ class Document:
     ) -> list[int]:
         """Put a contents page in front of the document, and return its pages.
 
-        The headings come from the same reading :meth:`generate_outlines` does
-        -- the structure tree where the document has one, the size tiers where
-        it does not -- so a contents page and a bookmark tree say the same
-        thing. Each line is the heading, dot leaders, the page it is on, and a
-        link that lands on the heading itself rather than on the top of its
-        sheet::
+        Default entries use the same heading detection as
+        :meth:`generate_outlines`, reading tagged structure or inferred size
+        tiers. ``source="bookmarks"`` uses the existing bookmark tree. Each
+        line shows a title, dot leaders, a page number and a clickable link.
+        Heading links land at the heading's coordinates when available.
+        Bookmark links fit the target page's width.
+
+        Example::
 
             with Document("report.pdf") as document:
                 document.add_table_of_contents()
@@ -4256,15 +4259,22 @@ class Document:
 
         Parameters
         ----------
+        source : str
+            ``"headings"`` reads tagged or inferred headings by default.
+            ``"bookmarks"`` lists existing local bookmark targets in tree order,
+            indented by nesting level. It reads current named destinations and
+            unsaved bookmark edits. Each entry links to its bookmark's page.
+            External actions and unresolved targets are skipped, while their
+            local children can still be listed within ``max_level``.
         title : str, optional
             The heading over the list. ``None`` writes none.
         max_level : int
-            Ignore headings deeper than this (1 to 6).
+            Ignore headings or bookmark levels deeper than this (1 to 6).
         prefer_structure : bool
             Read the structure tree when it has headings in it, as
-            :meth:`generate_outlines` describes.
+            :meth:`generate_outlines` describes. Applies to ``source="headings"``.
         at : int
-            Where the contents goes. ``0`` is in front of everything; ``1``
+            Where the contents goes. ``1`` is in front of everything; ``2``
             puts it after a cover page.
         size : PageSize, str or (width, height), optional
             The sheet to make it on. Defaults to the size of the page it goes
@@ -4291,9 +4301,8 @@ class Document:
         Returns
         -------
         list[int]
-            The indexes of the pages inserted, in order. **Empty** when the
-            document has no headings to list -- nothing is inserted, because a
-            contents page listing nothing is not worth a sheet of paper.
+            The one-based numbers of the inserted pages, in order. Empty when
+            the selected source has no usable entries.
 
         Raises
         ------
@@ -4326,13 +4335,16 @@ class Document:
             chosen = _coerce_page_size(size)
             sheet = (float(chosen.width), float(chosen.height))
 
-        self._flush_outlines()
+        if source == "headings":
+            self._flush_outlines()
         pages = build(
             self._engine_pdf,
             self,
             title=title,
             max_level=max_level,
             prefer_structure=prefer_structure,
+            source=source,
+            outlines=None if self._outlines is None else self._outlines._items,
             at=at,
             size=sheet,
             margin=float(margin),
