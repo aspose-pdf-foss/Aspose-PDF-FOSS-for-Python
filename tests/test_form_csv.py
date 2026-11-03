@@ -306,12 +306,12 @@ def test_csv_input_records_cells_and_text_obey_resource_limits(data, limit):
 
 
 def test_csv_wide_rows_are_bounded_before_the_csv_reader_allocates_them(monkeypatch):
-    from aspose_pdf.engine import form_csv
+    from aspose_pdf.engine import csv_import
 
     def fail_reader(*args, **kwargs):
         raise AssertionError("CSV parser must not run before container limits")
 
-    monkeypatch.setattr(form_csv.csv, "reader", fail_reader)
+    monkeypatch.setattr(csv_import.csv, "reader", fail_reader)
     limits = replace(PdfLoadLimits.unlimited(), max_container_items=8)
     with pytest.raises(PdfResourceLimitException, match="max_container_items"):
         FormFillerOptions.from_csv(b"," * 100 + b"\n", limits=limits)

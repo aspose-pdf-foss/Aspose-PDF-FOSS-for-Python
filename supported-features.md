@@ -2007,6 +2007,30 @@ Supported:
   optional dependency: the Standard-14 advances of `engine.std_metrics` and an
   embedded font's CID widths, so a column's text is wrapped to **what it will
   occupy** rather than to a guess.
+  - `Table.from_csv(source, encoding="utf-8-sig", delimiter=",", header=True,
+    limits=None, **options)` builds an editable table from a path, bytes,
+    bytearray or readable binary stream. Streams are read from their current
+    position and left open. The default codec accepts UTF-8 with or without a
+    BOM. Choose a text encoding and a single-character delimiter explicitly
+    for other formats. No additional dependency is required.
+  - The first nonblank CSV record is retained as a header row by default.
+    `header=False` retains it as ordinary data. Blank or duplicate header
+    values are allowed, and `repeat_header=False` disables repetition when
+    placed. Blank records are skipped. Empty cells, surrounding spaces,
+    leading zeros, formula-like text, quoted delimiters, escaped quotes and
+    embedded line breaks are preserved as strings. Numbers, dates and booleans
+    are not inferred. Other keyword arguments are `Table` constructor options
+    such as widths, automatic column sizing, fonts, colors and borders. The
+    `rows` argument is reserved for imported CSV data. Place the result with
+    `Page.add_table()` to wrap, tag and paginate it through the existing layout.
+  - CSV import finishes before returning a table. Empty input, unequal row
+    widths, invalid encoding and malformed CSV raise `PdfValidationException`.
+    Options are checked before input is read. `PdfLoadLimits` bounds input
+    bytes, rows plus cells, per-cell PDF-string size and total decoded text.
+    Wide CSV records are checked before the standard parser allocates their
+    cell lists. The process-wide `csv.field_size_limit()` is honored and left
+    unchanged. These limits apply to import, while placement uses the target
+    document's resource policy and existing table/font limitations.
   - `column_widths` are points and decide the table's width; without them
     `columns` (or the widest row) splits `width`, or the room left on the page,
     into equal columns. A cell may span columns.

@@ -724,6 +724,22 @@ with Document() as document:
     document.save("invoice.pdf")
 ```
 
+Build a table directly from CSV, using its first record as a repeated header.
+
+```python
+from aspose_pdf import Document, Table
+
+table = Table.from_csv("items.csv", width=420, auto_column_widths=True)
+with Document() as document:
+    document.pages.add().add_table(table, 60, 760)
+    document.save("items.pdf")
+```
+
+Pass `header=False` when the CSV starts with data. Bytes, bytearrays and readable
+binary streams also work. Cells keep their original strings, including leading
+zeros and empty values. Set `encoding=` or `delimiter=` for other CSV formats.
+See [table import details](supported-features.md#pages) for limits and validation.
+
 Set `border_widths={"bottom": 1.5}` or `border_colors={"bottom": "#003366"}`
 on a `Table`, `Row` or `Cell` to style individual sides (`top`, `right`,
 `bottom`, `left`). Width `0` or a side color of `None` hides that side.

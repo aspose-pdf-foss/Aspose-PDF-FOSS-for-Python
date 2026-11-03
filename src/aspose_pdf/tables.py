@@ -26,10 +26,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, BinaryIO
 
 from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.interactive import Action, Destination
+from aspose_pdf.load_limits import PdfLoadLimits
 
 __all__ = ["Cell", "Row", "Table"]
 
@@ -299,6 +301,47 @@ class Table:
         )
 
     # -- building ----------------------------------------------------------
+
+    @classmethod
+    def from_csv(
+        cls,
+        source: str | Path | bytes | bytearray | BinaryIO,
+        *,
+        encoding: str = "utf-8-sig",
+        delimiter: str = ",",
+        header: bool = True,
+        limits: PdfLoadLimits | None = None,
+        **options: Any,
+    ) -> Table:
+        """Build an editable table from a CSV path, bytes or binary stream.
+
+        The first nonblank record is a header by default. ``header=False``
+        keeps it as an ordinary row. All cells remain exact strings, including
+        leading zeros, whitespace, empty cells, quotes and embedded newlines.
+        Blank or repeated header values are allowed. Blank records are skipped.
+        Empty input, unequal row widths and malformed CSV are refused.
+
+        ``options`` are Table constructor settings, including column widths,
+        fonts, colors and ``repeat_header``. Rows come only from the CSV.
+        Binary streams are read from their current position and left open.
+        Parsing finishes before returning and obeys ``limits``. Place the
+        result with ``Page.add_table()`` to wrap and paginate its rows.
+        """
+        from aspose_pdf.engine.csv_import import read_rows, validate_options
+        from aspose_pdf.load_limits import _LoadBudget
+
+        if not isinstance(header, bool):
+            raise TypeError("header must be a boolean")
+        budget = _LoadBudget(limits)
+        validate_options(encoding, delimiter)
+        table = cls(rows=[], **options)
+        for _line_number, row in read_rows(
+            source, encoding=encoding, delimiter=delimiter, budget=budget
+        ):
+            table.add_row(row, header=header and not table.rows)
+        if not table.rows:
+            raise PdfValidationException("CSV source must contain at least one row")
+        return table
 
     def add_row(
         self,
