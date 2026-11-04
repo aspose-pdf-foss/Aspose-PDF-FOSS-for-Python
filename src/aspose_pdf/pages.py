@@ -633,6 +633,26 @@ class Page:
             pages=[self.number], clip=clip, skip_artifacts=skip_artifacts
         )
 
+    def export_words_json(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export this page's words with their original one-based page number.
+
+        See :meth:`Document.export_words_json` for the schema and output policy.
+        """
+        return self._document.export_words_json(
+            destination,
+            pages=[self.number],
+            clip=clip,
+            skip_artifacts=skip_artifacts,
+            overwrite=overwrite,
+        )
+
     def add_text(
         self,
         text: str,

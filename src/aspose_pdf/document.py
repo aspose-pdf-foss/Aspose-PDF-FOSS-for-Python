@@ -4959,6 +4959,56 @@ class Document:
             self, pages=pages, clip=clip, skip_artifacts=skip_artifacts
         )
 
+    @page_api(selections=("pages",))
+    def export_words_json(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return positioned words as versioned UTF-8 JSON, optionally writing it.
+
+        Schema version 1 contains ``schema_version`` and a flat ``words`` list.
+        Each record has ``text``, the original one-based ``page_index``,
+        ``rect=[x0, y0, x1, y1]`` and four ``quad`` points. Coordinates are PDF
+        points in unrotated user space with a lower-left origin. Selection,
+        ordering, clipping and positioning limits follow :meth:`extract_words`.
+        Empty documents or selections produce an empty words list.
+
+        All options and page numbers are validated before decoding content.
+        Streaming inputs decode only selected pages and invoked forms; no
+        rendering or OCR occurs. Words and the complete JSON are held in
+        memory. Escaping is chunked, and encoded output obeys codec-work,
+        decoded-stream and total-decoded byte limits in ``PdfLoadLimits``.
+
+        JSON is completed before output is touched. Paths are written atomically
+        with parent directories created; ``overwrite=False`` refuses existing
+        files. Binary streams retry short writes at their current position and
+        remain open. Write failures can leave partial stream output. The PDF
+        remains unchanged; the returned bytes equal the written payload.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.word_export import to_json
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        words = self._api_extract_words(
+            pages=pages, clip=clip, skip_artifacts=skip_artifacts
+        )
+        data = to_json(words, _LoadBudget(self.load_limits))
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def _choose_incremental(self, requested: bool | None) -> bool:
         """Decide how :meth:`save` writes, honouring signatures already there.
 
@@ -6552,6 +6602,7 @@ class Document:
     _api_iter_text_pages = iter_text_pages.__wrapped__
     _api_save_as_text = save_as_text.__wrapped__
     _api_extract_words = extract_words.__wrapped__
+    _api_export_words_json = export_words_json.__wrapped__
     _api_get_content_bounds = get_content_bounds.__wrapped__
     _api_auto_crop = auto_crop.__wrapped__
     _api_find_blank_pages = find_blank_pages.__wrapped__

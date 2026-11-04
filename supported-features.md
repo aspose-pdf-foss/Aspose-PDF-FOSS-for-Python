@@ -3485,6 +3485,39 @@ Supported:
     nonnegative integer page index, four finite quad points and a matching
     finite bounding rectangle. Extraction does not alter page data, forms,
     metadata, protection or source files. No extra dependency is required.
+- **Export word positions as JSON.**
+  `Document.export_words_json(destination=None, pages=None, clip=None,
+  skip_artifacts=False, overwrite=True)` and `Page.export_words_json(...)`
+  return versioned UTF-8 bytes for search indexes, region analysis and
+  annotation tools, optionally writing a path or binary stream.
+  - Schema version 1 is `{"schema_version":1,"words":[...]}`. Each word has
+    `text`, its original one-based `page_index`, `rect=[x0,y0,x1,y1]` and
+    `quad=[[x,y],[x,y],[x,y],[x,y]]`. Coordinates are unchanged PDF points in
+    unrotated user space with a lower-left origin. Quad point order and numeric
+    precision are retained. `rect` is the axis-aligned enclosure; the `bbox`
+    alias is not duplicated in JSON. Unicode text is encoded directly as UTF-8,
+    with normal JSON escaping and a final newline.
+  - Selection, order, clipping, artifact filtering and geometry limits follow
+    `extract_words()`. Page order and repetitions are preserved. `Page` exports
+    keep their original document page number. Empty sources, pages and
+    selections produce an empty `words` array. The same conservative omissions
+    and lack of OCR apply; export does not infer new coordinates or words.
+  - All options and page selections are validated before content reads.
+    Streaming inputs decode selected page streams and invoked forms without
+    populating full-document text/content caches, rendering pages or decoding
+    images. Source data, page boxes, text cursor, protection and files stay
+    unchanged. No extra dependency is required.
+  - Extracted words and the full JSON remain in memory. Existing word extraction
+    limits apply; chunked string escaping bounds temporary encoding work.
+    Encoded JSON growth, including escaping and the schema, obeys
+    `max_codec_work_bytes`, `max_decoded_stream_bytes` and
+    `max_total_decoded_bytes` before the output buffer grows.
+  - JSON is completed before destination output starts. Paths get parent
+    directories and atomic replacement; `overwrite=False` refuses existing
+    files. Caller-owned binary streams receive bytes at their current position,
+    retry short writes and remain open. Validation, extraction and serialization
+    failures leave destinations untouched; stream write failures can leave
+    partial output. Returned bytes equal the written payload.
 - Extract text from page content streams with `PdfExtractor`, which reads each
   page **through the engine's own extractor**: content is decoded on demand,
   so a document whose pages are loaded lazily is read rather than coming back

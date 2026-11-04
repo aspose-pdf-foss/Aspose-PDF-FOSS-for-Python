@@ -1292,6 +1292,18 @@ font metrics; unmeasurable runs and content-stream `/ActualText` replacement
 spans are omitted. No OCR or language-specific word segmentation is performed.
 See [word extraction details](supported-features.md#text).
 
+Export the same word positions for search indexes or annotation tools:
+
+```python
+with Document("input.pdf") as document:
+    document.export_words_json("words.json", pages=[1, 3], skip_artifacts=True)
+    payload = document.pages[1].export_words_json()
+```
+
+The versioned UTF-8 JSON contains `text`, one-based `page_index`, `rect` and
+four-point `quad` for each word. Omit the destination to receive bytes, or pass
+a binary stream. Selection and clipping follow `extract_words()`.
+
 ### Download Split PDF Parts as One ZIP
 
 ```python
@@ -2111,6 +2123,10 @@ and delete workflows. 276 public types are organized by module below.
   `Page.extract_words(clip=None, skip_artifacts=False)` return immutable `TextWord`
   snapshots with text, page index, `rect`/`bbox` and `quad`. A region selects
   whole overlapping words in unrotated PDF coordinates.
+
+- `Document.export_words_json(destination=None, pages=None, clip=None, skip_artifacts=False, overwrite=True)` /
+  `Page.export_words_json(destination=None, clip=None, skip_artifacts=False, overwrite=True)`
+  return versioned UTF-8 word and geometry JSON, optionally writing a file or binary stream.
 
 - `Document.extract_tables(pages=None, clip_to_page=True)` / `Page.extract_tables(clip_to_page=True)`
   return `list[ExtractedTable]`; `pages` contains one-based indices. Each result exposes
