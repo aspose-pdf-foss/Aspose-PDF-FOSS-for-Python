@@ -5009,6 +5009,35 @@ Supported:
   pdfium and MuPDF do, and the specification places it) rather than from a
   separate widget (pdf.js, qpdf), and radio export values are on-state names
   (pdf.js, MuPDF) rather than `/Opt` texts (pdfium).
+- **Choose the first visible list-box option.** `Field.top_index` reads and
+  writes the zero-based `/TI` scroll position. `Form.add_list_box(...,
+  top_index=0)` sets it when creating the field. This lets long lists open at
+  a relevant section while preserving their current and default answers.
+  - Zero shows the first option. Assign an integer within the current option
+    list; booleans and other types raise `TypeError`, and negative or out-of-range
+    indices raise `PdfValidationException` before edits. Empty lists loaded from
+    another producer accept only zero. Other field types return `None` and
+    reject scroll edits, including combo boxes.
+  - Missing `/TI` reads as zero. The nearest field override is read for existing
+    field hierarchies; assigning `None` removes the local override, normally
+    restoring zero. Setting zero explicitly overrides an ancestor's position.
+    Malformed or out-of-range stored `/TI` values raise `PdfValidationException`
+    when read; assigning a valid index repairs the setting.
+  - Every widget is redrawn from the chosen first row, with its own height and
+    existing styling. Selected rows retain their highlighting when visible.
+    `/V`, `/DV` and `/I` selections, choices, flags, geometry and other fields'
+    appearances are preserved. Conflicting `/TI` entries on separate unnamed
+    widgets are cleared when setting the field's position. Filling or resetting
+    values does not automatically scroll to a selected option.
+  - Replacing options keeps a valid top index; shortening the list clamps a
+    position beyond its end to the last remaining option. Existing requirements
+    to preserve valid current/default selections still apply. Scroll positions
+    and visible rows persist through normal and supported incremental saves,
+    rendering and flattening, including streaming and password-protected sources.
+  - The existing appearance generator's font/Unicode and resource limits apply.
+    Edits requiring an unsupported embedded CID appearance rebuild raise
+    `UnsupportedFeatureException` before the scroll setting changes. No page
+    content scan or new dependency is needed.
 - **Move or resize an existing form widget** with
   `Field.set_widget_rect(rect, widget_index=0) -> Field`, or assign `Field.rect`
   to edit the first widget. Indices match `Field.widgets` and must be non-negative;
@@ -5035,7 +5064,7 @@ Supported:
   ```
 - **Edit existing field configuration** with setters for `default_value`,
   `alignment`, `max_length`, `multiline`, `password`, `comb`, `options`,
-  `multi_select` and `editable`. Changes are written on the selected field, retaining unrelated
+  `top_index`, `multi_select` and `editable`. Changes are written on the selected field, retaining unrelated
   flag bits and inherited sibling settings. Type, encoding, option and mode
   validation happens before metadata is changed. Choice/default text and option
   counts are checked against `PdfLoadLimits`.

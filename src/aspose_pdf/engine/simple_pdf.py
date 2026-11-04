@@ -91,7 +91,9 @@ from .form_fields import (
     field_attribute,
     field_quadding,
     form_value,
+    list_box_top_index,
     validate_choice_value,
+    validate_top_index,
 )
 from .image_fitting import fit_image_geometry, validate_anchor, validate_fit_box
 from .incremental_update import IncrementalUpdate
@@ -15261,6 +15263,7 @@ class SimplePdf:
         value: Any = None,
         flags: int = 0,
         options: Sequence[Any] | None = None,
+        top_index: int = 0,
         default_appearance: str | None = None,
         alignment: int = 0,
         caption: str = "",
@@ -15322,6 +15325,10 @@ class SimplePdf:
         option_cos = [self._choice_option_to_cos(item) for item in choice_options]
         if field_type in ("listbox", "combobox") and not option_cos:
             raise PdfValidationException("Choice fields require at least one option")
+        if field_type == "listbox":
+            validate_top_index(top_index, len(choice_options))
+        elif top_index != 0:
+            raise PdfValidationException("top_index applies only to listbox fields")
 
         existing = self.get_form_fields()
         if name in existing:
@@ -15375,6 +15382,8 @@ class SimplePdf:
             field_map[PdfName("Q")] = PdfNumber(alignment)
         if option_cos:
             field_map[PdfName("Opt")] = PdfArray(option_cos)
+            if field_type == "listbox":
+                field_map[PdfName("TI")] = PdfNumber(top_index)
             if field_type == "listbox" and isinstance(value, (list, tuple)):
                 export_values = [
                     item if isinstance(item, str) else item[0]
@@ -16638,6 +16647,7 @@ class SimplePdf:
                 font_size=size,
                 color_op=color,
                 quadding=q if q in (0, 1, 2) else 0,
+                top_index=list_box_top_index(self, widget, len(option_pairs)),
                 width_fn=width_fn,
             )
         else:

@@ -32,9 +32,11 @@ __all__ = [
     "field_quadding",
     "field_widgets",
     "form_value",
+    "list_box_top_index",
     "on_states",
     "text_of",
     "validate_choice_value",
+    "validate_top_index",
     "widget_dictionaries",
 ]
 
@@ -90,6 +92,32 @@ def validate_choice_value(
     if value is not None and value not in exports:
         raise PdfValidationException("List box value is not one of the options")
     return value
+
+
+def validate_top_index(value: int, option_count: int) -> int:
+    """Validate a zero-based scroll position, allowing zero for an empty list."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("top_index must be an integer")
+    maximum = min(max(0, option_count - 1), 2**31 - 1)
+    if not 0 <= value <= maximum:
+        raise PdfValidationException(f"top_index must be from 0 to {maximum}")
+    return value
+
+
+def list_box_top_index(pdf: Any, field: PdfDictionary, option_count: int) -> int:
+    """Read the nearest /TI, including a separate widget's owning field."""
+    value = field_attribute(pdf, field, "TI")
+    if value is None or isinstance(value, PdfNull):
+        return 0
+    try:
+        if not isinstance(value, PdfNumber) or isinstance(value.value, bool):
+            raise ValueError
+        index = int(value.value)
+        if index != value.value:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise PdfValidationException("List box TI must be an integer") from exc
+    return validate_top_index(index, option_count)
 
 
 def field_dictionary(pdf: Any, name: str) -> PdfDictionary | None:

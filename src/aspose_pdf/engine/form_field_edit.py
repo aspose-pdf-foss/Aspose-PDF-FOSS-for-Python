@@ -14,8 +14,10 @@ from .form_fields import (
     field_attribute,
     field_quadding,
     form_value,
+    list_box_top_index,
     on_states,
     validate_choice_value,
+    validate_top_index,
     widget_dictionaries,
 )
 
@@ -213,6 +215,19 @@ def set_parameter(
             if not 1 <= value <= 2**31 - 1:
                 raise PdfValidationException("max_length must be from 1 to 2147483647")
         changes[PdfName("MaxLen")] = None if value is None else PdfNumber(value)
+    elif parameter == "top_index":
+        if kind != "listbox":
+            raise PdfValidationException("top_index applies only to listbox fields")
+        count = len(pdf._choice_options_for_appearance(field_attribute(pdf, field, "Opt")))
+        if value is not None:
+            validate_top_index(value, count)
+        else:
+            staged = PdfDictionary(dict(field.mapping))
+            staged.mapping.pop(PdfName("TI"), None)
+            list_box_top_index(pdf, staged, count)
+        changes[PdfName("TI")] = None if value is None else PdfNumber(value)
+        for widget in widget_dictionaries(pdf, field) or [field]:
+            _check_text_appearance_font(pdf, widget)
     elif parameter == "options":
         if kind not in ("listbox", "combobox"):
             raise PdfValidationException("options applies only to choice fields")
@@ -308,6 +323,11 @@ def set_parameter(
         if parameter == "multi_select":
             default = _choice_value(pdf, field, kind, "DV", flags, exports)
             changes[PdfName("DV")] = pdf._value_to_pdf(staged, default) or PdfNull()
+        if kind == "listbox" and parameter == "options":
+            previous = pdf._choice_options_for_appearance(field_attribute(pdf, field, "Opt"))
+            first = list_box_top_index(pdf, field, len(previous))
+            if first >= len(exports):
+                changes[PdfName("TI")] = PdfNumber(len(exports) - 1)
 
     text_mode_changed = parameter in ("multiline", "password", "comb") and changes[
         PdfName("Ff")
@@ -316,6 +336,12 @@ def set_parameter(
         _check_text_appearance_font(pdf, field)
 
     widgets = []
+    if parameter == "top_index":
+        widgets = [
+            widget
+            for widget in widget_dictionaries(pdf, field)
+            if widget is not field and PdfName("T") not in widget.mapping
+        ]
     if parameter == "alignment":
         widgets = [
             widget
@@ -341,4 +367,4 @@ def set_parameter(
     if kind in ("listbox", "combobox") and PdfName("V") in changes:
         pdf._update_choice_indices(field, changes[PdfName("V")])
     for widget in widgets:
-        widget.mapping.pop(PdfName("Q"), None)
+        widget.mapping.pop(PdfName("TI" if parameter == "top_index" else "Q"), None)

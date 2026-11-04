@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from aspose_pdf._page_numbers import page_index
 from aspose_pdf.actions import FIELD_TRIGGERS, ActionCollection
-from aspose_pdf.engine.form_fields import validate_choice_value
+from aspose_pdf.engine.form_fields import validate_choice_value, validate_top_index
 from aspose_pdf.engine.form_validation import FormValidationIssue
 from aspose_pdf.exceptions import PdfValidationException
 
@@ -407,6 +407,29 @@ class Field:
     def options(self, value: Iterable[str | tuple[str, str]]) -> None:
         """Replace choices while preserving valid current and default selections."""
         self._set_parameter("options", value)
+
+    @property
+    def top_index(self) -> int | None:
+        """The list box's zero-based first visible option (``/TI``), defaulting to 0.
+
+        Other field types return ``None``. Reads the nearest field override;
+        malformed or out-of-range stored indices raise ``PdfValidationException``.
+        """
+        from aspose_pdf.engine.form_fields import list_box_top_index
+
+        if self._field_type != "listbox":
+            return None
+        return list_box_top_index(self._engine(), self._dictionary(), len(self.options))
+
+    @top_index.setter
+    def top_index(self, value: int | None) -> None:
+        """Scroll to an option and redraw every widget without changing selections.
+
+        Indices start at zero and must fit the current option list. ``None``
+        removes the local override, normally restoring zero. The existing
+        appearance-generation font and resource limits apply.
+        """
+        self._set_parameter("top_index", value)
 
     @property
     def multi_select(self) -> bool:
@@ -912,6 +935,7 @@ class Form:
         *,
         value: str | Sequence[str] | None = None,
         multiselect: bool = False,
+        top_index: int = 0,
         font_size: float = 12,
         alignment: str | int = "left",
         read_only: bool = False,
@@ -919,11 +943,12 @@ class Form:
         text_color: Any = None,
         **appearance: Any,
     ) -> Field:
-        """Add a list box with string or export/display options."""
+        """Add a list box with choices and a zero-based first visible option."""
         if isinstance(options, (str, bytes)):
             raise TypeError("options must be a sequence of choices")
         normalized_options = list(options)
         exports = self._choice_exports(normalized_options)
+        top_index = validate_top_index(top_index, len(exports))
         if not isinstance(multiselect, bool):
             raise TypeError("multiselect must be a boolean")
         selected = validate_choice_value(value, exports, multiselect=multiselect)
@@ -937,6 +962,7 @@ class Form:
             value=selected,
             flags=flags,
             options=normalized_options,
+            top_index=top_index,
             default_appearance=self._default_appearance(font_size, text_color),
             alignment=self._alignment_value(alignment),
             **self._appearance_options(appearance),

@@ -1200,6 +1200,26 @@ templates produce results in input order, then record order. All PDFs are
 prepared before configured outputs are written, and results are retained in
 memory under resource limits. `password=` opens protected templates.
 
+### Choose the First Visible List Option
+
+```python
+from aspose_pdf import Document
+
+with Document() as document:
+    page = document.pages.add()
+    cities = document.form.add_list_box(
+        "cities", page, (40, 600, 260, 700),
+        [f"City {number}" for number in range(20)],
+        value="City 12", top_index=10,
+    )
+    document.save("city-form.pdf")
+```
+
+For an existing list box, assign `document.form["cities"].top_index = 10`.
+Indices start at zero. The setting scrolls the visible options and redraws the
+widgets while preserving current and default selections. It survives saving
+and flattening; see [form details](supported-features.md#forms).
+
 ### Validate a Filled Form
 
 Check stored answers before delivering a completed form:
@@ -2195,7 +2215,7 @@ and delete workflows. 276 public types are organized by module below.
   - `add_text_field(name, page, rect, value, font_size, multiline, alignment, read_only, required) -> Field`
   - `add_checkbox(name, page, rect, checked, on_value, read_only, required) -> Field` /
     `add_radio_group(name, page, options, value, read_only, required) -> Field`
-  - `add_list_box(...) -> Field` / `add_combo_box(...) -> Field` /
+  - `add_list_box(..., top_index=0) -> Field` / `add_combo_box(...) -> Field` /
     `add_push_button(name, page, rect, caption, read_only, required) -> Field`
   - `remove_field(name) -> Field` / `generate_appearances() -> int` /
     `flatten(fields=True, annotations=True, pages=None, strict=True) -> None`
@@ -2211,10 +2231,10 @@ and delete workflows. 276 public types are organized by module below.
     `import_fdf(source) -> list[str]` / `import_xfdf(source) -> list[str]` (form data interchange)
 - `Field` — `remove() -> Field`; properties `name`, `value`, `field_type`, `partial_name`,
   `alternate_name`, `mapping_name`, `flags`, `read_only`, `required`, `no_export`, `default_value`,
-  `max_length`, `multiline`, `password`, `comb`, `options`, `multi_select`, `editable`,
+  `max_length`, `multiline`, `password`, `comb`, `options`, `top_index`, `multi_select`, `editable`,
   `export_values`, `widgets` (`FieldWidget(page_index, rect)`), `page_index`, `rect`
   Configuration setters include `default_value`, `max_length`, `multiline`, `password`,
-  `comb`, `options`, `multi_select` and `editable`.
+  `comb`, `options`, `top_index`, `multi_select` and `editable`.
   Assign `rect` to move or resize the first widget on its page, or call
   `set_widget_rect(rect, widget_index=0) -> Field` to select a widget by index.
   Existing appearances scale to fit; text is not reflowed.
