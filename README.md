@@ -2212,7 +2212,10 @@ and delete workflows. 276 public types are organized by module below.
   for each template/record pair. Add template data sources and optional paired outputs.
 
 - `Form`
-  - `add_text_field(name, page, rect, value, font_size, multiline, alignment, read_only, required) -> Field`
+  - `add_text_field(name, page=None, rect=None, *, widgets=None, value="", font_size=12, multiline=False, alignment="left", read_only=False, required=False) -> Field`
+    accepts either one `page` / `rect` pair or `widgets=[(page, rect), ...]` to repeat
+    a text field across pages or several places on one page. All occurrences share
+    one value, so filling a customer name once updates every occurrence.
   - `add_checkbox(name, page, rect, checked, on_value, read_only, required) -> Field` /
     `add_radio_group(name, page, options, value, read_only, required) -> Field`
   - `add_list_box(..., top_index=0) -> Field` / `add_combo_box(...) -> Field` /

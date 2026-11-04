@@ -5484,6 +5484,39 @@ with Document("application.pdf") as document:
   `/DR` and `/DA`, common/type-specific flags, choice `/Opt` and multiselect
   `/I`, `/DV`, and generated appearances. Choice options may be strings or
   `(export_value, display_value)` pairs.
+- **Repeat one text field in several places** with
+  `Form.add_text_field(name, widgets=[(page, rect), ...], ...)`. Each pair uses
+  a `Page` from the same document or a one-based page number and a rectangle
+  `(x0, y0, x1, y1)` in unrotated PDF coordinates. Widget order is preserved;
+  multiple occurrences on the same page are allowed. The form contains one
+  named field with one value, default and configuration, and each occurrence
+  gets its own appearance fitted to its rectangle. Setting `Field.value`,
+  filling or resetting the form updates every appearance. Saving and reopening
+  preserves all occurrences, and flattening selected pages keeps the remaining
+  widgets interactive.
+  - The existing `add_text_field(name, page, rect, ...)` call remains supported.
+    Supply either `page` and `rect` or a nonempty `widgets` iterable; combining
+    them raises `TypeError`. A generator is consumed before field creation,
+    with its count bounded by `PdfLoadLimits.max_container_items`. Invalid
+    placements, foreign pages and iteration failures leave no partial field.
+    This creates a new field; it does not append widgets to an existing field.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document() as document:
+      document.pages.add()
+      document.pages.add()
+      name = document.form.add_text_field(
+          "customer.name",
+          widgets=[(1, (40, 700, 240, 725)), (2, (40, 700, 240, 725))],
+          value="Alice",
+          required=True,
+      )
+      name.value = "Bob"
+      document.save("customer-form.pdf")
+  ```
+
 - **How a field looks** (`/MK`, `/BS`, `/DA`), at creation or afterwards. Every
   factory takes `border_color`, `background_color`, `border_width`,
   `border_style` (`solid`, `dashed`, `beveled`, `inset`, `underline`, or the

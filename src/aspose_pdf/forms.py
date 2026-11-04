@@ -790,9 +790,10 @@ class Form:
     def add_text_field(
         self,
         name: str,
-        page: Any,
-        rect: Sequence[float],
+        page: Any = None,
+        rect: Sequence[float] | None = None,
         *,
+        widgets: Iterable[tuple[Any, Sequence[float]]] | None = None,
         value: str = "",
         font_size: float = 12,
         font: Any = None,
@@ -804,6 +805,15 @@ class Form:
         **appearance: Any,
     ) -> Field:
         """Add an editable text field and return it.
+
+        Supply *page* and *rect* for one occurrence, or *widgets* as a nonempty
+        iterable of ``(page, rect)`` pairs to repeat the same field. Each page
+        is a :class:`~aspose_pdf.pages.Page` from this document or a one-based
+        page number; rectangles use unrotated PDF coordinates. Several widgets
+        may share a page. All occurrences share one value and configuration,
+        with an appearance generated for each rectangle. ``page`` and ``rect``
+        cannot be combined with ``widgets``. Placements are checked before the
+        field is created, and their count obeys ``max_container_items``.
 
         *font* embeds a Type0 (CID) field font — bytes/path/``FontDescriptor`` —
         so a non-Latin *value* renders (its ``/AP`` is baked with CID codes at
@@ -825,7 +835,7 @@ class Form:
         return self._create_field(
             name,
             "text",
-            [{"page_index": self._page_index(page), "rect": rect}],
+            self._text_field_widgets(page, rect, widgets),
             value=value,
             flags=flags,
             default_appearance=self._default_appearance(font_size, text_color),
@@ -833,6 +843,47 @@ class Form:
             font=font,
             **self._appearance_options(appearance),
         )
+
+    def _text_field_widgets(
+        self,
+        page: Any,
+        rect: Sequence[float] | None,
+        widgets: Iterable[tuple[Any, Sequence[float]]] | None,
+    ) -> list[dict[str, Any]]:
+        """Snapshot public placements before the engine validates their geometry."""
+        from aspose_pdf.load_limits import _LoadBudget
+
+        self._document._ensure_not_disposed()
+        if widgets is None:
+            if page is None or rect is None:
+                raise TypeError("Provide page and rect, or widgets")
+            return [{"page_index": self._page_index(page), "rect": rect}]
+        if page is not None or rect is not None:
+            raise TypeError("widgets cannot be combined with page or rect")
+        if isinstance(widgets, (str, bytes, bytearray, Mapping)) or not isinstance(
+            widgets, Iterable
+        ):
+            raise TypeError("widgets must be an iterable of (page, rect) pairs")
+        budget = _LoadBudget(self._document.load_limits)
+        result = []
+        for index, widget in enumerate(widgets, 1):
+            budget.check(index, "max_container_items", "text field widgets")
+            if not isinstance(widget, (list, tuple)) or len(widget) != 2:
+                raise TypeError("Each widget must be a (page, rect) pair")
+            widget_page, widget_rect = widget
+            result.append(
+                {
+                    "page_index": self._page_index(widget_page),
+                    "rect": (
+                        tuple(widget_rect)
+                        if isinstance(widget_rect, (list, tuple))
+                        else widget_rect
+                    ),
+                }
+            )
+        if not result:
+            raise PdfValidationException("widgets must contain at least one placement")
+        return result
 
     def add_checkbox(
         self,
