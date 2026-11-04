@@ -543,6 +543,19 @@ with Document() as document:
     document.pages[1].save_as_image("page-1.png", dpi=144)
 ```
 
+Fit a single-page preview inside pixel bounds:
+
+```python
+with Document("input.pdf") as document:
+    document.pages[1].render_thumbnail(size=(160, 220)).save("preview.png")
+    preview = document.render_thumbnail(2, size=(320, 240))
+```
+
+Thumbnails preserve the visible page's proportions, CropBox and rotation.
+The raster fits within the requested bounds without padding. Set
+`include_annotations=False` for page content alone. PNG, TIFF and JPEG need
+no imaging dependency; WebP uses the optional `images` extra.
+
 Create a contact sheet to inspect several pages at once:
 
 ```python
@@ -1980,6 +1993,8 @@ and delete workflows. 276 public types are organized by module below.
     `save_as_svg(destination, pages, background, draw_annotations, font_substitution, precision, overwrite) -> list[Path]`
   - `render_contact_sheet(pages, columns, thumbnail_size, margin, spacing, labels, background, page_background, label_color, antialias, include_annotations) -> RasterizedPage` /
     `save_contact_sheet(destination, ..., mode, compression, quality, threshold, lossless, method, dither) -> Path`
+  - `render_thumbnail(page_index, size=(160, 220), background=(255, 255, 255), antialias=True, include_annotations=True) -> RasterizedPage` —
+    render a one-based page directly within pixel bounds while preserving proportions
   - `rasterized_copy(pages=None, dpi=150, background=(255, 255, 255), antialias=True, include_annotations=True, mode="rgb", threshold=128, dither=False) -> Document` —
     create an independent image-only PDF from selected visible page views
   - `split_spreads(pages=None, layout="horizontal", reverse=False, split_ratio=0.5, gutter=0, flatten_fields=True) -> Document` —
@@ -2053,6 +2068,8 @@ and delete workflows. 276 public types are organized by module below.
   - `get_content_bounds(dpi=72, white_threshold=250, include_annotations=True) -> tuple[float, float, float, float] | None` —
     measure visible content without changing page boxes
   - `add_stamp(stamp) -> Page` — a text, image or page-number stamp over or under the page
+  - `render_thumbnail(size=(160, 220), background=(255, 255, 255), antialias=True, include_annotations=True) -> RasterizedPage` —
+    create a fitted preview that can be saved in the usual image formats
   - `replace_text(...) -> int` / `redact_text(...) -> int`
   - `highlight_text(...) -> TextHighlightResult` — annotations and a report of unplaceable matches
   - properties: `index`, `label`, `rect`, `media_box`, `crop_box`, `rotation`, `tab_order`, `annotations`, `content`

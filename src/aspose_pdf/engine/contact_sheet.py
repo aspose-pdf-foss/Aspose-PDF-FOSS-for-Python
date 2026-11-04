@@ -92,6 +92,45 @@ def _thumbnail_geometry(
     return scale, max(1, math.ceil(scaled_width)), max(1, math.ceil(scaled_height))
 
 
+def render_thumbnail(
+    document: Document,
+    index: int,
+    *,
+    size: tuple[int, int] = (160, 220),
+    background: tuple[int, int, int] = (255, 255, 255),
+    antialias: bool | int = True,
+    include_annotations: bool = True,
+) -> RasterizedPage:
+    """Render one fitted page directly, without allocating a surrounding sheet."""
+    if (
+        not isinstance(size, Sequence)
+        or isinstance(size, (str, bytes, bytearray))
+        or len(size) != 2
+    ):
+        raise PdfValidationException("size must contain two positive integers")
+    width, height = (_integer(value, "size", 1) for value in size)
+    background = _rgb(background, "background")
+    if not isinstance(include_annotations, bool):
+        raise PdfValidationException("include_annotations must be a boolean")
+    if isinstance(antialias, bool):
+        factor = 3 if antialias else 1
+    else:
+        factor = _integer(antialias, "antialias", 1)
+        if factor > 8:
+            raise PdfValidationException("antialias must be a factor between 1 and 8")
+    scale, width, height = _thumbnail_geometry(document._engine_pdf, index, width, height)
+    document._engine_pdf._load_budget.check_raster_pixels(
+        width * factor, height * factor, "supersampled page thumbnail"
+    )
+    return document._api_render_page(
+        index,
+        scale=scale,
+        background=background,
+        antialias=antialias,
+        draw_annotations=include_annotations,
+    )
+
+
 def _paste(
     canvas: bytearray, width: int, raster: RasterizedPage, x: int, y: int
 ) -> None:

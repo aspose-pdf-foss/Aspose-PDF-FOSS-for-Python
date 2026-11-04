@@ -2590,6 +2590,31 @@ Supported:
     compressed size. Final PDF size reduction is not guaranteed.
     Source content/image decoding keeps its ordinary policy and can still
     fail during rendering. Use subsets for large documents.
+- **Single-page thumbnails**: `Document.render_thumbnail(page_index,
+  size=(160, 220), background=(255, 255, 255), antialias=True,
+  include_annotations=True)` and `Page.render_thumbnail(...)` return an RGB
+  `RasterizedPage` fitted within pixel bounds for document lists, previews and
+  navigation. Document page numbers start at one.
+  - `size` contains two positive integers, giving maximum width and height in
+    pixels. The effective CropBox with page rotation applied is scaled uniformly;
+    dimensions round up to whole pixels while staying within both bounds.
+    There is no surrounding padding or stretching. Small pages may be enlarged;
+    at tiny sizes the minimum dimension is one pixel.
+  - Defaults use white paper and 3x supersampling. `background` is an RGB byte
+    triple, `antialias=False` disables smoothing, and integers 1..8 choose its
+    factor. `include_annotations=False` omits annotation appearances. Layer
+    visibility, fonts, document font substitution, content and annotations
+    otherwise follow `render_page()` and its coverage limits.
+  - Returns the fitted raster with 72 DPI metadata. Use `.save(path)` or the
+    normal PNG/TIFF/JPEG/WebP encoders; WebP requires the `images` extra.
+    PNG/TIFF/JPEG work without Pillow. The result remains usable after the
+    document closes. No separate image-resize step is needed.
+  - Options and supersampled pixel limits are checked before rendering. Pixels
+    obey `max_raster_pixels`; normal resource, content and image-decoding limits
+    still apply. Rendering runs directly at the fitted scale, keeping even a
+    very large page's canvas small. Only the requested page's content is decoded,
+    including with streaming and password-protected input; page boxes, rotation,
+    content, source files and protection settings are preserved.
 - **Contact sheets**: `Document.render_contact_sheet()` returns a single RGB
   `RasterizedPage` with a row-major grid of page thumbnails;
   `Document.save_contact_sheet(destination, ...)` saves it as PNG, TIFF, JPEG or

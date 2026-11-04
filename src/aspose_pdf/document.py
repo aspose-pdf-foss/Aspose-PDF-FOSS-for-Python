@@ -1976,6 +1976,50 @@ class Document:
         )
 
     @page_api(scalars=("page_index",))
+    def render_thumbnail(
+        self,
+        page_index: int,
+        *,
+        size: tuple[int, int] = (160, 220),
+        background: tuple[int, int, int] = (255, 255, 255),
+        antialias: bool | int = True,
+        include_annotations: bool = True,
+    ) -> RasterizedPage:
+        """Render a one-based page inside pixel bounds, preserving its proportions.
+
+        ``size=(width, height)`` must contain positive integers. The effective
+        CropBox, with page rotation applied, is fitted within those bounds.
+        The result has the fitted dimensions, rounded up to whole pixels,
+        without padding or stretching. Small pages may be enlarged.
+
+        Return an RGB ``RasterizedPage`` with 72 DPI metadata, ready for
+        ``.save()`` or the usual PNG/TIFF/JPEG/WebP encoders. White paper is
+        used by default; ``background`` is an RGB byte triple. ``antialias``
+        defaults to 3x supersampling; use ``False`` or a factor from 1 to 8.
+        Visible annotation appearances are included unless disabled. Document
+        font substitution and ordinary rendering limitations apply.
+
+        Rendering uses the fitted scale directly; no full-resolution page
+        image is created first. Supersampled pixels obey ``max_raster_pixels``
+        before rendering starts, and normal content/image limits still apply.
+        Only the requested page is decoded, including for streaming sources.
+        The PDF's page boxes, content and rotation remain unchanged.
+        """
+        from aspose_pdf.engine.contact_sheet import render_thumbnail
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return render_thumbnail(
+            self,
+            page_index,
+            size=size,
+            background=background,
+            antialias=antialias,
+            include_annotations=include_annotations,
+        )
+
+    @page_api(scalars=("page_index",))
     def save_page_as_image(
         self,
         page_index: int,
@@ -6470,6 +6514,7 @@ class Document:
     _api_find_low_resolution_images = find_low_resolution_images.__wrapped__
     _api_export_images_zip = export_images_zip.__wrapped__
     _api_render_page = render_page.__wrapped__
+    _api_render_thumbnail = render_thumbnail.__wrapped__
     _api_save_page_as_image = save_page_as_image.__wrapped__
     _api_export_pages_zip = export_pages_zip.__wrapped__
     _api_rasterized_copy = rasterized_copy.__wrapped__

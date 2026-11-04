@@ -1315,6 +1315,27 @@ class Page:
             performance=performance,
         )
 
+    def render_thumbnail(
+        self,
+        *,
+        size: tuple[int, int] = (160, 220),
+        background: tuple[int, int, int] = (255, 255, 255),
+        antialias: bool | int = True,
+        include_annotations: bool = True,
+    ) -> RasterizedPage:
+        """Render this page inside pixel bounds without padding or stretching.
+
+        See :meth:`Document.render_thumbnail` for options and rendering limits.
+        Save the returned raster with ``.save(path)`` to choose an image format.
+        """
+        return self._document.render_thumbnail(
+            self.number,
+            size=size,
+            background=background,
+            antialias=antialias,
+            include_annotations=include_annotations,
+        )
+
     def to_svg(
         self,
         *,
