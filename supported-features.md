@@ -4675,18 +4675,31 @@ Supported:
   samples continue to work without Pillow.
 - **Fit images into a frame without distortion.**
   `Page.add_image(image, x, y, width, height, fit="contain")` keeps the whole
-  image visible, centered in the frame with unused space left transparent.
-  `fit="cover"` centers and fills the frame, clipping overflow on the longer
+  image visible, centered by default with unused space left transparent.
+  `fit="cover"` fills the frame, clipping overflow on the longer
   axis. Both preserve the source pixel aspect ratio and work with every image
   format accepted by `add_image`, including raw samples. JPEG, PNG and raw
   fitting need no optional dependencies. The default `fit="stretch"` retains
   independent axis scaling and per-axis pixel-size defaults for omitted display
   dimensions.
-  - Both new modes require explicit, positive finite `width` and `height` in
+  - Both modes require explicit, positive finite `width` and `height` in
     PDF points; `(x, y)` is the frame's lower-left corner in the current user
     space. Dimensions that round to zero at PDF coordinate precision, or
     produce non-finite fitted geometry, are rejected before image resources
     are registered. Mode names are case-sensitive.
+  - `anchor="center"` controls alignment for both fitting modes. Other values
+    are `"top_left"`, `"top"`, `"top_right"`, `"left"`, `"right"`,
+    `"bottom_left"`, `"bottom"` and `"bottom_right"`. Contain places remaining
+    space around the chosen position; cover retains the corresponding edge or
+    corner of the image while clipping overflow to the same frame. Proportions
+    and scale are unchanged by the anchor. Top is the frame's positive Y side
+    and left its negative X side in current PDF user space, before surrounding
+    graphics transforms or page rotation.
+  - Anchor names are case-sensitive. Nontext or unknown anchors raise
+    `PdfValidationException` before image-file access, image decoding or
+    resource registration, including with `fit="stretch"`. Valid anchors have
+    no effect on stretch placements or omitted-dimension defaults. Omitting
+    `anchor` retains the existing centered contain/cover placement.
   - Fitting changes the placement matrix only: it does not resize or crop the
     embedded pixel data, recompress JPEG bytes, or change page boxes. Cover
     clipping is local to that image and follows any surrounding graphics
@@ -4699,8 +4712,10 @@ Supported:
 
   with Document() as document:
       page = document.pages.add()
-      page.add_image("logo.png", 40, 700, 160, 80, fit="contain", alt="Company logo")
-      page.add_image("photo.jpg", 40, 400, 160, 160, fit="cover", alt="Photo")
+      page.add_image("logo.png", 40, 700, 160, 80, fit="contain",
+                     anchor="top_left", alt="Company logo")
+      page.add_image("photo.jpg", 40, 400, 160, 160, fit="cover",
+                     anchor="top", alt="Photo")
       document.save("framed-images.pdf")
   ```
 - **Every embedded file is an associated file.** The catalog carries an `/AF`

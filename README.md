@@ -1429,6 +1429,23 @@ with Document("batch.pdf") as document:
 Use `dry_run=True` to preview removal or `keep="last"` to retain the last selected
 copy. Returned indices refer to the original document and are sorted ascending.
 
+### Align Images Within a Frame
+
+```python
+from aspose_pdf import Document
+
+with Document() as document:
+    page = document.pages.add()
+    page.add_image("logo.png", 40, 700, 160, 80, fit="contain", anchor="top_left")
+    page.add_image("photo.jpg", 40, 400, 160, 160, fit="cover", anchor="top")
+    document.save("framed-images.pdf")
+```
+
+`anchor` selects the center, an edge or a corner. With `contain`, it positions
+the whole image inside the frame; with `cover`, it chooses the part that remains
+visible. The default is `"center"`. Source pixels and proportions are preserved;
+see [image fitting details](supported-features.md#images).
+
 ### Find Images with Low Effective DPI
 
 ```python
@@ -2067,8 +2084,8 @@ and delete workflows. 276 public types are organized by module below.
 - `Page`
   - `translate_content(dx, dy) -> Page` — move existing content and annotation geometry in PDF points
   - `add_text(text, x, y, font_size, font_name, font, color, tag, actual_text, layout) -> Page`
-  - `add_image(image, x, y, width, height, fit="stretch", pixel_width, pixel_height, color_space, bits_per_component, name, tag, alt, actual_text) -> str` —
-    use `fit="contain"` or `fit="cover"` to center an image in a frame while preserving its proportions
+  - `add_image(image, x, y, width, height, fit="stretch", anchor="center", pixel_width, pixel_height, color_space, bits_per_component, name, tag, alt, actual_text) -> str` —
+    use `fit="contain"` or `fit="cover"` with `anchor` to align an image in a frame while preserving its proportions
   - `draw_rectangle(x, y, width, height, stroke_color, fill_color, line_width, tag, alt, actual_text) -> Page` /
     `draw_line(x1, y1, x2, y2, stroke_color, line_width, tag, alt, actual_text) -> Page`
   - `render(dpi, scale, background, antialias) -> RasterizedPage` /

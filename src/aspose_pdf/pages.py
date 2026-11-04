@@ -717,6 +717,7 @@ class Page:
         height: float | None = None,
         *,
         fit: str = "stretch",
+        anchor: str = "center",
         pixel_width: int | None = None,
         pixel_height: int | None = None,
         color_space: str = "DeviceRGB",
@@ -735,16 +736,26 @@ class Page:
         default to the corresponding pixel dimensions in PDF points.
 
         ``fit="stretch"`` (the default) scales each axis independently.
-        ``fit="contain"`` preserves proportions and centers the entire image
+        ``fit="contain"`` preserves proportions and fits the entire image
         within ``(x, y, width, height)``, leaving unused space transparent.
-        ``fit="cover"`` preserves proportions, centers the image and clips it
-        to that frame. Both require positive finite width and height. Fitting
-        changes placement only: source pixels and page boxes are preserved.
+        ``fit="cover"`` preserves proportions and clips the image to that
+        frame. Both require positive finite width and height. ``anchor`` chooses
+        its position: ``"center"`` (default), ``"top_left"``, ``"top"``,
+        ``"top_right"``, ``"left"``, ``"right"``, ``"bottom_left"``,
+        ``"bottom"`` or ``"bottom_right"``. For cover, it chooses the retained
+        part of the image. Top/bottom follow the frame's current user space,
+        before surrounding transforms or page rotation. Valid anchors have no
+        effect with stretch. Invalid anchors raise ``PdfValidationException``
+        before reading image files or decoding pixels. Fitting changes placement
+        only: source pixels and page boxes are preserved.
         """
         self._document._ensure_not_disposed()
         eng = self._document._engine_pdf
         if eng is None:
             raise AsposePdfException("No document loaded")
+        from aspose_pdf.engine.image_fitting import validate_anchor
+
+        validate_anchor(anchor)
         if isinstance(image, (str, Path)):
             path = Path(image)
             eng._load_budget.check(
@@ -765,6 +776,7 @@ class Page:
             width,
             height,
             fit=fit,
+            anchor=anchor,
             pixel_width=pixel_width,
             pixel_height=pixel_height,
             color_space=color_space,

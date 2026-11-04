@@ -93,7 +93,7 @@ from .form_fields import (
     form_value,
     validate_choice_value,
 )
-from .image_fitting import fit_image_geometry, validate_fit_box
+from .image_fitting import fit_image_geometry, validate_anchor, validate_fit_box
 from .incremental_update import IncrementalUpdate
 from .pdf_matrix import affine_decimal_to_float, image_placement_bbox
 from .pdf_parser_cos import PdfCosParser, pdf_header_offset, pdf_header_version
@@ -10029,6 +10029,7 @@ class SimplePdf:
         height: float | None = None,
         *,
         fit: str = "stretch",
+        anchor: str = "center",
         pixel_width: int | None = None,
         pixel_height: int | None = None,
         color_space: str = "DeviceRGB",
@@ -10043,6 +10044,7 @@ class SimplePdf:
         self._ensure_not_disposed()
         self._validate_page_index(page_index)
         box = validate_fit_box(x, y, width, height, fit)
+        alignment = validate_anchor(anchor)
         image = prepare_image(
             bytes(data),
             pixel_width=pixel_width,
@@ -10056,7 +10058,7 @@ class SimplePdf:
         placement_height = image.height if height is None else height
         if box is not None:
             x, y, placement_width, placement_height = fit_image_geometry(
-                image.width, image.height, box, fit
+                image.width, image.height, box, fit, alignment
             )
         resource_name, image_key = self._register_page_image(page_index, image, name)
         content = build_image_stream(

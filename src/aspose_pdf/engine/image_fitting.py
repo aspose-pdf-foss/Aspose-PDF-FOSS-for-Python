@@ -1,4 +1,4 @@
-"""Center an image in a frame while preserving its pixel aspect ratio."""
+"""Align an image within a frame while preserving its pixel aspect ratio."""
 
 from __future__ import annotations
 
@@ -7,6 +7,25 @@ import math
 from aspose_pdf.exceptions import PdfValidationException
 
 from .content_authoring import format_number
+
+_ANCHORS = {
+    "top_left": (0.0, 1.0),
+    "top": (0.5, 1.0),
+    "top_right": (1.0, 1.0),
+    "left": (0.0, 0.5),
+    "center": (0.5, 0.5),
+    "right": (1.0, 0.5),
+    "bottom_left": (0.0, 0.0),
+    "bottom": (0.5, 0.0),
+    "bottom_right": (1.0, 0.0),
+}
+
+
+def validate_anchor(anchor: str) -> tuple[float, float]:
+    """Resolve an anchor before reading image input or registering resources."""
+    if not isinstance(anchor, str) or anchor not in _ANCHORS:
+        raise PdfValidationException("anchor must be one of: " + ", ".join(_ANCHORS))
+    return _ANCHORS[anchor]
 
 
 def validate_fit_box(
@@ -42,6 +61,7 @@ def fit_image_geometry(
     pixel_height: int,
     box: tuple[float, float, float, float],
     fit: str,
+    alignment: tuple[float, float] = (0.5, 0.5),
 ) -> tuple[float, float, float, float]:
     """Return the full image rectangle, before any cover clipping."""
     x, y, width, height = box
@@ -52,8 +72,8 @@ def fit_image_geometry(
     else:
         image_height = height
         image_width = height * (pixel_width / pixel_height)
-    placed_x = x + (width - image_width) / 2
-    placed_y = y + (height - image_height) / 2
+    placed_x = x + (width - image_width) * alignment[0]
+    placed_y = y + (height - image_height) * alignment[1]
     geometry = placed_x, placed_y, image_width, image_height
     if not all(math.isfinite(value) for value in geometry):
         raise PdfValidationException("Fitted image geometry must be finite")
