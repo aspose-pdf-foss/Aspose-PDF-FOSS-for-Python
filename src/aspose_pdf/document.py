@@ -372,6 +372,38 @@ class Document:
         )
 
     @property
+    def language(self) -> str | None:
+        """The document's default natural language, stored in catalog ``/Lang``.
+
+        Returns the declared text verbatim, or ``None`` for an absent/null
+        entry. An empty string declares an unknown language. Assign a language
+        identifier such as ``"en-US"`` or ``"zh-Hant-TW"``, or ``None`` to
+        remove the declaration. New nonempty values use 1-8 character ASCII
+        subtags separated by hyphens, with an alphabetic first subtag; registry
+        membership is not checked and spelling is preserved.
+
+        Reading or writing does not decode page content, change text, or run
+        PDF/UA conversion. Local language overrides remain intact. Malformed
+        metadata types/references raise ``PdfParseException``; metadata sizes
+        and reference traversal obey ``load_limits``.
+        """
+        from aspose_pdf.engine.document_language import get_language
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return get_language(self)
+
+    @language.setter
+    def language(self, value: str | None) -> None:
+        from aspose_pdf.engine.document_language import set_language
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        set_language(self, value)
+
+    @property
     def base_uri(self) -> str | None:
         """The catalog's ``/URI /Base`` for resolving relative URI actions.
 

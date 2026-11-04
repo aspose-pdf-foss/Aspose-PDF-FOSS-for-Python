@@ -75,6 +75,9 @@ flowchart TD
   equivalent to `Document().load_from(source, ...)` — and merges instances together — a missing
   file, non-PDF data, or a missing password always raises rather than silently handing back an
   empty document.
+- `Document.language` reads or sets the PDF's default language, for example
+  `document.language = "en-US"`, without converting the document. Assign `None`
+  to remove the declaration, or `""` to declare the language unknown.
 - `document.pages.add(PageSize.A4)` creates a page of any size — the ISO A and B sizes, the US
   sizes, `landscape()`, `from_mm()` or a plain `(width, height)` pair in points — and
   `Page.media_box`, `Page.size`, `Page.crop_box`, `Page.bleed_box`, `Page.trim_box` and
@@ -2101,7 +2104,7 @@ and delete workflows. 276 public types are organized by module below.
   - properties: `pages`, `page_labels`, `form`, `outlines`, `layers`, `tagged_content`, `load_limits`,
     `xmp_metadata`, `embedded_files`, `page_count`, `info`, `is_encrypted`, `permissions`,
     `is_pdfua_compliant`, `font_substitution`, `page_mode`, `page_layout`, `open_action`,
-    `viewer_preferences`, `base_uri`
+    `viewer_preferences`, `base_uri`, `language`
   - `add_stamp(stamp, pages) -> Document` — stamp the pages named, or every page
 
 ### Pages And Content

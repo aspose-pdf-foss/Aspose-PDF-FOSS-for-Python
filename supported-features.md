@@ -188,6 +188,36 @@ Supported:
   than as mojibake. On the way in, all four things files actually hold are
   read: UTF-16BE and UTF-16LE behind their marks, UTF-8 behind `EFBBBF`
   (ISO 32000-2) or bare, and PDFDocEncoding's upper half.
+- **Read, correct or remove the default document language** through
+  `Document.language`, backed by the catalog's `/Lang` text string. Assign
+  `"en-US"`, `"zh-Hant-TW"` or another language identifier without running
+  PDF/UA conversion. `None` removes the entry; `""` stores an explicit unknown
+  language. The getter returns `None` for absent/null entries and otherwise
+  returns the declared text verbatim, including a producer's nonstandard value.
+  - New nonempty values use hyphen-separated ASCII subtags of 1–8 characters,
+    with an alphabetic first subtag and alphanumeric subsequent subtags.
+    Spelling and case are preserved. This checks subtag syntax, not membership
+    in a language registry or full BCP 47 validity. Non-string values raise
+    `TypeError`; invalid spelling raises `PdfValidationException` before edits.
+  - Direct and indirect strings use the normal PDF text-string decoder.
+    Wrong metadata types, missing references and reference cycles raise
+    `PdfParseException`. String sizes, catalog entries and reference traversal
+    obey `PdfLoadLimits`. Shared strings are replaced rather than modified.
+    Reading or clearing an absent declaration creates no metadata.
+  - The property changes only the catalog declaration: page content, other
+    metadata and local language overrides are preserved. It stays lazy for
+    streaming documents and supports full and encrypted incremental saves.
+    Declaring a language does not translate text or certify accessibility.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      print(document.language)
+      document.language = "fr-CA"
+      document.save("report-fr-CA.pdf")
+  ```
+
 - Read and set the PDF header version used on save.
 - Read file identifiers and permission flags.
 - **Validate, check, and repair basic PDF structure.** `validate()` (and its
