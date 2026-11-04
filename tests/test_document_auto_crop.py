@@ -107,7 +107,7 @@ def test_selection_is_validated_deduplicated_and_keeps_first_selected_order(monk
             return original(page, **options)
 
         monkeypatch.setattr(Page, "render", render)
-        result = document.auto_crop(pages=(number + 1 if type(number) is int else number for number in ((i for i in (1, 0, 1)))))
+        result = document.auto_crop(pages=(number + 1 if type(number) is int else number for number in (i for i in (1, 0, 1))))
         assert list(result) == visited == [2, 1]
         assert result == {2: (40, 30, 60, 50), 1: (10, 20, 30, 40)}
         assert document.pages[3].crop_box == (0, 0, 100, 80)

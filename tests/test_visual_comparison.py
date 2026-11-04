@@ -183,8 +183,8 @@ def test_added_and_removed_blank_pages_never_match(extra_on_left):
         report = results[1]
         assert not report.matches and report.changed_pixels == report.total_pixels == 35
         assert report.difference_ratio == 1 and report.bbox == (0, 0, 5, 7)
-        assert report.page_index == ((2 if extra_on_left else None))
-        assert report.other_page_index == ((None if extra_on_left else 2))
+        assert report.page_index == (2 if extra_on_left else None)
+        assert report.other_page_index == (None if extra_on_left else 2)
         assert report.diff_image.pixels == b"\xff\x00\x00" * 35
 
 
@@ -195,7 +195,7 @@ def test_independent_page_selections_preserve_order_repeats_and_missing_tail():
         for color in ("#00f", "#0f0", "#f00"):
             _page(right, color)
         results = left.compare_visual(
-            right, pages=(number + 1 if type(number) is int else number for number in ((i for i in (1, 0, 1)))), other_pages=(number + 1 if type(number) is int else number for number in ((i for i in (0, 2))))
+            right, pages=(number + 1 if type(number) is int else number for number in (i for i in (1, 0, 1))), other_pages=(number + 1 if type(number) is int else number for number in (i for i in (0, 2)))
         )
         assert [(r.page_index, r.other_page_index, r.matches) for r in results] == [
             (2, 1, True),

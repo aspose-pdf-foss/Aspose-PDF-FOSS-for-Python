@@ -123,7 +123,7 @@ def test_namespace_metadata_unicode_and_threads_survive_pdf_round_trips(
 
 def test_page_order_repeats_type_filters_and_orphan_popup_behavior(document):
     nodes = _annots(
-        document.export_annotations_xfdf(pages=(number + 1 if type(number) is int else number for number in ((value for value in (1, 0, 1)))))
+        document.export_annotations_xfdf(pages=(number + 1 if type(number) is int else number for number in (value for value in (1, 0, 1))))
     )
     assert [node.attrib["page"] for node in nodes] == ["1", "0", "0", "0"]
     nodes = _annots(document.export_annotations_xfdf(subtypes=[AnnotationType.TEXT]))

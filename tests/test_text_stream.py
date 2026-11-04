@@ -115,7 +115,7 @@ def test_selection_clip_and_exclusion_generators_are_snapshotted_on_call():
         clip = [0, 0, 300, 200]
         exclusion = [0, 0, 300, 50]
         parts = document.iter_text_pages(
-            pages=(number + 1 if type(number) is int else number for number in ((index for index in pages))),
+            pages=(number + 1 if type(number) is int else number for number in (index for index in pages)),
             clip=clip,
             exclude_regions=(region for region in [exclusion]),
         )

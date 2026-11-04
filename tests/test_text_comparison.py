@@ -320,8 +320,8 @@ def test_selections_keep_order_repeats_generators_and_missing_tail():
             _page(right, text)
         results = left.compare_text(
             right,
-            pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))),
-            other_pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 1)))),
+            pages=(number + 1 if type(number) is int else number for number in (index for index in (2, 0, 2))),
+            other_pages=(number + 1 if type(number) is int else number for number in (index for index in (2, 1))),
         )
         assert [(r.page_index, r.other_page_index) for r in results] == [
             (3, 3),

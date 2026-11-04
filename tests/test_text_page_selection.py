@@ -104,7 +104,7 @@ def test_document_selection_survives_pdf_round_trips_and_does_not_change_full_te
         try:
             assert document.extract_text(pages=[3, 1, 3]) == "Third\nFirst\nThird"
             assert document.extract_text() == "First\nSecond\nThird"
-            assert document.extract_text(pages=(number + 1 if type(number) is int else number for number in ((i for i in [1])))) == "Second"
+            assert document.extract_text(pages=(number + 1 if type(number) is int else number for number in (i for i in [1]))) == "Second"
             assert document.extract_text(pages=range(1, (2) + 1)) == "First\nSecond"
             assert document.extract_text(pages=[]) == ""
             assert document.extract_text() == "First\nSecond\nThird"
@@ -186,7 +186,7 @@ def test_later_invalid_index_is_checked_even_when_full_text_is_cached(monkeypatc
 
         monkeypatch.setattr(document._engine_pdf, "extract_page_text", no_extraction)
         with pytest.raises(PdfValidationException, match="out of range"):
-            document.extract_text(pages=(number + 1 if type(number) is int else number for number in ((i for i in [0, 99]))))
+            document.extract_text(pages=(number + 1 if type(number) is int else number for number in (i for i in [0, 99])))
         assert document.extract_text() == expected
 
 
@@ -339,7 +339,7 @@ def test_unbound_empty_and_disposed_objects_validate_selection():
 
 
 def test_lowcode_generator_selection_is_reusable_across_inputs_and_runs():
-    options = TextExtractorOptions(pages=(number + 1 if type(number) is int else number for number in ((i for i in [2, 0, 2]))))
+    options = TextExtractorOptions(pages=(number + 1 if type(number) is int else number for number in (i for i in [2, 0, 2])))
     options.add_input(ByteArrayDataSource(_source_bytes(("A0", "A1", "A2"))))
     options.add_input(ByteArrayDataSource(_source_bytes(("B0", "B1", "B2"))))
     for _ in range(2):
@@ -412,7 +412,7 @@ def test_lowcode_options_reject_invalid_page_values(pages):
 def test_page_selection_resource_limits_apply_before_page_extraction():
     limits = PdfLoadLimits(max_container_items=3)
     with pytest.raises(PdfResourceLimitException, match="page selection"):
-        TextExtractorOptions(limits, pages=(number + 1 if type(number) is int else number for number in ((0 for _ in range(4)))))
+        TextExtractorOptions(limits, pages=(number + 1 if type(number) is int else number for number in (0 for _ in range(4))))
     with Document(limits=limits) as document:
         document.pages.add()
         with pytest.raises(PdfResourceLimitException, match="page selection"):

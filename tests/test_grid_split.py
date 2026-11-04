@@ -156,7 +156,7 @@ def test_selection_keeps_covers_page_order_labels_destinations_and_editable_fiel
         original = [
             (item.title, item.page_index, item.destination) for item in source.outlines
         ]
-        with source.split_grid(2, 3, pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 1, 2))))) as result:
+        with source.split_grid(2, 3, pages=(number + 1 if type(number) is int else number for number in (index for index in (2, 1, 2)))) as result:
             assert result.page_count == 14
             assert (
                 "Cover" in result.pages[1].extract_text()

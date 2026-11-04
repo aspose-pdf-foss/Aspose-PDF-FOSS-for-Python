@@ -115,7 +115,7 @@ def test_literal_regex_templates_flags_relative_and_custom_urls(search, replacem
 def test_page_selection_deduplicates_repeats_and_page_method_uses_its_own_index():
     with Document() as document:
         _report(document)
-        assert document.replace_link_urls(OLD, NEW, pages=(number + 1 if type(number) is int else number for number in ((index for index in [2, 0, 2])))) == 2
+        assert document.replace_link_urls(OLD, NEW, pages=(number + 1 if type(number) is int else number for number in (index for index in [2, 0, 2]))) == 2
         assert _uris(document)[::2] == [NEW + "/page-0?q=1#part", OLD + "/page-1?q=1#part", NEW + "/page-2?q=1#part"]
         assert document.pages[2].replace_link_urls(OLD, NEW) == 1
         assert document.replace_link_urls(OLD, NEW, pages=[]) == 0

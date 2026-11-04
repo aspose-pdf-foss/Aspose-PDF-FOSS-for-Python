@@ -241,7 +241,7 @@ def test_an_independent_reader_agrees_about_the_updated_stream_file():
     updated = _saved(document, incremental=True)
     with pikepdf.open(io.BytesIO(updated)) as pdf:
         assert len(pdf.pages) == 2
-        assert b"appended" in bytes(pdf.pages[2].Contents.read_bytes())
+        assert b"appended" in bytes(pdf.pages[1].Contents.read_bytes())
 
 
 # --- the newest revision owns the object ------------------------------------

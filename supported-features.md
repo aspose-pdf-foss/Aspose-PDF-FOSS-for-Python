@@ -420,6 +420,48 @@ Supported:
   model is restored before every yield and on import failure. `split_every()`
   retains its list return type and disposes all partial results if splitting fails.
 
+- **Package fixed-size PDF parts as one ZIP.**
+  `Document.export_split_zip(destination=None, pages_per_part=1,
+  compression="deflate", compresslevel=6, include_manifest=False, overwrite=True)`
+  returns archive bytes and optionally writes them to a path or binary stream.
+  This packages split batches for one download or handoff without managing
+  temporary PDF files or the lifetime of returned documents.
+  - `pages_per_part` follows `split_every`: a positive integer, defaulting to
+    one PDF per source page. Pages retain order, blank pages count normally,
+    and the final part can be shorter. Parts have portable flat names
+    `part-0001.pdf`, `part-0002.pdf`, etc. Empty sources produce a valid empty
+    ZIP, or a manifest-only ZIP when requested. This API uses fixed page
+    counts; bookmark, text-marker and blank-page splitting remain separate.
+  - Part contents follow `split_every`, retaining Info metadata, page geometry,
+    resources, annotations, fields, labels, layers and relevant bookmarks,
+    including current unsaved outline edits. Document attachments, source
+    encryption and existing signature validity are not inherited. Source
+    documents and files remain unchanged unless explicitly chosen as output.
+  - `include_manifest=True` appends UTF-8 `manifest.json` with `schema_version=1`,
+    `pages_per_part`, and a `parts` array. Each record has `archive_name`,
+    one-based inclusive `start_page`/`end_page`, `page_count` and PDF byte `size`.
+    No source titles or other untrusted strings become filenames.
+  - ZIP compression accepts `"deflate"` or `"stored"`; `compresslevel` is an
+    integer 0..9. ZIP entries use fixed timestamps and regular-file permissions.
+    PDF file identifiers can vary, so repeated exports need not be byte-identical.
+    Archive options and entry count are validated before page import. Batch-size
+    errors follow `split_every`; invalid archive options raise
+    `PdfValidationException`, including for empty documents.
+  - Uses `iter_split_every`, importing, serializing and disposing one part at
+    a time, including on failures. Streaming sources stay lazy without text
+    extraction or rendering. The source graph, current serialized PDF and full
+    ZIP remain in memory. Each PDF is serialized by the normal writer before
+    its output-size check; this is not a streaming PDF writer. PDF and manifest
+    buffers obey `max_object_bytes` and `max_decoded_stream_bytes`, their sum
+    obeys `max_total_decoded_bytes`, archive growth including the central
+    directory obeys `max_codec_work_bytes`, and entries (including the manifest)
+    obey `max_container_items`. Existing import/decoding limits still apply.
+  - The archive is completed before destination output starts. Paths get parent
+    directories and atomic replacement; `overwrite=False` refuses existing files.
+    Caller-owned streams write at the current position, retry short writes and
+    remain open. Import, serialization, compression or limit failures leave the
+    destination untouched; stream write failures can leave partial output.
+
 - **Split into chapters by bookmarks.**
   `Document.split_by_bookmarks(level=1, include_preamble=True)` returns independent
   `Document` instances, one per distinct destination page at the requested

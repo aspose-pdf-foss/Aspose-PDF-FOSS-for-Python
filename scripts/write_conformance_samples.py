@@ -34,8 +34,8 @@ def _document():
     page = document.pages.add()
     page.add_text("Sample heading", 60, 720, font_size=20)
     page.add_text("Body text for a conformance sample.", 60, 700, font_size=11)
-    document.outlines.add(OutlineItem("Chapter one", 0))
-    document.form.add_text_field("nickname", 0, (60, 100, 260, 130), value="typed")
+    document.outlines.add(OutlineItem("Chapter one", 1))
+    document.form.add_text_field("nickname", 1, (60, 100, 260, 130), value="typed")
     document.add_attachment("notes.txt", b"an attachment", mime="text/plain")
     document.info["Title"] = "Conformance sample"
     buffer = io.BytesIO()

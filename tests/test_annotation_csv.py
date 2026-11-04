@@ -157,7 +157,7 @@ def test_page_selection_keeps_order_deduplicates_and_reports_header_only_empty_r
     document,
 ):
     rows = _report(
-        document.export_annotations_csv(pages=(number + 1 if type(number) is int else number for number in ((index for index in [1, 0, 1]))))
+        document.export_annotations_csv(pages=(number + 1 if type(number) is int else number for number in (index for index in [1, 0, 1])))
     )
     assert [row["page_number"] for row in rows] == ["2", "1", "1", "1", "1"]
     for options in ({"pages": []}, {"subtypes": []}, {"subtypes": "VendorMissing"}):

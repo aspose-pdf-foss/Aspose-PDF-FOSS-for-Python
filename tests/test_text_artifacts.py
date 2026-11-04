@@ -391,7 +391,7 @@ def test_facade_and_lowcode_combine_filtering_page_selection_clip_and_repeated_r
         extractor.extract_text(page_numbers=[1])
         assert extractor.get_text() == "First\nHeader"
     options = TextExtractorOptions(
-        PdfLoadLimits(), pages=(number + 1 if type(number) is int else number for number in ((i for i in [1, 0]))), clip=clip, skip_artifacts=True
+        PdfLoadLimits(), pages=(number + 1 if type(number) is int else number for number in (i for i in [1, 0])), clip=clip, skip_artifacts=True
     )
     options.add_input(ByteArrayDataSource(raw))
     options.add_input(ByteArrayDataSource(raw))

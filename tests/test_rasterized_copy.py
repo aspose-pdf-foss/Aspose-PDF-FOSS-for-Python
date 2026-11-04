@@ -89,7 +89,7 @@ def test_selected_pages_keep_order_repeats_and_independent_resources():
         for color in ("#f00", "#0f0", "#00f"):
             _page(source, color)
         with source.rasterized_copy(
-            pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))), dpi=72, antialias=False
+            pages=(number + 1 if type(number) is int else number for number in (index for index in (2, 0, 2))), dpi=72, antialias=False
         ) as result:
             assert [
                 page.render(antialias=False).get_pixel(10, 10) for page in result.pages

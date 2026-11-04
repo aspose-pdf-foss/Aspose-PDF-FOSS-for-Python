@@ -61,7 +61,7 @@ def test_selected_pages_keep_order_repeats_and_manifest_provenance():
             _page(document, color)
         files = _files(
             document.export_pages_zip(
-                pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))),
+                pages=(number + 1 if type(number) is int else number for number in (index for index in (2, 0, 2))),
                 antialias=False,
                 include_manifest=True,
             )

@@ -142,7 +142,7 @@ def test_selection_keeps_order_deduplicates_pages_and_shared_objects_only():
         third_xobjects.mapping[PdfName("Shared")] = first_ref
         files = _read(
             document.export_images_zip(
-                pages=(number + 1 if type(number) is int else number for number in ((p for p in (2, 0, 2, 1)))), include_manifest=True
+                pages=(number + 1 if type(number) is int else number for number in (p for p in (2, 0, 2, 1))), include_manifest=True
             )
         )
         records = json.loads(files["manifest.json"])["images"]

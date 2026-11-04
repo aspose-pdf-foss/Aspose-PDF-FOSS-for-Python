@@ -206,8 +206,8 @@ def test_selection_generators_keep_order_repetitions_and_missing_pages():
             left.export_comparison_html(
                 right,
                 mode="text",
-                pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))),
-                other_pages=(number + 1 if type(number) is int else number for number in ((index for index in (1, 0)))),
+                pages=(number + 1 if type(number) is int else number for number in (index for index in (2, 0, 2))),
+                other_pages=(number + 1 if type(number) is int else number for number in (index for index in (1, 0))),
             )
         )
         assert [row[:2] for row in report.rows] == [

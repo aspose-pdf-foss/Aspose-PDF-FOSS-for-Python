@@ -138,7 +138,7 @@ def test_page_selection_order_repeats_generator_and_original_page_indices():
     with Document() as document:
         for number in range(3):
             _grid(document.pages.add(), [["N", "V"], [str(number), "x"]], xs=(60, 85))
-        tables = document.extract_tables(pages=(number + 1 if type(number) is int else number for number in ((i for i in [2, 0, 2]))))
+        tables = document.extract_tables(pages=(number + 1 if type(number) is int else number for number in (i for i in [2, 0, 2])))
         assert [table.page_index for table in tables] == [3, 1, 3]
         assert [table.rows[1][0] for table in tables] == ["2", "0", "2"]
         assert document.pages[2].extract_tables()[0].page_index == 2

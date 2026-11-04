@@ -11,6 +11,8 @@ pikepdf is absent, so a plain checkout stays green; CI installs it. Its
 ``check_pdf_syntax`` is qpdf's own consistency pass over the object graph,
 cross-reference table and stream lengths, and its ``save`` is a full rewrite
 that has to re-read everything first.
+
+Aspose public page numbers start at one; pikepdf page indices start at zero.
 """
 
 from __future__ import annotations
@@ -272,7 +274,7 @@ def test_qpdf_opens_what_the_writer_enciphered(documents, name):
         assert [str(f.T) for f in pdf.Root.AcroForm.Fields] == ["nickname"]
         assert str(pdf.Root.Names.EmbeddedFiles.Names[0]) == "notes.txt"
         assert "/Outlines" in pdf.Root
-        assert b"Body text" in _page_content(pdf.pages[1])
+        assert b"Body text" in _page_content(pdf.pages[0])
 
 
 def test_a_qpdf_rewrite_settles_after_one_save_here():
@@ -313,7 +315,7 @@ def test_qpdf_reads_an_appended_revision_without_repairing_it():
     assert whole.count(b"%%EOF") >= 2
     assert _qpdf_problems(whole) == []
     with pikepdf.open(io.BytesIO(whole)) as pdf:
-        assert b"Appended later" in _page_content(pdf.pages[1])
+        assert b"Appended later" in _page_content(pdf.pages[0])
 
 
 @pytest.mark.parametrize("algorithm", ["RC4", "AES-128", "AES-256"])
@@ -339,7 +341,7 @@ def test_qpdf_reads_an_encrypted_incremental_revision(algorithm):
     assert _qpdf_problems(whole, "u") == []
     with pikepdf.open(io.BytesIO(whole), password="u") as pdf:
         assert str(pdf.docinfo["/Title"]) == "Encrypted and structured"
-        content = _page_content(pdf.pages[1])
+        content = _page_content(pdf.pages[0])
         assert b"Appended later" in content
         assert b"Body text" in content
 

@@ -207,7 +207,7 @@ def test_selection_is_validated_deduplicated_and_keeps_first_occurrence_order():
     with Document() as document:
         for color in ("#000", "#00f", "#000", "#00f", "#000", "#f00"):
             _page(document, color)
-        assert document.find_duplicate_pages(pages=(number + 1 if type(number) is int else number for number in ((i for i in (3, 4, 1, 2, 4, 0))))) == [
+        assert document.find_duplicate_pages(pages=(number + 1 if type(number) is int else number for number in (i for i in (3, 4, 1, 2, 4, 0)))) == [
             [4, 2],
             [5, 3, 1],
         ]

@@ -82,7 +82,7 @@ def test_selection_order_and_repeats_report_original_indices(monkeypatch):
             return original(page, **options)
 
         monkeypatch.setattr(Page, "render", render)
-        assert document.remove_blank_pages(pages=(number + 1 if type(number) is int else number for number in ((i for i in (4, 1, 0, 4))))) == [5, 1]
+        assert document.remove_blank_pages(pages=(number + 1 if type(number) is int else number for number in (i for i in (4, 1, 0, 4)))) == [5, 1]
         assert visits == [5, 2, 1]
         assert [page.extract_text() for page in document.pages] == [
             "P1",

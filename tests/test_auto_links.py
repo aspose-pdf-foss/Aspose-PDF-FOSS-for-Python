@@ -224,7 +224,7 @@ def test_page_selection_order_repeats_and_max_count():
         for index in range(3):
             document.pages.add().add_text(f"https://example.org/{index}", 72, 700)
         assert document.auto_link(pages=[]) == AutoLinkResult()
-        result = document.auto_link(pages=(number + 1 if type(number) is int else number for number in ((i for i in [2, 0, 2, 1]))), max_count=3)
+        result = document.auto_link(pages=(number + 1 if type(number) is int else number for number in (i for i in [2, 0, 2, 1])), max_count=3)
         assert _targets(result) == ["https://example.org/2", "https://example.org/0"]
         assert result.existing_count == 1 and result.matched_count == 3
         assert [len(page.annotations) for page in document.pages] == [1, 0, 1]

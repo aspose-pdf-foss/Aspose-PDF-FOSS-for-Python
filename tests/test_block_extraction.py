@@ -101,7 +101,7 @@ def test_page_selection_preserves_order_repetitions_and_original_indices():
     with Document() as document:
         for number in range(3):
             document.pages.add().add_text(f"Page {number}", 20, 700)
-        blocks = document.extract_blocks(pages=(number + 1 if type(number) is int else number for number in ((i for i in (2, 0, 2)))))
+        blocks = document.extract_blocks(pages=(number + 1 if type(number) is int else number for number in (i for i in (2, 0, 2))))
         assert [(b.page_index, b.text) for b in blocks] == [
             (3, "Page 2"), (1, "Page 0"), (3, "Page 2"),
         ]

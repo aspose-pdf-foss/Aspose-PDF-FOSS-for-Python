@@ -227,7 +227,7 @@ def test_document_selection_is_snapshot_validated_and_deduplicated(monkeypatch):
             return original(page, **options)
 
         monkeypatch.setattr(Page, "render", render)
-        assert document.find_blank_pages(pages=(number + 1 if type(number) is int else number for number in ((i for i in (3, 1, 0, 3, 2))))) == [
+        assert document.find_blank_pages(pages=(number + 1 if type(number) is int else number for number in (i for i in (3, 1, 0, 3, 2)))) == [
             4,
             1,
             3,

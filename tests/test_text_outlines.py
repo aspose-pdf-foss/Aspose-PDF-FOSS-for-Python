@@ -91,7 +91,7 @@ def test_page_selection_keeps_order_repetitions_and_original_indices():
     with Document() as document:
         _report(document)
         assert document.generate_outlines_from_text(
-            r"Chapter \d+", regex=True, pages=(number + 1 if type(number) is int else number for number in ((index for index in [2, 1, 2]))),
+            r"Chapter \d+", regex=True, pages=(number + 1 if type(number) is int else number for number in (index for index in [2, 1, 2])),
         ) == 3
         assert _titles(document) == [("Chapter 2", 3), ("Chapter 1", 2), ("Chapter 2", 3)]
 

@@ -198,7 +198,7 @@ def test_subtype_strings_enums_and_generators_select_original_indices(
 
 
 def test_page_selection_order_and_duplicates_empty_and_unknown_filters(document):
-    data = document.export_annotations_json(pages=(number + 1 if type(number) is int else number for number in ((i for i in [1, 0, 1]))))
+    data = document.export_annotations_json(pages=(number + 1 if type(number) is int else number for number in (i for i in [1, 0, 1])))
     assert [a["page_index"] for a in json.loads(data)["annotations"]] == [2, 1, 1, 1, 1]
     for options in ({"pages": []}, {"subtypes": []}, {"subtypes": "VendorType"}):
         assert (

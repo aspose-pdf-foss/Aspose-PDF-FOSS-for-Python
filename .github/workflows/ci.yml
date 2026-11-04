@@ -98,7 +98,7 @@ jobs:
           python -m pip install -e .[dev] pikepdf
 
       - name: Cross-validate against qpdf
-        run: pytest -q tests/test_cross_validation.py
+        run: pytest -q tests/test_cross_validation.py tests/test_revision_chain.py
 
       # veraPDF is the reference PDF/A validator, and the one this project's
       # documentation tells users to run. It is deliberately non-blocking:

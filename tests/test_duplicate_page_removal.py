@@ -93,7 +93,7 @@ def test_selection_order_controls_keep_and_results_use_document_order(
         with monkeypatch.context() as patch:
             patch.setattr(Page, "render", render)
             assert document.remove_duplicate_pages(
-                pages=(number + 1 if type(number) is int else number for number in ((i for i in (4, 2, 1, 5, 4, 0)))), keep=keep,
+                pages=(number + 1 if type(number) is int else number for number in (i for i in (4, 2, 1, 5, 4, 0))), keep=keep,
             ) == list(number + 1 for number in (removed))
         assert set(visited) == {1, 2, 3, 5, 6}
         assert [page.extract_text() for page in document.pages] == remaining

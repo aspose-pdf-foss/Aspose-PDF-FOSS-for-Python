@@ -5741,6 +5741,61 @@ class Document:
             raise
         return result
 
+    def export_split_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages_per_part: int = 1,
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Split into fixed-size PDF parts and return them in one ZIP archive.
+
+        ``pages_per_part`` must be a positive integer and defaults to one page
+        per PDF. Parts are named ``part-0001.pdf``, ``part-0002.pdf``, etc. in
+        source page order; the last can be shorter. Empty input produces a
+        valid empty ZIP. ``include_manifest=True`` adds ``manifest.json`` with
+        versioned records of one-based inclusive source ranges and file sizes.
+
+        Part contents follow :meth:`split_every`, including metadata, relevant
+        bookmarks and annotations. Parts do not inherit source encryption,
+        document attachments or signature validity. Only one imported part is
+        retained at a time and is disposed after serialization, also on errors.
+        Streaming sources stay lazy. The complete ZIP and each current PDF's
+        serialized bytes are buffered in memory under ``PdfLoadLimits``.
+
+        Compression is ``'deflate'`` (level 0..9) or ``'stored'``. ZIP member
+        metadata uses fixed timestamps and regular-file permissions; PDF file
+        identifiers may vary between exports. The archive is completed before
+        output is touched. Paths are written atomically with parent directories
+        created; ``overwrite=False`` refuses existing files. Binary streams
+        retry short writes at their current position and remain open; write
+        failures can leave partial stream output. The source is unchanged.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.split_zip import export_zip
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = export_zip(
+            self,
+            pages_per_part=pages_per_part,
+            compression=compression,
+            compresslevel=compresslevel,
+            include_manifest=include_manifest,
+        )
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     def split_by_bookmarks(
         self,
         level: int = 1,

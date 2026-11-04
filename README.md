@@ -1279,6 +1279,23 @@ font metrics; unmeasurable runs and content-stream `/ActualText` replacement
 spans are omitted. No OCR or language-specific word segmentation is performed.
 See [word extraction details](supported-features.md#text).
 
+### Download Split PDF Parts as One ZIP
+
+```python
+from aspose_pdf import Document
+
+with Document.open_streaming("batch.pdf") as document:
+    document.export_split_zip(
+        "parts.zip", pages_per_part=10, include_manifest=True,
+    )
+```
+
+Omit the destination to receive ZIP bytes, or pass a binary stream. The default
+is one page per PDF; files are named `part-0001.pdf`, `part-0002.pdf`, etc.
+The optional manifest records original page ranges and file sizes. Each part
+is disposed after packaging. Parts follow `split_every()` and start without
+source encryption; see [splitting details](supported-features.md#documents).
+
 ### Split at Text Markers
 
 Separate a batch of invoices or reports by searching for a heading in the
@@ -1980,6 +1997,8 @@ and delete workflows. 276 public types are organized by module below.
     `generate_appearances(force) -> int` / `generate_field_appearances() -> int`
   - `split_by_bookmarks(level=1, include_preamble=True) -> list[Document]` —
     split chapters at local bookmarks and retain leading pages in a separate document
+  - `export_split_zip(destination=None, pages_per_part=1, compression="deflate", compresslevel=6, include_manifest=False, overwrite=True) -> bytes` —
+    package consecutive PDF parts into one archive, optionally recording source page ranges
   - `export_bookmarks_json(destination=None, resolve_named_destinations=True, overwrite=True) -> bytes` /
     `import_bookmarks_json(source, replace=False, page_map=None) -> int` — exchange a
     versioned bookmark tree, preserving supported targets and styles

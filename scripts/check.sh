@@ -14,7 +14,7 @@ else
 fi
 
 python -m pip install -e .[dev]
-python -m ruff check src/
+python -m ruff check src/ tests/
 python -m pytest -q
 python -m compileall -q src/aspose_pdf
 python -m build

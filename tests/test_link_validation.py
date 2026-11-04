@@ -466,7 +466,7 @@ def test_page_selection_order_duplicates_flags_and_page_convenience(document):
     document.outlines.add(OutlineItem("bad", destination="outline-missing"))
     _names(document, [("invalid", PdfNull())])
     issues = document.validate_links(
-        pages=(number + 1 if type(number) is int else number for number in ((i for i in [2, 0, 2]))),
+        pages=(number + 1 if type(number) is int else number for number in (i for i in [2, 0, 2])),
         include_outlines=False,
         include_named_destinations=False,
     )

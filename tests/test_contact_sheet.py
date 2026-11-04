@@ -51,7 +51,7 @@ def test_grid_selection_order_repeats_margins_and_last_empty_cell():
         for color in ("#f00", "#0f0", "#00f"):
             _colored_page(document, color)
         sheet = document.render_contact_sheet(
-            pages=(number + 1 if type(number) is int else number for number in ((i for i in (2, 0, 2)))),
+            pages=(number + 1 if type(number) is int else number for number in (i for i in (2, 0, 2))),
             columns=2,
             thumbnail_size=(10, 10),
             margin=2,

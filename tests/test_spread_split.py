@@ -139,7 +139,7 @@ def test_selected_spreads_stay_in_source_order_with_unselected_covers():
         source.pages.add(size=(10, 20)).add_text("Cover", 1, 10, font_size=2)
         _spread(source)
         source.pages.add(size=(10, 20)).add_text("Back", 1, 10, font_size=2)
-        with source.split_spreads(pages=(number + 1 if type(number) is int else number for number in ((index for index in (1, 1))))) as result:
+        with source.split_spreads(pages=(number + 1 if type(number) is int else number for number in (index for index in (1, 1)))) as result:
             assert result.page_count == 4
             assert (
                 "Cover" in result.pages[1].extract_text()

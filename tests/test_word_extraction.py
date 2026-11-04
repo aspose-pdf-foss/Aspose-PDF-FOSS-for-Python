@@ -197,7 +197,7 @@ def test_selected_pages_keep_order_repeats_and_original_page_indices():
     with Document() as document:
         for index in range(3):
             document.pages.add().add_text(f"Page{index}", 20, 100)
-        words = document.extract_words(pages=(number + 1 if type(number) is int else number for number in ((index for index in (2, 0, 2)))))
+        words = document.extract_words(pages=(number + 1 if type(number) is int else number for number in (index for index in (2, 0, 2))))
         assert [(word.page_index, word.text) for word in words] == [
             (3, "Page2"),
             (1, "Page0"),
