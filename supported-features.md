@@ -3879,6 +3879,35 @@ Supported:
     are planned and checked before insertion. An error on a later page can
     leave earlier pages' additions in place. Saving retains the document's
     protection and existing text; it follows the normal signature/save rules.
+- **Link a literal phrase to one chosen URL.**
+  `Document.link_text(search, uri, pages=None, case_sensitive=True, max_count=0)`
+  adds invisible, borderless URI links over reliably located occurrences in
+  existing text. `Page.link_text(search, uri, case_sensitive=True, max_count=0)`
+  processes one page. For example, link every `"Contact support"` to a help
+  page without changing the PDF's wording, fonts, content streams or appearance.
+  - Search is literal, case-sensitive by default, and finds non-overlapping
+    substrings. Punctuation and regular-expression characters have no special
+    meaning. `case_sensitive=False` uses Python's Unicode case-insensitive
+    matching; this does not perform arbitrary Unicode normalization.
+  - `uri` is nonblank text stored verbatim, as with `URIAction`, including
+    relative or `mailto:` targets. No URL normalization, network request or
+    destination validation occurs. Empty/nontext searches, blank/nontext URIs,
+    invalid Unicode, nonboolean `case_sensitive` and invalid `max_count` raise
+    `PdfValidationException` before edits, even with an empty selection.
+    Search, escaped pattern and encoded target sizes obey `max_object_bytes`.
+  - The result is `AutoLinkResult` with the same live annotations, counts,
+    one-based fragment page indices and full-page text offsets as `auto_link`.
+    One-based `pages` preserves selection order/repetitions; `None` selects all
+    and an empty iterable does nothing. `max_count=0` is unlimited; a positive
+    cap counts all considered matches, including existing and skipped ones.
+  - Placement, overlap protection, resource limits, lazy streaming and saving
+    follow `auto_link`. Existing links are preserved regardless of target,
+    and repeated calls do not stack overlapping annotations. Uncertain fonts,
+    Form XObjects, ambiguous repeated phrases, and phrases assembled across
+    unrelated text runs may be reported in `skipped_fragments`. No OCR,
+    line-wrap joining or regular-expression search is performed. Axis-aligned
+    rectangles can cover surrounding space for transformed text. A later-page
+    error can leave earlier pages' additions in place.
 - **Match a shape, not only a phrase.** `replace_text` and `redact_text` take
   `regex=True`, or a compiled `re.Pattern` as the search (which needs no flag),
   so `\d{3}-\d{2}-\d{4}` finds a social security number and

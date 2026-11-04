@@ -971,6 +971,25 @@ existing link. `urls=False` or `emails=False` disables either kind; `max_count`
 limits addresses considered. Uncertain coordinates are reported in
 `skipped_fragments`; see [recognition and geometry limits](supported-features.md#text).
 
+### Link a Phrase to a URL
+
+```python
+from aspose_pdf import Document
+
+with Document("manual.pdf") as document:
+    result = document.link_text(
+        "Contact support", "https://example.com/support", case_sensitive=False,
+    )
+    print(result.linked_count, result.skipped_count, result.existing_count)
+    document.save("linked-manual.pdf")
+```
+
+`Page.link_text()` processes one page; `pages` selects pages on `Document`.
+Matching is literal and case-sensitive by default. Text and appearance stay
+unchanged; existing links are preserved and uncertain positions are reported.
+`max_count` limits matches considered, including skipped and existing matches.
+See [placement limits](supported-features.md#text).
+
 ### Exchange Bookmarks as JSON
 
 ```python
@@ -2041,6 +2060,10 @@ and delete workflows. 276 public types are organized by module below.
 - `Document.replace_link_urls(search, replacement, pages=None, regex=False, case_sensitive=True, dry_run=False)` /
   `Page.replace_link_urls(search, replacement, regex=False, case_sensitive=True, dry_run=False)`
   return the number of changed Link annotations, replacing primary URI URLs.
+
+- `Document.link_text(search, uri, pages=None, case_sensitive=True, max_count=0)` /
+  `Page.link_text(search, uri, case_sensitive=True, max_count=0)` link literal
+  phrase occurrences to one target URI and return `AutoLinkResult`.
 
 - `Document.extract_text(pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` /
   `Page.extract_text(clip=None, skip_artifacts=False, exclude_regions=None)` return text,

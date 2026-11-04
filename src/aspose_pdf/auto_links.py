@@ -1,4 +1,4 @@
-"""Recognize web/email addresses and link only reliably located PDF text."""
+"""Link recognized addresses or literal phrases with reliable PDF text bounds."""
 
 from __future__ import annotations
 
@@ -6,13 +6,19 @@ import ipaddress
 import math
 import re
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from aspose_pdf.annotations import LinkAnnotation, Name
-from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfName, PdfNumber
+from aspose_pdf.engine.cos import (
+    PdfArray,
+    PdfDictionary,
+    PdfName,
+    PdfNumber,
+    encode_pdf_text_string,
+)
 from aspose_pdf.engine.text_edit import _lex, _run_char_data, _walk_show_runs
 from aspose_pdf.engine.text_locate import _bounds, _char_geometry, _span_quads
 from aspose_pdf.engine.text_selection import page_indexes
@@ -24,6 +30,8 @@ if TYPE_CHECKING:
     from aspose_pdf.document import Document
 
 __all__ = ["AutoLinkResult"]
+
+_CandidateFinder = Callable[[str], Iterator[tuple[int, int, str, str]]]
 
 _ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -51,12 +59,12 @@ _CLOSERS = {")": "(", "]": "[", "}": "{"}
 
 @dataclass(frozen=True)
 class AutoLinkResult:
-    """Created links and detected addresses that were left unchanged.
+    """Created links and matched text that was left unchanged.
 
     ``annotations`` contains live link handles in page/match order.
     ``skipped_fragments`` have uncertain geometry; ``existing_fragments``
     overlap an existing link. Fragment offsets refer to full-page extraction.
-    Counts include only addresses considered within ``max_count``.
+    Counts include only matches considered within ``max_count``.
     """
 
     annotations: tuple[LinkAnnotation, ...] = ()
@@ -65,22 +73,22 @@ class AutoLinkResult:
 
     @property
     def linked_count(self) -> int:
-        """The number of new annotations, one per linked address."""
+        """The number of new annotations, one per linked match."""
         return len(self.annotations)
 
     @property
     def skipped_count(self) -> int:
-        """The number of addresses without reliable geometry."""
+        """The number of matches without reliable geometry."""
         return len(self.skipped_fragments)
 
     @property
     def existing_count(self) -> int:
-        """The number of addresses already covered by link annotations."""
+        """The number of matches already covered by link annotations."""
         return len(self.existing_fragments)
 
     @property
     def matched_count(self) -> int:
-        """The number of detected addresses considered, including skips."""
+        """The number of text matches considered, including skips."""
         return self.linked_count + self.skipped_count + self.existing_count
 
 
@@ -160,7 +168,7 @@ def _candidates(
             yield match.start(), match.start() + len(value), value, uri
 
 
-def _located(engine, index: int, urls: bool, emails: bool) -> dict[str, list]:
+def _located(engine, index: int, candidates: _CandidateFinder) -> dict[str, list]:
     """Reuse the text locator's run decoding and whole-code-unit geometry."""
     budget = engine._load_budget
     found = defaultdict(list)
@@ -175,7 +183,7 @@ def _located(engine, index: int, urls: bool, emails: bool) -> dict[str, list]:
             continue
         infos, text, entries, _starts = _run_char_data(run, budget=budget)
         geometry = None
-        for start, end, value, _uri in _candidates(text, urls, emails):
+        for start, end, value, _uri in candidates(text):
             if (
                 not entries[start][2]
                 or not entries[end - 1][3]
@@ -198,7 +206,7 @@ def _located(engine, index: int, urls: bool, emails: bool) -> dict[str, list]:
             ):
                 continue
             count += 1
-            budget.check(count, "max_container_items", "auto-link located addresses")
+            budget.check(count, "max_container_items", "auto-link located matches")
             found[value].append((rect, quads))
     return found
 
@@ -304,6 +312,63 @@ def _auto_link(
     indexes = page_indexes(pages, document.page_count, limits=document.load_limits)
     if not urls and not emails:
         return AutoLinkResult()
+    return _link_matches(
+        document, indexes, lambda text: _candidates(text, urls, emails), max_count
+    )
+
+
+def _link_text(
+    document: Document,
+    search: str,
+    uri: str,
+    *,
+    pages: Iterable[int] | None = None,
+    case_sensitive: bool = True,
+    max_count: int = 0,
+) -> AutoLinkResult:
+    """Find non-overlapping literal matches and link them to one URI."""
+    document._ensure_not_disposed()
+    engine = document._engine_pdf
+    if engine is None:
+        raise AsposePdfException("No document loaded")
+    if not isinstance(search, str) or not search:
+        raise PdfValidationException("search must be nonempty text")
+    if not isinstance(uri, str) or not uri.strip():
+        raise PdfValidationException("uri must be nonblank text")
+    if not isinstance(case_sensitive, bool):
+        raise PdfValidationException("case_sensitive must be a boolean")
+    if isinstance(max_count, bool) or not isinstance(max_count, int) or max_count < 0:
+        raise PdfValidationException("max_count must be a non-negative integer")
+    budget = engine._load_budget
+    for value, label in ((search, "search"), (uri, "uri")):
+        budget.check(len(value), "max_object_bytes", f"link text {label}")
+        try:
+            encoded = (
+                encode_pdf_text_string(value) if label == "uri" else value.encode("utf-8")
+            )
+        except UnicodeError as exc:
+            raise PdfValidationException(f"{label} contains invalid Unicode") from exc
+        budget.check(len(encoded), "max_object_bytes", f"link text {label}")
+    source = re.escape(search)
+    budget.check(len(source), "max_object_bytes", "link text pattern")
+    pattern = re.compile(source, 0 if case_sensitive else re.IGNORECASE)
+    indexes = page_indexes(pages, document.page_count, limits=document.load_limits)
+
+    def candidates(text: str) -> Iterator[tuple[int, int, str, str]]:
+        for match in pattern.finditer(text):
+            yield match.start(), match.end(), match.group(), uri
+
+    return _link_matches(document, indexes, candidates, max_count)
+
+
+def _link_matches(
+    document: Document,
+    indexes: tuple[int, ...] | None,
+    candidates: _CandidateFinder,
+    max_count: int,
+) -> AutoLinkResult:
+    """Share conservative placement and duplicate checks across link searches."""
+    engine = document._engine_pdf
     annotations, skipped, existing = [], [], []
     considered = overlap_checks = 0
     budget = engine._load_budget
@@ -311,7 +376,7 @@ def _auto_link(
         page = document._page_at(index)
         matches = []
         by_text = defaultdict(list)
-        for start, end, value, uri in _candidates(page.extract_text(), urls, emails):
+        for start, end, value, uri in candidates(page.extract_text()):
             budget.check(
                 len(matches) + 1, "max_container_items", "auto-link page matches"
             )
@@ -320,10 +385,10 @@ def _auto_link(
             by_text[value].append(fragment)
         if not matches:
             continue
-        located = _located(engine, index, urls, emails)
+        located = _located(engine, index, candidates)
         for value, group in by_text.items():
             places = located[value]
-            # Counts must agree: a form or an unmeasurable repeated address
+            # Counts must agree: a form or an unmeasurable repeated match
             # must not borrow the coordinates of another occurrence.
             if len(places) == len(group):
                 for fragment, (rect, quads) in zip(group, places):

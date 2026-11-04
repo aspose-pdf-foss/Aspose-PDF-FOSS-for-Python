@@ -1715,6 +1715,26 @@ class Page:
             pages=[self.number], urls=urls, emails=emails, max_count=max_count
         )
 
+    def link_text(
+        self,
+        search: str,
+        uri: str,
+        *,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+    ) -> AutoLinkResult:
+        """Link literal phrase occurrences on this page to one target URI.
+
+        See :meth:`Document.link_text` for placement limits and result fields.
+        """
+        return self._document.link_text(
+            search,
+            uri,
+            pages=[self.number],
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+        )
+
     def add_link(
         self,
         rect: Sequence[float],

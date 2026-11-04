@@ -3465,6 +3465,44 @@ class Document:
 
         return _auto_link(self, pages=pages, urls=urls, emails=emails, max_count=max_count)
 
+    @page_api(selections=("pages",), result="records")
+    def link_text(
+        self,
+        search: str,
+        uri: str,
+        *,
+        pages: Iterable[int] | None = None,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+    ) -> AutoLinkResult:
+        """Make occurrences of a literal phrase clickable using one target URI.
+
+        Match non-overlapping occurrences, respecting case by default. The
+        nonblank ``uri`` is stored verbatim, as with ``URIAction``. Text, fonts
+        and content streams remain unchanged. ``pages`` selects one-based
+        pages in order; ``None`` selects all. ``max_count=0`` is unlimited;
+        a positive cap includes matches skipped for uncertain geometry or
+        overlap with existing links, regardless of their target.
+
+        Return ``AutoLinkResult`` with live annotations and skipped/existing
+        fragments. Placement and streaming behavior follow :meth:`auto_link`:
+        only reliably located text receives an axis-aligned link rectangle.
+        Forms, unknown fonts, ambiguous repetitions and phrases split across
+        lines or unrelated runs may remain unlinked. No OCR or regular
+        expression matching is performed. Options are validated before edits;
+        an error on a later page can leave earlier pages' links in place.
+        """
+        from aspose_pdf.auto_links import _link_text
+
+        return _link_text(
+            self,
+            search,
+            uri,
+            pages=pages,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+        )
+
     @page_api(scalars=("page_index",), result="records")
     def markup_text(
         self,
@@ -6404,6 +6442,7 @@ class Document:
     _api_save_as_tiff = save_as_tiff.__wrapped__
     _api_replace_text = replace_text.__wrapped__
     _api_auto_link = auto_link.__wrapped__
+    _api_link_text = link_text.__wrapped__
     _api_markup_text = markup_text.__wrapped__
     _api_highlight_text = highlight_text.__wrapped__
     _api_redact_text = redact_text.__wrapped__
