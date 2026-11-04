@@ -3979,22 +3979,38 @@ Supported:
     are planned and checked before insertion. An error on a later page can
     leave earlier pages' additions in place. Saving retains the document's
     protection and existing text; it follows the normal signature/save rules.
-- **Link a literal phrase to one chosen URL.**
-  `Document.link_text(search, uri, pages=None, case_sensitive=True, max_count=0)`
-  adds invisible, borderless URI links over reliably located occurrences in
-  existing text. `Page.link_text(search, uri, case_sensitive=True, max_count=0)`
-  processes one page. For example, link every `"Contact support"` to a help
-  page without changing the PDF's wording, fonts, content streams or appearance.
+- **Link a literal phrase to a URL or a destination within the PDF.**
+  `Document.link_text(search, uri=None, *, target=None, pages=None,
+  case_sensitive=True, max_count=0)` adds invisible, borderless links over
+  reliably located occurrences in existing text. `Page.link_text` accepts the
+  same options except `pages` and processes one page. For example, link every
+  `"Contact support"` to a help URL or `"See chapter 3"` to a PDF page without
+  changing the PDF's wording, fonts, content streams or appearance.
   - Search is literal, case-sensitive by default, and finds non-overlapping
     substrings. Punctuation and regular-expression characters have no special
     meaning. `case_sensitive=False` uses Python's Unicode case-insensitive
     matching; this does not perform arbitrary Unicode normalization.
   - `uri` is nonblank text stored verbatim, as with `URIAction`, including
     relative or `mailto:` targets. No URL normalization, network request or
-    destination validation occurs. Empty/nontext searches, blank/nontext URIs,
-    invalid Unicode, nonboolean `case_sensitive` and invalid `max_count` raise
+    external destination validation occurs. Empty/nontext searches,
+    blank/nontext URIs, invalid Unicode, nonboolean `case_sensitive` and invalid `max_count` raise
     `PdfValidationException` before edits, even with an empty selection.
     Search, escaped pattern and encoded target sizes obey `max_object_bytes`.
+  - Supply exactly one of `uri` and keyword-only `target`. `target` accepts any
+    of the eight supported `Destination` types, such as `FitDestination(3)` or
+    `XYZDestination(3, top=700)`, or an existing named destination such as
+    `"chapter-3"`. Destination pages are one-based and must exist; view
+    coordinates must be finite numbers. Names use the destination collection's
+    Latin-1 byte-preserving spelling and must resolve to a supported local
+    destination. Invalid types, missing/unresolvable names, bad page numbers or
+    coordinates, and conflicting URI/target arguments raise
+    `PdfValidationException` before page content is read or links are added,
+    even when no pages or phrases match. Names obey `max_object_bytes` too.
+    Local targets are stored as `/Dest`, retaining the specified view; a named
+    target is kept as a name rather than expanded to a page, so redefining that
+    name redirects the links. The returned live annotation exposes it through
+    `get_property("Dest")`. Named targets must be defined before linking;
+    actions and remote-file destinations are not accepted by `target`.
   - The result is `AutoLinkResult` with the same live annotations, counts,
     one-based fragment page indices and full-page text offsets as `auto_link`.
     One-based `pages` preserves selection order/repetitions; `None` selects all

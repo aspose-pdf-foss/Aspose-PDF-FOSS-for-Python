@@ -984,16 +984,19 @@ existing link. `urls=False` or `emails=False` disables either kind; `max_count`
 limits addresses considered. Uncertain coordinates are reported in
 `skipped_fragments`; see [recognition and geometry limits](supported-features.md#text).
 
-### Link a Phrase to a URL
+### Link a Phrase to a URL or PDF Destination
 
 ```python
-from aspose_pdf import Document
+from aspose_pdf import Document, FitDestination
 
 with Document("manual.pdf") as document:
     result = document.link_text(
         "Contact support", "https://example.com/support", case_sensitive=False,
     )
     print(result.linked_count, result.skipped_count, result.existing_count)
+    document.link_text("See chapter 3", target=FitDestination(3))
+    document.destinations["appendix"] = FitDestination(5)
+    document.link_text("See appendix", target="appendix")
     document.save("linked-manual.pdf")
 ```
 
@@ -1001,6 +1004,8 @@ with Document("manual.pdf") as document:
 Matching is literal and case-sensitive by default. Text and appearance stay
 unchanged; existing links are preserved and uncertain positions are reported.
 `max_count` limits matches considered, including skipped and existing matches.
+Use either `uri` or `target`; destination pages are one-based, and named targets
+must already exist. Named links follow later changes to their destination.
 See [placement limits](supported-features.md#text).
 
 ### Exchange Bookmarks as JSON
@@ -2146,9 +2151,10 @@ and delete workflows. 276 public types are organized by module below.
   `Page.replace_link_urls(search, replacement, regex=False, case_sensitive=True, dry_run=False)`
   return the number of changed Link annotations, replacing primary URI URLs.
 
-- `Document.link_text(search, uri, pages=None, case_sensitive=True, max_count=0)` /
-  `Page.link_text(search, uri, case_sensitive=True, max_count=0)` link literal
-  phrase occurrences to one target URI and return `AutoLinkResult`.
+- `Document.link_text(search, uri=None, *, target=None, pages=None, case_sensitive=True, max_count=0)` /
+  `Page.link_text(search, uri=None, *, target=None, case_sensitive=True, max_count=0)`
+  link literal phrases to a URI, typed PDF destination or existing destination
+  name, and return `AutoLinkResult`.
 
 - `Document.extract_text(pages=None, clip=None, skip_artifacts=False, exclude_regions=None)` /
   `Page.extract_text(clip=None, skip_artifacts=False, exclude_regions=None)` return text,

@@ -23,7 +23,7 @@ from aspose_pdf.engine.text_edit import _lex, _run_char_data, _walk_show_runs
 from aspose_pdf.engine.text_locate import _bounds, _char_geometry, _span_quads
 from aspose_pdf.engine.text_selection import page_indexes
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
-from aspose_pdf.interactive import URIAction
+from aspose_pdf.interactive import Destination, URIAction, destination_from_spec
 from aspose_pdf.text import TextFragment
 
 if TYPE_CHECKING:
@@ -261,16 +261,23 @@ def _overlaps(first, second) -> bool:
     ) > max(first[1], second[1])
 
 
-def _add_link(engine, page, page_dict, annots, fragment, uri) -> LinkAnnotation:
-    """Append a typed URI action and return a live handle without reading APs."""
-    action = engine._action_cos(URIAction(uri))
+def _add_link(
+    engine, page, page_dict, annots, fragment, uri, target=None
+) -> LinkAnnotation:
+    """Append a link and return a live handle without reading appearances."""
+    if target is None:
+        cos_target, key = engine._action_cos(URIAction(uri)), "A"
+        property_value = {"Type": Name("Action"), "S": Name("URI"), "URI": uri}
+    else:
+        cos_target, key = engine._interactive_target_cos(target)
+        property_value = target
     annotation = PdfDictionary(
         {
             PdfName("Type"): PdfName("Annot"),
             PdfName("Subtype"): PdfName("Link"),
             PdfName("Rect"): PdfArray([PdfNumber(value) for value in fragment.rect]),
             PdfName("Border"): PdfArray([PdfNumber(0), PdfNumber(0), PdfNumber(0)]),
-            PdfName("A"): action,
+            PdfName(key): cos_target,
         }
     )
     reference = engine._cos_doc.register_object(annotation)
@@ -286,7 +293,7 @@ def _add_link(engine, page, page_dict, annots, fragment, uri) -> LinkAnnotation:
             "Contents": "",
             "Properties": {
                 "Border": [0, 0, 0],
-                "A": {"Type": Name("Action"), "S": Name("URI"), "URI": uri},
+                key: property_value,
             },
         },
     )
@@ -320,27 +327,34 @@ def _auto_link(
 def _link_text(
     document: Document,
     search: str,
-    uri: str,
+    uri: str | None = None,
     *,
+    target: Destination | str | None = None,
     pages: Iterable[int] | None = None,
     case_sensitive: bool = True,
     max_count: int = 0,
 ) -> AutoLinkResult:
-    """Find non-overlapping literal matches and link them to one URI."""
+    """Find literal matches and link them to one URI or local destination."""
     document._ensure_not_disposed()
     engine = document._engine_pdf
     if engine is None:
         raise AsposePdfException("No document loaded")
     if not isinstance(search, str) or not search:
         raise PdfValidationException("search must be nonempty text")
-    if not isinstance(uri, str) or not uri.strip():
-        raise PdfValidationException("uri must be nonblank text")
+    if target is None:
+        if not isinstance(uri, str) or not uri.strip():
+            raise PdfValidationException("uri must be nonblank text, or supply target")
+    elif uri is not None:
+        raise PdfValidationException("Supply either uri or target, not both")
     if not isinstance(case_sensitive, bool):
         raise PdfValidationException("case_sensitive must be a boolean")
     if isinstance(max_count, bool) or not isinstance(max_count, int) or max_count < 0:
         raise PdfValidationException("max_count must be a non-negative integer")
     budget = engine._load_budget
-    for value, label in ((search, "search"), (uri, "uri")):
+    values = [(search, "search")]
+    if uri is not None:
+        values.append((uri, "uri"))
+    for value, label in values:
         budget.check(len(value), "max_object_bytes", f"link text {label}")
         try:
             encoded = (
@@ -349,6 +363,8 @@ def _link_text(
         except UnicodeError as exc:
             raise PdfValidationException(f"{label} contains invalid Unicode") from exc
         budget.check(len(encoded), "max_object_bytes", f"link text {label}")
+    if target is not None:
+        _validate_local_target(engine, target, document.page_count)
     source = re.escape(search)
     budget.check(len(source), "max_object_bytes", "link text pattern")
     pattern = re.compile(source, 0 if case_sensitive else re.IGNORECASE)
@@ -356,9 +372,53 @@ def _link_text(
 
     def candidates(text: str) -> Iterator[tuple[int, int, str, str]]:
         for match in pattern.finditer(text):
-            yield match.start(), match.end(), match.group(), uri
+            yield match.start(), match.end(), match.group(), uri or ""
 
-    return _link_matches(document, indexes, candidates, max_count)
+    return _link_matches(document, indexes, candidates, max_count, target=target)
+
+
+def _validate_local_target(engine, target: Destination | str, page_count: int) -> None:
+    """Refuse broken destinations before reading any source page's content."""
+    destination = target
+    if isinstance(target, str):
+        from aspose_pdf.engine.simple_pdf import _destination_name_bytes
+
+        budget = engine._load_budget
+        budget.check(len(target), "max_object_bytes", "link text target")
+        encoded = _destination_name_bytes(target)
+        budget.check(len(encoded), "max_object_bytes", "link text target")
+        destination = engine.named_destination_target(target)
+        if destination is None:
+            raise PdfValidationException(
+                "target must name an existing, resolvable named destination"
+            )
+    if not isinstance(destination, Destination):
+        raise PdfValidationException("target must be a Destination or a destination name")
+    page = getattr(destination, "page", None)
+    if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= page_count:
+        raise PdfValidationException("The link destination must name an existing page")
+    try:
+        kind, params = destination._spec()
+        valid = destination_from_spec(kind, page, params) is not None
+    except (NotImplementedError, TypeError, ValueError) as exc:
+        raise PdfValidationException("Invalid link destination view") from exc
+    if not valid:
+        raise PdfValidationException("Invalid link destination view")
+    for value in params:
+        if value is None and kind != "FitR":
+            continue
+        try:
+            valid = (
+                not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and math.isfinite(value)
+            )
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise PdfValidationException(
+                "Link destination coordinates must be finite numbers"
+            )
 
 
 def _link_matches(
@@ -366,6 +426,8 @@ def _link_matches(
     indexes: tuple[int, ...] | None,
     candidates: _CandidateFinder,
     max_count: int,
+    *,
+    target: Destination | str | None = None,
 ) -> AutoLinkResult:
     """Share conservative placement and duplicate checks across link searches."""
     engine = document._engine_pdf
@@ -433,7 +495,7 @@ def _link_matches(
             budget.check_object_id(last_object)
         for fragment, uri in planned:
             annotations.append(
-                _add_link(engine, page, page_dict, annots, fragment, uri)
+                _add_link(engine, page, page_dict, annots, fragment, uri, target)
             )
         if max_count and considered >= max_count:
             break

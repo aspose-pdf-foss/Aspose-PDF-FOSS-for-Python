@@ -3513,18 +3513,25 @@ class Document:
     def link_text(
         self,
         search: str,
-        uri: str,
+        uri: str | None = None,
         *,
+        target: Destination | str | None = None,
         pages: Iterable[int] | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
     ) -> AutoLinkResult:
-        """Make occurrences of a literal phrase clickable using one target URI.
+        """Link a literal phrase to a URI or a destination within this PDF.
 
         Match non-overlapping occurrences, respecting case by default. The
-        nonblank ``uri`` is stored verbatim, as with ``URIAction``. Text, fonts
-        and content streams remain unchanged. ``pages`` selects one-based
-        pages in order; ``None`` selects all. ``max_count=0`` is unlimited;
+        nonblank ``uri`` is stored verbatim, as with ``URIAction``. Alternatively,
+        omit ``uri`` and supply ``target=FitDestination(3)`` (or another typed
+        Destination), or ``target="chapter-3"`` for an existing named destination.
+        Destination pages are one-based; coordinates must be finite. A named
+        target stays a name, so redefining it redirects the links. Unknown or
+        unresolvable names are rejected. Supply exactly one of ``uri`` and
+        ``target``. Text, fonts and content streams remain unchanged.
+        ``pages`` selects one-based pages in order; ``None`` selects all.
+        ``max_count=0`` is unlimited;
         a positive cap includes matches skipped for uncertain geometry or
         overlap with existing links, regardless of their target.
 
@@ -3542,6 +3549,7 @@ class Document:
             self,
             search,
             uri,
+            target=target,
             pages=pages,
             case_sensitive=case_sensitive,
             max_count=max_count,

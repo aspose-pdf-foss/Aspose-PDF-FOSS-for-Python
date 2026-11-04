@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
+    from aspose_pdf.interactive import Destination
     from aspose_pdf.link_extraction import ExtractedLink
     from aspose_pdf.link_validation import LinkValidationIssue
     from aspose_pdf.lists import TextList
@@ -1771,18 +1772,22 @@ class Page:
     def link_text(
         self,
         search: str,
-        uri: str,
+        uri: str | None = None,
         *,
+        target: Destination | str | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
     ) -> AutoLinkResult:
-        """Link literal phrase occurrences on this page to one target URI.
+        """Link this page's literal phrases to a URI or a local destination.
 
-        See :meth:`Document.link_text` for placement limits and result fields.
+        Use ``uri`` for an external address, or ``target`` for a typed
+        Destination or an existing destination name. See
+        :meth:`Document.link_text` for validation, placement and result fields.
         """
         return self._document.link_text(
             search,
             uri,
+            target=target,
             pages=[self.number],
             case_sensitive=case_sensitive,
             max_count=max_count,
