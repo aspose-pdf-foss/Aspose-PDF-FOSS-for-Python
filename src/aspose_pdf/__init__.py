@@ -149,7 +149,7 @@ from .stamps import (
 from .table_extraction import ExtractedTable
 from .tables import Cell, Row, Table
 from .tagged import StructureElement, TaggedContent
-from .text import TextHighlightResult, TextMarkupResult, TextWord
+from .text import TextHighlightResult, TextMarkupResult, TextSearchMatch, TextWord
 from .text_block import Paragraph, TextBlock
 from .text_comparison import PageTextComparison
 from .text_layout import TextLayoutOptions
@@ -340,6 +340,7 @@ __all__ = [
     "TextLayoutOptions",
     "TextList",
     "TextMarkupResult",
+    "TextSearchMatch",
     "TextStamp",
     "TextWord",
     "TrustStatus",

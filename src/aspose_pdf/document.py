@@ -85,7 +85,12 @@ if TYPE_CHECKING:
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tagged import TaggedContent
-    from aspose_pdf.text import TextHighlightResult, TextMarkupResult, TextWord
+    from aspose_pdf.text import (
+        TextHighlightResult,
+        TextMarkupResult,
+        TextSearchMatch,
+        TextWord,
+    )
     from aspose_pdf.text_comparison import PageTextComparison
     from aspose_pdf.text_layout import TextLayoutOptions
     from aspose_pdf.validation import CertificationLevel
@@ -5049,6 +5054,109 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",), result="records")
+    def search_text(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        context_chars: int = 40,
+    ) -> list[TextSearchMatch]:
+        """Return detached matches with page-local offsets, context and geometry.
+
+        Strings are literal unless ``regex=True``; compiled text regexes retain
+        their flags. ``case_sensitive=False`` adds Python's IGNORECASE semantics.
+        Literal occurrences may overlap; regex matches follow ``re.finditer``.
+        Zero-length matches are omitted. Empty patterns are rejected.
+
+        ``context_chars`` is a non-negative character count on each side, cut
+        at the page boundary. Offsets index the page's extracted Unicode text,
+        not PDF bytes. ``rect`` and ``quads`` use unrotated PDF coordinates and
+        are None when placement cannot be established reliably, as with
+        TextFragmentAbsorber. Matches without geometry remain in the report.
+
+        One-based ``pages`` preserves order and repeats. All options/selections
+        are checked before extraction. Only selected pages are read, without
+        filling document-wide text/content caches. Search follows ordinary text
+        extraction, including hidden-layer filtering and logical replacements;
+        it does not OCR images or search annotation/form values. Results obey
+        load limits and survive source edits/disposal without changing the PDF.
+        """
+        from aspose_pdf.engine.text_search import search
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return search(
+            self, pattern, pages=pages, regex=regex,
+            case_sensitive=case_sensitive, context_chars=context_chars,
+        )
+
+    @page_api(selections=("pages",))
+    def export_search_json(
+        self,
+        pattern: str | re.Pattern[str],
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        context_chars: int = 40,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export search_text results as versioned UTF-8 JSON bytes.
+
+        Schema version 1 contains a ``matches`` array with one-based page_index,
+        text, start, end, context_before, context_after, rect and quads. Missing
+        geometry is null. An empty search result produces an empty array.
+
+        The complete report is prepared before output is touched. Paths replace
+        atomically with parent folders created; overwrite=False refuses existing
+        files. Binary streams accept short writes at their current position and
+        remain open. A stream write failure may leave a partial payload. Search
+        results and encoded output are held in memory and obey load limits.
+        """
+        from aspose_pdf.engine.text_search import export_report
+
+        return export_report(
+            self, pattern, destination, pages=pages, regex=regex,
+            case_sensitive=case_sensitive, context_chars=context_chars,
+            overwrite=overwrite,
+        )
+
+    @page_api(selections=("pages",))
+    def export_search_csv(
+        self,
+        pattern: str | re.Pattern[str],
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        context_chars: int = 40,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export matches as CSV with context and separate x0,y0,x1,y1 columns.
+
+        Other columns are page_number (one-based), text, start, end,
+        context_before, context_after and quads (a JSON array in one cell).
+        Missing geometry uses empty cells. Empty results return a header only.
+        Standard quoting preserves newlines and quotes; records use CRLF.
+        encoding="utf-8-sig" adds a spreadsheet BOM. Selection and output
+        behavior follow export_search_json; the document remains unchanged.
+        """
+        from aspose_pdf.engine.text_search import export_report
+
+        return export_report(
+            self, pattern, destination, pages=pages, regex=regex,
+            case_sensitive=case_sensitive, context_chars=context_chars,
+            overwrite=overwrite, csv_options=(delimiter, encoding),
+        )
+
     def _choose_incremental(self, requested: bool | None) -> bool:
         """Decide how :meth:`save` writes, honouring signatures already there.
 
@@ -6643,6 +6751,9 @@ class Document:
     _api_save_as_text = save_as_text.__wrapped__
     _api_extract_words = extract_words.__wrapped__
     _api_export_words_json = export_words_json.__wrapped__
+    _api_search_text = search_text.__wrapped__
+    _api_export_search_json = export_search_json.__wrapped__
+    _api_export_search_csv = export_search_csv.__wrapped__
     _api_get_content_bounds = get_content_bounds.__wrapped__
     _api_auto_crop = auto_crop.__wrapped__
     _api_find_blank_pages = find_blank_pages.__wrapped__

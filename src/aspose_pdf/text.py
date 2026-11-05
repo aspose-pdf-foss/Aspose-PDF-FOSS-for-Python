@@ -40,6 +40,7 @@ __all__ = [
     "TextFragmentAbsorber",
     "TextHighlightResult",
     "TextMarkupResult",
+    "TextSearchMatch",
     "TextSearchOptions",
     "TextWord",
 ]
@@ -145,6 +146,27 @@ class TextWord:
     def bbox(self) -> tuple[float, float, float, float]:
         """Alias of :attr:`rect` for coordinate-based data processing."""
         return self.rect
+
+
+@dataclass(frozen=True, slots=True)
+class TextSearchMatch:
+    """A detached search hit with page-local character offsets and context.
+
+    ``page_index`` is one-based; ``start`` and exclusive ``end`` index the
+    page's extracted Unicode text. Context contains up to the requested number
+    of characters on each side, without crossing page boundaries. Geometry is
+    in unrotated PDF points, or ``None`` when placement is uncertain. Results
+    remain usable after the source is edited or disposed.
+    """
+
+    page_index: int
+    text: str
+    start: int
+    end: int
+    context_before: str
+    context_after: str
+    rect: tuple[float, float, float, float] | None = None
+    quads: tuple[tuple[tuple[float, float], ...], ...] | None = None
 
 
 @dataclass

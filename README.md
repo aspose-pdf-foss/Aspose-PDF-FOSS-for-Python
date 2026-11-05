@@ -111,6 +111,9 @@ flowchart TD
   real image files (`extract_image()`/`get_next_image(destination=None)`) and file attachments
   (`extract_attachment()`/`get_attach_names()`), while `TextFragmentAbsorber` runs exact-phrase or
   regex searches and reports match offsets, page indices and where the text sits.
+- `Document.search_text()` adds surrounding context to search results, and
+  `export_search_json()` / `export_search_csv()` turn matches into review reports
+  with page numbers and coordinates. The same methods are available on `Page`.
 - `Document.replace_text()` and `Document.redact_text()` rewrite or remove matched text directly
   inside existing content streams; `redact_text(..., overlay=True)` also draws a filled bar over
   each removed run's location.
@@ -1338,6 +1341,20 @@ The versioned UTF-8 JSON contains `text`, one-based `page_index`, `rect` and
 four-point `quad` for each word. Omit the destination to receive bytes, or pass
 a binary stream. Selection and clipping follow `extract_words()`.
 
+Collect search hits with surrounding text, or export a report for review:
+
+```python
+with Document("input.pdf") as document:
+    matches = document.search_text("Invoice", context_chars=50, pages=[1, 3])
+    document.export_search_json("Invoice", "invoice-matches.json")
+    document.export_search_csv(r"INV-\d+", "invoice-matches.csv", regex=True)
+```
+
+Each immutable `TextSearchMatch` contains the original page number, matched text,
+character offsets, context before/after and available geometry. Matches without
+reliable coordinates remain in the report. Search uses extracted page text and
+does not perform OCR. See [search report details](supported-features.md#text).
+
 ### Download Split PDF Parts as One ZIP
 
 ```python
@@ -1688,7 +1705,7 @@ The `Document` class is the central entry point — it exposes `pages`, `form`, 
 `tagged_content` for structural editing alongside `encrypt`, `decrypt`, `merge`, `optimize`, and
 `flatten` operations. `PdfExtractor` handles text, image, and attachment extraction, and
 `PdfFileEditor` provides a boolean-returning facade for file-based concatenate, extract, insert,
-and delete workflows. 276 public types are organized by module below.
+and delete workflows. 277 public types are organized by module below.
 
 <details>
 <summary>View the Core API Surface</summary>
@@ -1850,6 +1867,7 @@ and delete workflows. 276 public types are organized by module below.
 | `TextLayoutOptions` | Configure complex-text shaping and line layout for ``Page.add_text``. |
 | `TextList` | Items ready to be placed on a page, bulleted or numbered. |
 | `TextSearchOptions` | Options controlling how text search is performed. |
+| `TextSearchMatch` | Immutable search hit with page, offsets, surrounding context and available geometry. |
 | `TrustStatus` | Outcome of building/validating the signer's certificate chain. |
 | `UnsignedContent-forms` | Represents a collection of unsigned content elements in a PDF document. |
 | `UnsignedContentAbsorber-forms` | Extract unsigned form fields and annotations from a PDF document. |

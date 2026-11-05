@@ -3884,6 +3884,58 @@ Supported:
     obey `max_container_items`; glyph/rectangle comparisons per page, including
     its invoked forms, obey `max_content_tokens`. Other source parsing and
     resource limits continue to apply and failures propagate.
+- **Search reports with surrounding context.**
+  `Document.search_text(pattern, pages=None, regex=False, case_sensitive=True,
+  context_chars=40) -> list[TextSearchMatch]` returns immutable, detached search
+  snapshots. `Page.search_text(...)` keeps the original document page number.
+  - Every match contains one-based `page_index`, `text`, zero-based `start` and
+    exclusive `end` offsets in the extracted page's Unicode text,
+    `context_before`, `context_after`, `rect` and `quads`. Context includes up to
+    `context_chars` characters on each side, retaining whitespace and newlines
+    but never crossing page boundaries; zero requests no surrounding text.
+    Snapshots remain usable after source edits or disposal.
+  - Strings are literal unless `regex=True`; compiled text regexes retain their
+    flags. `case_sensitive=False` adds Python `re.IGNORECASE`, preserving
+    offsets in the original text even when Unicode lowercase changes length.
+    Literal occurrences may overlap; regex matches follow `re.finditer` order
+    without overlapping. Zero-length
+    matches are omitted. Empty/nontext/byte patterns, invalid regexes,
+    non-boolean flags and negative/non-integer context lengths are rejected.
+  - Coordinates use unrotated PDF points with a lower-left origin, following
+    `TextFragmentAbsorber`'s conservative placement rules. Ambiguous geometry,
+    matches assembled across separate text runs, and unsupported placements
+    retain `rect=None` and `quads=None`; matching text is still reported.
+    Geometry is not inferred from nearby words. No annotations are created.
+  - `pages` accepts an iterable of one-based numbers, retaining requested order
+    and repetitions. All options and the complete selection are checked before
+    content reads, including empty selections. Matching happens within each
+    page's ordinary extracted text, preserving its content order, logical
+    replacements and hidden-layer filtering. It does not search annotation
+    contents or form-field values, reconstruct reading order or OCR images.
+  - `Document.export_search_json(pattern, destination=None, ..., overwrite=True)`
+    returns UTF-8 bytes with `{"schema_version":1,"matches":[...]}`. Each entry
+    has the snapshot fields above; missing geometry is JSON null. Text uses
+    ordinary JSON escaping, with Unicode retained and a final newline.
+    `Document.export_search_csv(pattern, destination=None, ..., delimiter=",",
+    encoding="utf-8", overwrite=True)` exports columns
+    `page_number,text,start,end,context_before,context_after,x0,y0,x1,y1,quads`.
+    The page number is one-based; quads are a JSON array in one CSV cell and
+    missing coordinates/quads use empty cells. Standard CSV quoting retains
+    delimiters, quotes and newlines; records use CRLF. `utf-8-sig` adds a BOM.
+    Both export methods also exist on `Page`. Empty results produce an empty
+    JSON matches list or a CSV header without data rows.
+  - Exports complete extraction and encoding before touching destinations.
+    Paths create parent directories and replace atomically; `overwrite=False`
+    refuses existing files. Binary streams write at their current position,
+    retry short writes and remain open; write failures can leave partial stream
+    output. Returned bytes equal the written payload. No dependency is added.
+  - Only selected page streams and invoked forms are decoded, including for
+    encrypted/streaming documents. Full-document text/content caches and the
+    text cursor remain unchanged. Results and the full encoded report stay in
+    memory. Patterns, contexts, match/selection counts, matching work and output
+    obey `PdfLoadLimits`; JSON encoding also checks `max_codec_work_bytes`.
+    These limits do not impose an execution timeout on Python regular expressions.
+
 - Use `TextFragmentAbsorber` and `TextAbsorber` to collect text fragments, search
   exact phrases, run regex searches, control case sensitivity, and inspect match
   offsets/page indices. A *document* is taken page by page, which is the only

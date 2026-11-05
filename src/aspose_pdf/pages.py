@@ -29,7 +29,12 @@ if TYPE_CHECKING:
     from aspose_pdf.stamps import Stamp
     from aspose_pdf.table_extraction import ExtractedTable
     from aspose_pdf.tables import Table
-    from aspose_pdf.text import TextHighlightResult, TextMarkupResult, TextWord
+    from aspose_pdf.text import (
+        TextHighlightResult,
+        TextMarkupResult,
+        TextSearchMatch,
+        TextWord,
+    )
     from aspose_pdf.text_block import TextBlock
     from aspose_pdf.text_layout import TextLayoutOptions
 
@@ -652,6 +657,56 @@ class Page:
             clip=clip,
             skip_artifacts=skip_artifacts,
             overwrite=overwrite,
+        )
+
+    def search_text(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        context_chars: int = 40,
+    ) -> list[TextSearchMatch]:
+        """Search this page with context; see Document.search_text."""
+        return self._document.search_text(
+            pattern, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive, context_chars=context_chars,
+        )
+
+    def export_search_json(
+        self,
+        pattern: str | re.Pattern[str],
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        context_chars: int = 40,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export this page's matches; see Document.export_search_json."""
+        return self._document.export_search_json(
+            pattern, destination, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive, context_chars=context_chars,
+            overwrite=overwrite,
+        )
+
+    def export_search_csv(
+        self,
+        pattern: str | re.Pattern[str],
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        context_chars: int = 40,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export this page's matches; see Document.export_search_csv."""
+        return self._document.export_search_csv(
+            pattern, destination, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive, context_chars=context_chars,
+            delimiter=delimiter, encoding=encoding, overwrite=overwrite,
         )
 
     def add_text(
