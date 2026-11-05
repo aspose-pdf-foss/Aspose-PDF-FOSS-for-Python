@@ -58,6 +58,7 @@ from aspose_pdf.load_limits import (
 )
 from aspose_pdf.outlines import OutlineCollection, OutlineItem
 from aspose_pdf.page_size import PageSize
+from aspose_pdf.pages import Page
 from aspose_pdf.pdfa import PdfAValidationResult
 from aspose_pdf.pdfua import PdfUaValidationResult
 from aspose_pdf.pdfx import PdfXValidationResult, normalize_pdfx_standard
