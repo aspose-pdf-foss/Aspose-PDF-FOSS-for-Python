@@ -679,9 +679,16 @@ def import_json(document: Any, source: Any, replace: bool, page_map: Any) -> int
             item._page_index = context.current_page(loaded)
         (roots if parent is None else outputs[parent]).append(item)
         outputs[id(record)] = item.children
+    return _commit_roots(context, roots, context.work, replace)
+
+
+def _commit_roots(
+    context: _Context, roots: list[OutlineItem], count: int, replace: bool
+) -> int:
+    """Validate the combined tree and object budget before replacing live roots."""
+    document = context.document
     if not roots and not replace:
         return 0
-    count = context.work
     collection = document._outlines
     if collection is None:
         collection = OutlineCollection() if replace else _existing_collection(context)

@@ -149,6 +149,8 @@ flowchart TD
 - `Document.export_bookmarks_json()` / `import_bookmarks_json()` exchange an editable
   bookmark tree, including styles and destination views. Import appends or replaces
   the tree and can remap local pages when transferring it to another PDF.
+  `export_bookmarks_csv()` / `import_bookmarks_csv()` exchange simple page bookmarks
+  as `level,title,page` rows for editing the table of contents in a spreadsheet.
 - `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
   curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. A
   Bézier is written back out as the Bézier it was, so the export stays exact at any zoom. The
@@ -1035,13 +1037,39 @@ with Document("updated-manual.pdf") as document:
 ```
 
 The versioned JSON preserves hierarchy, ordering, titles, styles, open state and
-supported targets. Page indices start at zero. Import appends by default;
+supported targets. Page numbers start at one. Import appends by default;
 `replace=True` replaces the whole tree, and an empty replacement clears it.
-`page_map={0: 2, 1: 3}` remaps explicit local targets and must cover every source
+`page_map={1: 3, 2: 4}` remaps explicit local targets and must cover every source
 page used. Named local targets are exported as explicit page views by default;
 `resolve_named_destinations=False` retains their names without copying definitions.
 See [bookmark exchange coverage](supported-features.md#documents) for the schema,
 supported actions and validation limits.
+
+### Edit Simple Bookmarks as CSV
+
+```python
+with Document("manual.pdf") as document:
+    document.export_bookmarks_csv("bookmarks.csv", encoding="utf-8-sig")
+
+with Document("updated-manual.pdf") as document:
+    added = document.import_bookmarks_csv("bookmarks.csv", replace=True)
+    document.save("with-bookmarks.pdf")
+```
+
+Edit the hierarchy and page targets in three columns:
+
+```csv
+level,title,page
+1,Introduction,1
+2,Background,3
+1,Appendices,
+```
+
+Levels and page numbers start at one; a blank page cell is a heading without a
+jump. Import appends by default or replaces with `replace=True`, validating the
+whole table before changing bookmarks. CSV supports whole-page destinations;
+export rejects styles, open state, names, precise page views and complex actions.
+Use JSON exchange to retain those supported properties.
 
 ### Inventory PDF Links
 
@@ -2102,6 +2130,9 @@ and delete workflows. 277 public types are organized by module below.
   - `export_bookmarks_json(destination=None, resolve_named_destinations=True, overwrite=True) -> bytes` /
     `import_bookmarks_json(source, replace=False, page_map=None) -> int` — exchange a
     versioned bookmark tree, preserving supported targets and styles
+  - `export_bookmarks_csv(destination=None, delimiter=",", encoding="utf-8", overwrite=True) -> bytes` /
+    `import_bookmarks_csv(source, replace=False, page_map=None, delimiter=",", encoding="utf-8-sig") -> int` —
+    edit simple bookmark hierarchies and page targets as `level,title,page` rows
   - `split_by_text(pattern, regex=False, case_sensitive=True, include_preamble=True, clip=None) -> list[Document]` —
     split a batch at pages containing a literal or regular expression match
   - `generate_outlines_from_text(pattern, pages=None, regex=False, case_sensitive=True, title_group=0, replace=True, max_count=0, clip=None, exclude_regions=None, skip_artifacts=False) -> int` —

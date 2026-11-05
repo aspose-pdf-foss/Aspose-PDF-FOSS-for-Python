@@ -760,7 +760,7 @@ Supported:
     the tree. Existing live `OutlineCollection` handles remain usable.
     `page_map` maps every explicit local source page used to an existing
     destination page; several source pages may map to one. All mapping entries
-    must contain non-negative integer indices and valid destination values.
+    must contain positive integer page numbers and valid destination values.
     Names and remote pages are not remapped. Pages are not created; a nonempty
     import requires at least one page. Imported local targets use destination
     page references immediately, so they follow later page insertions.
@@ -790,6 +790,54 @@ Supported:
     numeric precision, which can round values and normalize formatting (for
     example `700.0` to `700`). This is supported-data exchange, not an exact PDF
     backup or an audit of raw outline entries discarded by the loader.
+- **Import and export simple bookmark hierarchies as CSV.**
+  `Document.export_bookmarks_csv(destination=None, delimiter=",", encoding="utf-8",
+  overwrite=True) -> bytes` produces preorder rows with the exact header
+  `level,title,page`. `Document.import_bookmarks_csv(source, replace=False,
+  page_map=None, delimiter=",", encoding="utf-8-sig") -> int` validates a complete
+  table and returns the total imported node count, including descendants.
+  - Levels start at 1. The first row must be a root; increasing a level may add
+    one level at a time, while decreasing a level returns to an earlier ancestor.
+    Sibling order, duplicate titles, Unicode, whitespace, quotes and newlines in
+    titles are retained, including empty titles. Page numbers are one-based;
+    an empty/whitespace-only page cell creates a targetless heading. Numeric
+    cells accept positive ASCII decimal integers with outer whitespace. Blank
+    records are ignored. Unknown/reordered headers, wrong row widths, skipped
+    parent levels, invalid integers and unavailable pages are refused.
+  - Export supports direct whole-page `/Fit` destinations and targetless
+    headings. Local GoTo actions containing an explicit Fit destination are
+    normalized to direct Fit targets on import. Names, URI/remote/named/script
+    actions, chained/custom actions, other view modes/coordinates, bold/italic
+    flags, title colours and an open state are rejected before any output.
+    Use bookmark JSON exchange for its supported richer properties. CSV is
+    deliberately a simple table-of-contents format, not a full bookmark backup.
+  - Import appends roots by default, retaining existing targets and styles even
+    when they cannot be exported as CSV. Repeated imports append duplicates.
+    `replace=True` replaces the whole tree; a header-only replacement clears it.
+    Existing collection handles remain usable. A nonempty import requires at
+    least one document page. `page_map` maps every used one-based source page to
+    an existing one-based destination page; several pages may map to one.
+    Imported targets bind to page references and follow later insertions.
+    No pages or destination definitions are created and no actions are executed.
+  - Input accepts paths, bytes/bytearray and readable binary streams from their
+    current position; caller streams remain open and short reads are supported.
+    UTF-8 with or without a BOM works by default; other text encodings and
+    delimiters are explicit options. Output defaults to UTF-8 without a BOM,
+    uses CRLF records and standard CSV quoting; `utf-8-sig` adds a single BOM.
+    Paths create parent directories and replace atomically; `overwrite=False`
+    refuses existing paths. Binary output streams retry short writes and remain
+    open. Returned bytes equal the written payload. Stream write failures can
+    leave partial output, while preparation failures preserve destinations.
+  - Input, hierarchy, page mapping, combined-tree and projected PDF-object checks
+    complete before changing live bookmarks. Invalid input and resource-limit
+    failures preserve the previous tree. `PdfLoadLimits` bounds input and decoded
+    bytes, CSV records/cells, titles, nesting, page references, traversal and
+    output growth, including existing reusable outline object slots.
+    Both methods read bookmark/page metadata without decoding content or
+    appearance streams, including for streaming/encrypted PDFs. Export sees
+    unsaved edits and current page identities without initializing or flushing
+    the live outline collection. No dependency is added; source files stay
+    unchanged until an explicit PDF save.
 - **A bookmark's colour and its open state.** `OutlineItem.color` is the `/C`
   entry -- three **DeviceRGB** numbers, which is what Table 153 types it as, so
   it is the one colour in the package that takes no grey and no ink; it reads the

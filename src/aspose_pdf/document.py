@@ -1693,6 +1693,82 @@ class Document:
             page_map, self.page_count, limits=self.load_limits
         ))
 
+    def export_bookmarks_csv(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export simple bookmarks as level,title,page CSV for spreadsheet editing.
+
+        Rows use preorder, with one-based levels and page numbers. An empty
+        page cell is a targetless heading. Only whole-page Fit destinations
+        are supported; local GoTo Fit actions are normalized to direct targets.
+        Names, other actions/views, styling and open state are refused rather
+        than discarded. Use export_bookmarks_json for richer bookmarks.
+
+        Read unsaved edits and current page identities without decoding page
+        content. CSV uses standard quoting and CRLF records; utf-8-sig adds a
+        BOM. Return bytes and optionally write a path atomically or a binary
+        stream at its current position, retrying short writes and leaving it
+        open. Output is prepared before writing and obeys load limits.
+        overwrite=False refuses existing paths. The PDF remains unchanged.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.bookmark_csv import export_csv
+
+        self._ensure_not_disposed()
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        data = export_csv(self, delimiter=delimiter, encoding=encoding)
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
+    def import_bookmarks_csv(
+        self,
+        source: str | Path | bytes | bytearray | BinaryIO,
+        *,
+        replace: bool = False,
+        page_map: Mapping[int, int] | None = None,
+        delimiter: str = ",",
+        encoding: str = "utf-8-sig",
+    ) -> int:
+        """Import a complete level,title,page table and return its node count.
+
+        Require that exact header, levels starting at 1 without skipped parents,
+        and one-based positive page numbers or empty cells for headings. Titles
+        retain Unicode, whitespace and duplicates. Import creates whole-page
+        Fit targets without styles. UTF-8 with/without BOM works by default;
+        other encodings and delimiters can be selected explicitly.
+
+        Append roots by default; replace=True replaces the tree, with a header
+        alone clearing it. A nonempty import requires a document page. page_map
+        maps every used source page to an existing destination page, one-based.
+        Targets bind to page identities and follow subsequent page insertions.
+        No pages are created. All input, mapping, combined-tree and object-limit
+        checks precede live changes; failures preserve existing bookmarks.
+        Read paths, bytes/bytearray or binary streams from their current
+        position, leaving caller streams open. No page content is decoded.
+        """
+        from aspose_pdf.engine.bookmark_csv import import_csv
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return import_csv(
+            self, source, replace=replace,
+            page_map=page_mapping(page_map, self.page_count, limits=self.load_limits),
+            delimiter=delimiter, encoding=encoding,
+        )
+
     @property
     def permissions(self) -> Permissions:
         """What a reader may do with this document: the ``/P`` word, with names.
