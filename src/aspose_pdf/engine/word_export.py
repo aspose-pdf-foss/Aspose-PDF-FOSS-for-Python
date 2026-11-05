@@ -1,4 +1,4 @@
-"""Encode positioned words as a bounded, versioned UTF-8 JSON report."""
+"""Encode positioned words as bounded JSON and CSV reports."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.load_limits import _LoadBudget
 from aspose_pdf.text import TextWord
 
+from .csv_export import CsvWriter
 from .link_export import _json_tokens
 
 
@@ -45,3 +46,18 @@ def to_json(words: Iterable[TextWord], budget: _LoadBudget) -> bytes:
                 "Words cannot be encoded as UTF-8 JSON"
             ) from exc
         return output.getvalue()
+
+
+def to_csv(words: Iterable[TextWord], writer: CsvWriter) -> bytes:
+    """Keep word order, one-based pages and full geometry in flat CSV rows."""
+    writer.writerow(("page_number", "text", "x0", "y0", "x1", "y1", "quad"))
+    for word in words:
+        writer.writerow(
+            [
+                str(word.page_index + 1),
+                word.text,
+                *[str(value) for value in word.rect],
+                "".join(_json_tokens(word.quad)),
+            ]
+        )
+    return writer.finish()

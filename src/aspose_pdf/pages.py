@@ -659,6 +659,23 @@ class Page:
             overwrite=overwrite,
         )
 
+    def export_words_csv(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Export this page's words; see Document.export_words_csv."""
+        return self._document.export_words_csv(
+            destination, pages=[self.number], clip=clip,
+            skip_artifacts=skip_artifacts, delimiter=delimiter,
+            encoding=encoding, overwrite=overwrite,
+        )
+
     def search_text(
         self,
         pattern: str | re.Pattern[str],

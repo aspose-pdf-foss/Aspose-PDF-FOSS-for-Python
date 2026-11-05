@@ -3582,6 +3582,34 @@ Supported:
     retry short writes and remain open. Validation, extraction and serialization
     failures leave destinations untouched; stream write failures can leave
     partial output. Returned bytes equal the written payload.
+- **Export word positions as CSV.**
+  `Document.export_words_csv(destination=None, pages=None, clip=None,
+  skip_artifacts=False, delimiter=",", encoding="utf-8", overwrite=True)` and
+  `Page.export_words_csv(...)` return bytes for spreadsheet analysis and data
+  processing, optionally writing a path or binary stream.
+  - Columns are `page_number,text,x0,y0,x1,y1,quad`. Page numbers are one-based;
+    the four bounding coordinates retain the word's original unrotated PDF
+    points and numeric precision. `quad` is a JSON array of four `[x,y]` points
+    in one cell, preserving transformed geometry. Empty results produce a header
+    without data rows. CSV records use CRLF and standard quoting for delimiters,
+    quotes and Unicode. `encoding="utf-8-sig"` adds a single spreadsheet BOM;
+    `delimiter` accepts one character other than a quote, newline or NUL.
+  - Selection order/repetitions, original page numbers, clipping, artifact
+    filtering, hidden-layer handling and geometry omissions match
+    `extract_words()` and word JSON export. Clipping selects whole overlapping
+    words with unchanged bounds. No OCR or coordinate inference is performed.
+  - CSV options and the complete extraction request are validated before content
+    reads. Encrypted and streaming inputs decode selected page streams and
+    invoked forms, without filling full-document text/content caches or moving
+    the text cursor. The PDF and source files remain unchanged.
+  - Words and the complete CSV stay in memory. Extraction limits apply, as do
+    CSV column/cell limits and `max_decoded_stream_bytes` / `max_total_decoded_bytes`
+    for output growth. No dependency is added. Extraction and encoding finish
+    before destinations are touched. Paths create parent directories and replace
+    atomically; `overwrite=False` refuses existing files. Binary streams retry
+    short writes at their current position and remain open. Preparation failures
+    preserve destinations; stream write failures can leave partial output.
+    Returned bytes equal the written payload.
 - Extract text from page content streams with `PdfExtractor`, which reads each
   page **through the engine's own extractor**: content is decoded on demand,
   so a document whose pages are loaded lazily is read rather than coming back

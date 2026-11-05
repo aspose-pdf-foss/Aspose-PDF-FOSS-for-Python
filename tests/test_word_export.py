@@ -1,7 +1,8 @@
-"""Word JSON reports preserve source geometry, selection and output safety."""
+"""Word reports preserve source geometry, selection and output safety."""
 
 from __future__ import annotations
 
+import csv
 import io
 import json
 from itertools import repeat
@@ -36,6 +37,28 @@ def _records(words):
     ]
 
 
+def _report(target, export_name, **options):
+    data = getattr(target, export_name)(**options)
+    if export_name == "export_words_json":
+        report = json.loads(data)
+        assert report["schema_version"] == 1
+        return report["words"]
+    return [
+        dict(
+            page_index=int(row["page_number"]),
+            text=row["text"],
+            rect=[float(row[key]) for key in ("x0", "y0", "x1", "y1")],
+            quad=json.loads(row["quad"]),
+        )
+        for row in csv.DictReader(io.StringIO(data.decode("utf-8")))
+    ]
+
+
+@pytest.fixture(params=["export_words_json", "export_words_csv"])
+def export_name(request):
+    return request.param
+
+
 @pytest.fixture
 def source():
     with Document() as document:
@@ -61,10 +84,10 @@ def test_schema_unicode_escaping_geometry_and_source_preservation(source):
     assert _bytes(source) == before
 
 
-def test_page_order_repeats_and_original_page_numbers(source):
-    data = source.export_words_json(pages=(page for page in [3, 1, 3]))
-    assert json.loads(data)["words"] == _records(source.extract_words(pages=[3, 1, 3]))
-    assert [word["page_index"] for word in json.loads(data)["words"]] == [
+def test_page_order_repeats_and_original_page_numbers(source, export_name):
+    records = _report(source, export_name, pages=(page for page in [3, 1, 3]))
+    assert records == _records(source.extract_words(pages=[3, 1, 3]))
+    assert [word["page_index"] for word in records] == [
         3,
         3,
         1,
@@ -72,35 +95,33 @@ def test_page_order_repeats_and_original_page_numbers(source):
         3,
         3,
     ]
-    assert json.loads(source.pages[2].export_words_json())["words"] == _records(
+    assert _report(source.pages[2], export_name) == _records(
         source.pages[2].extract_words()
     )
 
 
 @pytest.mark.parametrize("selection", [None, [], ()])
-def test_empty_documents_pages_and_selections_have_no_records(selection):
+def test_empty_documents_pages_and_selections_have_no_records(selection, export_name):
     with Document() as document:
-        assert json.loads(document.export_words_json(pages=selection)) == dict(
-            schema_version=1, words=[]
-        )
+        assert _report(document, export_name, pages=selection) == []
         document.pages.add()
-        assert json.loads(document.export_words_json(pages=selection))["words"] == []
+        assert _report(document, export_name, pages=selection) == []
 
 
-def test_clipping_selects_complete_words_with_unchanged_bounds(source):
+def test_clipping_selects_complete_words_with_unchanged_bounds(source, export_name):
     word = source.pages[1].extract_words()[0]
     x0, y0, x1, y1 = word.rect
     clip = (x0 + (x1 - x0) / 3, y0, x0 + (x1 - x0) / 2, y1)
-    assert json.loads(source.export_words_json(pages=[1], clip=clip))[
-        "words"
-    ] == _records([word])
-    assert source.pages[1].export_words_json(clip=clip) == source.export_words_json(
-        pages=[1], clip=clip
-    )
+    assert _report(source, export_name, pages=[1], clip=clip) == _records([word])
+    assert getattr(source.pages[1], export_name)(clip=clip) == getattr(
+        source, export_name
+    )(pages=[1], clip=clip)
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
-def test_transformed_quads_and_pdf_coordinate_bounds_are_preserved(rotation):
+def test_transformed_quads_and_pdf_coordinate_bounds_are_preserved(
+    rotation, export_name
+):
     with Document() as document:
         page = document.pages.add()
         page.add_text("Seed", 72, 700)
@@ -109,7 +130,7 @@ def test_transformed_quads_and_pdf_coordinate_bounds_are_preserved(rotation):
         )
         page.rotation = rotation
         page.crop_box = (10, 10, 500, 780)
-        records = json.loads(page.export_words_json())["words"]
+        records = _report(page, export_name)
         assert records == _records(page.extract_words())
         assert len(records) == 2
         assert records[0]["quad"][0][0] == records[0]["quad"][1][0]
@@ -117,7 +138,7 @@ def test_transformed_quads_and_pdf_coordinate_bounds_are_preserved(rotation):
         assert page.rotation == rotation and page.crop_box == (10, 10, 500, 780)
 
 
-def test_artifacts_hidden_layers_and_invisible_ocr_follow_word_extraction():
+def test_artifacts_hidden_layers_and_invisible_ocr_follow_word_extraction(export_name):
     with Document() as document:
         page = document.pages.add()
         page.add_text("Seed", 72, 700)
@@ -130,25 +151,28 @@ def test_artifacts_hidden_layers_and_invisible_ocr_follow_word_extraction():
         layer = document.layers.add("Hidden", visible=False)
         with page.layer(layer):
             page.add_text("Hidden", 72, 550)
-        assert [
-            record["text"] for record in json.loads(page.export_words_json())["words"]
-        ] == ["Header", "Body", "OCR"]
-        data = page.export_words_json(skip_artifacts=True)
-        assert [record["text"] for record in json.loads(data)["words"]] == [
+        assert [record["text"] for record in _report(page, export_name)] == [
+            "Header",
             "Body",
             "OCR",
         ]
-        assert json.loads(data)["words"] == _records(
-            page.extract_words(skip_artifacts=True)
-        )
+        records = _report(page, export_name, skip_artifacts=True)
+        assert [record["text"] for record in records] == [
+            "Body",
+            "OCR",
+        ]
+        assert records == _records(page.extract_words(skip_artifacts=True))
 
 
-def test_file_and_binary_stream_outputs_short_writes_and_overwrite(source, tmp_path):
-    expected = source.export_words_json()
+def test_file_and_binary_stream_outputs_short_writes_and_overwrite(
+    source, tmp_path, export_name
+):
+    export = getattr(source, export_name)
+    expected = export()
     path = tmp_path / "new" / "words.json"
-    assert source.export_words_json(path) == path.read_bytes() == expected
+    assert export(path) == path.read_bytes() == expected
     with pytest.raises(FileExistsError):
-        source.export_words_json(path, overwrite=False)
+        export(path, overwrite=False)
     assert path.read_bytes() == expected
 
     class Short(io.BytesIO):
@@ -157,12 +181,12 @@ def test_file_and_binary_stream_outputs_short_writes_and_overwrite(source, tmp_p
 
     with Short(b"prefix") as output:
         output.seek(6)
-        assert source.export_words_json(output) == expected
+        assert export(output) == expected
         assert output.getvalue() == b"prefix" + expected and not output.closed
 
 
 def test_later_extraction_failure_leaves_destinations_untouched(
-    source, tmp_path, monkeypatch
+    source, tmp_path, monkeypatch, export_name
 ):
     original = source._engine_pdf.get_page_content
 
@@ -177,7 +201,7 @@ def test_later_extraction_failure_leaves_destinations_untouched(
     output = io.BytesIO(b"Keep")
     for destination in (path, output):
         with pytest.raises(PdfValidationException, match="Damaged later page"):
-            source.export_words_json(destination)
+            getattr(source, export_name)(destination)
         assert path.read_bytes() == output.getvalue() == b"Keep"
     assert not output.closed
 
@@ -185,7 +209,7 @@ def test_later_extraction_failure_leaves_destinations_untouched(
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("encrypted", [False, True])
 def test_pdf_round_trip_selected_page_only_and_source_state(
-    source, tmp_path, monkeypatch, streaming, encrypted
+    source, tmp_path, monkeypatch, streaming, encrypted, export_name
 ):
     path = tmp_path / "source.pdf"
     if encrypted:
@@ -209,7 +233,7 @@ def test_pdf_round_trip_selected_page_only_and_source_state(
             return original(index)
 
         monkeypatch.setattr(engine, "get_page_content", content)
-        records = json.loads(document.export_words_json(pages=[2]))["words"]
+        records = _report(document, export_name, pages=[2])
         assert [record["text"] for record in records] == ["Page2", "café"]
         assert [record["page_index"] for record in records] == [2, 2]
         assert reads == [1]
@@ -236,27 +260,32 @@ def test_pdf_round_trip_selected_page_only_and_source_state(
         {"overwrite": 1},
     ],
 )
-def test_invalid_options_precede_content_reads_and_output(source, monkeypatch, options):
+def test_invalid_options_precede_content_reads_and_output(
+    source, monkeypatch, options, export_name
+):
     def unexpected(*args, **kwargs):
         raise AssertionError("Invalid options must not decode page content")
 
     monkeypatch.setattr(source._engine_pdf, "get_page_content", unexpected)
     output = io.BytesIO(b"Keep")
     with pytest.raises(PdfValidationException):
-        source.export_words_json(output, **options)
+        getattr(source, export_name)(output, **options)
     assert output.getvalue() == b"Keep"
 
 
-def test_empty_selection_validates_options_and_does_not_decode(source, monkeypatch):
+def test_empty_selection_validates_options_and_does_not_decode(
+    source, monkeypatch, export_name
+):
     def unexpected(*args, **kwargs):
         raise AssertionError("Empty selections must not decode page content")
 
     monkeypatch.setattr(source._engine_pdf, "get_page_content", unexpected)
-    assert json.loads(source.export_words_json(pages=[]))["words"] == []
+    export = getattr(source, export_name)
+    assert _report(source, export_name, pages=[]) == []
     with pytest.raises(PdfValidationException):
-        source.export_words_json(pages=[], skip_artifacts=None)
+        export(pages=[], skip_artifacts=None)
     with pytest.raises(PdfValidationException):
-        source.export_words_json(pages=[], clip=(0, 0, 0, 1))
+        export(pages=[], clip=(0, 0, 0, 1))
 
 
 @pytest.mark.parametrize(
@@ -279,14 +308,15 @@ def test_exact_encoded_output_limits_preserve_destinations(
     assert source.export_words_json(path) == path.read_bytes() == expected
 
 
-def test_selection_and_cumulative_word_counts_obey_resource_limits(source):
+def test_selection_and_cumulative_word_counts_obey_resource_limits(source, export_name):
+    export = getattr(source, export_name)
     source._load_limits = PdfLoadLimits(max_container_items=3)
     with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-        source.export_words_json(pages=repeat(1))
+        export(pages=repeat(1))
     source._load_limits = PdfLoadLimits(max_container_items=64)
     source._engine_pdf._load_budget.limits = source._load_limits
     with pytest.raises(PdfResourceLimitException, match="extracted document words"):
-        source.export_words_json(pages=[1] * 33)
+        export(pages=[1] * 33)
 
 
 def test_long_escaped_strings_and_invalid_unicode_are_handled_by_serializer():
@@ -302,19 +332,97 @@ def test_long_escaped_strings_and_invalid_unicode_are_handled_by_serializer():
         to_json([TextWord(0, "\ud800", rect, quad)], _LoadBudget())
 
 
-def test_disposed_documents_stale_pages_and_stalled_streams_are_rejected(source):
+def test_disposed_documents_stale_pages_and_stalled_streams_are_rejected(
+    source, export_name
+):
     class Stalled:
         def write(self, data):
             return 0
 
     with pytest.raises(AsposePdfException, match="Stream write"):
-        source.export_words_json(Stalled())
+        getattr(source, export_name)(Stalled())
     page = source.pages[3]
     source.pages.delete(3)
     with pytest.raises(PdfValidationException, match="out of range"):
-        page.export_words_json()
+        getattr(page, export_name)()
     source.dispose()
     with pytest.raises(AsposePdfException, match="disposed"):
-        source.export_words_json()
+        getattr(source, export_name)()
     with pytest.raises(AsposePdfException, match="disposed"):
-        page.export_words_json()
+        getattr(page, export_name)()
+
+
+def test_csv_schema_unicode_quoting_and_source_preservation(source):
+    source.pages[1].add_text('"Quoted",word \\path', 72, 650)
+    before = _bytes(source)
+    data = source.export_words_csv()
+    rows = list(csv.DictReader(io.StringIO(data.decode("utf-8"))))
+    assert list(rows[0]) == ["page_number", "text", "x0", "y0", "x1", "y1", "quad"]
+    assert [row["text"] for row in rows][:4] == [
+        "Page1",
+        "café",
+        '"Quoted",word',
+        "\\path",
+    ]
+    assert _report(source, "export_words_csv") == _records(source.extract_words())
+    assert source.export_words_csv() == data and data.endswith(b"\r\n")
+    assert _bytes(source) == before
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+def test_csv_custom_delimiter_and_encoding_use_one_encoder_state(source, encoding):
+    source.pages[1].add_text("semi;colon", 72, 650)
+    data = source.export_words_csv(delimiter=";", encoding=encoding)
+    rows = list(csv.DictReader(io.StringIO(data.decode(encoding)), delimiter=";"))
+    assert [row["text"] for row in rows][:3] == ["Page1", "café", "semi;colon"]
+    if encoding == "utf-8-sig":
+        assert data.startswith(b"\xef\xbb\xbf") and data.count(b"\xef\xbb\xbf") == 1
+    assert source.pages[1].export_words_csv(
+        delimiter=";", encoding=encoding
+    ) == source.export_words_csv(pages=[1], delimiter=";", encoding=encoding)
+
+
+@pytest.mark.parametrize(
+    "options,error",
+    [
+        ({"delimiter": ""}, PdfValidationException),
+        ({"delimiter": "\n"}, PdfValidationException),
+        ({"delimiter": '"'}, PdfValidationException),
+        ({"delimiter": None}, TypeError),
+        ({"encoding": "missing-codec"}, PdfValidationException),
+        ({"encoding": None}, TypeError),
+    ],
+)
+def test_invalid_csv_options_precede_extraction(source, monkeypatch, options, error):
+    monkeypatch.setattr(
+        source._engine_pdf,
+        "get_page_content",
+        lambda *a: pytest.fail("Unexpected content read"),
+    )
+    with io.BytesIO(b"Keep") as output:
+        with pytest.raises(error):
+            source.export_words_csv(output, **options)
+        assert output.getvalue() == b"Keep"
+
+
+@pytest.mark.parametrize(
+    "limit", ["max_decoded_stream_bytes", "max_total_decoded_bytes"]
+)
+def test_csv_output_limits_and_encoding_failure_preserve_destinations(
+    source, tmp_path, limit
+):
+    expected = source.export_words_csv()
+    path = tmp_path / "words.csv"
+    path.write_bytes(b"Keep")
+    with io.BytesIO(b"Keep") as output:
+        for destination in (path, output):
+            with pytest.raises(PdfValidationException, match="encoded as CSV"):
+                source.export_words_csv(destination, encoding="ascii")
+            assert path.read_bytes() == output.getvalue() == b"Keep"
+        source._load_limits = PdfLoadLimits(**{limit: len(expected) - 1})
+        for destination in (path, output):
+            with pytest.raises(PdfResourceLimitException, match=limit):
+                source.export_words_csv(destination)
+            assert path.read_bytes() == output.getvalue() == b"Keep"
+    source._load_limits = PdfLoadLimits(**{limit: len(expected)})
+    assert source.export_words_csv(path) == path.read_bytes() == expected

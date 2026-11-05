@@ -1334,12 +1334,16 @@ Export the same word positions for search indexes or annotation tools:
 ```python
 with Document("input.pdf") as document:
     document.export_words_json("words.json", pages=[1, 3], skip_artifacts=True)
+    document.export_words_csv("words.csv", pages=[1, 3], encoding="utf-8-sig")
     payload = document.pages[1].export_words_json()
 ```
 
 The versioned UTF-8 JSON contains `text`, one-based `page_index`, `rect` and
 four-point `quad` for each word. Omit the destination to receive bytes, or pass
 a binary stream. Selection and clipping follow `extract_words()`.
+CSV exports use `page_number,text,x0,y0,x1,y1,quad` columns for spreadsheet
+analysis; the four quad points are a JSON array in one cell. Use
+`Page.export_words_csv()` for one page, or omit the destination to receive bytes.
 
 Collect search hits with surrounding text, or export a report for review:
 
@@ -2197,6 +2201,10 @@ and delete workflows. 277 public types are organized by module below.
 - `Document.export_words_json(destination=None, pages=None, clip=None, skip_artifacts=False, overwrite=True)` /
   `Page.export_words_json(destination=None, clip=None, skip_artifacts=False, overwrite=True)`
   return versioned UTF-8 word and geometry JSON, optionally writing a file or binary stream.
+
+- `Document.export_words_csv(destination=None, pages=None, clip=None, skip_artifacts=False, delimiter=",", encoding="utf-8", overwrite=True)` /
+  `Page.export_words_csv(...)` export the same words and geometry as CSV, with
+  one-based page numbers, separate bounding coordinates and a quad cell.
 
 - `Document.extract_tables(pages=None, clip_to_page=True)` / `Page.extract_tables(clip_to_page=True)`
   return `list[ExtractedTable]`; `pages` contains one-based indices. Each result exposes

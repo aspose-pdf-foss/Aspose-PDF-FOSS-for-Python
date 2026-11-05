@@ -5054,6 +5054,60 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",))
+    def export_words_csv(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return positioned words as CSV bytes, optionally writing a report.
+
+        Columns are page_number (one-based), text, x0,y0,x1,y1 and quad (four
+        points as a JSON array within one cell). Coordinates retain unrotated
+        PDF points. Selection, order, clipping, artifact filtering and geometry
+        limits follow :meth:`extract_words`. Empty results produce a header.
+
+        Standard CSV quoting retains delimiters, quotes and Unicode; records
+        use CRLF. encoding="utf-8-sig" adds a spreadsheet BOM. CSV options,
+        extraction options and all page numbers are validated before content
+        reads. Only selected page streams and invoked forms are decoded.
+
+        Words and the complete report stay in memory and obey load limits.
+        Extraction and encoding finish before output is touched. Paths replace
+        atomically with parent directories created; overwrite=False refuses
+        existing files. Binary streams retry short writes at their current
+        position and remain open; write failures may leave partial output.
+        Returned bytes equal the written payload. The PDF remains unchanged.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.csv_export import CsvWriter
+        from aspose_pdf.engine.word_export import to_csv
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        writer = CsvWriter(
+            delimiter, encoding, _LoadBudget(self.load_limits), context="CSV words"
+        )
+        words = self._api_extract_words(
+            pages=pages, clip=clip, skip_artifacts=skip_artifacts
+        )
+        data = to_csv(words, writer)
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     @page_api(selections=("pages",), result="records")
     def search_text(
         self,
@@ -6751,6 +6805,7 @@ class Document:
     _api_save_as_text = save_as_text.__wrapped__
     _api_extract_words = extract_words.__wrapped__
     _api_export_words_json = export_words_json.__wrapped__
+    _api_export_words_csv = export_words_csv.__wrapped__
     _api_search_text = search_text.__wrapped__
     _api_export_search_json = export_search_json.__wrapped__
     _api_export_search_csv = export_search_csv.__wrapped__
