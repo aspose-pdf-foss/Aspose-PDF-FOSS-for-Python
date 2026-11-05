@@ -16093,6 +16093,114 @@ class SimplePdf:
             raise PdfValidationException("The document has no catalog")
         self._set_additional_action(catalog, key, action)
 
+    # -- page transitions and durations (ISO 32000-1 14.12) --------------------
+
+    def get_page_transition(self, page_index: int) -> dict[str, Any] | None:
+        """A page's ``/Trans`` transition dictionary or ``None``."""
+        self._ensure_not_disposed()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            return None
+        trans = self._resolve(page.mapping.get(PdfName("Trans")))
+        if isinstance(trans, PdfDictionary):
+            result: dict[str, Any] = {}
+            for key, value in trans.mapping.items():
+                if isinstance(key, PdfName):
+                    name = key.name.lstrip("/")
+                    resolved = self._resolve(value)
+                    if isinstance(resolved, PdfName):
+                        result[name] = resolved.name.lstrip("/")
+                    elif isinstance(resolved, PdfNumber):
+                        result[name] = resolved.value
+                    elif isinstance(resolved, PdfArray):
+                        result[name] = [self._resolve(v) for v in resolved.items]
+                    else:
+                        result[name] = resolved
+            return result
+        return None
+
+    def set_page_transition(self, page_index: int, value: dict[str, Any] | None) -> None:
+        """Set a page's ``/Trans`` transition or remove it with ``None``."""
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page index out of range")
+        if value is None:
+            page.mapping.pop(PdfName("Trans"), None)
+        else:
+            # Validate required Type key
+            if "Type" not in value:
+                raise PdfValidationException(
+                    "Transition dictionary must contain a 'Type' key specifying the transition effect"
+                )
+
+            # Validate Type is a string
+            trans_type = value["Type"]
+            if not isinstance(trans_type, str):
+                raise PdfValidationException(
+                    f"Transition 'Type' must be a string, got {type(trans_type).__name__}"
+                )
+
+            # Validate Type value against known transition types
+            valid_types = {"Split", "Blinds", "Box", "Wipe", "Dissolve", "Glitter"}
+            if trans_type not in valid_types:
+                raise PdfValidationException(
+                    f"Invalid transition type '{trans_type}'. "
+                    f"Valid types are: {', '.join(sorted(valid_types))}"
+                )
+
+            trans = PdfDictionary()
+            for key, val in value.items():
+                if isinstance(val, bool):
+                    trans.mapping[PdfName(key)] = PdfBoolean(val)
+                elif isinstance(val, (int, float)):
+                    trans.mapping[PdfName(key)] = PdfNumber(val)
+                elif isinstance(val, str):
+                    trans.mapping[PdfName(key)] = PdfName(val)
+                elif isinstance(val, (list, tuple)):
+                    arr = PdfArray()
+                    for v in val:
+                        if isinstance(v, str):
+                            arr.items.append(PdfName(v))
+                        elif isinstance(v, (int, float)):
+                            arr.items.append(PdfNumber(v))
+                        elif isinstance(v, bool):
+                            arr.items.append(PdfBoolean(v))
+                        else:
+                            arr.items.append(PdfNumber(v))
+                    trans.mapping[PdfName(key)] = arr
+                else:
+                    trans.mapping[PdfName(key)] = PdfNumber(val)
+            page.mapping[PdfName("Trans")] = trans
+
+    def get_page_duration(self, page_index: int) -> float | None:
+        """A page's ``/Dur`` duration in seconds or ``None``."""
+        self._ensure_not_disposed()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            return None
+        dur = self._resolve(page.mapping.get(PdfName("Dur")))
+        if isinstance(dur, PdfNumber):
+            return dur.value
+        return None
+
+    def set_page_duration(self, page_index: int, value: float | None) -> None:
+        """Set a page's ``/Dur`` duration or remove it with ``None``."""
+        self._ensure_not_disposed()
+        self._ensure_cos()
+        page = self._get_page_dict(page_index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfValidationException("Page index out of range")
+        if value is None:
+            page.mapping.pop(PdfName("Dur"), None)
+        else:
+            try:
+                dur_val = float(value)
+            except (TypeError, ValueError):
+                raise PdfValidationException("Duration must be a number")
+            page.mapping[PdfName("Dur")] = PdfNumber(dur_val)
+
     # -- document-level JavaScript (/Names /JavaScript, 12.6.4.17) ----------
 
     def _javascript_tree_entries(self, catalog: Any) -> dict[bytes, Any]:

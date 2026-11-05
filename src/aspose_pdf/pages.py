@@ -1917,6 +1917,55 @@ class Page:
             include_named_destinations=False,
         )
 
+    @property
+    def transition(self) -> dict[str, Any] | None:
+        """The page's transition effect for slide shows (``/Trans``, ISO 32000-1 14.12.3).
+
+        Returns a dictionary with keys such as:
+
+        ``"Type"`` - transition type (e.g. ``"Split"``, ``"Blinds"``, ``"Box"``, ``"Wipe"``,
+        ``"Dissolve"``, ``"Glitter"``); required
+
+        ``"D"`` - duration in seconds (float, optional)
+
+        ``"DI"`` - direction for split/wipe transitions (int, optional)
+
+        ``"M"`` - transition sub-type (e.g. ``"H"``, ``"V"``, ``"I"`` for horizontal/vertical/inward)
+
+        ``None`` when the page has no transition effect.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        return None if eng is None else eng.get_page_transition(self._index)
+
+    @transition.setter
+    def transition(self, value: dict[str, Any] | None) -> None:
+        """Set the page's transition effect or remove it with ``None``."""
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("Cannot set transition: no underlying document.")
+        eng.set_page_transition(self._index, value)
+
+    @property
+    def duration(self) -> float | None:
+        """The page's display duration in seconds for automated slide shows (``/Dur``, ISO 32000-1 14.12.4).
+
+        ``None`` when the page has no duration set.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        return None if eng is None else eng.get_page_duration(self._index)
+
+    @duration.setter
+    def duration(self, value: float | None) -> None:
+        """Set the page's display duration or remove it with ``None``."""
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("Cannot set duration: no underlying document.")
+        eng.set_page_duration(self._index, value)
+
 
 class PageCollection:
     """A collection to manage PDF pages within a Document."""
@@ -2013,6 +2062,55 @@ class PageCollection:
         else:
             self._document._engine_pdf.add(page)
         return Page._from_index(self._document, idx)
+
+    @property
+    def transition(self) -> dict[str, Any] | None:
+        """The page's transition effect for slide shows (``/Trans``, ISO 32000-1 14.12.3).
+
+        A dictionary with keys:
+        ``"Type"`` - transition type (e.g. ``"Split"``, ``"Blinds"``, ``"Box"``, ``"Wipe"``,
+        ``"Dissolve"``, ``"Glitter"``, ``"Overwrite"``, ``"Push"``, ``"Fade"``)
+        ``"D"`` - duration in seconds (float, optional)
+        ``"DI"`` - direction for split/wipe transitions (int, optional)
+        ``"M"`` - transition sub-type (e.g. ``"H"``, ``"V"``, ``"I"`` for horizontal/vertical/inward)
+
+        ``None`` when the page has no transition effect.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            return None
+        return eng.get_page_transition(self._index)
+
+    @transition.setter
+    def transition(self, value: dict[str, Any] | None) -> None:
+        """Set the page's transition effect or remove it with ``None``."""
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("Cannot set transition: no underlying document.")
+        eng.set_page_transition(self._index, value)
+
+    @property
+    def duration(self) -> float | None:
+        """The page's display duration in seconds for automated slide shows (``/Dur``, ISO 32000-1 14.12.4).
+
+        ``None`` when the page has no duration set.
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            return None
+        return eng.get_page_duration(self._index)
+
+    @duration.setter
+    def duration(self, value: float | None) -> None:
+        """Set the page's display duration or remove it with ``None``."""
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("Cannot set duration: no underlying document.")
+        eng.set_page_duration(self._index, value)
 
     def insert(
         self,
