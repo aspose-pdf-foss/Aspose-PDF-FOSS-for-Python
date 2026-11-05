@@ -484,6 +484,99 @@ class Document:
         engine_stamps.apply(self._engine_pdf, stamp, indices)
         return self
 
+    def add_header(
+        self,
+        text: str,
+        font_size: float = 10.0,
+        margin: float = 18.0,
+        pages: Sequence[int] | None = None,
+        **options: Any,
+    ) -> Document:
+        """Put *text* along the top of *pages*, or every page when none are named.
+
+        Args:
+            text: The header text to display. Use ``{page}`` and ``{total}`` for
+                dynamic page numbers (requires PageNumberStamp).
+            font_size: Font size in points (default: 10).
+            margin: Distance from the top edge in points (default: 18).
+            pages: One-based page numbers, or None for all pages.
+            **options: Additional TextStamp options (font_name, color, etc.).
+
+        Returns:
+            Self for method chaining.
+
+        Example:
+            document.add_header("Confidential", font_size=12, color=(1, 0, 0))
+            document.add_header("Page {page}", font_size=9)  # uses PageNumberStamp
+        """
+        from aspose_pdf.stamps import PageNumberStamp, TextStamp, VerticalAlignment
+
+        y_indent = -float(margin)
+        # Use PageNumberStamp for {page} or {total} placeholders
+        if "{page}" in text or "{total}" in text:
+            stamp = PageNumberStamp(
+                value=text,
+                font_size=font_size,
+                vertical_alignment=VerticalAlignment.TOP,
+                y_indent=y_indent,
+                **options,
+            )
+        else:
+            stamp = TextStamp(
+                value=text,
+                font_size=font_size,
+                vertical_alignment=VerticalAlignment.TOP,
+                y_indent=y_indent,
+                **options,
+            )
+        return self.add_stamp(stamp, pages)
+
+    def add_footer(
+        self,
+        text: str,
+        font_size: float = 10.0,
+        margin: float = 18.0,
+        pages: Sequence[int] | None = None,
+        **options: Any,
+    ) -> Document:
+        """Put *text* along the bottom of *pages*, or every page when none are named.
+
+        Args:
+            text: The footer text to display. Use ``{page}`` and ``{total}`` for
+                dynamic page numbers (requires PageNumberStamp).
+            font_size: Font size in points (default: 10).
+            margin: Distance from the bottom edge in points (default: 18).
+            pages: One-based page numbers, or None for all pages.
+            **options: Additional TextStamp options (font_name, color, etc.).
+
+        Returns:
+            Self for method chaining.
+
+        Example:
+            document.add_footer("Page {page} of {total}", font_size=9, color=(0.5, 0.5, 0.5))
+        """
+        from aspose_pdf.stamps import PageNumberStamp, TextStamp, VerticalAlignment
+
+        y_indent = float(margin)
+        # Use PageNumberStamp for {page} or {total} placeholders
+        if "{page}" in text or "{total}" in text:
+            stamp = PageNumberStamp(
+                value=text,
+                font_size=font_size,
+                vertical_alignment=VerticalAlignment.BOTTOM,
+                y_indent=y_indent,
+                **options,
+            )
+        else:
+            stamp = TextStamp(
+                value=text,
+                font_size=font_size,
+                vertical_alignment=VerticalAlignment.BOTTOM,
+                y_indent=y_indent,
+                **options,
+            )
+        return self.add_stamp(stamp, pages)
+
     @property
     def viewer_preferences(self) -> ViewerPreferences:
         """The window, the reading direction and the print dialogue.

@@ -641,3 +641,80 @@ def test_an_image_stamp_reads_a_file(tmp_path):
     document = _document()
     document.pages[1].add_stamp(ImageStamp(path, width=20, height=20))
     assert len(_pixels(_reloaded(document), _red)) == 400
+
+
+# --- header and footer --------------------------------------------------------
+
+
+def test_a_header_is_placed_at_the_top_of_a_page():
+    document = _document(size=200)
+    document.pages[1].add_header("CONFIDENTIAL", font_size=12, margin=20, color=(1, 0, 0))
+    reopened = _reloaded(document)
+    red = _pixels(reopened, _red)
+    # Top area: 20pt margin from top, text is ~12pt tall
+    # y_indent is negative (pulls up from top), so min_y should be <= 19
+    assert min(y for _, y in red) <= 25
+
+
+def test_a_footer_is_placed_at_the_bottom_of_a_page():
+    document = _document(size=200)
+    document.pages[1].add_footer("Page {page}", font_size=10, margin=20, color=(0, 0, 1))
+    reopened = _reloaded(document)
+    blue = _pixels(reopened, _blue)
+    # Bottom area: 20pt margin from bottom
+    # y_indent is positive (pushes up from bottom)
+    assert max(y for _, y in blue) >= 175
+
+
+def test_document_level_header_applies_to_all_pages():
+    document = _document(3, size=100)
+    document.add_header("HEADER", font_size=8, margin=10, color=(1, 0, 0))
+    reopened = _reloaded(document)
+    for i in range(3):
+        assert bool(_pixels(reopened, _red, page=i))
+
+
+def test_document_level_footer_targets_specific_pages():
+    document = _document(4, size=100)
+    document.add_footer("FOOTER", font_size=8, margin=10, color=(0, 0, 1), pages=[1, 3])
+    reopened = _reloaded(document)
+    assert bool(_pixels(reopened, _blue, page=0))  # page 1
+    assert not bool(_pixels(reopened, _blue, page=1))  # page 2
+    assert bool(_pixels(reopened, _blue, page=2))  # page 3
+    assert not bool(_pixels(reopened, _blue, page=3))  # page 4
+
+
+def test_header_with_page_number_placeholder():
+    from aspose_pdf import PageNumberStamp
+    document = _document(2, size=200)
+    # Use PageNumberStamp for {page} and {total} placeholders
+    # PageNumberStamp uses y_indent instead of margin
+    document.add_stamp(PageNumberStamp("Page {page} of {total}", font_size=10, y_indent=-15, color=(0.3, 0.3, 0.3)))
+    reopened = _reloaded(document)
+    # Extract all text - PageNumberStamp renders actual text that can be extracted
+    text = reopened.pages[1].extract_text()
+    assert "Page 1 of 2" in text
+    text2 = reopened.pages[2].extract_text()
+    assert "Page 2 of 2" in text2
+
+
+def test_header_and_footer_on_same_page():
+    document = _document(size=300)
+    document.pages[1].add_header("TOP", font_size=10, margin=10, color=(1, 0, 0))
+    document.pages[1].add_footer("BOTTOM", font_size=10, margin=10, color=(0, 0, 1))
+    reopened = _reloaded(document)
+    red = _pixels(reopened, _red)
+    blue = _pixels(reopened, _blue)
+    # Header at top (10pt margin), footer at bottom (10pt margin)
+    assert min(y for _, y in red) <= 15
+    assert max(y for _, y in blue) >= 285
+
+
+def test_header_footer_chaining():
+    # Methods should return the page/document for chaining
+    document = _document(size=150)
+    result = document.pages[1].add_header("H", font_size=8, color=(1, 0, 0))
+    # Check by index since == is not implemented for Page
+    assert result.index == document.pages[1].index
+    result2 = document.add_footer("F", font_size=8, color=(0, 0, 1))
+    assert result2 is document

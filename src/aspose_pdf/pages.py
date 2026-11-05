@@ -1234,6 +1234,95 @@ class Page:
         engine_stamps.apply(eng, stamp, [self._index])
         return self
 
+    def add_header(
+        self,
+        text: str,
+        font_size: float = 10.0,
+        margin: float = 18.0,
+        **options: Any,
+    ) -> Page:
+        """Put *text* along the top of this page.
+
+        Args:
+            text: The header text to display. Use ``{page}`` and ``{total}`` for
+                dynamic page numbers (requires PageNumberStamp).
+            font_size: Font size in points (default: 10).
+            margin: Distance from the top edge in points (default: 18).
+            **options: Additional TextStamp options (font_name, color, etc.).
+
+        Returns:
+            Self for method chaining.
+
+        Example:
+            page.add_header("Confidential", font_size=12, color=(1, 0, 0))
+            page.add_header("Page {page}", font_size=9)  # uses PageNumberStamp
+        """
+        from aspose_pdf.stamps import PageNumberStamp, TextStamp, VerticalAlignment
+
+        y_indent = -float(margin)
+        # Use PageNumberStamp for {page} or {total} placeholders
+        if "{page}" in text or "{total}" in text:
+            stamp = PageNumberStamp(
+                value=text,
+                font_size=font_size,
+                vertical_alignment=VerticalAlignment.TOP,
+                y_indent=y_indent,
+                **options,
+            )
+        else:
+            stamp = TextStamp(
+                value=text,
+                font_size=font_size,
+                vertical_alignment=VerticalAlignment.TOP,
+                y_indent=y_indent,
+                **options,
+            )
+        return self.add_stamp(stamp)
+
+    def add_footer(
+        self,
+        text: str,
+        font_size: float = 10.0,
+        margin: float = 18.0,
+        **options: Any,
+    ) -> Page:
+        """Put *text* along the bottom of this page.
+
+        Args:
+            text: The footer text to display. Use ``{page}`` and ``{total}`` for
+                dynamic page numbers (requires PageNumberStamp).
+            font_size: Font size in points (default: 10).
+            margin: Distance from the bottom edge in points (default: 18).
+            **options: Additional TextStamp options (font_name, color, etc.).
+
+        Returns:
+            Self for method chaining.
+
+        Example:
+            page.add_footer("Page {page} of {total}", font_size=9, color=(0.5, 0.5, 0.5))
+        """
+        from aspose_pdf.stamps import PageNumberStamp, TextStamp, VerticalAlignment
+
+        y_indent = float(margin)
+        # Use PageNumberStamp for {page} or {total} placeholders
+        if "{page}" in text or "{total}" in text:
+            stamp = PageNumberStamp(
+                value=text,
+                font_size=font_size,
+                vertical_alignment=VerticalAlignment.BOTTOM,
+                y_indent=y_indent,
+                **options,
+            )
+        else:
+            stamp = TextStamp(
+                value=text,
+                font_size=font_size,
+                vertical_alignment=VerticalAlignment.BOTTOM,
+                y_indent=y_indent,
+                **options,
+            )
+        return self.add_stamp(stamp)
+
     def __repr__(self) -> str:
         return f"Page({self.number})"
 
