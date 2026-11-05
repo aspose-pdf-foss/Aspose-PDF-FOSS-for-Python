@@ -1345,6 +1345,11 @@ Supported:
   annotations. **Widget** annotations are left out — one is a form field's
   presence on a page, and duplicating it would put a single field in two places
   where typing in either changes both.
+- **Insert a page at a specific position**: `pages.insert(index, page)` inserts
+  a page at *index* (1-based, from 1 to N+1). For convenience, the following
+  methods are also available:
+  - `pages.prepend(page)` or `pages.insert_first(page)` - insert at the beginning
+  - `pages.append(page)` or `pages.insert_last(page)` - append at the end
 - **Take a page from another document**: `pages.insert(i, other.pages[j])` and
   `pages.add(other.pages[j])` import it, with the graph it names — its
   resources, its annotations, the form fields its widgets belong to, the

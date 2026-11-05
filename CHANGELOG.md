@@ -33,6 +33,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Convenience methods for inserting pages at specific positions.** Added
+  `PageCollection.append()`, `PageCollection.prepend()`, `PageCollection.insert_first()`,
+  and `PageCollection.insert_last()` methods for more intuitive page manipulation.
+  These methods provide Pythonic aliases for common insertion patterns:
+  - `pages.append(page)` - equivalent to `pages.add(page)`
+  - `pages.prepend(page)` - equivalent to `pages.insert(1, page)`
+  - `pages.insert_first(page)` - insert at the beginning
+  - `pages.insert_last(page)` - append at the end
+
 - **Turn scanned spreads into individual PDF pages.**
   `Document.split_spreads()` supports selected spreads, both reading axes,
   reversed reading order, an adjustable split and a central gutter. Teams can

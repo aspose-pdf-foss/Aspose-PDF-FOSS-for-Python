@@ -2250,6 +2250,95 @@ class PageCollection:
 
         return Page._from_index(self._document, index)
 
+    def append(self, page: Page | PageCollection | PageSize | Any | None = None, *, size: PageSize | Sequence[float] | str | None = None) -> Page | None:
+        """Append a page at the end of the document.
+
+        This is a convenience method equivalent to ``add(page, size=...)``.
+        Unlike ``insert()`` which uses 1-based indexing, this method always
+        appends to the end.
+
+        A blank page is US Letter unless a size is given, either as the first
+        argument or as *size* -- a :class:`~aspose_pdf.page_size.PageSize`, one of
+        its names, or a ``(width, height)`` pair in points::
+
+            document.pages.append(PageSize.A4)
+            document.pages.append(PageSize.A4.landscape())
+            document.pages.append(size=(300, 400))
+
+        Passing a :class:`Page` copies it, as :meth:`insert` describes --
+        including one from another document. Passing a :class:`PageCollection`
+        imports its pages together, preserving resources and references between
+        them, and returns ``None``. An empty collection adds nothing. Adding
+        this document's own collection copies its original pages once.
+        """
+        return self.add(page, size=size)
+
+    def prepend(self, page: Page | PageSize | Any | None = None, *, size: PageSize | Sequence[float] | str | None = None) -> Page:
+        """Insert a page at the beginning of the document.
+
+        This is a convenience method equivalent to ``insert_first(page, size=...)``
+        or ``insert(1, page, size=...)``.
+
+        A blank page takes a *size* exactly as :meth:`add` does, and is US Letter
+        without one.
+
+        A :class:`Page` of *this* document is copied whole -- its resources,
+        rotation and boxes, and its annotations as fresh objects.
+
+        A page of a **different** document is imported, with everything it
+        names: the resources its content draws with, its annotations, the form
+        fields its widgets belong to, the optional content groups it mentions,
+        its part of the structure tree, its label, and any bookmark that
+        pointed at it.
+
+        Returns the inserted page.
+        """
+        return self.insert_first(page, size=size)
+
+    def insert_first(self, page: Page | PageSize | Any | None = None, *, size: PageSize | Sequence[float] | str | None = None) -> Page:
+        """Insert a page at the beginning of the document.
+
+        This is a convenience method equivalent to ``insert(1, page, size=...)``.
+
+        A blank page takes a *size* exactly as :meth:`add` does, and is US Letter
+        without one.
+
+        A :class:`Page` of *this* document is copied whole -- its resources,
+        rotation and boxes, and its annotations as fresh objects.
+
+        A page of a **different** document is imported, with everything it
+        names: the resources its content draws with, its annotations, the form
+        fields its widgets belong to, the optional content groups it mentions,
+        its part of the structure tree, its label, and any bookmark that
+        pointed at it.
+
+        Returns the inserted page.
+        """
+        return self.insert(1, page, size=size)
+
+    def insert_last(self, page: Page | PageSize | Any | None = None, *, size: PageSize | Sequence[float] | str | None = None) -> Page:
+        """Append a page at the end of the document.
+
+        This is a convenience method equivalent to ``append(page, size=...)`` or
+        ``add(page, size=...)``. Unlike ``insert()`` which uses 1-based indexing,
+        this method always appends to the end.
+
+        A blank page takes a *size* exactly as :meth:`add` does, and is US Letter
+        without one.
+
+        A :class:`Page` of *this* document is copied whole -- its resources,
+        rotation and boxes, and its annotations as fresh objects.
+
+        A page of a **different** document is imported, with everything it
+        names: the resources its content draws with, its annotations, the form
+        fields its widgets belong to, the optional content groups it mentions,
+        its part of the structure tree, its label, and any bookmark that
+        pointed at it.
+
+        Returns the inserted page.
+        """
+        return self.add(page, size=size)
+
     def _import_page(self, page: Page, index: int) -> None:
         """Bring *page* in from the document it belongs to, at *index*."""
         source = page._document

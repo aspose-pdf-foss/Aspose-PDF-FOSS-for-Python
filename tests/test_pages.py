@@ -594,3 +594,47 @@ def test_delete_takes_the_page_it_names_with_it(document):
     ]
     engine = document._engine_pdf
     assert len(engine.page_contents) == len(engine.pages)
+
+
+def test_append_adds_page_at_end(document):
+    """Append a page at the end using the convenience method."""
+    pages = document.pages
+    pages.add()
+    pages.add()
+    original_len = len(pages)
+    new_page = pages.append()
+    assert len(pages) == original_len + 1
+    assert new_page.number == len(pages)
+
+
+def test_prepend_adds_page_at_beginning(document):
+    """Prepend a page at the beginning using the convenience method."""
+    pages = document.pages
+    pages.add()
+    pages.add()
+    original_len = len(pages)
+    new_page = pages.prepend()
+    assert len(pages) == original_len + 1
+    assert new_page.number == 1
+
+
+def test_insert_first_adds_page_at_beginning(document):
+    """Insert_first adds a page at the beginning."""
+    pages = document.pages
+    pages.add()
+    pages.add()
+    original_len = len(pages)
+    new_page = pages.insert_first()
+    assert len(pages) == original_len + 1
+    assert new_page.number == 1
+
+
+def test_insert_last_adds_page_at_end(document):
+    """Insert_last adds a page at the end."""
+    pages = document.pages
+    pages.add()
+    pages.add()
+    original_len = len(pages)
+    new_page = pages.insert_last()
+    assert len(pages) == original_len + 1
+    assert new_page.number == original_len + 1
