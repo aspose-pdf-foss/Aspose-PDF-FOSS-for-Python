@@ -676,6 +676,40 @@ Supported:
   destination *name*: `OutlineItem(destination="chapter-2")` writes the name
   itself, so the bookmark follows whatever that name is later pointed at, and
   `OutlineItem.destination_name` reads the name a bookmark targets.
+- **Remote PDF navigation** with
+  `GoToRAction(file, destination=None, new_window=None)`. A destination can be a
+  typed page view such as `FitDestination(3)` or a nonempty remote name such as
+  `"chapter-2"`. Typed remote pages are one-based in Python and written as
+  zero-based PDF page numbers; they are never converted to local page references.
+  - Plain string names use Latin-1 byte spelling, matching
+    `Document.destinations`, and are written as PDF byte strings. Use
+    `aspose_pdf.annotations.Name("section")` for a legacy PDF name token,
+    without its leading slash. Loaded actions retain the name representation.
+    Empty names, non-Latin-1 string names and invalid destination types are
+    rejected when the action is attached.
+  - `new_window=True` writes `/NewWindow true` to request a new viewer window;
+    `False` writes a PDF boolean requesting replacement of the current document.
+    `None` omits the entry and uses the viewer's preference. Only actual booleans
+    or `None` are accepted; a compatible viewer controls the resulting behavior.
+  - The action works in page links, outline targets, form-button actions and
+    `Document.open_action`. Typed reads and PDF saves retain named and explicit
+    remote destinations and their optional window preference, including encrypted
+    and streaming input. Bookmark JSON exchange retains both settings. Malformed
+    loaded window flags, chained `/Next` actions and remote arrays using local
+    page references stay untyped rather than being partially converted.
+  - Names are not resolved against the current document or remapped during local
+    page edits or merging. Authoring, reading and saving the action does not open
+    the target file or verify that its destination exists. The existing
+    destination-free `GoToRAction(file)` remains available.
+
+  ```python
+  from aspose_pdf import GoToRAction, OutlineItem
+
+  manual = GoToRAction("manual.pdf", destination="chapter-2", new_window=True)
+  page.add_link((20, 695, 180, 715), manual)
+  document.outlines.add(OutlineItem("Read the manual", destination=manual))
+  ```
+
 - **Import and export bookmarks as editable JSON.**
   `Document.export_bookmarks_json(destination=None,
   resolve_named_destinations=True, overwrite=True) -> bytes` exports the current
@@ -5784,7 +5818,8 @@ Boundaries:
   use the typed action/destination API (`aspose_pdf.interactive`: `GoTo`/`URI`/
   `GoToR`/`Named`/`JavaScript`/`Launch` actions and `Fit`/`XYZ`/`FitH`/`FitV`/
   `FitR`/`FitB` destinations, serialized to `/A` and `/Dest`). A remote GoToR
-  page number must be a finite non-negative integer. A text field can
+  destination accepts a named section or a positive integer page number in
+  Python; its PDF array uses a zero-based number. A text field can
   embed a **Type0 (CID) font** (`add_text_field(font=…)`): the font is added to
   the AcroForm `/DR`, `/DA` points at it, and a CID-encoded `/AP` is baked at
   authoring time so a non-Latin value renders (this baked appearance is left
@@ -6662,10 +6697,11 @@ Boundaries:
   unknown name falling back to the subtype's default as a viewer does. Other
   subtypes (`Sound`, `3D`, …) still need an appearance supplied via
   `appearance_normal`.
-- A destination is typed only when its page is one **this** document has. A
-  remote destination (`GoToR`) names a page in another file by *number*, which
-  the plain channel already carries and writes back unchanged; typing it would
-  turn it into a reference into this document. A destination whose page has
+- In the annotation property channel, an explicit destination is typed only
+  when its page is one **this** document has. A remote destination (`GoToR`)
+  uses a remote page number or name, which this plain channel carries and writes
+  back unchanged. The typed `GoToRAction` API separately preserves those remote
+  targets and their optional window preference. A local destination whose page has
   since been deleted, or whose view is not one of the eight ISO 32000-1 defines,
   is not surfaced at all rather than half-converted into something that would
   write back malformed. A page dictionary is never a property value anywhere

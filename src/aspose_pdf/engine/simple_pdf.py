@@ -1551,7 +1551,7 @@ def destination_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
 
 #: Keys for the general action decoder. Hide validates its target types
 #: separately; both paths keep conversion flat and bounded.
-_ACTION_SPEC_KEYS = ("S", "D", "F", "URI", "N", "JS", "Flags", "Fields")
+_ACTION_SPEC_KEYS = ("S", "D", "F", "URI", "N", "JS", "Flags", "Fields", "NewWindow")
 
 
 def action_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
@@ -1589,18 +1589,34 @@ def action_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
             return value.value
         return None
 
+    remote = resolve(obj.mapping.get(PdfName("S"))) == PdfName("GoToR")
+    if remote and PdfName("Next") in obj.mapping:
+        return None
     spec: dict[str, Any] = {}
     for key in _ACTION_SPEC_KEYS:
         raw = obj.mapping.get(PdfName(key))
         if raw is None:
             continue
         if key == "D":
+            if remote:
+                resolved = resolve(raw)
+                if isinstance(resolved, PdfString):
+                    spec[key] = resolved.value.decode("latin-1")
+                elif isinstance(resolved, PdfName):
+                    spec[key] = AnnotationName(resolved.name.removeprefix("/"))
+                elif isinstance(resolved, PdfArray):
+                    spec[key] = [plain(entry) for entry in resolved.items]
+                elif resolved is None or isinstance(resolved, PdfNull):
+                    spec[key] = None
+                else:
+                    return None
+                continue
             destination = destination_from_cos(raw, resolve, page_index_of)
             if destination is _UNRESOLVED_DESTINATION:
                 return None
             if destination is None:
-                # A remote destination, whose page is a number rather than a
-                # reference, or a named one -- both plain values.
+                # Retain a destination's plain shape when no typed local view
+                # is available.
                 resolved = resolve(raw)
                 destination = (
                     [plain(entry) for entry in resolved.items]
@@ -1608,6 +1624,15 @@ def action_from_cos(obj: Any, resolve: Any, page_index_of: Any) -> Any:
                     else plain(raw)
                 )
             spec[key] = destination
+        elif key == "NewWindow":
+            if not remote:
+                continue
+            value = resolve(raw)
+            if value is None or isinstance(value, PdfNull):
+                continue
+            if not isinstance(value, PdfBoolean):
+                return None
+            spec[key] = value.value
         elif key == "Fields":
             resolved = resolve(raw)
             if not isinstance(resolved, PdfArray):
@@ -11559,6 +11584,12 @@ class SimplePdf:
             pdf_key = PdfName(key)
             if key in ("S", "N"):
                 mapping[pdf_key] = PdfName(str(value))
+            elif key == "D" and spec.get("S") == "GoToR" and isinstance(value, str):
+                mapping[pdf_key] = (
+                    PdfName(str(value))
+                    if isinstance(value, AnnotationName)
+                    else PdfString(_destination_name_bytes(value))
+                )
             elif isinstance(value, Destination):
                 if spec.get("S") == "GoToR":  # remote page *number*, not a ref
                     mapping[pdf_key] = self._destination_cos(

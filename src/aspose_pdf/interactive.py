@@ -4,7 +4,8 @@ and form-field widgets.
 These are immutable value objects. The engine turns them into the PDF ``/Dest``
 array or ``/A`` action dictionary, resolving a document page index to the page's
 indirect reference. A ``page`` is a one-based number in the document (an
-in-document page); ``GoToRAction`` targets a page *number* in a remote file.
+in-document page); ``GoToRAction`` targets a page *number* or a name in a remote
+file.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar
+
+from aspose_pdf.engine.cos import AnnotationName
 
 
 class Destination:
@@ -160,20 +163,55 @@ def _remote_page_number(value: object) -> int | None:
 class GoToRAction(Action):
     """Jump to a destination in another (remote) PDF file.
 
-    ``destination.page`` is a one-based page *number* in the remote file.
+    ``destination`` is a typed view whose ``page`` is a one-based page number
+    in the remote file, or a nonempty named destination. String names use the
+    byte-preserving Latin-1 spelling used by named destination collections;
+    ``annotations.Name`` retains a legacy PDF name token instead, without its
+    leading slash.
+
+    ``new_window=True`` requests a new viewer window, ``False`` reuses the
+    current one, and ``None`` leaves the choice to the viewer's preference.
+    The target file and destination are never opened or resolved here.
     """
 
     file: str
-    destination: Destination | None = None
+    destination: Destination | str | None = None
+    new_window: bool | None = None
 
     def _spec(self) -> dict:
+        if self.new_window is not None and not isinstance(self.new_window, bool):
+            raise TypeError("new_window must be a boolean or None")
         spec: dict = {"S": "GoToR", "F": self.file}
-        if self.destination is not None:
+        if isinstance(self.destination, str):
+            if not self.destination:
+                raise ValueError("remote destination name must not be empty")
+            if (
+                isinstance(self.destination, AnnotationName)
+                and self.destination.startswith("/")
+            ):
+                raise ValueError(
+                    "remote destination PDF names must omit the leading slash"
+                )
+            try:
+                self.destination.encode(
+                    "utf-8" if isinstance(self.destination, AnnotationName) else "latin-1"
+                )
+            except UnicodeError as exc:
+                raise ValueError(
+                    "remote destination names must use Latin-1 byte spelling "
+                    "or a valid PDF name"
+                ) from exc
+            spec["D"] = self.destination
+        elif isinstance(self.destination, Destination):
             if _remote_page_number(self.destination.page) is None or self.destination.page < 1:
                 raise ValueError(
                     "remote destination page must be a positive integer"
                 )
             spec["D"] = self.destination
+        elif self.destination is not None:
+            raise TypeError("remote destination must be a Destination, a name or None")
+        if self.new_window is not None:
+            spec["NewWindow"] = self.new_window
         return spec
 
 
@@ -350,10 +388,10 @@ def action_from_spec(spec: dict) -> Action | None:
 
     The inverse of :meth:`Action._spec`. *spec* is that dictionary as plain
     Python -- keys without their slash, strings decoded, and a ``D`` entry
-    already turned into a :class:`Destination` (or left as the ``[page number,
-    name, ...]`` list a remote destination uses). Returns ``None`` for an action
-    type this API does not model, which is the caller's cue to keep what the
-    file holds rather than write something else in its place.
+    already turned into a :class:`Destination`, a destination name, or the
+    ``[page number, name, ...]`` list a remote destination uses. Returns ``None``
+    for an action type this API does not model, which is the caller's cue to keep
+    what the file holds rather than write something else in its place.
     """
     kind = spec.get("S")
     if kind == "Hide":
@@ -377,6 +415,8 @@ def action_from_spec(spec: dict) -> Action | None:
         uri = spec.get("URI")
         return URIAction(uri) if isinstance(uri, str) else None
     if kind == "GoToR":
+        if "Next" in spec:
+            return None
         target = spec.get("F")
         if not isinstance(target, str):
             return None
@@ -391,9 +431,15 @@ def action_from_spec(spec: dict) -> Action | None:
             destination = destination_from_spec(name, page_number + 1, params)
             if destination is None:
                 return None
-        elif destination is not None and not isinstance(destination, Destination):
+        elif destination is not None and not isinstance(destination, (Destination, str)):
             return None
-        return GoToRAction(target, destination)
+        new_window = spec.get("NewWindow")
+        action = GoToRAction(target, destination, new_window)
+        try:
+            action._spec()
+        except (TypeError, ValueError):
+            return None
+        return action
     if kind == "Named":
         name = spec.get("N")
         return NamedAction(name) if isinstance(name, str) else None

@@ -233,6 +233,10 @@ flowchart TD
   XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
   (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks
   also carry a title colour and an open/closed state.
+- `GoToRAction("manual.pdf", destination="chapter-2", new_window=True)` links directly
+  to a named section in another PDF and asks the viewer to open it in a new window.
+  Use it for page links, bookmarks or form buttons; `new_window=False` requests the
+  current window, and the default `None` leaves the choice to the viewer.
 - `Document.layers` lists, creates, switches and removes optional content groups; rendering, text
   extraction, and graphics absorption all skip a hidden layer, the way a viewer does.
   `make_exclusive([...])` makes layers mutually exclusive (`/RBGroups`), so switching one on
@@ -1733,7 +1737,7 @@ and delete workflows. 276 public types are organized by module below.
 | `FormFillerOptions` | Reusable records, field filling options and data sources for a form batch. |
 | `FormType` | Type of PDF form. |
 | `GoToAction` | Jump to a destination within this document. |
-| `GoToRAction` | Jump to a destination in another (remote) PDF file. |
+| `GoToRAction` | Jump to a page view or named destination in another PDF, with an optional window preference. |
 | `GradientAxialShading` | Represents axial (linear) gradient shading. |
 | `GraphicElement` | A painted path or a placed image, read from a page's content stream. |
 | `GraphicElementCollection` | Collection of graphic elements that can be added to or removed from a page. |
