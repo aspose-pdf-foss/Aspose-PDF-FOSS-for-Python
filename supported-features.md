@@ -1937,6 +1937,38 @@ Supported:
   one. `margin`, `gutter` and `order` (`"row"` or `"column"`) place the cells.
   `PdfFileEditor.make_n_up()` and `make_booklet()` are the same two with file I/O,
   reporting `False` and recording `last_exception` instead of raising.
+  - **Crop marks** are opt-in with `crop_marks=True` on both arrangements and
+    both file facades. Each occupied position receives eight vector line
+    segments, two at each corner of the actual scaled page bounds. CropBox
+    origin, source rotation, proportional scaling and letterboxing follow the
+    same page-form and placement matrices as the imposed content. Marks use
+    the visible page boundary, independently of any source TrimBox or BleedBox.
+  - Dimensions are in output-sheet PDF points (1/72 inch):
+    `crop_mark_length=9.0`, `crop_mark_offset=3.0`, `crop_mark_width=0.5`.
+    Length/width must be finite positive numbers and remain positive at PDF
+    numeric precision; offset must be finite and non-negative. Booleans and
+    nonnumeric values are refused. `crop_marks` requires an actual boolean.
+    Mark options are validated even when marks are disabled.
+  - Marks are solid CMYK black with butt caps, wrapped as Layout artifacts and
+    isolated from page graphics state. They do not add text, fonts or images.
+    Row/column ordering, booklet pairing, sheet sizes, page placements and
+    source boxes remain unchanged. Empty N-up cells and blank booklet padding
+    positions are unmarked. No bleed, fold marks or automatic trimming is added.
+  - Every stroke must fit inside its cell's available whitespace, outer sheet
+    margins and half of each neighboring gutter. This reserves independent
+    space for adjacent positions, including unoccupied ones. Insufficient
+    space raises `PdfValidationException` before page content import; there is
+    no implicit enlargement, rescaling or clipping of marks. For typical equal
+    page sizes, `margin=18, gutter=30` accommodates the default marks. Letterboxed
+    pages can use their extra cell whitespace.
+  - With marks enabled, sheet/source dimensions and layout space must be finite
+    and positive where applicable. Grid cells, output pages, mark segments/path
+    operators and generated content bytes obey `PdfLoadLimits`. Planning uses
+    page metadata before decoding source content. Successful imposition still
+    imports the source pages it needs; streaming source caches/cursors stay
+    deferred and source files/protection remain unchanged. The returned document
+    is independent and can be saved after source disposal. Defaults remain
+    unchanged when `crop_marks=False`.
 - A **link or bookmark points at the page named**, whatever has happened to the
   page order since it was loaded. A destination's page is resolved by walking
   the page tree at the moment it is written, so one authored between an insert

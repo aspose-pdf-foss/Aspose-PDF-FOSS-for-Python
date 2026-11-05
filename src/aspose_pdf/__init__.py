@@ -36,6 +36,7 @@ from .document_fonts import DocumentFont
 from .exceptions import (
     FontEmbeddingException,
     PdfResourceLimitException,
+    PdfValidationException,
     UnsupportedFeatureException,
 )
 from .facades import (
@@ -297,6 +298,7 @@ __all__ = [
     "PdfUaValidateOptions",
     "PdfUaValidationResult",
     "PdfUaValidator",
+    "PdfValidationException",
     "PdfXStandard",
     "PdfXValidateOptions",
     "PdfXValidationResult",

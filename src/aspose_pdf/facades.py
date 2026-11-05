@@ -552,6 +552,10 @@ class PdfFileEditor:
         margin: float = 0.0,
         gutter: float = 0.0,
         order: str = "row",
+        crop_marks: bool = False,
+        crop_mark_length: float = 9.0,
+        crop_mark_offset: float = 3.0,
+        crop_mark_width: float = 0.5,
     ) -> bool:
         """Impose *source* as ``rows x columns`` pages per sheet into *destination*.
 
@@ -573,6 +577,10 @@ class PdfFileEditor:
                 margin=margin,
                 gutter=gutter,
                 order=order,
+                crop_marks=crop_marks,
+                crop_mark_length=crop_mark_length,
+                crop_mark_offset=crop_mark_offset,
+                crop_mark_width=crop_mark_width,
             ),
         )
 
@@ -584,6 +592,10 @@ class PdfFileEditor:
         page_size: Any = None,
         margin: float = 0.0,
         gutter: float = 0.0,
+        crop_marks: bool = False,
+        crop_mark_length: float = 9.0,
+        crop_mark_offset: float = 3.0,
+        crop_mark_width: float = 0.5,
     ) -> bool:
         """Impose *source* as a saddle-stitched booklet into *destination*.
 
@@ -593,7 +605,9 @@ class PdfFileEditor:
             source,
             destination,
             lambda document: document.booklet(
-                page_size=page_size, margin=margin, gutter=gutter
+                page_size=page_size, margin=margin, gutter=gutter,
+                crop_marks=crop_marks, crop_mark_length=crop_mark_length,
+                crop_mark_offset=crop_mark_offset, crop_mark_width=crop_mark_width,
             ),
         )
 

@@ -300,6 +300,8 @@ flowchart TD
 - `PageStamp` puts a page of another PDF onto a page — a letterhead, a background form, a
   designed watermark — importing everything it draws with, and `Document.n_up(2, 2)` /
   `Document.booklet()` impose a document as a grid or as a folded booklet.
+  Set `crop_marks=True` to add vector trim guides, with configurable length,
+  offset and thickness; the layout checks that they fit outside placed pages.
 - `Page.add_stamp` and `Document.add_stamp` put a text, image or page-number stamp over or
   under a page — aligned in the box a reader shows, upright whatever the page's rotation, with
   opacity and rotation, and written once however many pages it goes on.
@@ -470,6 +472,23 @@ empty document.
 ## Additional Examples
 
 More real, runnable examples from the project's own documentation are collected below.
+
+### Add Crop Marks to Imposed Sheets
+
+```python
+with Document("input.pdf") as source:
+    with source.n_up(2, 2, margin=18, gutter=30, crop_marks=True) as sheets:
+        sheets.save("four-up-with-marks.pdf")
+    with source.booklet(margin=18, gutter=30, crop_marks=True) as booklet:
+        booklet.save("booklet-with-marks.pdf")
+```
+
+Marks follow each placed page's visible CropBox and rotation. Defaults are 9 pt
+long, 3 pt away from the page, with a 0.5 pt stroke; override them with
+`crop_mark_length`, `crop_mark_offset` and `crop_mark_width`. Insufficient room
+raises before page content is imported. Increase margins/gutters or reduce mark
+dimensions. Blank padding slots stay unmarked; source documents stay unchanged.
+See [imposition details](supported-features.md#pages).
 
 ### Create an Image-Only PDF Copy
 

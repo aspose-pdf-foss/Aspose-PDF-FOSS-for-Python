@@ -6363,6 +6363,10 @@ class Document:
         margin: float = 0.0,
         gutter: float = 0.0,
         order: str = "row",
+        crop_marks: bool = False,
+        crop_mark_length: float = 9.0,
+        crop_mark_offset: float = 3.0,
+        crop_mark_width: float = 0.5,
     ) -> Document:
         """Return a new document with ``rows * columns`` pages on each sheet.
 
@@ -6376,6 +6380,12 @@ class Document:
             two_up = document.n_up(1, 2, page_size=PageSize.A4.landscape())
 
         *order* is ``"row"`` (left to right, top row first) or ``"column"``.
+        Set ``crop_marks=True`` for eight black trim guides around each placed
+        page's displayed bounds. Length, offset and stroke width are in sheet
+        points; defaults are 9, 3 and 0.5. Marks use available cell whitespace,
+        outer margins and half of each gutter. Insufficient room raises before
+        page content is imported; increase margin/gutter or reduce mark sizes.
+        Empty slots are unmarked. Source page boxes and placement stay the same.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -6390,6 +6400,10 @@ class Document:
             margin=margin,
             gutter=gutter,
             order=order,
+            crop_marks=crop_marks,
+            crop_mark_length=crop_mark_length,
+            crop_mark_offset=crop_mark_offset,
+            crop_mark_width=crop_mark_width,
         )
         result = Document(limits=self._load_limits)
         result._engine_pdf = imposed
@@ -6401,6 +6415,10 @@ class Document:
         page_size: Any = None,
         margin: float = 0.0,
         gutter: float = 0.0,
+        crop_marks: bool = False,
+        crop_mark_length: float = 9.0,
+        crop_mark_offset: float = 3.0,
+        crop_mark_width: float = 0.5,
     ) -> Document:
         """Return a new document imposed as a saddle-stitched booklet.
 
@@ -6410,6 +6428,9 @@ class Document:
         multiple of four with blanks, because a folded sheet carries four pages
         whether they are all used or not. The sheet is twice the width of a page
         unless *page_size* says otherwise.
+        Crop-mark options follow :meth:`n_up`: marks surround actual placed
+        pages, while blank padding slots stay unmarked. They require enough
+        margin and gutter space; no fold marks or bleed are generated.
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
@@ -6421,6 +6442,10 @@ class Document:
             page_size=page_size,
             margin=margin,
             gutter=gutter,
+            crop_marks=crop_marks,
+            crop_mark_length=crop_mark_length,
+            crop_mark_offset=crop_mark_offset,
+            crop_mark_width=crop_mark_width,
         )
         result = Document(limits=self._load_limits)
         result._engine_pdf = imposed
