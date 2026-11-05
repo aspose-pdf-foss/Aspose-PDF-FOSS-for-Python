@@ -299,6 +299,8 @@ flowchart TD
   `field.actions["validate"] = JavaScriptAction(...)` for the keystroke, format, validate and
   calculate scripts that make a form compute. `page.actions`, `document.actions` and
   `document.javascript` are the page, catalog and document-level script equivalents.
+  Set `document.form.calculation_order = ["subtotal", "tax", "total"]` to control
+  the sequence in which a PDF viewer recalculates dependent fields.
 - `Form`, `Field`, and `Document.flatten()` create, fill, and permanently bake AcroForm fields —
   text fields, checkboxes, radio groups, list boxes, combo boxes, and push buttons — into static
   page content. Flatten all objects or select field names and pages; `annotations=False`
@@ -2239,6 +2241,8 @@ and delete workflows. 276 public types are organized by module below.
     JSON Schema Draft 2020-12 for normalized flat form answers and standard validation.
   - `reset(fields=None, strict=True) -> list[str]` — restore all or selected fields to template defaults
   - `validate(fields=None, strict=True) -> list[FormValidationIssue]` — inspect stored answers without changing them
+  - `calculation_order` — read or replace the viewer's calculation sequence using
+    fully qualified field names; assign `[]` or `None` to clear it.
   - `export_fdf(destination) -> bytes` / `export_xfdf(destination) -> bytes` /
     `import_fdf(source) -> list[str]` / `import_xfdf(source) -> list[str]` (form data interchange)
 - `Field` — `remove() -> Field`; properties `name`, `value`, `field_type`, `partial_name`,

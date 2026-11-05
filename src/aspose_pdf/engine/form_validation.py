@@ -12,6 +12,7 @@ from aspose_pdf.exceptions import PdfParseException
 from .cos import (
     PdfArray,
     PdfDictionary,
+    PdfIndirectReference,
     PdfName,
     PdfNull,
     PdfNumber,
@@ -146,6 +147,7 @@ def _kind(attributes: dict) -> str:
 
 def _field_index(
     reader: _Reader, *, strict: bool = False,
+    references: dict[int, PdfIndirectReference] | None = None,
 ) -> dict[str, tuple[PdfDictionary, dict, str]]:
     pdf, budget = reader.pdf, reader.budget
     if pdf._cos_doc is None:
@@ -186,6 +188,8 @@ def _field_index(
             len(seen) + 1, "max_container_items", "form validation field nodes"
         )
         seen.add(key)
+        if references is not None and isinstance(reference, PdfIndirectReference):
+            references[key] = reference
         attributes = dict(inherited)
         attributes.update(reader.inherited(entry))
         title = reader.resolve(entry.mapping.get(PdfName("T")))

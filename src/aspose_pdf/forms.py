@@ -717,6 +717,32 @@ class Form:
     def __iter__(self) -> Iterator[Field]:
         return iter(self._fields.values())
 
+    @property
+    def calculation_order(self) -> list[str]:
+        """The viewer's calculation sequence as fully qualified field names.
+
+        Reading returns a detached list in stored order. Assign an iterable
+        of existing terminal field names to replace it; repeated names retain
+        their positions. ``None`` or an empty iterable removes the sequence.
+        Names, references and resource limits are checked before editing.
+
+        This configures AcroForm ``/CO`` without running JavaScript, changing
+        values or regenerating appearances. Calculation actions are assigned
+        separately through ``field.actions["calculate"]``. Reading and writing
+        do not decode page content, appearances or scripts.
+        """
+        from aspose_pdf.engine.form_calculation_order import get_order
+
+        self._document._ensure_not_disposed()
+        return get_order(self._document)
+
+    @calculation_order.setter
+    def calculation_order(self, values: Iterable[str] | None) -> None:
+        from aspose_pdf.engine.form_calculation_order import set_order
+
+        self._document._ensure_not_disposed()
+        set_order(self._document, values)
+
     def _page_index(self, page: Any) -> int:
         if isinstance(page, bool):
             raise TypeError("page must be a Page or a one-based page number")
@@ -1613,9 +1639,12 @@ class Form:
             field = self[name]
         except KeyError:
             raise KeyError(f"Field '{name}' not found") from None
+        order = self.calculation_order
         if not self._document._engine_pdf.remove_form_field(name):
             raise KeyError(f"Field '{name}' not found")
         self._load_fields()
+        if name in order:
+            self.calculation_order = [entry for entry in order if entry != name]
         return field
 
     def generate_appearances(self, *, keep_existing: bool = False) -> int:

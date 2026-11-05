@@ -5594,6 +5594,50 @@ with Document("application.pdf") as document:
     own key (`"V"`, `"O"`, `"WP"`) is accepted as well as the friendly name.
     Assigning `None`, or deleting the key, removes the trigger and the `/AA`
     dictionary with the last of them.
+- **Choose the calculation order of form fields** with
+  `Form.calculation_order`, backed by the AcroForm `/CO` array. Reading returns
+  a detached list of fully qualified terminal field names. Assign an iterable
+  of existing names to replace the sequence, or `[]` / `None` to remove it.
+  Input order and repeated names are preserved. Names may include Unicode and
+  hierarchy components such as `invoice.total`; namespace parents and unnamed
+  widgets are not selectable fields. Unknown names raise `KeyError`; a bare
+  string, mapping or non-string element raises `TypeError`. Empty or invalid
+  Unicode names raise `PdfValidationException`. The whole input, including a
+  generator, is validated before any metadata changes.
+  - Entries reference the existing field dictionaries, preserving object
+    generations and shared metadata. Direct inline field dictionaries cannot
+    be assigned to `/CO` and raise `PdfValidationException`. Malformed arrays,
+    dangling or cyclic references, and entries outside the form raise
+    `PdfParseException` on read; assigning a valid order or clearing it repairs
+    the array. Field-tree traversal, references, input names and arrays obey
+    `PdfLoadLimits`. Reading or clearing an absent order creates no form.
+  - Removing a field also removes every occurrence of its name from the order.
+    Selective flattening retains a shared field's entry while any widget stays
+    interactive, and prunes it when the last widget is baked. Saved full and
+    encrypted incremental revisions retain the sequence. Merely reading it
+    does not append an incremental revision. Calculation orders from imported
+    documents are not combined automatically; set the final order after merging
+    forms.
+  - This stores a viewer setting; it does not execute JavaScript, calculate
+    answers or regenerate appearances. Attach the actions separately through
+    `field.actions["calculate"]`; an order can be prepared before those actions
+    are attached. Page content, appearance and script streams are not decoded,
+    and streaming documents remain lazy.
+
+  ```python
+  from aspose_pdf import Document, JavaScriptAction
+
+  with Document("invoice-form.pdf") as document:
+      document.form["invoice.total"].actions["calculate"] = JavaScriptAction(
+          'event.value = Number(this.getField("invoice.subtotal").value) + '
+          'Number(this.getField("invoice.tax").value);'
+      )
+      document.form.calculation_order = [
+          "invoice.subtotal", "invoice.tax", "invoice.total"
+      ]
+      document.save("ordered-invoice-form.pdf")
+  ```
+
 - **Document-level JavaScript** (12.6.4.17) through `Document.javascript`, a
   mapping of name to source over the catalog's `/Names /JavaScript` name tree --
   where the functions a field's scripts call are defined. A viewer runs them in
