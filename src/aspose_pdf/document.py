@@ -57,6 +57,7 @@ from aspose_pdf.load_limits import (
     _read_limited,
 )
 from aspose_pdf.outlines import OutlineCollection, OutlineItem
+from aspose_pdf.page_size import PageSize
 from aspose_pdf.pdfa import PdfAValidationResult
 from aspose_pdf.pdfua import PdfUaValidationResult
 from aspose_pdf.pdfx import PdfXValidationResult, normalize_pdfx_standard
@@ -2224,6 +2225,87 @@ class Document:
             antialias=antialias,
             include_annotations=include_annotations,
         )
+
+    def add_pages_from_images(
+        self,
+        image_paths: list[str | Path],
+        layout: str = "grid",
+        *,
+        size: PageSize | Sequence[float] | str | None = None,
+        dpi: float = 72.0,
+    ) -> list[int]:
+        """Add one or more pages from image files, one per image.
+
+        Images are embedded as full-page images. Each file gets its own page,
+        laid out according to the *layout* mode.
+
+        Parameters
+        ----------
+        image_paths : list of str, Path
+            Image file paths to add (JPEG, PNG, BMP, GIF, WebP).
+        layout : str, optional
+            Layout strategy. Currently only ``"grid"`` is supported (default),
+            which places one image per page filling the entire page.
+        size : PageSize, (width, height), or str, optional
+            Page size to use. If ``None`` (default), each page matches its
+            image's natural size at *dpi*.
+        dpi : float, optional
+            Resolution to use when deriving page size from image pixels.
+            Default is 72 DPI.
+
+        Returns
+        -------
+        list of int
+            One-based page numbers of the newly added pages, in order.
+
+        Raises
+        ------
+        PdfValidationException
+            If any image data is invalid or the size is malformed.
+
+        Notes
+        -----
+        JPEG and PNG work without optional dependencies. Static BMP, GIF,
+        and WebP require the ``images`` extra. Animated GIFs are not supported.
+
+        Examples
+        --------
+        ::
+
+            # Add several pages from image files
+            page_numbers = document.add_pages_from_images(
+                ["scan1.png", "scan2.png", "scan3.png"]
+            )
+
+            # Add pages with explicit A4 size
+            page_numbers = document.add_pages_from_images(
+                ["img1.jpg", "img2.jpg"],
+                size="A4"
+            )
+        """
+        if not isinstance(image_paths, list):
+            raise TypeError("image_paths must be a list of paths")
+        if not image_paths:
+            return []
+
+        # Validate layout
+        if layout != "grid":
+            raise PdfValidationException(
+                f"layout must be 'grid', got {layout!r}"
+            )
+
+        page_numbers = []
+
+        for image_path in image_paths:
+            path = Path(image_path)
+            if not path.exists():
+                raise FileNotFoundError(f"Image not found: {image_path}")
+
+            # Create page from image
+            page = Page.from_image(self, str(path), size=size, dpi=dpi)
+            page_numbers.append(page.number)
+
+        return page_numbers
 
     @page_api(scalars=("page_index",))
     def save_page_as_image(

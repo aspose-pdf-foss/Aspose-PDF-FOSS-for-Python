@@ -1621,6 +1621,124 @@ class Page:
         write_file_atomically(target, svg.encode("utf-8"))
         return target
 
+
+    @classmethod
+    def from_image(
+        cls,
+        document: Document,
+        image: str | Path | bytes | bytearray,
+        *,
+        size: PageSize | Sequence[float] | str | None = None,
+        dpi: float = 72.0,
+    ) -> Page:
+        """Create a new page from an image file or bytes.
+
+        The image is embedded as a full-page image at the specified or
+        natural resolution. The page size is derived from the image dimensions
+        unless *size* is given.
+
+        Parameters
+        ----------
+        document : Document
+            The document to which the page will be added.
+        image : str, Path, bytes, or bytearray
+            Image file path or raw bytes (JPEG, PNG, BMP, GIF, WebP).
+        size : PageSize, (width, height), or str, optional
+            Page size to use instead of the image's natural size.
+            A :class:`~aspose_pdf.page_size.PageSize`, its name, or a
+            ``(width, height)`` pair in points.
+        dpi : float, optional
+            Resolution to use when deriving page size from image pixels.
+            Default is 72 DPI (1 point = 1 pixel).
+
+        Returns
+        -------
+        Page
+            The newly created page containing the image.
+
+        Raises
+        ------
+        PdfValidationException
+            If the image data is invalid or the size is malformed.
+
+        Notes
+        -----
+        JPEG and PNG work without optional dependencies. Static BMP, GIF,
+        and WebP require the ``images`` extra. Animated GIFs are not supported.
+
+        Examples
+        --------
+        ::
+
+            # From a file, page matches image size
+            page = Page.from_image(doc, "photo.jpg")
+
+            # From bytes with explicit A4 size
+            with open("scan.png", "rb") as f:
+                page = Page.from_image(doc, f.read(), size="A4")
+
+            # From path with custom size in points
+            page = Page.from_image(doc, "chart.jpg", size=(400, 600))
+        """
+        from aspose_pdf.engine.content_authoring import prepare_image
+        from aspose_pdf.engine.image_import import pillow_image_format
+        from aspose_pdf.engine.simple_pdf import _LoadBudget
+
+        document._ensure_not_disposed()
+        eng = document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+
+        # Load image data
+        if isinstance(image, (str, Path)):
+            path = Path(image)
+            eng._load_budget.check(
+                path.stat().st_size,
+                "max_input_bytes",
+                "image input bytes",
+            )
+            data = path.read_bytes()
+        elif isinstance(image, (bytes, bytearray)):
+            data = bytes(image)
+        else:
+            raise TypeError("image must be bytes, bytearray, str, or Path")
+
+        # Prepare the image
+        try:
+            image_obj = prepare_image(
+                data,
+                limits=eng._load_limits,
+                budget=eng._load_budget,
+            )
+        except Exception as exc:
+            raise PdfValidationException(f"Invalid image data: {exc}") from exc
+
+        # Determine page size
+        if size is None:
+            # Use image dimensions at the specified DPI
+            # Image pixels -> points: points = pixels * (72 / dpi)
+            width_pts = image_obj.width * (72.0 / dpi)
+            height_pts = image_obj.height * (72.0 / dpi)
+            page_size = PageSize(width_pts, height_pts)
+        else:
+            page_size = _coerce_page_size(size)
+
+        # Create a new page with the determined size
+        new_page = document.pages.add(page_size)
+
+        # Place the image to fill the entire page
+        # Add image at (0, 0) filling the whole page
+        new_page.add_image(
+            data,
+            x=0,
+            y=0,
+            width=page_size.width,
+            height=page_size.height,
+            fit="cover",
+        )
+
+        return new_page
+
     def layer(self, layer: Any) -> Any:
         """Author content onto *layer*, as a context manager.
 
