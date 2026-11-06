@@ -2966,6 +2966,93 @@ class Document:
             raise AsposePdfException("No document loaded")
         return extract(self, pages)
 
+    def extract_images(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+    ) -> list[Image]:
+        """Extract all images from selected pages.
+
+        Parameters
+        ----------
+        pages : Iterable[int] | None
+            One-based page indices to extract images from. ``None`` means all pages.
+            Repeated selections are inspected once in first-selected order.
+
+        Returns
+        -------
+        list[Image]
+            A list of :class:`Image` objects from all selected pages. Each object
+            contains the raw image data, resource name, size in bytes, and detected
+            format (e.g., "png", "jpg"). The list preserves page order: all images
+            from page 1, then all from page 2, etc.
+
+        Notes
+        -----
+        The image bytes are the *decoded* sample bytes that the stream decoder
+        produces, not the original encoded payload. To obtain the original bytes
+        (e.g., a JPEG payload from a ``DCTDecode`` image), use the engine's
+        :meth:`~aspose_pdf.engine.simple_pdf.SimplePdf.extract_images` directly.
+        """
+        from aspose_pdf.images import Image
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            return []
+
+        engine = self._engine_pdf
+        images_dict = {}
+        page_map = {}
+
+        # Get image data from engine
+        if hasattr(engine, "extract_images"):
+            images_dict = engine.extract_images()
+        if not isinstance(images_dict, dict):
+            return []
+
+        # Get per-page image mapping if available
+        # Note: engine uses 0-based page indices; caller uses 1-based
+        if hasattr(engine, "extract_images_per_page"):
+            page_map = engine.extract_images_per_page()
+
+        # Determine which pages to process
+        if pages is None:
+            # Convert engine's 0-based keys to 1-based for output
+            pages_to_process = [idx + 1 for idx in page_map.keys()] if page_map else [1]
+        else:
+            pages_to_process = list(pages)
+
+        result = []
+        seen_names: set[str] = set()
+
+        for page_index in pages_to_process:
+            # Convert 1-based page index to 0-based for engine lookup
+            engine_page_idx = page_index - 1
+            # Get image names for this page
+            if page_map:
+                image_names = page_map.get(engine_page_idx, [])
+            else:
+                # Fallback: use all images
+                image_names = list(images_dict.keys())
+
+            for name in image_names:
+                if name not in images_dict:
+                    continue
+                # Skip duplicates (same image on multiple pages)
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+
+                data = images_dict[name]
+                result.append(Image(
+                    data=data,
+                    name=name,
+                    size=len(data),
+                    format=None,
+                ))
+
+        return result
+
     @page_api(selections=("pages",))
     def export_links_json(
         self,

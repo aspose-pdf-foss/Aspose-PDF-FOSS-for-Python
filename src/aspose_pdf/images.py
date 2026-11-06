@@ -22,6 +22,7 @@ its own bytes -- there is nothing else it could do.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -522,3 +523,29 @@ def _resolve_engine(source) -> tuple[object | None, int | None]:
     ):  # SimplePdf
         return source, None
     return None, None
+
+
+@dataclass(frozen=True)
+class Image:
+    """Represents an extracted image from a PDF document.
+
+    Attributes
+    ----------
+    data : bytes
+        The raw image bytes.
+    name : str
+        The image's resource name in the PDF.
+    size : int
+        The size of the image data in bytes.
+    format : str | None
+        The file format detected from the image (e.g., "png", "jpg", "gif", "bmp"),
+        or None if not determinable from the raw bytes.
+    """
+
+    data: bytes
+    name: str
+    size: int
+    format: str | None
+
+    def __repr__(self) -> str:
+        return f"Image(name={self.name!r}, size={self.size} bytes, format={self.format!r})"

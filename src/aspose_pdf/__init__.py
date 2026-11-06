@@ -72,6 +72,7 @@ from .forms import (
     UnsignedContentAbsorber,
 )
 from .image_resolution import ImageResolutionIssue
+from .images import Image
 from .interactive import (
     Action,
     Destination,
@@ -243,6 +244,7 @@ __all__ = [
     "HideAction",
     "HighlightAnnotation",
     "HorizontalAlignment",
+    "Image",
     "ImageResolutionIssue",
     "ImageStamp",
     "InkAnnotation",

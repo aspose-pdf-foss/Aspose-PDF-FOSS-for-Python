@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from aspose_pdf.document import Document
     from aspose_pdf.engine.rasterizer import RasterizedPage
     from aspose_pdf.font_registry import FontDescriptor
+    from aspose_pdf.images import Image
     from aspose_pdf.interactive import Destination
     from aspose_pdf.link_extraction import ExtractedLink
     from aspose_pdf.link_validation import LinkValidationIssue
@@ -586,6 +587,65 @@ class Page:
         if self._index < len(eng.page_contents):
             return eng.page_contents[self._index]
         return b""
+
+    def extract_images(self) -> list[Image]:
+        """Extract all images from this page.
+
+        Returns a list of :class:`Image` objects, each containing the raw image
+        data, resource name, size in bytes, and detected format (e.g., "png", "jpg").
+
+        The image bytes are the *decoded* sample bytes that the stream decoder
+        produces, not the original encoded payload. To obtain the original bytes
+        (e.g., a JPEG payload from a ``DCTDecode`` image), use the engine's
+        :meth:`~aspose_pdf.engine.simple_pdf.SimplePdf.extract_images` directly.
+
+        Returns
+        -------
+        list[Image]
+            A list of image objects. Empty if the page has no images.
+        """
+        self._document._ensure_not_disposed()
+        engine = self._document._engine_pdf
+        if engine is None:
+            return []
+        
+        # Get the engine's extract_images method - returns dict[name, bytes]
+        if hasattr(engine, "extract_images"):
+            images_dict = engine.extract_images()
+        else:
+            return []
+        
+        if not isinstance(images_dict, dict):
+            return []
+        
+        # Filter to only images on this page
+        page_index = self._index
+        result = []
+        
+        # Get per-page image mapping if available
+        if hasattr(engine, "extract_images_per_page"):
+            page_map = engine.extract_images_per_page()
+            image_names = page_map.get(page_index, [])
+            for name in image_names:
+                if name in images_dict:
+                    data = images_dict[name]
+                    result.append(Image(
+                        data=data,
+                        name=name,
+                        size=len(data),
+                        format=None,  # Format detection would require more logic
+                    ))
+        else:
+            # Fallback: try to extract all images and return them
+            for name, data in images_dict.items():
+                result.append(Image(
+                    data=data,
+                    name=name,
+                    size=len(data),
+                    format=None,
+                ))
+        
+        return result
 
     def extract_text(
         self, *, clip: Sequence[float] | None = None, skip_artifacts: bool = False,

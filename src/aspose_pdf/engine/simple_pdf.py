@@ -20263,1356 +20263,1356 @@ class CosExtractor:
             return b""
         return self._read_content_stream(contents_ref)
 
-    def extract_fonts(self) -> dict[str, Any]:
-        if hasattr(self, "_cached_fonts"):
-            return self._cached_fonts
-        return {}
-
-    def extract_extgstates(self) -> dict[str, Any]:
-        if hasattr(self, "_cached_extgs"):
-            return self._cached_extgs
-        return {}
-
-    def extract_images(self) -> dict[str, bytes]:
-        if hasattr(self, "_cached_images"):
-            return self._cached_images
-        return {}
-
-    def extract_images_per_page(self) -> dict[int, list[str]]:
-        if hasattr(self, "_cached_pmap"):
-            return self._cached_pmap
-        return {}
-
-    def extract_image_sizes(self) -> dict[str, tuple[int, int]]:
-        return dict(self._image_sizes)
-
-    def extract_image_meta(self) -> dict[str, dict[str, Any]]:
-        """Return per-image reconstruction metadata gathered during traversal."""
-        return dict(self._image_meta)
-
-    def _image_key(self, name: str, ref: Any, page_index: int) -> str:
-        """Return the document-wide key image *name* on *page_index* is stored under.
-
-        The same XObject reused on several pages keeps one key (and one copy of
-        its bytes). A *different* object that wants a name already taken gets a
-        numbered suffix, so neither image is silently lost -- which is what
-        happened when both were stored under the bare resource name.
-        """
-        obj_number = (
-            ref.object_number if isinstance(ref, PdfIndirectReference) else None
-        )
-        key = self._image_key_by_object.get(obj_number) if obj_number else None
-        if key is None:
-            key = name
-            if key in self._image_sizes or key in self._image_meta:
-                index = 2
-                while f"{name}#{index}" in self._image_meta:
-                    index += 1
-                key = f"{name}#{index}"
-            if obj_number is not None:
-                self._image_key_by_object[obj_number] = key
-        self._image_key_by_page[(page_index, name)] = key
-        return key
-
-    def _resolve_image_meta(self, img_obj: Any) -> dict[str, Any]:
-        """Resolve reconstruction metadata for an image XObject stream.
-
-        Captures geometry, bits-per-component, the terminal stream filter, the
-        ``/Decode`` array, soft-mask presence, and a resolved colour space
-        (including an ``/Indexed`` palette) so the image can later be rebuilt as
-        a real file by :mod:`aspose_pdf.engine.image_export`.
-        """
-        from .cos import PdfArray, PdfBoolean, PdfName, PdfStream
-
-        m = img_obj.mapping
-        meta: dict[str, Any] = {}
-        w = self._get_number(m.get(PdfName("Width")))
-        h = self._get_number(m.get(PdfName("Height")))
-        meta["width"] = int(w) if w is not None else 0
-        meta["height"] = int(h) if h is not None else 0
-        bpc = self._get_number(m.get(PdfName("BitsPerComponent")))
-        meta["bpc"] = int(bpc) if bpc is not None else 8
-
-        im = self._resolve(m.get(PdfName("ImageMask")))
-        is_mask = isinstance(im, PdfBoolean) and im.value
-        if is_mask:
-            meta["bpc"] = 1
-            meta["cs_kind"] = "gray"
-            meta["n_comps"] = 1
-
-        filt = self._resolve(m.get(PdfName("Filter")))
-        names: list[str] = []
-        if isinstance(filt, PdfName):
-            names = [filt.name.lstrip("/")]
-        elif isinstance(filt, PdfArray):
-            names = [self._get_name(f) or "" for f in filt.items]
-        meta["filter"] = names[-1] if names else None
-
-        decode = self._resolve(m.get(PdfName("Decode")))
-        if isinstance(decode, PdfArray):
-            vals: list[float] = []
-            for it in decode.items:
-                n = self._get_number(it)
-                vals.append(float(n) if n is not None else 0.0)
-            meta["decode"] = vals
-
-        meta["smask"] = isinstance(self._resolve(m.get(PdfName("SMask"))), PdfStream)
-
-        if not is_mask:
-            cs = self._resolve(m.get(PdfName("ColorSpace")))
-            kind, ncomps, palette, base_comps = self._resolve_colorspace(cs)
-            meta["cs_kind"] = kind
-            if ncomps is not None:
-                meta["n_comps"] = ncomps
-            if palette is not None:
-                meta["palette"] = palette
-                meta["palette_base_comps"] = base_comps
-        return meta
-
-    def _resolve_colorspace(self, cs: Any, _depth: int = 0):
-        """Resolve a ``/ColorSpace`` to ``(kind, n_comps, palette, base_comps)``.
-
-        ``kind`` is one of ``"gray"``/``"rgb"``/``"cmyk"``/``"indexed"``/
-        ``"unknown"``. For indexed spaces ``palette`` holds the lookup bytes and
-        ``base_comps`` the components per palette entry.
-        """
-        from .cos import PdfArray, PdfName, PdfStream, PdfString
-
-        if _depth > 4:
-            return ("unknown", None, None, None)
-        if isinstance(cs, PdfName):
-            name = cs.name.lstrip("/")
-            if name in ("DeviceGray", "G", "CalGray"):
-                return ("gray", 1, None, None)
-            if name in ("DeviceRGB", "RGB", "CalRGB"):
-                return ("rgb", 3, None, None)
-            if name in ("DeviceCMYK", "CMYK"):
-                return ("cmyk", 4, None, None)
-            return ("unknown", None, None, None)
-        if isinstance(cs, PdfArray) and cs.items:
-            head = self._get_name(cs.items[0])
-            if head == "ICCBased" and len(cs.items) >= 2:
-                stream = self._resolve(cs.items[1])
-                n = (
-                    self._get_number(stream.mapping.get(PdfName("N")))
-                    if isinstance(stream, PdfStream)
-                    else None
-                )
-                n = int(n) if n is not None else None
-                kind = {1: "gray", 3: "rgb", 4: "cmyk"}.get(n or 0, "unknown")
-                return (kind, n, None, None)
-            if head in ("Indexed", "I") and len(cs.items) >= 4:
-                base = self._resolve(cs.items[1])
-                _, base_comps, _, _ = self._resolve_colorspace(base, _depth + 1)
-                lookup = self._resolve(cs.items[3])
-                palette = None
-                if isinstance(lookup, PdfString):
-                    palette = bytes(lookup.value)
-                elif isinstance(lookup, PdfStream):
-                    try:
-                        palette = self._decode_stream(lookup, cs.items[3])
-                    except PdfResourceLimitException:
-                        raise
-                    except PDF_STREAM_DECODE_ERRORS:
-                        palette = lookup.content
-                return ("indexed", 1, palette, base_comps or 3)
-            if head in ("CalRGB", "Lab"):
-                return ("rgb", 3, None, None)
-            if head == "CalGray":
-                return ("gray", 1, None, None)
-            if head == "DeviceN" and len(cs.items) >= 2:
-                colorants = self._resolve(cs.items[1])
-                nc = (
-                    len(colorants.items) if isinstance(colorants, PdfArray) else None
-                )
-                return ("unknown", nc, None, None)
-            if head == "Separation":
-                return ("gray", 1, None, None)
-        return ("unknown", None, None, None)
-
-    def extract_image_placements(
-        self,
-    ) -> tuple[
-        dict[tuple[int, str], tuple[float, ...]],
-        dict[tuple[int, str], tuple[float, float, float, float]],
-    ]:
-        """Extract image placement matrix and rect from page content streams.
-
-        Returns (matrix_map, rect_map) where keys are (page_idx, image_name).
-        matrix is (a,b,c,d,e,f), rect is (x,y,width,height) in PDF points.
-        """
-        matrix_map: dict[tuple[int, str], tuple[float, ...]] = {}
-        rect_map: dict[tuple[int, str], tuple[float, float, float, float]] = {}
-        contents = getattr(self, "_cached_contents", [])
-        page_image_map = getattr(self, "_cached_pmap", {})
-
-        for page_idx, content in enumerate(contents):
-            image_keys = set(page_image_map.get(page_idx, ()))
-            if not image_keys:
-                continue
-            placements = parse_image_placements_from_content(
-                content,
-                limits=self._limits,
-                budget=self._budget,
-            )
-            for name, matrix_dec in placements:
-                # The content stream names a page-local resource; the image is
-                # stored under a document-wide key.
-                image_key = self._image_key_by_page.get((page_idx, name), name)
-                if image_key not in image_keys:
-                    continue
-                key = (page_idx, image_key)
-                if key not in matrix_map:
-                    matrix_map[key] = affine_decimal_to_float(matrix_dec)
-                    rect_map[key] = image_placement_bbox(matrix_dec)
-        return matrix_map, rect_map
-
-    def extract_metadata(self) -> dict[str, str]:
-        from .cos import PdfDictionary, PdfName
-
-        info_ref = self._doc.trailer.mapping.get(PdfName("Info"))
-        info = self._resolve(info_ref) if info_ref else None
-        if not isinstance(info, PdfDictionary):
+        def extract_fonts(self) -> dict[str, Any]:
+            if hasattr(self, "_cached_fonts"):
+                return self._cached_fonts
             return {}
-        metadata: dict[str, str] = {}
-        for k, v in info.mapping.items():
-            text = _info_cos_text(self._resolve(v))
-            if text is not None:
-                metadata[k.name.lstrip("/")] = text
-        return metadata
 
-    def encryption_algorithm_name(self) -> str:
-        """Return the crypt algorithm the document's security handler uses.
+        def extract_extgstates(self) -> dict[str, Any]:
+            if hasattr(self, "_cached_extgs"):
+                return self._cached_extgs
+            return {}
 
-        One of ``RC4``, ``AES-128``, ``AES-256`` or ``Identity``. ``/V`` 1 and 2
-        are RC4 (40-bit and 128-bit). ``/V`` 4 and 5 name a crypt filter in
-        ``/CF`` through ``/StmF``, and its ``/CFM`` decides: ``V2`` is RC4,
-        ``AESV2`` is AES-128, ``AESV3`` is AES-256 and ``None`` means the
-        streams are not encrypted at all. A ``/V`` 4+ dictionary with no usable
-        crypt filter falls back to the revision's usual cipher.
+        def extract_images(self) -> dict[str, bytes]:
+            if hasattr(self, "_cached_images"):
+                return self._cached_images
+            return {}
 
-        The standard and public-key handlers share this machinery -- they
-        differ only in how the file key is derived -- so both are read here. A
-        third-party handler is not, and reports the modern default.
-        """
-        from .cos import PdfDictionary, PdfName, PdfNumber
+        def extract_images_per_page(self) -> dict[int, list[str]]:
+            if hasattr(self, "_cached_pmap"):
+                return self._cached_pmap
+            return {}
 
-        enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
-        enc = self._resolve(enc_ref)
-        if not isinstance(enc, PdfDictionary):
-            return "AES-256"
-        filt = self._get_name(enc.mapping.get(PdfName("Filter")))
-        if filt is not None and filt not in ("Standard", PUBSEC_FILTER):
-            return "AES-256"
-        v = self._get_number(enc.mapping.get(PdfName("V")))
-        r_obj = self._resolve(enc.mapping.get(PdfName("R")))
-        r: int | None = None
-        if isinstance(r_obj, PdfNumber):
-            r = int(r_obj.value)
-        v_int = int(v) if v is not None else (5 if (r or 0) >= 5 else 0)
-        if v_int < 4:
-            # /V 0-3 predate crypt filters: the standard handler is RC4 there,
-            # with the key length taken from /Length.
-            return "RC4"
-        cfm = self._stream_crypt_filter_method(enc)
-        if cfm is None or (cfm == "None" and filt == PUBSEC_FILTER):
-            crypt_filter = self._public_key_crypt_filter(enc)
-            if crypt_filter is not None:
-                cfm = self._get_name(crypt_filter.mapping.get(PdfName("CFM"))) or cfm
-        if cfm == "V2":
-            return "RC4"
-        if cfm == "AESV2":
-            return "AES-128"
-        if cfm == "AESV3":
-            return "AES-256"
-        if cfm == "None":
-            return "Identity"
-        return "AES-256" if v_int >= 5 or (r or 0) >= 5 else "AES-128"
+        def extract_image_sizes(self) -> dict[str, tuple[int, int]]:
+            return dict(self._image_sizes)
 
-    def _stream_crypt_filter_method(self, enc: Any) -> str | None:
-        """Return the ``/CFM`` of the crypt filter ``/StmF`` selects, or None."""
-        from .cos import PdfDictionary, PdfName
+        def extract_image_meta(self) -> dict[str, dict[str, Any]]:
+            """Return per-image reconstruction metadata gathered during traversal."""
+            return dict(self._image_meta)
 
-        if not isinstance(enc, PdfDictionary):
-            return None
-        stmf = self._get_name(enc.mapping.get(PdfName("StmF")))
-        if stmf is None:
-            # ISO 32000-1 7.6.5: /StmF defaults to Identity, i.e. streams are
-            # left in the clear even though the document is encrypted.
-            return "None"
-        if stmf == "Identity":
-            return "None"
-        cf = self._resolve(enc.mapping.get(PdfName("CF")))
-        if not isinstance(cf, PdfDictionary):
-            return None
-        crypt_filter = self._resolve(cf.mapping.get(PdfName(stmf)))
-        if not isinstance(crypt_filter, PdfDictionary):
-            return None
-        return self._get_name(crypt_filter.mapping.get(PdfName("CFM")))
+        def _image_key(self, name: str, ref: Any, page_index: int) -> str:
+            """Return the document-wide key image *name* on *page_index* is stored under.
 
-    def _crypt_filter_key_length(self, enc: Any) -> int | None:
-        """Return the key length in bytes declared by the ``/StmF`` filter."""
-        from .cos import PdfDictionary, PdfName, PdfNumber
-
-        if not isinstance(enc, PdfDictionary):
-            return None
-        stmf = self._get_name(enc.mapping.get(PdfName("StmF")))
-        if stmf is None or stmf == "Identity":
-            return None
-        cf = self._resolve(enc.mapping.get(PdfName("CF")))
-        if not isinstance(cf, PdfDictionary):
-            return None
-        crypt_filter = self._resolve(cf.mapping.get(PdfName(stmf)))
-        if not isinstance(crypt_filter, PdfDictionary):
-            return None
-        length = self._resolve(crypt_filter.mapping.get(PdfName("Length")))
-        if not isinstance(length, PdfNumber):
-            return None
-        value = int(length.value)
-        # /CF /Length is in bytes, but producers exist that write bits.
-        if value > 40:
-            value //= 8
-        return max(5, min(32, value)) if value > 0 else None
-
-    def _public_key_crypt_filter(self, enc: Any) -> Any:
-        """The crypt filter holding ``/Recipients``, or ``None`` for /V < 4.
-
-        ``/V`` 4 and 5 move the recipient list into the crypt filter that
-        ``/StmF`` names. Producers do not agree on the name (``DefaultCryptFilter``
-        and ``DEF`` both occur), so a ``/StmF`` that names nothing usable falls
-        back to whichever ``/CF`` entry actually carries ``/Recipients``.
-        """
-        from .cos import PdfDictionary, PdfName
-
-        cf = self._resolve(enc.mapping.get(PdfName("CF")))
-        if not isinstance(cf, PdfDictionary):
-            return None
-        stmf = self._get_name(enc.mapping.get(PdfName("StmF")))
-        if stmf and stmf != "Identity":
-            candidate = self._resolve(cf.mapping.get(PdfName(stmf)))
-            if isinstance(candidate, PdfDictionary) and (
-                candidate.mapping.get(PdfName("Recipients")) is not None
-            ):
-                return candidate
-        for value in cf.mapping.values():
-            candidate = self._resolve(value)
-            if isinstance(candidate, PdfDictionary) and (
-                candidate.mapping.get(PdfName("Recipients")) is not None
-            ):
-                return candidate
-        return None
-
-    def _recipient_blobs(self, container: Any) -> list[bytes]:
-        """The raw ``/Recipients`` entries, in the array's own order."""
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfString
-
-        if not isinstance(container, PdfDictionary):
-            return []
-        recipients = self._resolve(container.mapping.get(PdfName("Recipients")))
-        if isinstance(recipients, PdfString):
-            # A single recipient may be written as a bare string.
-            recipients = PdfArray([recipients])
-        if not isinstance(recipients, PdfArray):
-            return []
-        blobs: list[bytes] = []
-        for item in recipients.items:
-            value = self._resolve(item)
-            if isinstance(value, PdfString):
-                raw = value.value
-                blobs.append(
-                    raw if isinstance(raw, bytes) else raw.encode("latin-1")
-                )
-        return blobs
-
-    def _public_key_decryption_key(
-        self, enc: Any, password: str
-    ) -> bytes | None:
-        """Derive the file key from the recipient envelope we can open.
-
-        Certificate credentials open key-transport and key-agreement entries;
-        raw key bytes open KEK entries, and otherwise *password* opens a CMS
-        password-recipient entry. A present but wrong credential raises rather
-        than producing a garbage file key.
-        """
-        from .cos import PdfBoolean, PdfName, PdfNumber
-        from .pubsec import (
-            compute_file_key,
-            open_envelopes,
-            open_kek_envelopes,
-            open_password_envelopes,
-        )
-
-        crypt_filter = self._public_key_crypt_filter(enc)
-        container = crypt_filter if crypt_filter is not None else enc
-        blobs = self._recipient_blobs(container)
-        if not blobs:
-            raise PdfSecurityException(
-                "The public-key /Encrypt dictionary carries no /Recipients"
+            The same XObject reused on several pages keeps one key (and one copy of
+            its bytes). A *different* object that wants a name already taken gets a
+            numbered suffix, so neither image is silently lost -- which is what
+            happened when both were stored under the bare resource name.
+            """
+            obj_number = (
+                ref.object_number if isinstance(ref, PdfIndirectReference) else None
             )
-        cfm = None
-        if crypt_filter is not None:
-            cfm = self._get_name(crypt_filter.mapping.get(PdfName("CFM")))
-        if cfm == "AESV3":
-            key_length, sha256 = 32, True
-        elif cfm == "AESV2":
-            key_length, sha256 = 16, False
-        else:
-            key_length, sha256 = 5, False
+            key = self._image_key_by_object.get(obj_number) if obj_number else None
+            if key is None:
+                key = name
+                if key in self._image_sizes or key in self._image_meta:
+                    index = 2
+                    while f"{name}#{index}" in self._image_meta:
+                        index += 1
+                    key = f"{name}#{index}"
+                if obj_number is not None:
+                    self._image_key_by_object[obj_number] = key
+            self._image_key_by_page[(page_index, name)] = key
+            return key
+
+        def _resolve_image_meta(self, img_obj: Any) -> dict[str, Any]:
+            """Resolve reconstruction metadata for an image XObject stream.
+
+            Captures geometry, bits-per-component, the terminal stream filter, the
+            ``/Decode`` array, soft-mask presence, and a resolved colour space
+            (including an ``/Indexed`` palette) so the image can later be rebuilt as
+            a real file by :mod:`aspose_pdf.engine.image_export`.
+            """
+            from .cos import PdfArray, PdfBoolean, PdfName, PdfStream
+
+            m = img_obj.mapping
+            meta: dict[str, Any] = {}
+            w = self._get_number(m.get(PdfName("Width")))
+            h = self._get_number(m.get(PdfName("Height")))
+            meta["width"] = int(w) if w is not None else 0
+            meta["height"] = int(h) if h is not None else 0
+            bpc = self._get_number(m.get(PdfName("BitsPerComponent")))
+            meta["bpc"] = int(bpc) if bpc is not None else 8
+
+            im = self._resolve(m.get(PdfName("ImageMask")))
+            is_mask = isinstance(im, PdfBoolean) and im.value
+            if is_mask:
+                meta["bpc"] = 1
+                meta["cs_kind"] = "gray"
+                meta["n_comps"] = 1
+
+            filt = self._resolve(m.get(PdfName("Filter")))
+            names: list[str] = []
+            if isinstance(filt, PdfName):
+                names = [filt.name.lstrip("/")]
+            elif isinstance(filt, PdfArray):
+                names = [self._get_name(f) or "" for f in filt.items]
+            meta["filter"] = names[-1] if names else None
+
+            decode = self._resolve(m.get(PdfName("Decode")))
+            if isinstance(decode, PdfArray):
+                vals: list[float] = []
+                for it in decode.items:
+                    n = self._get_number(it)
+                    vals.append(float(n) if n is not None else 0.0)
+                meta["decode"] = vals
+
+            meta["smask"] = isinstance(self._resolve(m.get(PdfName("SMask"))), PdfStream)
+
+            if not is_mask:
+                cs = self._resolve(m.get(PdfName("ColorSpace")))
+                kind, ncomps, palette, base_comps = self._resolve_colorspace(cs)
+                meta["cs_kind"] = kind
+                if ncomps is not None:
+                    meta["n_comps"] = ncomps
+                if palette is not None:
+                    meta["palette"] = palette
+                    meta["palette_base_comps"] = base_comps
+            return meta
+
+        def _resolve_colorspace(self, cs: Any, _depth: int = 0):
+            """Resolve a ``/ColorSpace`` to ``(kind, n_comps, palette, base_comps)``.
+
+            ``kind`` is one of ``"gray"``/``"rgb"``/``"cmyk"``/``"indexed"``/
+            ``"unknown"``. For indexed spaces ``palette`` holds the lookup bytes and
+            ``base_comps`` the components per palette entry.
+            """
+            from .cos import PdfArray, PdfName, PdfStream, PdfString
+
+            if _depth > 4:
+                return ("unknown", None, None, None)
+            if isinstance(cs, PdfName):
+                name = cs.name.lstrip("/")
+                if name in ("DeviceGray", "G", "CalGray"):
+                    return ("gray", 1, None, None)
+                if name in ("DeviceRGB", "RGB", "CalRGB"):
+                    return ("rgb", 3, None, None)
+                if name in ("DeviceCMYK", "CMYK"):
+                    return ("cmyk", 4, None, None)
+                return ("unknown", None, None, None)
+            if isinstance(cs, PdfArray) and cs.items:
+                head = self._get_name(cs.items[0])
+                if head == "ICCBased" and len(cs.items) >= 2:
+                    stream = self._resolve(cs.items[1])
+                    n = (
+                        self._get_number(stream.mapping.get(PdfName("N")))
+                        if isinstance(stream, PdfStream)
+                        else None
+                    )
+                    n = int(n) if n is not None else None
+                    kind = {1: "gray", 3: "rgb", 4: "cmyk"}.get(n or 0, "unknown")
+                    return (kind, n, None, None)
+                if head in ("Indexed", "I") and len(cs.items) >= 4:
+                    base = self._resolve(cs.items[1])
+                    _, base_comps, _, _ = self._resolve_colorspace(base, _depth + 1)
+                    lookup = self._resolve(cs.items[3])
+                    palette = None
+                    if isinstance(lookup, PdfString):
+                        palette = bytes(lookup.value)
+                    elif isinstance(lookup, PdfStream):
+                        try:
+                            palette = self._decode_stream(lookup, cs.items[3])
+                        except PdfResourceLimitException:
+                            raise
+                        except PDF_STREAM_DECODE_ERRORS:
+                            palette = lookup.content
+                    return ("indexed", 1, palette, base_comps or 3)
+                if head in ("CalRGB", "Lab"):
+                    return ("rgb", 3, None, None)
+                if head == "CalGray":
+                    return ("gray", 1, None, None)
+                if head == "DeviceN" and len(cs.items) >= 2:
+                    colorants = self._resolve(cs.items[1])
+                    nc = (
+                        len(colorants.items) if isinstance(colorants, PdfArray) else None
+                    )
+                    return ("unknown", nc, None, None)
+                if head == "Separation":
+                    return ("gray", 1, None, None)
+            return ("unknown", None, None, None)
+
+        def extract_image_placements(
+            self,
+        ) -> tuple[
+            dict[tuple[int, str], tuple[float, ...]],
+            dict[tuple[int, str], tuple[float, float, float, float]],
+        ]:
+            """Extract image placement matrix and rect from page content streams.
+
+            Returns (matrix_map, rect_map) where keys are (page_idx, image_name).
+            matrix is (a,b,c,d,e,f), rect is (x,y,width,height) in PDF points.
+            """
+            matrix_map: dict[tuple[int, str], tuple[float, ...]] = {}
+            rect_map: dict[tuple[int, str], tuple[float, float, float, float]] = {}
+            contents = getattr(self, "_cached_contents", [])
+            page_image_map = getattr(self, "_cached_pmap", {})
+
+            for page_idx, content in enumerate(contents):
+                image_keys = set(page_image_map.get(page_idx, ()))
+                if not image_keys:
+                    continue
+                placements = parse_image_placements_from_content(
+                    content,
+                    limits=self._limits,
+                    budget=self._budget,
+                )
+                for name, matrix_dec in placements:
+                    # The content stream names a page-local resource; the image is
+                    # stored under a document-wide key.
+                    image_key = self._image_key_by_page.get((page_idx, name), name)
+                    if image_key not in image_keys:
+                        continue
+                    key = (page_idx, image_key)
+                    if key not in matrix_map:
+                        matrix_map[key] = affine_decimal_to_float(matrix_dec)
+                        rect_map[key] = image_placement_bbox(matrix_dec)
+            return matrix_map, rect_map
+
+        def extract_metadata(self) -> dict[str, str]:
+            from .cos import PdfDictionary, PdfName
+
+            info_ref = self._doc.trailer.mapping.get(PdfName("Info"))
+            info = self._resolve(info_ref) if info_ref else None
+            if not isinstance(info, PdfDictionary):
+                return {}
+            metadata: dict[str, str] = {}
+            for k, v in info.mapping.items():
+                text = _info_cos_text(self._resolve(v))
+                if text is not None:
+                    metadata[k.name.lstrip("/")] = text
+            return metadata
+
+        def encryption_algorithm_name(self) -> str:
+            """Return the crypt algorithm the document's security handler uses.
+
+            One of ``RC4``, ``AES-128``, ``AES-256`` or ``Identity``. ``/V`` 1 and 2
+            are RC4 (40-bit and 128-bit). ``/V`` 4 and 5 name a crypt filter in
+            ``/CF`` through ``/StmF``, and its ``/CFM`` decides: ``V2`` is RC4,
+            ``AESV2`` is AES-128, ``AESV3`` is AES-256 and ``None`` means the
+            streams are not encrypted at all. A ``/V`` 4+ dictionary with no usable
+            crypt filter falls back to the revision's usual cipher.
+
+            The standard and public-key handlers share this machinery -- they
+            differ only in how the file key is derived -- so both are read here. A
+            third-party handler is not, and reports the modern default.
+            """
+            from .cos import PdfDictionary, PdfName, PdfNumber
+
+            enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
+            enc = self._resolve(enc_ref)
+            if not isinstance(enc, PdfDictionary):
+                return "AES-256"
+            filt = self._get_name(enc.mapping.get(PdfName("Filter")))
+            if filt is not None and filt not in ("Standard", PUBSEC_FILTER):
+                return "AES-256"
+            v = self._get_number(enc.mapping.get(PdfName("V")))
+            r_obj = self._resolve(enc.mapping.get(PdfName("R")))
+            r: int | None = None
+            if isinstance(r_obj, PdfNumber):
+                r = int(r_obj.value)
+            v_int = int(v) if v is not None else (5 if (r or 0) >= 5 else 0)
+            if v_int < 4:
+                # /V 0-3 predate crypt filters: the standard handler is RC4 there,
+                # with the key length taken from /Length.
+                return "RC4"
+            cfm = self._stream_crypt_filter_method(enc)
+            if cfm is None or (cfm == "None" and filt == PUBSEC_FILTER):
+                crypt_filter = self._public_key_crypt_filter(enc)
+                if crypt_filter is not None:
+                    cfm = self._get_name(crypt_filter.mapping.get(PdfName("CFM"))) or cfm
+            if cfm == "V2":
+                return "RC4"
+            if cfm == "AESV2":
+                return "AES-128"
+            if cfm == "AESV3":
+                return "AES-256"
+            if cfm == "None":
+                return "Identity"
+            return "AES-256" if v_int >= 5 or (r or 0) >= 5 else "AES-128"
+
+        def _stream_crypt_filter_method(self, enc: Any) -> str | None:
+            """Return the ``/CFM`` of the crypt filter ``/StmF`` selects, or None."""
+            from .cos import PdfDictionary, PdfName
+
+            if not isinstance(enc, PdfDictionary):
+                return None
+            stmf = self._get_name(enc.mapping.get(PdfName("StmF")))
+            if stmf is None:
+                # ISO 32000-1 7.6.5: /StmF defaults to Identity, i.e. streams are
+                # left in the clear even though the document is encrypted.
+                return "None"
+            if stmf == "Identity":
+                return "None"
+            cf = self._resolve(enc.mapping.get(PdfName("CF")))
+            if not isinstance(cf, PdfDictionary):
+                return None
+            crypt_filter = self._resolve(cf.mapping.get(PdfName(stmf)))
+            if not isinstance(crypt_filter, PdfDictionary):
+                return None
+            return self._get_name(crypt_filter.mapping.get(PdfName("CFM")))
+
+        def _crypt_filter_key_length(self, enc: Any) -> int | None:
+            """Return the key length in bytes declared by the ``/StmF`` filter."""
+            from .cos import PdfDictionary, PdfName, PdfNumber
+
+            if not isinstance(enc, PdfDictionary):
+                return None
+            stmf = self._get_name(enc.mapping.get(PdfName("StmF")))
+            if stmf is None or stmf == "Identity":
+                return None
+            cf = self._resolve(enc.mapping.get(PdfName("CF")))
+            if not isinstance(cf, PdfDictionary):
+                return None
+            crypt_filter = self._resolve(cf.mapping.get(PdfName(stmf)))
+            if not isinstance(crypt_filter, PdfDictionary):
+                return None
+            length = self._resolve(crypt_filter.mapping.get(PdfName("Length")))
+            if not isinstance(length, PdfNumber):
+                return None
+            value = int(length.value)
+            # /CF /Length is in bytes, but producers exist that write bits.
+            if value > 40:
+                value //= 8
+            return max(5, min(32, value)) if value > 0 else None
+
+        def _public_key_crypt_filter(self, enc: Any) -> Any:
+            """The crypt filter holding ``/Recipients``, or ``None`` for /V < 4.
+
+            ``/V`` 4 and 5 move the recipient list into the crypt filter that
+            ``/StmF`` names. Producers do not agree on the name (``DefaultCryptFilter``
+            and ``DEF`` both occur), so a ``/StmF`` that names nothing usable falls
+            back to whichever ``/CF`` entry actually carries ``/Recipients``.
+            """
+            from .cos import PdfDictionary, PdfName
+
+            cf = self._resolve(enc.mapping.get(PdfName("CF")))
+            if not isinstance(cf, PdfDictionary):
+                return None
+            stmf = self._get_name(enc.mapping.get(PdfName("StmF")))
+            if stmf and stmf != "Identity":
+                candidate = self._resolve(cf.mapping.get(PdfName(stmf)))
+                if isinstance(candidate, PdfDictionary) and (
+                    candidate.mapping.get(PdfName("Recipients")) is not None
+                ):
+                    return candidate
+            for value in cf.mapping.values():
+                candidate = self._resolve(value)
+                if isinstance(candidate, PdfDictionary) and (
+                    candidate.mapping.get(PdfName("Recipients")) is not None
+                ):
+                    return candidate
+            return None
+
+        def _recipient_blobs(self, container: Any) -> list[bytes]:
+            """The raw ``/Recipients`` entries, in the array's own order."""
+            from .cos import PdfArray, PdfDictionary, PdfName, PdfString
+
+            if not isinstance(container, PdfDictionary):
+                return []
+            recipients = self._resolve(container.mapping.get(PdfName("Recipients")))
+            if isinstance(recipients, PdfString):
+                # A single recipient may be written as a bare string.
+                recipients = PdfArray([recipients])
+            if not isinstance(recipients, PdfArray):
+                return []
+            blobs: list[bytes] = []
+            for item in recipients.items:
+                value = self._resolve(item)
+                if isinstance(value, PdfString):
+                    raw = value.value
+                    blobs.append(
+                        raw if isinstance(raw, bytes) else raw.encode("latin-1")
+                    )
+            return blobs
+
+        def _public_key_decryption_key(
+            self, enc: Any, password: str
+        ) -> bytes | None:
+            """Derive the file key from the recipient envelope we can open.
+
+            Certificate credentials open key-transport and key-agreement entries;
+            raw key bytes open KEK entries, and otherwise *password* opens a CMS
+            password-recipient entry. A present but wrong credential raises rather
+            than producing a garbage file key.
+            """
+            from .cos import PdfBoolean, PdfName, PdfNumber
+            from .pubsec import (
+                compute_file_key,
+                open_envelopes,
+                open_kek_envelopes,
+                open_password_envelopes,
+            )
+
+            crypt_filter = self._public_key_crypt_filter(enc)
+            container = crypt_filter if crypt_filter is not None else enc
+            blobs = self._recipient_blobs(container)
+            if not blobs:
+                raise PdfSecurityException(
+                    "The public-key /Encrypt dictionary carries no /Recipients"
+                )
+            cfm = None
+            if crypt_filter is not None:
+                cfm = self._get_name(crypt_filter.mapping.get(PdfName("CFM")))
+            if cfm == "AESV3":
+                key_length, sha256 = 32, True
+            elif cfm == "AESV2":
+                key_length, sha256 = 16, False
+            else:
+                key_length, sha256 = 5, False
+                length_obj = self._resolve(enc.mapping.get(PdfName("Length")))
+                if isinstance(length_obj, PdfNumber):
+                    key_length = max(5, min(32, int(length_obj.value) // 8))
+                cf_length = None
+                if crypt_filter is not None:
+                    cf_length = self._resolve(
+                        crypt_filter.mapping.get(PdfName("Length"))
+                    )
+                if isinstance(cf_length, PdfNumber):
+                    value = int(cf_length.value)
+                    if value > 40:  # producers write bits here as well as bytes
+                        value //= 8
+                    key_length = max(5, min(32, value))
+
+            encrypt_metadata = True
+            for source in (crypt_filter, enc):
+                if source is None:
+                    continue
+                flag = self._resolve(source.mapping.get(PdfName("EncryptMetadata")))
+                if isinstance(flag, PdfBoolean):
+                    encrypt_metadata = bool(flag.value)
+                    break
+
+            if isinstance(self._credential, tuple):
+                certificate, private_key = self._credential
+                payload = open_envelopes(blobs, certificate, private_key)
+            elif isinstance(self._credential, bytes):
+                payload = open_kek_envelopes(blobs, self._credential)
+            else:
+                payload = open_password_envelopes(blobs, password)
+            self._pubsec_permissions = payload.permissions
+            return compute_file_key(
+                payload.seed,
+                blobs,
+                key_length=key_length,
+                sha256=sha256,
+                encrypt_metadata=encrypt_metadata,
+            )
+
+        def encryption_filter(self) -> str | None:
+            """Return the ``/Encrypt /Filter`` name (the security handler), or None."""
+            from .cos import PdfDictionary, PdfName
+
+            enc = self._resolve(self._doc.trailer.mapping.get(PdfName("Encrypt")))
+            if not isinstance(enc, PdfDictionary):
+                return None
+            return self._get_name(enc.mapping.get(PdfName("Filter")))
+
+        def uses_public_key_security(self) -> bool:
+            """True when the document uses the ``/Adobe.PubSec`` handler."""
+            return self.encryption_filter() == PUBSEC_FILTER
+
+        def extract_decryption_key(self, password: str) -> bytes | None:
+            """Derive the file encryption key from *password* or a certificate.
+
+            The standard handler derives it from its document password;
+            ``/Adobe.PubSec`` derives it from a certificate envelope when a
+            credential is present, or from a CMS password-recipient envelope.
+            """
+            if not self.detect_encryption():
+                return None
+            from .cos import PdfBoolean, PdfDictionary, PdfName, PdfNumber, PdfString
+
+            enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
+            enc = self._resolve(enc_ref)
+            if not isinstance(enc, PdfDictionary):
+                return None
+
+            if self._get_name(enc.mapping.get(PdfName("Filter"))) == PUBSEC_FILTER:
+                return self._public_key_decryption_key(enc, password)
+
+            def as_bytes(obj: Any) -> bytes | None:
+                o = self._resolve(obj)
+                if isinstance(o, PdfString):
+                    raw = o.value
+                    return raw if isinstance(raw, bytes) else raw.encode("latin-1")
+                return None
+
+            u_b = as_bytes(enc.mapping.get(PdfName("U")))
+            o_b = as_bytes(enc.mapping.get(PdfName("O")))
+            if u_b is None or o_b is None or len(u_b) < 16 or len(o_b) < 16:
+                return None
+
+            v = self._get_number(enc.mapping.get(PdfName("V")))
+            r_obj = self._resolve(enc.mapping.get(PdfName("R")))
+            r: int | None = None
+            if isinstance(r_obj, PdfNumber):
+                r = int(r_obj.value)
+
+            p_val = self.extract_permissions()
+            fid = self.extract_file_id()
+            file_id = fid[0] if fid else b""
+
+            encrypt_metadata = True
+            em_obj = self._resolve(enc.mapping.get(PdfName("EncryptMetadata")))
+            if isinstance(em_obj, PdfBoolean):
+                encrypt_metadata = bool(em_obj.value)
+
+            if v is not None and v >= 5 and r is not None and r >= 5:
+                ue_b = as_bytes(enc.mapping.get(PdfName("UE"))) or b""
+                oe_b = as_bytes(enc.mapping.get(PdfName("OE"))) or b""
+                user_material = len(u_b) >= 48 and bool(ue_b)
+                owner_material = len(o_b) >= 48 and bool(oe_b)
+                if not user_material and not owner_material:
+                    raise PdfSecurityException(
+                        "Cannot verify password: encryption uses revision 5+ security "
+                        "but /UE and /OE (or valid /U / /O lengths) are missing"
+                    )
+                return EncryptionUtils.verify_password_v6(
+                    password, u_b, o_b, ue_b, oe_b, r if r is not None else 6
+                )
+
+            key_length = 16
             length_obj = self._resolve(enc.mapping.get(PdfName("Length")))
             if isinstance(length_obj, PdfNumber):
-                key_length = max(5, min(32, int(length_obj.value) // 8))
-            cf_length = None
-            if crypt_filter is not None:
-                cf_length = self._resolve(
-                    crypt_filter.mapping.get(PdfName("Length"))
+                Lbits = int(length_obj.value)
+                key_length = max(5, min(32, Lbits // 8))
+            cf_length = self._crypt_filter_key_length(enc)
+            if cf_length is not None:
+                key_length = cf_length
+            if r == 2:
+                # Revision 2 is 40-bit RC4 whatever /Length claims.
+                key_length = 5
+
+            rev = r if r is not None else 4
+            return EncryptionUtils.verify_password_v4(
+                password,
+                u_b,
+                o_b,
+                p_val,
+                file_id,
+                key_length,
+                rev,
+                encrypt_metadata,
+            )
+
+        def encryption_password_allows_access(self, password: str) -> bool:
+            """True if *password* is correct, or verification is unavailable
+            (minimal /Encrypt dict)."""
+            if not self.detect_encryption():
+                return True
+            from .cos import PdfDictionary, PdfName, PdfString
+
+            enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
+            enc = self._resolve(enc_ref)
+            if not isinstance(enc, PdfDictionary):
+                return True
+
+            def as_bytes(obj: Any) -> bytes | None:
+                o = self._resolve(obj)
+                if isinstance(o, PdfString):
+                    raw = o.value
+                    return raw if isinstance(raw, bytes) else raw.encode("latin-1")
+                return None
+
+            u_b = as_bytes(enc.mapping.get(PdfName("U")))
+            o_b = as_bytes(enc.mapping.get(PdfName("O")))
+            if u_b is None or o_b is None or len(u_b) < 16 or len(o_b) < 16:
+                return True
+
+            return self.extract_decryption_key(password) is not None
+
+        def detect_encryption(self) -> bool:
+            from .cos import PdfName
+
+            return PdfName("Encrypt") in self._doc.trailer.mapping
+
+        def extract_file_id(self) -> list[bytes] | None:
+            """Return the two-element /ID array from the trailer, or None."""
+            from .cos import PdfArray, PdfName, PdfString
+
+            id_ref = self._doc.trailer.mapping.get(PdfName("ID"))
+            id_obj = self._resolve(id_ref)
+            if not isinstance(id_obj, PdfArray) or len(id_obj.items) < 2:
+                return None
+            result: list[bytes] = []
+            for item in id_obj.items[:2]:
+                item = self._resolve(item)
+                if isinstance(item, PdfString):
+                    raw = item.value
+                    result.append(raw if isinstance(raw, bytes) else raw.encode("latin-1"))
+                else:
+                    result.append(b"")
+            return result
+
+        def extract_permissions(self) -> int:
+            """Return the effective ``/P`` flags, or ``-4`` when none are stated.
+
+            A public-key document has no document-wide ``/P``: each recipient's
+            envelope carries its own, so once one has been opened those flags are
+            what apply to this reader.
+            """
+            from .cos import PdfDictionary, PdfName, PdfNumber
+
+            if self._pubsec_permissions is not None:
+                return self._pubsec_permissions
+            enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
+            enc = self._resolve(enc_ref)
+            if isinstance(enc, PdfDictionary):
+                p_val = enc.mapping.get(PdfName("P"))
+                p_val = self._resolve(p_val)
+                if isinstance(p_val, PdfNumber):
+                    return int(p_val.value)
+            return -4
+
+        def extract_outlines(self) -> list[dict]:
+            """Return a list of outline-item dicts from the catalog /Outlines tree.
+
+            A bookmark tree is decoration: a document whose own is unreadable still
+            has its pages, and every reference reader opens such a file. So damage
+            here costs the bookmarks and not the document -- an object that will not
+            parse, a list that ends nowhere, a loop -- while a resource limit still
+            stops the read, because that is the caller's ceiling and not the file's
+            fault.
+            """
+            from .cos import PdfDictionary, PdfName
+
+            root_ref = self._doc.trailer.mapping.get(PdfName("Root"))
+            try:
+                root = self._resolve(root_ref)
+                if not isinstance(root, PdfDictionary):
+                    return []
+                outlines_ref = root.mapping.get(PdfName("Outlines"))
+                outlines = self._resolve(outlines_ref)
+                if not isinstance(outlines, PdfDictionary):
+                    return []
+                first_ref = outlines.mapping.get(PdfName("First"))
+                if _outline_link_absent(first_ref):
+                    return []
+                return self._collect_outline_items(
+                    first_ref,
+                    named=named_destinations(root, self._resolve, self._budget),
+                    _visited=set(),
+                    _node_count=[0],
                 )
-            if isinstance(cf_length, PdfNumber):
-                value = int(cf_length.value)
-                if value > 40:  # producers write bits here as well as bytes
-                    value //= 8
-                key_length = max(5, min(32, value))
+            except PdfResourceLimitException:
+                raise
+            except (PdfParseException, PdfValidationException) as exc:
+                logger.warning("Could not read the outline tree: %s", exc)
+                return []
 
-        encrypt_metadata = True
-        for source in (crypt_filter, enc):
-            if source is None:
-                continue
-            flag = self._resolve(source.mapping.get(PdfName("EncryptMetadata")))
-            if isinstance(flag, PdfBoolean):
-                encrypt_metadata = bool(flag.value)
-                break
+        def _collect_outline_items(
+            self,
+            item_ref: Any,
+            depth: int = 0,
+            *,
+            named: dict[Any, Any] | None = None,
+            _visited: set[tuple[str, int]] | None = None,
+            _node_count: list[int] | None = None,
+        ) -> list[dict]:
+            """Recursively walk the outline linked list, returning dicts.
 
-        if isinstance(self._credential, tuple):
-            certificate, private_key = self._credential
-            payload = open_envelopes(blobs, certificate, private_key)
-        elif isinstance(self._credential, bytes):
-            payload = open_kek_envelopes(blobs, self._credential)
-        else:
-            payload = open_password_envelopes(blobs, password)
-        self._pubsec_permissions = payload.permissions
-        return compute_file_key(
-            payload.seed,
-            blobs,
-            key_length=key_length,
-            sha256=sha256,
-            encrypt_metadata=encrypt_metadata,
-        )
+            A cycle, a link to a missing object or to something that is not a
+            dictionary, and nesting past :data:`OUTLINE_TREE_MAX_DEPTH` each end the
+            walk where they are found, with a warning: the bookmarks read so far are
+            what the file holds, and a damaged bookmark list is no reason to refuse
+            the pages. A resource limit still raises.
+            """
+            from .cos import PdfDictionary, PdfName, PdfNumber, PdfString
 
-    def encryption_filter(self) -> str | None:
-        """Return the ``/Encrypt /Filter`` name (the security handler), or None."""
-        from .cos import PdfDictionary, PdfName
-
-        enc = self._resolve(self._doc.trailer.mapping.get(PdfName("Encrypt")))
-        if not isinstance(enc, PdfDictionary):
-            return None
-        return self._get_name(enc.mapping.get(PdfName("Filter")))
-
-    def uses_public_key_security(self) -> bool:
-        """True when the document uses the ``/Adobe.PubSec`` handler."""
-        return self.encryption_filter() == PUBSEC_FILTER
-
-    def extract_decryption_key(self, password: str) -> bytes | None:
-        """Derive the file encryption key from *password* or a certificate.
-
-        The standard handler derives it from its document password;
-        ``/Adobe.PubSec`` derives it from a certificate envelope when a
-        credential is present, or from a CMS password-recipient envelope.
-        """
-        if not self.detect_encryption():
-            return None
-        from .cos import PdfBoolean, PdfDictionary, PdfName, PdfNumber, PdfString
-
-        enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
-        enc = self._resolve(enc_ref)
-        if not isinstance(enc, PdfDictionary):
-            return None
-
-        if self._get_name(enc.mapping.get(PdfName("Filter"))) == PUBSEC_FILTER:
-            return self._public_key_decryption_key(enc, password)
-
-        def as_bytes(obj: Any) -> bytes | None:
-            o = self._resolve(obj)
-            if isinstance(o, PdfString):
-                raw = o.value
-                return raw if isinstance(raw, bytes) else raw.encode("latin-1")
-            return None
-
-        u_b = as_bytes(enc.mapping.get(PdfName("U")))
-        o_b = as_bytes(enc.mapping.get(PdfName("O")))
-        if u_b is None or o_b is None or len(u_b) < 16 or len(o_b) < 16:
-            return None
-
-        v = self._get_number(enc.mapping.get(PdfName("V")))
-        r_obj = self._resolve(enc.mapping.get(PdfName("R")))
-        r: int | None = None
-        if isinstance(r_obj, PdfNumber):
-            r = int(r_obj.value)
-
-        p_val = self.extract_permissions()
-        fid = self.extract_file_id()
-        file_id = fid[0] if fid else b""
-
-        encrypt_metadata = True
-        em_obj = self._resolve(enc.mapping.get(PdfName("EncryptMetadata")))
-        if isinstance(em_obj, PdfBoolean):
-            encrypt_metadata = bool(em_obj.value)
-
-        if v is not None and v >= 5 and r is not None and r >= 5:
-            ue_b = as_bytes(enc.mapping.get(PdfName("UE"))) or b""
-            oe_b = as_bytes(enc.mapping.get(PdfName("OE"))) or b""
-            user_material = len(u_b) >= 48 and bool(ue_b)
-            owner_material = len(o_b) >= 48 and bool(oe_b)
-            if not user_material and not owner_material:
-                raise PdfSecurityException(
-                    "Cannot verify password: encryption uses revision 5+ security "
-                    "but /UE and /OE (or valid /U / /O lengths) are missing"
+            if depth > OUTLINE_TREE_MAX_DEPTH:
+                # A ceiling on the *file*, to stop runaway recursion, and not the
+                # caller's: the branch below it is dropped, with the bookmarks above
+                # it kept. The caller's own ``max_nesting_depth`` is checked next
+                # and does raise, because that ceiling is theirs to set.
+                logger.warning(
+                    "Outline tree nests deeper than %d; dropping the rest of the branch.",
+                    OUTLINE_TREE_MAX_DEPTH,
                 )
-            return EncryptionUtils.verify_password_v6(
-                password, u_b, o_b, ue_b, oe_b, r if r is not None else 6
+                return []
+            self._budget.check(
+                depth + 1,
+                "max_nesting_depth",
+                "outline tree depth",
+            )
+            items: list[dict] = []
+            visited = _visited if _visited is not None else set()
+            node_count = _node_count if _node_count is not None else [0]
+            while not _outline_link_absent(item_ref):
+                item = self._resolve(item_ref)
+                if item is None:
+                    # ISO 32000-1 7.3.10: a reference to an object that is not
+                    # there is a reference to null, which ends the list. The
+                    # bookmarks before it are still bookmarks.
+                    logger.warning("Outline list ends at a missing object; dropping the rest.")
+                    break
+                if not isinstance(item, PdfDictionary):
+                    logger.warning("Dropping an outline item that is not a dictionary.")
+                    break
+                if isinstance(item_ref, PdfIndirectReference):
+                    cycle_key = ("ref", item_ref.object_number)
+                else:
+                    cycle_key = ("direct", id(item))
+                if cycle_key in visited:
+                    # A list that points back at itself is stopped where it closes,
+                    # the way a cyclic resource graph is: the items read so far are
+                    # what the file holds, and refusing the document over its
+                    # bookmarks would lose the pages too.
+                    logger.warning("Dropping a circular reference in the outline tree.")
+                    break
+                visited.add(cycle_key)
+                node_count[0] += 1
+                self._budget.check(
+                    node_count[0],
+                    "max_container_items",
+                    "outline tree items",
+                )
+
+                # Title
+                title = ""
+                title_obj = self._resolve(item.mapping.get(PdfName("Title")))
+                if isinstance(title_obj, PdfString):
+                    title = decode_pdf_text_string(title_obj)
+
+                # The target, kept exactly as the file holds it so that saving
+                # writes back what was read, plus a typed view of it where this
+                # API has a class for it and the page index it lands on.
+                loaded_target = None
+                target = None
+                for key in ("Dest", "A"):
+                    raw = item.mapping.get(PdfName(key))
+                    if raw is None:
+                        continue
+                    loaded_target = (key, raw)
+                    target = self._outline_target(key, self._resolve(raw))
+                    break
+                # ``None`` where it lands on no page of this document: no target,
+                # a URI, a name nobody defined, a page that is not in the tree.
+                page_ref = loaded_target_page_reference(
+                    loaded_target, self._resolve, named
+                )
+                page_index = None if page_ref is None else self._outline_page_index(page_ref)
+
+                # Style flags (/F bit 1 = italic, bit 2 = bold)
+                flags = 0
+                flags_obj = self._resolve(item.mapping.get(PdfName("F")))
+                if isinstance(flags_obj, PdfNumber):
+                    flags = int(flags_obj.value)
+
+                # Title colour (/C), three DeviceRGB numbers; anything else is not a
+                # colour and is read as none rather than as part of one.
+                color = None
+                color_obj = self._resolve(item.mapping.get(PdfName("C")))
+                if isinstance(color_obj, PdfArray) and len(color_obj.items) == 3:
+                    channels = [self._resolve(value) for value in color_obj.items]
+                    if all(isinstance(value, PdfNumber) for value in channels):
+                        color = tuple(
+                            min(1.0, max(0.0, float(value.value))) for value in channels
+                        )
+
+                # /Count is positive for an item a viewer shows unfolded (Table 153).
+                count_obj = self._resolve(item.mapping.get(PdfName("Count")))
+                is_open = isinstance(count_obj, PdfNumber) and count_obj.value > 0
+
+                # Children
+                children: list[dict] = []
+                first_child = item.mapping.get(PdfName("First"))
+                if not _outline_link_absent(first_child):
+                    children = self._collect_outline_items(
+                        first_child,
+                        depth + 1,
+                        named=named,
+                        _visited=visited,
+                        _node_count=node_count,
+                    )
+
+                items.append(
+                    {
+                        "title": title,
+                        "page_index": page_index,
+                        "is_bold": bool(flags & 2),
+                        "is_italic": bool(flags & 1),
+                        "color": color,
+                        "open": is_open,
+                        "target": target,
+                        "loaded_target": loaded_target,
+                        "children": children,
+                    }
+                )
+
+                item_ref = item.mapping.get(PdfName("Next"))
+            return items
+
+        def _outline_target(self, key: str, obj: Any) -> Any:
+            """The typed view of an outline item's ``/Dest`` or ``/A``, if any.
+
+            ``None`` for a target this API has no class for -- a named destination,
+            an action type it does not model. The item keeps the target the file
+            holds either way; this only decides whether it can also be read.
+            """
+            if key == "A":
+                return action_from_cos(obj, self._resolve, self._outline_page_index)
+            destination = destination_from_cos(
+                obj, self._resolve, self._outline_page_index
+            )
+            return None if destination is _UNRESOLVED_DESTINATION else destination
+
+        def _outline_page_index(self, ref: Any) -> int | None:
+            """Zero-based index of the page *ref* names, or ``None`` for no page."""
+            ids = getattr(self, "_page_obj_ids", [])
+            try:
+                return ids.index(ref.object_number)
+            except ValueError:
+                return None
+
+        def extract_signature(self) -> dict[str, str] | None:
+            from .cos import PdfDictionary, PdfName, PdfString
+
+            sig_ref = self._doc.trailer.mapping.get(PdfName("Sig"))
+            if sig_ref is None:
+                sig_ref = self._doc.trailer.mapping.get(PdfName("Signature"))
+            if sig_ref is None:
+                return None
+            sig_obj = self._resolve(sig_ref)
+            if not isinstance(sig_obj, PdfDictionary):
+                return None
+            res = {}
+            for field_name in ["Reason", "ContactInfo", "Location"]:
+                val = sig_obj.mapping.get(PdfName(field_name))
+                val = self._resolve(val)
+                if isinstance(val, PdfString):
+                    res[field_name] = decode_pdf_text_string(val)
+            return res if res else None
+
+        def _dss_decryption(self) -> Any:
+            """The handler that reads this document's streams, or ``None`` in clear."""
+            if self._stream_decrypt_key is None:
+                return None
+            from .pdf_writer_cos import WriterEncryption
+
+            return WriterEncryption(
+                self._stream_decrypt_key, self._stream_decrypt_algorithm
             )
 
-        key_length = 16
-        length_obj = self._resolve(enc.mapping.get(PdfName("Length")))
-        if isinstance(length_obj, PdfNumber):
-            Lbits = int(length_obj.value)
-            key_length = max(5, min(32, Lbits // 8))
-        cf_length = self._crypt_filter_key_length(enc)
-        if cf_length is not None:
-            key_length = cf_length
-        if r == 2:
-            # Revision 2 is 40-bit RC4 whatever /Length claims.
-            key_length = 5
+        def extract_signatures(self, data: bytes) -> list[PdfSignature]:
+            from .cos import PdfArray, PdfDictionary, PdfName
 
-        rev = r if r is not None else 4
-        return EncryptionUtils.verify_password_v4(
-            password,
-            u_b,
-            o_b,
-            p_val,
-            file_id,
-            key_length,
-            rev,
-            encrypt_metadata,
-        )
+            signatures: list[PdfSignature] = []
 
-    def encryption_password_allows_access(self, password: str) -> bool:
-        """True if *password* is correct, or verification is unavailable
-        (minimal /Encrypt dict)."""
-        if not self.detect_encryption():
-            return True
-        from .cos import PdfDictionary, PdfName, PdfString
+            # 1. Get AcroForm
+            root = self._doc.trailer.mapping.get(PdfName("Root"))
+            root = self._resolve(root)
+            if isinstance(root, PdfDictionary):
+                acroform = root.mapping.get(PdfName("AcroForm"))
+                acroform = self._resolve(acroform)
+                if isinstance(acroform, PdfDictionary):
+                    fields = acroform.mapping.get(PdfName("Fields"))
+                    fields = self._resolve(fields)
+                    if isinstance(fields, PdfArray):
+                        self._budget.check(
+                            len(fields.items),
+                            "max_container_items",
+                            "signature field entries",
+                        )
+                        visited: set[tuple[str, int]] = set()
+                        node_count = [0]
+                        for field_ref in fields.items:
+                            self._collect_signatures_from_field(
+                                field_ref,
+                                signatures,
+                                data,
+                                _visited=visited,
+                                _node_count=node_count,
+                            )
+            return signatures
 
-        enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
-        enc = self._resolve(enc_ref)
-        if not isinstance(enc, PdfDictionary):
-            return True
+        def _collect_signatures_from_field(
+            self,
+            field_ref: Any,
+            signatures: list[PdfSignature],
+            data: bytes,
+            *,
+            _depth: int = 1,
+            _visited: set[tuple[str, int]] | None = None,
+            _node_count: list[int] | None = None,
+        ) -> None:
+            from .cos import PdfArray, PdfDictionary, PdfName, PdfString
 
-        def as_bytes(obj: Any) -> bytes | None:
-            o = self._resolve(obj)
-            if isinstance(o, PdfString):
-                raw = o.value
-                return raw if isinstance(raw, bytes) else raw.encode("latin-1")
-            return None
-
-        u_b = as_bytes(enc.mapping.get(PdfName("U")))
-        o_b = as_bytes(enc.mapping.get(PdfName("O")))
-        if u_b is None or o_b is None or len(u_b) < 16 or len(o_b) < 16:
-            return True
-
-        return self.extract_decryption_key(password) is not None
-
-    def detect_encryption(self) -> bool:
-        from .cos import PdfName
-
-        return PdfName("Encrypt") in self._doc.trailer.mapping
-
-    def extract_file_id(self) -> list[bytes] | None:
-        """Return the two-element /ID array from the trailer, or None."""
-        from .cos import PdfArray, PdfName, PdfString
-
-        id_ref = self._doc.trailer.mapping.get(PdfName("ID"))
-        id_obj = self._resolve(id_ref)
-        if not isinstance(id_obj, PdfArray) or len(id_obj.items) < 2:
-            return None
-        result: list[bytes] = []
-        for item in id_obj.items[:2]:
-            item = self._resolve(item)
-            if isinstance(item, PdfString):
-                raw = item.value
-                result.append(raw if isinstance(raw, bytes) else raw.encode("latin-1"))
+            self._budget.check(
+                _depth,
+                "max_nesting_depth",
+                "signature field tree depth",
+            )
+            field_obj = self._resolve(field_ref)
+            if not isinstance(field_obj, PdfDictionary):
+                return
+            visited = _visited if _visited is not None else set()
+            node_count = _node_count if _node_count is not None else [0]
+            if isinstance(field_ref, PdfIndirectReference):
+                node_key = ("ref", field_ref.object_number)
             else:
-                result.append(b"")
-        return result
-
-    def extract_permissions(self) -> int:
-        """Return the effective ``/P`` flags, or ``-4`` when none are stated.
-
-        A public-key document has no document-wide ``/P``: each recipient's
-        envelope carries its own, so once one has been opened those flags are
-        what apply to this reader.
-        """
-        from .cos import PdfDictionary, PdfName, PdfNumber
-
-        if self._pubsec_permissions is not None:
-            return self._pubsec_permissions
-        enc_ref = self._doc.trailer.mapping.get(PdfName("Encrypt"))
-        enc = self._resolve(enc_ref)
-        if isinstance(enc, PdfDictionary):
-            p_val = enc.mapping.get(PdfName("P"))
-            p_val = self._resolve(p_val)
-            if isinstance(p_val, PdfNumber):
-                return int(p_val.value)
-        return -4
-
-    def extract_outlines(self) -> list[dict]:
-        """Return a list of outline-item dicts from the catalog /Outlines tree.
-
-        A bookmark tree is decoration: a document whose own is unreadable still
-        has its pages, and every reference reader opens such a file. So damage
-        here costs the bookmarks and not the document -- an object that will not
-        parse, a list that ends nowhere, a loop -- while a resource limit still
-        stops the read, because that is the caller's ceiling and not the file's
-        fault.
-        """
-        from .cos import PdfDictionary, PdfName
-
-        root_ref = self._doc.trailer.mapping.get(PdfName("Root"))
-        try:
-            root = self._resolve(root_ref)
-            if not isinstance(root, PdfDictionary):
-                return []
-            outlines_ref = root.mapping.get(PdfName("Outlines"))
-            outlines = self._resolve(outlines_ref)
-            if not isinstance(outlines, PdfDictionary):
-                return []
-            first_ref = outlines.mapping.get(PdfName("First"))
-            if _outline_link_absent(first_ref):
-                return []
-            return self._collect_outline_items(
-                first_ref,
-                named=named_destinations(root, self._resolve, self._budget),
-                _visited=set(),
-                _node_count=[0],
-            )
-        except PdfResourceLimitException:
-            raise
-        except (PdfParseException, PdfValidationException) as exc:
-            logger.warning("Could not read the outline tree: %s", exc)
-            return []
-
-    def _collect_outline_items(
-        self,
-        item_ref: Any,
-        depth: int = 0,
-        *,
-        named: dict[Any, Any] | None = None,
-        _visited: set[tuple[str, int]] | None = None,
-        _node_count: list[int] | None = None,
-    ) -> list[dict]:
-        """Recursively walk the outline linked list, returning dicts.
-
-        A cycle, a link to a missing object or to something that is not a
-        dictionary, and nesting past :data:`OUTLINE_TREE_MAX_DEPTH` each end the
-        walk where they are found, with a warning: the bookmarks read so far are
-        what the file holds, and a damaged bookmark list is no reason to refuse
-        the pages. A resource limit still raises.
-        """
-        from .cos import PdfDictionary, PdfName, PdfNumber, PdfString
-
-        if depth > OUTLINE_TREE_MAX_DEPTH:
-            # A ceiling on the *file*, to stop runaway recursion, and not the
-            # caller's: the branch below it is dropped, with the bookmarks above
-            # it kept. The caller's own ``max_nesting_depth`` is checked next
-            # and does raise, because that ceiling is theirs to set.
-            logger.warning(
-                "Outline tree nests deeper than %d; dropping the rest of the branch.",
-                OUTLINE_TREE_MAX_DEPTH,
-            )
-            return []
-        self._budget.check(
-            depth + 1,
-            "max_nesting_depth",
-            "outline tree depth",
-        )
-        items: list[dict] = []
-        visited = _visited if _visited is not None else set()
-        node_count = _node_count if _node_count is not None else [0]
-        while not _outline_link_absent(item_ref):
-            item = self._resolve(item_ref)
-            if item is None:
-                # ISO 32000-1 7.3.10: a reference to an object that is not
-                # there is a reference to null, which ends the list. The
-                # bookmarks before it are still bookmarks.
-                logger.warning("Outline list ends at a missing object; dropping the rest.")
-                break
-            if not isinstance(item, PdfDictionary):
-                logger.warning("Dropping an outline item that is not a dictionary.")
-                break
-            if isinstance(item_ref, PdfIndirectReference):
-                cycle_key = ("ref", item_ref.object_number)
-            else:
-                cycle_key = ("direct", id(item))
-            if cycle_key in visited:
-                # A list that points back at itself is stopped where it closes,
-                # the way a cyclic resource graph is: the items read so far are
-                # what the file holds, and refusing the document over its
-                # bookmarks would lose the pages too.
-                logger.warning("Dropping a circular reference in the outline tree.")
-                break
-            visited.add(cycle_key)
+                node_key = ("direct", id(field_obj))
+            if node_key in visited:
+                raise PdfParseException(
+                    "Signature field tree contains a cycle or repeated field"
+                )
+            visited.add(node_key)
             node_count[0] += 1
             self._budget.check(
                 node_count[0],
                 "max_container_items",
-                "outline tree items",
+                "signature field tree items",
             )
 
-            # Title
-            title = ""
-            title_obj = self._resolve(item.mapping.get(PdfName("Title")))
-            if isinstance(title_obj, PdfString):
-                title = decode_pdf_text_string(title_obj)
+            # Check FT
+            ft = field_obj.mapping.get(PdfName("FT"))
+            ft = self._resolve(ft)
+            if isinstance(ft, PdfName) and ft.name == "/Sig":
+                # Parse Signature Dictionary check
+                v_ref = field_obj.mapping.get(PdfName("V"))
+                v_obj = self._resolve(v_ref)
+                if isinstance(v_obj, PdfDictionary):
+                    br = v_obj.mapping.get(PdfName("ByteRange"))
+                    br = self._resolve(br)
+                    contents = v_obj.mapping.get(PdfName("Contents"))
+                    contents = self._resolve(contents)
 
-            # The target, kept exactly as the file holds it so that saving
-            # writes back what was read, plus a typed view of it where this
-            # API has a class for it and the page index it lands on.
-            loaded_target = None
-            target = None
-            for key in ("Dest", "A"):
-                raw = item.mapping.get(PdfName(key))
-                if raw is None:
+                    if isinstance(br, PdfArray) and isinstance(contents, PdfString):
+                        try:
+                            byte_range = [int(self._get_number(x) or 0) for x in br.items]
+                            # /Contents is zero-padded to a fixed placeholder; trim to
+                            # the exact DER length so the PKCS#7 blob parses cleanly.
+                            pkcs7_content = _trim_der_padding(contents.value)
+
+                            t = field_obj.mapping.get(PdfName("T"))
+                            t = self._resolve(t)
+                            name = ""
+                            if isinstance(t, PdfString):
+                                name = decode_pdf_text_string(t)
+
+                            sig = PdfSignature(
+                                name=name,
+                                contents=pkcs7_content,
+                                byte_range=byte_range,
+                                reference_data=data,
+                                load_limits=self._limits,
+                                _load_budget=self._budget,
+                                # A /DSS in an encrypted document is enciphered
+                                # like any other stream; validation reads it.
+                                _decryption=self._dss_decryption(),
+                            )
+
+                            for key, attr in [
+                                ("Reason", "reason"),
+                                ("Location", "location"),
+                                ("ContactInfo", "contact_info"),
+                                ("M", "date"),
+                            ]:
+                                val = v_obj.mapping.get(PdfName(key))
+                                val = self._resolve(val)
+                                if isinstance(val, PdfString):
+                                    setattr(sig, attr, decode_pdf_text_string(val))
+
+                            sub = self._resolve(v_obj.mapping.get(PdfName("SubFilter")))
+                            if isinstance(sub, PdfName):
+                                sig.sub_filter = sub.name.lstrip("/")
+
+                            sig.docmdp_level = self._extract_docmdp_level(v_obj)
+
+                            signatures.append(sig)
+                            self._budget.check(
+                                len(signatures),
+                                "max_container_items",
+                                "PDF signatures",
+                            )
+                        except (
+                            ValueError,
+                            TypeError,
+                            KeyError,
+                            IndexError,
+                            AttributeError,
+                        ):
+                            pass
+
+            # Recurse Kids
+            kids = field_obj.mapping.get(PdfName("Kids"))
+            kids = self._resolve(kids)
+            if isinstance(kids, PdfArray):
+                self._budget.check(
+                    len(kids.items),
+                    "max_container_items",
+                    "signature field child entries",
+                )
+                for kid_ref in kids.items:
+                    self._collect_signatures_from_field(
+                        kid_ref,
+                        signatures,
+                        data,
+                        _depth=_depth + 1,
+                        _visited=visited,
+                        _node_count=node_count,
+                    )
+
+        def _extract_docmdp_level(self, v_obj: Any) -> int | None:
+            """Return the DocMDP ``/P`` level of a certifying signature, if any."""
+            from .cos import PdfArray, PdfDictionary, PdfName
+
+            refs = self._resolve(v_obj.mapping.get(PdfName("Reference")))
+            if not isinstance(refs, PdfArray):
+                return None
+            for ref in refs.items:
+                ref = self._resolve(ref)
+                if not isinstance(ref, PdfDictionary):
                     continue
-                loaded_target = (key, raw)
-                target = self._outline_target(key, self._resolve(raw))
-                break
-            # ``None`` where it lands on no page of this document: no target,
-            # a URI, a name nobody defined, a page that is not in the tree.
-            page_ref = loaded_target_page_reference(
-                loaded_target, self._resolve, named
-            )
-            page_index = None if page_ref is None else self._outline_page_index(page_ref)
-
-            # Style flags (/F bit 1 = italic, bit 2 = bold)
-            flags = 0
-            flags_obj = self._resolve(item.mapping.get(PdfName("F")))
-            if isinstance(flags_obj, PdfNumber):
-                flags = int(flags_obj.value)
-
-            # Title colour (/C), three DeviceRGB numbers; anything else is not a
-            # colour and is read as none rather than as part of one.
-            color = None
-            color_obj = self._resolve(item.mapping.get(PdfName("C")))
-            if isinstance(color_obj, PdfArray) and len(color_obj.items) == 3:
-                channels = [self._resolve(value) for value in color_obj.items]
-                if all(isinstance(value, PdfNumber) for value in channels):
-                    color = tuple(
-                        min(1.0, max(0.0, float(value.value))) for value in channels
-                    )
-
-            # /Count is positive for an item a viewer shows unfolded (Table 153).
-            count_obj = self._resolve(item.mapping.get(PdfName("Count")))
-            is_open = isinstance(count_obj, PdfNumber) and count_obj.value > 0
-
-            # Children
-            children: list[dict] = []
-            first_child = item.mapping.get(PdfName("First"))
-            if not _outline_link_absent(first_child):
-                children = self._collect_outline_items(
-                    first_child,
-                    depth + 1,
-                    named=named,
-                    _visited=visited,
-                    _node_count=node_count,
-                )
-
-            items.append(
-                {
-                    "title": title,
-                    "page_index": page_index,
-                    "is_bold": bool(flags & 2),
-                    "is_italic": bool(flags & 1),
-                    "color": color,
-                    "open": is_open,
-                    "target": target,
-                    "loaded_target": loaded_target,
-                    "children": children,
-                }
-            )
-
-            item_ref = item.mapping.get(PdfName("Next"))
-        return items
-
-    def _outline_target(self, key: str, obj: Any) -> Any:
-        """The typed view of an outline item's ``/Dest`` or ``/A``, if any.
-
-        ``None`` for a target this API has no class for -- a named destination,
-        an action type it does not model. The item keeps the target the file
-        holds either way; this only decides whether it can also be read.
-        """
-        if key == "A":
-            return action_from_cos(obj, self._resolve, self._outline_page_index)
-        destination = destination_from_cos(
-            obj, self._resolve, self._outline_page_index
-        )
-        return None if destination is _UNRESOLVED_DESTINATION else destination
-
-    def _outline_page_index(self, ref: Any) -> int | None:
-        """Zero-based index of the page *ref* names, or ``None`` for no page."""
-        ids = getattr(self, "_page_obj_ids", [])
-        try:
-            return ids.index(ref.object_number)
-        except ValueError:
+                method = self._resolve(ref.mapping.get(PdfName("TransformMethod")))
+                if not (isinstance(method, PdfName) and method.name == "/DocMDP"):
+                    continue
+                params = self._resolve(ref.mapping.get(PdfName("TransformParams")))
+                if isinstance(params, PdfDictionary):
+                    p = self._get_number(self._resolve(params.mapping.get(PdfName("P"))))
+                    if p is not None:
+                        return int(p)
+                return 2  # DocMDP present without explicit /P -> default level 2
             return None
 
-    def extract_signature(self) -> dict[str, str] | None:
-        from .cos import PdfDictionary, PdfName, PdfString
+        def extract_form_fields(self) -> dict[str, dict[str, Any]]:
+            """Extract all form fields with values and types.
 
-        sig_ref = self._doc.trailer.mapping.get(PdfName("Sig"))
-        if sig_ref is None:
-            sig_ref = self._doc.trailer.mapping.get(PdfName("Signature"))
-        if sig_ref is None:
-            return None
-        sig_obj = self._resolve(sig_ref)
-        if not isinstance(sig_obj, PdfDictionary):
-            return None
-        res = {}
-        for field_name in ["Reason", "ContactInfo", "Location"]:
-            val = sig_obj.mapping.get(PdfName(field_name))
-            val = self._resolve(val)
-            if isinstance(val, PdfString):
-                res[field_name] = decode_pdf_text_string(val)
-        return res if res else None
+            Returns
+            -------
+            dict
+                Mapping of field name to
+                {"value": ..., "type": "text"|"checkbox"|"radio"|"listbox"|
+                "combobox"|"pushbutton"}.
+            """
+            from .cos import PdfArray, PdfDictionary, PdfName
 
-    def _dss_decryption(self) -> Any:
-        """The handler that reads this document's streams, or ``None`` in clear."""
-        if self._stream_decrypt_key is None:
-            return None
-        from .pdf_writer_cos import WriterEncryption
-
-        return WriterEncryption(
-            self._stream_decrypt_key, self._stream_decrypt_algorithm
-        )
-
-    def extract_signatures(self, data: bytes) -> list[PdfSignature]:
-        from .cos import PdfArray, PdfDictionary, PdfName
-
-        signatures: list[PdfSignature] = []
-
-        # 1. Get AcroForm
-        root = self._doc.trailer.mapping.get(PdfName("Root"))
-        root = self._resolve(root)
-        if isinstance(root, PdfDictionary):
-            acroform = root.mapping.get(PdfName("AcroForm"))
-            acroform = self._resolve(acroform)
-            if isinstance(acroform, PdfDictionary):
-                fields = acroform.mapping.get(PdfName("Fields"))
-                fields = self._resolve(fields)
-                if isinstance(fields, PdfArray):
-                    self._budget.check(
-                        len(fields.items),
-                        "max_container_items",
-                        "signature field entries",
-                    )
-                    visited: set[tuple[str, int]] = set()
-                    node_count = [0]
-                    for field_ref in fields.items:
-                        self._collect_signatures_from_field(
-                            field_ref,
-                            signatures,
-                            data,
-                            _visited=visited,
-                            _node_count=node_count,
-                        )
-        return signatures
-
-    def _collect_signatures_from_field(
-        self,
-        field_ref: Any,
-        signatures: list[PdfSignature],
-        data: bytes,
-        *,
-        _depth: int = 1,
-        _visited: set[tuple[str, int]] | None = None,
-        _node_count: list[int] | None = None,
-    ) -> None:
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfString
-
-        self._budget.check(
-            _depth,
-            "max_nesting_depth",
-            "signature field tree depth",
-        )
-        field_obj = self._resolve(field_ref)
-        if not isinstance(field_obj, PdfDictionary):
-            return
-        visited = _visited if _visited is not None else set()
-        node_count = _node_count if _node_count is not None else [0]
-        if isinstance(field_ref, PdfIndirectReference):
-            node_key = ("ref", field_ref.object_number)
-        else:
-            node_key = ("direct", id(field_obj))
-        if node_key in visited:
-            raise PdfParseException(
-                "Signature field tree contains a cycle or repeated field"
-            )
-        visited.add(node_key)
-        node_count[0] += 1
-        self._budget.check(
-            node_count[0],
-            "max_container_items",
-            "signature field tree items",
-        )
-
-        # Check FT
-        ft = field_obj.mapping.get(PdfName("FT"))
-        ft = self._resolve(ft)
-        if isinstance(ft, PdfName) and ft.name == "/Sig":
-            # Parse Signature Dictionary check
-            v_ref = field_obj.mapping.get(PdfName("V"))
-            v_obj = self._resolve(v_ref)
-            if isinstance(v_obj, PdfDictionary):
-                br = v_obj.mapping.get(PdfName("ByteRange"))
-                br = self._resolve(br)
-                contents = v_obj.mapping.get(PdfName("Contents"))
-                contents = self._resolve(contents)
-
-                if isinstance(br, PdfArray) and isinstance(contents, PdfString):
-                    try:
-                        byte_range = [int(self._get_number(x) or 0) for x in br.items]
-                        # /Contents is zero-padded to a fixed placeholder; trim to
-                        # the exact DER length so the PKCS#7 blob parses cleanly.
-                        pkcs7_content = _trim_der_padding(contents.value)
-
-                        t = field_obj.mapping.get(PdfName("T"))
-                        t = self._resolve(t)
-                        name = ""
-                        if isinstance(t, PdfString):
-                            name = decode_pdf_text_string(t)
-
-                        sig = PdfSignature(
-                            name=name,
-                            contents=pkcs7_content,
-                            byte_range=byte_range,
-                            reference_data=data,
-                            load_limits=self._limits,
-                            _load_budget=self._budget,
-                            # A /DSS in an encrypted document is enciphered
-                            # like any other stream; validation reads it.
-                            _decryption=self._dss_decryption(),
-                        )
-
-                        for key, attr in [
-                            ("Reason", "reason"),
-                            ("Location", "location"),
-                            ("ContactInfo", "contact_info"),
-                            ("M", "date"),
-                        ]:
-                            val = v_obj.mapping.get(PdfName(key))
-                            val = self._resolve(val)
-                            if isinstance(val, PdfString):
-                                setattr(sig, attr, decode_pdf_text_string(val))
-
-                        sub = self._resolve(v_obj.mapping.get(PdfName("SubFilter")))
-                        if isinstance(sub, PdfName):
-                            sig.sub_filter = sub.name.lstrip("/")
-
-                        sig.docmdp_level = self._extract_docmdp_level(v_obj)
-
-                        signatures.append(sig)
+            fields: dict[str, dict[str, Any]] = {}
+            root = self._doc.trailer.mapping.get(PdfName("Root"))
+            root = self._resolve(root)
+            if isinstance(root, PdfDictionary):
+                acroform = root.mapping.get(PdfName("AcroForm"))
+                acroform = self._resolve(acroform)
+                if isinstance(acroform, PdfDictionary):
+                    fields_arr = acroform.mapping.get(PdfName("Fields"))
+                    fields_arr = self._resolve(fields_arr)
+                    if isinstance(fields_arr, PdfArray):
                         self._budget.check(
-                            len(signatures),
+                            len(fields_arr.items),
                             "max_container_items",
-                            "PDF signatures",
+                            "form field entries",
                         )
-                    except (
-                        ValueError,
-                        TypeError,
-                        KeyError,
-                        IndexError,
-                        AttributeError,
-                    ):
-                        pass
+                        visited: set[tuple[str, int]] = set()
+                        node_count = [0]
+                        for field_ref in fields_arr.items:
+                            self._collect_fields_rec(
+                                field_ref,
+                                fields,
+                                _visited=visited,
+                                _node_count=node_count,
+                            )
+            return fields
 
-        # Recurse Kids
-        kids = field_obj.mapping.get(PdfName("Kids"))
-        kids = self._resolve(kids)
-        if isinstance(kids, PdfArray):
+        def _collect_fields_rec(
+            self,
+            field_ref: Any,
+            fields: dict[str, dict[str, Any]],
+            prefix: str = "",
+            inherited_ft: PdfName | None = None,
+            inherited_ff: int = 0,
+            inherited_v: Any = None,
+            *,
+            _depth: int = 1,
+            _visited: set[tuple[str, int]] | None = None,
+            _node_count: list[int] | None = None,
+        ) -> None:
+            from .cos import PdfArray, PdfDictionary, PdfName, PdfString
+
             self._budget.check(
-                len(kids.items),
-                "max_container_items",
-                "signature field child entries",
+                _depth,
+                "max_nesting_depth",
+                "form field tree depth",
             )
-            for kid_ref in kids.items:
-                self._collect_signatures_from_field(
-                    kid_ref,
-                    signatures,
-                    data,
-                    _depth=_depth + 1,
-                    _visited=visited,
-                    _node_count=node_count,
-                )
-
-    def _extract_docmdp_level(self, v_obj: Any) -> int | None:
-        """Return the DocMDP ``/P`` level of a certifying signature, if any."""
-        from .cos import PdfArray, PdfDictionary, PdfName
-
-        refs = self._resolve(v_obj.mapping.get(PdfName("Reference")))
-        if not isinstance(refs, PdfArray):
-            return None
-        for ref in refs.items:
-            ref = self._resolve(ref)
-            if not isinstance(ref, PdfDictionary):
-                continue
-            method = self._resolve(ref.mapping.get(PdfName("TransformMethod")))
-            if not (isinstance(method, PdfName) and method.name == "/DocMDP"):
-                continue
-            params = self._resolve(ref.mapping.get(PdfName("TransformParams")))
-            if isinstance(params, PdfDictionary):
-                p = self._get_number(self._resolve(params.mapping.get(PdfName("P"))))
-                if p is not None:
-                    return int(p)
-            return 2  # DocMDP present without explicit /P -> default level 2
-        return None
-
-    def extract_form_fields(self) -> dict[str, dict[str, Any]]:
-        """Extract all form fields with values and types.
-
-        Returns
-        -------
-        dict
-            Mapping of field name to
-            {"value": ..., "type": "text"|"checkbox"|"radio"|"listbox"|
-            "combobox"|"pushbutton"}.
-        """
-        from .cos import PdfArray, PdfDictionary, PdfName
-
-        fields: dict[str, dict[str, Any]] = {}
-        root = self._doc.trailer.mapping.get(PdfName("Root"))
-        root = self._resolve(root)
-        if isinstance(root, PdfDictionary):
-            acroform = root.mapping.get(PdfName("AcroForm"))
-            acroform = self._resolve(acroform)
-            if isinstance(acroform, PdfDictionary):
-                fields_arr = acroform.mapping.get(PdfName("Fields"))
-                fields_arr = self._resolve(fields_arr)
-                if isinstance(fields_arr, PdfArray):
-                    self._budget.check(
-                        len(fields_arr.items),
-                        "max_container_items",
-                        "form field entries",
-                    )
-                    visited: set[tuple[str, int]] = set()
-                    node_count = [0]
-                    for field_ref in fields_arr.items:
-                        self._collect_fields_rec(
-                            field_ref,
-                            fields,
-                            _visited=visited,
-                            _node_count=node_count,
-                        )
-        return fields
-
-    def _collect_fields_rec(
-        self,
-        field_ref: Any,
-        fields: dict[str, dict[str, Any]],
-        prefix: str = "",
-        inherited_ft: PdfName | None = None,
-        inherited_ff: int = 0,
-        inherited_v: Any = None,
-        *,
-        _depth: int = 1,
-        _visited: set[tuple[str, int]] | None = None,
-        _node_count: list[int] | None = None,
-    ) -> None:
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfString
-
-        self._budget.check(
-            _depth,
-            "max_nesting_depth",
-            "form field tree depth",
-        )
-        field_obj = self._resolve(field_ref)
-        if not isinstance(field_obj, PdfDictionary):
-            return
-        visited = _visited if _visited is not None else set()
-        node_count = _node_count if _node_count is not None else [0]
-        if isinstance(field_ref, PdfIndirectReference):
-            node_key = ("ref", field_ref.object_number)
-        else:
-            node_key = ("direct", id(field_obj))
-        if node_key in visited:
-            raise PdfParseException("Form field tree contains a cycle or repeated field")
-        visited.add(node_key)
-        node_count[0] += 1
-        self._budget.check(
-            node_count[0],
-            "max_container_items",
-            "form field tree items",
-        )
-
-        t = self._resolve(field_obj.mapping.get(PdfName("T")))
-        if not isinstance(t, PdfString):
-            # A node without a name (/T is optional) is transparent: its kids
-            # take the name above it and inherit what it carries, as pdf.js,
-            # qpdf and MuPDF read it. Without kids it is a widget, not a field.
-            kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
-            if not isinstance(kids, PdfArray):
+            field_obj = self._resolve(field_ref)
+            if not isinstance(field_obj, PdfDictionary):
                 return
+            visited = _visited if _visited is not None else set()
+            node_count = _node_count if _node_count is not None else [0]
+            if isinstance(field_ref, PdfIndirectReference):
+                node_key = ("ref", field_ref.object_number)
+            else:
+                node_key = ("direct", id(field_obj))
+            if node_key in visited:
+                raise PdfParseException("Form field tree contains a cycle or repeated field")
+            visited.add(node_key)
+            node_count[0] += 1
+            self._budget.check(
+                node_count[0],
+                "max_container_items",
+                "form field tree items",
+            )
+
+            t = self._resolve(field_obj.mapping.get(PdfName("T")))
+            if not isinstance(t, PdfString):
+                # A node without a name (/T is optional) is transparent: its kids
+                # take the name above it and inherit what it carries, as pdf.js,
+                # qpdf and MuPDF read it. Without kids it is a widget, not a field.
+                kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
+                if not isinstance(kids, PdfArray):
+                    return
+                from .cos import PdfNumber
+
+                ft_obj = self._resolve(field_obj.mapping.get(PdfName("FT")))
+                ff = self._resolve(field_obj.mapping.get(PdfName("Ff")))
+                self._budget.check(len(kids.items), "max_container_items", "form field child entries")
+                for kid_ref in kids.items:
+                    self._collect_fields_rec(
+                        kid_ref,
+                        fields,
+                        prefix,
+                        ft_obj if isinstance(ft_obj, PdfName) else inherited_ft,
+                        int(ff.value) if isinstance(ff, PdfNumber) else inherited_ff,
+                        self._resolve(field_obj.mapping[PdfName("V")])
+                        if PdfName("V") in field_obj.mapping
+                        else inherited_v,
+                        _depth=_depth + 1,
+                        _visited=visited,
+                        _node_count=node_count,
+                    )
+                return
+
+            name = decode_pdf_text_string(t)
+            full_name = f"{prefix}.{name}" if prefix else name
+
             from .cos import PdfNumber
 
             ft_obj = self._resolve(field_obj.mapping.get(PdfName("FT")))
+            ft = ft_obj if isinstance(ft_obj, PdfName) else inherited_ft
             ff = self._resolve(field_obj.mapping.get(PdfName("Ff")))
-            self._budget.check(len(kids.items), "max_container_items", "form field child entries")
-            for kid_ref in kids.items:
-                self._collect_fields_rec(
-                    kid_ref,
-                    fields,
-                    prefix,
-                    ft_obj if isinstance(ft_obj, PdfName) else inherited_ft,
-                    int(ff.value) if isinstance(ff, PdfNumber) else inherited_ff,
-                    self._resolve(field_obj.mapping[PdfName("V")])
-                    if PdfName("V") in field_obj.mapping
-                    else inherited_v,
-                    _depth=_depth + 1,
-                    _visited=visited,
-                    _node_count=node_count,
-                )
-            return
+            ff_val = int(ff.value) if isinstance(ff, PdfNumber) else inherited_ff
+            is_radio = bool(ff_val & (1 << 15))  # Ff bit 16 = Radio
+            is_pushbutton = bool(ff_val & (1 << 16))  # Ff bit 17 = Pushbutton
+            is_checkbox = (
+                isinstance(ft, PdfName)
+                and ft.name == "/Btn"
+                and not is_radio
+                and not is_pushbutton
+            )
+            is_choice = isinstance(ft, PdfName) and ft.name == "/Ch"
+            is_signature = isinstance(ft, PdfName) and ft.name == "/Sig"
+            combo = is_choice and bool(ff_val & (1 << 17))  # Ff bit 18 = Combo
 
-        name = decode_pdf_text_string(t)
-        full_name = f"{prefix}.{name}" if prefix else name
+            kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
+            named_field_child = False
+            if isinstance(kids, PdfArray):
+                for kid_ref in kids.items:
+                    kid = self._resolve(kid_ref)
+                    if isinstance(kid, PdfDictionary) and isinstance(
+                        self._resolve(kid.mapping.get(PdfName("T"))), PdfString
+                    ):
+                        named_field_child = True
+                        break
+            is_terminal = isinstance(ft, PdfName) and not named_field_child
 
-        from .cos import PdfNumber
+            if is_pushbutton:
+                field_type = "pushbutton"
+            elif is_checkbox:
+                field_type = "checkbox"
+            elif is_radio:
+                field_type = "radio"
+            elif is_signature:
+                field_type = "signature"
+            elif is_choice:
+                field_type = "combobox" if combo else "listbox"
+            else:
+                field_type = "text"
 
-        ft_obj = self._resolve(field_obj.mapping.get(PdfName("FT")))
-        ft = ft_obj if isinstance(ft_obj, PdfName) else inherited_ft
-        ff = self._resolve(field_obj.mapping.get(PdfName("Ff")))
-        ff_val = int(ff.value) if isinstance(ff, PdfNumber) else inherited_ff
-        is_radio = bool(ff_val & (1 << 15))  # Ff bit 16 = Radio
-        is_pushbutton = bool(ff_val & (1 << 16))  # Ff bit 17 = Pushbutton
-        is_checkbox = (
-            isinstance(ft, PdfName)
-            and ft.name == "/Btn"
-            and not is_radio
-            and not is_pushbutton
-        )
-        is_choice = isinstance(ft, PdfName) and ft.name == "/Ch"
-        is_signature = isinstance(ft, PdfName) and ft.name == "/Sig"
-        combo = is_choice and bool(ff_val & (1 << 17))  # Ff bit 18 = Combo
-
-        kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
-        named_field_child = False
-        if isinstance(kids, PdfArray):
-            for kid_ref in kids.items:
-                kid = self._resolve(kid_ref)
-                if isinstance(kid, PdfDictionary) and isinstance(
-                    self._resolve(kid.mapping.get(PdfName("T"))), PdfString
-                ):
-                    named_field_child = True
-                    break
-        is_terminal = isinstance(ft, PdfName) and not named_field_child
-
-        if is_pushbutton:
-            field_type = "pushbutton"
-        elif is_checkbox:
-            field_type = "checkbox"
-        elif is_radio:
-            field_type = "radio"
-        elif is_signature:
-            field_type = "signature"
-        elif is_choice:
-            field_type = "combobox" if combo else "listbox"
-        else:
-            field_type = "text"
-
-        # /V is inheritable (ISO 32000-1 table 220): a field without one takes
-        # its parent's, as pdfium, pdf.js, qpdf and MuPDF all read it.
-        if PdfName("V") in field_obj.mapping:
-            v = self._resolve(field_obj.mapping.get(PdfName("V")))
-        else:
-            v = inherited_v
-        # A signature field's /V is a signature dictionary, not a reportable form
-        # value; surface it as unsigned (None) here — verification is separate.
-        val = form_value(
-            self._resolve,
-            self._budget,
-            v if is_terminal and not is_signature else None,
-            field_type,
-        )
-
-        if is_terminal:
-            fields[full_name] = {"value": val, "type": field_type}
-            self._budget.check(
-                len(fields),
-                "max_container_items",
-                "extracted form fields",
+            # /V is inheritable (ISO 32000-1 table 220): a field without one takes
+            # its parent's, as pdfium, pdf.js, qpdf and MuPDF all read it.
+            if PdfName("V") in field_obj.mapping:
+                v = self._resolve(field_obj.mapping.get(PdfName("V")))
+            else:
+                v = inherited_v
+            # A signature field's /V is a signature dictionary, not a reportable form
+            # value; surface it as unsigned (None) here — verification is separate.
+            val = form_value(
+                self._resolve,
+                self._budget,
+                v if is_terminal and not is_signature else None,
+                field_type,
             )
 
-        if isinstance(kids, PdfArray):
-            self._budget.check(
-                len(kids.items),
-                "max_container_items",
-                "form field child entries",
-            )
-            for kid_ref in kids.items:
-                self._collect_fields_rec(
-                    kid_ref,
-                    fields,
-                    full_name,
-                    ft,
-                    ff_val,
-                    v,
-                    _depth=_depth + 1,
-                    _visited=visited,
-                    _node_count=node_count,
+            if is_terminal:
+                fields[full_name] = {"value": val, "type": field_type}
+                self._budget.check(
+                    len(fields),
+                    "max_container_items",
+                    "extracted form fields",
                 )
 
-    def extract_attachment_entries(self) -> list[tuple[str, bytes, dict]]:
-        """Walk ``/Names /EmbeddedFiles``, one entry per embedded file.
-
-        Each entry is ``(name, decoded_bytes, metadata)``. *metadata* mirrors the
-        keys written by ``_sync_attachments_to_cos`` and may carry ``mime`` (from
-        the embedded file ``/Subtype``), ``description`` (the Filespec ``/Desc``)
-        and ``creation_date`` / ``mod_date`` (:class:`datetime.datetime`, parsed
-        from the embedded file ``/Params``). Absent fields are omitted.
-        """
-        from .cos import (
-            PdfDictionary,
-            PdfIndirectReference,
-            PdfName,
-            PdfStream,
-            PdfString,
-        )
-
-        entries: list[tuple[str, bytes, dict]] = []
-
-        # 1. Get Catalog
-        catalog = self._resolve(self._doc.trailer.mapping.get(PdfName("Root")))
-        if not isinstance(catalog, PdfDictionary):
-            return entries
-
-        # 2. Get Names
-        names = self._resolve(catalog.mapping.get(PdfName("Names")))
-        if not isinstance(names, PdfDictionary):
-            return entries
-
-        # 3. Get EmbeddedFiles
-        emb_files = self._resolve(names.mapping.get(PdfName("EmbeddedFiles")))
-        if not isinstance(emb_files, PdfDictionary):
-            return entries
-
-        # 4. Collect the tree's leaves as a flat [key, value, ...] list.
-        items = self._collect_name_tree_entries(emb_files)
-        for i in range(0, len(items), 2):
-            if i + 1 >= len(items):
-                break
-
-            key_obj = self._resolve(items[i])
-            val_obj = self._resolve(items[i + 1])
-
-            filename = ""
-            if isinstance(key_obj, PdfString):
-                filename = decode_pdf_text_string(key_obj)
-
-            if not filename or not isinstance(val_obj, PdfDictionary):
-                continue
-
-            # 5. Process FileSpec — /EF may use /F, /UF, or platform variants
-            ef = self._resolve(val_obj.mapping.get(PdfName("EF")))
-            if not isinstance(ef, PdfDictionary):
-                continue
-
-            f_ref = None
-            f_stream = None
-            for ef_key in (
-                PdfName("F"),
-                PdfName("UF"),
-                PdfName("Unix"),
-                PdfName("Mac"),
-                PdfName("DOS"),
-            ):
-                cand_raw = ef.mapping.get(ef_key)
-                cand = self._resolve(cand_raw)
-                if isinstance(cand, PdfStream):
-                    f_ref = (
-                        cand_raw
-                        if isinstance(cand_raw, PdfIndirectReference)
-                        else None
+            if isinstance(kids, PdfArray):
+                self._budget.check(
+                    len(kids.items),
+                    "max_container_items",
+                    "form field child entries",
+                )
+                for kid_ref in kids.items:
+                    self._collect_fields_rec(
+                        kid_ref,
+                        fields,
+                        full_name,
+                        ft,
+                        ff_val,
+                        v,
+                        _depth=_depth + 1,
+                        _visited=visited,
+                        _node_count=node_count,
                     )
-                    f_stream = cand
+
+        def extract_attachment_entries(self) -> list[tuple[str, bytes, dict]]:
+            """Walk ``/Names /EmbeddedFiles``, one entry per embedded file.
+
+            Each entry is ``(name, decoded_bytes, metadata)``. *metadata* mirrors the
+            keys written by ``_sync_attachments_to_cos`` and may carry ``mime`` (from
+            the embedded file ``/Subtype``), ``description`` (the Filespec ``/Desc``)
+            and ``creation_date`` / ``mod_date`` (:class:`datetime.datetime`, parsed
+            from the embedded file ``/Params``). Absent fields are omitted.
+            """
+            from .cos import (
+                PdfDictionary,
+                PdfIndirectReference,
+                PdfName,
+                PdfStream,
+                PdfString,
+            )
+
+            entries: list[tuple[str, bytes, dict]] = []
+
+            # 1. Get Catalog
+            catalog = self._resolve(self._doc.trailer.mapping.get(PdfName("Root")))
+            if not isinstance(catalog, PdfDictionary):
+                return entries
+
+            # 2. Get Names
+            names = self._resolve(catalog.mapping.get(PdfName("Names")))
+            if not isinstance(names, PdfDictionary):
+                return entries
+
+            # 3. Get EmbeddedFiles
+            emb_files = self._resolve(names.mapping.get(PdfName("EmbeddedFiles")))
+            if not isinstance(emb_files, PdfDictionary):
+                return entries
+
+            # 4. Collect the tree's leaves as a flat [key, value, ...] list.
+            items = self._collect_name_tree_entries(emb_files)
+            for i in range(0, len(items), 2):
+                if i + 1 >= len(items):
                     break
 
-            if not isinstance(f_stream, PdfStream):
-                continue
+                key_obj = self._resolve(items[i])
+                val_obj = self._resolve(items[i + 1])
 
-            data = self._decode_stream(
-                f_stream,
-                f_ref if isinstance(f_ref, PdfIndirectReference) else None,
+                filename = ""
+                if isinstance(key_obj, PdfString):
+                    filename = decode_pdf_text_string(key_obj)
+
+                if not filename or not isinstance(val_obj, PdfDictionary):
+                    continue
+
+                # 5. Process FileSpec — /EF may use /F, /UF, or platform variants
+                ef = self._resolve(val_obj.mapping.get(PdfName("EF")))
+                if not isinstance(ef, PdfDictionary):
+                    continue
+
+                f_ref = None
+                f_stream = None
+                for ef_key in (
+                    PdfName("F"),
+                    PdfName("UF"),
+                    PdfName("Unix"),
+                    PdfName("Mac"),
+                    PdfName("DOS"),
+                ):
+                    cand_raw = ef.mapping.get(ef_key)
+                    cand = self._resolve(cand_raw)
+                    if isinstance(cand, PdfStream):
+                        f_ref = (
+                            cand_raw
+                            if isinstance(cand_raw, PdfIndirectReference)
+                            else None
+                        )
+                        f_stream = cand
+                        break
+
+                if not isinstance(f_stream, PdfStream):
+                    continue
+
+                data = self._decode_stream(
+                    f_stream,
+                    f_ref if isinstance(f_ref, PdfIndirectReference) else None,
+                )
+                entries.append(
+                    (filename, data, self._read_filespec_meta(val_obj, f_stream))
+                )
+
+            return entries
+
+        def _collect_name_tree_entries(self, root: Any) -> list:
+            """Return a name tree's leaves as a flat ``[key, value, ...]`` list."""
+            return collect_name_tree_entries(root, self._resolve, self._budget)
+
+        def _read_filespec_meta(self, filespec: Any, ef_stream: Any) -> dict:
+            """Read typed metadata from a ``/Filespec`` and its ``/EmbeddedFile`` stream.
+
+            Reverses ``_sync_attachments_to_cos``: the MIME ``/Subtype`` on the
+            embedded file stream, the ``/Desc`` on the file specification, and the
+            ``/CreationDate`` / ``/ModDate`` in the stream's ``/Params``.
+            """
+            from .cos import PdfDictionary, PdfName, PdfString
+
+            meta: dict = {}
+
+            mime = _decode_mime_name(
+                self._resolve(ef_stream.mapping.get(PdfName("Subtype")))
             )
-            entries.append(
-                (filename, data, self._read_filespec_meta(val_obj, f_stream))
-            )
+            # "application/octet-stream" is what PDF/A-3 6.8 and PDF/A-4 6.9 say to
+            # write when the type is not known, and it is what this library writes
+            # for an attachment added without one -- so it carries no more
+            # information than an absent /Subtype and is reported the same way,
+            # exactly as "Unspecified" is for /AFRelationship below.
+            if mime and mime != "application/octet-stream":
+                meta["mime"] = mime
 
-        return entries
+            desc = self._resolve(filespec.mapping.get(PdfName("Desc")))
+            if isinstance(desc, PdfString):
+                text = decode_pdf_text_string(desc)
+                if text:
+                    meta["description"] = text
 
-    def _collect_name_tree_entries(self, root: Any) -> list:
-        """Return a name tree's leaves as a flat ``[key, value, ...]`` list."""
-        return collect_name_tree_entries(root, self._resolve, self._budget)
+            rel = self._resolve(filespec.mapping.get(PdfName("AFRelationship")))
+            if isinstance(rel, PdfName):
+                rel_name = rel.name.lstrip("/")
+                # "Unspecified" is the default; surface only a meaningful relationship.
+                if rel_name and rel_name != "Unspecified":
+                    meta["relationship"] = rel_name
 
-    def _read_filespec_meta(self, filespec: Any, ef_stream: Any) -> dict:
-        """Read typed metadata from a ``/Filespec`` and its ``/EmbeddedFile`` stream.
+            params = self._resolve(ef_stream.mapping.get(PdfName("Params")))
+            if isinstance(params, PdfDictionary):
+                for date_key, meta_key in (
+                    ("CreationDate", "creation_date"),
+                    ("ModDate", "mod_date"),
+                ):
+                    raw = self._resolve(params.mapping.get(PdfName(date_key)))
+                    if isinstance(raw, PdfString):
+                        parsed = _parse_pdf_date(decode_pdf_text_string(raw))
+                        if parsed is not None:
+                            meta[meta_key] = parsed
+            return meta
 
-        Reverses ``_sync_attachments_to_cos``: the MIME ``/Subtype`` on the
-        embedded file stream, the ``/Desc`` on the file specification, and the
-        ``/CreationDate`` / ``/ModDate`` in the stream's ``/Params``.
-        """
-        from .cos import PdfDictionary, PdfName, PdfString
+        def extract_attachments(self) -> dict[str, bytes]:
+            """Return ``{name: bytes}`` for every embedded file.
 
-        meta: dict = {}
-
-        mime = _decode_mime_name(
-            self._resolve(ef_stream.mapping.get(PdfName("Subtype")))
-        )
-        # "application/octet-stream" is what PDF/A-3 6.8 and PDF/A-4 6.9 say to
-        # write when the type is not known, and it is what this library writes
-        # for an attachment added without one -- so it carries no more
-        # information than an absent /Subtype and is reported the same way,
-        # exactly as "Unspecified" is for /AFRelationship below.
-        if mime and mime != "application/octet-stream":
-            meta["mime"] = mime
-
-        desc = self._resolve(filespec.mapping.get(PdfName("Desc")))
-        if isinstance(desc, PdfString):
-            text = decode_pdf_text_string(desc)
-            if text:
-                meta["description"] = text
-
-        rel = self._resolve(filespec.mapping.get(PdfName("AFRelationship")))
-        if isinstance(rel, PdfName):
-            rel_name = rel.name.lstrip("/")
-            # "Unspecified" is the default; surface only a meaningful relationship.
-            if rel_name and rel_name != "Unspecified":
-                meta["relationship"] = rel_name
-
-        params = self._resolve(ef_stream.mapping.get(PdfName("Params")))
-        if isinstance(params, PdfDictionary):
-            for date_key, meta_key in (
-                ("CreationDate", "creation_date"),
-                ("ModDate", "mod_date"),
-            ):
-                raw = self._resolve(params.mapping.get(PdfName(date_key)))
-                if isinstance(raw, PdfString):
-                    parsed = _parse_pdf_date(decode_pdf_text_string(raw))
-                    if parsed is not None:
-                        meta[meta_key] = parsed
-        return meta
-
-    def extract_attachments(self) -> dict[str, bytes]:
-        """Return ``{name: bytes}`` for every embedded file.
-
-        See :meth:`extract_attachment_entries` for the metadata-aware variant.
-        """
-        return {name: data for name, data, _meta in self.extract_attachment_entries()}
+            See :meth:`extract_attachment_entries` for the metadata-aware variant.
+            """
+            return {name: data for name, data, _meta in self.extract_attachment_entries()}
 
 class PageCollection:
     """Collection wrapper for pages in SimplePdf."""
