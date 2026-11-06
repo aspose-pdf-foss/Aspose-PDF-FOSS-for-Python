@@ -6815,6 +6815,70 @@ class Document:
                     self._import_pages_from(doc)
         return self
 
+    def append(self, other: Document) -> Document:
+        """Append all pages from another document to this one.
+
+        This method provides a simple, intuitive way to concatenate PDF documents
+        by appending all pages from the source document to the end of this document.
+
+        The source document remains unchanged and can be used independently after
+        the append operation.
+
+        Parameters
+        ----------
+        other : Document
+            The document whose pages should be appended. Must be a valid Document
+            instance that has not been disposed.
+
+        Returns
+        -------
+        Document
+            This document (self), allowing for method chaining.
+
+        Raises
+        ------
+        TypeError
+            If *other* is not a Document instance.
+        PdfValidationException
+            If *other* has been disposed or is otherwise invalid.
+
+        Examples
+        --------
+        Basic concatenation::
+
+            from aspose_pdf import Document
+
+            with Document("first.pdf") as doc1:
+                with Document("second.pdf") as doc2:
+                    doc1.append(doc2)
+                    doc1.save("combined.pdf")
+
+        Method chaining::
+
+            with Document("main.pdf") as doc:
+                for extra in ["append1.pdf", "append2.pdf", "append3.pdf"]:
+                    with Document(extra) as append_doc:
+                        doc.append(append_doc)
+                doc.save("full_document.pdf")
+
+        Notes
+        -----
+        - All pages, resources, annotations, form fields, and bookmarks from
+          the source document are imported.
+        - The source document remains independent and can be disposed or reused.
+        - Page numbers in the target document are updated to accommodate the
+          newly appended pages.
+        """
+        self._ensure_not_disposed()
+        if not isinstance(other, Document):
+            raise TypeError("other must be a Document instance")
+        other._ensure_not_disposed()
+
+        if other._engine_pdf is not None:
+            self._import_pages_from(other)
+
+        return self
+
     def _import_pages_from(
         self,
         other: Document,
