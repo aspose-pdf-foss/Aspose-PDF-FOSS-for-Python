@@ -53,6 +53,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   authors, dates and reply threads with page/type filters. Teams can hand off
   review data without copying the full PDF or manually re-entering comments.
 
+- **Public API for PDF document comparison and diff generation.** Added the `aspose_pdf.comparison` module with:
+  - `DocumentComparison` class for high-level comparison results
+  - `ContentChange` dataclass for individual changes between documents  
+  - `ChangeType` class with constants for change categories (added, deleted, modified, added_page, deleted_page, modified_page)
+  - Methods: `compare_text()`, `compare_visual()`, `compare()` for easy comparison
+  - Export methods: `export_json()` and `export_html()` for review workflows
+  - Helper methods: `get_changed_pages()`, `get_additions()`, `get_deletions()`, `get_modifications()`, `has_changes()`
+  - Integrates with existing low-level `compare_text()` and `compare_visual()` methods
+
 - **Download rendered PDF pages as one image archive.**
   `Document.export_pages_zip()` packages selected views as PNG, JPEG or optional
   WebP, with configurable resolution/color and an optional page manifest.

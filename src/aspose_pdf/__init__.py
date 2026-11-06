@@ -174,6 +174,7 @@ from .viewer_preferences import (
     ReadingDirection,
     ViewerPreferences,
 )
+from .comparison import ChangeType, ContentChange, DocumentComparison
 from .visual_comparison import PageVisualComparison
 from .visualization import RasterizedPage
 from .xmp import (
@@ -280,6 +281,9 @@ __all__ = [
     "PageStamp",
     "PageTextComparison",
     "PageVisualComparison",
+    "ContentChange",
+    "DocumentComparison",
+    "ChangeType",
     "Paragraph",
     "PdfAValidateOptions",
     "PdfAValidationResult",
