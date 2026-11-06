@@ -19480,6 +19480,32 @@ class SimplePdf:
         flush_all()
         return bytes(out) if changed else None
 
+    def extract_images(self) -> dict[str, bytes]:
+        """Return all cached images from the document.
+
+        Returns a dict mapping image resource names (e.g., "Im1") to their
+        decoded byte data. If no images have been extracted yet, returns an
+        empty dict.
+
+        This method is used by the high-level API (Document.extract_images,
+        Page.extract_images) to retrieve image data.
+        """
+        if hasattr(self, "_cached_images"):
+            return self._cached_images
+        return {}
+
+    def extract_images_per_page(self) -> dict[int, list[str]]:
+        """Return a mapping of page indices to image resource names.
+
+        The mapping is 0-based: key is the zero-based page index, value is
+        the list of image resource names on that page.
+
+        If no page-image mapping has been computed yet, returns an empty dict.
+        """
+        if hasattr(self, "_cached_pmap"):
+            return self._cached_pmap
+        return {}
+
 # ---------------------------------------------------------------------------
 # COS Extractor — extracts high-level data from PdfDocument COS graph
 # ---------------------------------------------------------------------------

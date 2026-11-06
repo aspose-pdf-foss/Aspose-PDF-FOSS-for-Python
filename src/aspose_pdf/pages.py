@@ -12,6 +12,7 @@ from aspose_pdf.actions import PAGE_TRIGGERS, ActionCollection
 from aspose_pdf.annotations import AnnotationCollection
 from aspose_pdf.color import ColorValue
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.images import Image
 from aspose_pdf.page_size import PageSize
 from aspose_pdf.paths import GraphicsPath
 from aspose_pdf.viewer_preferences import PageBoundary
@@ -1741,8 +1742,6 @@ class Page:
             page = Page.from_image(doc, "chart.jpg", size=(400, 600))
         """
         from aspose_pdf.engine.content_authoring import prepare_image
-        from aspose_pdf.engine.image_import import pillow_image_format
-        from aspose_pdf.engine.simple_pdf import _LoadBudget
 
         document._ensure_not_disposed()
         eng = document._engine_pdf

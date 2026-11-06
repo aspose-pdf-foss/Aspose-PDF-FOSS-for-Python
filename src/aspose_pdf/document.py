@@ -49,6 +49,7 @@ from aspose_pdf.exceptions import (
     PdfValidationException,
 )
 from aspose_pdf.font_substitution import FontSubstitutionOptions
+from aspose_pdf.images import Image
 from aspose_pdf.layers import LayerCollection
 from aspose_pdf.load_limits import (
     PdfLoadLimits,
@@ -2994,8 +2995,6 @@ class Document:
         (e.g., a JPEG payload from a ``DCTDecode`` image), use the engine's
         :meth:`~aspose_pdf.engine.simple_pdf.SimplePdf.extract_images` directly.
         """
-        from aspose_pdf.images import Image
-
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             return []

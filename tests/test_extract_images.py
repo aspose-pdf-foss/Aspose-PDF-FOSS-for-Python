@@ -142,9 +142,11 @@ class TestExtractImages:
         
         doc = Document()
         doc._engine_pdf = pdf
+        # Get the page before disposal
+        page = doc.pages[1]
+        # Now dispose the document
         doc.dispose()
         
-        page = doc.pages[1]
         with pytest.raises(Exception):
             page.extract_images()
 
