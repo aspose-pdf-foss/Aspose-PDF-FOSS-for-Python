@@ -3135,6 +3135,89 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    def import_links_json(
+        self,
+        source: str | bytes | bytearray | BinaryIO,
+        *,
+        page_map: Mapping[int, int] | None = None,
+    ) -> int:
+        """Import links from a JSON report and return the number added.
+
+        Accepts UTF-8 bytes, a path or a readable binary stream. Streams are
+        read from their current position and left open. ``page_map`` maps
+        one-based source page indices to existing destination pages; every
+        used source page must be mapped. Without it, page indices are retained
+        and must exist in the destination document.
+
+        The JSON schema matches :meth:`export_links_json` output:
+        ``{"schema_version": 2, "links": [...]}``.
+
+        Each link record may contain:
+        - ``page_index`` (1-based): the source page for the link
+        - ``uri``: URL for URI actions
+        - ``destination``: a typed page view ``{page_index, view, parameters}``
+        - ``file``: remote file path for GoToR actions
+        - ``named_action``: named action like "NextPage"
+        - Other fields from the export are accepted but ignored.
+
+        Supported actions are URI, GoTo, GoToR, Named, and links inferred from
+        destination fields. JavaScript, Launch and SubmitForm are not created
+        automatically; use the engine API for those.
+
+        Existing annotations are preserved and repeat imports append duplicates.
+        All JSON, property, page and relationship checks finish before any
+        annotation is added. Malformed/unsupported data and resource-limit
+        failures leave annotations unchanged. Limits follow :attr:`load_limits`.
+
+        Returns the count of successfully imported link annotations.
+        """
+        from aspose_pdf.engine.link_import import from_json
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return from_json(
+            self, source, page_map=page_mapping(page_map, self.page_count, limits=self.load_limits)
+        )
+
+    def import_links_csv(
+        self,
+        source: str | bytes | bytearray | BinaryIO,
+        *,
+        page_map: Mapping[int, int] | None = None,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+    ) -> int:
+        """Import links from a CSV report and return the number added.
+
+        Accepts a path, bytes or a readable binary stream, with the page mapping
+        and append-only behavior of :meth:`import_links_json`. The CSV schema
+        matches :meth:`export_links_csv` output with columns:
+        ``page_number``, ``annotation_index``, ``action_type``, ``uri``,
+        ``target_page_number``, ``file``, ``named_action``, ``destination_view``,
+        ``destination_parameters``, ``x0``, ``y0``, ``x1``, ``y1``.
+
+        ``page_map`` maps one-based source ``page_number`` to existing destination
+        pages. ``delimiter`` and ``encoding`` follow the ``csv`` module.
+
+        Supported actions are URI, GoTo, GoToR, and Named. Links are inferred
+        from destination fields. Existing annotations are preserved and repeat
+        imports append duplicates. All checks finish before any annotation is
+        added. Resource limits and CSV parsing errors are handled atomically.
+        Limits follow :attr:`load_limits`.
+
+        Returns the count of successfully imported link annotations.
+        """
+        from aspose_pdf.engine.link_import import from_csv
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return from_csv(
+            self, source, page_map=page_mapping(page_map, self.page_count, limits=self.load_limits),
+            delimiter=delimiter, encoding=encoding
+        )
+
     @page_api(selections=("pages",))
     def replace_link_urls(
         self,
