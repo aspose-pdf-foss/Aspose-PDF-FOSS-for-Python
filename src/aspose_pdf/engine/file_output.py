@@ -30,7 +30,7 @@ _STAGING_ATTEMPTS = 16
 _Result = TypeVar("_Result")
 
 
-def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> None:
+def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> Path:
     """Replace *path* with *data*, all at once or not at all.
 
     The bytes go to a new file in the target's own directory -- the same
@@ -52,8 +52,15 @@ def write_file_atomically(path: str | os.PathLike[str], data: bytes) -> None:
     What cannot be kept: a replaced file is a new inode, so other **hard
     links** to the old one keep the old content. If the directory cannot hold
     a staging file, the write fails without touching the target.
+
+    Returns
+    -------
+    pathlib.Path
+        The path that was written (after resolving symlinks).
     """
+    result_path = Path(os.path.realpath(path))
     _write_file(path, lambda handle: handle.write(data))
+    return result_path
 
 
 def write_file_chunks_atomically(

@@ -57,8 +57,14 @@ class FileSpecification:
         """The size of :attr:`contents` in bytes."""
         return len(self.contents)
 
-    def save(self, path: str | Path) -> None:
-        """Write the decoded attachment bytes to *path*, replacing it in one step."""
+    def save(self, path: str | Path) -> Path:
+        """Write the decoded attachment bytes to *path*, replacing it in one step.
+
+        Returns
+        -------
+        pathlib.Path
+            The path that was written (after resolving symlinks).
+        """
         from aspose_pdf.engine.file_output import write_file_atomically
 
-        write_file_atomically(path, self.contents)
+        return write_file_atomically(path, self.contents)
