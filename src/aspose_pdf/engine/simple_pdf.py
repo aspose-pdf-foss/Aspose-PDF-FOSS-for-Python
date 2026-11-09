@@ -3758,15 +3758,13 @@ class SimplePdf:
         root.mapping[PdfName("Outlines")] = outline_root_ref
 
     def _sync_pages_to_cos(self) -> None:
-        """Append any Python-level pages that are not yet in the COS document.
+        """Sync Python-level pages to the COS document.
 
-        The condition used to be that the COS document already had pages, on
-        the grounds that a document with no page tree would crash the page
-        builder. But a *salvaged* document has a page tree -- an empty one --
-        and pages in the model that belong in it, and the guard refused those
-        too: the file came out with ``/Count 0`` while the model claimed a
-        page, so a document repaired from a truncated file saved with nothing
-        in it. What decides is whether there is a tree to add to.
+        Creates any pages that are not yet in the COS document, and updates the
+        ``/Contents`` of existing pages to match the current ``page_contents``
+        if they differ. This ensures that edits made to pages (e.g., via
+        :meth:`_append_content_to_page`) are properly reflected in the COS
+        before serialization.
         """
         if not self._cos_doc:
             return
@@ -3776,11 +3774,66 @@ class SimplePdf:
         tree = self._resolve(root.mapping.get(PdfName("Pages")))
         if not isinstance(tree, PdfDictionary):
             return
+
         cos_page_count = len(getattr(self, "_page_obj_ids", []))
+
+        # Create new pages that don't exist in the COS yet
         for i in range(cos_page_count, len(self.pages)):
             rect = self.pages[i]
             content = self.page_contents[i] if i < len(self.page_contents) else b""
             self._create_cos_page(i, rect, content)
+
+        # Update /Contents for existing pages if page_contents has been edited
+        # and differs from what's in the COS
+        for i in range(min(cos_page_count, len(self.pages))):
+            if i < len(self.page_contents) and self.page_contents[i]:
+                # Read the current COS /Contents to check if it needs updating
+                page = self._get_page_dict(i)
+                if not isinstance(page, PdfDictionary):
+                    continue
+
+                contents_key = PdfName("Contents")
+                existing_entry = page.mapping.get(contents_key)
+
+                # Get the content that should be in the page
+                should_be_content = self.page_contents[i]
+
+                # If the COS /Contents is empty or doesn't match, update it
+                # We compare by checking if we need to update - if page_contents
+                # has content but COS doesn't, or they differ significantly
+                needs_update = False
+                if existing_entry is None:
+                    needs_update = True
+                else:
+                    # Check if the content matches by reading the decoded content
+                    current_cos_content = self.get_page_content(i)
+                    if current_cos_content != should_be_content:
+                        needs_update = True
+
+                if needs_update:
+                    # Rebuild the /Contents from page_contents
+                    # First remove the old /Contents reference
+                    if existing_entry is not None:
+                        old_content = self._resolve(existing_entry)
+                        # If it's a single stream, remove it; if it's an array, we'll replace it
+                        if isinstance(old_content, PdfStream):
+                            # The stream object will be orphaned; that's fine for save
+                            pass
+
+                    # Create a new content stream with the current page_contents
+                    content_stream = PdfStream(
+                        mapping={}, content=should_be_content
+                    )
+                    content_ref = self._cos_doc.register_object(content_stream)
+                    page.mapping[contents_key] = content_ref
+
+                    # Update _content_obj_ids if present
+                    if hasattr(self, "_content_obj_ids"):
+                        if i < len(self._content_obj_ids):
+                            self._content_obj_ids[i] = content_ref.object_number
+                        else:
+                            self._content_obj_ids.append(content_ref.object_number)
+
         self._page_cache_valid = False
 
     def _drop_removed_info_entries(self, info_dict: PdfDictionary) -> None:

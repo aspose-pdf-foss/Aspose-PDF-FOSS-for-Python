@@ -6742,6 +6742,30 @@ class Document:
             raise
         return result
 
+    def split_pages(self) -> list[Document]:
+        """Return independent documents, one for each page.
+
+        The document is split into single-page parts in source order.
+        Every page appears exactly once. An empty document returns an
+        empty list.
+
+        Results follow :meth:`extract_pages`: retain Info metadata,
+        page resources, boxes, labels, annotations, form fields, layers
+        and tags. Relevant bookmarks retain live edits and destination
+        views; children of excluded parents are promoted. Document
+        attachments are not copied, and new parts do not inherit source
+        encryption or signature validity.
+
+        No text extraction or rendering is needed. Streaming sources
+        remain lazy while whole pages are imported one part at a time.
+        Options and result/selection limits are checked before importing;
+        each part inherits the source resource policy. The source and
+        its files are unchanged. Dispose every returned document when
+        done. Partial results are disposed and the source outline model
+        is restored if splitting fails.
+        """
+        return self.split_every(1)
+
     def n_up(
         self,
         rows: int = 2,
