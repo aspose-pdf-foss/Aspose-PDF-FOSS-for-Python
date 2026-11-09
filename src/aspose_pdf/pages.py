@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -2007,6 +2007,95 @@ class Page:
             font=font,
             layout=layout,
         )
+
+    def replace_texts(
+        self,
+        replacements: Mapping[str | re.Pattern[str], str],
+        *,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+        font: FontDescriptor | bytes | bytearray | str | Path | None = None,
+        layout: TextLayoutOptions | None = None,
+    ) -> int:
+        """Replace multiple text patterns on this page in a single call.
+
+        This is a convenience method that applies multiple text replacements
+        to the page. It is equivalent to calling :meth:`replace_text`
+        for each key-value pair in *replacements*, but more efficient as it
+        performs a single scan of the content stream.
+
+        Parameters
+        ----------
+        replacements
+            A mapping of search patterns to replacement strings. Keys may be
+            strings or compiled regex patterns; values are the replacement text.
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns.
+        max_count
+            Maximum replacements to perform across all patterns. ``0`` (default)
+            means unlimited. The count is shared across all patterns.
+        regex
+            If ``True``, all keys are treated as regular expressions. Not
+            required for compiled :class:`re.Pattern` keys.
+        font
+            Optional font descriptor for shaping complex-script replacements.
+        layout
+            Optional layout options for complex-script replacements.
+
+        Returns
+        -------
+        int
+            Total number of replacements made across all patterns.
+
+        See Also
+        --------
+        replace_text : Replace a single text pattern.
+        redact_text : Remove matching text with an optional overlay.
+
+        Examples
+        --------
+        Replace multiple strings in one call:
+
+        >>> page.replace_texts({"Old Co": "New Co", "2023": "2024"})
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> page.replace_texts(
+        ...     {re.compile(r"\\d{4}"): "2024", "Mr.": "Ms."},
+        ...     regex=True
+        ... )
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+
+        total_count = 0
+        remaining_count = max_count
+
+        for search, replacement in replacements.items():
+            # Determine if this specific pattern should use regex mode
+            use_regex = regex or isinstance(search, re.Pattern)
+            pattern_count = eng.replace_text(
+                search,
+                replacement,
+                page_index=self._index,
+                case_sensitive=case_sensitive,
+                max_count=remaining_count if remaining_count > 0 else 0,
+                regex=use_regex,
+                font=font,
+                layout=layout,
+            )
+            total_count += pattern_count
+            if remaining_count > 0:
+                remaining_count -= pattern_count
+                if remaining_count <= 0:
+                    break
+
+        return total_count
 
     def markup_text(
         self,

@@ -4397,6 +4397,53 @@ Supported:
   cmap. Vertical fonts apply CID-specific `/W2` position/displacement metrics
   and `/DW2` defaults. The bar is cosmetic — the text is already removed from
   the content — so a run whose position cannot be tracked is left unmarked.
+
+- **Replace multiple patterns in a single call.**
+  `Document.replace_texts(replacements)` and `Page.replace_texts(replacements)`
+  apply several text replacements at once, returning the total number of edits.
+  This is a convenience wrapper around `replace_text` that scans the content
+  streams once and applies all specified patterns, rather than iterating
+  manually. It supports all the same options as the single-pattern method.
+  The replacement mapping may contain strings or compiled regex patterns as
+  keys, and the same `regex`, `case_sensitive`, and complex-script shaping
+  options apply.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Replace multiple strings in one pass
+      count = document.replace_texts({
+          "Old Company": "New Company",
+          "2023": "2024",
+          "draft": "final"
+      })
+      print(f"Made {count} replacements")
+
+      # Use regex patterns for more flexibility
+      import re
+      count = document.replace_texts({
+          re.compile(r"\\d{4}"): "2024",  # Replace any 4-digit year
+          "Mr.": "Ms.",
+      }, regex=True)
+  ```
+
+  Both `Document.replace_texts` and `Page.replace_texts` accept:
+  - `replacements`: A dictionary mapping search patterns to replacement strings
+  - `page_index`: For `Document`, target a specific page (optional)
+  - `case_sensitive`: Whether matching should be case-sensitive (default True)
+  - `max_count`: Limit total replacements across all patterns (default 0, unlimited)
+  - `regex`: Treat keys as regex patterns (default False)
+  - `font` and `layout`: For complex-script shaping (optional)
+
+  `max_count` shares the limit across all patterns: if you set `max_count=10`
+  and the first pattern finds 7 matches, the remaining patterns can find at
+  most 3 more. Empty mappings return 0 without scanning the document.
+
+  Use this when you know multiple replacements are needed and want to avoid
+  repeated document scans. For single edits, `replace_text` is still the
+  direct choice.
+
 - Add positioned text to pages with Standard-14 Type1 font resources. The font
   declares `WinAnsiEncoding` and the text is written as codes in it, so accented
   letters, curly quotes, dashes, the euro sign and the rest of Latin-1 come out
