@@ -257,3 +257,45 @@ def export_report(
         else:
             write_files([(Path(destination), data)], overwrite)
     return data
+
+
+def find_text(
+    document,
+    pattern,
+    *,
+    pages,
+    regex,
+    case_sensitive,
+) -> list[str]:
+    """Return matched text strings without context or geometry.
+
+    This is a lightweight companion to :func:`search`. It performs the same
+    pattern matching but returns only the matched substrings, one per hit,
+    in document order. Use this when you only need to know *what* matched
+    and not where or how it appeared.
+
+    Args:
+        document: The document to search.
+        pattern: Search string (literal) or compiled regex pattern.
+        pages: One-based page numbers or None for all pages.
+        regex: Treat pattern as a regular expression.
+        case_sensitive: Match case exactly unless False.
+
+    Returns:
+        List of matched text strings in page order. Empty if no matches.
+
+    See Also:
+        :meth:`~aspose_pdf.Document.find_text`: The public method that wraps this.
+    """
+    budget = _LoadBudget(document.load_limits)
+    matcher, regex = _matcher(pattern, regex, case_sensitive, context_chars=0, budget=budget)
+    indexes = page_indexes(pages, document.page_count, limits=document.load_limits)
+    indexes = range(document.page_count) if indexes is None else indexes
+    texts = iter_text_pages(
+        document, pages=indexes, clip=None, skip_artifacts=False, exclude_regions=None
+    )
+    results: list[str] = []
+    for index, text in zip(indexes, texts, strict=True):
+        for match in _matches(matcher, text, regex):
+            results.append(match.group())
+    return results

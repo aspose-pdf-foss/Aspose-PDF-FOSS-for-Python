@@ -7,7 +7,6 @@ for comparing PDF documents and working with the results.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
     from aspose_pdf.visual_comparison import PageVisualComparison
 
 
-__all__ = ["ComparisonOptions", "DocumentComparison", "ContentChange", "ChangeType"]
+__all__ = ["ChangeType", "ComparisonOptions", "ContentChange", "DocumentComparison"]
 
 
 class ChangeType:
@@ -307,8 +306,8 @@ class DocumentComparison:
         Returns:
             The HTML report as a string.
         """
-        from datetime import datetime
         import html
+        from datetime import datetime
 
         html_parts = [
             "<!DOCTYPE html>\n",
@@ -387,8 +386,8 @@ class DocumentComparison:
                     other_num = (comp.other_page_index or 0) + 1
                     diff_preview = comp.unified_diff[:200] + "..." if len(comp.unified_diff) > 200 else comp.unified_diff
                     diff_escaped = html.escape(diff_preview).replace("\n", "<br>")
-                    html_parts.append(f"<div class='change modified'>\n")
-                    html_parts.append(f"<span class='change-type'>text</span>\n")
+                    html_parts.append("<div class='change modified'>\n")
+                    html_parts.append("<span class='change-type'>text</span>\n")
                     html_parts.append(f"<p>Page {page_num} vs Page {other_num}</p>\n")
                     html_parts.append(f"<div class='diff'><pre>{diff_escaped}</pre></div>\n")
                     html_parts.append("</div>\n")

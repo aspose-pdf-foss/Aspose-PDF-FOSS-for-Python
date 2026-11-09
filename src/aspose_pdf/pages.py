@@ -751,6 +751,19 @@ class Page:
             case_sensitive=case_sensitive, context_chars=context_chars,
         )
 
+    def find_text(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+    ) -> list[str]:
+        """Return matched text strings for this page; see Document.find_text."""
+        return self._document.find_text(
+            pattern, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive,
+        )
+
     def export_search_json(
         self,
         pattern: str | re.Pattern[str],

@@ -5486,6 +5486,59 @@ class Document:
             case_sensitive=case_sensitive, context_chars=context_chars,
         )
 
+    @page_api(selections=("pages",), result="records")
+    def find_text(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+    ) -> list[str]:
+        """Return matched text strings without context or geometry.
+
+        This is a lightweight companion to :meth:`search_text`. It performs
+        the same pattern matching but returns only the matched substrings,
+        one per hit, in document order. Use this when you only need to know
+        *what* matched and not where or how it appeared.
+
+        Strings are literal unless ``regex=True``; compiled text regexes
+        retain their flags. ``case_sensitive=False`` adds Python's IGNORECASE
+        semantics. Literal occurrences may overlap; regex matches follow
+        ``re.finditer``. Zero-length matches are omitted. Empty patterns
+        are rejected.
+
+        One-based ``pages`` preserves order and repeats. All options/selections
+        are checked before extraction. Only selected pages are read, without
+        filling document-wide text/content caches. Search follows ordinary text
+        extraction, including hidden-layer filtering and logical replacements;
+        it does not OCR images or search annotation/form values. Results obey
+        load limits and survive source edits/disposal without changing the PDF.
+
+        Args:
+            pattern: Text or regex pattern to search for.
+            pages: One-based page numbers, or None for all pages.
+            regex: Treat pattern as a regular expression (default: False).
+            case_sensitive: Match case exactly (default: True).
+
+        Returns:
+            List of matched text strings in page order. Empty list if none.
+
+        Example:
+            >>> matches = document.find_text("Invoice")  # returns ["Invoice", "Invoice", ...]
+            >>> # Same as search_text but without extra metadata
+            >>> exact_matches = [m.text for m in document.search_text("Invoice")]
+        """
+        from aspose_pdf.engine.text_search import find_text
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return find_text(
+            self, pattern, pages=pages, regex=regex,
+            case_sensitive=case_sensitive,
+        )
+
     @page_api(selections=("pages",))
     def export_search_json(
         self,

@@ -441,3 +441,59 @@ def test_stale_pages_and_disposed_sources_are_rejected(document):
     ):
         with pytest.raises(AsposePdfException, match="disposed"):
             method("Invoice")
+
+
+# --- Tests for find_text() ---
+
+
+def test_find_text_returns_simple_list_of_strings(document):
+    matches = document.find_text("Invoice")
+    assert isinstance(matches, list)
+    assert all(isinstance(m, str) for m in matches)
+    assert matches == ["Invoice", "Invoice", "Invoice"]
+
+
+def test_find_text_matches_search_text_behavior(document):
+    literal_matches = document.find_text("Invoice")
+    detailed = document.search_text("Invoice")
+    assert [m.text for m in detailed] == literal_matches
+
+
+def test_find_text_case_insensitive(document):
+    matches = document.find_text("invoice", case_sensitive=False)
+    assert matches == ["Invoice", "Invoice", "Invoice"]
+
+
+def test_find_text_regex(document):
+    matches = document.find_text(r"Invoice \d+", regex=True)
+    assert matches == ["Invoice 123", "Invoice 456", "Invoice 789"]
+
+
+def test_find_text_with_page_selection(document):
+    matches = document.find_text("Invoice", pages=[2])
+    assert matches == ["Invoice"]
+
+
+def test_find_text_empty_result(document):
+    matches = document.find_text("NotFound")
+    assert matches == []
+
+
+def test_find_text_no_context(document):
+    matches = document.find_text("Invoice")
+    assert matches == ["Invoice", "Invoice", "Invoice"]
+
+
+def test_find_text_page_method(document):
+    matches = document.pages[1].find_text("Invoice")
+    assert matches == ["Invoice", "Invoice"]
+
+
+def test_find_text_regex_flags():
+    with Document() as doc:
+        page = doc.pages.add()
+        page.add_text("aaa Invoice 123 invoice 456", 72, 700)
+        assert doc.find_text(re.compile(r"invoice \d+", re.I)) == [
+            "Invoice 123",
+            "invoice 456",
+        ]

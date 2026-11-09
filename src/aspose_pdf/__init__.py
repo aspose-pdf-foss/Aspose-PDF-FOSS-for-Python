@@ -30,6 +30,7 @@ from .attachments import AF_RELATIONSHIPS, FileSpecification
 from .auto_links import AutoLinkResult
 from .block_extraction import ExtractedBlock
 from .color import Color
+from .comparison import ChangeType, ContentChange, DocumentComparison
 from .destinations import NamedDestinationCollection
 from .document import Document
 from .document_fonts import DocumentFont
@@ -174,7 +175,6 @@ from .viewer_preferences import (
     ReadingDirection,
     ViewerPreferences,
 )
-from .comparison import ChangeType, ContentChange, DocumentComparison
 from .visual_comparison import PageVisualComparison
 from .visualization import RasterizedPage
 from .xmp import (
@@ -203,11 +203,14 @@ __all__ = [
     "ByteArrayDataSource",
     "Cell",
     "CertificationLevel",
+    "ChangeType",
     "CircleAnnotation",
     "Color",
+    "ContentChange",
     "DataSource",
     "Destination",
     "Document",
+    "DocumentComparison",
     "DocumentFont",
     "DuplexMode",
     "ExtractedBlock",
@@ -281,9 +284,6 @@ __all__ = [
     "PageStamp",
     "PageTextComparison",
     "PageVisualComparison",
-    "ContentChange",
-    "DocumentComparison",
-    "ChangeType",
     "Paragraph",
     "PdfAValidateOptions",
     "PdfAValidationResult",
