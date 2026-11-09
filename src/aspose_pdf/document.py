@@ -36,6 +36,7 @@ from aspose_pdf.color import ColorValue
 from aspose_pdf.destinations import NamedDestinationCollection
 from aspose_pdf.document_fonts import DocumentFont
 from aspose_pdf.engine import viewer_preferences as engine_viewer_prefs
+from aspose_pdf.engine.field_split import split_by_field_value as _split_by_field_value
 from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
@@ -6590,6 +6591,78 @@ class Document:
                 include_preamble=include_preamble,
                 clip=clip,
                 outlines=None if self._outlines is None else self._outlines._items,
+            ):
+                part = Document(limits=self._load_limits)
+                part._engine_pdf = engine
+                result.append(part)
+        except BaseException:
+            for part in result:
+                part.dispose()
+            raise
+        return result
+
+    def split_by_field_value(
+        self,
+        field_name: str,
+        *,
+        pattern: str | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        include_preamble: bool = True,
+    ) -> list[Document]:
+        """Return independent parts starting at pages whose form field value matches.
+
+        Splits the document into multiple parts based on the values of a specified
+        form field. Each unique field value (or matching pattern) creates a boundary
+        between parts. The field's widgets may appear on any subset of pages; the
+        field's value is shared across all widgets of that field.
+
+        ``field_name`` is the fully qualified field name (e.g., ``"Vendor"`` or
+        ``"Address.Country"`` for nested fields). Use :attr:`Form.keys()` to list
+        available fields.
+
+        ``pattern`` restricts boundaries to pages where the field value matches.
+        A string is a literal substring unless ``regex=True``. Compiled regular
+        expressions always use regex matching and keep their flags; ``case_sensitive=False``
+        adds ``re.IGNORECASE``. ``None`` (default) matches any field value and
+        creates a boundary whenever the value changes.
+
+        Matching is a search anywhere in the field's string representation. Field
+        values are converted to text: checkbox ``True`` becomes ``"True"``, choice
+        field selections are joined with newlines, etc. Zero-width matches count.
+        Patterns cannot be empty.
+
+        A matching page starts a new part, ending before the next matching page
+        or at the end of the PDF. Multiple matches on one page give one boundary.
+        Leading pages become a separate part unless ``include_preamble=False``.
+        No matches, including an empty document, raises ``PdfValidationException``.
+        Pages are never split internally.
+
+        Forms are read without decoding page content. The field's value is taken
+        from the field's ``/V`` entry; widget annotations are not rendered.
+        Streaming inputs are scanned one page at a time without filling the full
+        document text or content caches. Python's regex engine has no execution
+        timeout; use patterns appropriate for the input.
+
+        Results follow :meth:`extract_pages`, retaining source Info metadata
+        and relevant bookmarks, including live edits and children whose parents
+        point outside the part. Neither the source nor its files are changed.
+        Dispose each returned document when done. Partial results are disposed
+        on failure. New parts do not inherit source encryption or retain the
+        validity of existing digital signatures.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        result = []
+        try:
+            for engine in _split_by_field_value(
+                self._engine_pdf,
+                field_name,
+                pattern=pattern,
+                regex=regex,
+                case_sensitive=case_sensitive,
+                include_preamble=include_preamble,
             ):
                 part = Document(limits=self._load_limits)
                 part._engine_pdf = engine
