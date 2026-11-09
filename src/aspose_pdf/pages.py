@@ -2169,6 +2169,69 @@ class Page:
         """
         return self._document.extract_links(pages=[self.number])
 
+    def export_links_json(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return a versioned UTF-8 JSON link report, optionally writing it.
+
+        The report contains only links from this page. Schema version 2 contains
+        a ``links`` array with each inventory entry's fields and ``target_page_index``.
+        Page indices are one-based. A destination is ``{page_index, view,
+        parameters}``; its page index is remote for GoToR. Null parameters
+        and invalid targets are retained without executable action payloads.
+
+        No page content, images or appearances are decoded, and no links or
+        files are opened. Metadata and encoded output obey the document's load_limits.
+        All output is prepared before writing. Paths are replaced atomically,
+        creating parent folders; ``overwrite=False`` refuses existing files.
+        Binary streams are written at their current position with short-write
+        handling and remain open. The PDF is unchanged.
+
+        See :meth:`Document.export_links_json` for full details.
+        """
+        return self._document.export_links_json(
+            destination, pages=[self.number], overwrite=overwrite
+        )
+
+    def export_links_csv(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return CSV with one row per inventoried link target or action.
+
+        The report contains only links from this page. Selection, ordering,
+        scope and output handling match :meth:`Document.export_links_csv`.
+
+        Columns include source ``page_number`` (one-based),
+        ``annotation_index`` (zero-based), ``action_type``, ``action_path``,
+        ``uri``, ``resolved_uri``, local ``target_page_number``
+        and ``remote_page_number`` (both one-based), ``destination_name``,
+        ``destination_view``, ``destination_parameters``, ``file``,
+        ``named_action``, rectangle ``x0,y0,x1,y1`` and ``issues``.
+
+        Parameters and issues are JSON arrays within CSV cells. Other missing
+        values are empty cells. Empty selections return a header-only report.
+        Standard CSV quoting preserves delimiters, quotes, Unicode and newlines
+        with CRLF records. ``encoding="utf-8-sig"`` adds a spreadsheet BOM.
+        No optional dependencies are needed; the PDF is unchanged.
+
+        See :meth:`Document.export_links_csv` for full details.
+        """
+        return self._document.export_links_csv(
+            destination,
+            pages=[self.number],
+            delimiter=delimiter,
+            encoding=encoding,
+            overwrite=overwrite,
+        )
+
     def replace_link_urls(
         self,
         search: str | re.Pattern[str],

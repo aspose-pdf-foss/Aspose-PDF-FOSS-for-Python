@@ -1101,10 +1101,20 @@ with Document("manual.pdf") as document:
               link.resolved_uri, link.target_page_index, link.file, link.issues)
     document.export_links_csv("links.csv", encoding="utf-8-sig")
     document.export_links_json("links.json")
+
+# Or inspect a single page:
+with Document("manual.pdf") as document:
+    page = document.pages[1]
+    for link in page.extract_links():
+        print(link.page_index, link.rect, link.action_type,
+              link.resolved_uri, link.target_page_index, link.file, link.issues)
+    page.export_links_csv("page1_links.csv", encoding="utf-8-sig")
+    page.export_links_json("page1_links.json")
 ```
 
 Audit outbound URLs, locate internal navigation and prepare link migrations
 without clicking through the PDF. `Page.extract_links()` inspects one page.
+`Page.export_links_json()` and `Page.export_links_csv()` export a report for that page.
 Reports include direct targets and action chains, retain invalid targets with
 diagnostic codes, and remain usable after the document is closed. Source page numbers are one-based;
 annotation indices remain zero-based. Relative URLs use the catalog URI Base
@@ -2364,7 +2374,9 @@ and delete workflows. 277 public types are organized by module below.
 - `Document.extract_links(pages=None)` / `Page.extract_links()` return
   `list[ExtractedLink]` for link auditing, navigation review and content migrations.
 - `Document.export_links_json(destination=None, pages=None, overwrite=True)` /
-  `export_links_csv(destination=None, pages=None, delimiter=",", encoding="utf-8", overwrite=True)`
+  `Page.export_links_json(destination=None, overwrite=True)` /
+  `Document.export_links_csv(destination=None, pages=None, delimiter=",", encoding="utf-8", overwrite=True)` /
+  `Page.export_links_csv(destination=None, delimiter=",", encoding="utf-8", overwrite=True)`
   return report bytes and optionally save them to a file or binary stream.
 - `Document.validate_links(pages=None, include_outlines=True, include_named_destinations=True)` /
   `Page.validate_links()` return `list[LinkValidationIssue]` without editing the PDF.

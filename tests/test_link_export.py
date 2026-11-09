@@ -315,3 +315,180 @@ def test_disposed_documents_and_malformed_containers_are_reported(document, repo
     document.dispose()
     with pytest.raises(AsposePdfException, match="disposed"):
         export()
+
+
+@pytest.mark.parametrize("report", ["json", "csv"])
+def test_page_level_export_returns_only_links_from_that_page(document, report):
+    """Page.export_links_json/csv should only include links from that page."""
+    page1 = document.pages[1]
+    page2 = document.pages[2]
+    page3 = document.pages[3]
+
+    # Page 1 has 2 links, Page 2 has 3 links, Page 3 has 1 link
+    export_page1 = getattr(page1, f"export_links_{report}")
+    data_page1 = export_page1()
+
+    export_page2 = getattr(page2, f"export_links_{report}")
+    data_page2 = export_page2()
+
+    export_page3 = getattr(page3, f"export_links_{report}")
+    data_page3 = export_page3()
+
+    if report == "json":
+        records_page1 = json.loads(data_page1)["links"]
+        records_page2 = json.loads(data_page2)["links"]
+        records_page3 = json.loads(data_page3)["links"]
+
+        # Page 1 has 2 links
+        assert len(records_page1) == 2
+        assert all(r["page_index"] == 1 for r in records_page1)
+        # Page 2 has 3 links
+        assert len(records_page2) == 3
+        assert all(r["page_index"] == 2 for r in records_page2)
+        # Page 3 has 1 link
+        assert len(records_page3) == 1
+        assert all(r["page_index"] == 3 for r in records_page3)
+    else:
+        rows_page1 = _rows(data_page1)
+        rows_page2 = _rows(data_page2)
+        rows_page3 = _rows(data_page3)
+
+        # Page 1 has 2 links
+        assert len(rows_page1) == 2
+        assert all(r["page_number"] == "1" for r in rows_page1)
+        # Page 2 has 3 links
+        assert len(rows_page2) == 3
+        assert all(r["page_number"] == "2" for r in rows_page2)
+        # Page 3 has 1 link
+        assert len(rows_page3) == 1
+        assert all(r["page_number"] == "3" for r in rows_page3)
+
+
+@pytest.mark.parametrize("report", ["json", "csv"])
+def test_page_level_export_matches_document_export_for_single_page(document, report):
+    """Page-level export should match Document export for a single page."""
+    page = document.pages[2]
+
+    page_export = getattr(page, f"export_links_{report}")()
+    doc_export = getattr(document, f"export_links_{report}")(pages=[2])
+
+    assert page_export == doc_export
+
+
+@pytest.mark.parametrize("report", ["json", "csv"])
+def test_page_level_export_with_destination(tmp_path, document, report):
+    """Page-level export should support writing to a file path."""
+    page = document.pages[2]
+    target = tmp_path / f"page2_links.{report}"
+
+    export = getattr(page, f"export_links_{report}")
+    expected = export()
+    assert export(target, overwrite=False) == expected == target.read_bytes()
+
+
+@pytest.mark.parametrize("report", ["json", "csv"])
+def test_page_level_export_with_stream(tmp_path, document, report):
+    """Page-level export should support writing to a binary stream."""
+    page = document.pages[2]
+
+    export = getattr(page, f"export_links_{report}")
+    expected = export()
+
+    with io.BytesIO() as stream:
+        stream.seek(0, io.SEEK_END)
+        assert export(stream) == expected
+        assert not stream.closed
+        # Stream should be at the end after writing
+        stream.seek(0)
+        assert stream.read() == expected
+
+
+@pytest.mark.parametrize("report", ["json", "csv"])
+def test_page_level_export_does_not_change_the_serialized_pdf(document, report):
+    """Page-level export should not modify the document."""
+    page = document.pages[2]
+    before = _saved(document)
+
+    getattr(page, f"export_links_{report}")()
+
+    assert _saved(document) == before
+
+
+@pytest.mark.parametrize("report", ["json", "csv"])
+def test_page_level_export_with_invalid_page(document, report):
+    """Page-level export should handle invalid page selections."""
+    # Create a document with only 2 pages
+    with Document() as doc:
+        doc.pages.add()
+        doc.pages.add()
+        doc.pages[1].add_link(RECT, URIAction("https://example.com"))
+
+        page = doc.pages[1]
+        export = getattr(page, f"export_links_{report}")
+
+        # Export should work normally
+        data = export()
+        if report == "json":
+            assert len(json.loads(data)["links"]) == 1
+        else:
+            assert len(_rows(data)) == 1
+
+        # Page 2 has no links, but export should still succeed with empty result
+        page2 = doc.pages[2]
+        data2 = getattr(page2, f"export_links_{report}")()
+        if report == "json":
+            assert json.loads(data2)["links"] == []
+        else:
+            assert _rows(data2) == []
+
+
+def test_page_level_export_csv_options(document):
+    """Page-level CSV export should support delimiter and encoding options."""
+    page = document.pages[1]
+
+    # Test custom delimiter
+    data_semicolon = page.export_links_csv(delimiter=";")
+    rows_semicolon = _rows(data_semicolon, delimiter=";")
+    assert len(rows_semicolon) > 0
+
+    # Test custom encoding
+    data_utf16 = page.export_links_csv(encoding="utf-16")
+    rows_utf16 = _rows(data_utf16, encoding="utf-16")
+    assert len(rows_utf16) > 0
+
+
+def test_page_level_export_json_overwrite(document, tmp_path):
+    """Page-level JSON export should respect overwrite parameter."""
+    page = document.pages[1]
+    target = tmp_path / "page_links.json"
+
+    # First export should succeed
+    page.export_links_json(target)
+
+    # Second export with overwrite=False should fail
+    with pytest.raises(FileExistsError):
+        page.export_links_json(target, overwrite=False)
+
+    # Second export with overwrite=True should succeed
+    page.export_links_json(target, overwrite=True)
+    assert target.exists()
+
+
+def test_page_level_export_invalid_overwrite(document):
+    """Page-level JSON export should validate overwrite parameter."""
+    page = document.pages[1]
+
+    with pytest.raises(PdfValidationException, match="overwrite"):
+        page.export_links_json(overwrite="yes")
+
+
+def test_page_level_export_disposed(document):
+    """Page-level export should report disposed documents."""
+    page = document.pages[1]
+    document.dispose()
+
+    with pytest.raises(AsposePdfException, match="disposed"):
+        page.export_links_json()
+
+    with pytest.raises(AsposePdfException, match="disposed"):
+        page.export_links_csv()
