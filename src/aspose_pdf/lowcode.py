@@ -47,6 +47,7 @@ from aspose_pdf.load_limits import (
     _read_limited,
 )
 from aspose_pdf.optimization import OptimizationOptions
+from aspose_pdf.page_size import PageSize
 from aspose_pdf.permissions import Permissions
 
 __all__ = [
@@ -962,6 +963,64 @@ class ImagesToPdfOptions(PluginOptions):
         self.margin = margin
         self.single_document = single_document
         self.auto_orient = auto_orient
+
+    @property
+    def page_size(self) -> PageSize | None:
+        """The page size for output pages, or ``None`` to cut each page to its image.
+
+        Accepts a :class:`~aspose_pdf.page_size.PageSize` instance, a named size
+        (e.g. ``"A4"``, ``"letter"``), or a ``(width, height)`` tuple of numbers.
+        When ``None`` (the default), each input image becomes a page sized to fit.
+        """
+        return self._page_size
+
+    @page_size.setter
+    def page_size(self, value: Any) -> None:
+        """Set the page size with validation."""
+        if value is None:
+            self._page_size = None
+            return
+
+        # Normalize by name first (e.g., "A4", "letter", "A5")
+        if isinstance(value, str):
+            try:
+                self._page_size = PageSize.by_name(value)
+                return
+            except (KeyError, ValueError, TypeError) as ex:
+                raise PdfValidationException(
+                    f"Invalid page size name {value!r}; use a PageSize name like "
+                    '"A4", "letter", or a (width, height) pair\n'
+                    f"Original error: {ex}"
+                ) from ex
+
+        # Already a PageSize instance
+        if isinstance(value, PageSize):
+            self._page_size = value
+            return
+
+        # Tuple/sequence of (width, height)
+        if isinstance(value, (tuple, list)):
+            if len(value) != 2:
+                raise PdfValidationException(
+                    f"page_size tuple must have exactly 2 values, got {len(value)}"
+                )
+            width, height = value
+            # Validate using PageSize' own validation logic
+            try:
+                self._page_size = PageSize(float(width), float(height))
+            except (TypeError, ValueError) as ex:
+                raise PdfValidationException(
+                    f"Invalid page_size values ({width}, {height}); both must be "
+                    "finite positive numbers\n"
+                    f"Original error: {ex}"
+                ) from ex
+            return
+
+        # Unknown type
+        raise PdfValidationException(
+            f"page_size must be a PageSize, a size name like 'A4', or (width, height); "
+            f"got {type(value).__name__}"
+        )
 
 
 class ConvertOptions(PluginOptions):
