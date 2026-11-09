@@ -1410,6 +1410,38 @@ Supported:
           reversed_pages.save("reversed.pdf")
   ```
 
+- **Resolve page range strings to one-based page indices.**
+  `Document.get_page_indices(selection: str) -> tuple of int` validates a
+  range string against the document's page count and returns the selected
+  one-based page numbers. This is useful for validating page ranges before
+  extraction, UI display, or debugging.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Get the indices for validation before extraction
+      pages = document.get_page_indices("1-3,7,10-")
+      print(f"Selected {len(pages)} pages: {pages}")
+      # Use the same range for extraction
+      with document.extract_pages("1-3,7,10-") as selected:
+          selected.save("selected.pdf")
+      # Or use it for odd/even splitting
+      front_pages = document.get_page_indices("odd")
+      back_pages = document.get_page_indices("even")
+  ```
+
+  The `selection` string uses the same syntax as `extract_pages`:
+  - ``"1-3,7,10-"`` selects pages 1 through 3, page 7, and 10 through the last.
+  - ``"odd"`` and ``"even"`` select physical odd/even pages.
+  - ``"last"`` names the final page, and can be used as an endpoint.
+  - Ranges may descend, such as ``"4-2"`` for reverse order.
+  - Whitespace is ignored, and order/repeated pages are preserved.
+
+  Validation raises `PdfValidationException` for pages beyond the document
+  size, empty selections, or invalid syntax. Resource limits are applied to
+  expand large selections like ``"odd,last"``.
+
 - **Find visually blank pages, including scanned sides.**
   `Page.is_blank(dpi=72, white_threshold=250, max_ink_ratio=0,
   include_annotations=True)` returns a boolean;

@@ -6285,6 +6285,34 @@ class Document:
         result._engine_pdf = extracted
         return result
 
+    def get_page_indices(self, selection: str) -> tuple[int, ...]:
+        """Return one-based page numbers from a page range string.
+
+        *selection* is a page range string such as ``"1-3,7,10-"``. String
+        ranges include both endpoints and may descend (``"last-1"`` reverses
+        all pages); an omitted end selects through the last page.
+        ``odd`` and ``even`` select physical odd/even pages; ``last`` names
+        the final page. Order and repeated pages are retained.
+
+        This method validates the selection against the document's page count
+        and raises :exc:`PdfValidationException` if any page is out of range.
+        Use :attr:`page_count` to check the document size before resolving
+        a range.
+
+        Returns
+        -------
+        tuple of int
+            One-based page numbers in the order specified by the selection.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        from aspose_pdf.page_ranges import parse_page_range
+
+        return parse_page_range(
+            selection, self.page_count, limits=self._load_limits
+        )
+
     @page_api(selections=("pages",))
     def split_spreads(
         self,
