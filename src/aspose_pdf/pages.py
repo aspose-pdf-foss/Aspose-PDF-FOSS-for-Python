@@ -2189,6 +2189,158 @@ class Page:
             title=title,
         )
 
+    def markup_texts(
+        self,
+        patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
+        *,
+        kind: str = "highlight",
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+    ) -> TextMarkupResult:
+        """Mark multiple text patterns on this page in a single call.
+
+        This is a convenience method that applies multiple text markup patterns
+        to the page. It is equivalent to calling :meth:`markup_text`
+        for each pattern, but more efficient as it performs a single scan
+        of the content stream.
+
+        Parameters
+        ----------
+        patterns
+            A dictionary mapping search patterns to options. Each key is a string
+            or compiled regex pattern; each value is a dict of options for that
+            pattern (color, opacity, contents, title), or None for defaults.
+        kind
+            The markup kind: 'highlight', 'underline', 'strike_out', or 'squiggly'.
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns.
+        max_count
+            Maximum marks to perform across all patterns. ``0`` (default)
+            means unlimited. The count is shared across all patterns.
+        regex
+            If ``True``, all string patterns are treated as regular expressions.
+            Not required for compiled :class:`re.Pattern` keys.
+
+        Returns
+        -------
+        TextMarkupResult
+            A result object with annotations, skipped_fragments, marked_count,
+            skipped_count, and matched_count.
+
+        See Also
+        --------
+        markup_text : Mark a single text pattern.
+        highlight_texts : Highlight multiple text patterns on this page.
+
+        Examples
+        --------
+        Mark multiple patterns with different colors:
+
+        >>> page.markup_texts(
+        ...     {"review": {"color": (1, 0, 0)}, "draft": {"color": (0, 1, 0)}},
+        ...     kind="highlight"
+        ... )
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> page.markup_texts(
+        ...     {re.compile(r"\\d{4}"): {}, "Mr.": {"title": "Formal Title"}},
+        ...     kind="underline",
+        ...     regex=True
+        ... )
+
+        Limit marks:
+
+        >>> page.markup_texts(
+        ...     {"important": {}, "critical": {}},
+        ...     max_count=5,
+        ...     kind="strike_out"
+        ... )
+        """
+        return self._document.markup_texts(
+            patterns,
+            kind=kind,
+            page_index=self.number,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+        )
+
+    def highlight_texts(
+        self,
+        patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
+        *,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+    ) -> TextHighlightResult:
+        """Highlight multiple text patterns on this page in a single call.
+
+        This is a convenience method that applies multiple highlight patterns
+        to the page. It is equivalent to calling :meth:`highlight_text`
+        for each pattern, but more efficient as it performs a single scan
+        of the content stream.
+
+        Parameters
+        ----------
+        patterns
+            A dictionary mapping search patterns to options. Each key is a string
+            or compiled regex pattern; each value is a dict of options for that
+            pattern (color, opacity, contents, title). The color defaults to
+            yellow for highlights if not specified.
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns.
+        max_count
+            Maximum highlights to perform across all patterns. ``0`` (default)
+            means unlimited. The count is shared across all patterns.
+        regex
+            If ``True``, all string patterns are treated as regular expressions.
+            Not required for compiled :class:`re.Pattern` keys.
+
+        Returns
+        -------
+        TextHighlightResult
+            A result object with highlights, skipped_fragments, highlighted_count,
+            skipped_count, and matched_count.
+
+        See Also
+        --------
+        highlight_text : Highlight a single text pattern.
+        markup_texts : Mark multiple text patterns with different styles on this page.
+
+        Examples
+        --------
+        Highlight multiple patterns:
+
+        >>> page.highlight_texts({"review": {}, "approved": {}})
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> page.highlight_texts(
+        ...     {re.compile(r"\\d{4}"): {"color": (1, 0, 0)}, "Mr.": {}},
+        ...     regex=True
+        ... )
+
+        Limit highlights:
+
+        >>> page.highlight_texts(
+        ...     {"important": {}, "critical": {}},
+        ...     max_count=5
+        ... )
+        """
+        return self._document.highlight_texts(
+            patterns,
+            page_index=self.number,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+        )
+
     def redact_text(
         self,
         search: str | re.Pattern[str],

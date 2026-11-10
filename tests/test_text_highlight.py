@@ -513,3 +513,187 @@ def test_markup_empty_results_defaults_and_disposed_documents(document):
         document.markup_text("Hello", kind="underline")
     with pytest.raises(AsposePdfException, match="disposed"):
         page.markup_text("Hello", kind="underline")
+
+
+# Tests for markup_texts ------------------------------
+
+
+def test_markup_texts_multiple_patterns(document):
+    """markup_texts marks multiple patterns in one call."""
+    result = document.markup_texts(
+        {"world": {"color": (1, 0, 0)}, "HELLO": {"color": (0, 1, 0)}},
+        kind="highlight",
+        case_sensitive=False,
+    )
+    # 3 "world" matches + 2 "HELLO/Hello" matches = 5 total
+    assert result.marked_count == 5
+    assert result.matched_count == 5
+    assert [len(page.annotations) for page in document.pages] == [3, 2]
+
+
+def test_markup_texts_page_selection(document):
+    """markup_texts can target a specific page."""
+    result = document.markup_texts(
+        {"world": {}},
+        page_index=2,
+        kind="underline",
+    )
+    assert result.marked_count == 1
+    assert [len(page.annotations) for page in document.pages] == [0, 1]
+
+
+def test_markup_texts_max_count(document):
+    """markup_texts respects max_count."""
+    result = document.markup_texts(
+        {"world": {}, "HELLO": {}},
+        max_count=3,
+        case_sensitive=False,
+    )
+    assert result.marked_count == 3
+    assert result.matched_count == 3
+
+
+def test_markup_texts_regex(document):
+    """markup_texts supports regex patterns."""
+    # Use string pattern with regex=True instead of compiled
+    result = document.markup_texts(
+        {r"\d+": {}},
+        regex=True,
+    )
+    # 123 and 456 = 2 matches
+    assert result.marked_count == 2
+    assert result.matched_count == 2
+
+
+def test_markup_texts_options(document):
+    """markup_texts respects per-pattern options."""
+    result = document.markup_texts(
+        {"world": {"color": (1, 0, 0), "opacity": 0.8, "contents": "Review1"}},
+        kind="highlight",
+        case_sensitive=False,
+    )
+    assert result.marked_count == 3
+    for ann in result.annotations:
+        assert ann.color == (1, 0, 0)
+        assert ann.opacity == 0.8
+        assert ann.contents == "Review1"
+
+
+def test_markup_texts_mixed_patterns(document):
+    """markup_texts handles both string and compiled regex patterns."""
+    result = document.markup_texts(
+        {
+            "world": {},
+            re.compile(r"HELLO"): {"color": (1, 0, 0)},
+        },
+        regex=True,
+    )
+    # 3 "world" + 1 "HELLO" (not matching "Hello" because case-sensitive)
+    assert result.marked_count == 4
+    assert result.matched_count == 4
+
+
+def test_markup_texts_empty_dict():
+    """markup_texts with empty dict returns zero."""
+    with Document() as doc:
+        doc.pages.add().add_text("Hello", 72, 700)
+        result = doc.markup_texts({})
+        assert result.marked_count == 0
+
+
+def test_markup_texts_invalid_options():
+    """markup_texts validates options."""
+    with Document() as doc:
+        doc.pages.add().add_text("Hello", 72, 700)
+        with pytest.raises(TypeError):
+            doc.markup_texts({"Hello": "invalid"})
+        with pytest.raises(PdfValidationException):
+            doc.markup_texts({"Hello": {"opacity": 2.0}})
+
+
+# Tests for highlight_texts ------------------------------
+
+
+def test_highlight_texts_multiple_patterns(document):
+    """highlight_texts highlights multiple patterns in one call."""
+    result = document.highlight_texts(
+        {"world": {}, "HELLO": {}},
+        case_sensitive=False,
+    )
+    # 3 "world" matches + 2 "HELLO/Hello" matches = 5 total
+    assert result.highlighted_count == 5
+    assert result.matched_count == 5
+    assert [len(page.annotations) for page in document.pages] == [3, 2]
+
+
+def test_highlight_texts_page_selection(document):
+    """highlight_texts can target a specific page."""
+    result = document.highlight_texts(
+        {"world": {}},
+        page_index=2,
+    )
+    assert result.highlighted_count == 1
+    assert [len(page.annotations) for page in document.pages] == [0, 1]
+
+
+def test_highlight_texts_max_count(document):
+    """highlight_texts respects max_count."""
+    result = document.highlight_texts(
+        {"world": {}, "HELLO": {}},
+        max_count=3,
+        case_sensitive=False,
+    )
+    assert result.highlighted_count == 3
+    assert result.matched_count == 3
+
+
+def test_highlight_texts_regex(document):
+    """highlight_texts supports regex patterns."""
+    # Use string pattern with regex=True instead of compiled
+    result = document.highlight_texts(
+        {r"\d+": {}},
+        regex=True,
+    )
+    # 123 and 456 = 2 matches
+    assert result.highlighted_count == 2
+    assert result.matched_count == 2
+
+
+def test_highlight_texts_color(document):
+    """highlight_texts respects color option."""
+    result = document.highlight_texts(
+        {"world": {"color": (1, 0, 0)}},
+        case_sensitive=False,
+    )
+    assert result.highlighted_count == 3
+    for ann in result.annotations:
+        assert ann.color == (1, 0, 0)
+
+
+def test_highlight_texts_page_method(document):
+    """Page.highlight_texts works correctly."""
+    result = document.pages[1].highlight_texts(
+        {"world": {}, "Hello": {}},
+        case_sensitive=True,
+    )
+    # 2 "world" + 1 "Hello" on page 1 (case-sensitive)
+    assert result.highlighted_count == 3
+    assert result.matched_count == 3
+
+
+def test_highlight_texts_empty_dict():
+    """highlight_texts with empty dict returns zero."""
+    with Document() as doc:
+        doc.pages.add().add_text("Hello", 72, 700)
+        result = doc.highlight_texts({})
+        assert result.highlighted_count == 0
+
+
+def test_highlight_texts_invalid_options():
+    """highlight_texts validates options."""
+    with Document() as doc:
+        doc.pages.add().add_text("Hello", 72, 700)
+        with pytest.raises(TypeError):
+            doc.highlight_texts({"Hello": "invalid"})
+        with pytest.raises(PdfValidationException):
+            doc.highlight_texts({"Hello": {"opacity": 2.0}})

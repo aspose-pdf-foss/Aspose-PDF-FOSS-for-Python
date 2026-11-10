@@ -4199,6 +4199,174 @@ class Document:
             title=title,
         )
 
+    @page_api(scalars=("page_index",), result="records")
+    def markup_texts(
+        self,
+        patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
+        *,
+        kind: str = "highlight",
+        page_index: int | None = None,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+    ) -> TextMarkupResult:
+        """Mark multiple text patterns in a single call.
+
+        This is a convenience method that applies multiple text markup patterns
+        to the document. It is equivalent to calling :meth:`markup_text`
+        for each pattern, but more efficient as it performs a single scan
+        of the content streams per pattern.
+
+        Parameters
+        ----------
+        patterns
+            A dictionary mapping search patterns to options. Each key is a string
+            or compiled regex pattern; each value is a dict of options for that
+            pattern (color, opacity, contents, title), or None for defaults.
+        kind
+            The markup kind: 'highlight', 'underline', 'strike_out', or 'squiggly'.
+        page_index
+            One-based page number. If omitted, all pages are processed.
+        case_sensitive
+            If True (default), matching is case-sensitive. Ignored for compiled
+            regex patterns.
+        max_count
+            Maximum marks to perform across all patterns. ``0`` (default)
+            means unlimited. The count is shared across all patterns.
+        regex
+            If True, all string patterns are treated as regular expressions.
+            Not required for compiled :class:`re.Pattern` keys.
+
+        Returns
+        -------
+        TextMarkupResult
+            A result object with annotations, skipped_fragments, marked_count,
+            skipped_count, and matched_count.
+
+        See Also
+        --------
+        markup_text : Mark a single text pattern.
+        highlight_texts : Highlight multiple text patterns.
+
+        Examples
+        --------
+        Mark multiple patterns with different colors:
+
+        >>> document.markup_texts(
+        ...     {"review": {"color": (1, 0, 0)}, "draft": {"color": (0, 1, 0)}},
+        ...     kind="highlight"
+        ... )
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> document.markup_texts(
+        ...     {re.compile(r"\\d{4}"): {}, "Mr.": {"title": "Formal Title"}},
+        ...     kind="underline",
+        ...     regex=True
+        ... )
+
+        Limit marks and target a specific page:
+
+        >>> document.markup_texts(
+        ...     {"important": {}, "critical": {}},
+        ...     page_index=1,
+        ...     max_count=5,
+        ...     kind="strike_out"
+        ... )
+        """
+        from aspose_pdf.engine.text_highlight import markup_texts
+
+        return markup_texts(
+            self,
+            patterns,
+            kind=kind,
+            page_index=page_index,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+        )
+
+    @page_api(scalars=("page_index",), result="records")
+    def highlight_texts(
+        self,
+        patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
+        *,
+        page_index: int | None = None,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+    ) -> TextHighlightResult:
+        """Highlight multiple text patterns in a single call.
+
+        This is a convenience method that applies multiple highlight patterns
+        to the document. It is equivalent to calling :meth:`highlight_text`
+        for each pattern, but more efficient as it performs a single scan
+        of the content streams per pattern.
+
+        Parameters
+        ----------
+        patterns
+            A dictionary mapping search patterns to options. Each key is a string
+            or compiled regex pattern; each value is a dict of options for that
+            pattern (color, opacity, contents, title). The color defaults to
+            yellow for highlights if not specified.
+        page_index
+            One-based page number. If omitted, all pages are processed.
+        case_sensitive
+            If True (default), matching is case-sensitive. Ignored for compiled
+            regex patterns.
+        max_count
+            Maximum highlights to perform across all patterns. ``0`` (default)
+            means unlimited. The count is shared across all patterns.
+        regex
+            If True, all string patterns are treated as regular expressions.
+            Not required for compiled :class:`re.Pattern` keys.
+
+        Returns
+        -------
+        TextHighlightResult
+            A result object with highlights, skipped_fragments, highlighted_count,
+            skipped_count, and matched_count.
+
+        See Also
+        --------
+        highlight_text : Highlight a single text pattern.
+        markup_texts : Mark multiple text patterns with different styles.
+
+        Examples
+        --------
+        Highlight multiple patterns:
+
+        >>> document.highlight_texts({"review": {}, "approved": {}})
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> document.highlight_texts(
+        ...     {re.compile(r"\\d{4}"): {"color": (1, 0, 0)}, "Mr.": {}},
+        ...     regex=True
+        ... )
+
+        Limit highlights and target a specific page:
+
+        >>> document.highlight_texts(
+        ...     {"important": {}, "critical": {}},
+        ...     page_index=1,
+        ...     max_count=5
+        ... )
+        """
+        from aspose_pdf.engine.text_highlight import highlight_texts
+
+        return highlight_texts(
+            self,
+            patterns,
+            page_index=page_index,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+        )
+
     @page_api(scalars=("page_index",))
     def redact_text(
         self,
