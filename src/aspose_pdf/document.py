@@ -4951,6 +4951,84 @@ class Document:
         self._pending_signing = []
         return self
 
+    def load_from_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        password: str | None = None,
+        certificate: Any = None,
+        private_key: Any = None,
+        key_encryption_key: bytes | bytearray | None = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> Document:
+        """Load a PDF from a binary stream.
+
+        This is a convenience method equivalent to ``load_from(stream, ...)``,
+        provided for clarity when loading from in-memory streams such as
+        ``io.BytesIO``.
+
+        Parameters
+        ----------
+        stream : BinaryIO
+            Any readable binary stream (e.g., ``BytesIO``, an open file
+            handle in ``"rb"`` mode).
+        password : str, optional
+            Password for encrypted PDFs.
+        certificate, private_key : optional
+            Certificate recipient credentials for an ``/Adobe.PubSec`` PDF.
+        key_encryption_key : bytes, optional
+            Pre-shared AES key for a CMS KEK recipient.
+        limits : PdfLoadLimits, optional
+            Resource policy for this load. When omitted, the policy configured
+            on the document is reused.
+
+        Returns
+        -------
+        Document
+            Self for method chaining.
+
+        Raises
+        ------
+        ValueError
+            If stream contains invalid PDF data.
+        TypeError
+            If stream is not a readable binary stream.
+
+        Notes
+        -----
+        The stream's current position is read to EOF; the stream is **not**
+        closed afterwards.
+
+        Examples
+        --------
+        ::
+
+            from io import BytesIO
+
+            # Load from an in-memory buffer
+            buffer = BytesIO(pdf_bytes)
+            document = Document()
+            document.load_from_stream(buffer)
+
+            # Load from a file-like object
+            with open("document.pdf", "rb") as f:
+                doc = Document()
+                doc.load_from_stream(f)
+
+            # Load with password
+            buffer = BytesIO(encrypted_bytes)
+            doc = Document()
+            doc.load_from_stream(buffer, password="secret")
+        """
+        return self.load_from(
+            stream,
+            password=password,
+            certificate=certificate,
+            private_key=private_key,
+            key_encryption_key=key_encryption_key,
+            limits=limits,
+        )
+
     def sanitize(
         self,
         *,

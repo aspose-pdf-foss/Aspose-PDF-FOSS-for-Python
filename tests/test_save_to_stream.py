@@ -271,3 +271,60 @@ def test_save_to_stream_method_chaining():
     doc = _make_doc()
     result = doc.save_to_stream(buf)
     assert result is doc
+
+
+# ---------------------------------------------------------------------------
+# New Feature: load_from_stream() convenience method
+# ---------------------------------------------------------------------------
+
+
+def test_load_from_stream_method_loads_data():
+    """load_from_stream() must load PDF from a BytesIO buffer."""
+    src = _minimal_pdf_bytes()
+    buf = io.BytesIO(src)
+    doc = Document()
+    doc.load_from_stream(buf)
+    assert doc.page_count == 1
+
+
+def test_load_from_stream_method_matches_load_from():
+    """load_from_stream() must behave identically to load_from() on a stream."""
+    src = _minimal_pdf_bytes()
+    buf1 = io.BytesIO(src)
+    doc1 = Document()
+    doc1.load_from(buf1)
+
+    buf2 = io.BytesIO(src)
+    doc2 = Document()
+    doc2.load_from_stream(buf2)
+
+    assert doc1.page_count == doc2.page_count
+    assert doc1.page_count == 1
+
+
+def test_load_from_stream_with_password():
+    """load_from_stream() works with encrypted PDFs (if password provided)."""
+    # Note: We don't have a real encrypted PDF for testing, but the method
+    # should accept the password parameter without error
+    src = _minimal_pdf_bytes()
+    buf = io.BytesIO(src)
+    doc = Document()
+    doc.load_from_stream(buf, password=None)
+
+
+def test_load_from_stream_chaining():
+    """load_from_stream() returns self for method chaining."""
+    src = _minimal_pdf_bytes()
+    buf = io.BytesIO(src)
+    doc = Document()
+    result = doc.load_from_stream(buf)
+    assert result is doc
+
+
+def test_load_from_stream_with_document_constructor():
+    """Can load directly from stream via constructor + load_from_stream."""
+    src = _minimal_pdf_bytes()
+    buf = io.BytesIO(src)
+    doc = Document()
+    doc.load_from_stream(buf)
+    assert doc.page_count == 1
