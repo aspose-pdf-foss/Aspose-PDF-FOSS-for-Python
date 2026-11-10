@@ -638,3 +638,33 @@ def test_insert_last_adds_page_at_end(document):
     new_page = pages.insert_last()
     assert len(pages) == original_len + 1
     assert new_page.number == original_len + 1
+
+
+def test_page_collection_count_method(page_collection):
+    """PageCollection.count() returns the number of pages."""
+    assert page_collection.count() == 3
+
+
+def test_page_collection_count_matches_len(page_collection):
+    """PageCollection.count() should match len()."""
+    assert page_collection.count() == len(page_collection)
+
+
+def test_page_collection_count_empty(document):
+    """PageCollection.count() returns 0 for empty collection."""
+    assert document.pages.count() == 0
+
+
+def test_page_collection_count_after_operations(document):
+    """PageCollection.count() updates after add/insert operations."""
+    pages = document.pages
+    assert pages.count() == 0
+
+    pages.add()
+    assert pages.count() == 1
+
+    pages.add()
+    assert pages.count() == 2
+
+    pages.insert(2)
+    assert pages.count() == 3

@@ -2987,6 +2987,27 @@ class PageCollection:
         self._ensure_not_disposed()
         return len(self._document._engine_pdf.pages)
 
+    def count(self) -> int:
+        """Return the number of pages in the collection.
+
+        This is an alias for ``len(pages)`` provided for compatibility with
+        .NET-style APIs.
+
+        Returns
+        -------
+        int
+            Number of pages.
+
+        Examples
+        --------
+        ::
+
+            pages = document.pages
+            count = pages.count()
+            # Same as: count = len(pages)
+        """
+        return len(self)
+
     def __iter__(self) -> Iterator[Page]:
         self._ensure_not_disposed()
         for i in range(len(self)):
