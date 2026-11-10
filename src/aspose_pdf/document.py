@@ -2296,21 +2296,21 @@ class Document:
 
     def add_pages_from_images(
         self,
-        image_paths: list[str | Path],
+        image_sources: list[str | Path | bytes | bytearray],
         layout: str = "grid",
         *,
         size: PageSize | Sequence[float] | str | None = None,
         dpi: float = 72.0,
     ) -> list[int]:
-        """Add one or more pages from image files, one per image.
+        """Add one or more pages from image files or bytes, one per image.
 
-        Images are embedded as full-page images. Each file gets its own page,
+        Images are embedded as full-page images. Each source gets its own page,
         laid out according to the *layout* mode.
 
         Parameters
         ----------
-        image_paths : list of str, Path
-            Image file paths to add (JPEG, PNG, BMP, GIF, WebP).
+        image_sources : list of str, Path, bytes, or bytearray
+            Image file paths, or raw image bytes (JPEG, PNG, BMP, GIF, WebP).
         layout : str, optional
             Layout strategy. Currently only ``"grid"`` is supported (default),
             which places one image per page filling the entire page.
@@ -2345,15 +2345,19 @@ class Document:
                 ["scan1.png", "scan2.png", "scan3.png"]
             )
 
+            # Add pages from image bytes
+            with open("image.png", "rb") as f:
+                page_numbers = document.add_pages_from_images([f.read()])
+
             # Add pages with explicit A4 size
             page_numbers = document.add_pages_from_images(
                 ["img1.jpg", "img2.jpg"],
                 size="A4"
             )
         """
-        if not isinstance(image_paths, list):
-            raise TypeError("image_paths must be a list of paths")
-        if not image_paths:
+        if not isinstance(image_sources, list):
+            raise TypeError("image_sources must be a list of paths or bytes")
+        if not image_sources:
             return []
 
         # Validate layout
@@ -2364,13 +2368,9 @@ class Document:
 
         page_numbers = []
 
-        for image_path in image_paths:
-            path = Path(image_path)
-            if not path.exists():
-                raise FileNotFoundError(f"Image not found: {image_path}")
-
-            # Create page from image
-            page = Page.from_image(self, str(path), size=size, dpi=dpi)
+        for source in image_sources:
+            # Create page from image (handles both paths and bytes)
+            page = Page.from_image(self, source, size=size, dpi=dpi)
             page_numbers.append(page.number)
 
         return page_numbers

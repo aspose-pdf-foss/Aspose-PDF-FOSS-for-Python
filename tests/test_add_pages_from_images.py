@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import struct
 import zlib
-from pathlib import Path
 
 import pytest
 
-from aspose_pdf import Document, PageSize
+from aspose_pdf import Document
 from aspose_pdf.exceptions import PdfValidationException
 
 
@@ -222,3 +221,82 @@ def test_add_images_roundtrip_save(document, png_100x50, tmp_path):
     reloaded = Document(str(out_path))
 
     assert reloaded.page_count == 1
+
+
+def test_add_images_from_bytes(document, png_100x50):
+    """Adding images from bytes works correctly."""
+    page_numbers = document.add_pages_from_images([png_100x50])
+
+    assert page_numbers == [1]
+    assert document.page_count == 1
+
+
+def test_add_images_from_bytearray(document, png_100x50):
+    """Adding images from bytearray works correctly."""
+    page_numbers = document.add_pages_from_images([bytearray(png_100x50)])
+
+    assert page_numbers == [1]
+    assert document.page_count == 1
+
+
+def test_add_images_mixed_paths_and_bytes(document, png_100x50, png_200x150, tmp_path):
+    """Adding images with mixed paths and bytes works correctly."""
+    # Write one image to file
+    path = tmp_path / "image1.png"
+    path.write_bytes(png_100x50)
+
+    # Add first from path, second from bytes
+    page_numbers = document.add_pages_from_images([str(path), png_200x150])
+
+    assert page_numbers == [1, 2]
+    assert document.page_count == 2
+
+
+def test_add_images_bytes_automatic_size(document, png_100x50):
+    """Adding images from bytes uses automatic size from pixels."""
+    page_numbers = document.add_pages_from_images([png_100x50])
+
+    assert page_numbers == [1]
+    # PNG is 100x50 pixels, at 72 DPI that's 100x50 points
+    assert document.pages[1].size.width == pytest.approx(100)
+    assert document.pages[1].size.height == pytest.approx(50)
+
+
+def test_add_images_bytes_custom_dpi(document, png_100x50):
+    """Adding images from bytes respects DPI setting."""
+    page_numbers = document.add_pages_from_images([png_100x50], dpi=144)
+
+    assert page_numbers == [1]
+    # At 144 DPI, 100 pixels becomes 50 points
+    assert document.pages[1].size.width == pytest.approx(50)
+    assert document.pages[1].size.height == pytest.approx(25)
+
+
+def test_add_images_bytes_custom_size(document, png_100x50):
+    """Adding images from bytes with explicit size works."""
+    page_numbers = document.add_pages_from_images([png_100x50], size="A4")
+
+    assert page_numbers == [1]
+    assert document.pages[1].size.width == pytest.approx(595.2755905511812, rel=1e-6)
+    assert document.pages[1].size.height == pytest.approx(841.89)
+
+
+def test_add_images_invalid_bytes_raises(document, png_100x50):
+    """Invalid image bytes raises PdfValidationException."""
+    # Create invalid PNG data (truncated)
+    invalid_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+
+    with pytest.raises(PdfValidationException, match="image"):
+        document.add_pages_from_images([invalid_data])
+
+
+def test_add_images_empty_bytes_raises(document):
+    """Empty bytes raises PdfValidationException."""
+    with pytest.raises(PdfValidationException):
+        document.add_pages_from_images([b""])
+
+
+def test_add_pages_from_images_type_name(document):
+    """Test that the parameter name in error messages is correct."""
+    with pytest.raises(TypeError, match="list"):
+        document.add_pages_from_images("not_a_list")
