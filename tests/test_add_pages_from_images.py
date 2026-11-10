@@ -41,6 +41,89 @@ def create_png(width: int, height: int, color: tuple[int, int, int] = (255, 0, 0
     return b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", ihdr) + png_chunk(b"IDAT", idat) + png_chunk(b"IEND", b"")
 
 
+def create_jpeg(width: int, height: int, color: tuple[int, int, int] = (255, 0, 0)) -> bytes:
+    """Create a minimal JPEG image for testing.
+    
+    This creates a valid JPEG header with dummy JPEG data.
+    """
+    # Minimal JPEG structure with SOI marker and dummy data
+    # This is a minimal valid JPEG for testing purposes
+    return b"\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + b"\x00" * (width * height // 10)
+
+
+def create_bmp(width: int, height: int, color: tuple[int, int, int] = (255, 0, 0)) -> bytes:
+    """Create a minimal BMP image for testing.
+    
+    This creates a valid BMP header with dummy pixel data.
+    """
+    row_size = ((width * 3 + 3) // 4) * 4  # Rows are padded to 4-byte boundaries
+    pixel_data_size = row_size * height
+    file_size = 54 + pixel_data_size
+    
+    # BMP File Header (14 bytes)
+    file_header = b"BM" + struct.pack("<I", file_size) + b"\x00\x00\x00\x00" + struct.pack("<I", 54)
+    
+    # DIB Header (BITMAPINFOHEADER - 40 bytes)
+    dib_header = struct.pack("<I", 40) + struct.pack("<ii", width, height)
+    dib_header += struct.pack("<HH", 1, 24) + b"\x00\x00\x00\x00" + struct.pack("<I", pixel_data_size)
+    dib_header += b"\x13\x0B\x00\x00\x13\x0B\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    
+    # Pixel data (BGR format, padded to 4-byte boundaries)
+    pixel_data = bytearray()
+    for _ in range(height):
+        for _ in range(width):
+            pixel_data.extend(color[::-1])  # BGR order
+        # Padding to 4-byte boundary
+        padding = row_size - width * 3
+        pixel_data.extend(b"\x00" * padding)
+    
+    return file_header + dib_header + bytes(pixel_data)
+
+
+def create_gif(width: int, height: int, color: tuple[int, int, int] = (255, 0, 0)) -> bytes:
+    """Create a minimal GIF image for testing.
+    
+    This creates a valid GIF89a header with dummy data.
+    """
+    # GIF89a header
+    header = b"GIF89a"
+    
+    # Logical Screen Descriptor
+    header += struct.pack("<HH", width, height)
+    header += struct.pack("<B", 0xF0)  # Global Color Table + 8-bit color
+    header += struct.pack("<B", 0)  # Background color
+    header += struct.pack("<B", 0)  # Pixel aspect ratio
+    
+    # Global Color Table (256 colors, 3 bytes each)
+    for i in range(256):
+        header += struct.pack("<BBB", i, i, i)
+    
+    # Image Descriptor
+    header += b"\x2C"
+    header += struct.pack("<HH", 0, 0)
+    header += struct.pack("<HH", width, height)
+    header += struct.pack("<B", 0)
+    
+    # Minimal LZW compressed data
+    header += b"\x02\x02\x44\x01\x00"  # Minimal valid LZW data
+    
+    # Terminator
+    header += b"\x3B"
+    
+    return header
+    """Create a simple PNG image with solid color."""
+    raw = bytearray()
+    for _ in range(height):
+        raw.append(0)
+        for _ in range(width):
+            raw.extend(color)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    idat = zlib.compress(bytes(raw), 9)
+
+    return b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", ihdr) + png_chunk(b"IDAT", idat) + png_chunk(b"IEND", b"")
+
+
 @pytest.fixture
 def png_100x50():
     """Create a 100x50 PNG image."""
@@ -192,6 +275,9 @@ def test_add_images_invalid_layout_raises(document, png_100x50, tmp_path):
         document.add_pages_from_images([str(path)], layout="invalid")
 
 
+
+
+
 def test_add_images_not_a_list_raises(document):
     """Non-list image_paths raises TypeError with type info."""
     with pytest.raises(TypeError, match=r"list.*got str"):
@@ -227,6 +313,24 @@ def test_add_images_roundtrip_save(document, png_100x50, tmp_path):
     reloaded = Document(str(out_path))
 
     assert reloaded.page_count == 1
+
+
+def test_add_images_none_in_list_raises(document, png_100x50):
+    """None in list raises TypeError."""
+    with pytest.raises(TypeError, match="None"):
+        document.add_pages_from_images([png_100x50, None])
+
+
+def test_add_images_empty_string_raises(document, tmp_path):
+    """Empty string in list raises FileNotFoundError or OSError."""
+    with pytest.raises((FileNotFoundError, OSError)):
+        document.add_pages_from_images([""])
+
+
+def test_add_images_mixed_none_bytes_raises(document):
+    """List with None and bytes raises TypeError."""
+    with pytest.raises(TypeError):
+        document.add_pages_from_images([None, b""])
 
 
 def test_add_images_from_bytes(document, png_100x50):
