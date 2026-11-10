@@ -656,3 +656,108 @@ def test_pixel_comparison_agrees_with_an_independent_coordinate_map_oracle():
             if image.get_pixel(x, y) == (255, 0, 0)
         }
         assert red_pixels == changed
+
+
+# Tests for Page.compare_visual ---------------------------------------
+
+
+def test_page_compare_visual_with_identical_pages():
+    """Page.compare_visual returns matching result for identical pages."""
+    with Document() as left, Document() as right:
+        page = _page(left, "#ff0000")
+        other_page = _page(right, "#ff0000")
+
+        result = page.compare_visual(right)
+
+        assert isinstance(result, PageVisualComparison)
+        assert result.page_index == page.number
+        assert result.other_page_index == other_page.number
+        assert result.matches
+        assert result.changed_pixels == 0
+
+
+def test_page_compare_visual_with_different_pages():
+    """Page.compare_visual detects differences between pages."""
+    with Document() as left, Document() as right:
+        page = _page(left, "#000000")
+        _page(right, "#ffffff")
+
+        result = page.compare_visual(right)
+
+        assert not result.matches
+        assert result.changed_pixels > 0
+
+
+def test_page_compare_visual_with_custom_tolerance():
+    """Page.compare_visual respects tolerance parameter."""
+    with Document() as left, Document() as right:
+        page = _page(left, "#000000")
+        _page(right, "#010000")  # Only 1 RGB unit different
+
+        # Without tolerance, it should detect difference
+        result_no_tol = page.compare_visual(right, tolerance=0)
+        assert not result_no_tol.matches
+        assert result_no_tol.changed_pixels > 0
+
+        # With tolerance of 1, it should match
+        result_with_tol = page.compare_visual(right, tolerance=1)
+        assert result_with_tol.matches
+        assert result_with_tol.changed_pixels == 0
+
+
+def test_page_compare_visual_with_custom_other_page():
+    """Page.compare_visual can compare with a specific page in the other document."""
+    with Document() as left, Document() as right:
+        page = _page(left, "#ff0000")
+        # Add multiple pages to right document
+        _page(right, "#00ff00")
+        _page(right, "#0000ff")
+
+        # Compare with the second page (index 2)
+        result = page.compare_visual(right, other_page=2)
+        assert result.other_page_index == 2
+        assert not result.matches  # Red vs Blue
+
+
+def test_page_compare_visual_with_diff_image():
+    """Page.compare_visual includes diff image when requested."""
+    with Document() as left, Document() as right:
+        page = _page(left, "#000000")
+        other_page = _page(right, "#ffffff")
+        other_page.draw_rectangle(10, 10, 20, 20, fill_color="#0000ff")
+
+        result = page.compare_visual(right, include_diff_images=True)
+
+        assert result.diff_image is not None
+        assert result.changed_pixels > 0
+        # Check that changed pixels are red in the diff image
+        assert result.diff_image.get_pixel(0, 0) == (255, 0, 0)
+
+
+def test_page_compare_visual_with_ignore_regions():
+    """Page.compare_visual ignores specified regions."""
+    with Document() as left, Document() as right:
+        page = _page(left, "#000000")
+        _page(right, "#ffffff")
+
+        # Ignore the entire page to get 0 changed pixels
+        result = page.compare_visual(right, ignore_regions=[(0, 0, 10, 10)])
+
+        # All pixels should be ignored, so no changes detected
+        assert result.changed_pixels == 0
+        assert result.ignored_pixels == 100  # 10x10 page
+
+
+def test_page_compare_visual_preserves_source_documents():
+    """Page.compare_visual does not modify source documents."""
+    with Document() as left, Document() as right:
+        page = _page(left, "#ff0000")
+        _page(right, "#00ff00")
+
+        left_content = left.pages[1].content
+        right_content = right.pages[1].content
+
+        page.compare_visual(right)
+
+        assert left.pages[1].content == left_content
+        assert right.pages[1].content == right_content

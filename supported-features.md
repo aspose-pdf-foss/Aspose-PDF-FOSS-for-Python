@@ -1703,7 +1703,15 @@ Supported:
   case_sensitive=True, ignore_whitespace=False, skip_artifacts=False,
   title="PDF comparison", left_label="Original", right_label="Revised",
   overwrite=True)` returns UTF-8 HTML bytes and optionally writes the same
-  report to a path or binary stream. Reviewers can open and share this single
+  report to a path or binary stream.
+
+- **Compare a single page visually.** `Page.compare_visual(other, other_page=None,
+  dpi=72, tolerance=0, max_diff_ratio=0, include_annotations=True,
+  include_diff_images=False, ignore_regions=None)` compares this page with a page
+  from another document. It is a convenience wrapper around `Document.compare_visual`
+  that compares exactly one page pair. See `Document.compare_visual` for parameter
+  descriptions, validation rules and return values. The result is a single
+  `PageVisualComparison` rather than a list. Reviewers can open and share this single
   file offline; CSS and PNG difference images are embedded, with no scripts,
   remote assets or additional dependencies.
   - `mode="both"` combines the existing text and visual checks; `"text"` only

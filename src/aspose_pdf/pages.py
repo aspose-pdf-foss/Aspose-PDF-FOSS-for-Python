@@ -17,6 +17,7 @@ from aspose_pdf.images import Image
 from aspose_pdf.page_size import PageSize
 from aspose_pdf.paths import GraphicsPath
 from aspose_pdf.viewer_preferences import PageBoundary
+from aspose_pdf.visual_comparison import PageVisualComparison
 
 if TYPE_CHECKING:
     from aspose_pdf.auto_links import AutoLinkResult
@@ -2554,6 +2555,93 @@ class Page:
         return self._document.find_low_resolution_images_batch(
             thresholds, pages=[self.number]
         )
+
+    def compare_visual(
+        self,
+        other: Document,
+        *,
+        other_page: int | None = None,
+        dpi: float = 72.0,
+        tolerance: int = 0,
+        max_diff_ratio: float = 0.0,
+        include_annotations: bool = True,
+        include_diff_images: bool = False,
+        ignore_regions: Sequence[Sequence[float]] | None = None,
+    ) -> PageVisualComparison:
+        """Compare this page visually with a page from another document.
+
+        Return a comparison result with changed pixel counts, difference ratio,
+        and optional difference images. This is a convenience method that calls
+        :meth:`Document.compare_visual` with this page as the only comparison.
+
+        Parameters
+        ----------
+        other
+            The other document to compare against. Must be an open Document.
+        other_page
+            The one-based page index in the other document. ``None`` (default)
+            compares against the first page.
+        dpi
+            Render at finite positive DPI for pixel-level comparison. Higher
+            DPI reveals smaller differences at a higher cost.
+        tolerance
+            Integer 0-255 specifying how much RGB channel difference is allowed.
+            Default 0 requires exact pixel equality. Increase to tolerate minor
+            rendering differences.
+        max_diff_ratio
+            Float 0-1 specifying the maximum allowed difference ratio for a
+            match. Default 0 requires exact equality. Increase to allow some
+            differences.
+        include_annotations
+            Include visible annotations and form appearances in the comparison.
+            Default is ``True``.
+        include_diff_images
+            Include a difference image in the result showing changed pixels in
+            red over pale gray unchanged content. Default is ``False``.
+        ignore_regions
+            An iterable of ``(x0, y0, x1, y1)`` rectangles in PDF points to
+            exclude from comparison. Pixels inside these regions are ignored.
+            Default is ``None`` (no exclusions).
+
+        Returns
+        -------
+        PageVisualComparison
+            A result object with pixel counts, difference ratio, bounding box
+            of changes, match status, and optional difference image.
+
+        See Also
+        --------
+        Document.compare_visual : Compare multiple page pairs between documents.
+
+        Examples
+        --------
+        Compare this page with the first page of another document:
+
+        >>> result = page.compare_visual(other_document)
+
+        Compare with a specific page:
+
+        >>> result = page.compare_visual(other_document, other_page=3)
+
+        Allow some tolerance for minor rendering differences:
+
+        >>> result = page.compare_visual(
+        ...     other_document, tolerance=10, max_diff_ratio=0.01
+        ... )
+        """
+        results = self._document.compare_visual(
+            other,
+            pages=[self.number],
+            other_pages=[other_page] if other_page is not None else None,
+            dpi=dpi,
+            tolerance=tolerance,
+            max_diff_ratio=max_diff_ratio,
+            include_annotations=include_annotations,
+            include_diff_images=include_diff_images,
+            ignore_regions=ignore_regions,
+        )
+        # Document.compare_visual returns a list; for a single page pair, return the first result
+        return results[0] if results else None
 
     def auto_link(
         self, *, urls: bool = True, emails: bool = True, max_count: int = 0

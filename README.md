@@ -182,10 +182,12 @@ flowchart TD
 - `Page.get_content_bounds()` / `Document.get_content_bounds()` measure visible
   content for crop previews, white-margin checks and layout preparation without
   changing page boxes or content.
-- `Document.compare_visual()` compares PDF page views with pixel counts, difference
-  ratios and bounding boxes, plus optional images highlighting changes in red.
-  Color and area tolerances help review revised documents and scanned pages.
-  Use `ignore_regions` to exclude changing dates, headers or page numbers.
+- `Page.compare_visual(other, other_page=None, dpi=72, tolerance=0, max_diff_ratio=0,
+  include_annotations=True, include_diff_images=False, ignore_regions=None)`
+  compares this page visually with a page from another document, returning a result
+  with changed pixel counts, difference ratios, bounding boxes, and optional images
+  highlighting changes in red. Color and area tolerances help review revised documents
+  and scanned pages. Use `ignore_regions` to exclude changing dates, headers or page numbers.
 - `Document.compare_text()` reviews extracted text changes page by page, with
   unified diffs and optional case, whitespace and tagged-artifact filtering.
   Use `exclude_regions` to omit changing headers, footers or dates.
