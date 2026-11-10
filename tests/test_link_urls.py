@@ -587,3 +587,171 @@ def test_success_keeps_annotation_identity_and_writes_indirect_action_copies():
         assert current is reference and engine._resolve(current) is entry
         assert len(set(engine._cos_doc.objects) - old_objects) == 1
         assert engine._resolve(entry.mapping[PdfName("A")]).mapping[PdfName("URI")].value == NEW.encode()
+
+
+# Batch replace_link_urls tests
+def test_replace_link_urls_batch_applies_multiple_patterns():
+    """replace_link_urls_batch replaces all patterns in the mapping."""
+    with Document() as document:
+        page = document.pages.add()
+        page.add_link(RECT, URIAction(f"{OLD}/page1"))
+        page.add_link(RECT, URIAction(f"{OLD}/page2"))
+        page.add_link(RECT, URIAction("https://other.example/path"))
+
+        count = document.replace_link_urls_batch({OLD: NEW, "other.example": "example.org"})
+
+        assert count == 3  # First pattern matches 2, second matches 1
+        uris = _uris(document)
+        assert f"{NEW}/page1" in uris
+        assert f"{NEW}/page2" in uris
+        assert "https://example.org/path" in uris
+
+
+def test_replace_link_urls_batch_first_match_wins():
+    """When multiple patterns match the same URL, the first one in iteration order is applied."""
+    with Document() as document:
+        document.pages.add().add_link(RECT, URIAction("https://test.example/path"))
+
+        # Both patterns would match "test.example" but only one replacement happens
+        # Using a dict literal, Python preserves insertion order (Python 3.7+)
+        count = document.replace_link_urls_batch(
+            {"test.example": "first.com", "other.example": "second.com"}
+        )
+
+        # First pattern matched, so "first.com" should be in the URL
+        assert count == 1
+        assert "first.com" in _uris(document)[0]
+
+
+def test_replace_link_urls_batch_with_regex():
+    """replace_link_urls_batch supports regex patterns."""
+    with Document() as document:
+        page = document.pages.add()
+        page.add_link(RECT, URIAction("https://v1.api.example/endpoint"))
+        page.add_link(RECT, URIAction("https://v2.api.example/endpoint"))
+        page.add_link(RECT, URIAction("https://other.example/path"))
+
+        count = document.replace_link_urls_batch(
+            {r"v\d\.": "v3.", r"other\.example": "new.example"},
+            regex=True
+        )
+
+        assert count == 3
+        uris = _uris(document)
+        assert "v3.api.example" in uris[0]
+        assert "v3.api.example" in uris[1]
+        assert "new.example" in uris[2]
+
+
+def test_replace_link_urls_batch_with_compiled_regex():
+    """replace_link_urls_batch accepts compiled regex patterns."""
+    import re
+
+    with Document() as document:
+        document.pages.add().add_link(RECT, URIAction("https://old.example/path"))
+
+        count = document.replace_link_urls_batch(
+            {re.compile(r"old\.example"): "new.example"}
+        )
+
+        assert count == 1
+        assert "new.example" in _uris(document)[0]
+
+
+def test_replace_link_urls_batch_with_page_selection():
+    """replace_link_urls_batch respects page selection."""
+    with Document() as document:
+        for i in range(3):
+            page = document.pages.add()
+            page.add_link(RECT, URIAction(f"{OLD}/page{i}"))
+
+        # Only replace on page 1
+        count = document.replace_link_urls_batch({OLD: NEW}, pages=[1])
+
+        assert count == 1
+        assert NEW in _uris(document)[0]
+        assert OLD in _uris(document)[1]
+        assert OLD in _uris(document)[2]
+
+
+def test_replace_link_urls_batch_dry_run():
+    """replace_link_urls_batch dry_run counts without modifying."""
+    with Document() as document:
+        for i in range(3):
+            document.pages.add().add_link(RECT, URIAction(f"{OLD}/page{i}"))
+
+        original_uris = _uris(document)
+        assert document.replace_link_urls_batch({OLD: NEW}, dry_run=True) == 3
+
+        # No changes should have been made
+        assert _uris(document) == original_uris
+
+
+def test_replace_link_urls_batch_empty_mapping():
+    """replace_link_urls_batch with empty mapping returns 0."""
+    with Document() as document:
+        document.pages.add().add_link(RECT, URIAction(OLD))
+        assert document.replace_link_urls_batch({}, pages=[1]) == 0
+
+
+def test_replace_link_urls_batch_no_matches():
+    """replace_link_urls_batch with no matches returns 0."""
+    with Document() as document:
+        document.pages.add().add_link(RECT, URIAction(OLD))
+        assert document.replace_link_urls_batch({"nomatch": NEW}) == 0
+
+
+def test_replace_link_urls_batch_page_method():
+    """Page.replace_link_urls_batch works correctly."""
+    with Document() as document:
+        for i in range(2):
+            document.pages.add().add_link(RECT, URIAction(f"{OLD}/page{i}"))
+
+        count = document.pages[1].replace_link_urls_batch({OLD: NEW})
+
+        assert count == 1
+        assert NEW in _uris(document)[0]
+        assert OLD in _uris(document)[1]
+
+
+def test_replace_link_urls_batch_invalid_options():
+    """replace_link_urls_batch rejects invalid options."""
+    with Document() as document:
+        document.pages.add().add_link(RECT, URIAction(OLD))
+
+        with pytest.raises(PdfValidationException):
+            document.replace_link_urls_batch({OLD: NEW}, regex="true")
+
+        with pytest.raises(PdfValidationException):
+            document.replace_link_urls_batch({OLD: NEW}, case_sensitive="false")
+
+        with pytest.raises(PdfValidationException):
+            document.replace_link_urls_batch({OLD: NEW}, dry_run="true")
+
+
+def test_replace_link_urls_batch_invalid_replacements_type():
+    """replace_link_urls_batch rejects non-mapping replacements."""
+    with Document() as document:
+        document.pages.add().add_link(RECT, URIAction(OLD))
+
+        with pytest.raises(PdfValidationException, match="replacements must be a mapping"):
+            document.replace_link_urls_batch("not a mapping")
+
+        with pytest.raises(PdfValidationException, match="replacements must be a mapping"):
+            document.replace_link_urls_batch([("key", "value")])
+
+
+def test_replace_link_urls_batch_shared_annotation_refused():
+    """replace_link_urls_batch refuses shared annotations outside page selection."""
+    with Document() as document:
+        page = document.pages.add()
+        page.add_link(RECT, URIAction(OLD))
+        document.pages.add()  # Add a second page
+        # Share the annotation with page 2 (index 1 in engine)
+        engine = document._engine_pdf
+        shared_ref = engine._annotation_refs(0)[0]
+        engine._get_page_dict(1).mapping[PdfName("Annots")] = PdfArray([shared_ref])
+
+        # Trying to replace on page 2 should fail because annotation is shared
+        with pytest.raises(PdfValidationException, match="shared with an unselected page"):
+            document.pages[2].replace_link_urls_batch({OLD: NEW})

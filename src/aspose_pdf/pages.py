@@ -2648,6 +2648,20 @@ class Page:
             case_sensitive=case_sensitive, dry_run=dry_run,
         )
 
+    def replace_link_urls_batch(
+        self,
+        replacements: Mapping[str | re.Pattern[str], str],
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        dry_run: bool = False,
+    ) -> int:
+        """Replace multiple URL patterns on this page; see Document.replace_link_urls_batch."""
+        return self._document.replace_link_urls_batch(
+            replacements, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive, dry_run=dry_run,
+        )
+
     def validate_links(self) -> list[LinkValidationIssue]:
         """Check this page's link annotations, resolving names as needed.
 

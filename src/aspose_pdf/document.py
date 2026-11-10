@@ -3266,6 +3266,97 @@ class Document:
             case_sensitive=case_sensitive, dry_run=dry_run,
         )
 
+    @page_api(selections=("pages",))
+    def replace_link_urls_batch(
+        self,
+        replacements: Mapping[str | re.Pattern[str], str],
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        dry_run: bool = False,
+    ) -> int:
+        """Replace multiple URL patterns in Link annotations in a single call.
+
+        This is a convenience method that applies multiple URL replacements
+        to the document. It is equivalent to calling :meth:`replace_link_urls`
+        for each key-value pair in *replacements*, but more efficient as it
+        performs a single scan of the annotation metadata.
+
+        Parameters
+        ----------
+        replacements
+            A mapping of search patterns to replacement strings. Keys may be
+            strings or compiled regex patterns; values are the replacement text.
+        pages
+            One-based page numbers to process. ``None`` (default) processes all pages.
+            Duplicates are processed once. Rejected page numbers raise an error.
+        regex
+            If ``True``, all string keys are treated as regular expressions.
+            Compiled :class:`re.Pattern` keys always use regex mode, regardless
+            of this flag's value.
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns that already have flags set.
+        dry_run
+            If ``True``, perform all checks and count changes without
+            modifying the document. Return the number of changes that
+            would be made.
+
+        Returns
+        -------
+        int
+            Total number of link annotations modified across all patterns.
+            Each annotation is counted at most once, even if multiple patterns
+            match its URL.
+
+        Notes
+        -----
+        The batch operation scans the document once and applies all patterns
+        to each annotation's URL. If multiple patterns match the same URL,
+        only the first matching pattern's replacement is applied.
+
+        This preserves the same behavior as the single-pattern :meth:`replace_link_urls`
+        for annotation sharing, resource limits, and error handling. Annotations
+        shared with unselected pages are rejected.
+
+        See Also
+        --------
+        replace_link_urls : Replace a single URL pattern.
+
+        Examples
+        --------
+        Replace multiple domain patterns in one call:
+
+        >>> document.replace_link_urls_batch(
+        ...     {"old.example.com": "new.example.com", "old-domain.com": "new-domain.com"}
+        ... )
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> document.replace_link_urls_batch(
+        ...     {re.compile(r"\\d{4}"): "2024", "prod": "staging"}
+        ... )
+
+        Limit replacements and target specific pages:
+
+        >>> document.replace_link_urls_batch(
+        ...     {"v1": "v2"},
+        ...     pages=[1, 2, 3],
+        ...     case_sensitive=False
+        ... )
+        """
+        from aspose_pdf.engine.link_urls import replace_link_urls_in_batch
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return replace_link_urls_in_batch(
+            self, replacements, pages=pages, regex=regex,
+            case_sensitive=case_sensitive, dry_run=dry_run,
+        )
+
     @page_api(selections=("pages",), result="records")
     def validate_links(
         self,

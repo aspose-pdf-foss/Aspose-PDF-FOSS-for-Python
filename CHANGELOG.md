@@ -87,6 +87,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   link appearance and other action data. Plans are checked before editing,
   helping maintain published PDF links without recreating the document.
 
+- **Batch replace multiple URL patterns.** `Document.replace_link_urls_batch()`
+  and `Page.replace_link_urls_batch()` apply multiple URL replacements in a
+  single pass, scanning annotation metadata only once. This is more efficient
+  than repeated `replace_link_urls` calls, especially for domain migrations or
+  many pattern updates. Supports literal strings and compiled regex patterns
+  in the mapping; first matching pattern wins per annotation. All existing
+  options (`pages`, `regex`, `case_sensitive`, `dry_run`) work the same as
+  with the single-pattern method.
+
 - **Create navigation bookmarks from text patterns.**
   `Document.generate_outlines_from_text()` turns literal or regex matches into
   page bookmarks, with capture groups for titles and reusable text filters.

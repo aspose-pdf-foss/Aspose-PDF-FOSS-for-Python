@@ -1152,6 +1152,32 @@ schemes. Only primary URI actions are edited; page text, bookmark URLs and
 action chains remain unchanged. The complete plan is checked before edits,
 with no page rendering, content decoding or network access.
 
+### Batch Replace Multiple URL Patterns
+
+For multiple domain migrations or URL pattern updates, use `replace_link_urls_batch`:
+
+```python
+from aspose_pdf import Document
+
+with Document("manual.pdf") as document:
+    count = document.replace_link_urls_batch({
+        "old.example.com": "new.example.com",
+        "legacy.domain.net": "current.domain.net",
+    })
+    document.save("manual-updated.pdf")
+```
+
+This performs a single scan of the document's link metadata, applying all patterns
+in order. The first pattern that matches a URL is applied, and the annotation is
+not checked against subsequent patterns. Supports literal strings and compiled
+regex patterns in the mapping, with `regex=True` to treat string keys as patterns.
+`case_sensitive=False` adds case-insensitive matching, and `pages=[1, 3]` limits
+processing to specific pages. Use `dry_run=True` to count changes without modifying
+the document.
+
+The batch operation is more efficient than calling `replace_link_urls` repeatedly,
+especially when scanning large documents or applying many patterns.
+
 ### Check Internal Links
 
 ```python

@@ -6489,6 +6489,42 @@ Supported:
     counts and allocation slots obey `max_objects`, including dry runs; failed
     registration/assignment removes allocated copies and restores annotations.
     Save to persist the edits.
+
+- **Replace multiple URL patterns in Link annotations.**
+  `Document.replace_link_urls_batch(replacements, pages=None, regex=False,
+  case_sensitive=True, dry_run=False) -> int` and
+  `Page.replace_link_urls_batch(replacements, regex=False, case_sensitive=True,
+  dry_run=False)` apply multiple URL replacements in a single pass. This is more
+  efficient than calling `replace_link_urls` repeatedly, especially when applying
+  many patterns or scanning large documents.
+
+  - The *replacements* mapping contains patterns as keys and replacement strings
+    as values. Keys may be literal strings or compiled **text** regex patterns;
+    values are always text strings. The batch method scans all annotations once,
+    applying each pattern in mapping iteration order until the first match is
+    found for an annotation, then stops checking subsequent patterns for that
+    annotation.
+  - `regex=True` treats all string keys as Python regex patterns; compiled regex
+    patterns always use regex mode, regardless of this flag. `case_sensitive=False`
+    adds `IGNORECASE` to pattern matching, except for compiled patterns that
+    already have flags set. All non-overlapping matches within each URL are
+    replaced for matching patterns.
+  - `pages` contains one-based indices; None selects all and `[]` selects
+    none. Repetitions are processed once in first-selected order. The return
+    value counts distinct changed annotation dictionaries. Empty mappings
+    return 0 without any processing. Invalid patterns or replacement syntax
+    are validated before any metadata reads, and no changes are made if any
+    pattern is invalid.
+  - When a pattern matches and the replacement is identical to the original URL,
+    the annotation is not modified and not counted. Only annotations whose URLs
+    actually change receive new action dictionaries.
+  - All options and annotations are validated before any edits. If a failure
+    occurs during planning or application, all changes are rolled back and
+    the original annotations are preserved. The same sharing detection and
+    page-selection rules apply as with `replace_link_urls`.
+  - Resource limits bound selections, metadata work, reference depth,
+    substitution counts, source/search/replacement strings and resulting PDF
+    URL string sizes, matching the behavior of `replace_link_urls`.
 - **Validate local navigation targets without editing the PDF.**
   `Document.validate_links(pages=None, include_outlines=True,
   include_named_destinations=True) -> list[LinkValidationIssue]` checks Link
