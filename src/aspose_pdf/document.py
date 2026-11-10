@@ -5935,6 +5935,70 @@ class Document:
             self._reopen(data)
         return self
 
+    def save_to_stream(
+        self,
+        stream: BinaryIO,
+        save_format: Any = None,
+        *,
+        incremental: bool | None = None,
+    ) -> Document:
+        """Save the document to a binary stream.
+
+        This is a convenience method equivalent to ``save(stream, ...)``,
+        provided for clarity when saving to in-memory streams such as
+        ``io.BytesIO``.
+
+        Parameters
+        ----------
+        stream : BinaryIO
+            Any writable binary stream (e.g., ``BytesIO``, an open file
+            handle in binary mode).
+        save_format : SaveFormat, DocFormat, HtmlSaveOptions, MarkdownSaveOptions, or None
+            ``None`` (the default), ``SaveFormat.PDF`` or ``DocFormat.PDF``
+            write PDF. Other formats require a file path and raise
+            ``PdfValidationException`` for streams.
+        incremental : bool or None
+            See :meth:`save` for full details. When ``True``, write a
+            byte-preserving incremental update; requires a document loaded
+            from an existing PDF.
+
+        Returns
+        -------
+        Document
+            Self for method chaining.
+
+        Raises
+        ------
+        PdfValidationException
+            If *save_format* specifies HTML, Markdown, or SVG (these exports
+            generate multiple files and need a file path).
+
+        Notes
+        -----
+        For redacted documents written to a stream, the entire contents are
+        replaced from offset zero and the stream is truncated. Non-seekable
+        and append-mode outputs are refused.
+
+        Examples
+        --------
+        ::
+
+            from io import BytesIO
+
+            # Save to an in-memory buffer
+            buffer = BytesIO()
+            document.save_to_stream(buffer)
+            pdf_bytes = buffer.getvalue()
+
+            # Save with incremental update
+            with open("source.pdf", "rb") as f:
+                doc = Document(f)
+            doc.add_header(\"Confidential\")
+            doc.save_to_stream(buffer, incremental=True)
+        """
+        self.save(stream, save_format=save_format, incremental=incremental)
+        return self
+
     def dispose(self) -> None:
         """Release the document and underlying engine resources (primary lifecycle API).
 

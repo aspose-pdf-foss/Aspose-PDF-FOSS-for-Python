@@ -201,3 +201,73 @@ def test_save_to_path_overwrite_true_replaces_file(tmp_path):
     out.write_bytes(b"old content")
     _make_doc().save(out, overwrite=True)
     assert out.read_bytes()[:5] == b"%PDF-"
+
+
+# ---------------------------------------------------------------------------
+# New Feature: save_to_stream() convenience method
+# ---------------------------------------------------------------------------
+
+
+def test_save_to_stream_method_writes_data():
+    """save_to_stream() must write non-empty bytes into a BytesIO buffer."""
+    buf = io.BytesIO()
+    _make_doc().save_to_stream(buf)
+    assert buf.tell() > 0
+
+
+def test_save_to_stream_method_produces_valid_pdf_header():
+    """Bytes written by save_to_stream() must start with the %PDF- magic."""
+    buf = io.BytesIO()
+    _make_doc().save_to_stream(buf)
+    buf.seek(0)
+    assert buf.read(5) == b"%PDF-"
+
+
+def test_save_to_stream_matches_save_method(tmp_path):
+    """save_to_stream() must produce identical bytes to save() on a stream."""
+    src = _minimal_pdf_bytes()
+    doc = _make_doc(src)
+
+    # Save using save()
+    buf1 = io.BytesIO()
+    doc.save(buf1)
+
+    # Save using save_to_stream()
+    buf2 = io.BytesIO()
+    doc.save_to_stream(buf2)
+
+    assert buf1.getvalue() == buf2.getvalue()
+
+
+def test_save_to_stream_with_explicit_format():
+    """save_to_stream() works with explicit PDF format."""
+    buf = io.BytesIO()
+    _make_doc().save_to_stream(buf, save_format=None)
+    buf.seek(0)
+    assert buf.read(5) == b"%PDF-"
+
+
+def test_save_to_stream_incremental():
+    """save_to_stream() supports incremental updates."""
+    # Create a document from an existing PDF
+    src = _minimal_pdf_bytes()
+    doc = _make_doc(src)
+    doc.add_header("Test")
+
+    # Save incrementally
+    buf = io.BytesIO()
+    doc.save_to_stream(buf, incremental=None)
+
+    # Can be reloaded
+    buf.seek(0)
+    reloaded = Document()
+    reloaded.load_from(buf.read())
+    assert reloaded.page_count == 1
+
+
+def test_save_to_stream_method_chaining():
+    """save_to_stream() returns self for method chaining."""
+    buf = io.BytesIO()
+    doc = _make_doc()
+    result = doc.save_to_stream(buf)
+    assert result is doc
