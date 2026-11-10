@@ -409,3 +409,209 @@ def replace_link_urls_in_batch(
         raise
 
     return len(changes)
+
+
+def replace_annotation_contents_in_batch(
+    document: Document,
+    replacements: Mapping[str | re.Pattern[str], str],
+    *,
+    pages: Iterable[int] | None = None,
+    regex: bool = False,
+    case_sensitive: bool = True,
+    max_count: int = 0,
+    dry_run: bool = False,
+) -> int:
+    """Replace multiple annotation contents patterns in a single pass.
+
+    This is a convenience method that applies multiple contents replacements
+    to the document. It is equivalent to calling annotation contents editing
+    for each key-value pair in *replacements*, but more efficient as it
+    performs a single scan of the annotation metadata.
+
+    Parameters
+    ----------
+    document
+        The PDF document whose annotation contents should be modified.
+    replacements
+        A mapping of search patterns to replacement strings. Keys may be
+        strings or compiled regex patterns; values are the replacement text.
+    pages
+        One-based page numbers to process. ``None`` (default) processes all pages.
+        Duplicates are processed once. Rejected page numbers raise an error.
+    regex
+        If ``True``, all string keys are treated as regular expressions.
+        Compiled :class:`re.Pattern` keys always use regex mode, regardless
+        of this flag's value.
+    case_sensitive
+        If ``True`` (default), matching is case-sensitive. Ignored for
+        compiled regex patterns that already have flags set.
+    dry_run
+        If ``True``, perform all checks and count changes without
+        modifying the document. Return the number of changes that
+        would be made.
+
+    Returns
+    -------
+    int
+        Total number of annotation contents modified across all patterns.
+        Each annotation is counted at most once, even if multiple patterns
+        match its contents.
+
+    Notes
+    -----
+    The batch operation scans the document once and applies all patterns
+    to each annotation's contents. If multiple patterns match the same
+    contents, only the first matching pattern's replacement is applied.
+    """
+    if not isinstance(replacements, Mapping):
+        raise PdfValidationException("replacements must be a mapping")
+
+    if not replacements:
+        return 0
+
+    budget = _LoadBudget(document.load_limits)
+    for name, value in (("regex", regex), ("case_sensitive", case_sensitive), ("dry_run", dry_run)):
+        if not isinstance(value, bool):
+            raise PdfValidationException(f"{name} must be a boolean")
+
+    # Pre-validate all patterns and compile matchers before any processing
+    matchers: list[tuple[re.Pattern[str], str, bool]] = []
+    for search, replacement in replacements.items():
+        _text_size(replacement, budget, "annotation contents replacement")
+        if isinstance(search, re.Pattern):
+            source, flags, is_regex = search.pattern, search.flags, True
+        elif isinstance(search, str):
+            source, flags, is_regex = search, 0, regex
+        else:
+            raise PdfValidationException("search must be text or a compiled text regular expression")
+        _text_size(source, budget, "annotation contents search")
+        if not source:
+            raise PdfValidationException("search must not be empty")
+        if not is_regex:
+            flags |= re.IGNORECASE if not case_sensitive else 0
+        try:
+            matcher = re.compile(source, flags)
+        except re.error as exc:
+            raise PdfValidationException(f"Invalid regular expression: {exc}") from exc
+        matchers.append((matcher, replacement, is_regex))
+
+    indexes = page_indexes(pages, document.page_count, limits=budget.limits)
+    indexes = range(document.page_count) if indexes is None else indexes
+    budget.check(len(indexes), "max_container_items", "annotation page selection")
+    if not indexes:
+        return 0
+
+    selected = set(indexes)
+
+    # Track which annotations have been modified (by id for deduplication)
+    modified_annotation_ids: set[int] = set()
+    
+    # Total replacements counter for max_count
+    total_replacements = 0
+    remaining_count = max_count
+
+    # Collect annotations that need modification with their replacement info
+    to_modify: list[tuple[int, int, str, str]] = []  # (page_index, annot_index, new_contents, match_id)
+
+    # Single pass through annotations - collect all changes first
+    for index in dict.fromkeys(indexes):
+        page_dict = document._engine_pdf._get_page_dict(index)
+        if not isinstance(page_dict, PdfDictionary):
+            continue
+
+        annots_ref = page_dict.mapping.get(PdfName("Annots"))
+        if annots_ref is None:
+            continue
+
+        annots_array = document._engine_pdf._resolve(annots_ref)
+        if not isinstance(annots_array, PdfArray):
+            continue
+
+        for annot_idx, annot_ref in enumerate(annots_array.items):
+            annot_dict = document._engine_pdf._resolve(annot_ref)
+            if not isinstance(annot_dict, PdfDictionary):
+                continue
+
+            current_contents = document._engine_pdf._get_cos_string(
+                annot_dict.mapping.get(PdfName("Contents"))
+            )
+
+            # Skip annotations without contents (like Link annotations)
+            if not current_contents:
+                continue
+
+            # Skip if already modified
+            annot_id = id(annot_dict)
+            if annot_id in modified_annotation_ids:
+                continue
+
+            for matcher_idx, (matcher, replacement, _) in enumerate(matchers):
+                match = matcher.search(current_contents)
+                if match:
+                    # Compute the new contents
+                    new_contents = matcher.sub(replacement, current_contents)
+
+                    # Validate the new contents size
+                    _text_size(new_contents, budget, "annotation contents replacement result")
+
+                    # Count how many matches in this annotation
+                    # For simplicity, count 1 per annotation per pattern
+                    match_count = 1
+                    
+                    # Check max_count - 0 means unlimited, otherwise limit to that many
+                    if max_count > 0 and remaining_count <= 0:
+                        continue
+                        
+                    # Store for modification
+                    to_modify.append((index, annot_idx, new_contents, f"{annot_id}_{matcher_idx}"))
+                    modified_annotation_ids.add(annot_id)
+                    total_replacements += match_count
+                    remaining_count -= match_count
+                    break
+
+    if not to_modify:
+        return 0
+
+    # Check for shared annotations outside the selected pages
+    # We need to verify that annotations we're modifying are not shared with unselected pages
+    for index in range(document.page_count):
+        if index not in selected:
+            page_dict = document._engine_pdf._get_page_dict(index)
+            if not isinstance(page_dict, PdfDictionary):
+                continue
+
+            annots_ref = page_dict.mapping.get(PdfName("Annots"))
+            if annots_ref is None:
+                continue
+
+            annots_array = document._engine_pdf._resolve(annots_ref)
+            if not isinstance(annots_array, PdfArray):
+                continue
+
+            for annot_idx, annot_ref in enumerate(annots_array.items):
+                annot_dict = document._engine_pdf._resolve(annot_ref)
+                if not isinstance(annot_dict, PdfDictionary):
+                    continue
+
+                # Check if this annotation is in our modify list
+                for page_idx, annot_idx_check, _, _ in to_modify:
+                    if page_idx != index:
+                        continue
+                    # Same page, same index means same annotation
+                    if annot_idx == annot_idx_check:
+                        annot_dict_check = document._engine_pdf._resolve(annots_array.items[annot_idx])
+                        if id(annot_dict_check) == id(annot_dict):
+                            raise PdfValidationException(
+                                "An annotation with matching contents is shared with an unselected page"
+                            )
+
+    if dry_run:
+        return total_replacements
+
+    # Apply modifications
+    for page_index, annot_index, new_contents, _ in to_modify:
+        document._engine_pdf.update_annotation(
+            page_index, annot_index, {"Contents": new_contents}
+        )
+
+    return len(to_modify)

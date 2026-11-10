@@ -2898,6 +2898,73 @@ class Page:
             case_sensitive=case_sensitive, dry_run=dry_run,
         )
 
+    def replace_annotation_contents(
+        self,
+        replacements: Mapping[str | re.Pattern[str], str],
+        *,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+        dry_run: bool = False,
+    ) -> int:
+        """Replace multiple annotation contents patterns on this page.
+
+        This is a convenience method that applies multiple contents replacements
+        to annotations on this page. It is equivalent to calling annotation
+        content editing for each key-value pair in *replacements*, but more
+        efficient as it performs a single scan of the annotation metadata.
+
+        Parameters
+        ----------
+        replacements
+            A mapping of search patterns to replacement strings. Keys may be
+            strings or compiled regex patterns; values are the replacement text.
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns that already have flags set.
+        max_count
+            Maximum replacements to perform across all patterns. ``0`` (default)
+            means unlimited. The count is shared across all patterns.
+        regex
+            If ``True``, all string keys are treated as regular expressions.
+            Not required for compiled :class:`re.Pattern` keys.
+        dry_run
+            If ``True``, perform all checks and count changes without
+            modifying the document. Return the number of changes that
+            would be made.
+
+        Returns
+        -------
+        int
+            Total number of annotation contents modified across all patterns.
+
+        See Also
+        --------
+        replace_text : Replace a single text pattern in page content.
+        replace_texts : Replace multiple text patterns in page content.
+        replace_link_urls : Replace a single link URL pattern.
+        replace_link_urls_batch : Replace multiple link URL patterns.
+        Document.replace_annotation_contents : Replace annotation contents in the whole document.
+
+        Examples
+        --------
+        Replace multiple annotation contents in one call:
+
+        >>> page.replace_annotation_contents({"Old Co": "New Co", "2023": "2024"})
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> page.replace_annotation_contents(
+        ...     {re.compile(r"\\d{4}"): "2024", "Mr.": "Ms."},
+        ...     regex=True
+        ... )
+        """
+        return self._document.replace_annotation_contents(
+            replacements, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive, max_count=max_count, dry_run=dry_run,
+        )
+
     def validate_links(self) -> list[LinkValidationIssue]:
         """Check this page's link annotations, resolving names as needed.
 

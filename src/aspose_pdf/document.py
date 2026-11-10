@@ -4219,6 +4219,102 @@ class Document:
 
         return total_count
 
+    @page_api(selections=("pages",), scalars=("page_index",))
+    def replace_annotation_contents(
+        self,
+        replacements: Mapping[str | re.Pattern[str], str],
+        *,
+        page_index: int | None = None,
+        pages: Iterable[int] | None = None,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+        dry_run: bool = False,
+    ) -> int:
+        """Replace multiple annotation contents patterns in a single call.
+
+        This is a convenience method that applies multiple contents replacements
+        to annotations in the document. It is equivalent to calling annotation
+        content editing for each key-value pair in *replacements*, but more
+        efficient as it performs a single scan of the annotation metadata.
+
+        Parameters
+        ----------
+        replacements
+            A mapping of search patterns to replacement strings. Keys may be
+            strings or compiled regex patterns; values are the replacement text.
+        page_index
+            One-based page number. If omitted and ``pages`` is also omitted,
+            all pages are processed. Cannot be used together with ``pages``.
+        pages
+            Iterable of one-based page numbers to process. If omitted and
+            ``page_index`` is also omitted, all pages are processed.
+            Cannot be used together with ``page_index``.
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns that already have flags set.
+        max_count
+            Maximum replacements to perform across all patterns. ``0`` (default)
+            means unlimited. The count is shared across all patterns.
+        regex
+            If ``True``, all string keys are treated as regular expressions.
+            Not required for compiled :class:`re.Pattern` keys.
+        dry_run
+            If ``True``, perform all checks and count changes without
+            modifying the document. Return the number of changes that
+            would be made.
+
+        Returns
+        -------
+        int
+            Total number of annotation contents modified across all patterns.
+
+        See Also
+        --------
+        replace_text : Replace a single text pattern in page content.
+        replace_texts : Replace multiple text patterns in page content.
+        replace_link_urls : Replace a single link URL pattern.
+        replace_link_urls_batch : Replace multiple link URL patterns.
+
+        Examples
+        --------
+        Replace multiple annotation contents in one call:
+
+        >>> document.replace_annotation_contents({"Old Co": "New Co", "2023": "2024"})
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> document.replace_annotation_contents(
+        ...     {re.compile(r"\\d{4}"): "2024", "Mr.": "Ms."},
+        ...     regex=True
+        ... )
+
+        Limit replacements and target specific pages:
+
+        >>> document.replace_annotation_contents(
+        ...     {"old": "new"},
+        ...     pages=[1, 3],
+        ...     max_count=5
+        ... )
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        if page_index is not None and pages is not None:
+            raise PdfValidationException(
+                "page_index and pages cannot be used together. "
+                "Use page_index for a single page or pages for multiple pages."
+            )
+
+        from aspose_pdf.engine.link_urls import replace_annotation_contents_in_batch
+
+        return replace_annotation_contents_in_batch(
+            self, replacements, pages=pages, regex=regex,
+            case_sensitive=case_sensitive, max_count=max_count, dry_run=dry_run,
+        )
+
     @page_api(selections=("pages",), result="records")
     def auto_link(
         self,

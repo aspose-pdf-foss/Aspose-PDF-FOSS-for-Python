@@ -116,7 +116,10 @@ flowchart TD
   with page numbers and coordinates. The same methods are available on `Page`.
 - `Document.replace_text()` and `Document.redact_text()` rewrite or remove matched text directly
   inside existing content streams; `redact_text(..., overlay=True)` also draws a filled bar over
-  each removed run's location.
+  each removed run's location. `Document.replace_texts()` and `Document.redact_texts()` apply
+  multiple patterns efficiently in one scan. `Document.replace_annotation_contents()` and
+  `Page.replace_annotation_contents()` replace text in annotation contents using the same
+  pattern-based approach.
 - `Document.to_html()` and `to_markdown()` convert a document to a *flowing* one — headings,
   paragraphs, lists, tables and figures inferred by the same layout analysis `auto_tag()` uses,
   with the text decoded the way `extract_text()` decodes it. For a facsimile, export SVG instead.
