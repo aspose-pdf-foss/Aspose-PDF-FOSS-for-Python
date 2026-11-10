@@ -2590,6 +2590,87 @@ class Page:
             max_count=max_count,
         )
 
+    def link_texts(
+        self,
+        patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
+        uri: str | None = None,
+        *,
+        target: Destination | str | None = None,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+    ) -> AutoLinkResult:
+        """Link multiple text patterns on this page in a single call.
+
+        This is a convenience method that links multiple text patterns
+        to the same URI or destination. It is equivalent to calling
+        :meth:`link_text` for each pattern, but more efficient as it
+        performs a single scan of the content stream.
+
+        Parameters
+        ----------
+        patterns
+            A dictionary mapping search patterns to options. Each key is a string
+            or compiled regex pattern; each value is a dict of options for that
+            pattern (currently unused, kept for consistency with other batch APIs).
+        uri
+            The URI to link to. Exactly one of ``uri`` and ``target`` must be provided.
+        target
+            A destination to link to. Exactly one of ``uri`` and ``target`` must be provided.
+        case_sensitive
+            If True (default), matching is case-sensitive. Ignored for compiled
+            regex patterns.
+        max_count
+            Maximum links to create across all patterns. ``0`` (default) means
+            unlimited. The count is shared across all patterns.
+        regex
+            If True, all string patterns are treated as regular expressions.
+            Not required for compiled :class:`re.Pattern` keys.
+
+        Returns
+        -------
+        AutoLinkResult
+            A result object with annotations, skipped_fragments, existing_fragments,
+            and counts (linked_count, skipped_count, existing_count, matched_count).
+
+        See Also
+        --------
+        link_text : Link a single text pattern.
+        highlight_texts : Highlight multiple text patterns on this page.
+
+        Examples
+        --------
+        Link multiple patterns to a URI:
+
+        >>> page.link_texts({"review": {}, "approved": {}}, uri="https://example.com")
+
+        Link multiple patterns to a named destination:
+
+        >>> import re
+        >>> page.link_texts(
+        ...     {re.compile(r"\\d{4}"): {}, "chapter": {}},
+        ...     target="appendix",
+        ...     regex=True
+        ... )
+
+        Limit links:
+
+        >>> page.link_texts(
+        ...     {"important": {}, "critical": {}},
+        ...     uri="https://example.com",
+        ...     max_count=5
+        ... )
+        """
+        return self._document.link_texts(
+            patterns,
+            uri=uri,
+            target=target,
+            pages=[self.number],
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+        )
+
     def add_link(
         self,
         rect: Sequence[float],

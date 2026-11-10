@@ -4269,6 +4269,98 @@ class Document:
             max_count=max_count,
         )
 
+    @page_api(selections=("pages",), result="records")
+    def link_texts(
+        self,
+        patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
+        uri: str | None = None,
+        *,
+        target: Destination | str | None = None,
+        pages: Iterable[int] | None = None,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+    ) -> AutoLinkResult:
+        """Link multiple text patterns to a URI or destination in a single call.
+
+        This is a convenience method that links multiple text patterns
+        to the same URI or destination. It is equivalent to calling
+        :meth:`link_text` for each pattern, but more efficient as it
+        performs a single scan of the content streams.
+
+        Parameters
+        ----------
+        patterns
+            A dictionary mapping search patterns to options. Each key is a string
+            or compiled regex pattern; each value is a dict of options for that
+            pattern (currently unused, kept for consistency with other batch APIs).
+        uri
+            The URI to link to. Exactly one of ``uri`` and ``target`` must be provided.
+        target
+            A destination to link to. Exactly one of ``uri`` and ``target`` must be provided.
+        pages
+            One-based page numbers or None for all pages.
+        case_sensitive
+            If True (default), matching is case-sensitive. Ignored for compiled
+            regex patterns.
+        max_count
+            Maximum links to create across all patterns. ``0`` (default) means
+            unlimited. The count is shared across all patterns.
+        regex
+            If True, all string patterns are treated as regular expressions.
+            Not required for compiled :class:`re.Pattern` keys.
+
+        Returns
+        -------
+        AutoLinkResult
+            A result object with annotations, skipped_fragments, existing_fragments,
+            and counts (linked_count, skipped_count, existing_count, matched_count).
+
+        See Also
+        --------
+        link_text : Link a single text pattern.
+        highlight_texts : Highlight multiple text patterns.
+
+        Examples
+        --------
+        Link multiple patterns to a URI:
+
+        >>> document.link_texts(
+        ...     {"review": {}, "approved": {}},
+        ...     uri="https://example.com/docs"
+        ... )
+
+        Link multiple patterns to a named destination:
+
+        >>> import re
+        >>> document.link_texts(
+        ...     {re.compile(r"\\d{4}"): {}, "chapter": {}},
+        ...     target="appendix",
+        ...     regex=True
+        ... )
+
+        Limit links and target a specific page:
+
+        >>> document.link_texts(
+        ...     {"important": {}, "critical": {}},
+        ...     uri="https://example.com",
+        ...     pages=[1],
+        ...     max_count=5
+        ... )
+        """
+        from aspose_pdf.auto_links import _link_texts
+
+        return _link_texts(
+            self,
+            patterns,
+            uri=uri,
+            target=target,
+            pages=pages,
+            case_sensitive=case_sensitive,
+            max_count=max_count,
+            regex=regex,
+        )
+
     @page_api(scalars=("page_index",), result="records")
     def markup_text(
         self,

@@ -8,7 +8,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from aspose_pdf.annotations import LinkAnnotation, Name
@@ -500,3 +500,158 @@ def _link_matches(
         if max_count and considered >= max_count:
             break
     return AutoLinkResult(tuple(annotations), tuple(skipped), tuple(existing))
+
+
+def _link_texts(
+    document: Document,
+    patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
+    *,
+    uri: str | None = None,
+    target: Destination | str | None = None,
+    pages: Iterable[int] | None = None,
+    case_sensitive: bool = True,
+    max_count: int = 0,
+    regex: bool = False,
+) -> AutoLinkResult:
+    """Link multiple text patterns to one URI or local destination.
+
+    This is a convenience method that links multiple text patterns
+    to the same URI or destination. It is equivalent to calling
+    :meth:`_link_text` for each pattern, but more efficient as it
+    performs a single scan of the content streams.
+
+    Parameters
+    ----------
+    document
+        The document to link text in.
+    patterns
+        A dictionary mapping search patterns to options. Each key is a string
+        or compiled regex pattern; each value is a dict of options for that
+        pattern (currently unused, kept for consistency with other batch APIs).
+    uri
+        The URI to link to. Exactly one of ``uri`` and ``target`` must be provided.
+    target
+        A destination to link to. Exactly one of ``uri`` and ``target`` must be provided.
+    pages
+        One-based page numbers or None for all pages.
+    case_sensitive
+        If True (default), matching is case-sensitive. Ignored for compiled
+        regex patterns.
+    max_count
+        Maximum links to create across all patterns. 0 (default) means
+        unlimited. The count is shared across all patterns.
+    regex
+        If True, all string patterns are treated as regular expressions.
+        Not required for compiled :class:`re.Pattern` keys.
+
+    Returns
+    -------
+    AutoLinkResult
+        A result object with annotations, skipped_fragments, existing_fragments,
+        and counts (linked_count, skipped_count, existing_count, matched_count).
+
+    See Also
+    --------
+    link_text : Link a single text pattern.
+    highlight_texts : Highlight multiple text patterns.
+
+    Examples
+    --------
+    Link multiple patterns to a URI:
+
+    >>> document.link_texts(
+    ...     {"review": {}, "approved": {}},
+    ...     uri="https://example.com/docs"
+    ... )
+
+    Link multiple patterns to a named destination:
+
+    >>> document.link_texts(
+    ...     {re.compile(r"\\d{4}"): {}, "chapter": {}},
+    ...     target="appendix",
+    ...     regex=True
+    ... )
+
+    Limit links and target a specific page:
+
+    >>> document.link_texts(
+    ...     {"important": {}, "critical": {}},
+    ...     uri="https://example.com",
+    ...     page_index=1,
+    ...     max_count=5
+    ... )
+    """
+    document._ensure_not_disposed()
+    engine = document._engine_pdf
+    if engine is None:
+        raise AsposePdfException("No document loaded")
+
+    if not patterns:
+        raise PdfValidationException("patterns must not be empty")
+
+    # Validate and normalize patterns
+    compiled_patterns = []
+    for pattern_key, options in patterns.items():
+        if options is not None and not isinstance(options, dict):
+            raise PdfValidationException(
+                f"Pattern options must be a dict or None, got {type(options).__name__}"
+            )
+        if isinstance(pattern_key, re.Pattern):
+            # For compiled patterns, use the pattern as-is
+            compiled_patterns.append(pattern_key)
+        elif isinstance(pattern_key, str):
+            if not pattern_key:
+                raise PdfValidationException("Pattern string must not be empty")
+            if regex:
+                # Treat as regex
+                try:
+                    compiled_patterns.append(
+                        re.compile(pattern_key, 0 if case_sensitive else re.IGNORECASE)
+                    )
+                except re.error as exc:
+                    raise PdfValidationException(
+                        f"Invalid regex pattern: {pattern_key}"
+                    ) from exc
+            else:
+                # Escape and treat as literal
+                compiled_patterns.append(
+                    re.compile(re.escape(pattern_key), 0 if case_sensitive else re.IGNORECASE)
+                )
+        else:
+            raise PdfValidationException(
+                f"Pattern key must be a string or compiled regex, got {type(pattern_key).__name__}"
+            )
+
+    # Validate uri/target exactly one
+    if target is None:
+        if not isinstance(uri, str) or not uri.strip():
+            raise PdfValidationException(
+                "uri must be nonblank text, or supply target"
+            )
+    elif uri is not None:
+        raise PdfValidationException("Supply either uri or target, not both")
+
+    # Validate target if provided
+    if target is not None:
+        _validate_local_target(engine, target, document.page_count)
+
+    # Build page index list
+    indexes = page_indexes(pages, document.page_count, limits=document.load_limits)
+    if indexes is None:
+        indexes = tuple(range(document.page_count))
+    else:
+        indexes = tuple(indexes)
+
+    def candidates(text: str) -> Iterator[tuple[int, int, str, str]]:
+        """Yield (start, end, value, uri) for all pattern matches in text."""
+        for pattern in compiled_patterns:
+            for match in pattern.finditer(text):
+                start, end = match.span()
+                value = match.group()
+                if value:
+                    # Yield the URI or an empty string (target is passed separately)
+                    yield start, end, value, uri or ""
+
+    # Reuse the shared _link_matches function, passing the pre-computed indexes
+    result = _link_matches(document, indexes, candidates, max_count, target=target)
+    return result
