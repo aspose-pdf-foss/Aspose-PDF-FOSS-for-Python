@@ -176,10 +176,10 @@ def test_add_images_page_size_string_names(document, tmp_path):
 
 
 def test_add_images_nonexistent_file_raises(document, tmp_path):
-    """Non-existent image path raises FileNotFoundError."""
+    """Non-existent image path raises FileNotFoundError with filename."""
     path = tmp_path / "missing.png"
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError, match=r"Image not found:.*missing\.png"):
         document.add_pages_from_images([str(path)])
 
 
@@ -193,9 +193,15 @@ def test_add_images_invalid_layout_raises(document, png_100x50, tmp_path):
 
 
 def test_add_images_not_a_list_raises(document):
-    """Non-list image_paths raises TypeError."""
-    with pytest.raises(TypeError, match="list"):
+    """Non-list image_paths raises TypeError with type info."""
+    with pytest.raises(TypeError, match=r"list.*got str"):
         document.add_pages_from_images("not_a_list")
+
+
+def test_add_images_not_a_list_int_raises(document):
+    """Non-list image_paths raises TypeError with int type info."""
+    with pytest.raises(TypeError, match=r"list.*got int"):
+        document.add_pages_from_images(123)
 
 
 def test_add_png_images(document, png_100x50, tmp_path):

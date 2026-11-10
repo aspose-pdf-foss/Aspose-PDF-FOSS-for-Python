@@ -1785,7 +1785,7 @@ class Page:
         document : Document
             The document to which the page will be added.
         image : str, Path, bytes, or bytearray
-            Image file path or raw bytes (JPEG, PNG, BMP, GIF, WebP).
+            Image file path, raw bytes, or bytearray (JPEG, PNG, BMP, GIF, WebP).
         size : PageSize, (width, height), or str, optional
             Page size to use instead of the image's natural size.
             A :class:`~aspose_pdf.page_size.PageSize`, its name, or a
@@ -1803,6 +1803,10 @@ class Page:
         ------
         PdfValidationException
             If the image data is invalid or the size is malformed.
+        FileNotFoundError
+            If the image path does not exist.
+        OSError
+            If the image file cannot be read.
 
         Notes
         -----
@@ -1833,16 +1837,22 @@ class Page:
         # Load image data
         if isinstance(image, (str, Path)):
             path = Path(image)
-            eng._load_budget.check(
-                path.stat().st_size,
-                "max_input_bytes",
-                "image input bytes",
-            )
-            data = path.read_bytes()
+            try:
+                file_size = path.stat().st_size
+                eng._load_budget.check(
+                    file_size,
+                    "max_input_bytes",
+                    "image input bytes",
+                )
+                data = path.read_bytes()
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Image not found: {image}")
+            except OSError as exc:
+                raise OSError(f"Could not read image file '{image}': {exc}")
         elif isinstance(image, (bytes, bytearray)):
             data = bytes(image)
         else:
-            raise TypeError("image must be bytes, bytearray, str, or Path")
+            raise TypeError(f"image must be bytes, bytearray, str, or Path, got {type(image).__name__}")
 
         # Prepare the image
         try:

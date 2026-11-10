@@ -2356,7 +2356,7 @@ class Document:
             )
         """
         if not isinstance(image_sources, list):
-            raise TypeError("image_sources must be a list of paths or bytes")
+            raise TypeError(f"image_sources must be a list of paths or bytes, got {type(image_sources).__name__}")
         if not image_sources:
             return []
 
