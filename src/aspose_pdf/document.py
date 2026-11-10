@@ -38,6 +38,7 @@ from aspose_pdf.document_fonts import DocumentFont
 from aspose_pdf.engine import viewer_preferences as engine_viewer_prefs
 from aspose_pdf.engine.field_split import split_by_field_value as _split_by_field_value
 from aspose_pdf.engine.file_output import write_file_atomically
+from aspose_pdf.engine.page_pdf_zip import export_zip as _export_pages_zip
 from aspose_pdf.engine.simple_pdf import (
     SimplePdf,
     _effective_encryption_password,
@@ -6002,6 +6003,69 @@ class Document:
             exclude_regions=exclude_regions, page_separator=page_separator,
             encoding=encoding, overwrite=overwrite,
         )
+
+    @page_api(selections=("pages",))
+    def export_pages_as_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return individual page PDFs in a ZIP archive, optionally writing them.
+
+        Each selected page becomes a single-page PDF file in the archive.
+        Pages are named ``page-0001.pdf``, ``page-0002.pdf``, etc. in the
+        order they are selected. An empty selection produces a valid empty ZIP.
+
+        The ZIP uses flat basenames, with both slash styles removed. Unsafe
+        characters are replaced before writing. Archive timestamps and
+        permissions are fixed for deterministic output.
+
+        ``compression`` is ``"deflate"`` (default) or ``"stored"``;
+        ``compresslevel`` is an integer from 0 to 9.
+
+        ``include_manifest=True`` appends ``manifest.json`` with schema version 1,
+        a ``pages`` array, and for each entry: ``archive_name``, one-based
+        ``page_index``, and ``size`` (ZIP entry byte count).
+
+        Selection follows :meth:`extract_text`: one-based page indices,
+        preserving order and repetitions. ``pages=None`` selects all pages;
+        an empty iterable checks none. Options and page-count limits are
+        checked before any page is read. Streaming inputs read selected
+        pages one at a time without filling full-document caches.
+
+        File output is staged beside the target and replaced atomically after
+        success; failure leaves existing files intact. Parent folders are
+        created as needed. ``overwrite=False`` refuses existing paths.
+        Binary streams receive bytes at their current position, retry short
+        writes and remain open; write failures can leave partial output.
+        No full-document text string or complete encoded output is accumulated.
+        """
+        from aspose_pdf._export_files import write_files
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+
+        data = _export_pages_zip(
+            self,
+            pages=pages,
+            compression=compression,
+            compresslevel=compresslevel,
+            include_manifest=include_manifest,
+        )
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
 
     @page_api(selections=("pages",), result="records")
     def extract_words(

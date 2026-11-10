@@ -2543,6 +2543,38 @@ Supported:
     `None` selects all pages. Generated flat names `page-0001.png`, etc. follow
     output position, including repeated source pages. Empty documents or
     selections produce valid empty archives, or a manifest with an empty list.
+
+- **Export individual pages as separate PDF files in a ZIP archive.**
+  `Document.export_pages_as_zip(destination=None, pages=None, compression="deflate",
+  compresslevel=6, include_manifest=False, overwrite=True)` returns ZIP bytes
+  and optionally writes a file or binary stream.
+  - Page selection uses one-based indices, preserving order and repetitions;
+    `None` selects all pages. Generated flat names `page-0001.pdf`, etc. follow
+    output position, including repeated source pages. Empty documents or
+    selections produce valid empty archives, or a manifest with an empty list.
+  - Each page becomes a complete single-page PDF in the ZIP, with all its
+    content: text, images, annotations, form fields, layers, and structure.
+    Page geometry, rotation, boxes, and labels are preserved. PDF text, links,
+    fields, attachments, metadata and signatures remain as live objects.
+  - ZIP compression is `deflate` (default) or `stored`, with integer
+    `compresslevel` 0-9. Fixed timestamps (1980-01-01) and regular-file
+    permissions give deterministic archives in the same runtime/codecs.
+  - `include_manifest=True` adds `manifest.json` with `schema_version: 1`,
+    and a `pages` array. Every record contains `archive_name`, one-based
+    `page_index`, and encoded `size` in bytes.
+  - All indices, selection count, and ZIP entry count (including manifest)
+    obey `max_container_items`. Each page PDF and the total PDF bytes plus
+    manifest obey `max_object_bytes`/`max_total_decoded_bytes`. Estimated
+    serialization work and complete ZIP growth obey `max_codec_work_bytes`.
+    Source content and page decoding retain their normal resource policies.
+  - One page is imported, serialized and released at a time. Streaming
+    documents read only selected page content and keep full-document
+    content/text caches lazy. The complete archive remains in memory and
+    is built before destination writes. File replacement is atomic;
+    `overwrite=False` refuses existing paths. Streams are written at their
+    current position, support short writes and stay open; a stream I/O
+    failure can leave partial bytes.
+  - Source content, metadata, protection and files are not edited.
   - `image_format` accepts `png`, `jpeg`/`jpg` and `webp`, ignoring case,
     surrounding whitespace and leading dots. PNG and JPEG use built-in codecs.
     WebP requires the optional `images` extra with WebP support; unavailable

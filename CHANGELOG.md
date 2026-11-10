@@ -33,6 +33,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Export individual pages as separate PDF files in a ZIP archive.**
+  `Document.export_pages_as_zip()` returns each page as a single-page PDF in a
+  ZIP archive, preserving complete page content including annotations, form
+  fields, and layers. Pages are named ``page-0001.pdf``, ``page-0002.pdf``, etc.
+  An optional manifest tracks the source page index for each entry. Teams can
+  distribute individual page PDFs without creating temporary files or managing
+  the lifecycle of returned documents.
+
 - **Batch text redaction methods.** Added `Document.redact_texts()` and
   `Page.redact_texts()` to remove multiple text patterns in a single call.
   This is more efficient than calling `redact_text()` repeatedly, scanning
