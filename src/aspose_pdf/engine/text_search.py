@@ -357,3 +357,124 @@ def find_texts(
                 results[pattern_key].append(match.group())
 
     return results
+
+
+def search_texts(
+    document,
+    patterns,
+    *,
+    pages,
+    regex,
+    case_sensitive,
+    context_chars,
+) -> dict:
+    """Return search results for multiple patterns with context and geometry.
+
+    This is a batch version of :func:`search`. It performs the same pattern
+    matching for each pattern, returning matches with page-local character
+    offsets, context, and geometry. Use this when you need to know *what*
+    matched for each pattern along with where and how it appeared.
+
+    Args:
+        document: The document to search.
+        patterns: A mapping of search patterns to names. Keys may be strings or
+            compiled regex patterns; values are the names used in the result dict.
+        pages: One-based page numbers or None for all pages.
+        regex: If True, all patterns are treated as regular expressions. Ignored
+            for compiled :class:`re.Pattern` keys.
+        case_sensitive: Match case exactly unless False.
+        context_chars: Number of characters of context to include before and
+            after each match.
+
+    Returns:
+        A dictionary mapping each pattern key to a list of :class:`TextSearchMatch`
+        instances in page order. Empty lists for patterns with no matches.
+
+    See Also:
+        :meth:`~aspose_pdf.Document.search_texts`: The public method that wraps this.
+    """
+    from collections import OrderedDict
+
+    from aspose_pdf.pages import Page
+
+    budget = _LoadBudget(document.load_limits)
+    indexes = page_indexes(pages, document.page_count, limits=document.load_limits)
+    indexes = range(document.page_count) if indexes is None else indexes
+
+    # Build matchers for all patterns
+    matchers: OrderedDict = OrderedDict()
+    for pattern_key in patterns:
+        pattern_matcher, _ = _matcher(
+            pattern_key, regex, case_sensitive, context_chars, budget=budget
+        )
+        matchers[pattern_key] = pattern_matcher
+
+    texts = iter_text_pages(
+        document, pages=indexes, clip=None, skip_artifacts=False, exclude_regions=None
+    )
+    results: dict = {pattern_key: [] for pattern_key in patterns}
+
+    placer = TextFragmentAbsorber()
+    total_work = 0
+    total_text = 0
+
+    for index, text in zip(indexes, texts, strict=True):
+        # Collect matches for all patterns on this page
+        page_matches: dict = {pattern_key: [] for pattern_key in patterns}
+        
+        for pattern_key, matcher in matchers.items():
+            # Determine if this matcher is regex-based
+            # Compiled patterns are always regex; string patterns use the regex parameter
+            is_regex = isinstance(pattern_key, re.Pattern) or regex
+            for match in _matches(matcher, text, is_regex):
+                total_work += 1
+                budget.check(
+                    total_work, "max_content_tokens", "search texts matches inspected"
+                )
+                start, end = match.span()
+                if start == end:
+                    continue
+                
+                budget.check(
+                    sum(len(v) for v in results.values()) + 1,
+                    "max_container_items",
+                    "search texts matches",
+                )
+                
+                before = text[max(0, start - context_chars) : start]
+                after = text[end : end + context_chars]
+                matched = match.group()
+                total_text += sum(
+                    _text_size(value, budget) for value in (matched, before, after)
+                )
+                budget.check(
+                    total_text, "max_total_decoded_bytes", "search texts result text"
+                )
+                
+                fragments = [TextFragment(index, matched, start, end)]
+                placer._place(Page._from_index(document, index), fragments)
+                fragment = fragments[0]
+                
+                page_matches[pattern_key].append(
+                    TextSearchMatch(
+                        index,
+                        fragment.text,
+                        fragment.start,
+                        fragment.end,
+                        before,
+                        after,
+                        None if fragment.rect is None else tuple(fragment.rect),
+                        None
+                        if fragment.quads is None
+                        else tuple(
+                            tuple(tuple(point) for point in quad)
+                            for quad in fragment.quads
+                        ),
+                    )
+                )
+        
+        # Add matches for each pattern to results
+        for pattern_key in patterns:
+            results[pattern_key].extend(page_matches[pattern_key])
+
+    return results

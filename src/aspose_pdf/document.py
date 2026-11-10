@@ -5944,6 +5944,84 @@ class Document:
         )
 
     @page_api(selections=("pages",), result="records")
+    def search_texts(
+        self,
+        patterns: Mapping[str | re.Pattern[str], str],
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        context_chars: int = 40,
+    ) -> dict:
+        """Return search results for multiple patterns with context and geometry.
+
+        This is a batch version of :meth:`search_text`. It performs the same
+        pattern matching for each pattern, returning matches with page-local
+        character offsets, context, and geometry. Use this when you need to
+        know *what* matched for each pattern along with where and how it appeared.
+
+        The search is efficient: the document is scanned only once, and results
+        are collected for all patterns in a single pass.
+
+        Keys may be strings or compiled regex patterns; values are ignored and
+        present only to allow clear labeling in the caller's code. The result
+        dictionary preserves the key order from the input mapping.
+
+        Strings are literal unless ``regex=True``; compiled text regexes
+        retain their flags. ``case_sensitive=False`` adds Python's IGNORECASE
+        semantics. Literal occurrences may overlap; regex matches follow
+        ``re.finditer``. Zero-length matches are omitted. Empty patterns
+        are rejected.
+
+        ``context_chars`` is a non-negative character count on each side, cut
+        at the page boundary. Offsets index the page's extracted Unicode text,
+        not PDF bytes. ``rect`` and ``quads`` use unrotated PDF coordinates and
+        are None when placement cannot be established reliably, as with
+        TextFragmentAbsorber. Matches without geometry remain in the report.
+
+        One-based ``pages`` preserves order and repeats. All options/selections
+        are checked before extraction. Only selected pages are read, without
+        filling document-wide text/content caches. Search follows ordinary text
+        extraction, including hidden-layer filtering and logical replacements;
+        it does not OCR images or search annotation/form values. Results obey
+        load limits and survive source edits/disposal without changing the PDF.
+
+        Args:
+            patterns: A mapping of search patterns to names. Keys may be strings
+                or compiled regex patterns; values are labels used in the result.
+            pages: One-based page numbers, or None for all pages.
+            regex: Treat all string patterns as regular expressions (default: False).
+            case_sensitive: Match case exactly (default: True).
+            context_chars: Number of context characters before and after each
+                match (default: 40).
+
+        Returns:
+            A dictionary mapping each pattern key to a list of :class:`TextSearchMatch`
+            instances in page order. Empty lists for patterns with no matches.
+
+        Example:
+            >>> results = document.search_texts(
+            ...     {"invoice": "inv", "amount": "amt"},
+            ...     context_chars=20
+            ... )
+            >>> # results is {"invoice": [TextSearchMatch(...), ...], "amount": [...]}
+            >>> import re
+            >>> results = document.search_texts(
+            ...     {re.compile(r"\\d{4}"): "year", re.compile(r"\\d{2}"): "number"},
+            ...     regex=True
+            ... )
+        """
+        from aspose_pdf.engine.text_search import search_texts
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return search_texts(
+            self, patterns, pages=pages, regex=regex,
+            case_sensitive=case_sensitive, context_chars=context_chars,
+        )
+
+    @page_api(selections=("pages",), result="records")
     def find_text(
         self,
         pattern: str | re.Pattern[str],

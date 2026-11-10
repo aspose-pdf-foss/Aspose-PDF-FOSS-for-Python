@@ -106,6 +106,8 @@ def numbered_records(value: Any) -> Any:
         return [numbered_records(item) for item in value]
     if isinstance(value, tuple):
         return tuple(numbered_records(item) for item in value)
+    if isinstance(value, dict):
+        return {key: numbered_records(item) for key, item in value.items()}
     if is_dataclass(value) and not isinstance(value, type):
         changes = {}
         for field in fields(value):

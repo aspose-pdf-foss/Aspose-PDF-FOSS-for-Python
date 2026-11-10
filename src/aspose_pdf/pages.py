@@ -796,6 +796,41 @@ class Page:
             case_sensitive=case_sensitive,
         )
 
+    def search_texts(
+        self,
+        patterns: Mapping[str | re.Pattern[str], str],
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        context_chars: int = 40,
+    ) -> dict:
+        """Return search results for multiple patterns on this page with context.
+
+        This is a batch version of :meth:`search_text`. It performs the same
+        pattern matching for each pattern, returning matches with page-local
+        character offsets, context, and geometry.
+
+        Args:
+            patterns: A mapping of search patterns to names. Keys may be strings
+                or compiled regex patterns; values are labels used in the result.
+            regex: Treat all string patterns as regular expressions (default: False).
+            case_sensitive: Match case exactly (default: True).
+            context_chars: Number of context characters before and after each
+                match (default: 40).
+
+        Returns:
+            A dictionary mapping each pattern key to a list of :class:`TextSearchMatch`
+            instances in page order. Empty lists for patterns with no matches.
+
+        Example:
+            >>> results = page.search_texts({"invoice": "inv", "amount": "amt"})
+            >>> # results is {"invoice": [TextSearchMatch(...), ...], "amount": [...]}
+        """
+        return self._document.search_texts(
+            patterns, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive, context_chars=context_chars,
+        )
+
     def export_search_json(
         self,
         pattern: str | re.Pattern[str],

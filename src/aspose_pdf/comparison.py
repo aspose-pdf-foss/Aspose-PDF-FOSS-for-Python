@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from aspose_pdf.visual_comparison import PageVisualComparison
 
 
-__all__ = ["ChangeType", "ComparisonOptions", "ContentChange", "DocumentComparison"]
+__all__ = ["ChangeType", "ContentChange", "DocumentComparison"]
 
 
 class ChangeType:
