@@ -5305,6 +5305,42 @@ Boundaries:
 - Arithmetic-coded, lossless and differential JPEG, and 12-bit samples, remain
   unsupported by the pure-Python raster path.
 
+- **Add pages from image files or bytes.**
+  `Document.add_pages_from_images(image_sources, layout="grid", size=None, dpi=72.0)`
+  adds one page per image, embedding the image as a full-page image. Each source
+  in the list can be a file path (`str` or `Path`) or raw image bytes
+  (`bytes`/`bytearray`). The layout is currently only `"grid"` (one image per
+  page filling the page); the page size defaults to the image's natural size at
+  *dpi* or can be specified with `size="A4"`, `size=(300, 400)`, etc. The DPI
+  controls how pixels map to points (72 DPI = 1 pixel = 1 point).
+  - JPEG and PNG work without optional dependencies. Static BMP, GIF,
+    and WebP require the ``images`` extra. Animated GIFs are not supported.
+  - The method returns a list of one-based page numbers for the newly added
+    pages. An empty list returns an empty list; a single image returns `[1]`.
+  - Invalid image bytes, unreadable files, or malformed `size` raise
+    `PdfValidationException` or `FileNotFoundError`. Invalid layout mode or
+    non-list input raises `TypeError`.
+
+  ```python
+  from aspose_pdf import Document
+
+  # Add pages from image files
+  page_numbers = document.add_pages_from_images(["scan1.png", "scan2.jpg"])
+
+  # Add pages from image bytes (e.g., downloaded from network)
+  with open("image.png", "rb") as f:
+      document.add_pages_from_images([f.read()])
+
+  # Add pages with explicit A4 size
+  page_numbers = document.add_pages_from_images(
+      ["img1.jpg", "img2.jpg"],
+      size="A4"
+  )
+
+  # Add pages from bytes with custom DPI
+  page_numbers = document.add_pages_from_images([image_bytes], dpi=144)
+  ```
+
 ## Forms
 
 Supported:

@@ -568,6 +568,34 @@ JPEG supports RGB and gray. The method returns ZIP bytes and can also write a
 file or binary stream. See [page archive details](supported-features.md#pages)
 for rendering options, limits and output behavior.
 
+### Add Pages from Image Files or Bytes
+
+```python
+from aspose_pdf import Document
+
+with Document() as document:
+    # Add pages from image files
+    page_numbers = document.add_pages_from_images(["scan1.png", "scan2.jpg"])
+    print(f"Added pages: {page_numbers}")
+
+    # Add pages from image bytes (e.g., downloaded from network)
+    with open("image.png", "rb") as f:
+        document.add_pages_from_images([f.read()])
+
+    # Add pages with explicit A4 size
+    page_numbers = document.add_pages_from_images(
+        ["img1.jpg", "img2.jpg"],
+        size="A4"
+    )
+
+    document.save("from_images.pdf")
+```
+
+`add_pages_from_images` accepts file paths or raw image bytes, adding one page
+per source. JPEG and PNG work out of the box; BMP, GIF, and WebP need the
+optional `images` extra. The page size defaults to the image's natural size at
+72 DPI or can be specified with a `PageSize` name or `(width, height)` tuple.
+
 ### Render a Page to an Image
 
 ```python
