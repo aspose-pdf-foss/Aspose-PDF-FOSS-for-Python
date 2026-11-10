@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, cast
 
 from aspose_pdf.color import ColorValue
@@ -203,6 +204,7 @@ def markup_texts(
     *,
     kind: str = "highlight",
     page_index: int | None = None,
+    pages: Iterable[int] | None = None,
     case_sensitive: bool = True,
     max_count: int = 0,
     regex: bool = False,
@@ -223,7 +225,12 @@ def markup_texts(
     kind
         The markup kind: 'highlight', 'underline', 'strike_out', or 'squiggly'.
     page_index
-        One-based page number. If omitted, all pages are processed.
+        One-based page number. If omitted and ``pages`` is also omitted,
+        all pages are processed. Cannot be used together with ``pages``.
+    pages
+        Iterable of one-based page numbers to process. If omitted and
+        ``page_index`` is also omitted, all pages are processed.
+        Cannot be used together with ``page_index``.
     case_sensitive
         If True (default), matching is case-sensitive. Ignored for compiled
         regex patterns.
@@ -263,11 +270,11 @@ def markup_texts(
     ...     regex=True
     ... )
 
-    Limit marks and target a specific page:
+    Limit marks and target specific pages:
 
     >>> document.markup_texts(
     ...     {"important": {}, "critical": {}},
-    ...     page_index=1,
+    ...     pages=[1, 3],
     ...     max_count=5,
     ...     kind="strike_out"
     ... )
@@ -278,6 +285,12 @@ def markup_texts(
         raise AsposePdfException("No document loaded")
     if not isinstance(patterns, dict):
         raise TypeError("patterns must be a dictionary")
+
+    if page_index is not None and pages is not None:
+        raise PdfValidationException(
+            "page_index and pages cannot be used together. "
+            "Use page_index for a single page or pages for multiple pages."
+        )
 
     # Build a list of (pattern_key, pattern_str, is_regex, options) tuples
     pattern_items: list[tuple[str | re.Pattern[str], str, bool, dict[str, Any]]] = []
@@ -311,13 +324,24 @@ def markup_texts(
         raise TypeError("max_count must be a non-negative integer")
     if max_count < 0:
         raise ValueError("max_count must be greater than or equal to zero")
-    if page_index is None:
-        indexes = range(document.page_count)
-    else:
+
+    if page_index is not None and pages is not None:
+        raise PdfValidationException(
+            "page_index and pages cannot be used together. "
+            "Use page_index for a single page or pages for multiple pages."
+        )
+
+    if page_index is not None:
         if isinstance(page_index, bool) or not isinstance(page_index, int):
             raise TypeError("page_index must be a zero-based integer")
         engine._validate_page_index(page_index)
         indexes = (page_index,)
+    elif pages is not None:
+        # pages is already an _EngineSelection from the decorator
+        # Iterate over it to get zero-based indices
+        indexes = tuple(pages)
+    else:
+        indexes = range(document.page_count)
 
     # Process each pattern and collect results
     all_annotations: list[
@@ -438,6 +462,7 @@ def highlight_texts(
     patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
     *,
     page_index: int | None = None,
+    pages: Iterable[int] | None = None,
     case_sensitive: bool = True,
     max_count: int = 0,
     regex: bool = False,
@@ -457,7 +482,12 @@ def highlight_texts(
         pattern (color, opacity, contents, title). The color defaults to
         yellow for highlights if not specified.
     page_index
-        One-based page number. If omitted, all pages are processed.
+        One-based page number. If omitted and ``pages`` is also omitted,
+        all pages are processed. Cannot be used together with ``pages``.
+    pages
+        Iterable of one-based page numbers to process. If omitted and
+        ``page_index`` is also omitted, all pages are processed.
+        Cannot be used together with ``page_index``.
     case_sensitive
         If True (default), matching is case-sensitive. Ignored for compiled
         regex patterns.
@@ -466,7 +496,7 @@ def highlight_texts(
         unlimited. The count is shared across all patterns.
     regex
         If True, all string patterns are treated as regular expressions.
-        Not required for compiled re.Pattern keys.
+        Not required for compiled :class:`re.Pattern` keys.
 
     Returns
     -------
@@ -493,19 +523,26 @@ def highlight_texts(
     ...     regex=True
     ... )
 
-    Limit highlights and target a specific page:
+    Limit highlights and target specific pages:
 
     >>> document.highlight_texts(
     ...     {"important": {}, "critical": {}},
-    ...     page_index=1,
+    ...     pages=[1, 3],
     ...     max_count=5
     ... )
     """
+    if page_index is not None and pages is not None:
+        raise PdfValidationException(
+            "page_index and pages cannot be used together. "
+            "Use page_index for a single page or pages for multiple pages."
+        )
+
     result = markup_texts(
         document,
         patterns,
         kind="highlight",
         page_index=page_index,
+        pages=pages,
         case_sensitive=case_sensitive,
         max_count=max_count,
         regex=regex,

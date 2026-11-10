@@ -8000,6 +8000,7 @@ class SimplePdf:
         replacement: str,
         *,
         page_index: int | None = None,
+        pages: Iterable[int] | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
         regex: bool = False,
@@ -8051,12 +8052,22 @@ class SimplePdf:
         wants_reshape = needs_shaping(replacement)
         author_layout = layout if layout is not None else TextLayoutOptions()
 
+        if page_index is not None and pages is not None:
+            raise PdfValidationException(
+                "page_index and pages cannot be used together. "
+                "Use page_index for a single page or pages for multiple pages."
+            )
+
         self._materialize_page_contents_for_edit()
-        if page_index is None:
-            indices = range(len(self.pages))
-        else:
+        if page_index is not None:
             self._validate_page_index(page_index)
             indices = (page_index,)
+        elif pages is not None:
+            # pages is already an _EngineSelection from the decorator
+            # Iterate over it to get zero-based indices
+            indices = tuple(pages)
+        else:
+            indices = range(len(self.pages))
 
         total = 0
         metric_cache: dict[int, Any] = {}
@@ -8177,6 +8188,7 @@ class SimplePdf:
         search: str | re.Pattern[str],
         *,
         page_index: int | None = None,
+        pages: Iterable[int] | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
         regex: bool = False,
@@ -8217,12 +8229,22 @@ class SimplePdf:
         if max_count < 0:
             raise ValueError("max_count must be greater than or equal to zero")
 
+        if page_index is not None and pages is not None:
+            raise PdfValidationException(
+                "page_index and pages cannot be used together. "
+                "Use page_index for a single page or pages for multiple pages."
+            )
+
         self._materialize_page_contents_for_edit()
-        if page_index is None:
-            indices = range(len(self.pages))
-        else:
+        if page_index is not None:
             self._validate_page_index(page_index)
             indices = (page_index,)
+        elif pages is not None:
+            # pages is already an _EngineSelection from the decorator
+            # Iterate over it to get zero-based indices
+            indices = tuple(pages)
+        else:
+            indices = range(len(self.pages))
 
         total = 0
         metric_cache: dict[int, Any] = {}

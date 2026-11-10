@@ -4094,12 +4094,13 @@ class Document:
             layout=layout,
         )
 
-    @page_api(scalars=("page_index",))
+    @page_api(selections=("pages",), scalars=("page_index",))
     def replace_texts(
         self,
         replacements: Mapping[str | re.Pattern[str], str],
         *,
         page_index: int | None = None,
+        pages: Iterable[int] | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
         regex: bool = False,
@@ -4119,7 +4120,12 @@ class Document:
             A mapping of search patterns to replacement strings. Keys may be
             strings or compiled regex patterns; values are the replacement text.
         page_index
-            One-based page number. If omitted, all pages are processed.
+            One-based page number. If omitted and ``pages`` is also omitted,
+            all pages are processed. Cannot be used together with ``pages``.
+        pages
+            Iterable of one-based page numbers to process. If omitted and
+            ``page_index`` is also omitted, all pages are processed.
+            Cannot be used together with ``page_index``.
         case_sensitive
             If ``True`` (default), matching is case-sensitive. Ignored for
             compiled regex patterns.
@@ -4158,17 +4164,23 @@ class Document:
         ...     regex=True
         ... )
 
-        Limit replacements and target a specific page:
+        Limit replacements and target specific pages:
 
         >>> document.replace_texts(
         ...     {"old": "new"},
-        ...     page_index=1,
+        ...     pages=[1, 3],
         ...     max_count=5
         ... )
         """
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
+
+        if page_index is not None and pages is not None:
+            raise PdfValidationException(
+                "page_index and pages cannot be used together. "
+                "Use page_index for a single page or pages for multiple pages."
+            )
 
         total_count = 0
         remaining_count = max_count
@@ -4180,6 +4192,7 @@ class Document:
                 search,
                 replacement,
                 page_index=page_index,
+                pages=pages,
                 case_sensitive=case_sensitive,
                 max_count=remaining_count if remaining_count > 0 else 0,
                 regex=use_regex,
@@ -4447,13 +4460,14 @@ class Document:
             title=title,
         )
 
-    @page_api(scalars=("page_index",), result="records")
+    @page_api(selections=("pages",), scalars=("page_index",), result="records")
     def markup_texts(
         self,
         patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
         *,
         kind: str = "highlight",
         page_index: int | None = None,
+        pages: Iterable[int] | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
         regex: bool = False,
@@ -4474,7 +4488,12 @@ class Document:
         kind
             The markup kind: 'highlight', 'underline', 'strike_out', or 'squiggly'.
         page_index
-            One-based page number. If omitted, all pages are processed.
+            One-based page number. If omitted and ``pages`` is also omitted,
+            all pages are processed. Cannot be used together with ``pages``.
+        pages
+            Iterable of one-based page numbers to process. If omitted and
+            ``page_index`` is also omitted, all pages are processed.
+            Cannot be used together with ``page_index``.
         case_sensitive
             If True (default), matching is case-sensitive. Ignored for compiled
             regex patterns.
@@ -4514,33 +4533,41 @@ class Document:
         ...     regex=True
         ... )
 
-        Limit marks and target a specific page:
+        Limit marks and target specific pages:
 
         >>> document.markup_texts(
         ...     {"important": {}, "critical": {}},
-        ...     page_index=1,
+        ...     pages=[1, 3],
         ...     max_count=5,
         ...     kind="strike_out"
         ... )
         """
         from aspose_pdf.engine.text_highlight import markup_texts
 
+        if page_index is not None and pages is not None:
+            raise PdfValidationException(
+                "page_index and pages cannot be used together. "
+                "Use page_index for a single page or pages for multiple pages."
+            )
+
         return markup_texts(
             self,
             patterns,
             kind=kind,
             page_index=page_index,
+            pages=pages,
             case_sensitive=case_sensitive,
             max_count=max_count,
             regex=regex,
         )
 
-    @page_api(scalars=("page_index",), result="records")
+    @page_api(selections=("pages",), scalars=("page_index",), result="records")
     def highlight_texts(
         self,
         patterns: dict[str | re.Pattern[str], dict[str, Any] | None],
         *,
         page_index: int | None = None,
+        pages: Iterable[int] | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
         regex: bool = False,
@@ -4560,7 +4587,12 @@ class Document:
             pattern (color, opacity, contents, title). The color defaults to
             yellow for highlights if not specified.
         page_index
-            One-based page number. If omitted, all pages are processed.
+            One-based page number. If omitted and ``pages`` is also omitted,
+            all pages are processed. Cannot be used together with ``pages``.
+        pages
+            Iterable of one-based page numbers to process. If omitted and
+            ``page_index`` is also omitted, all pages are processed.
+            Cannot be used together with ``page_index``.
         case_sensitive
             If True (default), matching is case-sensitive. Ignored for compiled
             regex patterns.
@@ -4596,20 +4628,27 @@ class Document:
         ...     regex=True
         ... )
 
-        Limit highlights and target a specific page:
+        Limit highlights and target specific pages:
 
         >>> document.highlight_texts(
         ...     {"important": {}, "critical": {}},
-        ...     page_index=1,
+        ...     pages=[1, 3],
         ...     max_count=5
         ... )
         """
         from aspose_pdf.engine.text_highlight import highlight_texts
 
+        if page_index is not None and pages is not None:
+            raise PdfValidationException(
+                "page_index and pages cannot be used together. "
+                "Use page_index for a single page or pages for multiple pages."
+            )
+
         return highlight_texts(
             self,
             patterns,
             page_index=page_index,
+            pages=pages,
             case_sensitive=case_sensitive,
             max_count=max_count,
             regex=regex,
@@ -4670,12 +4709,13 @@ class Document:
             overlay_color=overlay_color,
         )
 
-    @page_api(scalars=("page_index",))
+    @page_api(selections=("pages",), scalars=("page_index",))
     def redact_texts(
         self,
         patterns: Mapping[str | re.Pattern[str], None],
         *,
         page_index: int | None = None,
+        pages: Iterable[int] | None = None,
         case_sensitive: bool = True,
         max_count: int = 0,
         regex: bool = False,
@@ -4696,7 +4736,12 @@ class Document:
             compiled regex patterns; values are ignored (redaction removes text
             rather than replacing it with something).
         page_index
-            One-based page number. If omitted, all pages are processed.
+            One-based page number. If omitted and ``pages`` is also omitted,
+            all pages are processed. Cannot be used together with ``pages``.
+        pages
+            Iterable of one-based page numbers to process. If omitted and
+            ``page_index`` is also omitted, all pages are processed.
+            Cannot be used together with ``page_index``.
         case_sensitive
             If ``True`` (default), matching is case-sensitive. Ignored for
             compiled regex patterns.
@@ -4739,11 +4784,11 @@ class Document:
         ...     overlay=True
         ... )
 
-        Limit redactions and target a specific page:
+        Limit redactions and target specific pages:
 
         >>> document.redact_texts(
         ...     {"confidential": None},
-        ...     page_index=1,
+        ...     pages=[1, 3],
         ...     max_count=5,
         ...     overlay=True
         ... )
@@ -4751,6 +4796,12 @@ class Document:
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
+
+        if page_index is not None and pages is not None:
+            raise PdfValidationException(
+                "page_index and pages cannot be used together. "
+                "Use page_index for a single page or pages for multiple pages."
+            )
 
         total_count = 0
         remaining_count = max_count
@@ -4761,6 +4812,7 @@ class Document:
             pattern_count = self._engine_pdf.redact_text(
                 search,
                 page_index=page_index,
+                pages=pages,
                 case_sensitive=case_sensitive,
                 max_count=remaining_count if remaining_count > 0 else 0,
                 regex=use_regex,
