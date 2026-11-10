@@ -4885,11 +4885,24 @@ Supported:
   photos, illustrations or scans before printing or publishing. This supports
   automated resolution checks and targeted asset replacement, reducing manual
   inspection and avoidable document rework. It does not modify the PDF.
+  - This is a geometric resolution inspection, not a visibility, sharpness,
+    OCR or certified preflight check. Opacity, optional-content visibility,
   - The threshold must be a finite positive number. A placement is reported
     when either image axis is strictly below it; equality passes. `pages=None`
     scans all pages; explicit one-based selections preserve order and repeats.
     Empty documents or selections return an empty list. All options and the
     complete selection are validated before content is inspected.
+
+  - **Batch check against multiple DPI thresholds.**
+    `Document.find_low_resolution_images_batch(thresholds, pages=None)` returns
+    a dictionary mapping each threshold to its list of issues in a single
+    document scan. The thresholds mapping uses finite positive numbers as keys
+    and string identifiers as values. Results preserve threshold key order and
+    are efficient: the document is scanned only once, with each image's DPI
+    compared against all thresholds. This avoids repeated document scans when
+    reviewing images against multiple resolution targets (e.g., 75, 150, 300 DPI).
+    Page and resource limits, threshold validation and the single-method behavior
+    otherwise match `find_low_resolution_images`.
   - Inspection follows actual `Do` paints through inherited page resources
     and invoked nested Form XObjects, composing `cm` and Form `/Matrix`
     transforms and respecting `q`/`Q`. Forms without resources use page

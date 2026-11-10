@@ -5,10 +5,11 @@ from __future__ import annotations
 import math
 import re
 from collections import deque
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from decimal import Decimal, DecimalException, localcontext
 from typing import TYPE_CHECKING
 
+from aspose_pdf._page_numbers import numbered_records
 from aspose_pdf.exceptions import PdfParseException, PdfValidationException
 from aspose_pdf.image_resolution import ImageResolutionIssue
 from aspose_pdf.load_limits import _LoadBudget
@@ -374,3 +375,274 @@ def find_low_resolution_images(
                 )
             )
     return results
+
+
+def find_low_resolution_images_batch(
+    document: Document,
+    thresholds: Mapping[float, str],
+    pages: Iterable[int] | None,
+) -> dict[float, list[ImageResolutionIssue]]:
+    """Report images below multiple DPI thresholds in a single document scan.
+
+    This is a batch version of :func:`find_low_resolution_images`. It performs
+    the same resolution check for each threshold but returns results grouped
+    by threshold in a dictionary. Use this when you need to know which images
+    are below multiple DPI thresholds without scanning the document multiple
+    times.
+
+    Parameters
+    ----------
+    document
+        The PDF document to inspect.
+    thresholds
+        A mapping of minimum DPI thresholds to names. Each key is a finite,
+        positive DPI threshold; each value is an identifier used in the
+        result dictionary.
+    pages
+        One-based page numbers to inspect, or None for all pages.
+
+    Returns
+    -------
+    dict[float, list[ImageResolutionIssue]]
+        A dictionary mapping each threshold to its list of issues, in page
+        order. Empty lists for thresholds with no matches.
+
+    See Also
+    --------
+    find_low_resolution_images : Check images against a single threshold.
+    """
+    from collections import OrderedDict
+
+    from aspose_pdf.load_limits import _LoadBudget
+
+    from .text_selection import page_indexes
+
+    # Validate thresholds before processing
+    validated_thresholds: OrderedDict[float, str] = OrderedDict()
+    for threshold, name in thresholds.items():
+        if not isinstance(threshold, (int, float)):
+            raise PdfValidationException(
+                f"Threshold must be a number, got {type(threshold).__name__}"
+            )
+        if not math.isfinite(threshold) or threshold <= 0:
+            raise PdfValidationException(
+                f"Threshold must be finite and positive, got {threshold}"
+            )
+        validated_thresholds[float(threshold)] = str(name)
+
+    if not validated_thresholds:
+        return {name: [] for name in validated_thresholds.values()}
+
+    budget = _LoadBudget(document.load_limits)
+    # The @page_api decorator has already converted 1-based page numbers to 0-based indices
+    indexes = page_indexes(pages, document.page_count, limits=budget.limits)
+    indexes = range(document.page_count) if indexes is None else indexes
+    budget.check_pages(len(indexes))
+
+    if not indexes:
+        return {name: [] for name in validated_thresholds.values()}
+
+    pdf = document._engine_pdf
+    pdf._ensure_cos()
+
+    extractor = CosExtractor(
+        pdf._cos_doc,
+        pdf._raw_bytes or b"",
+        stream_decrypt_key=pdf._cos_decrypt_key or pdf.encryption_key,
+        stream_decrypt_algorithm=pdf._cos_decrypt_algorithm
+        if pdf._cos_decrypt_key
+        else pdf.encryption_algorithm,
+        limits=budget.limits,
+        budget=budget,
+    )
+
+    # Initialize results for each threshold (using threshold as key)
+    results: dict[float, list[ImageResolutionIssue]] = {
+        threshold: [] for threshold in validated_thresholds
+    }
+    work = [0]
+    visits = 0
+    path_items = 0
+
+    for index in indexes:
+        page = pdf._get_page_dict(index)
+        if not isinstance(page, PdfDictionary):
+            raise PdfParseException("Image resolution source page must be a dictionary")
+
+        unit_value = pdf._resolve(page.mapping.get(PdfName("UserUnit")))
+        unit = (
+            1
+            if unit_value is None or isinstance(unit_value, PdfNull)
+            else _scalar(pdf, unit_value, "UserUnit")
+        )
+        if unit <= 0:
+            raise PdfValidationException("UserUnit must be positive")
+
+        page_resources = _resources(pdf, page, budget)
+        content = (
+            pdf.page_contents[index]
+            if index < len(pdf.page_contents)
+            else extractor._read_content_stream(page.mapping.get(PdfName("Contents")))
+        )
+        stack = [
+            (
+                iter(_placements(content, identity_affine_decimal(), budget, work)),
+                page_resources,
+                (),
+                None,
+            )
+        ]
+        active = set()
+        placement_index = 0
+
+        while stack:
+            paints, resources, path, marker = stack[-1]
+            paint = next(paints, None)
+            if paint is None:
+                stack.pop()
+                active.discard(marker)
+                continue
+
+            visits += 1
+            budget.check(visits, "max_container_items", "image resolution paint visits")
+            name, inline, matrix = paint
+
+            if inline is None:
+                xobjects = pdf._resolve(resources.mapping.get(PdfName("XObject")))
+                if not isinstance(xobjects, PdfDictionary):
+                    raise PdfParseException(
+                        "Image resolution Do has no XObject dictionary"
+                    )
+                reference = xobjects.mapping.get(PdfName("/" + name))
+                target = pdf._resolve(reference)
+                if not isinstance(target, PdfStream):
+                    raise PdfParseException(
+                        f"Image resolution XObject {name!r} must be a stream"
+                    )
+                subtype = pdf._resolve(target.mapping.get(PdfName("Subtype")))
+                if subtype == PdfName("Form"):
+                    child_marker = id(target)
+                    if child_marker in active:
+                        raise PdfParseException(
+                            "Image resolution Form invocation cycle"
+                        )
+                    budget.check(
+                        len(stack) + 1,
+                        "max_nesting_depth",
+                        "image resolution Form nesting",
+                    )
+                    budget.check(
+                        len(stack) + 1,
+                        "max_container_items",
+                        "image resolution Form stack",
+                    )
+                    child_resources = pdf._resolve(
+                        target.mapping.get(PdfName("Resources"))
+                    )
+                    if child_resources is None or isinstance(child_resources, PdfNull):
+                        child_resources = page_resources
+                    if not isinstance(child_resources, PdfDictionary):
+                        raise PdfParseException(
+                            "Image resolution Form Resources must be a dictionary"
+                        )
+                    form_matrix = pdf._resolve(target.mapping.get(PdfName("Matrix")))
+                    if form_matrix is not None and not isinstance(form_matrix, PdfNull):
+                        if (
+                            not isinstance(form_matrix, PdfArray)
+                            or len(form_matrix.items) != 6
+                        ):
+                            raise PdfValidationException(
+                                "Image resolution Form Matrix requires six numbers"
+                            )
+                        values = tuple(
+                            Decimal(str(_scalar(pdf, v, "Form Matrix")))
+                            for v in form_matrix.items
+                        )
+                        matrix = _compose(values, matrix)
+                    content = extractor._decode_stream(
+                        target,
+                        reference,
+                        max_output_bytes=budget.limits.max_content_stream_bytes,
+                    )
+                    active.add(child_marker)
+                    stack.append(
+                        (
+                            iter(_placements(content, matrix, budget, work)),
+                            child_resources,
+                            (*path, name),
+                            child_marker,
+                        )
+                    )
+                    continue
+
+                if not isinstance(subtype, PdfName):
+                    raise PdfParseException(
+                        "Image resolution XObject requires a Subtype name"
+                    )
+                if subtype != PdfName("Image"):
+                    continue
+
+                entries = target
+                resource_path = (*path, name)
+            else:
+                entries = inline
+                resource_path = path
+
+            current_index = placement_index
+            placement_index += 1
+            dimensions = []
+            for key in ("Width", "Height"):
+                value = _scalar(pdf, entries.mapping.get(PdfName(key)), f"image {key}")
+                if value <= 0 or int(value) != value:
+                    raise PdfValidationException(
+                        "Image resolution dimensions must be positive integers"
+                    )
+                dimensions.append(int(value))
+            width, height = dimensions
+            budget.check_image_pixels(width, height, "image resolution")
+
+            with localcontext() as ctx:
+                ctx.prec = 80
+                determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2]
+                if determinant == 0:
+                    continue
+                physical_unit = Decimal(str(unit))
+                axis_x = (matrix[0] ** 2 + matrix[1] ** 2).sqrt() * physical_unit
+                axis_y = (matrix[2] ** 2 + matrix[3] ** 2).sqrt() * physical_unit
+                resolution_x = Decimal(width) * 72 / axis_x
+                resolution_y = Decimal(height) * 72 / axis_y
+            dpi_x, dpi_y = float(resolution_x), float(resolution_y)
+            if not all(math.isfinite(v) and v > 0 for v in (dpi_x, dpi_y)):
+                raise PdfValidationException(
+                    "Image resolution DPI is outside the supported numeric range"
+                )
+            min_resolution = min(resolution_x, resolution_y)
+
+            # Check against all thresholds
+            for threshold, threshold_name in validated_thresholds.items():
+                if min_resolution < Decimal(str(threshold)):
+                    bbox = image_placement_bbox(matrix)
+                    if not all(math.isfinite(v) for v in bbox):
+                        raise PdfValidationException(
+                            "Image resolution bounding box must be finite"
+                        )
+                    path_items += len(resource_path)
+                    budget.check(
+                        path_items, "max_container_items", "image resolution result paths"
+                    )
+                    results[threshold].append(
+                        ImageResolutionIssue(
+                            index,
+                            current_index,
+                            resource_path,
+                            width,
+                            height,
+                            dpi_x,
+                            dpi_y,
+                            bbox,
+                            inline is not None,
+                        )
+                    )
+
+    # Convert 0-based page indices to 1-based for public API
+    return {threshold: numbered_records(issues) for threshold, issues in results.items()}

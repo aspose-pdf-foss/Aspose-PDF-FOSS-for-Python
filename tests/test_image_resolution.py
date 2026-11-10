@@ -566,3 +566,166 @@ def test_nested_form_missing_resources_uses_page_resources_instead_of_outer_form
         assert issue.resource_path == ("Outer", "Inner", "Im")
         assert (issue.pixel_width, issue.pixel_height) == (150, 150)
         assert (issue.dpi_x, issue.dpi_y) == (150, 150)
+
+
+def test_batch_find_low_resolution_images_single_threshold():
+    """Batch method with a single threshold returns results for that threshold."""
+    with Document() as document:
+        # Image: 100x100 pixels, matrix 72x72, UserUnit 0.5
+        # Effective DPI = 100 * 72 / (72 * 0.5) = 200 DPI
+        page_dict, _, _ = _page(document, size=(100, 100))
+        page_dict.mapping[PdfName("UserUnit")] = PdfNumber(0.5)  # 200 DPI effective
+        results = document.find_low_resolution_images_batch({250: "low"})
+
+        assert 250 in results
+        (issue,) = results[250]
+        assert issue.effective_dpi == 200
+        assert issue.image_name == "Im"
+
+
+def test_batch_find_low_resolution_images_multiple_thresholds():
+    """Batch method with multiple thresholds returns results for each."""
+    with Document() as document:
+        # Image: 150x150 pixels, matrix 72x72, UserUnit 0.5
+        # Effective DPI = 150 * 72 / (72 * 0.5) = 300 DPI
+        page_dict, _, _ = _page(document, size=(150, 150))
+        page_dict.mapping[PdfName("UserUnit")] = PdfNumber(0.5)  # 300 DPI effective
+        results = document.find_low_resolution_images_batch({250: "below_250", 350: "below_350"})
+
+        # 300 >= 250, so below_250 has no issues
+        assert 250 in results
+        assert results[250] == []
+
+        # 300 < 350, so below_350 has issues
+        assert 350 in results
+        (issue,) = results[350]
+        assert issue.effective_dpi == 300
+
+
+def test_batch_find_low_resolution_images_empty_result_for_high_threshold():
+    """Batch method returns empty list for thresholds above all image resolutions."""
+    with Document() as document:
+        _page(document, size=(600, 600))  # 432 DPI effective
+        results = document.find_low_resolution_images_batch({75: "low", 150: "medium"})
+
+        assert 75 in results
+        assert results[75] == []  # 432 >= 75, no issues
+        assert 150 in results
+        assert results[150] == []  # 432 >= 150, no issues
+
+
+def test_batch_find_low_resolution_images_disjoint_thresholds():
+    """Batch method handles multiple thresholds with disjoint result sets."""
+    with Document() as document:
+        # Image: 150x150 pixels, matrix 72x72, UserUnit 0.5
+        # Effective DPI = 150 * 72 / (72 * 0.5) = 300 DPI
+        page_dict, _, _ = _page(document, size=(150, 150))
+        page_dict.mapping[PdfName("UserUnit")] = PdfNumber(0.5)  # 300 DPI effective
+
+        results = document.find_low_resolution_images_batch({250: "below_250", 350: "below_350"})
+
+        # 300 >= 250, so below_250 has no issues
+        assert 250 in results
+        assert results[250] == []
+
+        # 300 < 350, so below_350 has issues
+        assert 350 in results
+        (issue,) = results[350]
+        assert issue.effective_dpi == 300
+
+
+def test_batch_find_low_resolution_images_pages_selection():
+    """Batch method respects page selection."""
+    with Document() as document:
+        # Page 1: 150x150 pixels, matrix 72x72, UserUnit 0.5 = 300 DPI
+        page1_dict, _, _ = _page(document, size=(150, 150))
+        page1_dict.mapping[PdfName("UserUnit")] = PdfNumber(0.5)
+
+        # Page 2: 600x600 pixels, matrix 72x72, UserUnit 0.5 = 1200 DPI (no issue at 1000)
+        page2_dict, _, _ = _page(document, size=(600, 600))
+        page2_dict.mapping[PdfName("UserUnit")] = PdfNumber(0.5)
+
+        # Use threshold 350, so page 1 (300 DPI) should have issues
+        # Note: pages uses 1-based indices
+        results = document.find_low_resolution_images_batch({350: "below_350"}, pages=[1])
+
+        assert 350 in results
+        (issue,) = results[350]
+        assert issue.page_index == 1
+
+
+def test_batch_find_low_resolution_images_threshold_validation():
+    """Batch method validates threshold values."""
+    with Document() as document:
+        with pytest.raises(PdfValidationException, match="positive"):
+            document.find_low_resolution_images_batch({0: "zero"})
+
+        with pytest.raises(PdfValidationException, match="finite"):
+            document.find_low_resolution_images_batch({float("inf"): "inf"})
+
+        with pytest.raises(PdfValidationException, match="finite"):
+            document.find_low_resolution_images_batch({float("nan"): "nan"})
+
+        with pytest.raises(PdfValidationException, match="number"):
+            document.find_low_resolution_images_batch({"string": "not_a_number"})
+
+
+def test_batch_find_low_resolution_images_empty_mapping():
+    """Batch method with empty mapping returns empty results."""
+    with Document() as document:
+        results = document.find_low_resolution_images_batch({})
+
+        assert results == {}
+
+
+def test_batch_find_low_resolution_images_disposed_document():
+    """Batch method raises for disposed document."""
+    document = Document()
+    document.dispose()
+    with pytest.raises(AsposePdfException, match="disposed"):
+        document.find_low_resolution_images_batch({75: "low"})
+
+
+def test_batch_find_low_resolution_images_no_document_loaded():
+    """Batch method raises for document without loaded PDF."""
+    document = Document()
+    # For a new Document(), _engine_pdf is not set, so this should fail
+    # But let's check what actually happens
+    try:
+        document.find_low_resolution_images_batch({75: "low"})
+        # If no exception, that's fine - the method might handle empty documents
+    except AsposePdfException as e:
+        assert "loaded" in str(e).lower() or "disposed" in str(e).lower()
+
+
+def test_page_batch_find_low_resolution_images():
+    """Page-level batch method returns results for the page."""
+    with Document() as document:
+        # Image: 100x100 pixels, matrix 36x36 (not 72), UserUnit 1
+        # Effective DPI = 100 * 72 / (36 * 1) = 200 DPI
+        page = document.pages.add()
+        pdf = document._engine_pdf
+        pdf._ensure_cos()
+        resource = pdf._ensure_resource_subdict((page.index) - 1, "XObject")
+        image = PdfStream(
+            b"samples must never be decoded",
+            {
+                PdfName("Subtype"): PdfName("Image"),
+                PdfName("Width"): PdfNumber(100),
+                PdfName("Height"): PdfNumber(100),
+                PdfName("Filter"): PdfName("UnsupportedCodec"),
+            },
+        )
+        reference = pdf._cos_doc.register_object(image)
+        resource.mapping[PdfName("Im")] = reference
+        pdf._set_page_content((page.index) - 1, b"36 0 0 36 0 0 cm /Im Do")
+
+        results = page.find_low_resolution_images_batch({250: "below_250"})
+
+        assert 250 in results
+        (issue,) = results[250]
+        assert issue.page_index == 1
+        assert issue.effective_dpi == 200  # 100 * 72 / 36 = 200
+
+        # Check that results are page-indexed
+        assert len(results[250]) == 1

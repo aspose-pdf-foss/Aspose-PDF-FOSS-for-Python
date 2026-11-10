@@ -725,6 +725,70 @@ class Document:
         return find_low_resolution_images(self, min_dpi, pages)
 
     @page_api(selections=("pages",))
+    def find_low_resolution_images_batch(
+        self,
+        thresholds: Mapping[float, str],
+        *,
+        pages: Iterable[int] | None = None,
+    ) -> dict[float, list[ImageResolutionIssue]]:
+        """Find image placements below multiple DPI thresholds in a single scan.
+
+        This is a batch version of :meth:`find_low_resolution_images`. It
+        performs the same resolution check for each threshold but returns
+        results grouped by threshold in a dictionary. Use this when you need
+        to know which images are below multiple DPI thresholds without
+        scanning the document multiple times.
+
+        Parameters
+        ----------
+        thresholds
+            A mapping of minimum DPI thresholds to names. Each key is a finite,
+            positive DPI threshold; each value is an identifier used in the
+            result dictionary.
+        pages
+            One-based page numbers to inspect, or None for all pages. Repeated
+            selections are inspected once in first-selected order.
+
+        Returns
+        -------
+        dict[float, list[ImageResolutionIssue]]
+            A dictionary mapping each threshold to its list of issues, in page
+            order. Empty lists for thresholds with no matches.
+
+        See Also
+        --------
+        find_low_resolution_images : Check images against a single threshold.
+        find_texts : Find text for multiple patterns in one pass.
+
+        Examples
+        --------
+        Check images against multiple DPI thresholds:
+
+        >>> results = document.find_low_resolution_images_batch(
+        ...     {75: "very_low", 150: "low", 300: "good"}
+        ... )
+        >>> # results is {75: [...], 150: [...], 300: [...]}
+        >>> # where results[75] includes images below 75 DPI
+        >>> # and results[150] includes images below 150 DPI but >= 75 DPI
+
+        Limit to specific pages:
+
+        >>> results = document.find_low_resolution_images_batch(
+        ...     {150: "low"},
+        ...     pages=[1, 2, 3]
+        ... )
+        """
+
+        from aspose_pdf.engine.image_resolution import (
+            find_low_resolution_images_batch,
+        )
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return find_low_resolution_images_batch(self, thresholds, pages)
+
+    @page_api(selections=("pages",))
     def export_images_zip(
         self,
         destination: str | Path | BinaryIO | None = None,

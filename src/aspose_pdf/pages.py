@@ -12,6 +12,7 @@ from aspose_pdf.actions import PAGE_TRIGGERS, ActionCollection
 from aspose_pdf.annotations import AnnotationCollection
 from aspose_pdf.color import ColorValue
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
+from aspose_pdf.image_resolution import ImageResolutionIssue
 from aspose_pdf.images import Image
 from aspose_pdf.page_size import PageSize
 from aspose_pdf.paths import GraphicsPath
@@ -2509,6 +2510,50 @@ class Page:
                     break
 
         return total_count
+
+    def find_low_resolution_images(
+        self,
+        min_dpi: float = 150,
+    ) -> list[ImageResolutionIssue]:
+        """Find image placements on this page below ``min_dpi``.
+
+        See :meth:`Document.find_low_resolution_images` for full details.
+        """
+        return self._document.find_low_resolution_images(
+            min_dpi, pages=[self.number]
+        )
+
+    def find_low_resolution_images_batch(
+        self,
+        thresholds: Mapping[float, str],
+    ) -> dict[float, list[ImageResolutionIssue]]:
+        """Find image placements on this page below multiple DPI thresholds.
+
+        This is a batch version of :meth:`find_low_resolution_images`. It
+        performs the same resolution check for each threshold but returns
+        results grouped by threshold in a dictionary.
+
+        Parameters
+        ----------
+        thresholds
+            A mapping of minimum DPI thresholds to names. Each key is a finite,
+            positive DPI threshold; each value is an identifier used in the
+            result dictionary.
+
+        Returns
+        -------
+        dict[float, list[ImageResolutionIssue]]
+            A dictionary mapping each threshold to its list of issues, in page
+            order. Empty lists for thresholds with no matches.
+
+        See Also
+        --------
+        find_low_resolution_images : Check images against a single threshold.
+        find_texts : Find text for multiple patterns on this page.
+        """
+        return self._document.find_low_resolution_images_batch(
+            thresholds, pages=[self.number]
+        )
 
     def auto_link(
         self, *, urls: bool = True, emails: bool = True, max_count: int = 0
