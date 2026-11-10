@@ -299,3 +299,61 @@ def find_text(
         for match in _matches(matcher, text, regex):
             results.append(match.group())
     return results
+
+
+def find_texts(
+    document,
+    patterns,
+    *,
+    pages,
+    regex,
+    case_sensitive,
+) -> dict:
+    """Return matched text strings for multiple patterns without context or geometry.
+
+    This is a batch version of :func:`find_text`. It performs the same pattern
+    matching for each pattern but returns only the matched substrings for each
+    pattern in a dictionary. Use this when you need to know *what* matched for
+    each pattern without the overhead of context or geometry.
+
+    Args:
+        document: The document to search.
+        patterns: A mapping of search patterns to names. Keys may be strings or
+            compiled regex patterns; values are the names used in the result dict.
+        pages: One-based page numbers or None for all pages.
+        regex: If True, all patterns are treated as regular expressions. Ignored
+            for compiled :class:`re.Pattern` keys.
+        case_sensitive: Match case exactly unless False.
+
+    Returns:
+        A dictionary mapping each pattern key to a list of matched text strings
+        in page order. Empty lists for patterns with no matches.
+
+    See Also:
+        :meth:`~aspose_pdf.Document.find_texts`: The public method that wraps this.
+    """
+    from collections import OrderedDict
+
+    budget = _LoadBudget(document.load_limits)
+    indexes = page_indexes(pages, document.page_count, limits=document.load_limits)
+    indexes = range(document.page_count) if indexes is None else indexes
+
+    # Build matchers for all patterns
+    matchers: OrderedDict = OrderedDict()
+    for pattern_key in patterns:
+        pattern_matcher, _ = _matcher(
+            pattern_key, regex, case_sensitive, context_chars=0, budget=budget
+        )
+        matchers[pattern_key] = pattern_matcher
+
+    texts = iter_text_pages(
+        document, pages=indexes, clip=None, skip_artifacts=False, exclude_regions=None
+    )
+    results: dict = {pattern_key: [] for pattern_key in patterns}
+
+    for index, text in zip(indexes, texts, strict=True):
+        for pattern_key, matcher in matchers.items():
+            for match in _matches(matcher, text, isinstance(pattern_key, re.Pattern)):
+                results[pattern_key].append(match.group())
+
+    return results

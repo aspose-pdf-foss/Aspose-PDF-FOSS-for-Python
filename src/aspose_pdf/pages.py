@@ -764,6 +764,38 @@ class Page:
             case_sensitive=case_sensitive,
         )
 
+    def find_texts(
+        self,
+        patterns: Mapping[str | re.Pattern[str], str],
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+    ) -> dict:
+        """Return matched text strings for multiple patterns on this page.
+
+        This is a batch version of :meth:`find_text`. It performs the same
+        pattern matching for each pattern but returns only the matched
+        substrings for each pattern in a dictionary.
+
+        Args:
+            patterns: A mapping of search patterns to names. Keys may be strings
+                or compiled regex patterns; values are labels used in the result.
+            regex: Treat all string patterns as regular expressions (default: False).
+            case_sensitive: Match case exactly (default: True).
+
+        Returns:
+            A dictionary mapping each pattern key to a list of matched text strings
+            in page order. Empty lists for patterns with no matches.
+
+        Example:
+            >>> results = page.find_texts({"Old": "old_name", "New": "new_name"})
+            >>> # results is {"Old": ["Old", "Old"], "New": ["New"]}
+        """
+        return self._document.find_texts(
+            patterns, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive,
+        )
+
     def export_search_json(
         self,
         pattern: str | re.Pattern[str],

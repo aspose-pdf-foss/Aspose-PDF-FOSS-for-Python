@@ -5828,6 +5828,72 @@ class Document:
             case_sensitive=case_sensitive,
         )
 
+    @page_api(selections=("pages",), result="records")
+    def find_texts(
+        self,
+        patterns: Mapping[str | re.Pattern[str], str],
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+    ) -> dict:
+        """Return matched text strings for multiple patterns without context or geometry.
+
+        This is a batch version of :meth:`find_text`. It performs the same pattern
+        matching for each pattern but returns only the matched substrings for each
+        pattern in a dictionary. Use this when you need to know *what* matched for
+        each pattern without the overhead of context or geometry.
+
+        The search is efficient: the document is scanned only once, and results
+        are collected for all patterns in a single pass.
+
+        Keys may be strings or compiled regex patterns; values are ignored and
+        present only to allow clear labeling in the caller's code. The result
+        dictionary preserves the key order from the input mapping.
+
+        Strings are literal unless ``regex=True``; compiled text regexes
+        retain their flags. ``case_sensitive=False`` adds Python's IGNORECASE
+        semantics. Literal occurrences may overlap; regex matches follow
+        ``re.finditer``. Zero-length matches are omitted. Empty patterns
+        are rejected.
+
+        One-based ``pages`` preserves order and repeats. All options/selections
+        are checked before extraction. Only selected pages are read, without
+        filling document-wide text/content caches. Search follows ordinary text
+        extraction, including hidden-layer filtering and logical replacements;
+        it does not OCR images or search annotation/form values. Results obey
+        load limits and survive source edits/disposal without changing the PDF.
+
+        Args:
+            patterns: A mapping of search patterns to names. Keys may be strings
+                or compiled regex patterns; values are labels used in the result.
+            pages: One-based page numbers, or None for all pages.
+            regex: Treat all string patterns as regular expressions (default: False).
+            case_sensitive: Match case exactly (default: True).
+
+        Returns:
+            A dictionary mapping each pattern key to a list of matched text strings
+            in page order. Empty lists for patterns with no matches.
+
+        Example:
+            >>> results = document.find_texts({"Old": "old_name", "New": "new_name"})
+            >>> # results is {"Old": ["Old", "Old"], "New": ["New"]}
+            >>> import re
+            >>> results = document.find_texts(
+            ...     {re.compile(r"\\d{4}"): "year", re.compile(r"\\d{2}"): "number"},
+            ...     regex=True
+            ... )
+        """
+        from aspose_pdf.engine.text_search import find_texts
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        return find_texts(
+            self, patterns, pages=pages, regex=regex,
+            case_sensitive=case_sensitive,
+        )
+
     @page_api(selections=("pages",))
     def export_search_json(
         self,

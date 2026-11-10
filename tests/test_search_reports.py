@@ -497,3 +497,110 @@ def test_find_text_regex_flags():
             "Invoice 123",
             "invoice 456",
         ]
+
+
+# --- Tests for find_texts() ---
+
+
+def test_find_texts_returns_mapping(document):
+    """find_texts returns a dict mapping patterns to their matches."""
+    matches = document.find_texts({"Old": "label1", "Invoice": "label2"})
+    assert isinstance(matches, dict)
+    assert "Old" in matches and "Invoice" in matches
+    assert matches["Invoice"] == ["Invoice", "Invoice", "Invoice"]
+    assert matches["Old"] == []
+
+
+def test_find_texts_case_insensitive(document):
+    """find_texts supports case-insensitive matching."""
+    matches = document.find_texts(
+        {"invoice": "label"}, case_sensitive=False
+    )
+    assert matches["invoice"] == ["Invoice", "Invoice", "Invoice"]
+
+
+def test_find_texts_regex(document):
+    """find_texts supports regex patterns."""
+    matches = document.find_texts(
+        {r"Invoice \d+": "invoice_num"}, regex=True
+    )
+    assert matches[r"Invoice \d+"] == ["Invoice 123", "Invoice 456", "Invoice 789"]
+
+
+def test_find_texts_compiled_regex():
+    """find_texts accepts compiled regex patterns as keys."""
+    with Document() as doc:
+        page = doc.pages.add()
+        page.add_text("Name: John Doe", 72, 700)
+        page.add_text("Name: Jane Smith", 72, 650)
+
+        pattern1 = re.compile(r"John")
+        pattern2 = re.compile(r"Jane")
+        matches = doc.find_texts(
+            {pattern1: "first", pattern2: "last"},
+            regex=True,
+        )
+        assert matches[pattern1] == ["John"]
+        assert matches[pattern2] == ["Jane"]
+
+
+def test_find_texts_with_page_selection(document):
+    """find_texts supports page selection."""
+    matches = document.find_texts(
+        {"Invoice": "label"}, pages=[2]
+    )
+    assert matches["Invoice"] == ["Invoice"]
+
+
+def test_find_texts_empty_result(document):
+    """find_texts returns empty lists for non-matching patterns."""
+    matches = document.find_texts(
+        {"NotFound": "label", "Missing": "label2"}
+    )
+    assert matches["NotFound"] == []
+    assert matches["Missing"] == []
+
+
+def test_find_texts_multiple_patterns(document):
+    """find_texts handles multiple patterns in one call."""
+    matches = document.find_texts(
+        {"Invoice": "inv", "123": "num", "999": "missing"}
+    )
+    assert matches["Invoice"] == ["Invoice", "Invoice", "Invoice"]
+    assert matches["123"] == ["123"]
+    assert matches["999"] == []
+
+
+def test_find_texts_page_method(document):
+    """Page.find_texts returns mapping for a single page."""
+    matches = document.pages[1].find_texts(
+        {"Invoice": "label", "123": "num"}
+    )
+    assert isinstance(matches, dict)
+    assert matches["Invoice"] == ["Invoice", "Invoice"]
+    assert matches["123"] == ["123"]
+
+
+def test_find_texts_order_preserved():
+    """find_texts preserves key order in result dict."""
+    with Document() as doc:
+        page = doc.pages.add()
+        page.add_text("a b c d e", 72, 700)
+
+        from collections import OrderedDict
+        patterns = OrderedDict([("e", "e"), ("c", "c"), ("a", "a")])
+        matches = doc.find_texts(patterns)
+        assert list(matches.keys()) == list(patterns.keys())
+
+
+def test_find_texts_with_regex_and_case_insensitive():
+    """find_texts supports both regex and case-insensitive together."""
+    with Document() as doc:
+        page = doc.pages.add()
+        page.add_text("HELLO hello HeLLo World", 72, 700)
+
+        pattern = re.compile(r"hello")
+        matches = doc.find_texts(
+            {pattern: "hello"}, regex=True, case_sensitive=False
+        )
+        assert matches[pattern] == ["HELLO", "hello", "HeLLo"]
