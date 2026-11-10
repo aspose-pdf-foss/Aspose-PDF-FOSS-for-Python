@@ -33,6 +33,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Batch text redaction methods.** Added `Document.redact_texts()` and
+  `Page.redact_texts()` to remove multiple text patterns in a single call.
+  This is more efficient than calling `redact_text()` repeatedly, scanning
+  the document once and applying all specified patterns. Supports strings,
+  compiled regex patterns, case sensitivity, max_count limits, and optional
+  overlay bars for redaction marks.
+
 - **Convenience methods for inserting pages at specific positions.** Added
   `PageCollection.append()`, `PageCollection.prepend()`, `PageCollection.insert_first()`,
   and `PageCollection.insert_last()` methods for more intuitive page manipulation.

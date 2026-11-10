@@ -4444,6 +4444,53 @@ Supported:
   repeated document scans. For single edits, `replace_text` is still the
   direct choice.
 
+- **Redact multiple patterns in a single call.**
+  `Document.redact_texts(patterns)` and `Page.redact_texts(patterns)` remove
+  several text patterns at once, returning the total number of redactions.
+  This is a convenience wrapper around `redact_text` that scans the content
+  streams once and removes all specified patterns, rather than iterating
+  manually. It supports all the same options as the single-pattern method.
+  The pattern mapping may contain strings or compiled regex patterns as
+  keys; values are ignored (redaction removes text rather than replacing it).
+  The same `regex`, `case_sensitive`, `overlay`, and `overlay_color` options
+  apply.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Redact multiple patterns in one pass
+      count = document.redact_texts({
+          "password": None,
+          "secret": None,
+          "confidential": None
+      })
+      print(f"Redacted {count} occurrences")
+
+      # Use regex patterns for shapes like SSN
+      import re
+      count = document.redact_texts({
+          re.compile(r"\\d{3}-\\d{2}-\\d{4}"): None,  # SSN pattern
+      }, regex=True, overlay=True)
+  ```
+
+  Both `Document.redact_texts` and `Page.redact_texts` accept:
+  - `patterns`: A dictionary mapping search patterns to ``None`` (values ignored)
+  - `page_index`: For `Document`, target a specific page (optional)
+  - `case_sensitive`: Whether matching should be case-sensitive (default True)
+  - `max_count`: Limit total redactions across all patterns (default 0, unlimited)
+  - `regex`: Treat keys as regex patterns (default False)
+  - `overlay`: Draw a bar over removed text (default False)
+  - `overlay_color`: Color of the overlay bar when overlay=True (default black)
+
+  `max_count` shares the limit across all patterns: if you set `max_count=10`
+  and the first pattern finds 7 matches, the remaining patterns can find at
+  most 3 more. Empty mappings return 0 without scanning the document.
+
+  Use this when you know multiple redactions are needed and want to avoid
+  repeated document scans. For single edits, `redact_text` is still the
+  direct choice.
+
 - Add positioned text to pages with Standard-14 Type1 font resources. The font
   declares `WinAnsiEncoding` and the text is written as codes in it, so accented
   letters, curly quotes, dashes, the euro sign and the rest of Latin-1 come out

@@ -270,3 +270,178 @@ def test_page_replace_texts_with_regex() -> None:
 
     assert count == 1
     assert b"(ID: XXXXX)" in page.content
+
+
+# Tests for Document.redact_texts() ------------------------------
+
+
+def test_redact_texts_removes_multiple_patterns() -> None:
+    """redact_texts removes all patterns in the mapping."""
+    doc = _doc_with_content(
+        b"BT /F1 12 Tf (Hello World) Tj ET",
+        b"BT /F1 12 Tf (Hello Secret) Tj ET",
+    )
+
+    count = doc.redact_texts({"World": None, "Secret": None})
+
+    # World appears once, Secret appears once
+    assert count == 2
+    # The text should be removed (no longer in content)
+    assert b"(World)" not in doc.pages[1].content
+    assert b"(Secret)" not in doc.pages[2].content
+
+
+def test_redact_texts_with_page_index() -> None:
+    """redact_texts can target a specific page."""
+    doc = _doc_with_content(
+        b"BT /F1 12 Tf (alpha) Tj ET",
+        b"BT /F1 12 Tf (alpha) Tj ET",
+    )
+
+    count = doc.redact_texts({"alpha": None}, page_index=1)
+
+    assert count == 1
+    # alpha should be removed from page 1 but not page 2
+    assert b"(alpha)" not in doc.pages[1].content
+    assert b"(alpha)" in doc.pages[2].content
+
+
+def test_redact_texts_with_max_count() -> None:
+    """redact_texts respects max_count across all patterns."""
+    doc = _doc_with_content(b"BT /F1 12 Tf (cat dog) Tj ET")
+
+    count = doc.redact_texts({"cat": None, "dog": None}, max_count=2)
+
+    # max_count=2 means only 2 total redactions, shared across patterns
+    assert count == 2
+
+
+def test_redact_texts_with_regex() -> None:
+    """redact_texts supports regex patterns in the mapping."""
+    doc = _doc_with_content(b"BT /F1 12 Tf (Phone: 123-456) Tj ET")
+
+    count = doc.redact_texts(
+        {r"\d{3}-\d{3}": None},
+        regex=True,
+    )
+
+    assert count == 1
+    assert b"(Phone: )" in doc.pages[1].content
+    assert b"123-456" not in doc.pages[1].content
+
+
+def test_redact_texts_compiled_regex() -> None:
+    """redact_texts accepts compiled regex patterns as keys."""
+    import re
+
+    doc = _doc_with_content(b"BT /F1 12 Tf (Name: John) Tj ET")
+
+    count = doc.redact_texts(
+        {re.compile(r"John"): None, re.compile(r"Name"): None},
+        regex=True,
+    )
+
+    assert count == 2
+    # When both patterns are removed, we're left with ": "
+    assert b": " in doc.pages[1].content
+    assert b"Name" not in doc.pages[1].content
+    assert b"John" not in doc.pages[1].content
+
+
+def test_redact_texts_case_insensitive() -> None:
+    """redact_texts supports case-insensitive matching."""
+    doc = _doc_with_content(b"BT /F1 12 Tf (HELLO hello HeLLo) Tj ET")
+
+    count = doc.redact_texts({"hello": None}, case_sensitive=False)
+
+    assert count == 3
+    assert b"(HELLO)" not in doc.pages[1].content
+    assert b"(hello)" not in doc.pages[1].content
+    assert b"(HeLLo)" not in doc.pages[1].content
+
+
+def test_redact_texts_returns_total_count() -> None:
+    """redact_texts returns the sum of all pattern redactions."""
+    doc = _doc_with_content(b"BT /F1 12 Tf (a b a b a b) Tj ET")
+
+    count = doc.redact_texts({"a": None, "b": None})
+
+    assert count == 6  # 3 'a's + 3 'b's
+
+
+def test_redact_texts_with_overlay() -> None:
+    """redact_texts removes text even with overlay=True."""
+    doc = _doc_with_content(b"BT /F1 12 Tf (Secret) Tj ET")
+
+    count = doc.redact_texts({"Secret": None}, overlay=True)
+
+    assert count == 1
+    # The text should be removed
+    assert b"(Secret)" not in doc.pages[1].content
+
+
+def test_redact_texts_empty_mapping() -> None:
+    """redact_texts with empty mapping returns 0."""
+    doc = _doc_with_content(b"BT /F1 12 Tf (nothing) Tj ET")
+
+    count = doc.redact_texts({})
+
+    assert count == 0
+    assert b"(nothing)" in doc.pages[1].content
+
+
+# Tests for Page.redact_texts() ------------------------------
+
+
+def test_page_redact_texts_removes_multiple_patterns() -> None:
+    """Page.redact_texts removes all patterns in the mapping."""
+    doc = Document()
+    page = doc.pages.add()
+    page.add_text("Hello World", 10, 20)
+    page.add_text("Hello Secret", 10, 40)
+
+    count = page.redact_texts({"World": None, "Secret": None})
+
+    # World appears once, Secret appears once
+    assert count == 2
+    assert b"(World)" not in page.content
+    assert b"(Secret)" not in page.content
+
+
+def test_page_redact_texts_with_max_count() -> None:
+    """Page.redact_texts respects max_count."""
+    doc = Document()
+    page = doc.pages.add()
+    page.add_text("cat cat cat cat", 10, 20)
+
+    count = page.redact_texts({"cat": None}, max_count=2)
+
+    assert count == 2
+
+
+def test_page_redact_texts_with_regex() -> None:
+    """Page.redact_texts supports regex patterns."""
+    import re
+
+    doc = Document()
+    page = doc.pages.add()
+    page.add_text("ID: 12345", 10, 20)
+
+    count = page.redact_texts({re.compile(r"\d+"): None})
+
+    assert count == 1
+    assert b"(ID: )" in page.content
+    assert b"12345" not in page.content
+
+
+def test_page_redact_texts_with_overlay() -> None:
+    """Page.redact_texts draws overlay bars when overlay=True."""
+    doc = Document()
+    page = doc.pages.add()
+    page.add_text("Confidential", 10, 20)
+
+    count = page.redact_texts({"Confidential": None}, overlay=True)
+
+    assert count == 1
+    assert b"(Confidential)" not in page.content
+

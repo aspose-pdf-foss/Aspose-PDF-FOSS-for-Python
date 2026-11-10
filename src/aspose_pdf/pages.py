@@ -2198,6 +2198,99 @@ class Page:
             overlay_color=overlay_color,
         )
 
+    def redact_texts(
+        self,
+        patterns: Mapping[str | re.Pattern[str], None],
+        *,
+        case_sensitive: bool = True,
+        max_count: int = 0,
+        regex: bool = False,
+        overlay: bool = False,
+        overlay_color: ColorValue = (0.0, 0.0, 0.0),
+    ) -> int:
+        """Remove multiple text patterns on this page in a single call.
+
+        This is a convenience method that redacts multiple text patterns
+        from the page. It is equivalent to calling :meth:`redact_text`
+        for each pattern in *patterns*, but more efficient as it performs
+        a single scan of the content stream.
+
+        Parameters
+        ----------
+        patterns
+            A mapping of search patterns to ``None``. Keys may be strings or
+            compiled regex patterns; values are ignored (redaction removes text
+            rather than replacing it with something).
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns.
+        max_count
+            Maximum redactions to perform across all patterns. ``0`` (default)
+            means unlimited. The count is shared across all patterns.
+        regex
+            If ``True``, all keys are treated as regular expressions. Not
+            required for compiled :class:`re.Pattern` keys.
+        overlay
+            If ``True``, draw a filled rectangle over each removed run
+            (the classic redaction bar). The default is ``False``, which
+            removes the text without marking its location.
+        overlay_color
+            The color of the overlay bar when ``overlay=True``. Grey, RGB
+            or CMYK values are accepted. Default is black.
+
+        Returns
+        -------
+        int
+            Total number of redactions made across all patterns.
+
+        See Also
+        --------
+        redact_text : Remove a single text pattern.
+        replace_texts : Replace multiple text patterns.
+
+        Examples
+        --------
+        Redact multiple patterns in one call:
+
+        >>> page.redact_texts({"password": None, "secret": None})
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> page.redact_texts(
+        ...     {re.compile(r"\\d{3}-\\d{2}-\\d{4}"): None},  # SSN pattern
+        ...     regex=True,
+        ...     overlay=True
+        ... )
+        """
+        self._document._ensure_not_disposed()
+        eng = self._document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+
+        total_count = 0
+        remaining_count = max_count
+
+        for search, _ in patterns.items():
+            # Determine if this specific pattern should use regex mode
+            use_regex = regex or isinstance(search, re.Pattern)
+            pattern_count = eng.redact_text(
+                search,
+                page_index=self._index,
+                case_sensitive=case_sensitive,
+                max_count=remaining_count if remaining_count > 0 else 0,
+                regex=use_regex,
+                overlay=overlay,
+                overlay_color=overlay_color,
+            )
+            total_count += pattern_count
+            if remaining_count > 0:
+                remaining_count -= pattern_count
+                if remaining_count <= 0:
+                    break
+
+        return total_count
+
     def auto_link(
         self, *, urls: bool = True, emails: bool = True, max_count: int = 0
     ) -> AutoLinkResult:
