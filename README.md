@@ -568,10 +568,11 @@ JPEG supports RGB and gray. The method returns ZIP bytes and can also write a
 file or binary stream. See [page archive details](supported-features.md#pages)
 for rendering options, limits and output behavior.
 
-### Add Pages from Image Files or Bytes
+### Add Pages from Image Files, Bytes, or Streams
 
 ```python
 from aspose_pdf import Document
+from io import BytesIO
 
 with Document() as document:
     # Add pages from image files
@@ -582,6 +583,10 @@ with Document() as document:
     with open("image.png", "rb") as f:
         document.add_pages_from_images([f.read()])
 
+    # Add pages from file-like objects (e.g., BytesIO)
+    image_data = download_image_from_network()
+    page_numbers = document.add_pages_from_images([BytesIO(image_data)])
+
     # Add pages with explicit A4 size
     page_numbers = document.add_pages_from_images(
         ["img1.jpg", "img2.jpg"],
@@ -591,10 +596,11 @@ with Document() as document:
     document.save("from_images.pdf")
 ```
 
-`add_pages_from_images` accepts file paths or raw image bytes, adding one page
-per source. JPEG and PNG work out of the box; BMP, GIF, and WebP need the
-optional `images` extra. The page size defaults to the image's natural size at
-72 DPI or can be specified with a `PageSize` name or `(width, height)` tuple.
+`add_pages_from_images` accepts file paths, raw image bytes, or file-like
+objects (e.g., `io.BytesIO`), adding one page per source. JPEG and PNG work out
+of the box; BMP, GIF, and WebP need the optional `images` extra. The page size
+defaults to the image's natural size at 72 DPI or can be specified with a
+`PageSize` name or `(width, height)` tuple.
 
 ### Render a Page to an Image
 

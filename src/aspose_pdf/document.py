@@ -2296,21 +2296,22 @@ class Document:
 
     def add_pages_from_images(
         self,
-        image_sources: list[str | Path | bytes | bytearray],
+        image_sources: list[str | Path | bytes | bytearray | BinaryIO],
         layout: str = "grid",
         *,
         size: PageSize | Sequence[float] | str | None = None,
         dpi: float = 72.0,
     ) -> list[int]:
-        """Add one or more pages from image files or bytes, one per image.
+        """Add one or more pages from image files, bytes, or streams, one per image.
 
         Images are embedded as full-page images. Each source gets its own page,
         laid out according to the *layout* mode.
 
         Parameters
         ----------
-        image_sources : list of str, Path, bytes, or bytearray
-            Image file paths, or raw image bytes (JPEG, PNG, BMP, GIF, WebP).
+        image_sources : list of str, Path, bytes, bytearray, or BinaryIO
+            Image file paths, raw image bytes, or file-like objects with a ``read()``
+            method (JPEG, PNG, BMP, GIF, WebP).
         layout : str, optional
             Layout strategy. Currently only ``"grid"`` is supported (default),
             which places one image per page filling the entire page.
@@ -2349,6 +2350,11 @@ class Document:
             with open("image.png", "rb") as f:
                 page_numbers = document.add_pages_from_images([f.read()])
 
+            # Add pages from file-like objects (e.g., BytesIO)
+            from io import BytesIO
+            image_data = download_image_from_network()
+            page_numbers = document.add_pages_from_images([BytesIO(image_data)])
+
             # Add pages with explicit A4 size
             page_numbers = document.add_pages_from_images(
                 ["img1.jpg", "img2.jpg"],
@@ -2356,7 +2362,7 @@ class Document:
             )
         """
         if not isinstance(image_sources, list):
-            raise TypeError(f"image_sources must be a list of paths or bytes, got {type(image_sources).__name__}")
+            raise TypeError(f"image_sources must be a list of paths, bytes, or file-like objects, got {type(image_sources).__name__}")
         if not image_sources:
             return []
 
@@ -2369,7 +2375,13 @@ class Document:
         page_numbers = []
 
         for source in image_sources:
-            # Create page from image (handles both paths and bytes)
+            # Handle file-like objects
+            if hasattr(source, "read") and callable(source.read):
+                data = source.read()
+                if not isinstance(data, (bytes, bytearray)):
+                    raise TypeError(f"read() must return bytes or bytearray, got {type(data).__name__}")
+                source = data
+            # Create page from image (handles paths, bytes, bytearrays, and file-like objects)
             page = Page.from_image(self, source, size=size, dpi=dpi)
             page_numbers.append(page.number)
 

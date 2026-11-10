@@ -1769,12 +1769,12 @@ class Page:
     def from_image(
         cls,
         document: Document,
-        image: str | Path | bytes | bytearray,
+        image: str | Path | bytes | bytearray | BinaryIO,
         *,
         size: PageSize | Sequence[float] | str | None = None,
         dpi: float = 72.0,
     ) -> Page:
-        """Create a new page from an image file or bytes.
+        """Create a new page from an image file, bytes, or stream.
 
         The image is embedded as a full-page image at the specified or
         natural resolution. The page size is derived from the image dimensions
@@ -1784,8 +1784,9 @@ class Page:
         ----------
         document : Document
             The document to which the page will be added.
-        image : str, Path, bytes, or bytearray
-            Image file path, raw bytes, or bytearray (JPEG, PNG, BMP, GIF, WebP).
+        image : str, Path, bytes, bytearray, or BinaryIO
+            Image file path, raw bytes, bytearray, or a file-like object with a
+            ``read()`` method (JPEG, PNG, BMP, GIF, WebP).
         size : PageSize, (width, height), or str, optional
             Page size to use instead of the image's natural size.
             A :class:`~aspose_pdf.page_size.PageSize`, its name, or a
@@ -1807,6 +1808,9 @@ class Page:
             If the image path does not exist.
         OSError
             If the image file cannot be read.
+        TypeError
+            If the image is not a supported type or a file-like object's
+            ``read()`` method does not return bytes or bytearray.
 
         Notes
         -----
@@ -1824,6 +1828,10 @@ class Page:
             with open("scan.png", "rb") as f:
                 page = Page.from_image(doc, f.read(), size="A4")
 
+            # From file-like object (e.g., BytesIO)
+            from io import BytesIO
+            page = Page.from_image(doc, BytesIO(image_data))
+
             # From path with custom size in points
             page = Page.from_image(doc, "chart.jpg", size=(400, 600))
         """
@@ -1834,8 +1842,12 @@ class Page:
         if eng is None:
             raise AsposePdfException("No document loaded")
 
-        # Load image data
-        if isinstance(image, (str, Path)):
+        # Handle file-like objects
+        if hasattr(image, "read") and callable(image.read):
+            data = image.read()
+            if not isinstance(data, (bytes, bytearray)):
+                raise TypeError(f"read() must return bytes or bytearray, got {type(data).__name__}")
+        elif isinstance(image, (str, Path)):
             path = Path(image)
             try:
                 file_size = path.stat().st_size
@@ -1852,7 +1864,7 @@ class Page:
         elif isinstance(image, (bytes, bytearray)):
             data = bytes(image)
         else:
-            raise TypeError(f"image must be bytes, bytearray, str, or Path, got {type(image).__name__}")
+            raise TypeError(f"image must be bytes, bytearray, str, Path, or BinaryIO, got {type(image).__name__}")
 
         # Prepare the image
         try:

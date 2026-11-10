@@ -406,6 +406,57 @@ def test_add_images_empty_bytes_raises(document):
         document.add_pages_from_images([b""])
 
 
+def test_add_pages_from_images_from_bytesio(document, png_100x50):
+    """Adding pages from BytesIO works correctly."""
+    from io import BytesIO
+
+    image_io = BytesIO(png_100x50)
+    page_numbers = document.add_pages_from_images([image_io])
+
+    assert page_numbers == [1]
+    assert document.page_count == 1
+
+
+def test_add_pages_from_images_from_file(document, png_100x50, tmp_path):
+    """Adding pages from opened file object works correctly."""
+    path = tmp_path / "image.png"
+    path.write_bytes(png_100x50)
+
+    with open(path, "rb") as f:
+        page_numbers = document.add_pages_from_images([f])
+
+    assert page_numbers == [1]
+    assert document.page_count == 1
+
+
+def test_add_pages_from_images_mixed_sources(document, png_100x50, tmp_path):
+    """Adding pages from mixed sources (path, bytes, BytesIO) works."""
+    from io import BytesIO
+
+    # Path
+    path = tmp_path / "image1.png"
+    path.write_bytes(png_100x50)
+
+    # BytesIO
+    image_io = BytesIO(png_100x50)
+
+    page_numbers = document.add_pages_from_images([str(path), png_100x50, image_io])
+
+    assert page_numbers == [1, 2, 3]
+    assert document.page_count == 3
+
+
+def test_add_pages_from_images_bytesio_read_returns_str_raises(document, png_100x50):
+    """BytesIO that reads str raises TypeError."""
+    from io import StringIO
+
+    # StringIO reads str, which should raise TypeError
+    string_io = StringIO("not image data")
+
+    with pytest.raises(TypeError, match="read\\(\\) must return bytes or bytearray"):
+        document.add_pages_from_images([string_io])
+
+
 def test_add_pages_from_images_type_name(document):
     """Test that the parameter name in error messages is correct."""
     with pytest.raises(TypeError, match="list"):

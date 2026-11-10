@@ -5305,14 +5305,16 @@ Boundaries:
 - Arithmetic-coded, lossless and differential JPEG, and 12-bit samples, remain
   unsupported by the pure-Python raster path.
 
-- **Add pages from image files or bytes.**
+- **Add pages from image files, bytes, or streams.**
   `Document.add_pages_from_images(image_sources, layout="grid", size=None, dpi=72.0)`
   adds one page per image, embedding the image as a full-page image. Each source
-  in the list can be a file path (`str` or `Path`) or raw image bytes
-  (`bytes`/`bytearray`). The layout is currently only `"grid"` (one image per
-  page filling the page); the page size defaults to the image's natural size at
-  *dpi* or can be specified with `size="A4"`, `size=(300, 400)`, etc. The DPI
-  controls how pixels map to points (72 DPI = 1 pixel = 1 point).
+  in the list can be a file path (`str` or `Path`), raw image bytes
+  (`bytes`/`bytearray`), or a file-like object with a ``read()`` method
+  (e.g., `io.BytesIO` or an open file handle). The layout is currently only
+  `"grid"` (one image per page filling the page); the page size defaults to the
+  image's natural size at *dpi* or can be specified with `size="A4"`,
+  `size=(300, 400)`, etc. The DPI controls how pixels map to points (72 DPI =
+  1 pixel = 1 point).
   - JPEG and PNG work without optional dependencies. Static BMP, GIF,
     and WebP require the ``images`` extra. Animated GIFs are not supported.
   - The method returns a list of one-based page numbers for the newly added
@@ -5320,9 +5322,12 @@ Boundaries:
   - Invalid image bytes, unreadable files, or malformed `size` raise
     `PdfValidationException` or `FileNotFoundError`. Invalid layout mode or
     non-list input raises `TypeError`.
+  - File-like objects must have a ``read()`` method that returns ``bytes`` or
+    ``bytearray``. Other types raise ``TypeError``.
 
   ```python
   from aspose_pdf import Document
+  from io import BytesIO
 
   # Add pages from image files
   page_numbers = document.add_pages_from_images(["scan1.png", "scan2.jpg"])
@@ -5330,6 +5335,10 @@ Boundaries:
   # Add pages from image bytes (e.g., downloaded from network)
   with open("image.png", "rb") as f:
       document.add_pages_from_images([f.read()])
+
+  # Add pages from file-like objects (e.g., BytesIO)
+  image_data = download_image_from_network()
+  page_numbers = document.add_pages_from_images([BytesIO(image_data)])
 
   # Add pages with explicit A4 size
   page_numbers = document.add_pages_from_images(
