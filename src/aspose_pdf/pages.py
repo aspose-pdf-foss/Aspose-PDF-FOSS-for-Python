@@ -2900,33 +2900,51 @@ class Page:
 
     def replace_annotation_contents(
         self,
-        replacements: Mapping[str | re.Pattern[str], str],
+        search_or_replacements: str | re.Pattern[str] | Mapping[str | re.Pattern[str], str],
+        replacement: str | None = None,
         *,
         case_sensitive: bool = True,
         max_count: int = 0,
         regex: bool = False,
         dry_run: bool = False,
     ) -> int:
-        """Replace multiple annotation contents patterns on this page.
+        """Replace annotation contents patterns on this page.
 
-        This is a convenience method that applies multiple contents replacements
-        to annotations on this page. It is equivalent to calling annotation
-        content editing for each key-value pair in *replacements*, but more
-        efficient as it performs a single scan of the annotation metadata.
+        This method can be called with either a single pattern or multiple patterns.
+
+        For a single pattern, use positional arguments:
+        ``replace_annotation_contents(search, replacement, ...)``
+
+        For multiple patterns, pass a mapping as the first argument:
+        ``replace_annotation_contents({search: replacement, ...}, ...)``
+
+        In single-pattern mode, strings match literal substrings unless
+        ``regex=True``; compiled text regexes retain their flags.
+        ``case_sensitive=False`` adds IGNORECASE. All occurrences are replaced
+        in each annotation. Regex replacement strings support Python
+        backreferences; literal replacements stay literal.
+
+        In multiple-pattern mode, a mapping of search patterns to replacement
+        strings is provided. This is more efficient than calling this method
+        multiple times for each pattern.
 
         Parameters
         ----------
-        replacements
-            A mapping of search patterns to replacement strings. Keys may be
-            strings or compiled regex patterns; values are the replacement text.
+        search_or_replacements
+            Either a single search pattern (string or compiled regex), or a
+            mapping of search patterns to replacement strings.
+        replacement
+            Replacement text for a single search pattern.
+            Required when ``search_or_replacements`` is a single pattern.
         case_sensitive
             If ``True`` (default), matching is case-sensitive. Ignored for
             compiled regex patterns that already have flags set.
         max_count
-            Maximum replacements to perform across all patterns. ``0`` (default)
-            means unlimited. The count is shared across all patterns.
+            Maximum replacements to perform. ``0`` (default)
+            means unlimited for single-pattern mode, or shared across all patterns
+            in multiple-pattern mode.
         regex
-            If ``True``, all string keys are treated as regular expressions.
+            If ``True``, string search patterns are treated as regular expressions.
             Not required for compiled :class:`re.Pattern` keys.
         dry_run
             If ``True``, perform all checks and count changes without
@@ -2936,7 +2954,7 @@ class Page:
         Returns
         -------
         int
-            Total number of annotation contents modified across all patterns.
+            Total number of annotation contents modified.
 
         See Also
         --------
@@ -2948,6 +2966,10 @@ class Page:
 
         Examples
         --------
+        Replace a single annotation content pattern:
+
+        >>> page.replace_annotation_contents("Old Co", "New Co")
+
         Replace multiple annotation contents in one call:
 
         >>> page.replace_annotation_contents({"Old Co": "New Co", "2023": "2024"})
@@ -2956,12 +2978,12 @@ class Page:
 
         >>> import re
         >>> page.replace_annotation_contents(
-        ...     {re.compile(r"\\d{4}"): "2024", "Mr.": "Ms."},
-        ...     regex=True
+        ...     re.compile(r"\\d{4}"), "2024", regex=True
         ... )
         """
         return self._document.replace_annotation_contents(
-            replacements, pages=[self.number], regex=regex,
+            search_or_replacements, replacement,
+            pages=[self.number], regex=regex,
             case_sensitive=case_sensitive, max_count=max_count, dry_run=dry_run,
         )
 

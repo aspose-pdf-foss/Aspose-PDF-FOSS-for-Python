@@ -4222,7 +4222,8 @@ class Document:
     @page_api(selections=("pages",), scalars=("page_index",))
     def replace_annotation_contents(
         self,
-        replacements: Mapping[str | re.Pattern[str], str],
+        search_or_replacements: str | re.Pattern[str] | Mapping[str | re.Pattern[str], str],
+        replacement: str | None = None,
         *,
         page_index: int | None = None,
         pages: Iterable[int] | None = None,
@@ -4231,18 +4232,34 @@ class Document:
         regex: bool = False,
         dry_run: bool = False,
     ) -> int:
-        """Replace multiple annotation contents patterns in a single call.
+        """Replace annotation contents patterns in a single call.
 
-        This is a convenience method that applies multiple contents replacements
-        to annotations in the document. It is equivalent to calling annotation
-        content editing for each key-value pair in *replacements*, but more
-        efficient as it performs a single scan of the annotation metadata.
+        This method can be called with either a single pattern or multiple patterns.
+
+        For a single pattern, use positional arguments:
+        ``replace_annotation_contents(search, replacement, ...)``
+
+        For multiple patterns, pass a mapping as the first argument:
+        ``replace_annotation_contents({search: replacement, ...}, ...)``
+
+        In single-pattern mode, strings match literal substrings unless
+        ``regex=True``; compiled text regexes retain their flags.
+        ``case_sensitive=False`` adds IGNORECASE. All occurrences are replaced
+        in each annotation. Regex replacement strings support Python
+        backreferences; literal replacements stay literal.
+
+        In multiple-pattern mode, a mapping of search patterns to replacement
+        strings is provided. This is more efficient than calling this method
+        multiple times for each pattern.
 
         Parameters
         ----------
-        replacements
-            A mapping of search patterns to replacement strings. Keys may be
-            strings or compiled regex patterns; values are the replacement text.
+        search_or_replacements
+            Either a single search pattern (string or compiled regex), or a
+            mapping of search patterns to replacement strings.
+        replacement
+            Replacement text for a single search pattern.
+            Required when ``search_or_replacements`` is a single pattern.
         page_index
             One-based page number. If omitted and ``pages`` is also omitted,
             all pages are processed. Cannot be used together with ``pages``.
@@ -4254,10 +4271,11 @@ class Document:
             If ``True`` (default), matching is case-sensitive. Ignored for
             compiled regex patterns that already have flags set.
         max_count
-            Maximum replacements to perform across all patterns. ``0`` (default)
-            means unlimited. The count is shared across all patterns.
+            Maximum replacements to perform. ``0`` (default)
+            means unlimited for single-pattern mode, or shared across all patterns
+            in multiple-pattern mode.
         regex
-            If ``True``, all string keys are treated as regular expressions.
+            If ``True``, string search patterns are treated as regular expressions.
             Not required for compiled :class:`re.Pattern` keys.
         dry_run
             If ``True``, perform all checks and count changes without
@@ -4267,7 +4285,7 @@ class Document:
         Returns
         -------
         int
-            Total number of annotation contents modified across all patterns.
+            Total number of annotation contents modified.
 
         See Also
         --------
@@ -4278,6 +4296,10 @@ class Document:
 
         Examples
         --------
+        Replace a single annotation content pattern:
+
+        >>> document.replace_annotation_contents("Old Co", "New Co")
+
         Replace multiple annotation contents in one call:
 
         >>> document.replace_annotation_contents({"Old Co": "New Co", "2023": "2024"})
@@ -4286,14 +4308,13 @@ class Document:
 
         >>> import re
         >>> document.replace_annotation_contents(
-        ...     {re.compile(r"\\d{4}"): "2024", "Mr.": "Ms."},
-        ...     regex=True
+        ...     re.compile(r"\\d{4}"), "2024", regex=True
         ... )
 
         Limit replacements and target specific pages:
 
         >>> document.replace_annotation_contents(
-        ...     {"old": "new"},
+        ...     "old", "new",
         ...     pages=[1, 3],
         ...     max_count=5
         ... )
@@ -4307,6 +4328,22 @@ class Document:
                 "page_index and pages cannot be used together. "
                 "Use page_index for a single page or pages for multiple pages."
             )
+
+        # Determine whether this is single-pattern or batch mode
+        if isinstance(search_or_replacements, Mapping):
+            # Batch mode: search_or_replacements is the mapping
+            if replacement is not None:
+                raise PdfValidationException(
+                    "'replacement' should not be provided when first argument is a mapping."
+                )
+            replacements = search_or_replacements
+        else:
+            # Single-pattern mode
+            if replacement is None:
+                raise PdfValidationException(
+                    "'replacement' is required when first argument is a single pattern."
+                )
+            replacements = {search_or_replacements: replacement}
 
         from aspose_pdf.engine.link_urls import replace_annotation_contents_in_batch
 
