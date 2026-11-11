@@ -288,6 +288,30 @@ class Document:
         """Return limits used for loading, lazy processing, and authored assets."""
         return self._load_limits
 
+    @property
+    def closed(self) -> bool:
+        """True if the document has been closed or disposed.
+
+        A document that is closed cannot be used for further operations.
+        This property follows the convention of built-in Python file objects.
+
+        Examples
+        --------
+        Using the property with a context manager::
+
+            with Document("file.pdf") as doc:
+                print(doc.closed)  # False
+                # ... do work ...
+            print(doc.closed)  # True
+
+        Checking before an operation::
+
+            doc = Document("file.pdf")
+            if not doc.closed:
+                print(doc.page_count)
+        """
+        return self._disposed
+
     def _ensure_not_disposed(self) -> None:
         """Raise if the document has been disposed."""
         if self._disposed:

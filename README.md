@@ -474,6 +474,26 @@ with Document("input.pdf") as document:
 — a missing file, non-PDF data, or a missing password raises rather than handing back a silently
 empty document.
 
+The `Document` class supports the context manager protocol, so it can be used with the `with`
+statement. After the context exits, the document is closed and cannot be used further. The
+`Document.closed` property returns `True` after the document has been closed (either by calling
+`dispose()` or exiting a context manager) and `False` otherwise:
+
+```python
+from aspose_pdf import Document
+
+doc = Document("input.pdf")
+if not doc.closed:
+    print(doc.page_count)  # Safe to use
+
+doc.dispose()
+print(doc.closed)  # True
+
+with Document("input.pdf") as doc:
+    print(doc.closed)  # False inside context
+print(doc.closed)  # True after context exits
+```
+
 ## Additional Examples
 
 More real, runnable examples from the project's own documentation are collected below.

@@ -19,6 +19,10 @@ class DummyEngine:
     def to_bytes(self):
         return b"%PDF-1.4\n%%EOF"
 
+    def dispose(self):
+        """Release resources - no-op for test stub."""
+        pass
+
     # What `Document.save` asks before choosing how to write: a document with
     # no signatures in it is written in full.
     def existing_signatures_bind(self):
@@ -264,3 +268,60 @@ def test_save_roundtrip_preserves_page_count_full(tmp_path):
     new_doc.load_from(out_path)
     new_count = getattr(new_doc, "page_count", None)
     assert new_count == original_count
+
+
+class TestDocumentClosedProperty:
+    """Tests for the Document.closed property."""
+
+    def test_closed_is_false_for_new_document(self, monkeypatch):
+        """A newly created document should not be closed."""
+        doc = _make_doc(monkeypatch)
+        assert doc.closed is False
+
+    def test_closed_is_true_after_dispose(self, monkeypatch):
+        """After calling dispose, closed should be True."""
+        doc = _make_doc(monkeypatch)
+        doc.dispose()
+        assert doc.closed is True
+
+    def test_closed_is_true_after_context_manager_exit(self, tmp_path, monkeypatch):
+        """After exiting a context manager, the document should be closed."""
+        doc = _make_doc(monkeypatch)
+        out_path = tmp_path / "out.pdf"
+        with doc:
+            assert doc.closed is False
+        assert doc.closed is True
+        # The file should still be written
+        assert out_path.exists() is False
+
+    def test_closed_is_true_after_context_manager_exit_with_exception(
+        self, tmp_path, monkeypatch
+    ):
+        """If an exception occurs in context manager, document should still be closed."""
+        doc = _make_doc(monkeypatch)
+
+        with pytest.raises(ValueError):
+            with doc:
+                assert doc.closed is False
+                raise ValueError("test error")
+
+        # Document should be closed even after exception
+        assert doc.closed is True
+
+    def test_closed_property_is_read_only(self, monkeypatch):
+        """The closed property should be read-only."""
+        doc = _make_doc(monkeypatch)
+        with pytest.raises(AttributeError):
+            doc.closed = True
+
+    def test_operations_raise_when_closed(self, tmp_path, monkeypatch):
+        """Operations should raise when the document is closed."""
+        doc = _make_doc(monkeypatch)
+        doc.dispose()
+
+        # The closed property is True
+        assert doc.closed is True
+
+        # Operations should raise AsposePdfException
+        with pytest.raises(Exception):
+            _ = doc.page_count
