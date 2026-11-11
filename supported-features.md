@@ -130,6 +130,10 @@ Supported:
   `close()`. The `Document.closed` property returns `True` after the document
   has been closed and `False` otherwise, allowing you to check the document's
   state without catching exceptions.
+- **Get the page count with `len(document)`.** `len(document)` returns the number
+  of pages in the document, equivalent to `document.page_count`. This makes the
+  API more Pythonic for users familiar with container types in Python's standard
+  library.
 - Read and write document info metadata. `/Info` maps names to **text strings**
   (ISO 32000-1 14.3.3), so `Document.info` accepts `str`, `bytes` or
   `bytearray` values under string keys; anything else is refused with a

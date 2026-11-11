@@ -38,6 +38,11 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   otherwise. This follows the convention of Python built-in file objects and
   allows checking document state without catching exceptions.
 
+- **Use `len(document)` to get the page count.** Added the `Document.__len__()` method
+  so that `len(document)` returns the number of pages. This is equivalent to
+  `document.page_count` and makes the API more Pythonic for users familiar with
+  container types in Python's standard library.
+
 - **Create a page from a PDF file.** `Page.from_pdf()` imports a specific page
   from another PDF into the current document, preserving all content, resources,
   annotations, and page properties. The source can be a file path, raw bytes,

@@ -11,6 +11,14 @@ class DummyEngine:
     # Mirrors the real engine: both flags decide how ``save`` writes.
     _sanitized = False
 
+    def __init__(self):
+        # Minimal pages collection that supports len()
+        class MinimalPages:
+            def __len__(self):
+                return 0
+
+        self.pages = MinimalPages()
+
     def save(self, path):
         # write minimal PDF bytes
         with open(path, "wb") as f:
@@ -325,3 +333,66 @@ class TestDocumentClosedProperty:
         # Operations should raise AsposePdfException
         with pytest.raises(Exception):
             _ = doc.page_count
+
+
+class TestDocumentLen:
+    """Tests for len(document)."""
+
+    def test_len_on_empty_document(self, monkeypatch):
+        """len() on a new empty document returns 0."""
+        doc = _make_doc(monkeypatch)
+        # page_count will fail on DummyEngine without pages attribute
+        # so we just verify the DummyEngine doesn't crash
+        assert len(doc) == 0
+
+    def test_len_with_pages(self, tmp_path, monkeypatch):
+        """len() returns the number of pages in the document."""
+        from aspose_pdf import Document
+
+        with Document() as doc:
+            doc.pages.add()
+            doc.pages.add()
+            doc.pages.add()
+            assert len(doc) == 3
+            assert len(doc) == doc.page_count
+
+    def test_len_after_page_removal(self, tmp_path):
+        """len() updates when pages are removed."""
+        from aspose_pdf import Document
+
+        with Document() as doc:
+            for _ in range(5):
+                doc.pages.add()
+            assert len(doc) == 5
+
+            # Remove page 3 (1-indexed) using extract_pages and merge
+            # First extract all pages except page 3
+            pages = doc.extract_pages([1, 2, 4, 5])
+            # Clear pages and add back the extracted ones
+            doc.pages.clear()
+            for p in pages.pages:
+                doc.pages.add(p)
+            assert len(doc) == 4
+            assert len(doc) == doc.page_count
+
+    def test_len_with_loaded_pdf(self, tmp_path):
+        """len() works correctly with loaded PDF files."""
+        from aspose_pdf import Document
+
+        # Create a test PDF
+        test_pdf = tmp_path / "test.pdf"
+        with Document() as doc:
+            for _ in range(4):
+                doc.pages.add()
+            doc.save(test_pdf)
+
+        # Load and check len
+        with Document(test_pdf) as doc:
+            assert len(doc) == 4
+            assert len(doc) == doc.page_count
+
+    def test_len_matches_page_count_property(self, monkeypatch):
+        """len(document) always equals document.page_count."""
+        doc = _make_doc(monkeypatch)
+        # Both should return the same value (0 for our dummy document)
+        assert len(doc) == doc.page_count

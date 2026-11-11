@@ -1153,6 +1153,29 @@ class Document:
             return 0
         return len(self._engine_pdf.pages)
 
+    def __len__(self) -> int:
+        """Return the number of pages in the document.
+
+        This makes ``len(document)`` equivalent to ``document.page_count``.
+
+        Returns
+        -------
+        int
+            Number of pages.
+
+        Examples
+        --------
+        ::
+
+            doc = Document("report.pdf")
+            print(len(doc))  # Same as: print(doc.page_count)
+
+        This method is provided for Pythonic convenience and consistency
+        with other container types. The property form
+        :attr:`page_count` is the canonical way to obtain the page count.
+        """
+        return self.page_count
+
     @property
     def info(self) -> dict[str, str]:
         """Get or set the document metadata (info dictionary).

@@ -494,6 +494,18 @@ with Document("input.pdf") as doc:
 print(doc.closed)  # True after context exits
 ```
 
+**Get the page count with `len(document)`.** The `Document` class implements
+`__len__`, so `len(document)` returns the number of pages, equivalent to
+`document.page_count`. This makes the API more Pythonic for users familiar with
+container types:
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as doc:
+    print(f"Total pages: {len(doc)}")  # Same as: print(f"Total pages: {doc.page_count}")
+```
+
 ## Additional Examples
 
 More real, runnable examples from the project's own documentation are collected below.
