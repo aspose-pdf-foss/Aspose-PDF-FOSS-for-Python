@@ -221,9 +221,13 @@ def markup_texts(
     patterns
         A dictionary mapping search patterns to options. Each key is a string
         or compiled regex pattern; each value is a dict of options for that
-        pattern (color, opacity, contents, title), or None for defaults.
+        pattern (color, opacity, contents, title, kind), or None for defaults.
+        The ``kind`` option specifies the markup style for that pattern
+        ('highlight', 'underline', 'strike_out', or 'squiggly'). When omitted,
+        the global ``kind`` parameter is used.
     kind
-        The markup kind: 'highlight', 'underline', 'strike_out', or 'squiggly'.
+        The default markup kind: 'highlight', 'underline', 'strike_out', or
+        'squiggly'. Patterns without a ``kind`` option use this value.
     page_index
         One-based page number. If omitted and ``pages`` is also omitted,
         all pages are processed. Cannot be used together with ``pages``.
@@ -259,6 +263,13 @@ def markup_texts(
     >>> document.markup_texts(
     ...     {"review": {"color": (1, 0, 0)}, "draft": {"color": (0, 1, 0)}},
     ...     kind="highlight"
+    ... )
+
+    Mix different markup kinds:
+
+    >>> document.markup_texts(
+    ...     {"review": {"kind": "highlight", "color": (1, 0, 0)},
+    ...      "draft": {"kind": "underline", "color": (0, 1, 0)}}
     ... )
 
     Use with regex patterns:
@@ -360,8 +371,17 @@ def markup_texts(
                 flags |= re.IGNORECASE
         pattern = re.compile(pattern_str, flags)
 
-        # Get default color based on kind
-        default_color = (1.0, 1.0, 0.0) if kind == "highlight" else (0.0, 0.0, 0.0)
+        # Get per-pattern kind (falls back to the global kind parameter)
+        pattern_kind = opts.get("kind", kind)
+        if not isinstance(pattern_kind, str):
+            raise TypeError("kind must be a string")
+        if pattern_kind not in _MARKUP_METHODS:
+            raise PdfValidationException(
+                f"kind must be one of {list(_MARKUP_METHODS.keys())}, got {pattern_kind!r}"
+            )
+
+        # Get default color based on pattern_kind
+        default_color = (1.0, 1.0, 0.0) if pattern_kind == "highlight" else (0.0, 0.0, 0.0)
         # Get options for this pattern
         pattern_color = opts.get("color", default_color)
         pattern_opacity = opts.get("opacity", 0.5)
@@ -441,7 +461,7 @@ def markup_texts(
                         (quad[3], quad[2], quad[0], quad[1]) for quad in fragment.quads
                     ]
                     all_annotations.append(
-                        getattr(page.annotations, _MARKUP_METHODS[kind])(
+                        getattr(page.annotations, _MARKUP_METHODS[pattern_kind])(
                             quads,
                             pattern_contents,
                             color=normalized_color,

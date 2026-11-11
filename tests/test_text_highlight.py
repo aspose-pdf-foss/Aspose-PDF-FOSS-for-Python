@@ -697,3 +697,46 @@ def test_highlight_texts_invalid_options():
             doc.highlight_texts({"Hello": "invalid"})
         with pytest.raises(PdfValidationException):
             doc.highlight_texts({"Hello": {"opacity": 2.0}})
+
+
+# Tests for per-pattern kind in markup_texts ------------------------------
+
+
+def test_markup_texts_per_pattern_kind(document):
+    """markup_texts supports different kinds per pattern."""
+    result = document.markup_texts(
+        {"Hello": {"kind": "highlight", "color": (1, 0, 0)},
+         "world": {"kind": "underline", "color": (0, 1, 0)}},
+        case_sensitive=False,
+    )
+    
+    # 2 "Hello" + 3 "world" = 5 total
+    assert result.marked_count == 5
+
+
+def test_markup_texts_per_pattern_kind_with_default(document):
+    """markup_texts uses global kind when pattern doesn't specify."""
+    result = document.markup_texts(
+        {"Hello": {}, "world": {"kind": "underline"}},
+        kind="highlight",
+        case_sensitive=False,
+    )
+    
+    # 2 "Hello" (uses default highlight) + 3 "world" (uses underline) = 5 total
+    assert result.marked_count == 5
+
+
+def test_markup_texts_invalid_per_pattern_kind():
+    """markup_texts rejects invalid per-pattern kinds."""
+    with Document() as doc:
+        doc.pages.add().add_text("Hello", 72, 700)
+        with pytest.raises(PdfValidationException):
+            doc.markup_texts({"Hello": {"kind": "invalid"}})
+
+
+def test_markup_texts_kind_as_string_not_allowed():
+    """markup_texts rejects non-string kind values."""
+    with Document() as doc:
+        doc.pages.add().add_text("Hello", 72, 700)
+        with pytest.raises(TypeError):
+            doc.markup_texts({"Hello": {"kind": 1}})

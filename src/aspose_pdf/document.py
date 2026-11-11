@@ -4629,9 +4629,13 @@ class Document:
         patterns
             A dictionary mapping search patterns to options. Each key is a string
             or compiled regex pattern; each value is a dict of options for that
-            pattern (color, opacity, contents, title), or None for defaults.
+            pattern (color, opacity, contents, title, kind), or None for defaults.
+            The ``kind`` option specifies the markup style for that pattern
+            ('highlight', 'underline', 'strike_out', or 'squiggly'). When omitted,
+            the global ``kind`` parameter is used.
         kind
-            The markup kind: 'highlight', 'underline', 'strike_out', or 'squiggly'.
+            The default markup kind: 'highlight', 'underline', 'strike_out', or
+            'squiggly'. Patterns without a ``kind`` option use this value.
         page_index
             One-based page number. If omitted and ``pages`` is also omitted,
             all pages are processed. Cannot be used together with ``pages``.
@@ -4662,11 +4666,18 @@ class Document:
 
         Examples
         --------
-        Mark multiple patterns with different colors:
+        Mark multiple patterns with different colors (same kind):
 
         >>> document.markup_texts(
         ...     {"review": {"color": (1, 0, 0)}, "draft": {"color": (0, 1, 0)}},
         ...     kind="highlight"
+        ... )
+
+        Mix different markup kinds:
+
+        >>> document.markup_texts(
+        ...     {"review": {"kind": "highlight", "color": (1, 0, 0)},
+        ...      "draft": {"kind": "underline", "color": (0, 1, 0)}}
         ... )
 
         Use with regex patterns:
@@ -4729,8 +4740,9 @@ class Document:
         patterns
             A dictionary mapping search patterns to options. Each key is a string
             or compiled regex pattern; each value is a dict of options for that
-            pattern (color, opacity, contents, title). The color defaults to
-            yellow for highlights if not specified.
+            pattern (color, opacity, contents, title, kind). The color defaults
+            to yellow for highlights if not specified. The ``kind`` option is
+            also accepted but only 'highlight' is valid for this method.
         page_index
             One-based page number. If omitted and ``pages`` is also omitted,
             all pages are processed. Cannot be used together with ``pages``.
