@@ -3110,6 +3110,66 @@ class Page:
             case_sensitive=case_sensitive, max_count=max_count, dry_run=dry_run,
         )
 
+    def remove_annotations_by_contents(
+        self,
+        patterns: Mapping[str | re.Pattern[str], None],
+        *,
+        case_sensitive: bool = True,
+        regex: bool = False,
+        dry_run: bool = False,
+    ) -> int:
+        """Remove annotations whose contents match patterns on this page.
+
+        This is a convenience method that removes multiple annotations based on
+        patterns in their contents. It is more efficient than calling
+        :meth:`remove_annotations` multiple times for each pattern.
+
+        Parameters
+        ----------
+        patterns
+            A mapping of search patterns to ``None``. Keys may be strings or
+            compiled regex patterns; values must be ``None``.
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns that already have flags set.
+        regex
+            If ``True``, string patterns are treated as regular expressions.
+            Compiled :class:`re.Pattern` keys always use regex mode.
+        dry_run
+            If ``True``, perform all checks and count changes without
+            modifying the document. Return the number of changes that
+            would be made.
+
+        Returns
+        -------
+        int
+            Total number of annotations removed.
+
+        See Also
+        --------
+        replace_annotation_contents : Replace annotation contents patterns.
+        remove_annotations : Remove annotations by author, date, subtype.
+        redact_texts : Remove multiple text patterns from page content.
+        Document.remove_annotations_by_contents : Remove annotations in the whole document.
+
+        Examples
+        --------
+        Remove annotations with "confidential" in their contents:
+
+        >>> page.remove_annotations_by_contents({"confidential": None})
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> page.remove_annotations_by_contents(
+        ...     {re.compile(r"\\d{4}-\\d{4}"): None}
+        ... )
+        """
+        return self._document.remove_annotations_by_contents(
+            patterns, pages=[self.number], regex=regex,
+            case_sensitive=case_sensitive, dry_run=dry_run,
+        )
+
     def validate_links(self) -> list[LinkValidationIssue]:
         """Check this page's link annotations, resolving names as needed.
 

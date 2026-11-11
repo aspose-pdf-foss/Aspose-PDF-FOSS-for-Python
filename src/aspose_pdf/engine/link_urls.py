@@ -615,3 +615,193 @@ def replace_annotation_contents_in_batch(
         )
 
     return len(to_modify)
+
+
+def remove_annotations_by_contents(
+    document: Document,
+    patterns: Mapping[str | re.Pattern[str], None],
+    *,
+    pages: Iterable[int] | None = None,
+    regex: bool = False,
+    case_sensitive: bool = True,
+    dry_run: bool = False,
+) -> int:
+    """Remove annotations whose contents match patterns in a single pass.
+
+    This is a convenience method that removes multiple annotations based on
+    patterns in their contents. It is equivalent to calling annotation removal
+    for each pattern, but more efficient as it performs a single scan of the
+    annotation metadata.
+
+    Parameters
+    ----------
+    document
+        The PDF document whose annotations should be removed.
+    patterns
+        A mapping of search patterns to None. Keys may be strings or compiled
+        regex patterns; values must be None (to indicate removal).
+    pages
+        One-based page numbers to process. ``None`` (default) processes all pages.
+        Duplicates are processed once. Rejected page numbers raise an error.
+    regex
+        If ``True``, all string keys are treated as regular expressions.
+        Compiled :class:`re.Pattern` keys always use regex mode, regardless
+        of this flag's value.
+    case_sensitive
+        If ``True`` (default), matching is case-sensitive. Ignored for
+        compiled regex patterns that already have flags set.
+    dry_run
+        If ``True``, perform all checks and count changes without
+        modifying the document. Return the number of changes that
+        would be made.
+
+    Returns
+    -------
+    int
+        Total number of annotations removed across all patterns.
+        Each annotation is counted at most once, even if multiple patterns
+        match its contents.
+
+    Notes
+    -----
+    The batch operation scans the document once and applies all patterns
+    to each annotation's contents. If multiple patterns match the same
+    contents, the annotation is removed once.
+
+    This preserves the same behavior as :func:`replace_annotation_contents`
+    for annotation sharing, resource limits, and error handling. Annotations
+    shared with unselected pages are rejected.
+    """
+    if not isinstance(patterns, Mapping):
+        raise PdfValidationException("patterns must be a mapping")
+
+    if not patterns:
+        return 0
+
+    budget = _LoadBudget(document.load_limits)
+    for name, value in (("regex", regex), ("case_sensitive", case_sensitive), ("dry_run", dry_run)):
+        if not isinstance(value, bool):
+            raise PdfValidationException(f"{name} must be a boolean")
+
+    # Pre-validate all patterns and compile matchers before any processing
+    matchers: list[tuple[re.Pattern[str], bool]] = []
+    for search, replacement in patterns.items():
+        if replacement is not None:
+            raise PdfValidationException("patterns values must be None for removal")
+        if isinstance(search, re.Pattern):
+            source, flags, is_regex = search.pattern, search.flags, True
+        elif isinstance(search, str):
+            source, flags, is_regex = search, 0, regex
+        else:
+            raise PdfValidationException("pattern keys must be text or compiled text regular expressions")
+        if not source:
+            raise PdfValidationException("pattern keys must not be empty")
+        if not is_regex:
+            flags |= re.IGNORECASE if not case_sensitive else 0
+        try:
+            matcher = re.compile(source, flags)
+        except re.error as exc:
+            raise PdfValidationException(f"Invalid regular expression: {exc}") from exc
+        matchers.append((matcher, is_regex))
+
+    indexes = page_indexes(pages, document.page_count, limits=budget.limits)
+    indexes = range(document.page_count) if indexes is None else indexes
+    budget.check(len(indexes), "max_container_items", "annotation page selection")
+    if not indexes:
+        return 0
+
+    selected = set(indexes)
+
+    # Track which annotations have been removed (by id for deduplication)
+    removed_annotation_ids: set[int] = set()
+    total_removed = 0
+
+    # Collect annotations to remove
+    to_remove: list[tuple[int, int]] = []  # (page_index, annot_index)
+
+    # Single pass through annotations - collect all to remove first
+    for index in dict.fromkeys(indexes):
+        page_dict = document._engine_pdf._get_page_dict(index)
+        if not isinstance(page_dict, PdfDictionary):
+            continue
+
+        annots_ref = page_dict.mapping.get(PdfName("Annots"))
+        if annots_ref is None:
+            continue
+
+        annots_array = document._engine_pdf._resolve(annots_ref)
+        if not isinstance(annots_array, PdfArray):
+            continue
+
+        for annot_idx, annot_ref in enumerate(annots_array.items):
+            annot_dict = document._engine_pdf._resolve(annot_ref)
+            if not isinstance(annot_dict, PdfDictionary):
+                continue
+
+            current_contents = document._engine_pdf._get_cos_string(
+                annot_dict.mapping.get(PdfName("Contents"))
+            )
+
+            # Skip annotations without contents (like Link annotations)
+            if not current_contents:
+                continue
+
+            # Skip if already removed
+            annot_id = id(annot_dict)
+            if annot_id in removed_annotation_ids:
+                continue
+
+            for matcher, is_regex in matchers:
+                if matcher.search(current_contents):
+                    # Check size of potential removal
+                    budget.check(len(current_contents), "max_object_bytes", "annotation contents removal")
+                    
+                    to_remove.append((index, annot_idx))
+                    removed_annotation_ids.add(annot_id)
+                    total_removed += 1
+                    break
+
+    if not to_remove:
+        return 0
+
+    # Check for shared annotations outside the selected pages
+    # We need to verify that annotations we're removing are not shared with unselected pages
+    for index in range(document.page_count):
+        if index not in selected:
+            page_dict = document._engine_pdf._get_page_dict(index)
+            if not isinstance(page_dict, PdfDictionary):
+                continue
+
+            annots_ref = page_dict.mapping.get(PdfName("Annots"))
+            if annots_ref is None:
+                continue
+
+            annots_array = document._engine_pdf._resolve(annots_ref)
+            if not isinstance(annots_array, PdfArray):
+                continue
+
+            for annot_idx, annot_ref in enumerate(annots_array.items):
+                annot_dict = document._engine_pdf._resolve(annot_ref)
+                if not isinstance(annot_dict, PdfDictionary):
+                    continue
+
+                # Check if this annotation is in our remove list
+                for page_idx, annot_idx_check in to_remove:
+                    if page_idx != index:
+                        continue
+                    # Same page, same index means same annotation
+                    if annot_idx == annot_idx_check:
+                        annot_dict_check = document._engine_pdf._resolve(annots_array.items[annot_idx])
+                        if id(annot_dict_check) == id(annot_dict):
+                            raise PdfValidationException(
+                                "An annotation with matching contents is shared with an unselected page"
+                            )
+
+    if dry_run:
+        return total_removed
+
+    # Apply removals - collect all annotation references to remove per page
+    for index, annot_index in to_remove:
+        document._engine_pdf.delete_annotation(index, annot_index)
+
+    return total_removed

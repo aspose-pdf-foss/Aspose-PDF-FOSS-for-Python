@@ -4352,6 +4352,98 @@ class Document:
             case_sensitive=case_sensitive, max_count=max_count, dry_run=dry_run,
         )
 
+    @page_api(selections=("pages",))
+    def remove_annotations_by_contents(
+        self,
+        patterns: Mapping[str | re.Pattern[str], None],
+        *,
+        pages: Iterable[int] | None = None,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        dry_run: bool = False,
+    ) -> int:
+        """Remove annotations whose contents match patterns in a single pass.
+
+        This is a convenience method that removes multiple annotations based on
+        patterns in their contents. It is more efficient than calling
+        :meth:`remove_annotations` multiple times for each pattern.
+
+        The method accepts a mapping of search patterns to ``None`` (indicating
+        removal). Patterns may be strings or compiled regex patterns.
+
+        Parameters
+        ----------
+        patterns
+            A mapping of search patterns to ``None``. Keys may be strings or
+            compiled regex patterns; values must be ``None``.
+        pages
+            One-based page numbers to process. ``None`` (default) processes all pages.
+            Duplicates are processed once. Rejected page numbers raise an error.
+        regex
+            If ``True``, string patterns are treated as regular expressions.
+            Compiled :class:`re.Pattern` keys always use regex mode.
+        case_sensitive
+            If ``True`` (default), matching is case-sensitive. Ignored for
+            compiled regex patterns that already have flags set.
+        dry_run
+            If ``True``, perform all checks and count changes without
+            modifying the document. Return the number of changes that
+            would be made.
+
+        Returns
+        -------
+        int
+            Total number of annotations removed across all patterns.
+            Each annotation is counted at most once, even if multiple patterns
+            match its contents.
+
+        Notes
+        -----
+        The batch operation scans the document once and applies all patterns
+        to each annotation's contents. If multiple patterns match the same
+        contents, the annotation is removed once.
+
+        This preserves the same behavior as :meth:`replace_annotation_contents`
+        for annotation sharing and resource limits. Annotations shared with
+        unselected pages are rejected.
+
+        See Also
+        --------
+        replace_annotation_contents : Replace annotation contents patterns.
+        remove_annotations : Remove annotations by author, date, subtype.
+        redact_texts : Remove multiple text patterns from page content.
+
+        Examples
+        --------
+        Remove annotations with "confidential" in their contents:
+
+        >>> document.remove_annotations_by_contents({"confidential": None})
+
+        Use with regex patterns:
+
+        >>> import re
+        >>> document.remove_annotations_by_contents(
+        ...     {re.compile(r"\\d{4}-\\d{4}"): None}
+        ... )
+
+        Limit to specific pages:
+
+        >>> document.remove_annotations_by_contents(
+        ...     {"review": None},
+        ...     pages=[1, 2]
+        ... )
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        from aspose_pdf.engine.link_urls import remove_annotations_by_contents
+
+        return remove_annotations_by_contents(
+            self, patterns, pages=pages, regex=regex,
+            case_sensitive=case_sensitive, dry_run=dry_run,
+        )
+
     @page_api(selections=("pages",), result="records")
     def auto_link(
         self,

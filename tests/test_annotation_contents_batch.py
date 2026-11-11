@@ -298,3 +298,265 @@ def test_replace_annotation_contents_round_trip(document_with_annotations, tmp_p
         contents = _get_contents(doc2)
         assert "Hello Universe" in contents
         assert "Universe War II history" in contents
+
+
+# Tests for remove_annotations_by_contents
+
+
+def test_remove_annotations_by_contents_basic(document_with_annotations):
+    """remove_annotations_by_contents removes matching annotations."""
+    doc = document_with_annotations
+
+    # Remove annotations with "World" in contents
+    count = doc.remove_annotations_by_contents({"World": None})
+
+    assert count == 2  # "Hello World" and "World War II history"
+    contents = _get_contents(doc)
+    assert "Hello World" not in contents
+    assert "World War II history" not in contents
+    # Other annotations should be unchanged
+    assert any("confidential" in c for c in contents)
+
+
+def test_remove_annotations_by_contents_multiple_patterns(document_with_annotations):
+    """remove_annotations_by_contents handles multiple patterns."""
+    doc = document_with_annotations
+
+    count = doc.remove_annotations_by_contents(
+        {"Hello": None, "Secret": None}
+    )
+
+    # "Hello World", "Some confidential info", "Confidential: Secret Data"
+    # "Hello" matches "Hello World" (1), "Secret" matches "Confidential: Secret Data" (1)
+    # "Some confidential info" doesn't match either
+    assert count == 2
+    contents = _get_contents(doc)
+    assert "Hello World" not in contents
+    assert "Confidential: Secret Data" not in contents
+    assert any("Some confidential info" in c for c in contents)  # This one should remain
+    assert any("World War II history" in c for c in contents)  # This one should remain
+
+
+def test_remove_annotations_by_contents_with_regex(document_with_annotations):
+    """remove_annotations_by_contents supports regex patterns."""
+    doc = document_with_annotations
+
+    count = doc.remove_annotations_by_contents(
+        {r"\bConfidential\b": None}, regex=True
+    )
+
+    # "Confidential: Secret Data" matches, but "Some confidential info" doesn't (case sensitive)
+    assert count == 1
+    contents = _get_contents(doc)
+    assert "Confidential: Secret Data" not in contents
+    assert any("Some confidential info" in c for c in contents)  # Case sensitive
+    assert any("Hello World" in c for c in contents)
+
+
+def test_remove_annotations_by_contents_case_insensitive(document_with_annotations):
+    """remove_annotations_by_contents supports case-insensitive matching."""
+    doc = document_with_annotations
+
+    count = doc.remove_annotations_by_contents(
+        {"confidential": None}, case_sensitive=False
+    )
+
+    # Both "confidential" in "Some confidential info" and "Confidential: Secret Data" match
+    assert count == 2
+    contents = _get_contents(doc)
+    assert not any("Some confidential info" in c for c in contents)
+    assert not any("Confidential: Secret Data" in c for c in contents)
+
+
+def test_remove_annotations_by_contents_dry_run(document_with_annotations):
+    """remove_annotations_by_contents dry_run counts without modifying."""
+    doc = document_with_annotations
+    original_contents = _get_contents(doc)
+
+    count = doc.remove_annotations_by_contents({"World": None}, dry_run=True)
+
+    assert count == 2
+    assert _get_contents(doc) == original_contents  # No annotations removed
+
+
+def test_remove_annotations_by_contents_with_pages(document_with_annotations):
+    """remove_annotations_by_contents can target specific pages."""
+    doc = document_with_annotations
+
+    # Only remove from page 1
+    count = doc.remove_annotations_by_contents(
+        {"Hello": None}, pages=[1]
+    )
+
+    assert count == 1
+    contents = _get_contents(doc)
+    assert "Hello World" not in contents
+    # Page 3 should be unchanged
+    assert any("World War II history" in c for c in contents)
+
+
+def test_remove_annotations_by_contents_empty_mapping(document_with_annotations):
+    """remove_annotations_by_contents with empty mapping returns 0."""
+    doc = document_with_annotations
+
+    count = doc.remove_annotations_by_contents({})
+
+    assert count == 0
+    assert _get_contents(doc)
+
+
+def test_remove_annotations_by_contents_no_matches(document_with_annotations):
+    """remove_annotations_by_contents with no matches returns 0."""
+    doc = document_with_annotations
+
+    count = doc.remove_annotations_by_contents({"nonexistent": None})
+
+    assert count == 0
+    assert _get_contents(doc)
+
+
+def test_remove_annotations_by_contents_page_method(document_with_annotations):
+    """Page.remove_annotations_by_contents works correctly."""
+    doc = document_with_annotations
+
+    count = doc.pages[1].remove_annotations_by_contents({"Hello": None})
+
+    assert count == 1  # Only on page 1
+    contents = _get_contents(doc)
+    assert "Hello World" not in contents
+    # Page 3 should be unchanged
+    assert any("World War II history" in c for c in contents)
+
+
+def test_remove_annotations_by_contents_shared_annotation(document_with_annotations):
+    """remove_annotations_by_contents handles annotations shared with unselected pages."""
+    doc = document_with_annotations
+
+    # Add annotation to page 1 that would match
+    doc.pages[1].annotations.add(
+        AnnotationType.TEXT.value, RECT, "World", title="Shared"
+    )
+
+    count = doc.remove_annotations_by_contents(
+        {"World": None}, pages=[1]
+    )
+
+    # Should work for page 1 only
+    assert count == 2  # Original "Hello World" + new "World"
+
+
+def test_remove_annotations_by_contents_invalid_patterns_type():
+    """remove_annotations_by_contents rejects non-mapping patterns."""
+    doc = Document()
+    doc.pages.add(size=(100, 100))
+    doc.pages[1].annotations.add(
+        AnnotationType.TEXT.value, RECT, "Test"
+    )
+
+    with pytest.raises(Exception):
+        doc.remove_annotations_by_contents("not a mapping")  # type: ignore
+
+
+def test_remove_annotations_by_contents_invalid_options():
+    """remove_annotations_by_contents rejects invalid options."""
+    doc = Document()
+    doc.pages.add(size=(100, 100))
+    doc.pages[1].annotations.add(
+        AnnotationType.TEXT.value, RECT, "Test"
+    )
+
+    with pytest.raises(Exception):
+        doc.remove_annotations_by_contents({"a": None}, regex="true")  # type: ignore
+
+    with pytest.raises(Exception):
+        doc.remove_annotations_by_contents({"a": None}, case_sensitive="false")  # type: ignore
+
+    with pytest.raises(Exception):
+        doc.remove_annotations_by_contents({"a": None}, dry_run="true")  # type: ignore
+
+
+def test_remove_annotations_by_contents_with_compiled_regex(document_with_annotations):
+    """remove_annotations_by_contents accepts compiled regex patterns."""
+    import re
+
+    doc = document_with_annotations
+
+    # Use compiled regex to remove annotations with 4-digit numbers
+    count = doc.remove_annotations_by_contents(
+        {re.compile(r"\\d{4}"): None}
+    )
+
+    # No 4-digit numbers in current annotations
+    assert count == 0
+
+
+def test_remove_annotations_by_contents_invalid_pattern():
+    """remove_annotations_by_contents rejects invalid regex patterns."""
+    doc = Document()
+    doc.pages.add(size=(100, 100))
+    doc.pages[1].annotations.add(
+        AnnotationType.TEXT.value, RECT, "Test"
+    )
+
+    with pytest.raises(Exception):
+        doc.remove_annotations_by_contents({"[invalid": None}, regex=True)
+
+
+def test_remove_annotations_by_contents_empty_pattern():
+    """remove_annotations_by_contents rejects empty patterns."""
+    doc = Document()
+    doc.pages.add(size=(100, 100))
+    doc.pages[1].annotations.add(
+        AnnotationType.TEXT.value, RECT, "Test"
+    )
+
+    with pytest.raises(Exception):
+        doc.remove_annotations_by_contents({"": None})
+
+
+def test_remove_annotations_by_contents_with_page_index(document_with_annotations):
+    """remove_annotations_by_contents can target a specific page with pages=[page_index]."""
+    doc = document_with_annotations
+
+    count = doc.remove_annotations_by_contents(
+        {"Hello": None}, pages=[1]
+    )
+
+    assert count == 1
+    # Page 1 should have annotation removed
+    assert "Hello World" not in _get_contents(doc)
+    # Other pages should be unchanged
+    assert any("World War II history" in c for c in _get_contents(doc))
+
+
+def test_remove_annotations_by_contents_round_trip(document_with_annotations, tmp_path):
+    """remove_annotations_by_contents preserves data through save/load."""
+    doc = document_with_annotations
+    doc.remove_annotations_by_contents({"World": None})
+
+    # Save and reload
+    output = tmp_path / "test.pdf"
+    doc.save(str(output))
+
+    with Document(str(output)) as doc2:
+        contents = _get_contents(doc2)
+        assert "Hello World" not in contents
+        assert "World War II history" not in contents
+        assert any("confidential" in c for c in contents)
+
+
+def test_remove_annotations_by_contents_max_count(document_with_annotations):
+    """remove_annotations_by_contents raises error when pattern values are not None."""
+    doc = document_with_annotations
+
+    with pytest.raises(Exception):
+        doc.remove_annotations_by_contents({"World": "replacement"})  # type: ignore
+
+
+def test_remove_annotations_by_contents_invalid_replacement_value():
+    """remove_annotations_by_contents requires None for pattern values."""
+    doc = Document()
+    doc.pages.add(size=(100, 100))
+
+    with pytest.raises(Exception):
+        doc.remove_annotations_by_contents({"pattern": "not None"})  # type: ignore
