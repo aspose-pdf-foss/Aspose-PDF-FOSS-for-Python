@@ -668,3 +668,81 @@ def test_page_collection_count_after_operations(document):
 
     pages.insert(2)
     assert pages.count() == 3
+
+
+def test_page_rotate_increases_rotation(document):
+    """rotate() adds to the current rotation."""
+    page = document.pages.add()
+    assert page.rotation == 0
+
+    page.rotate(90)
+    assert page.rotation == 90
+
+    page.rotate(180)
+    assert page.rotation == 270
+
+
+def test_page_rotate_negative_rotation(document):
+    """rotate() handles negative values (counter-clockwise)."""
+    page = document.pages.add()
+    page.rotation = 90
+    assert page.rotation == 90
+
+    page.rotate(-90)
+    assert page.rotation == 0
+
+    page.rotate(-90)
+    assert page.rotation == 270
+
+
+def test_page_rotate_wraps_at_360(document):
+    """rotate() normalizes values to [0, 360)."""
+    page = document.pages.add()
+
+    page.rotate(360)
+    assert page.rotation == 0
+
+    page.rotate(450)
+    assert page.rotation == 90
+
+    page.rotate(-90)
+    assert page.rotation == 0
+
+    page.rotate(-90)
+    assert page.rotation == 270
+
+
+def test_page_rotate_multiple_of_90_required(document):
+    """rotate() rejects non-multiples of 90."""
+    page = document.pages.add()
+
+    with pytest.raises(Exception) as exc_info:
+        page.rotate(45)
+    assert "multiple of 90" in str(exc_info.value).lower()
+
+
+def test_page_rotate_returns_self(document):
+    """rotate() returns self for method chaining."""
+    page = document.pages.add()
+
+    result = page.rotate(90)
+    assert result is page
+
+    # Verify chaining works - chaining adds to current rotation
+    # Start with 90, add 90 -> 180
+    page.rotate(90)
+    assert page.rotation == 180
+    
+    # Test actual chaining with a fresh page
+    page2 = document.pages.add()
+    page2.rotate(90).rotate(90)
+    assert page2.rotation == 180
+
+
+def test_page_rotate_disposed_document_raises(document):
+    """rotate() raises when the document is disposed."""
+    page = document.pages.add()
+    document.dispose()
+
+    with pytest.raises(AsposePdfException):
+        page.rotate(90)

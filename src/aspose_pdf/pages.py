@@ -289,6 +289,57 @@ class Page:
             raise AsposePdfException("Cannot set rotation: no underlying document.")
         eng.set_page_rotation(self._index, degrees)
 
+    def rotate(self, degrees: int | float) -> Page:
+        """Rotate the page by a specified amount relative to its current rotation.
+
+        The rotation is added to the page's current rotation and normalized to
+        the range [0, 360) degrees. The result is always a multiple of 90 degrees.
+
+        Parameters
+        ----------
+        degrees : int or float
+            Degrees to rotate clockwise. Must be a multiple of 90 degrees.
+            Negative values rotate counter-clockwise.
+
+        Returns
+        -------
+        Page
+            The same page for method chaining.
+
+        Raises
+        ------
+        PdfValidationException
+            If *degrees* is not a multiple of 90.
+
+        Examples
+        --------
+        ::
+
+            # Rotate 90 degrees clockwise from current orientation
+            page.rotate(90)
+
+            # Rotate 180 degrees (flip upright)
+            page.rotate(180)
+
+            # Rotate 90 degrees counter-clockwise
+            page.rotate(-90)
+
+            # Chain with other operations
+            page.rotate(90).scale_content(0.9)
+        """
+        self._document._ensure_not_disposed()
+        try:
+            delta = int(degrees)
+        except (TypeError, ValueError):
+            raise PdfValidationException("Rotation degrees must be an integer number.")
+        if delta % 90 != 0:
+            raise PdfValidationException("Rotation must be a multiple of 90 degrees.")
+
+        current = self.rotation
+        new_rotation = (current + delta) % 360
+        self.rotation = new_rotation
+        return self
+
     @property
     def crop_box(self) -> tuple[float, float, float, float]:
         """The page CropBox ``(x0, y0, x1, y1)``; falls back to the MediaBox when unset.
