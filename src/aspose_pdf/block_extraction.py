@@ -115,12 +115,13 @@ def extract_blocks(
     include_images: bool,
     paragraph_gap: float | None,
     clip_to_page: bool,
+    skip_artifacts: bool = False,
 ) -> list[ExtractedBlock]:
     """Validate a complete selection before reading only its page streams."""
     from aspose_pdf.engine.text_export import page_blocks
     from aspose_pdf.engine.text_selection import page_indexes
 
-    for name, value in (("include_images", include_images), ("clip_to_page", clip_to_page)):
+    for name, value in (("include_images", include_images), ("clip_to_page", clip_to_page), ("skip_artifacts", skip_artifacts)):
         if not isinstance(value, bool):
             raise PdfValidationException(f"{name} must be a boolean")
     if paragraph_gap is not None:
@@ -145,6 +146,7 @@ def extract_blocks(
         blocks = page_blocks(
             document._engine_pdf, index, include_images=include_images,
             paragraph_gap=paragraph_gap, clip_to_page=clip_to_page, cell_text_limit=None,
+            skip_artifacts=skip_artifacts,
         )
         for block in blocks:
             budget.check(len(result) + 1, "max_container_items", "extracted blocks")

@@ -142,7 +142,9 @@ def _matrix(value: Any, name: str) -> tuple[tuple[Any, ...], ...]:
         raise PdfValidationException(f"{name} must be an iterable of rows") from None
 
 
-def _page_tables(pdf: Any, page_index: int, clip_to_page: bool) -> list[ExtractedTable]:
+def _page_tables(
+    pdf: Any, page_index: int, clip_to_page: bool, skip_artifacts: bool = False
+) -> list[ExtractedTable]:
     """Reuse layout analysis without images or markup's cell-text truncation."""
     from aspose_pdf.engine.text_export import page_blocks
 
@@ -151,6 +153,7 @@ def _page_tables(pdf: Any, page_index: int, clip_to_page: bool) -> list[Extracte
         for block in page_blocks(
             pdf, page_index, include_images=False,
             clip_to_page=clip_to_page, cell_text_limit=None,
+            skip_artifacts=skip_artifacts,
         )
         if block.kind == "table"
     ]

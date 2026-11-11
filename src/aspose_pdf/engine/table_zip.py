@@ -31,6 +31,7 @@ def export_zip(
     *,
     pages=None,
     clip_to_page=True,
+    skip_artifacts=False,
     delimiter=",",
     encoding="utf-8",
     compression="deflate",
@@ -42,6 +43,8 @@ def export_zip(
 
     if not isinstance(clip_to_page, bool):
         raise PdfValidationException("clip_to_page must be a boolean")
+    if not isinstance(skip_artifacts, bool):
+        raise PdfValidationException("skip_artifacts must be a boolean")
     if not isinstance(include_manifest, bool):
         raise PdfValidationException("include_manifest must be a boolean")
     if not isinstance(compression, str) or compression.strip().lower() not in {
@@ -83,7 +86,7 @@ def export_zip(
         ) as archive:
             for index in selection:
                 for table_index, table in enumerate(
-                    _page_tables(document._engine_pdf, index, clip_to_page)
+                    _page_tables(document._engine_pdf, index, clip_to_page, skip_artifacts=skip_artifacts)
                 ):
                     number += 1
                     budget.check(

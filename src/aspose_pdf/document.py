@@ -3528,6 +3528,7 @@ class Document:
         *,
         pages: Iterable[int] | None = None,
         clip_to_page: bool = True,
+        skip_artifacts: bool = False,
     ) -> list[ExtractedTable]:
         """Extract regular text grids as detached :class:`ExtractedTable` values.
 
@@ -3543,6 +3544,9 @@ class Document:
         merge recovery is performed. Whitespace is normalized but cell text
         is not truncated. Use ``table.to_list()``, ``table.to_csv()`` or
         ``table.save_csv(path)`` to consume each result.
+        ``skip_artifacts=True`` omits text in explicitly marked ``/Artifact``
+        sequences, including nested blocks and invoked forms. Untagged headers
+        and footers are ordinary text; no positional heuristic is applied.
         """
         from aspose_pdf.table_extraction import _page_tables
 
@@ -3551,6 +3555,8 @@ class Document:
             raise AsposePdfException("No document loaded")
         if not isinstance(clip_to_page, bool):
             raise PdfValidationException("clip_to_page must be a boolean")
+        if not isinstance(skip_artifacts, bool):
+            raise PdfValidationException("skip_artifacts must be a boolean")
         count = self.page_count
         if pages is None:
             indexes = range(count)
@@ -3569,7 +3575,7 @@ class Document:
         return [
             table
             for index in indexes
-            for table in _page_tables(self._engine_pdf, index, clip_to_page)
+            for table in _page_tables(self._engine_pdf, index, clip_to_page, skip_artifacts=skip_artifacts)
         ]
 
     @page_api(selections=("pages",))
@@ -3579,6 +3585,7 @@ class Document:
         *,
         pages: Iterable[int] | None = None,
         clip_to_page: bool = True,
+        skip_artifacts: bool = False,
         delimiter: str = ",",
         encoding: str = "utf-8",
         compression: str = "deflate",
@@ -3620,7 +3627,7 @@ class Document:
         if not isinstance(overwrite, bool):
             raise PdfValidationException("overwrite must be a boolean")
         data = export_zip(
-            self, pages=pages, clip_to_page=clip_to_page, delimiter=delimiter,
+            self, pages=pages, clip_to_page=clip_to_page, skip_artifacts=skip_artifacts, delimiter=delimiter,
             encoding=encoding, compression=compression, compresslevel=compresslevel,
             include_manifest=include_manifest,
         )
@@ -3639,6 +3646,7 @@ class Document:
         include_images: bool = False,
         paragraph_gap: float | None = None,
         clip_to_page: bool = True,
+        skip_artifacts: bool = False,
     ) -> list[ExtractedBlock]:
         """Return immutable layout blocks with original page indices and anchors.
 
@@ -3654,13 +3662,16 @@ class Document:
         None for the analyzer's default. ``clip_to_page`` filters anchors outside
         the effective CropBox. Anchors are in unrotated PDF coordinates, not
         bounding boxes. Snapshots survive source edits and disposal.
+        ``skip_artifacts=True`` omits text in explicitly marked ``/Artifact``
+        sequences, including nested blocks and invoked forms. Untagged headers
+        and footers are ordinary text; no positional heuristic is applied.
         """
         from aspose_pdf.block_extraction import extract_blocks
 
         self._ensure_not_disposed()
         if self._engine_pdf is None:
             raise AsposePdfException("No document loaded")
-        return extract_blocks(self, pages, include_images, paragraph_gap, clip_to_page)
+        return extract_blocks(self, pages, include_images, paragraph_gap, clip_to_page, skip_artifacts)
 
     @page_api(selections=("pages",))
     def export_blocks_json(
@@ -3671,6 +3682,7 @@ class Document:
         include_images: bool = False,
         paragraph_gap: float | None = None,
         clip_to_page: bool = True,
+        skip_artifacts: bool = False,
         overwrite: bool = True,
     ) -> bytes:
         """Return versioned UTF-8 block JSON, optionally writing a file or stream.
@@ -3696,7 +3708,7 @@ class Document:
             raise PdfValidationException("overwrite must be a boolean")
         blocks = self._api_extract_blocks(
             pages=pages, include_images=include_images,
-            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page,
+            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page, skip_artifacts=skip_artifacts,
         )
         data = to_json(numbered_records(blocks), _LoadBudget(self.load_limits))
         if destination is not None:

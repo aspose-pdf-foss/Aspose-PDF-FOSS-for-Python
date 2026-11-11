@@ -117,7 +117,7 @@ def test_csv_quoting_encoding_and_bom_are_per_file(monkeypatch, delimiter, encod
     rows = [["Text", "Value"], ['café "quoted"\nnext', "=SUM(1,2)"], ["0007", ""]]
     table = ExtractedTable(1, rows)
     monkeypatch.setattr(
-        "aspose_pdf.table_extraction._page_tables", lambda *a: [table, table]
+        "aspose_pdf.table_extraction._page_tables", lambda *a, **k: [table, table]
     )
     with Document() as document:
         document.pages.add()
@@ -214,10 +214,10 @@ def test_paths_streams_short_writes_and_late_failures_are_safe(
         assert output.getvalue() == b"prefix" + expected and not output.closed
     from aspose_pdf.table_extraction import _page_tables
 
-    def extract(pdf, index, clipped):
+    def extract(pdf, index, clipped, skip_artifacts=False):
         if index == 1:
             raise PdfValidationException("Damaged later page")
-        return _page_tables(pdf, index, clipped)
+        return _page_tables(pdf, index, clipped, skip_artifacts=skip_artifacts)
 
     monkeypatch.setattr("aspose_pdf.table_extraction._page_tables", extract)
     output = io.BytesIO(b"Keep")
@@ -279,7 +279,7 @@ def test_export_limits_preserve_the_output(document, limit):
 def test_cumulative_csv_and_manifest_bytes_are_bounded(monkeypatch):
     table = ExtractedTable(1, [["A", "B"], ["1", "2"]])
     monkeypatch.setattr(
-        "aspose_pdf.table_extraction._page_tables", lambda *a: [table, table]
+        "aspose_pdf.table_extraction._page_tables", lambda *a, **k: [table, table]
     )
     with Document() as document:
         document.pages.add()
@@ -303,7 +303,7 @@ def test_each_csv_file_obeys_the_object_limit_before_output(
     monkeypatch, encoding, limit
 ):
     table = ExtractedTable(1, [["a", "b", "c"], ["d", "e", "f"]])
-    monkeypatch.setattr("aspose_pdf.table_extraction._page_tables", lambda *a: [table])
+    monkeypatch.setattr("aspose_pdf.table_extraction._page_tables", lambda *a, **k: [table])
     with Document() as document:
         document.pages.add()
         document._load_limits = PdfLoadLimits(max_object_bytes=limit)

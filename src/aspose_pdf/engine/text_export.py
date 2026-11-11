@@ -116,10 +116,112 @@ def _element_text(
     resources: dict,
     limits: Any,
     budget: Any,
+    skip_artifacts: bool = False,
 ) -> str:
     """Decode the text a single ``BT`` … ``ET`` object shows."""
     from .content_stream_parser import ContentStreamParser
 
+    if not skip_artifacts:
+        # Fast path: no artifact filtering needed
+        snippet = content[element.start : element.end]
+        if not snippet.startswith(b"BT"):
+            return ""
+        if b"Tf" not in snippet:
+            snippet = b"BT " + _tf_before(content, element.start) + snippet[2:]
+        try:
+            parser = ContentStreamParser(
+                snippet, resources, limits=limits, budget=budget,
+                skip_artifacts=False,
+            )
+            text = parser.extract_text()
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return ""
+        return _WHITESPACE.sub(" ", text.replace("\n", " ")).strip()
+    
+    # With artifact filtering, we need to include BDC/EMC markers in the stream
+    # to properly detect artifact scopes.
+    # First, find all BDC and EMC positions
+    bdc_positions = []  # List of (bdc_pos, bdc_scope_start, is_artifact)
+    emc_positions = []  # List of positions
+    
+    i = 0
+    while i < len(content):
+        bdc_pos = content.find(b"BDC", i)
+        emc_pos = content.find(b"EMC", i)
+        
+        if bdc_pos < 0 and emc_pos < 0:
+            break
+        
+        if bdc_pos >= 0 and (emc_pos < 0 or bdc_pos <= emc_pos):
+            # Found BDC first
+            # Find the start of the marked-content scope (the / name before BDC)
+            mark_start = max(0, bdc_pos - 100)  # Look back up to 100 bytes
+            mark_region = content[mark_start:bdc_pos].strip()
+            
+            is_artifact = False
+            full_scope_start = bdc_pos  # Default: just BDC
+            if b"/" in mark_region:
+                # Find the last / name before BDC
+                search_region = mark_region
+                while b"/" in search_region:
+                    last_slash = search_region.rfind(b"/")
+                    name_part = search_region[last_slash:].split()[0] if search_region[last_slash:].split() else b""
+                    if b"Artifact" in name_part:
+                        is_artifact = True
+                        # Calculate the start of the full marked-content scope
+                        # It's mark_start + last_slash (where the / starts)
+                        full_scope_start = mark_start + last_slash
+                        break
+                    search_region = search_region[:last_slash]
+            
+            bdc_positions.append((bdc_pos, full_scope_start, is_artifact))
+            i = bdc_pos + 3
+        else:
+            emc_positions.append(emc_pos)
+            i = emc_pos + 3
+    
+    # Now determine if this element is inside an /Artifact scope
+    inside_artifact = False
+    artifact_emc = None
+    artifact_scope_start = None
+    
+    for bdc_pos, scope_start, is_artifact in bdc_positions:
+        if not is_artifact:
+            continue
+        # Find corresponding EMC
+        emc_after_bdc = None
+        for emc_pos in emc_positions:
+            if emc_pos > bdc_pos:
+                emc_after_bdc = emc_pos
+                break
+
+        if emc_after_bdc is not None:
+            if bdc_pos <= element.start < emc_after_bdc:
+                inside_artifact = True
+                artifact_scope_start = scope_start  # Full scope start
+                artifact_emc = emc_after_bdc
+                break
+    
+    if inside_artifact:
+        # Include BDC/EMC markers in the snippet
+        # artifact_emc is the start of 'EMC', which is 3 bytes, plus the newline = 4 bytes
+        snippet = content[artifact_scope_start : artifact_emc + 4]
+        try:
+            parser = ContentStreamParser(
+                snippet, resources, limits=limits, budget=budget,
+                skip_artifacts=True,
+            )
+            text = parser.extract_text()
+            # The parser will return empty string when inside artifact with skip_artifacts=True
+            return text
+        except PdfResourceLimitException:
+            raise
+        except PDF_OPERATION_ERRORS:
+            return ""
+    
+    # Not inside artifact - extract normally
     snippet = content[element.start : element.end]
     if not snippet.startswith(b"BT"):
         return ""
@@ -127,7 +229,8 @@ def _element_text(
         snippet = b"BT " + _tf_before(content, element.start) + snippet[2:]
     try:
         parser = ContentStreamParser(
-            snippet, resources, limits=limits, budget=budget
+            snippet, resources, limits=limits, budget=budget,
+            skip_artifacts=False,
         )
         text = parser.extract_text()
     except PdfResourceLimitException:
@@ -220,6 +323,7 @@ def page_blocks(
     paragraph_gap: float | None = None,
     clip_to_page: bool = True,
     cell_text_limit: int | None = _MAX_CELL_CHARS,
+    skip_artifacts: bool = False,
 ) -> list[Block]:
     """Infer *page_index*'s structure and return it as :class:`Block` objects.
 
@@ -230,6 +334,8 @@ def page_blocks(
     its media box -- are left out, as a viewer never shows them.
     ``cell_text_limit`` bounds markup cell text; ``None`` retains every
     decoded character for direct data extraction.
+    ``skip_artifacts=True`` omits text in explicitly marked ``/Artifact``
+    sequences, including nested blocks and invoked forms.
     """
     try:
         content = pdf.get_page_content(page_index)
@@ -280,7 +386,8 @@ def page_blocks(
         if element.kind == "text":
             source = sources[id(element)]
             texts[id(element)] = _element_text(
-                source.content, element, source.text_resources(pdf), limits, budget
+                source.content, element, source.text_resources(pdf), limits, budget,
+                skip_artifacts=skip_artifacts,
             )
 
     blocks: list[Block] = []

@@ -2088,19 +2088,19 @@ class Page:
             )
         return _LayerSection(eng, self._index, number)
 
-    def extract_tables(self, *, clip_to_page: bool = True) -> list[ExtractedTable]:
+    def extract_tables(self, *, clip_to_page: bool = True, skip_artifacts: bool = False) -> list[ExtractedTable]:
         """Extract this page's text grids as detached table snapshots.
 
         See :meth:`Document.extract_tables` for recognition limits and output
         methods. Results retain this page's one-based number in the document.
         """
         return self._document.extract_tables(
-            pages=[self.number], clip_to_page=clip_to_page
+            pages=[self.number], clip_to_page=clip_to_page, skip_artifacts=skip_artifacts
         )
 
     def export_tables_zip(
         self, destination: str | Path | BinaryIO | None = None, *,
-        clip_to_page: bool = True, delimiter: str = ",", encoding: str = "utf-8",
+        clip_to_page: bool = True, skip_artifacts: bool = False, delimiter: str = ",", encoding: str = "utf-8",
         compression: str = "deflate", compresslevel: int = 6,
         include_manifest: bool = False, overwrite: bool = True,
     ) -> bytes:
@@ -2109,7 +2109,7 @@ class Page:
         Manifest records keep this page's original one-based document number.
         """
         return self._document.export_tables_zip(
-            destination, pages=[self.number], clip_to_page=clip_to_page,
+            destination, pages=[self.number], clip_to_page=clip_to_page, skip_artifacts=skip_artifacts,
             delimiter=delimiter, encoding=encoding, compression=compression,
             compresslevel=compresslevel, include_manifest=include_manifest,
             overwrite=overwrite,
@@ -2117,23 +2117,23 @@ class Page:
 
     def extract_blocks(
         self, *, include_images: bool = False, paragraph_gap: float | None = None,
-        clip_to_page: bool = True,
+        clip_to_page: bool = True, skip_artifacts: bool = False,
     ) -> list[ExtractedBlock]:
         """Return this page's detached structure; see Document.extract_blocks."""
         return self._document.extract_blocks(
             pages=[self.number], include_images=include_images,
-            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page,
+            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page, skip_artifacts=skip_artifacts,
         )
 
     def export_blocks_json(
         self, destination: str | Path | BinaryIO | None = None, *, include_images: bool = False,
-        paragraph_gap: float | None = None, clip_to_page: bool = True,
+        paragraph_gap: float | None = None, clip_to_page: bool = True, skip_artifacts: bool = False,
         overwrite: bool = True,
     ) -> bytes:
         """Export this page with its original index; see Document.export_blocks_json."""
         return self._document.export_blocks_json(
             destination, pages=[self.number], include_images=include_images,
-            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page, overwrite=overwrite,
+            paragraph_gap=paragraph_gap, clip_to_page=clip_to_page, skip_artifacts=skip_artifacts, overwrite=overwrite,
         )
 
     def to_html(self, *, embed_images: bool = True) -> str:
