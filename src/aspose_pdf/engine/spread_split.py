@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Iterator
+from typing import TYPE_CHECKING
 
 from aspose_pdf.exceptions import PdfValidationException, UnsupportedFeatureException
 from aspose_pdf.load_limits import _LoadBudget
 
 from . import page_labels
 from .blank_pages import _number
+from .bookmark_split import _range_outlines, _snapshot
 from .cos import (
     PdfArray,
     PdfDictionary,
@@ -24,6 +27,9 @@ from .simple_pdf import SimplePdf
 from .stamps import visible_box
 from .text_selection import page_indexes
 from .text_split import _check_result
+
+if TYPE_CHECKING:
+    from aspose_pdf.document import Document
 
 
 def _halves(pdf, index, layout, ratio, gutter):
@@ -328,3 +334,155 @@ def _split_pages(document, plan, budget, *, context="spread", flatten_fields=Tru
         result.dispose()
         raise
     return result
+
+
+def iter_split_spreads(
+    document: Document,
+    *,
+    pages: Iterable[int] | None = None,
+    layout: str = "horizontal",
+    reverse: bool = False,
+    split_ratio: float = 0.5,
+    gutter: float = 0.0,
+    flatten_fields: bool = True,
+) -> Iterator[SimplePdf]:
+    """Yield independent spread halves one at a time.
+
+    Each yielded result contains the pages created from splitting the
+    selected spreads. The source document remains unchanged, and the
+    outline model is restored before every yield.
+
+    This is the streaming variant of :func:`split_spreads`. Use it when
+    you want to process parts without loading all of them into memory.
+    """
+    if not isinstance(layout, str) or layout not in ("horizontal", "vertical"):
+        raise PdfValidationException("layout must be 'horizontal' or 'vertical'")
+    if not isinstance(reverse, bool) or not isinstance(flatten_fields, bool):
+        raise PdfValidationException("reverse and flatten_fields must be booleans")
+    split_ratio = _number(split_ratio, "split_ratio")
+    gutter = _number(gutter, "gutter")
+    if not 0 < split_ratio < 1:
+        raise PdfValidationException("split_ratio must be strictly between 0 and 1")
+    if gutter < 0:
+        raise PdfValidationException("gutter must be non-negative")
+    source = document._engine_pdf
+    budget = _LoadBudget(document.load_limits)
+    count = document.page_count
+    selection = page_indexes(pages, count, limits=budget.limits)
+    selected = set(range(count) if selection is None else selection)
+
+    if not selected:
+        return
+
+    # Validate upfront
+    total = count + len(selected)
+    budget.check_pages(total)
+    budget.check(total, "max_container_items", "spread output pages")
+    budget.check_objects(2 + total * 2)
+
+    # Build the plan upfront (geometry is same for both streaming and batch)
+    plan: dict[int, list[tuple[float, float, float, float]]] = {}
+    for index in sorted(selected):
+        boxes = _halves(source, index, layout, split_ratio, gutter)
+        plan[index] = list(reversed(boxes)) if reverse else boxes
+
+    # Snapshot the outline model before any changes
+    roots = source._outlines_data if document._outlines is None else document._outlines._items
+    snapshot, _starts = _snapshot(source, roots, 1)
+
+    # Import source once at the beginning
+    result = SimplePdf()
+    result._load_limits, result._load_budget = document.load_limits, budget
+    result.metadata = dict(source.metadata)
+    result.pdf_version = source.pdf_version
+    try:
+        _import_source(
+            result,
+            source,
+            None if document._outlines is None else document._outlines._items,
+        )
+        with_widgets = [
+            index
+            for index in plan
+            if any(
+                _is_widget(result, entry)
+                for entry in _annotations(result, index, context="spread")
+            )
+        ]
+        if with_widgets:
+            if not flatten_fields:
+                raise UnsupportedFeatureException(
+                    "Spread pages with form widgets require flatten_fields=True"
+                )
+            flatten(result, fields=True, annotations=False, pages=with_widgets)
+        retained = _check(result, context="spread")
+        extra: dict[int, list[int]] = {}
+
+        # Process spreads one at a time
+        for index in sorted(selected):
+            original = source._outlines_data
+            try:
+                source._outlines_data = _range_outlines(snapshot, index, index + 1)
+                boxes = plan[index]
+                entries = _annotations(result, index, context="spread")
+                if any(_is_widget(result, entry) for entry in entries):
+                    raise UnsupportedFeatureException(
+                        "A spread widget could not be flattened; prepare its visible appearance before splitting"
+                    )
+                original_page = result._get_page_dict(index)
+                content = result.get_page_content(index)
+
+                targets = []
+                for box in boxes[1:]:
+                    budget.check_objects(len(result._cos_doc.objects) + 2 + len(entries))
+                    budget.check_object_id(
+                        max(result._cos_doc.objects, default=0) + 2 + len(entries)
+                    )
+                    target = len(result.pages)
+                    retained += len(content)
+                    budget.check(
+                        retained,
+                        "max_total_decoded_bytes",
+                        "spread retained unfiltered streams",
+                    )
+                    result.insert(
+                        target,
+                        (result.pages[index], content),
+                        _source=original_page,
+                    )
+                    result._get_page_dict(target).mapping.pop(
+                        PdfName("StructParents"), None
+                    )
+                    _copy_annotations(result, entries, target)
+                    _set_boxes(result, target, box)
+                    if index in result._page_image_map:
+                        result._page_image_map[target] = list(result._page_image_map[index])
+                    for name in ("_image_matrix_map", "_image_rect_map"):
+                        mapping = getattr(result, name)
+                        mapping.update(
+                            {
+                                (target, image): value
+                                for (page, image), value in list(mapping.items())
+                                if page == index
+                            }
+                        )
+                    targets.append(target)
+
+                _set_boxes(result, index, boxes[0])
+                extra[index] = targets
+
+                # Now yield the halves one at a time
+                for half_index in [index, *targets]:
+                    half = result.extract_pages([half_index])
+                    from aspose_pdf.engine.text_split import _refresh_targets
+                    _check_result(half, context="spread half")
+                    _refresh_targets(half)
+                    yield half
+                    del half
+
+            finally:
+                source._outlines_data = original
+
+    except BaseException:
+        result.dispose()
+        raise

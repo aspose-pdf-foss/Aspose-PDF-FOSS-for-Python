@@ -2624,6 +2624,39 @@ Supported:
   layout="horizontal", reverse=False, split_ratio=0.5, gutter=0,
   flatten_fields=True)` returns an independent `Document` suitable for scan and
   book preparation. No rasterization or new dependency is required.
+
+  **Process spreads lazily** with `Document.iter_split_spreads(pages=None,
+  layout="horizontal", reverse=False, split_ratio=0.5, gutter=0,
+  flatten_fields=True)`. It returns a generator that yields each spread half
+  as an independent `Document`, one at a time, without loading all results
+  into memory. Empty documents yield no parts. The iterator does not accumulate
+  completed outputs, so saving and disposing each part avoids holding all split
+  documents in memory. The source graph and bookmark plan still remain in memory;
+  this is not a constant-memory parser for the entire input.
+
+  ```python
+  from contextlib import closing
+  from aspose_pdf import Document
+
+  with Document.open_streaming("spreads.pdf") as document:
+      with closing(document.iter_split_spreads()) as halves:
+          for half in halves:
+              with half:
+                  half.save(f"half-{half.pages[1].number}.pdf")
+  ```
+
+  Keep the source open and unmodified until iteration finishes. Every yielded
+  `Document` belongs to the caller and remains usable after closing the iterator
+  or the source, or after a later batch fails. Close or dispose each yielded part.
+  `iterator.close()` releases its traversal state without closing the source or
+  the parts already delivered; `contextlib.closing` is useful when stopping early.
+  An invalid result is disposed before the error propagates. The source outline
+  model is restored before every yield.
+
+- **Split spreads into individual pages.** `Document.split_spreads(pages=None,
+  layout="horizontal", reverse=False, split_ratio=0.5, gutter=0,
+  flatten_fields=True)` returns an independent `Document` suitable for scan and
+  book preparation. No rasterization or new dependency is required.
   - `pages` selects one-based source indices to split; unselected pages are
     retained once in source order. Repeated selections split a page once and
     selection order does not reorder the document. `None` splits all pages,

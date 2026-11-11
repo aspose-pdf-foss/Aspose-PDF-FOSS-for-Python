@@ -7538,6 +7538,90 @@ class Document:
         result._engine_pdf = engine
         return result
 
+    def iter_split_spreads(
+        self,
+        *,
+        pages: Iterable[int] | None = None,
+        layout: str = "horizontal",
+        reverse: bool = False,
+        split_ratio: float = 0.5,
+        gutter: float = 0.0,
+        flatten_fields: bool = True,
+    ) -> Generator[Document, None, None]:
+        """Yield independent documents, one for each spread half.
+
+        This is the streaming variant of :meth:`split_spreads`. Each yielded
+        document contains the pages created from splitting one spread into two
+        halves. The source document remains unchanged, and the outline model
+        is restored before every yield.
+
+        Parameters
+        ----------
+        pages : iterable of int or None, optional
+            One-based page numbers to split. Other pages stay in source order.
+            Repeats are split once and an empty selection copies the document.
+            Default is all pages.
+        layout : str, optional
+            ``"horizontal"`` (default) reads left then right; ``"vertical"``
+            reads top then bottom.
+        reverse : bool, optional
+            Reverse the order of halves (default: False).
+        split_ratio : float, optional
+            Position the cut from the left/top, strictly between 0 and 1
+            (default: 0.5).
+        gutter : float, optional
+            Remove a centered strip in page coordinate units (default: 0.0).
+        flatten_fields : bool, optional
+            Flatten form widgets before splitting (default: True).
+
+        Yields
+        ------
+        Document
+            An independent document containing one half of a split spread.
+            Each yielded document retains Info metadata, page resources,
+            boxes, labels, annotations, form fields, layers and tags.
+
+        Examples
+        --------
+        ::
+
+            for half in document.iter_split_spreads():
+                with half:
+                    # Process each half without loading all into memory
+                    half.save(f"half-{half.pages[1].number}.pdf")
+
+        Notes
+        -----
+        Use ``contextlib.closing`` when stopping iteration early to release
+        the iterator's references promptly. Each yielded document belongs
+        to the caller: close or dispose it when done.
+        """
+        from aspose_pdf.engine.spread_split import (
+            iter_split_spreads as _iter_split_spreads,
+        )
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        try:
+            for engine in _iter_split_spreads(
+                self,
+                pages=pages,
+                layout=layout,
+                reverse=reverse,
+                split_ratio=split_ratio,
+                gutter=gutter,
+                flatten_fields=flatten_fields,
+            ):
+                part = Document(limits=self._load_limits)
+                part._engine_pdf = engine
+                yield part
+                # Caller is responsible for disposing
+                del part
+        except BaseException:
+            raise
+
     @page_api(selections=("pages",))
     def split_grid(
         self,
