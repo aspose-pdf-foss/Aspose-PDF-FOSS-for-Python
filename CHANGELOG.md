@@ -33,6 +33,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Create a page from a PDF file.** `Page.from_pdf()` imports a specific page
+  from another PDF into the current document, preserving all content, resources,
+  annotations, and page properties. The source can be a file path, raw bytes,
+  or any binary stream. This provides a convenient way to combine individual
+  pages from different PDFs without the overhead of merging entire documents.
+  The method returns the newly created `Page` object.
+
 - **Export individual pages as separate PDF files in a ZIP archive.**
   `Document.export_pages_as_zip()` returns each page as a single-page PDF in a
   ZIP archive, preserving complete page content including annotations, form

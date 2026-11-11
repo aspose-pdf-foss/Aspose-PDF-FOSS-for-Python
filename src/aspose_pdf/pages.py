@@ -1902,6 +1902,117 @@ class Page:
 
         return new_page
 
+    @classmethod
+    def from_pdf(
+        cls,
+        document: Document,
+        pdf_source: str | Path | bytes | bytearray | BinaryIO,
+        page_number: int = 1,
+    ) -> Page:
+        """Create a new page from a specific page in a PDF file.
+
+        The specified page from the source PDF is imported into the target
+        document. The page's content, resources, annotations, and other
+        properties are preserved during the import.
+
+        Parameters
+        ----------
+        document : Document
+            The document to which the page will be added.
+        pdf_source : str, Path, bytes, bytearray, or BinaryIO
+            PDF file path, raw bytes, bytearray, or a file-like object with a
+            ``read()`` method.
+        page_number : int, optional
+            One-based page number to import from the source PDF. Default is 1.
+
+        Returns
+        -------
+        Page
+            The newly created page containing the imported PDF content.
+
+        Raises
+        ------
+        PdfValidationException
+            If the PDF data is invalid or the page number is out of range.
+        FileNotFoundError
+            If the PDF path does not exist.
+        IndexError
+            If the page_number exceeds the number of pages in the source PDF.
+        TypeError
+            If the pdf_source is not a supported type or a file-like object's
+            ``read()`` method does not return bytes or bytearray.
+
+        Notes
+        -----
+        The source PDF is loaded temporarily during the import and closed
+        afterwards. The imported page retains its original properties:
+        content, annotations, form fields, layers, and page boxes.
+
+        Examples
+        --------
+        ::
+
+            # From a file, uses page 1 by default
+            page = Page.from_pdf(doc, "document.pdf")
+
+            # From a specific page
+            page = Page.from_pdf(doc, "report.pdf", page_number=3)
+
+            # From bytes
+            with open("source.pdf", "rb") as f:
+                page = Page.from_pdf(doc, f.read(), page_number=2)
+
+            # From file-like object (e.g., BytesIO)
+            from io import BytesIO
+            page = Page.from_pdf(doc, BytesIO(pdf_bytes), page_number=1)
+        """
+        from aspose_pdf.document import Document as DocumentClass
+
+        document._ensure_not_disposed()
+        eng = document._engine_pdf
+        if eng is None:
+            raise AsposePdfException("No document loaded")
+
+        # Load the source PDF
+        if hasattr(pdf_source, "read") and callable(pdf_source.read):
+            # File-like object
+            data = pdf_source.read()
+            if not isinstance(data, (bytes, bytearray)):
+                raise TypeError(f"read() must return bytes or bytearray, got {type(data).__name__}")
+            source_pdf = DocumentClass()
+            source_pdf.load_from(data)
+        elif isinstance(pdf_source, (str, Path)):
+            # File path
+            path = Path(pdf_source)
+            if not path.is_file():
+                raise FileNotFoundError(f"PDF not found: {path}")
+            source_pdf = DocumentClass(path)
+        elif isinstance(pdf_source, (bytes, bytearray)):
+            # Raw bytes
+            data = bytes(pdf_source) if isinstance(pdf_source, bytearray) else pdf_source
+            source_pdf = DocumentClass()
+            source_pdf.load_from(data)
+        else:
+            raise TypeError(f"pdf_source must be bytes, bytearray, str, Path, or BinaryIO, got {type(pdf_source).__name__}")
+
+        try:
+            # Validate page number
+            if page_number < 1 or page_number > source_pdf.page_count:
+                raise IndexError(
+                    f"page_number must be between 1 and {source_pdf.page_count}, got {page_number}"
+                )
+
+            # Get the source page (using 1-based index from user)
+            source_page = source_pdf.pages[page_number]
+
+            # Import the page - use insert directly to get the correct return value
+            # The insert method properly handles importing pages from other documents
+            new_page = document.pages.insert(len(document.pages) + 1, source_page)
+            return new_page
+        finally:
+            # Close the temporary document
+            source_pdf.dispose()
+
     def layer(self, layer: Any) -> Any:
         """Author content onto *layer*, as a context manager.
 
@@ -3161,7 +3272,7 @@ class PageCollection:
             # the page carried no ``/Resources`` of its own, and the name then
             # resolved to the *target's* ``/F1`` -- so the text drew in
             # whatever font happened to be there, silently.
-            self.insert(idx + 1, page)
+            return self.insert(idx + 1, page)
         else:
             self._document._engine_pdf.add(page)
         return Page._from_index(self._document, idx)
