@@ -58,3 +58,44 @@ def split_every(
             raise
         yield result
         del result
+
+
+def iter_split_pages_from_pdf(
+    pdf: SimplePdf, *, outlines: list | None = None
+) -> Iterator[SimplePdf]:
+    """Yield independent single-page parts from a SimplePdf, restoring the source model before each yield.
+
+    This is the low-level streaming variant. Each yielded part contains
+    exactly one page. The source PDF is not modified.
+
+    The outline model is restored before every yield, including early termination
+    and failures. Use ``contextlib.closing`` when stopping iteration early to
+    release the iterator's references promptly.
+    """
+    pdf._ensure_not_disposed()
+    count = len(pdf.pages)
+    if not count:
+        return
+    budget = pdf._load_budget
+    budget.check_pages(count)
+    budget.check(count, "max_container_items", "single-page split parts")
+
+    roots = pdf._outlines_data if outlines is None else outlines
+    snapshot, _starts = _snapshot(pdf, roots, 1)
+
+    for index in range(count):
+        pdf._ensure_not_disposed()
+        original = pdf._outlines_data
+        try:
+            pdf._outlines_data = _range_outlines(snapshot, index, index + 1)
+            result = pdf.extract_pages([index])
+        finally:
+            pdf._outlines_data = original
+        try:
+            _check_result(result, context="single-page split")
+            _refresh_targets(result)
+        except BaseException:
+            result.dispose()
+            raise
+        yield result
+        del result

@@ -8128,6 +8128,61 @@ class Document:
         """
         return self.split_every(1)
 
+    def iter_split_pages(self) -> Generator[Document, None, None]:
+        """Yield independent documents, one for each page.
+
+        This is the streaming variant of :meth:`split_pages`. Each yielded
+        document contains exactly one page from the source document. The source
+        document remains unchanged, and the outline model is restored before
+        every yield.
+
+        Yields
+        ------
+        Document
+            An independent document containing one page. Each yielded document
+            retains Info metadata, page resources, boxes, labels, annotations,
+            form fields, layers and tags.
+
+        Examples
+        --------
+        ::
+
+            for page_doc in document.iter_split_pages():
+                with page_doc:
+                    # Process each page without loading all into memory
+                    page_doc.save(f"page-{page_doc.pages[1].number}.pdf")
+
+        Notes
+        -----
+        Use ``contextlib.closing`` when stopping iteration early to release
+        the iterator's references promptly. Each yielded document belongs
+        to the caller: close or dispose it when done.
+
+        Empty documents yield nothing. The source and its files are unchanged.
+        Each yielded document is independent and does not inherit source
+        encryption or signature validity.
+        """
+        from aspose_pdf.engine.page_count_split import (
+            iter_split_pages_from_pdf as _iter_split_pages,
+        )
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        try:
+            for engine in _iter_split_pages(
+                self._engine_pdf,
+                outlines=None if self._outlines is None else self._outlines._items,
+            ):
+                part = Document(limits=self._load_limits)
+                part._engine_pdf = engine
+                yield part
+                # Caller is responsible for disposing
+                del part
+        except BaseException:
+            raise
+
     def n_up(
         self,
         rows: int = 2,

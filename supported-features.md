@@ -2620,6 +2620,65 @@ Supported:
     attachments, metadata and signatures are not transferred as live objects.
     Visible text becomes pixels without OCR. Coverage and color behavior follow
     the existing renderer/codecs; higher DPI increases time and memory.
+
+- **Split into single-page documents.** `Document.split_pages()` returns an
+  independent `Document` for each page, in source order. Every page appears
+  exactly once. An empty PDF returns an empty list; no text extraction,
+  rendering or separator pages are needed.
+
+  ```python
+  with Document("book.pdf") as document:
+      parts = document.split_pages()
+      try:
+          for number, part in enumerate(parts, 1):
+              part.save(f"page-{number:03d}.pdf")
+      finally:
+          for part in parts:
+              part.dispose()
+  ```
+
+  Parts follow `extract_pages`: retain Info metadata, page contents/resources,
+  boxes and rotation, labels, annotations, form fields, layers and tags. Relevant
+  bookmarks retain styles and destination views, including unsaved outline edits;
+  children whose parents target other parts are promoted. Local links are remapped
+  within each part, and destinations outside it cannot remain valid local targets.
+  Document attachments are not copied. New parts do not inherit encryption or
+  preserve the validity of existing signatures. They remain editable after the
+  source closes, and neither the source nor its files are changed.
+  Options, source page count, part count and outline validity are checked before
+  importing. Each result inherits the source `PdfLoadLimits` and has its own
+  decoding budget. Streaming inputs stay lazy while pages are imported one part
+  at a time. The returned list retains every part; dispose each document when
+  done. On failure, partial results are disposed and the source outline model
+  is restored.
+
+  **Process pages lazily** with `Document.iter_split_pages()`. It returns a
+  generator that yields each page as an independent `Document`, one at a time,
+  without loading all results into memory. Empty documents yield no parts. The
+  iterator does not accumulate completed outputs, so saving and disposing each
+  part avoids holding all split documents in memory. The source graph and
+  bookmark plan still remain in memory; this is not a constant-memory parser
+  for the entire input.
+
+  ```python
+  from contextlib import closing
+  from aspose_pdf import Document
+
+  with Document.open_streaming("book.pdf") as document:
+      with closing(document.iter_split_pages()) as page_docs:
+          for page_doc in page_docs:
+              with page_doc:
+                  page_doc.save(f"page-{page_doc.pages[1].number}.pdf")
+  ```
+
+  Keep the source open and unmodified until iteration finishes. Every yielded
+  `Document` belongs to the caller and remains usable after closing the iterator
+  or the source, or after a later batch fails. Close or dispose each yielded part.
+  `iterator.close()` releases its traversal state without closing the source or
+  the parts already delivered; `contextlib.closing` is useful when stopping early.
+  An invalid result is disposed before the error propagates. The source outline
+  model is restored before every yield.
+
 - **Split spreads into individual pages.** `Document.split_spreads(pages=None,
   layout="horizontal", reverse=False, split_ratio=0.5, gutter=0,
   flatten_fields=True)` returns an independent `Document` suitable for scan and
