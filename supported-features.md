@@ -5404,22 +5404,29 @@ Boundaries:
   unsupported by the pure-Python raster path.
 
 - **Add pages from image files, bytes, or streams.**
-  `Document.add_pages_from_images(image_sources, layout="grid", size=None, dpi=72.0)`
-  adds one page per image, embedding the image as a full-page image. Each source
-  in the list can be a file path (`str` or `Path`), raw image bytes
-  (`bytes`/`bytearray`), or a file-like object with a ``read()`` method
-  (e.g., `io.BytesIO` or an open file handle). The layout is currently only
-  `"grid"` (one image per page filling the page); the page size defaults to the
-  image's natural size at *dpi* or can be specified with `size="A4"`,
+  `Document.add_pages_from_images(image_sources, layout="grid", size=None,
+  dpi=72.0, fit="cover")` adds one page per image, embedding the image as a
+  full-page image. Each source in the list can be a file path (`str` or `Path`),
+  raw image bytes (`bytes`/`bytearray`), or a file-like object with a ``read()``
+  method (e.g., `io.BytesIO` or an open file handle). The layout is currently
+  only `"grid"` (one image per page filling the page); the page size defaults to
+  the image's natural size at *dpi* or can be specified with `size="A4"`,
   `size=(300, 400)`, etc. The DPI controls how pixels map to points (72 DPI =
   1 pixel = 1 point).
+  - The `fit` parameter controls how images are placed on the page:
+    - `"cover"` (default): scales the image to cover the entire page, cropping
+      if necessary.
+    - `"contain"`: scales the image to fit entirely within the page, preserving
+      aspect ratio.
+    - `"stretch"`: stretches the image to fill the page, potentially distorting
+      it.
   - JPEG and PNG work without optional dependencies. Static BMP, GIF,
     and WebP require the ``images`` extra. Animated GIFs are not supported.
   - The method returns a list of one-based page numbers for the newly added
     pages. An empty list returns an empty list; a single image returns `[1]`.
   - Invalid image bytes, unreadable files, or malformed `size` raise
-    `PdfValidationException` or `FileNotFoundError`. Invalid layout mode or
-    non-list input raises `TypeError`.
+    `PdfValidationException` or `FileNotFoundError`. Invalid layout mode,
+    invalid `fit` mode, or non-list input raises `TypeError`.
   - File-like objects must have a ``read()`` method that returns ``bytes`` or
     ``bytearray``. Other types raise ``TypeError``.
 

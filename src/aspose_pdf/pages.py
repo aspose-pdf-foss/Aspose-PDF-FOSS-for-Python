@@ -1824,6 +1824,7 @@ class Page:
         *,
         size: PageSize | Sequence[float] | str | None = None,
         dpi: float = 72.0,
+        fit: str = "cover",
     ) -> Page:
         """Create a new page from an image file, bytes, or stream.
 
@@ -1845,6 +1846,12 @@ class Page:
         dpi : float, optional
             Resolution to use when deriving page size from image pixels.
             Default is 72 DPI (1 point = 1 pixel).
+        fit : str, optional
+            How to fit the image within the page. ``"cover"`` (default)
+            scales the image to cover the entire page, cropping if necessary.
+            ``"contain"`` scales the image to fit entirely within the page,
+            preserving aspect ratio. ``"stretch"`` stretches the image to
+            fill the page, potentially distorting it.
 
         Returns
         -------
@@ -1885,6 +1892,9 @@ class Page:
 
             # From path with custom size in points
             page = Page.from_image(doc, "chart.jpg", size=(400, 600))
+
+            # Use fit mode to control image placement
+            page = Page.from_image(doc, "photo.jpg", fit="contain")
         """
         from aspose_pdf.engine.content_authoring import prepare_image
 
@@ -1940,6 +1950,12 @@ class Page:
         # Create a new page with the determined size
         new_page = document.pages.add(page_size)
 
+        # Validate fit parameter - must be one of the supported modes
+        if fit not in ("stretch", "contain", "cover"):
+            raise PdfValidationException(
+                "fit must be 'stretch', 'contain', or 'cover'"
+            )
+
         # Place the image to fill the entire page
         # Add image at (0, 0) filling the whole page
         new_page.add_image(
@@ -1948,7 +1964,7 @@ class Page:
             y=0,
             width=page_size.width,
             height=page_size.height,
-            fit="cover",
+            fit=fit,
         )
 
         return new_page

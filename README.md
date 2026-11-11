@@ -628,6 +628,12 @@ with Document() as document:
         size="A4"
     )
 
+    # Use fit mode to control how images fill the page
+    page_numbers = document.add_pages_from_images(
+        ["photo.jpg", "screenshot.png"],
+        fit="contain"  # Shows entire image without cropping
+    )
+
     document.save("from_images.pdf")
 ```
 
@@ -636,6 +642,11 @@ objects (e.g., `io.BytesIO`), adding one page per source. JPEG and PNG work out
 of the box; BMP, GIF, and WebP need the optional `images` extra. The page size
 defaults to the image's natural size at 72 DPI or can be specified with a
 `PageSize` name or `(width, height)` tuple.
+
+The `fit` parameter controls how images are placed on the page:
+- `"cover"` (default): scales to cover the entire page, cropping if necessary
+- `"contain"`: scales to fit entirely within the page, preserving aspect ratio
+- `"stretch"`: stretches to fill the page, potentially distorting the image
 
 ### Render a Page to an Image
 

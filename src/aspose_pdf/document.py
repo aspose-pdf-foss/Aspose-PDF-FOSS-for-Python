@@ -2348,6 +2348,7 @@ class Document:
         *,
         size: PageSize | Sequence[float] | str | None = None,
         dpi: float = 72.0,
+        fit: str = "cover",
     ) -> list[int]:
         """Add one or more pages from image files, bytes, or streams, one per image.
 
@@ -2368,6 +2369,12 @@ class Document:
         dpi : float, optional
             Resolution to use when deriving page size from image pixels.
             Default is 72 DPI.
+        fit : str, optional
+            How to fit the image within each page. ``"cover"`` (default)
+            scales the image to cover the entire page, cropping if necessary.
+            ``"contain"`` scales the image to fit entirely within the page,
+            preserving aspect ratio. ``"stretch"`` stretches the image to
+            fill the page, potentially distorting it.
 
         Returns
         -------
@@ -2407,6 +2414,12 @@ class Document:
                 ["img1.jpg", "img2.jpg"],
                 size="A4"
             )
+
+            # Use fit mode to control image placement
+            page_numbers = document.add_pages_from_images(
+                ["img1.jpg", "img2.jpg"],
+                fit="contain"
+            )
         """
         if not isinstance(image_sources, list):
             raise TypeError(f"image_sources must be a list of paths, bytes, or file-like objects, got {type(image_sources).__name__}")
@@ -2419,6 +2432,12 @@ class Document:
                 f"layout must be 'grid', got {layout!r}"
             )
 
+        # Validate fit parameter - must be one of the supported modes
+        if fit not in ("stretch", "contain", "cover"):
+            raise PdfValidationException(
+                "fit must be 'stretch', 'contain', or 'cover'"
+            )
+
         page_numbers = []
 
         for source in image_sources:
@@ -2429,7 +2448,7 @@ class Document:
                     raise TypeError(f"read() must return bytes or bytearray, got {type(data).__name__}")
                 source = data
             # Create page from image (handles paths, bytes, bytearrays, and file-like objects)
-            page = Page.from_image(self, source, size=size, dpi=dpi)
+            page = Page.from_image(self, source, size=size, dpi=dpi, fit=fit)
             page_numbers.append(page.number)
 
         return page_numbers

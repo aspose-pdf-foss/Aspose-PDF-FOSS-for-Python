@@ -457,6 +457,64 @@ def test_add_pages_from_images_bytesio_read_returns_str_raises(document, png_100
         document.add_pages_from_images([string_io])
 
 
+def test_add_pages_from_images_fit_stretch(document, png_100x50):
+    """Adding pages with fit='stretch' works correctly."""
+    page_numbers = document.add_pages_from_images([png_100x50], fit="stretch")
+
+    assert page_numbers == [1]
+    assert document.page_count == 1
+
+
+def test_add_pages_from_images_fit_contain(document, png_100x50):
+    """Adding pages with fit='contain' works correctly."""
+    page_numbers = document.add_pages_from_images([png_100x50], fit="contain")
+
+    assert page_numbers == [1]
+    assert document.page_count == 1
+
+
+def test_add_pages_from_images_fit_cover(document, png_100x50):
+    """Adding pages with fit='cover' works correctly (default behavior)."""
+    page_numbers = document.add_pages_from_images([png_100x50], fit="cover")
+
+    assert page_numbers == [1]
+    assert document.page_count == 1
+
+
+def test_add_pages_from_images_fit_default_is_cover(document, png_100x50):
+    """Default fit mode is 'cover' for backward compatibility."""
+    # Use separate documents for comparison since document accumulates pages
+    from aspose_pdf import Document
+
+    doc_default = Document()
+    doc_explicit = Document()
+
+    page_numbers_default = doc_default.add_pages_from_images([png_100x50])
+    page_numbers_explicit = doc_explicit.add_pages_from_images([png_100x50], fit="cover")
+
+    assert page_numbers_default == page_numbers_explicit
+    assert page_numbers_default == [1]
+    assert page_numbers_explicit == [1]
+
+
+def test_add_pages_from_images_fit_invalid_raises(document, png_100x50):
+    """Invalid fit mode raises PdfValidationException."""
+    with pytest.raises(PdfValidationException, match="fit"):
+        document.add_pages_from_images([png_100x50], fit="invalid")
+
+
+def test_add_pages_from_images_fit_with_size(document, png_100x50):
+    """fit mode works with explicit page size."""
+    page_numbers = document.add_pages_from_images(
+        [png_100x50],
+        size="A4",
+        fit="contain"
+    )
+
+    assert page_numbers == [1]
+    assert document.page_count == 1
+
+
 def test_add_pages_from_images_type_name(document):
     """Test that the parameter name in error messages is correct."""
     with pytest.raises(TypeError, match="list"):
