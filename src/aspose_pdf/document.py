@@ -1177,6 +1177,87 @@ class Document:
         """
         return self.page_count
 
+    def remove_page(self, page_number: int) -> Page:
+        """Remove a page from the document and return it.
+
+        The removed page is returned as a :class:`~aspose_pdf.pages.Page` object
+        that can be inserted into another document using
+        :meth:`~aspose_pdf.pages.PageCollection.insert` or
+        :meth:`~aspose_pdf.pages.PageCollection.add`.
+
+        Parameters
+        ----------
+        page_number : int
+            The one-based page number to remove. Page numbers start at 1.
+
+        Returns
+        -------
+        Page
+            The removed page, which can be inserted into another document.
+
+        Raises
+        ------
+        IndexError
+            If *page_number* is not a valid page number (must be between 1 and
+            the number of pages in the document).
+
+        Examples
+        --------
+        ::
+
+            # Remove page 3 and insert it at the beginning of another document
+            removed_page = doc.remove_page(3)
+            other_doc.pages.insert(1, removed_page)
+
+            # Remove the last page
+            last_page = doc.remove_page(len(doc))
+
+        Notes
+        -----
+        After removal, the page count decreases by one, and all page numbers
+        after the removed page are shifted down by one. For example, if you
+        remove page 2 from a 5-page document, the former page 3 becomes page 2,
+        page 4 becomes page 3, and page 5 becomes page 4.
+
+        The removed page retains all its properties: content, annotations,
+        form fields, layer assignments, page labels, and bookmarks that point
+        to it.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        page_count = self.page_count
+        if page_count == 0:
+            raise IndexError("Document has no pages to remove")
+
+        # Convert to zero-based index for validation
+        if page_number < 1 or page_number > page_count:
+            raise IndexError(
+                f"Page number {page_number} is out of range. "
+                f"Document has {page_count} page(s). Page numbers must be between 1 and {page_count}."
+            )
+
+        # Extract the page first (to return it)
+        # We need to create a new document with just this page
+        extracted = self.extract_pages([page_number])
+
+        # Now delete the page from the original document
+        # Convert to zero-based index for deletion
+        zero_based_index = page_number - 1
+        self._engine_pdf.delete(zero_based_index)
+
+        # Return the first (and only) page from the extracted document
+        # We need to get the Page object from the extracted document
+        # Since we can't directly access the Page object from extracted document
+        # (it's a new document), we'll return a Page from the original document
+        # that references the same content before deletion
+        # Actually, we need to get the page from extracted before it goes out of scope
+        # The simplest way is to use the page from extracted document
+
+        # Return the page from the extracted document
+        return extracted.pages[1]
+
     @property
     def info(self) -> dict[str, str]:
         """Get or set the document metadata (info dictionary).

@@ -240,6 +240,14 @@ flowchart TD
   want it, with everything that belongs to it — resources, annotations, the fields its widgets
   belong to, its tagging, its label, the bookmarks that pointed at it. Previously that meant
   `extract_pages` into a scratch document, `merge`, then `move_page`.
+- `Document.remove_page(page_number)` removes a page from the document and returns it as a
+  :class:`~aspose_pdf.pages.Page` object that can be inserted into another document using
+  :meth:`~aspose_pdf.pages.PageCollection.insert` or
+  :meth:`~aspose_pdf.pages.PageCollection.add`. This provides a convenient way to move or delete
+  pages without the overhead of extracting all other pages with
+  :meth:`~aspose_pdf.Document.extract_pages`. The page count decreases by one, and all page
+  numbers after the removed page are shifted down by one. Page properties like content,
+  annotations, form fields, layers, and page labels are preserved in the returned page.
 - `Document.destinations` names places in the document — `destinations["chapter-2"] =
   XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
   (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks

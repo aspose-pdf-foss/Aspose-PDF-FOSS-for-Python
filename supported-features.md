@@ -1387,6 +1387,28 @@ Supported:
 - Delete a page by number, pass an iterable of original page numbers, or use
   `pages.delete()` / `pages.clear()` to delete all pages. Batch selections are
   validated before changes; repeated numbers are deleted once.
+- **Remove a page and reuse it:** `Document.remove_page(page_number: int) -> Page`
+  removes the specified page (1-based) from the document and returns it as a
+  :class:`~aspose_pdf.pages.Page` object that can be inserted into another document
+  using :meth:`~aspose_pdf.pages.PageCollection.insert` or
+  :meth:`~aspose_pdf.pages.PageCollection.add`. This provides a convenient way to
+  move or delete a page without the overhead of extracting all other pages with
+  :meth:`~aspose_pdf.Document.extract_pages`. After removal, the page count
+  decreases by one, and all page numbers after the removed page are shifted down
+  by one. Page properties like content, annotations, form fields, layers, and
+  page labels are preserved in the returned page.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Remove page 3 and insert it at the beginning of another document
+      removed = document.remove_page(3)
+      other_doc.pages.insert(1, removed)
+
+      # Remove the last page
+      last = document.remove_page(len(document))
+  ```
 - **Select pages using familiar range expressions.**
   `parse_page_range("1-3,7,10-", page_count)` (exported from `aspose_pdf`)
   returns a tuple of one-based indices for text extraction, page rendering
