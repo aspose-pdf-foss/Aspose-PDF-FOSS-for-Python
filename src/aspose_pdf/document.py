@@ -2057,6 +2057,238 @@ class Document:
             doc._password = eff
         return doc
 
+    @classmethod
+    def from_bytes(
+        cls,
+        data: bytes | bytearray | BinaryIO,
+        *,
+        password: str | None = None,
+        certificate: Any = None,
+        private_key: Any = None,
+        key_encryption_key: bytes | bytearray | None = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> Document:
+        """Create a document from PDF bytes.
+
+        This is a convenience class method that creates an empty document and
+        loads it from bytes in one step. It is equivalent to::
+
+            doc = Document(limits=limits)
+            doc.load_from(data, password=password, ...)
+
+        but is more concise and follows Python's convention for alternative
+        constructors.
+
+        Parameters
+        ----------
+        data :
+            Raw PDF bytes, a bytearray, or any readable binary stream
+            (e.g. ``BytesIO``, an open file handle in ``"rb"`` mode).
+        password :
+            Optional password for standard encrypted PDFs.
+        certificate, private_key :
+            Optional recipient credentials for an ``/Adobe.PubSec`` PDF.
+        key_encryption_key :
+            Optional pre-shared AES key for a CMS KEK recipient.
+        limits :
+            Optional resource policy for untrusted input.
+
+        Returns
+        -------
+        Document
+            A document loaded from the provided bytes.
+
+        Raises
+        ------
+        ValueError
+            If *data* is not valid PDF data.
+        TypeError
+            If *data* is not bytes, bytearray, or a binary stream.
+        PdfSecurityException
+            If the PDF is encrypted and *password* is missing or incorrect.
+
+        Examples
+        --------
+        ::
+
+            # Load from bytes
+            with open("document.pdf", "rb") as f:
+                doc = Document.from_bytes(f.read())
+
+            # Load from BytesIO
+            from io import BytesIO
+            pdf_bytes = download_pdf_from_api()
+            doc = Document.from_bytes(BytesIO(pdf_bytes))
+
+            # Load from a file-like object
+            with Document.from_bytes(my_stream) as doc:
+                print(f"Pages: {len(doc)}")
+
+        Notes
+        -----
+        The document must be closed with :meth:`dispose` or a context manager
+        when you are finished with it, just like documents loaded from files.
+        """
+        doc = cls(limits=limits)
+        doc.load_from(
+            data,
+            password=password,
+            certificate=certificate,
+            private_key=private_key,
+            key_encryption_key=key_encryption_key,
+        )
+        return doc
+
+    @classmethod
+    def from_file(
+        cls,
+        path: str | Path,
+        *,
+        password: str | None = None,
+        certificate: Any = None,
+        private_key: Any = None,
+        key_encryption_key: bytes | bytearray | None = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> Document:
+        """Create a document from a PDF file path.
+
+        This is a convenience class method that creates an empty document and
+        loads it from a file in one step. It is equivalent to::
+
+            doc = Document(limits=limits)
+            doc.load_from(path, password=password, ...)
+
+        but is more concise and follows Python's convention for alternative
+        constructors.
+
+        Parameters
+        ----------
+        path :
+            File system path to the PDF.
+        password :
+            Optional password for standard encrypted PDFs.
+        certificate, private_key :
+            Optional recipient credentials for an ``/Adobe.PubSec`` PDF.
+        key_encryption_key :
+            Optional pre-shared AES key for a CMS KEK recipient.
+        limits :
+            Optional resource policy for untrusted input.
+
+        Returns
+        -------
+        Document
+            A document loaded from the file.
+
+        Raises
+        ------
+        FileNotFoundError
+            If *path* does not exist.
+        ValueError
+            If the file is not valid PDF data.
+        PdfSecurityException
+            If the PDF is encrypted and *password* is missing or incorrect.
+
+        Examples
+        --------
+        ::
+
+            # Load from a file
+            doc = Document.from_file("report.pdf")
+
+            # Load with password
+            doc = Document.from_file("secure.pdf", password="secret")
+
+            # Use as a context manager
+            with Document.from_file("document.pdf") as doc:
+                print(f"Pages: {len(doc)}")
+        """
+        doc = cls(limits=limits)
+        doc.load_from(
+            path,
+            password=password,
+            certificate=certificate,
+            private_key=private_key,
+            key_encryption_key=key_encryption_key,
+        )
+        return doc
+
+    @classmethod
+    def from_stream(
+        cls,
+        stream: BinaryIO,
+        *,
+        password: str | None = None,
+        certificate: Any = None,
+        private_key: Any = None,
+        key_encryption_key: bytes | bytearray | None = None,
+        limits: PdfLoadLimits | None = None,
+    ) -> Document:
+        """Create a document from a binary stream.
+
+        This is a convenience class method that creates an empty document and
+        loads it from a stream in one step. It is equivalent to::
+
+            doc = Document(limits=limits)
+            doc.load_from(stream, password=password, ...)
+
+        but is more concise and follows Python's convention for alternative
+        constructors.
+
+        The stream is read to EOF and is **not** closed afterwards.
+
+        Parameters
+        ----------
+        stream :
+            Any readable binary stream (e.g. ``BytesIO``, an open file handle
+            in ``"rb"`` mode).
+        password :
+            Optional password for standard encrypted PDFs.
+        certificate, private_key :
+            Optional recipient credentials for an ``/Adobe.PubSec`` PDF.
+        key_encryption_key :
+            Optional pre-shared AES key for a CMS KEK recipient.
+        limits :
+            Optional resource policy for untrusted input.
+
+        Returns
+        -------
+        Document
+            A document loaded from the stream.
+
+        Raises
+        ------
+        ValueError
+            If the stream does not contain valid PDF data.
+        TypeError
+            If *stream* is not a binary stream.
+
+        Examples
+        --------
+        ::
+
+            # Load from BytesIO
+            from io import BytesIO
+            pdf_bytes = download_pdf_from_api()
+            doc = Document.from_stream(BytesIO(pdf_bytes))
+
+            # Load from an open file
+            with open("document.pdf", "rb") as f:
+                doc = Document.from_stream(f)
+
+            # Use as a context manager
+            with Document.from_stream(my_stream) as doc:
+                print(f"Pages: {len(doc)}")
+        """
+        doc = cls(limits=limits)
+        doc.load_from(
+            stream,
+            password=password,
+            certificate=certificate,
+            private_key=private_key,
+            key_encryption_key=key_encryption_key,
+        )
+        return doc
+
     def iter_pages(self) -> Iterator[Page]:
         """Iterate over the pages of the document one at a time.
 

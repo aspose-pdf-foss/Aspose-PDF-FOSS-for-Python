@@ -40,6 +40,13 @@ Supported:
   through `Document(source, password=..., limits=...)` or through
   `Document().load_from(...)`. Both raise on a missing file, non-PDF data, or a
   missing password instead of yielding an empty document.
+- **Alternative constructors for common source types.** `Document.from_bytes(data, ...)`,
+  `Document.from_file(path, ...)`, and `Document.from_stream(stream, ...)` create
+  and load a document in one step, equivalent to `Document(limits=...).load_from(..., ...)`.
+  They support the same parameters: `password`, `certificate`, `private_key`,
+  `key_encryption_key`, and `limits`. Use them when the source type is known:
+  `from_bytes()` for in-memory PDF bytes, `from_file()` for file paths, and
+  `from_stream()` for any readable binary stream.
 - Save PDFs to a path or writable binary stream, with overwrite protection for
   existing path targets.
 - **Saving over a file never costs the file that was there.** A path save --

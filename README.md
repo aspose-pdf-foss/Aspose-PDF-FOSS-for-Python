@@ -474,6 +474,21 @@ with Document("input.pdf") as document:
 — a missing file, non-PDF data, or a missing password raises rather than handing back a silently
 empty document.
 
+Alternative constructors provide a more concise way to create documents from specific sources:
+
+```python
+# From bytes in memory
+pdf_bytes = download_pdf_from_api()
+doc = Document.from_bytes(pdf_bytes)
+
+# From a file path
+doc = Document.from_file("report.pdf")
+
+# From a binary stream
+from io import BytesIO
+doc = Document.from_stream(BytesIO(pdf_bytes))
+```
+
 The `Document` class supports the context manager protocol, so it can be used with the `with`
 statement. After the context exits, the document is closed and cannot be used further. The
 `Document.closed` property returns `True` after the document has been closed (either by calling
