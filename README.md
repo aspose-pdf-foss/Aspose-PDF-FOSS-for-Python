@@ -154,11 +154,12 @@ flowchart TD
   the tree and can remap local pages when transferring it to another PDF.
   `export_bookmarks_csv()` / `import_bookmarks_csv()` exchange simple page bookmarks
   as `level,title,page` rows for editing the table of contents in a spreadsheet.
-- `Page.to_svg()` and `Document.save_as_svg()` export a page as real vectors — paths with their
-  curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and gradients. A
-  Bézier is written back out as the Bézier it was, so the export stays exact at any zoom. The
-  exporter is the renderer with its paint sinks replaced, so the SVG and the rasterized page agree
-  on geometry by construction.
+- `Page.to_svg()` and `Document.to_svg()` / `save_as_svg()` export a page as real vectors — paths
+  with their curves, fill rule, dashed strokes, clip paths, glyph outlines, embedded images and
+  gradients. A Bézier is written back out as the Bézier it was, so the export stays exact at any
+  zoom. The exporter is the renderer with its paint sinks replaced, so the SVG and the rasterized
+  page agree on geometry by construction. `to_svg()` returns each page as a separate SVG document
+  in a list of bytes, while `save_as_svg()` writes them to files.
 - JPEG 2000 (`/JPXDecode`) images — what scanners emit — decode with a bundled pure-Python
   decoder, so a default install reads them. Pillow is used when present because it is far faster;
   an image neither can decode is left undrawn rather than painted as noise.

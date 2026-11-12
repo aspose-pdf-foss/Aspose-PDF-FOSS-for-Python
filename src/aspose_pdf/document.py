@@ -4327,6 +4327,56 @@ class Document:
         return [path for path, _ in outputs]
 
     @page_api(selections=("pages",))
+    def to_svg(
+        self,
+        *,
+        pages: Sequence[int] | None = None,
+        background: tuple[int, int, int] | None = (255, 255, 255),
+        draw_annotations: bool = True,
+        font_substitution: FontSubstitutionOptions | None = None,
+        precision: int = 3,
+        text: str = "outlines",
+    ) -> list[bytes]:
+        """Return pages as SVG documents.
+
+        SVG has no notion of a multi-page document, so each page becomes its
+        own SVG document. Every page becomes one SVG document in the returned
+        list, in the order given by *pages* (all pages, in document order,
+        when omitted).
+
+        See :meth:`~aspose_pdf.pages.Page.to_svg` for what the conversion does
+        and does not turn into vectors, and for *text*, which chooses between
+        glyph outlines and selectable ``<text>``. ``background`` paints an
+        opaque page behind the content; pass ``None`` for a transparent SVG.
+        ``precision`` is the number of decimal places coordinates are written
+        with, trading file size against exactness.
+
+        :meth:`save_as_svg` writes these SVG documents to files.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        indexes = (
+            list(range(self.page_count)) if pages is None else [int(i) for i in pages]
+        )
+        if not indexes:
+            raise PdfValidationException("SVG export needs at least one page")
+
+        outputs: list[bytes] = []
+        for index in indexes:
+            page = self._page_at(index)
+            svg = page.to_svg(
+                background=background,
+                draw_annotations=draw_annotations,
+                font_substitution=font_substitution,
+                precision=precision,
+                text=text,
+            )
+            outputs.append(svg.encode("utf-8"))
+        return outputs
+
+    @page_api(selections=("pages",))
     def to_tiff(
         self,
         *,
@@ -4352,8 +4402,8 @@ class Document:
         ``dither`` applies Floyd-Steinberg dithering when ``mode`` is ``"bilevel"``.
 
         :meth:`save_as_tiff` writes these bytes to a file. Every other export has
-        both forms -- :meth:`to_html`, :meth:`to_markdown`, :meth:`Page.to_svg`,
-        :meth:`render_page` -- and this is TIFF's.
+        both forms -- :meth:`to_html`, :meth:`to_markdown`, :meth:`to_svg`,
+        :meth:`Page.to_svg`, :meth:`render_page` -- and this is TIFF's.
         """
         from aspose_pdf.engine.image_export import TiffPage, write_tiff
 

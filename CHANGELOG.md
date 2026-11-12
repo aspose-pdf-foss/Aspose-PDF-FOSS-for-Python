@@ -50,6 +50,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pages from different PDFs without the overhead of merging entire documents.
   The method returns the newly created `Page` object.
 
+- **Export a document as SVG.** `Document.to_svg()` returns each page as an SVG
+  document in a list of bytes, completing the symmetry with `save_as_svg()`.
+  This follows the same pattern as `to_html()` and `to_markdown()` for HTML and
+  Markdown exports. Each page becomes its own SVG document, preserving paths,
+  clips, text (as glyph outlines or selectable ``<text>``), images and shadings.
+
 - **Export individual pages as separate PDF files in a ZIP archive.**
   `Document.export_pages_as_zip()` returns each page as a single-page PDF in a
   ZIP archive, preserving complete page content including annotations, form

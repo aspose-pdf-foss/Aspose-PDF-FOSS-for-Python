@@ -3386,10 +3386,13 @@ Boundaries:
   rendering mode 3 or 7 puts nothing on the page and is not collected. The
   collection it returns is an in-memory container: adding or removing elements
   never changes the page.
-- **Export a document as HTML or Markdown** with `Document.to_html()` /
-  `to_markdown()`, `save_as_html()` / `save_as_markdown()`, or
-  `Document.save(path, DocFormat.HTML)` / `DocFormat.MARKDOWN` (the
-  `HtmlSaveOptions` and `MarkdownSaveOptions` objects select the same exports).
+- **Export a document as HTML, Markdown, or SVG** with `Document.to_html()` /
+  `to_markdown()` / `to_svg()`, `save_as_html()` / `save_as_markdown()`
+  / `save_as_svg()`, or `Document.save(path, DocFormat.HTML)` /
+  `DocFormat.MARKDOWN` (the `HtmlSaveOptions` and `MarkdownSaveOptions`
+  objects select the same exports). SVG exports each page as a separate
+  vector document, preserving paths, clips, text (as glyph outlines or
+  selectable ``<text>``), images and shadings.
   This is a conversion to a **flowing document**, not a facsimile: the same
   layout analysis `auto_tag()` uses infers headings (`H1`-`H3` by size tier),
   paragraphs (wrapped lines joined), bulleted and numbered lists (markers
