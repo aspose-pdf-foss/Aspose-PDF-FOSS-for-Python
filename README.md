@@ -689,6 +689,40 @@ The `fit` parameter controls how images are placed on the page:
 - `"contain"`: scales to fit entirely within the page, preserving aspect ratio
 - `"stretch"`: stretches to fill the page, potentially distorting the image
 
+### Add Pages from PDF Files, Bytes, or Streams
+
+```python
+from aspose_pdf import Document
+from io import BytesIO
+
+with Document() as document:
+    # Add pages from PDF files (page 1 from each)
+    page_numbers = document.add_pages_from_pdf(
+        ["document1.pdf", "document2.pdf", "document3.pdf"]
+    )
+    print(f"Added pages: {page_numbers}")
+
+    # Add specific pages from each source
+    page_numbers = document.add_pages_from_pdf(
+        ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+        page_numbers=[2, 1, 3]
+    )
+
+    # Add pages from bytes
+    with open("source.pdf", "rb") as f:
+        page_numbers = document.add_pages_from_pdf([f.read()])
+
+    # Add pages from file-like objects (e.g., BytesIO)
+    page_numbers = document.add_pages_from_pdf([BytesIO(pdf_bytes)])
+
+    document.save("from_pdf.pdf")
+```
+
+`add_pages_from_pdf` accepts file paths, raw PDF bytes, or file-like objects,
+adding one page per source. Each imported page retains its original content,
+annotations, form fields, layers, and page boxes. Use `page_numbers` to import
+specific pages; by default, page 1 is imported from each source.
+
 ### Render a Page to an Image
 
 ```python

@@ -1539,6 +1539,57 @@ Supported:
   Detection remains a visual heuristic: blank-looking pages can store invisible
   text or other data. Removing them is not secure erasure of unreferenced
   objects, form data or earlier PDF revisions.
+- **Import one or more pages from PDF sources in one call.**
+  `Document.add_pages_from_pdf(pdf_sources, page_numbers=None)` imports the
+  first page from each PDF source, or the specified page number, and returns a
+  list of one-based page numbers for the newly added pages. Each imported page
+  retains its content, resources, annotations, form fields, layers, and page
+  boxes.
+  - `pdf_sources` is a list of file paths (`str`/`Path`), raw bytes,
+    `bytearray`, or file-like objects with a ``read()`` method.
+  - `page_numbers` is an optional list of one-based page indices. ``None``
+    (default) imports page 1 from each source; a list must match `pdf_sources`
+    in length, so each source gets its own page number.
+  - Each source is loaded temporarily and closed after import; the source
+    document is left untouched.
+  - The imported page becomes a new page at the end of the document. The page's
+    number is sequential: the first imported page is `1`, the second is `2`,
+    etc., regardless of which page was imported from each source.
+  - `PdfValidationException` is raised for invalid PDF data, malformed page
+    numbers, or when page numbers exceed the source document's page count.
+  - `FileNotFoundError` is raised for non-existent file paths.
+  - `TypeError` is raised for invalid source types or when a file-like object's
+    ``read()`` method does not return bytes or `bytearray`.
+  - `ValueError` is raised when `page_numbers` length does not match
+    `pdf_sources` length, or when page numbers are negative or non-integer.
+
+  ```python
+  from aspose_pdf import Document
+  from io import BytesIO
+
+  with Document() as document:
+      # Add pages from multiple PDF files (page 1 from each)
+      page_numbers = document.add_pages_from_pdf(
+          ["document1.pdf", "document2.pdf", "document3.pdf"]
+      )
+      print(f"Added pages: {page_numbers}")
+
+      # Add specific pages from each source
+      page_numbers = document.add_pages_from_pdf(
+          ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+          page_numbers=[2, 1, 3]
+      )
+
+      # Add pages from bytes
+      with open("source.pdf", "rb") as f:
+          page_numbers = document.add_pages_from_pdf([f.read()])
+
+      # Add pages from file-like objects (e.g., BytesIO)
+      page_numbers = document.add_pages_from_pdf([BytesIO(pdf_bytes)])
+
+      document.save("from_pdf.pdf")
+  ```
+
 - **Find visually duplicate pages.**
   `Document.find_duplicate_pages(pages=None, dpi=72,
   include_annotations=True)` returns groups such as `[[1, 4], [2, 5, 8]]`.

@@ -2820,6 +2820,126 @@ class Document:
 
         return page_numbers
 
+    def add_pages_from_pdf(
+        self,
+        pdf_sources: list[str | Path | bytes | bytearray | BinaryIO],
+        page_numbers: list[int] | None = None,
+    ) -> list[int]:
+        """Add one or more pages from PDF files, bytes, or streams, one per source.
+
+        Each PDF source is opened and its first page is imported into the current
+        document. The page's content, resources, annotations, and other properties
+        are preserved during the import.
+
+        Parameters
+        ----------
+        pdf_sources : list of str, Path, bytes, bytearray, or BinaryIO
+            PDF file paths, raw bytes, bytearrays, or file-like objects with a
+            ``read()`` method.
+        page_numbers : list of int, optional
+            One-based page numbers to import from each source PDF. If ``None``
+            (default), page 1 is imported from each source. If a list, each
+            element corresponds to the source at the same index.
+
+        Returns
+        -------
+        list of int
+            One-based page numbers of the newly added pages, in order.
+
+        Raises
+        ------
+        PdfValidationException
+            If any PDF data is invalid.
+        FileNotFoundError
+            If any PDF path does not exist.
+        IndexError
+            If any page number exceeds the number of pages in the corresponding
+            source PDF, or if a negative page number is provided.
+        TypeError
+            If any source is not a supported type or a file-like object's
+            ``read()`` method does not return bytes or bytearray.
+
+        Notes
+        -----
+        Each source PDF is loaded temporarily during the import and closed
+        afterwards. The imported page retains its original properties:
+        content, annotations, form fields, layers, and page boxes.
+
+        Examples
+        --------
+        ::
+
+            # Add pages from multiple PDF files (page 1 from each)
+            page_numbers = document.add_pages_from_pdf(
+                ["document1.pdf", "document2.pdf", "document3.pdf"]
+            )
+
+            # Add specific pages from each source
+            page_numbers = document.add_pages_from_pdf(
+                ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+                page_numbers=[2, 1, 3]
+            )
+
+            # Add pages from bytes
+            with open("source.pdf", "rb") as f:
+                page_numbers = document.add_pages_from_pdf([f.read()])
+
+            # Add pages from file-like objects (e.g., BytesIO)
+            from io import BytesIO
+            page_numbers = document.add_pages_from_pdf([BytesIO(pdf_bytes)])
+
+        """
+        if not isinstance(pdf_sources, list):
+            raise TypeError(
+                f"pdf_sources must be a list of paths, bytes, or file-like objects, "
+                f"got {type(pdf_sources).__name__}"
+            )
+        if not pdf_sources:
+            return []
+
+        # Validate and normalize page_numbers
+        if page_numbers is None:
+            page_numbers = [1] * len(pdf_sources)
+        elif not isinstance(page_numbers, list):
+            raise TypeError(
+                f"page_numbers must be a list of integers or None, "
+                f"got {type(page_numbers).__name__}"
+            )
+        elif len(page_numbers) != len(pdf_sources):
+            raise ValueError(
+                f"page_numbers length ({len(page_numbers)}) must match "
+                f"pdf_sources length ({len(pdf_sources)})"
+            )
+
+        # Validate page numbers
+        for i, pn in enumerate(page_numbers):
+            if not isinstance(pn, int) or isinstance(pn, bool):
+                raise TypeError(
+                    f"page_numbers must contain only integers, "
+                    f"got {type(pn).__name__} at index {i}"
+                )
+            if pn < 1:
+                raise ValueError(
+                    f"page_numbers must contain positive integers, got {pn} at index {i}"
+                )
+
+        page_numbers_added = []
+
+        for source, page_num in zip(pdf_sources, page_numbers):
+            # Handle file-like objects
+            if hasattr(source, "read") and callable(source.read):
+                data = source.read()
+                if not isinstance(data, (bytes, bytearray)):
+                    raise TypeError(
+                        f"read() must return bytes or bytearray, got {type(data).__name__}"
+                    )
+                source = data
+            # Create page from PDF (handles paths, bytes, bytearrays, and file-like objects)
+            page = Page.from_pdf(self, source, page_number=page_num)
+            page_numbers_added.append(page.number)
+
+        return page_numbers_added
+
     @page_api(scalars=("page_index",))
     def save_page_as_image(
         self,
