@@ -1258,6 +1258,74 @@ class Document:
         # Return the page from the extracted document
         return extracted.pages[1]
 
+    def move_page(self, page_number: int, new_position: int) -> Page:
+        """Move a page to *new_position*, keeping the page itself.
+
+        The page keeps its object, so the links, bookmarks and named
+        destinations that point at it keep landing on it, and the form fields
+        whose widgets sit on it stay whole -- which a remove-then-reinsert or
+        copy-then-delete reorder cannot promise. Page labels follow their
+        pages. Both numbers are one-based, as everywhere else in the API.
+
+        Parameters
+        ----------
+        page_number : int
+            The one-based page number to move. Page numbers start at 1.
+        new_position : int
+            The one-based position to move the page to. The pages between the
+            page's old and new position shift the other way by one.
+
+        Returns
+        -------
+        Page
+            The moved page, at its new position.
+
+        Raises
+        ------
+        IndexError
+            If *page_number* or *new_position* is not an existing page or
+            position (both must be between 1 and the number of pages in the
+            document), or the document has no pages.
+
+        Examples
+        --------
+        ::
+
+            # Put the last page first
+            doc.move_page(len(doc), 1)
+
+            # Move page 2 behind page 5
+            doc.move_page(2, 5)
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        page_count = self.page_count
+        if page_count == 0:
+            raise IndexError("Document has no pages to move")
+        if not 1 <= page_number <= page_count:
+            raise IndexError(
+                f"Page number {page_number} is out of range. "
+                f"Document has {page_count} page(s). Page numbers must be between 1 and {page_count}."
+            )
+        if not 1 <= new_position <= page_count:
+            raise IndexError(
+                f"Position {new_position} is out of range. "
+                f"Document has {page_count} page(s). Positions must be between 1 and {page_count}."
+            )
+        if page_number == new_position:
+            return self.pages[page_number]
+
+        # The engine refreshes its own bookmark view while reordering, so the
+        # caller's edits must be where it reads them first.
+        self._flush_outlines()
+        self._engine_pdf.move_page(page_number - 1, new_position - 1)
+        # The bookmarks the engine reordered are the engine's now; a collection
+        # taken before it would still show the page numbers the tree had.
+        self._outlines = None
+        return self.pages[new_position]
+
     @property
     def info(self) -> dict[str, str]:
         """Get or set the document metadata (info dictionary).
@@ -7951,7 +8019,26 @@ class Document:
         must see the caller's edits first.
         """
         if self._outlines is not None and self._engine_pdf is not None:
-            self._engine_pdf._outlines_data = self._outlines._to_list()
+            outline_data = self._outlines._to_list()
+            # Add loaded_target for outlines that have page_index but no target.
+            # This ensures the outline follows the page after moves/deletions.
+            engine = self._engine_pdf
+            if engine._cos_doc is not None:
+                for item in outline_data:
+                    if item.get("loaded_target") is None and item.get("target") is None:
+                        page_index = item.get("page_index")
+                        if page_index is not None:
+                            try:
+                                page_ref = engine._make_page_ref(page_index)
+                                from aspose_pdf.engine.cos import PdfArray, PdfName
+                                item["loaded_target"] = (
+                                    "Dest",
+                                    PdfArray([page_ref, PdfName("Fit")]),
+                                )
+                            except Exception:
+                                # If we can't create a page ref, skip adding loaded_target
+                                pass
+            self._engine_pdf._outlines_data = outline_data
             if not self._outlines._items and self._engine_pdf._cos_doc is not None:
                 from aspose_pdf.engine.cos import PdfDictionary, PdfName
 

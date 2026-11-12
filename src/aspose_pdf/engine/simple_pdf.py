@@ -2014,7 +2014,13 @@ class SimplePdf:
     ) -> None:
         if self._cos_doc is None:
             return
-        from .cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
+        from .cos import (
+            PdfArray,
+            PdfDictionary,
+            PdfName,
+            PdfNumber,
+            PdfStream,
+        )
 
         # Get Pages root
         root_ref = self._cos_doc.trailer.mapping.get(PdfName("Root"))
@@ -10890,6 +10896,215 @@ class SimplePdf:
                     continue
                 if targets_deleted_page(action.mapping.get(PdfName("D"))):
                     annotation.mapping.pop(PdfName("A"), None)
+
+    #: The page entries (ISO 32000-1 7.7.3.4) a page inherits from the /Pages
+    #: nodes above it, which a move across the tree must not lose.
+    _PAGE_INHERITED = ("Resources", "MediaBox", "CropBox", "Rotate")
+
+    def _clear_page_inheritance(self) -> None:
+        """Remove inherited properties from pages.
+
+        This is used before re-inheriting after a page move, so that pages
+        pick up the new inherited values from their new parent nodes.
+        """
+        if self._cos_doc is None:
+            return
+
+        from .cos import PdfDictionary, PdfIndirectReference, PdfName
+
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        pages_ref = (
+            catalog.mapping.get(PdfName("Pages"))
+            if isinstance(catalog, PdfDictionary)
+            else None
+        )
+        if not isinstance(pages_ref, PdfIndirectReference):
+            return
+
+        stack = [pages_ref]
+        seen: set[int] = set()
+        while stack:
+            node_ref = stack.pop()
+            node = self._resolve(node_ref)
+            if not isinstance(node, PdfDictionary):
+                continue
+            number = node_ref.object_number
+            if number in seen:
+                continue
+            seen.add(number)
+            node_type = self._resolve(node.mapping.get(PdfName("Type")))
+            if isinstance(node_type, PdfName) and node_type.name == "/Page":
+                # Remove inherited properties from this page
+                for key in self._PAGE_INHERITED:
+                    name = PdfName(key)
+                    if name in node.mapping:
+                        del node.mapping[name]
+                continue
+            kids = self._resolve(node.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray) and kids.items:
+                for kid in kids.items:
+                    if isinstance(kid, PdfIndirectReference):
+                        stack.append(kid)
+
+    def _refresh_pages_list(self) -> None:
+        """Update self.pages from the current page tree.
+
+        This is called after page tree changes (e.g., page moves) to ensure
+        the cached page rectangles reflect any inherited property changes.
+        """
+        if self._cos_doc is None:
+            return
+
+        # Clear the cached pages list
+        self.pages = []
+        # Re-traverse the page tree to get the current MediaBoxes
+        root_ref = self._cos_doc.trailer.mapping.get(PdfName("Root"))
+        if isinstance(root_ref, PdfIndirectReference):
+            root = self._resolve(root_ref)
+            if isinstance(root, PdfDictionary):
+                pages_ref = root.mapping.get(PdfName("Pages"))
+                if isinstance(pages_ref, PdfIndirectReference):
+                    self._refresh_pages_from_node(pages_ref)
+        # Debug: check if pages list is correct
+        # print(f"_refresh_pages_list: pages = {self.pages}")
+
+    def _refresh_pages_from_node(
+        self, node_ref: Any, _depth: int = 1
+    ) -> None:
+        """Recursively traverse page tree and collect MediaBoxes."""
+        from .cos import PdfArray, PdfDictionary, PdfName
+
+        node = self._resolve(node_ref)
+        if not isinstance(node, PdfDictionary):
+            return
+        self._load_budget.check(_depth, "max_nesting_depth", "page tree depth")
+
+        node_type = self._get_name(node.mapping.get(PdfName("Type")))
+
+        if node_type == "Page":
+            mbox_obj = node.mapping.get(PdfName("MediaBox"))
+            mbox = _usable_media_box(
+                mbox_obj.items if isinstance(mbox_obj, PdfArray) else None,
+                self._get_number,
+            )
+            self.pages.append(mbox)
+        else:
+            # Intermediate node - recurse into kids
+            kids = self._resolve(node.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray) and kids.items:
+                for kid in kids.items:
+                    if isinstance(kid, PdfIndirectReference):
+                        self._refresh_pages_from_node(kid, _depth + 1)
+
+    def _materialize_page_inheritance(self) -> bool:
+        """Write what each page inherits from its ancestors onto the page itself.
+
+        A page tree may nest intermediate ``/Pages`` nodes, and ``/Resources``,
+        ``/MediaBox``, ``/CropBox`` and ``/Rotate`` inherit down it (ISO 32000-1
+        7.7.3.4). Reordering the tree moves pages under a different ancestor, so
+        anything a page only inherits must be written on the page first or the
+        move silently restyles it. Returns whether the tree was nested, the only
+        case that needs this.
+        """
+        if self._cos_doc is None:
+            return False
+
+        from .cos import PdfArray, PdfDictionary, PdfIndirectReference, PdfName
+
+        catalog = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))
+        pages_ref = (
+            catalog.mapping.get(PdfName("Pages"))
+            if isinstance(catalog, PdfDictionary)
+            else None
+        )
+        if not isinstance(pages_ref, PdfIndirectReference):
+            return False
+
+        nested = False
+        seen: set[int] = set()
+        # An explicit stack rather than recursion: an untrusted document may
+        # nest the tree deeper than Python's own recursion limit allows.
+        stack: list[tuple[PdfIndirectReference, dict[PdfName, object], int]] = [
+            (pages_ref, {}, 1)
+        ]
+        while stack:
+            node_ref, inherited, depth = stack.pop()
+            node = self._resolve(node_ref)
+            if not isinstance(node, PdfDictionary):
+                continue
+            self._load_budget.check(depth, "max_nesting_depth", "page tree depth")
+            number = node_ref.object_number
+            if number in seen:
+                continue  # a malformed tree that loops back on itself
+            seen.add(number)
+            node_type = self._resolve(node.mapping.get(PdfName("Type")))
+            if isinstance(node_type, PdfName) and node_type.name == "/Page":
+                if inherited:
+                    for key, value in inherited.items():
+                        # Always inherit from parent; overwrite any existing value
+                        node.mapping[key] = value
+                continue
+            # An intermediate node: its own inheritable entries apply to
+            # everything below it unless a nearer ancestor already supplied one.
+            child_inherited = dict(inherited)
+            for key in self._PAGE_INHERITED:
+                name = PdfName(key)
+                if name in node.mapping and name not in child_inherited:
+                    child_inherited[name] = self._resolve(node.mapping[name])
+            kids = self._resolve(node.mapping.get(PdfName("Kids")))
+            if isinstance(kids, PdfArray) and kids.items:
+                nested = True
+                for kid in kids.items:
+                    if isinstance(kid, PdfIndirectReference):
+                        stack.append((kid, child_inherited, depth + 1))
+        return nested
+
+    def move_page(self, source_index: int, target_index: int) -> None:
+        """Move a page from *source_index* to *target_index* (both 0-based).
+
+        The page itself moves: it keeps its object, so the links, bookmarks and
+        named destinations that name it keep landing on it, and the form fields
+        whose widgets sit on it stay whole -- which a copy-then-delete reorder
+        cannot promise. Page labels follow their pages, the way an interleave
+        or an assembly of pages from several documents does.
+
+        Raises
+        ------
+        IndexError
+            If either index is not an existing page.
+        """
+        self._ensure_not_disposed()
+        count = len(self.pages)
+        if not 0 <= source_index < count:
+            raise IndexError(f"Page index out of range: {source_index}")
+        if not 0 <= target_index < count:
+            raise IndexError(f"Page index out of range: {target_index}")
+        if source_index == target_index:
+            return
+        self._ensure_page_cache()
+        if len(self._page_refs) != count:
+            raise PdfValidationException(
+                f"The page tree names {len(self._page_refs)} page(s) but "
+                f"{count} page(s) are known; the document is malformed"
+            )
+        self._materialize_page_inheritance()
+        # Refresh the cached pages list to reflect the inherited values
+        # before the move, so _order_pages reorders the correct values.
+        self._refresh_pages_list()
+        # A position list, where position *target_index* takes the page that
+        # *source_index* held: the permutation _order_pages applies to the page
+        # tree and every view of it.
+        order = list(range(count))
+        order.insert(target_index, order.pop(source_index))
+        from .interleave import _order_pages
+
+        _order_pages(self, order)
+        # The _order_pages function flattens the page tree, so the intermediate
+        # nodes are no longer referenced. The pages already have their inherited
+        # values written onto them from _materialize_page_inheritance(), so we
+        # don't need to do anything else.
+        # Refresh the cached pages list to update the MediaBox from the page tree.
+        self._refresh_pages_list()
 
     def add(self, page: Any) -> None:
         """Add a page to the end with COS synchronization."""

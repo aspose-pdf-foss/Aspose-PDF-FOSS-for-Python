@@ -90,8 +90,13 @@ def _order_pages(pdf: SimplePdf, order: list[int]) -> None:
     for number in ordered:
         pdf._cos_doc.objects[number].mapping[PdfName("Parent")] = tree_ref
     pdf.pages = [pdf.pages[index] for index in order]
-    pdf.page_contents = [pdf.page_contents[index] for index in order]
-    pdf._content_obj_ids = [pdf._content_obj_ids[index] for index in order]
+    # A lazy document keeps ``page_contents`` (and the content object numbers)
+    # empty on purpose -- content is decoded per page through ``_page_obj_ids``
+    # -- so there is nothing here to permute.
+    if pdf.page_contents:
+        pdf.page_contents = [pdf.page_contents[index] for index in order]
+    if pdf._content_obj_ids:
+        pdf._content_obj_ids = [pdf._content_obj_ids[index] for index in order]
     pdf._page_obj_ids = ordered
     pdf._page_refs = list(ordered)
     pdf._page_cache_valid = True
