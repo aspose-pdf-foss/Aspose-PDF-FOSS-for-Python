@@ -6735,6 +6735,73 @@ class Document:
                 write_files([(Path(destination), data)], overwrite)
         return data
 
+    @page_api(selections=("pages",))
+    def export_words_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        clip: Sequence[float] | None = None,
+        skip_artifacts: bool = False,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return positioned words as separate CSV members in a ZIP archive.
+
+        Names are ``words-page-0001.csv``, ``words-page-0002.csv``, etc.,
+        following the requested one-based page order (including repeats).
+        ``None`` selects all pages; ``[]`` selects none. Extraction and
+        clipping follow :meth:`extract_words`. Selected pages are read one
+        at a time, without rendering or image decoding.
+
+        CSV preserves cell strings, with standard quoting and CRLF records.
+        ``encoding='utf-8-sig'`` adds a spreadsheet BOM per CSV.
+
+        ``include_manifest=True`` adds a versioned UTF-8 ``manifest.json``
+        with archive names, original page indices, word counts and encoded
+        file sizes.
+
+        ZIP uses ``'deflate'`` (level 0..9) or ``'stored'``, fixed timestamps
+        and regular-file permissions. Empty results produce a valid empty ZIP
+        or a manifest with no pages. Selection, word counts, CSV bytes,
+        manifest and archive buffers obey :class:`PdfLoadLimits`.
+
+        The archive is completed before output is touched. Paths are written
+        atomically with parent directories created; ``overwrite=False`` refuses
+        existing files. Binary streams retry short writes at their current
+        position and remain open; write failures can leave partial stream output.
+        The source PDF is not edited.
+        """
+        from aspose_pdf._export_files import write_files
+        from aspose_pdf.engine.word_zip import export_zip
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = export_zip(
+            self,
+            pages=pages,
+            clip=clip,
+            skip_artifacts=skip_artifacts,
+            delimiter=delimiter,
+            encoding=encoding,
+            compression=compression,
+            compresslevel=compresslevel,
+            include_manifest=include_manifest,
+        )
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
     @page_api(selections=("pages",), result="records")
     def search_text(
         self,

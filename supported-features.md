@@ -3865,6 +3865,42 @@ Supported:
     short writes at their current position and remain open. Preparation failures
     preserve destinations; stream write failures can leave partial output.
     Returned bytes equal the written payload.
+- **Export word positions as separate CSV files in a ZIP archive.**
+  `Document.export_words_zip(destination=None, pages=None, clip=None,
+  skip_artifacts=False, delimiter=",", encoding="utf-8", compression="deflate",
+  compresslevel=6, include_manifest=False, overwrite=True)` and
+  `Page.export_words_zip(...)` return ZIP bytes and optionally save one path
+  or binary stream. Each page's words become `words-page-0001.csv`,
+  `words-page-0002.csv`, and so on, in selected page order.
+  Page repetitions are retained; empty selections contribute no CSV files.
+  The archive is valid even when there are no words.
+  Extraction uses the same clipping and artifact filtering limits as
+  `extract_words()`, reading selected pages one at a time without rendering,
+  image decoding or cross-page merging.
+  CSV keeps the extracted word text, one-based page numbers, four bounding
+  coordinates and transformed quad geometry; quoting and CRLF records match
+  `export_words_csv`. `encoding="utf-8-sig"` adds a BOM independently to
+  every member. Compression is `"deflate"` (level 0..9) or `"stored"`;
+  timestamps and regular file permissions are fixed for deterministic archives.
+  Flat generated names contain no source filenames or path components.
+  `include_manifest=True` adds UTF-8 `manifest.json` with `schema_version: 2`,
+  `delimiter`, `encoding` and a `pages` array. Records contain `archive_name`,
+  original one-based `page_index`, word count and uncompressed CSV byte `size`.
+  Selection, entry counts, word counts, member bytes and cumulative
+  CSV/manifest bytes obey `PdfLoadLimits`; the ZIP buffer is bounded by
+  `max_codec_work_bytes`. Options and all page indices are validated before
+  extraction. The archive is completed before writing; paths are replaced
+  atomically with parent folders created, and `overwrite=False` refuses an
+  existing file. Streams retry short writes and remain open; a stream write
+  failure can leave partial output. The source PDF is not edited.
+
+  ```python
+  with Document("report.pdf") as document:
+      document.export_words_zip(
+          "words.zip", pages=[1, 3], delimiter=";",
+          encoding="utf-8-sig", include_manifest=True,
+      )
+  ```
 - Extract text from page content streams with `PdfExtractor`, which reads each
   page **through the engine's own extractor**: content is decoded on demand,
   so a document whose pages are loaded lazily is read rather than coming back
