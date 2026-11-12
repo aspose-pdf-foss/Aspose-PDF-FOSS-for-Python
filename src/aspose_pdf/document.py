@@ -1364,6 +1364,117 @@ class Document:
             )
         return self
 
+    # ------------------------------------------------------------------
+    # The standard text entries of the /Info dictionary, as properties.
+    # ------------------------------------------------------------------
+
+    def _info_text(self, key: str) -> str | None:
+        """One text entry of the ``/Info`` dictionary, or ``None`` when absent."""
+        return self.info.get(key)
+
+    def _set_info_text(self, key: str, value: str | None) -> None:
+        """Write one ``/Info`` text entry; ``None`` removes the entry.
+
+        A value that is not text is refused here rather than at save time,
+        which is where :attr:`info` itself would name the entry and the type
+        it got. Other entries -- including ones the ``/Info`` dictionary holds
+        under a producer's own name -- keep what they had.
+        """
+        if value is not None and not isinstance(value, str):
+            raise TypeError(
+                f"{key.lower()} must be a string or None, got {type(value).__name__}"
+            )
+        entries = dict(self.info)
+        if value is None:
+            entries.pop(key, None)
+        else:
+            entries[key] = value
+        self.info = entries
+
+    @property
+    def title(self) -> str | None:
+        """The document's title, the ``/Info`` ``/Title`` entry, or ``None``.
+
+        Assign text to set it, or ``None`` to remove the entry::
+
+            document.title = "Quarterly report"
+
+        The value lives in the ``/Info`` dictionary (:attr:`info`). Mirror the
+        standard entries into the XMP packet with :meth:`sync_metadata` when
+        the document carries one.
+        """
+        return self._info_text("Title")
+
+    @title.setter
+    def title(self, value: str | None) -> None:
+        self._set_info_text("Title", value)
+
+    @property
+    def author(self) -> str | None:
+        """The document's author, the ``/Info`` ``/Author`` entry, or ``None``.
+
+        Assign text to set it, or ``None`` to remove the entry. The value
+        lives in the ``/Info`` dictionary (:attr:`info`).
+        """
+        return self._info_text("Author")
+
+    @author.setter
+    def author(self, value: str | None) -> None:
+        self._set_info_text("Author", value)
+
+    @property
+    def subject(self) -> str | None:
+        """The document's subject, the ``/Info`` ``/Subject`` entry, or ``None``.
+
+        Assign text to set it, or ``None`` to remove the entry. The value
+        lives in the ``/Info`` dictionary (:attr:`info`).
+        """
+        return self._info_text("Subject")
+
+    @subject.setter
+    def subject(self, value: str | None) -> None:
+        self._set_info_text("Subject", value)
+
+    @property
+    def keywords(self) -> str | None:
+        """The document's search keywords, the ``/Info`` ``/Keywords`` entry.
+
+        One text entry, comma-separated when a viewer writes several, or
+        ``None`` when absent. Assign text to set it, or ``None`` to remove the
+        entry. The value lives in the ``/Info`` dictionary (:attr:`info`).
+        """
+        return self._info_text("Keywords")
+
+    @keywords.setter
+    def keywords(self, value: str | None) -> None:
+        self._set_info_text("Keywords", value)
+
+    @property
+    def creator(self) -> str | None:
+        """The program that authored the document, the ``/Info`` ``/Creator``.
+
+        ``None`` when absent. Assign text to set it, or ``None`` to remove the
+        entry. The value lives in the ``/Info`` dictionary (:attr:`info`).
+        """
+        return self._info_text("Creator")
+
+    @creator.setter
+    def creator(self, value: str | None) -> None:
+        self._set_info_text("Creator", value)
+
+    @property
+    def producer(self) -> str | None:
+        """The program that last wrote the file, the ``/Info`` ``/Producer``.
+
+        ``None`` when absent. Assign text to set it, or ``None`` to remove the
+        entry. The value lives in the ``/Info`` dictionary (:attr:`info`).
+        """
+        return self._info_text("Producer")
+
+    @producer.setter
+    def producer(self, value: str | None) -> None:
+        self._set_info_text("Producer", value)
+
     @property
     def signatures(self) -> list[PdfSignature]:
         """The digital signatures in the document, in the order the file holds them.

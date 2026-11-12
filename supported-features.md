@@ -156,6 +156,13 @@ Supported:
   `PdfValidationException` naming the entry and the type it got, and a
   date-like value is told the `D:YYYYMMDDHHmmSSOHH'mm'` spelling of 7.9.4
   (`value.strftime("D:%Y%m%d%H%M%S+00'00'")`) rather than being coerced.
+- The six standard text entries also answer as properties: `document.title`,
+  `author`, `subject`, `keywords`, `creator` and `producer` read their `/Info`
+  entry or `None` when it is absent, write it from text, and remove it with
+  `None`. A value that is not text is refused where it is assigned, rather
+  than at save time. The dates and `/Trapped` keep the dictionary spelling
+  (`info["CreationDate"] = ...`), and the XMP packet changes only through
+  `sync_metadata()`, never as a side effect of the properties.
 - **`/Trapped` is written as a name, and a producer's own entries keep their
   type.** 14.3.3 types `/Trapped` as a name (`/True`, `/False`, `/Unknown`),
   so `info["Trapped"] = "True"` (or `"true"`, or `"/True"`) writes `/Trapped

@@ -43,6 +43,16 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `document.page_count` and makes the API more Pythonic for users familiar with
   container types in Python's standard library.
 
+- **Read and write the standard document properties directly.** Added
+  `Document.title`, `author`, `subject`, `keywords`, `creator` and `producer`
+  properties over the `/Info` entries ISO 32000-1 14.3.3 names, so a document
+  can be retitled or branded with one obvious line (`document.title =
+  "Quarterly report"`) instead of naming the dictionary keys by hand.
+  Assigning `None` removes the entry, and a value that is not text is refused
+  on assignment rather than at save time. The properties share the dictionary
+  with `Document.info`, and `sync_metadata()` mirrors the entries into the
+  XMP packet.
+
 - **Get PDF content as bytes.** Added `Document.to_bytes(*, incremental=None) -> bytes`,
   the logical complement to `from_bytes()`. This returns the PDF content directly,
   allowing round-tripping through bytes without creating temporary files.

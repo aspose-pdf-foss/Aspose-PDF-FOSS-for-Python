@@ -78,6 +78,11 @@ flowchart TD
 - `Document.language` reads or sets the PDF's default language, for example
   `document.language = "en-US"`, without converting the document. Assign `None`
   to remove the declaration, or `""` to declare the language unknown.
+- `document.title`, `author`, `subject`, `keywords`, `creator` and `producer`
+  read and write the standard text entries of the information dictionary —
+  `document.title = "Quarterly report"` — and assigning `None` removes the
+  entry. `sync_metadata()` mirrors the entries into the XMP packet; anything
+  else the dictionary carries stays reachable through `document.info`.
 - `document.pages.add(PageSize.A4)` creates a page of any size — the ISO A and B sizes, the US
   sizes, `landscape()`, `from_mm()` or a plain `(width, height)` pair in points — and
   `Page.media_box`, `Page.size`, `Page.crop_box`, `Page.bleed_box`, `Page.trim_box` and
