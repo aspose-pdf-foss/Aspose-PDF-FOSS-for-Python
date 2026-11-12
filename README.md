@@ -2418,7 +2418,8 @@ and delete workflows. 277 public types are organized by module below.
     through fields and annotations; `None` clears the page's explicit preference.
 - `PageCollection` — `item(index) -> Page`, `add(page) -> Page`, `insert(index, page) -> Page`
   (the page may belong to another document, and is then imported with all it names),
-  `delete(index) -> None`, `clear() -> None`, `contains(page) -> bool`, `index_of(page) -> int`
+  `delete(index) -> None`, `clear() -> None`, `contains(page) -> bool`, `index_of(page) -> int`,
+  `pop(index=None) -> Page` (removes and returns a page, defaulting to the last page)
 - `PageLabelCollection` (`Document.page_labels`) — a mutable mapping from the page a label range
   starts at to its `PageLabel(style, prefix, start)`; `NumberingStyle` names the five styles and
   `NONE`; `label(page_index) -> str | None`, `clear()`

@@ -3754,6 +3754,85 @@ class PageCollection:
         # but our engine's delete_pages handles it now.
         self._document._engine_pdf.delete_pages(0, len(self))
 
+    def pop(self, index: int | None = None) -> Page:
+        """Remove and return a page from the collection.
+
+        This method removes a page from the collection and returns it as a
+        :class:`~aspose_pdf.pages.Page` object that can be inserted into
+        another document or used elsewhere.
+
+        Parameters
+        ----------
+        index : int, optional
+            The one-based page number to remove. Defaults to ``None``, which
+            removes and returns the last page (following Python's list.pop()
+            convention). Page numbers start at 1.
+
+        Returns
+        -------
+        Page
+            The removed page, which can be inserted into another document
+            using :meth:`~aspose_pdf.pages.PageCollection.insert` or
+            :meth:`~aspose_pdf.pages.PageCollection.add`.
+
+        Raises
+        ------
+        IndexError
+            If the collection is empty or if *index* is not a valid page number.
+        TypeError
+            If *index* is not an integer or ``None``.
+
+        Examples
+        --------
+        ::
+
+            # Remove and get the last page
+            last_page = document.pages.pop()
+
+            # Remove and get a specific page (e.g., first page)
+            first_page = document.pages.pop(1)
+
+            # Insert the popped page into another document
+            other_doc.pages.insert(1, popped_page)
+
+        Notes
+        -----
+        After removal, the page count decreases by one, and all page numbers
+        after the removed page are shifted down by one. For example, if you
+        pop page 2 from a 5-page document, the former page 3 becomes page 2,
+        page 4 becomes page 3, and page 5 becomes page 4.
+
+        The removed page retains all its properties: content, annotations,
+        form fields, layer assignments, page labels, and bookmarks that point
+        to it.
+        """
+        self._ensure_not_disposed()
+        count = len(self)
+
+        if count == 0:
+            raise IndexError("Cannot pop from an empty page collection")
+
+        # Default to the last page (Python's list.pop() behavior)
+        if index is None:
+            index = count
+
+        # Validate the index
+        index = page_index(index, count)
+
+        # Extract the page first (to return it)
+        # We need to extract just this page into a temporary document
+        extracted = self._document.extract_pages([index + 1])
+
+        # Now delete the page from the original document
+        self._document._engine_pdf.delete(index)
+
+        # Return the first (and only) page from the extracted document
+        return extracted.pages[1]
+
+    def Pop(self, index: int | None = None) -> Page:
+        """Public API alias for :meth:`pop`."""
+        return self.pop(index)
+
     def contains(self, page: Page) -> bool:
         """Return True if page is present in the collection."""
         self._ensure_not_disposed()

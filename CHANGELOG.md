@@ -33,6 +33,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PageCollection.pop()` method.** Added `PageCollection.pop(index=None) -> Page` to remove
+  and return a page from the collection, following Python's `list.pop()` convention. Without an
+  argument, `pop()` removes the last page; with an index, it removes the specified page. The
+  returned page can be inserted into another document using `pages.insert()` or `pages.add()`.
+  This provides a more Pythonic alternative to `Document.remove_page()` for many use cases.
+
 - **Check if a `Document` is closed.** Added the `Document.closed` property that
   returns `True` after `dispose()` or exiting a context manager, and `False`
   otherwise. This follows the convention of Python built-in file objects and
