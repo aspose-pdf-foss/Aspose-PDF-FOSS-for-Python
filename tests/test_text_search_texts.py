@@ -7,8 +7,11 @@ import re
 import pytest
 
 from aspose_pdf import Document, PdfLoadLimits, TextSearchMatch
-from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfName, PdfNumber, PdfStream
-from aspose_pdf.exceptions import AsposePdfException, PdfResourceLimitException, PdfValidationException
+from aspose_pdf.exceptions import (
+    AsposePdfException,
+    PdfResourceLimitException,
+    PdfValidationException,
+)
 
 
 @pytest.fixture

@@ -3,7 +3,7 @@ import zlib
 
 import pytest
 
-from aspose_pdf import Document, Image, PageSize
+from aspose_pdf import Document, Image
 from aspose_pdf.engine.simple_pdf import SimplePdf
 
 

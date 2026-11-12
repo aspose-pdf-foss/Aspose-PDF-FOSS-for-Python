@@ -840,6 +840,56 @@ class Page:
             overwrite=overwrite,
         )
 
+    def export_annotations_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        subtypes: str | Iterable[str] | None = None,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return this page's annotations as CSV in a ZIP archive.
+
+        Names are ``annotations-page-0001.csv``, ``annotations-page-0002.csv``,
+        etc., following the requested one-based page order (including repeats).
+        ``None`` selects all pages; ``[]`` selects none. Filters and snapshot
+        IDs match :meth:`export_annotations_json`, including popups/widgets by
+        default. Selected pages are read one at a time without decoding page
+        content or appearance streams.
+
+        CSV follows :meth:`export_annotations_csv`: columns are ``page_number``
+        (one-based), ``annotation_index`` (zero-based), ``id``, ``subtype``,
+        ``author``, ``subject``, ``contents``, ``created``, ``modified``,
+        ``in_reply_to``, ``popup`` and ``parent``. Quoting preserves Unicode,
+        double quotes, delimiters and embedded newlines with CRLF records.
+        ``encoding="utf-8-sig"`` adds a spreadsheet BOM; semicolon, tab and
+        other single-character delimiters are supported.
+
+        ZIP uses ``'deflate'`` (level 0..9) or ``'stored'``, fixed timestamps
+        and regular-file permissions. Empty results produce a valid empty ZIP
+        or a manifest with no pages. Selection, entry counts, annotation counts,
+        member bytes and cumulative CSV/manifest bytes obey :class:`PdfLoadLimits`.
+
+        The archive is completed before output is touched. Paths are written
+        atomically with parent directories created; ``overwrite=False`` refuses
+        existing files. Binary streams retry short writes at their current
+        position and remain open; write failures can leave partial stream output.
+        The source PDF is not edited.
+
+        This is a convenience method that delegates to
+        ``Document.export_annotations_zip`` with ``pages=[self.number]``.
+        """
+        return self._document.export_annotations_zip(
+            destination, pages=[self.number], subtypes=subtypes,
+            delimiter=delimiter, encoding=encoding, compression=compression,
+            compresslevel=compresslevel, include_manifest=include_manifest,
+            overwrite=overwrite,
+        )
+
     def search_text(
         self,
         pattern: str | re.Pattern[str],

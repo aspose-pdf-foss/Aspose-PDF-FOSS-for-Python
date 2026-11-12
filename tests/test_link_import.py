@@ -9,14 +9,10 @@ import pytest
 
 from aspose_pdf import (
     Document,
-    FitBDestination,
     FitDestination,
     FitRDestination,
-    FitVDestination,
     GoToRAction,
-    NamedAction,
     URIAction,
-    XYZDestination,
 )
 from aspose_pdf.exceptions import PdfValidationException
 

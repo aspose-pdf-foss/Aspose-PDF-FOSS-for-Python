@@ -259,8 +259,8 @@ def test_total_decoded_bytes_are_bounded():
 
 def test_streaming_source_works():
     """Streaming source pages are exported correctly."""
-    import tempfile
     import os
+    import tempfile
     
     with Document() as document:
         for i in range(3):

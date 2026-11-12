@@ -10,9 +10,7 @@ import pytest
 
 from aspose_pdf import Document, PdfLoadLimits
 from aspose_pdf.exceptions import (
-    AsposePdfException,
     PdfResourceLimitException,
-    PdfValidationException,
 )
 
 
@@ -178,8 +176,8 @@ def test_empty_document_produces_valid_empty_zip():
 
 def test_file_output():
     """File output writes the archive atomically."""
-    import tempfile
     import os
+    import tempfile
     
     with tempfile.TemporaryDirectory() as tmpdir:
         dest = os.path.join(tmpdir, "words.zip")
@@ -215,8 +213,8 @@ def test_binary_stream_output():
 
 def test_overwrite_option():
     """Overwrite option controls whether existing files may be replaced."""
-    import tempfile
     import os
+    import tempfile
     
     with tempfile.TemporaryDirectory() as tmpdir:
         dest = os.path.join(tmpdir, "words.zip")

@@ -36,6 +36,7 @@ from aspose_pdf.color import ColorValue
 from aspose_pdf.destinations import NamedDestinationCollection
 from aspose_pdf.document_fonts import DocumentFont
 from aspose_pdf.engine import viewer_preferences as engine_viewer_prefs
+from aspose_pdf.engine.annotation_zip import export_zip as _export_annotations_zip
 from aspose_pdf.engine.field_split import split_by_field_value as _split_by_field_value
 from aspose_pdf.engine.file_output import write_file_atomically
 from aspose_pdf.engine.page_pdf_zip import export_zip as _export_pages_zip
@@ -2993,6 +2994,72 @@ class Document:
         if not isinstance(overwrite, bool):
             raise PdfValidationException("overwrite must be a boolean")
         data = export(self, pages, subtypes)
+        if destination is not None:
+            if hasattr(destination, "write"):
+                write_all(destination, data)
+            else:
+                write_files([(Path(destination), data)], overwrite)
+        return data
+
+    @page_api(selections=("pages",))
+    def export_annotations_zip(
+        self,
+        destination: str | Path | BinaryIO | None = None,
+        *,
+        pages: Iterable[int] | None = None,
+        subtypes: str | Iterable[str] | None = None,
+        delimiter: str = ",",
+        encoding: str = "utf-8",
+        compression: str = "deflate",
+        compresslevel: int = 6,
+        include_manifest: bool = False,
+        overwrite: bool = True,
+    ) -> bytes:
+        """Return annotation metadata as separate CSV files in a ZIP archive.
+
+        Names are ``annotations-page-0001.csv``, ``annotations-page-0002.csv``,
+        etc., following the requested one-based page order (including repeats).
+        ``None`` selects all pages; ``[]`` selects none. Filters and snapshot
+        IDs match :meth:`export_annotations_json`, including popups/widgets by
+        default. Selected pages are read one at a time without decoding page
+        content or appearance streams.
+
+        CSV follows :meth:`export_annotations_csv`: columns are ``page_number``
+        (one-based), ``annotation_index`` (zero-based), ``id``, ``subtype``,
+        ``author``, ``subject``, ``contents``, ``created``, ``modified``,
+        ``in_reply_to``, ``popup`` and ``parent``. Quoting preserves Unicode,
+        double quotes, delimiters and embedded newlines with CRLF records.
+        ``encoding="utf-8-sig"`` adds a spreadsheet BOM; semicolon, tab and
+        other single-character delimiters are supported.
+
+        ZIP uses ``'deflate'`` (level 0..9) or ``'stored'``, fixed timestamps
+        and regular-file permissions. Empty results produce a valid empty ZIP
+        or a manifest with no pages. Selection, entry counts, annotation counts,
+        member bytes and cumulative CSV/manifest bytes obey :class:`PdfLoadLimits`.
+
+        The archive is completed before output is touched. Paths are written
+        atomically with parent directories created; ``overwrite=False`` refuses
+        existing files. Binary streams retry short writes at their current
+        position and remain open; write failures can leave partial output.
+        The source PDF is not edited.
+        """
+        from aspose_pdf._export_files import write_files
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        if not isinstance(overwrite, bool):
+            raise PdfValidationException("overwrite must be a boolean")
+        data = _export_annotations_zip(
+            self,
+            pages=pages,
+            subtypes=subtypes,
+            delimiter=delimiter,
+            encoding=encoding,
+            compression=compression,
+            compresslevel=compresslevel,
+            include_manifest=include_manifest,
+        )
         if destination is not None:
             if hasattr(destination, "write"):
                 write_all(destination, data)

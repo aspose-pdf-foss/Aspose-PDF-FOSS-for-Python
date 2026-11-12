@@ -6,8 +6,7 @@ import io
 
 import pytest
 
-from aspose_pdf import Document, Page, PageSize
-from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf import Document, Page
 
 
 def _create_minimal_pdf_with_pages(num_pages: int = 3) -> bytes:
@@ -17,7 +16,7 @@ def _create_minimal_pdf_with_pages(num_pages: int = 3) -> bytes:
     
     # Catalog and Pages dictionary
     pdf_body.append("1 0 obj << /Type /Catalog /Pages 2 0 R >>\nendobj\n")
-    pdf_body.append("2 0 obj << /Type /Pages /Count {} /Kids [".format(num_pages))
+    pdf_body.append(f"2 0 obj << /Type /Pages /Count {num_pages} /Kids [")
     
     # Page objects
     page_objects = []

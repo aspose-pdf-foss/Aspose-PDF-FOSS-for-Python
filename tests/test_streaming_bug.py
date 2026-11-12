@@ -1,7 +1,9 @@
 import io
-import tempfile
 import os
+import tempfile
+
 from aspose_pdf import Document
+
 
 def test_edit_save_reopen_split():
     """Test that edited content is preserved through save/reopen/split."""
@@ -41,11 +43,11 @@ def test_edit_save_reopen_split():
             print(f"page_contents after reopen: {engine.page_contents}")
             
             text = reopens.pages[1].extract_text()
-            print(f"Text after reopen: {repr(text)}")
+            print(f"Text after reopen: {text!r}")
             
             parts = reopens.split_pages()
             part_text = parts[0].pages[1].extract_text()
-            print(f"Part text: {repr(part_text)}")
+            print(f"Part text: {part_text!r}")
             
             assert "ANNOTATION TEXT" in part_text, f"ANNOTATION TEXT should be in part: {part_text}"
             print("TEST PASSED!")
