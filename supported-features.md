@@ -52,6 +52,10 @@ Supported:
   round-tripping without temporary files. Use `incremental=True` to write an
   incremental update (requires a document loaded from an existing PDF), `False`
   for a full rewrite, or `None` (the default) to auto-detect based on signatures.
+- **Write to a binary stream.** `Document.to_stream(stream, *, incremental=None) -> None`
+  writes the PDF content to a binary stream, complementing `from_stream()` for
+  round-tripping through streams. The stream is not closed after writing.
+  Incremental updates are supported with the same rules as `to_bytes()`.
 - Save PDFs to a path or writable binary stream, with overwrite protection for
   existing path targets.
 - **Saving over a file never costs the file that was there.** A path save --

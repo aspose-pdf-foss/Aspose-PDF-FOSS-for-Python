@@ -488,9 +488,12 @@ doc = Document.from_file("report.pdf")
 # From a binary stream
 from io import BytesIO
 doc = Document.from_stream(BytesIO(pdf_bytes))
+
+# To bytes
+pdf_bytes = doc.to_bytes()
 ```
 
-To get the PDF content as bytes, use `to_bytes()`:
+To get the PDF content as bytes or write to a stream, use `to_bytes()` and `to_stream()`:
 
 ```python
 # Get PDF content as bytes
@@ -501,9 +504,15 @@ with Document("report.pdf") as doc:
 doc = Document.from_bytes(pdf_bytes)
 doc.pages.add()
 modified_bytes = doc.to_bytes()
+
+# Round-trip through a stream
+from io import BytesIO
+buffer = BytesIO()
+doc.to_stream(buffer)
+pdf_bytes = buffer.getvalue()
 ```
 
-This complements `from_bytes()` and provides a convenient way to serialize a document
+These methods provide convenient ways to serialize a document
 without creating temporary files.
 
 The `Document` class supports the context manager protocol, so it can be used with the `with`

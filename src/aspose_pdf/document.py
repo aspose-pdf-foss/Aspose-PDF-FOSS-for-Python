@@ -2355,6 +2355,74 @@ class Document:
         else:
             return self._engine_pdf.to_bytes()
 
+    def to_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        incremental: bool | None = None,
+    ) -> None:
+        """Write the document to a binary stream.
+
+        This is a convenience method equivalent to ``save(stream, ...)``
+        but named for symmetry with :meth:`from_stream`. It writes the
+        PDF content to an in-memory buffer or any writable binary stream
+        without closing it.
+
+        Parameters
+        ----------
+        stream : BinaryIO
+            Any writable binary stream (e.g., ``io.BytesIO``, an open file
+            handle in binary mode).
+        incremental : bool or None
+            ``None`` (the default) writes an incremental update when the file
+            carries signatures that a rewrite would break. ``False`` asks for
+            a full rewrite regardless, and ``True`` forces an incremental
+            update. Incremental updates require a document that was loaded from
+            an existing PDF; a document built from scratch falls back to a full
+            write. Encrypted or to-be-signed documents are rejected.
+
+        Returns
+        -------
+        None
+            The method writes to the stream directly and returns ``None``.
+
+        Raises
+        ------
+        PdfSecurityException
+            If *incremental* is ``True`` and the document is encrypted or has
+            pending signatures.
+
+        Examples
+        --------
+        ::
+
+            from io import BytesIO
+
+            # Basic usage - round-trip through bytes
+            buffer = BytesIO()
+            with Document("input.pdf") as doc:
+                doc.pages.add()
+                doc.to_stream(buffer)
+            pdf_bytes = buffer.getvalue()
+
+            # Incremental save to stream
+            with Document("source.pdf") as doc:
+                doc.add_header("Confidential")
+                buffer = BytesIO()
+                doc.to_stream(buffer, incremental=True)
+
+        Notes
+        -----
+        The stream is **not** closed after writing. You can continue to
+        use it for additional operations after the method returns.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        # save_to_stream handles incremental correctly by calling save internally
+        self.save_to_stream(stream, save_format=None, incremental=incremental)
+
     def iter_pages(self) -> Iterator[Page]:
         """Iterate over the pages of the document one at a time.
 

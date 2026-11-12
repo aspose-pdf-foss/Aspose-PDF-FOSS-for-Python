@@ -49,6 +49,11 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The `incremental` parameter controls whether to write an incremental update
   (requires a document loaded from an existing PDF) or a full rewrite.
 
+- **Write to a binary stream.** Added `Document.to_stream(stream, *, incremental=None) -> None`,
+  the logical complement to `from_stream()`. This writes the PDF content to a binary
+  stream without closing it, allowing round-tripping through streams. The `incremental`
+  parameter has the same behavior as in `to_bytes()`.
+
 - **Create a page from a PDF file.** `Page.from_pdf()` imports a specific page
   from another PDF into the current document, preserving all content, resources,
   annotations, and page properties. The source can be a file path, raw bytes,
