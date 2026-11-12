@@ -2289,6 +2289,72 @@ class Document:
         )
         return doc
 
+    def to_bytes(self, *, incremental: bool | None = None) -> bytes:
+        """Return the document as PDF bytes.
+
+        This is a convenience method that returns the PDF content as bytes,
+        equivalent to saving to a :class:`BytesIO` stream and calling
+        ``getvalue()``, but more concise and efficient.
+
+        It is the logical complement to the :meth:`from_bytes` class method,
+        allowing you to round-trip a document through bytes without creating
+        temporary files::
+
+            # Load, modify, and get bytes
+            doc = Document.from_bytes(original_bytes)
+            doc.pages.add()
+            modified_bytes = doc.to_bytes()
+
+        Parameters
+        ----------
+        incremental : bool or None
+            ``None`` (the default) writes an incremental update when the file
+            carries signatures that a rewrite would break. ``False`` asks for
+            a full rewrite regardless, and ``True`` forces an incremental
+            update. Incremental updates require a document that was loaded from
+            an existing PDF; a document built from scratch falls back to a full
+            write. Encrypted or to-be-signed documents are rejected.
+
+        Returns
+        -------
+        bytes
+            The PDF content of the document.
+
+        Raises
+        ------
+        PdfSecurityException
+            If *incremental* is ``True`` and the document is encrypted or has
+            pending signatures.
+
+        Examples
+        --------
+        ::
+
+            # Basic usage
+            with Document("input.pdf") as doc:
+                doc.pages.add()
+                pdf_bytes = doc.to_bytes()
+
+            # Incremental save
+            with Document("source.pdf") as doc:
+                doc.add_header("Confidential")
+                pdf_bytes = doc.to_bytes(incremental=True)
+
+        Notes
+        -----
+        The document must be closed with :meth:`dispose` or a context manager
+        when you are finished with it, just like documents loaded from files.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        incremental = self._choose_incremental(incremental)
+        if incremental:
+            return self._engine_pdf.to_bytes_incremental()
+        else:
+            return self._engine_pdf.to_bytes()
+
     def iter_pages(self) -> Iterator[Page]:
         """Iterate over the pages of the document one at a time.
 

@@ -47,6 +47,11 @@ Supported:
   `key_encryption_key`, and `limits`. Use them when the source type is known:
   `from_bytes()` for in-memory PDF bytes, `from_file()` for file paths, and
   `from_stream()` for any readable binary stream.
+- **Get PDF content as bytes.** `Document.to_bytes(*, incremental=None) -> bytes`
+  returns the PDF content of the document, complementing `from_bytes()` for
+  round-tripping without temporary files. Use `incremental=True` to write an
+  incremental update (requires a document loaded from an existing PDF), `False`
+  for a full rewrite, or `None` (the default) to auto-detect based on signatures.
 - Save PDFs to a path or writable binary stream, with overwrite protection for
   existing path targets.
 - **Saving over a file never costs the file that was there.** A path save --

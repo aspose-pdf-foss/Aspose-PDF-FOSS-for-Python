@@ -490,6 +490,22 @@ from io import BytesIO
 doc = Document.from_stream(BytesIO(pdf_bytes))
 ```
 
+To get the PDF content as bytes, use `to_bytes()`:
+
+```python
+# Get PDF content as bytes
+with Document("report.pdf") as doc:
+    pdf_bytes = doc.to_bytes()
+
+# Round-trip through bytes
+doc = Document.from_bytes(pdf_bytes)
+doc.pages.add()
+modified_bytes = doc.to_bytes()
+```
+
+This complements `from_bytes()` and provides a convenient way to serialize a document
+without creating temporary files.
+
 The `Document` class supports the context manager protocol, so it can be used with the `with`
 statement. After the context exits, the document is closed and cannot be used further. The
 `Document.closed` property returns `True` after the document has been closed (either by calling

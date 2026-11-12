@@ -252,3 +252,110 @@ class TestDocumentFromClassMethods:
         doc1.dispose()
         doc2.dispose()
         doc3.dispose()
+
+
+# ---------------------------------------------------------------------------
+# to_bytes() tests
+# ---------------------------------------------------------------------------
+
+
+class TestDocumentToBytes:
+    """Test Document.to_bytes()."""
+
+    def test_to_bytes_returns_bytes(self, pdf_bytes):
+        """to_bytes() returns bytes."""
+        doc = Document.from_bytes(pdf_bytes)
+        result = doc.to_bytes()
+        assert isinstance(result, bytes)
+        doc.dispose()
+
+    def test_to_bytes_roundtrip(self, pdf_bytes):
+        """to_bytes() / from_bytes() roundtrip preserves content."""
+        doc1 = Document.from_bytes(pdf_bytes)
+        pdf_out = doc1.to_bytes()
+        doc2 = Document.from_bytes(pdf_out)
+
+        assert len(doc1) == len(doc2)
+        assert doc1.page_count == doc2.page_count
+        doc1.dispose()
+        doc2.dispose()
+
+    def test_to_bytes_empty_document(self):
+        """to_bytes() on an empty document returns valid PDF bytes."""
+        with Document() as doc:
+            result = doc.to_bytes()
+            assert isinstance(result, bytes)
+            # Minimal PDF should have a header
+            assert b"%PDF" in result
+
+    def test_to_bytes_programmatic_document(self):
+        """to_bytes() on a programmatically created document."""
+        with Document() as doc:
+            doc.pages.add()
+            # Simple test: bytes should be valid PDF
+            result = doc.to_bytes()
+            assert isinstance(result, bytes)
+            assert b"%PDF" in result
+
+    def test_to_bytes_incremental(self, pdf_bytes, tmp_path):
+        """to_bytes(incremental=True) works for documents loaded from file."""
+        # Write the bytes to a file first
+        test_file = tmp_path / "test.pdf"
+        test_file.write_bytes(pdf_bytes)
+
+        with Document.from_file(test_file) as doc:
+            # Add a page to ensure there are changes
+            doc.pages.add()
+            result = doc.to_bytes(incremental=True)
+            assert isinstance(result, bytes)
+            assert b"%PDF" in result
+
+    def test_to_bytes_full_rewrite(self, pdf_bytes):
+        """to_bytes(incremental=False) forces a full rewrite."""
+        doc = Document.from_bytes(pdf_bytes)
+        result = doc.to_bytes(incremental=False)
+        assert isinstance(result, bytes)
+        assert b"%PDF" in result
+        doc.dispose()
+
+    def test_to_bytes_equivalent_to_save_to_stream(self, pdf_bytes):
+        """to_bytes() produces same bytes as save_to_stream."""
+        import io
+
+        doc1 = Document.from_bytes(pdf_bytes)
+        bytes_direct = doc1.to_bytes()
+
+        doc2 = Document.from_bytes(pdf_bytes)
+        buffer = io.BytesIO()
+        doc2.save_to_stream(buffer)
+        bytes_stream = buffer.getvalue()
+
+        assert bytes_direct == bytes_stream
+        doc1.dispose()
+        doc2.dispose()
+
+    def test_to_bytes_multiple_calls(self, pdf_bytes):
+        """Multiple to_bytes() calls on the same document work."""
+        doc = Document.from_bytes(pdf_bytes)
+        result1 = doc.to_bytes()
+        result2 = doc.to_bytes()
+        result3 = doc.to_bytes()
+
+        assert result1 == result2 == result3
+        doc.dispose()
+
+    def test_to_bytes_after_dispose_raises(self, pdf_bytes):
+        """to_bytes() raises after dispose."""
+        doc = Document.from_bytes(pdf_bytes)
+        doc.dispose()
+
+        with pytest.raises(Exception):
+            doc.to_bytes()
+
+    def test_to_bytes_empty_document_succeeds(self):
+        """to_bytes() on a newly created empty document returns valid PDF bytes."""
+        doc = Document()
+        # A new Document has an engine for creating new content
+        result = doc.to_bytes()
+        assert isinstance(result, bytes)
+        assert b"%PDF" in result

@@ -43,6 +43,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `document.page_count` and makes the API more Pythonic for users familiar with
   container types in Python's standard library.
 
+- **Get PDF content as bytes.** Added `Document.to_bytes(*, incremental=None) -> bytes`,
+  the logical complement to `from_bytes()`. This returns the PDF content directly,
+  allowing round-tripping through bytes without creating temporary files.
+  The `incremental` parameter controls whether to write an incremental update
+  (requires a document loaded from an existing PDF) or a full rewrite.
+
 - **Create a page from a PDF file.** `Page.from_pdf()` imports a specific page
   from another PDF into the current document, preserving all content, resources,
   annotations, and page properties. The source can be a file path, raw bytes,
