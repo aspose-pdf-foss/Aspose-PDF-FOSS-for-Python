@@ -1505,6 +1505,54 @@ Supported:
   This is equivalent to creating an empty document and appending each source
   document in order, but more convenient for an iterable. The result is a new
   independent document that can be used with the context manager protocol.
+- **Select pages from multiple documents in one call:** `Document.concatenate_pages(pages_by_document) -> Document`
+  creates a new document from selected pages across multiple source documents. *pages_by_document*
+  is a mapping (e.g., dict) where keys are Document instances and values are page selections
+  for that document. Each selection can be:
+  - A one-based iterable of page numbers (e.g., ``[1, 3, 5]``)
+  - A page range string such as ``"1-3,7,10-"`` (string ranges include both endpoints and
+    may descend; an omitted end selects through the last page)
+  - ``odd`` and ``even`` select physical odd/even pages; ``last`` names the final page.
+    Order and repeated pages are retained.
+
+  All pages, resources, annotations, form fields, and bookmarks from the selected pages are
+  imported. The source documents remain unchanged. Page order follows the mapping's iteration
+  order (dict order in Python 3.7+).
+
+  ```python
+  from aspose_pdf import Document
+
+  # Combine specific pages from multiple documents
+  with Document("cover.pdf") as cover:
+      with Document("body.pdf") as body:
+          with Document("appendix.pdf") as appendix:
+              combined = Document.concatenate_pages({
+                  cover: [1],
+                  body: "1-5,10-",
+                  appendix: [1, 3, 5],
+              })
+              combined.save("combined.pdf")
+
+  # Use with odd/even page selection
+  with Document("double_sided.pdf") as doc:
+      with Document.concatenate_pages({
+          doc: "odd",  # Only odd pages
+      }) as odd_pages:
+          odd_pages.save("fronts.pdf")
+
+  # Combine pages from multiple sources in order
+  sources = {
+      Document("intro.pdf"): [1],
+      Document("main.pdf"): "1-3",
+      Document("outro.pdf"): [1],
+  }
+  with Document.concatenate_pages(sources) as result:
+      result.save("full_document.pdf")
+  ```
+  This is equivalent to creating an empty document and calling :meth:`append_pages`
+  for each source, but more convenient when you have pages from multiple documents
+  to combine. The result is a new independent document that can be used with the
+  context manager protocol.
 - **Select pages using familiar range expressions.**
   `parse_page_range("1-3,7,10-", page_count)` (exported from `aspose_pdf`)
   returns a tuple of one-based indices for text extraction, page rendering

@@ -274,6 +274,13 @@ flowchart TD
   (list, tuple, generator, etc.) into a single document. All pages, resources, annotations,
   form fields, and bookmarks are imported. The source documents remain unchanged. Use
   :meth:`merge` if you need to create section bookmarks for each source document.
+- `Document.concatenate_pages(pages_by_document)` creates a new document from selected pages
+  across multiple documents. *pages_by_document* is a mapping (e.g., dict) where keys are
+  Document instances and values are page selections for that document. Each selection can be
+  a one-based iterable of page numbers (e.g., ``[1, 3, 5]``), a page range string such as
+  ``"1-3,7,10-"``, ``odd``, ``even``, or ``last``. All pages, resources, annotations, form
+  fields, and bookmarks from the selected pages are imported. The source documents remain
+  unchanged. Page order follows the mapping's iteration order (dict order in Python 3.7+).
 - `Document.destinations` names places in the document — `destinations["chapter-2"] =
   XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
   (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks

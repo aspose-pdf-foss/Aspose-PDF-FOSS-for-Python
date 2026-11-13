@@ -9650,6 +9650,166 @@ class Document:
 
         return result
 
+    @staticmethod
+    def concatenate_pages(
+        pages_by_document: Mapping[Document, Iterable[int] | str],
+    ) -> Document:
+        """Create a new document from selected pages across multiple documents.
+
+        This static method provides a convenient way to combine specific pages
+        from multiple source documents into a single new document. It is the
+        page-selection equivalent of :meth:`concatenate`, allowing you to
+        extract and merge only the pages you need.
+
+        All pages, resources, annotations, form fields, and bookmarks from
+        the selected pages are imported. The source documents remain
+        unchanged and can be used independently after the operation.
+
+        Parameters
+        ----------
+        pages_by_document : mapping of Document to iterable of int or str
+            A mapping (e.g., dict) where keys are Document instances and
+            values are page selections for that document. Each selection can be:
+            - A one-based iterable of page numbers (e.g., ``[1, 3, 5]``)
+            - A page range string such as ``"1-3,7,10-"``
+            - String ranges include both endpoints and may descend (``"last-1"``);
+              an omitted end selects through the last page.
+            - ``odd`` and ``even`` select physical odd/even pages; ``last`` names
+              the final page. Order and repeated pages are retained.
+
+        Returns
+        -------
+        Document
+            A new document containing all selected pages from all source
+            documents, in the order the documents appear in the mapping.
+
+        Raises
+        ------
+        TypeError
+            If any key in the mapping is not a Document instance, or if any
+            page selection is not an iterable of integers or a string.
+        PdfValidationException
+            If any document in the mapping has been disposed, or if any page
+            selection is invalid (empty, out of range, etc.).
+
+        Examples
+        --------
+        Combine specific pages from multiple documents::
+
+            from aspose_pdf import Document
+
+            with Document("cover.pdf") as cover:
+                with Document("body.pdf") as body:
+                    with Document("appendix.pdf") as appendix:
+                        combined = Document.concatenate_pages({
+                            cover: [1],
+                            body: "1-5,10-",
+                            appendix: [1, 3, 5],
+                        })
+                        combined.save("combined.pdf")
+
+        Use with odd/even page selection::
+
+            with Document("double_sided.pdf") as doc:
+                with Document.concatenate_pages({
+                    doc: "odd",  # Only odd pages
+                }) as odd_pages:
+                    odd_pages.save("fronts.pdf")
+
+        Combine pages from multiple sources::
+
+            sources = {
+                Document("intro.pdf"): [1],
+                Document("main.pdf"): "1-3",
+                Document("outro.pdf"): [1],
+            }
+            with Document.concatenate_pages(sources) as result:
+                result.save("full_document.pdf")
+
+        Notes
+        -----
+        - This is equivalent to creating an empty document and calling
+          :meth:`append_pages` for each source, but more convenient when
+          you have pages from multiple documents to combine.
+        - The source documents remain independent and can be disposed or reused.
+        - Page numbers in the resulting document are assigned sequentially.
+        - Page order follows the mapping's iteration order (dict order in
+          Python 3.7+). To control the order, use an ordered mapping.
+        - Use :meth:`extract_pages` on a single document when you don't need
+          to combine pages from multiple documents.
+        """
+        result = Document()
+
+        try:
+            for doc, selection in pages_by_document.items():
+                if not isinstance(doc, Document):
+                    raise TypeError(
+                        "All keys in pages_by_document must be Document instances"
+                    )
+                doc._ensure_not_disposed()
+
+                if doc._engine_pdf is None:
+                    continue
+
+                # Handle page selection - convert to tuple of zero-based indices
+                if isinstance(selection, str):
+                    from aspose_pdf.page_ranges import parse_page_range
+
+                    one_based_indices = parse_page_range(
+                        selection, doc.page_count, limits=doc._load_limits
+                    )
+                    page_indices = tuple(index - 1 for index in one_based_indices)
+                else:
+                    # Validate that selection is iterable of integers
+                    try:
+                        one_based_indices = tuple(selection)
+                    except TypeError as exc:
+                        raise TypeError(
+                            "All values in pages_by_document must be "
+                            "iterables of integers or strings"
+                        ) from exc
+
+                    # Validate that all page numbers are valid one-based indices (>= 1)
+                    for idx in one_based_indices:
+                        if isinstance(idx, bool) or not isinstance(idx, int):
+                            raise TypeError(
+                                "Page selections must be iterables of integers"
+                            )
+                        if idx < 1:
+                            raise PdfValidationException(
+                                f"Page number must be >= 1, got {idx}"
+                            )
+                        if idx > doc.page_count:
+                            raise PdfValidationException(
+                                f"Page number {idx} is out of range for document "
+                                f"with {doc.page_count} pages"
+                            )
+
+                    page_indices = tuple(index - 1 for index in one_based_indices)
+
+                # Validate that selection is not empty
+                if not page_indices:
+                    raise PdfValidationException(
+                        "Selection of pages is empty"
+                    )
+
+                # Extract and import pages in one operation
+                doc._flush_outlines()
+                result._flush_outlines()
+                result._engine_pdf.append(doc._engine_pdf, pages=page_indices)
+
+                # Refresh the outlines collection to reflect the new pages
+                result._outlines = None
+                if result._form is not None:
+                    result._form._load_fields()
+
+        except Exception:
+            # If an error occurs, dispose the result document
+            result.dispose()
+            raise
+
+        return result
+
     def merge(
         self,
         *documents: Document,
