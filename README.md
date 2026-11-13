@@ -1191,7 +1191,7 @@ with Document("input.pdf") as document:
 ```
 
 `Document.extract_text(pages=[3, 1, 3])` reads the third, first, then third page.
-Indices in `Document` and `TextExtractorOptions(pages=...)` start at zero;
+Indices in `Document` and `TextExtractorOptions(pages=...)` start at one;
 the facade uses `PdfExtractor.extract_text(page_numbers=[3, 1, 3])` instead.
 `None` selects all pages and `[]` selects none. Lists, ranges and generators
 preserve their order and repetitions. Use `Document.open_streaming(...)` to
