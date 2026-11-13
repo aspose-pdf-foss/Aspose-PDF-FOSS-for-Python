@@ -723,6 +723,12 @@ with Document() as document:
     )
     print(f"Added pages: {page_numbers}")
 
+    # Add the same page from all sources (e.g., page 2 from each)
+    page_numbers = document.add_pages_from_pdf(
+        ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+        page_numbers=2
+    )
+
     # Add specific pages from each source
     page_numbers = document.add_pages_from_pdf(
         ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
@@ -742,7 +748,8 @@ with Document() as document:
 `add_pages_from_pdf` accepts file paths, raw PDF bytes, or file-like objects,
 adding one page per source. Each imported page retains its original content,
 annotations, form fields, layers, and page boxes. Use `page_numbers` to import
-specific pages; by default, page 1 is imported from each source.
+specific pages; by default, page 1 is imported from each source. You can pass
+a single integer to use the same page from all sources.
 
 ### Render a Page to an Image
 

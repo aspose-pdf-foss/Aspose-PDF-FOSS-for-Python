@@ -1606,9 +1606,10 @@ Supported:
   boxes.
   - `pdf_sources` is a list of file paths (`str`/`Path`), raw bytes,
     `bytearray`, or file-like objects with a ``read()`` method.
-  - `page_numbers` is an optional list of one-based page indices. ``None``
-    (default) imports page 1 from each source; a list must match `pdf_sources`
-    in length, so each source gets its own page number.
+  - `page_numbers` is an optional integer or list of one-based page indices.
+    ``None`` (default) imports page 1 from each source. A single integer uses
+    the same page for all sources; a list must match `pdf_sources` in length,
+    so each source gets its own page number.
   - Each source is loaded temporarily and closed after import; the source
     document is left untouched.
   - The imported page becomes a new page at the end of the document. The page's
@@ -1632,6 +1633,12 @@ Supported:
           ["document1.pdf", "document2.pdf", "document3.pdf"]
       )
       print(f"Added pages: {page_numbers}")
+
+      # Add the same page from all sources (e.g., page 2 from each)
+      page_numbers = document.add_pages_from_pdf(
+          ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+          page_numbers=2
+      )
 
       # Add specific pages from each source
       page_numbers = document.add_pages_from_pdf(

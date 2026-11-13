@@ -3182,7 +3182,7 @@ class Document:
     def add_pages_from_pdf(
         self,
         pdf_sources: list[str | Path | bytes | bytearray | BinaryIO],
-        page_numbers: list[int] | None = None,
+        page_numbers: int | list[int] | None = None,
     ) -> list[int]:
         """Add one or more pages from PDF files, bytes, or streams, one per source.
 
@@ -3195,10 +3195,11 @@ class Document:
         pdf_sources : list of str, Path, bytes, bytearray, or BinaryIO
             PDF file paths, raw bytes, bytearrays, or file-like objects with a
             ``read()`` method.
-        page_numbers : list of int, optional
+        page_numbers : int or list of int, optional
             One-based page numbers to import from each source PDF. If ``None``
-            (default), page 1 is imported from each source. If a list, each
-            element corresponds to the source at the same index.
+            (default), page 1 is imported from each source. If an integer, it
+            is used for all sources. If a list, each element corresponds to the
+            source at the same index.
 
         Returns
         -------
@@ -3233,6 +3234,12 @@ class Document:
                 ["document1.pdf", "document2.pdf", "document3.pdf"]
             )
 
+            # Add the same page from each source (e.g., page 2 from all)
+            page_numbers = document.add_pages_from_pdf(
+                ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+                page_numbers=2
+            )
+
             # Add specific pages from each source
             page_numbers = document.add_pages_from_pdf(
                 ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
@@ -3259,9 +3266,12 @@ class Document:
         # Validate and normalize page_numbers
         if page_numbers is None:
             page_numbers = [1] * len(pdf_sources)
+        elif isinstance(page_numbers, int) and not isinstance(page_numbers, bool):
+            # Single integer - apply to all sources
+            page_numbers = [page_numbers] * len(pdf_sources)
         elif not isinstance(page_numbers, list):
             raise TypeError(
-                f"page_numbers must be a list of integers or None, "
+                f"page_numbers must be an integer, a list of integers, or None, "
                 f"got {type(page_numbers).__name__}"
             )
         elif len(page_numbers) != len(pdf_sources):

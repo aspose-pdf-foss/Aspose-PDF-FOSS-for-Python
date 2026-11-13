@@ -180,7 +180,7 @@ class TestAddPagesFromPdf:
         """add_pages_from_pdf should raise TypeError for invalid page_numbers type."""
         with Document() as doc:
             with pytest.raises(
-                TypeError, match="page_numbers must be a list of integers or None"
+                TypeError, match="page_numbers must be an integer, a list of integers, or None"
             ):
                 doc.add_pages_from_pdf([_create_test_pdf()], page_numbers="not a list")
 
@@ -362,3 +362,130 @@ class TestAddPagesFromPdf:
             # additions become page 2, etc.
             assert page_numbers == [1, 2]
             assert len(doc.pages) == 2
+
+    def test_add_pages_from_pdf_single_integer_page_number(self):
+        """add_pages_from_pdf should accept a single integer for page_numbers."""
+        with Document() as doc:
+            # Use page 1 from all three sources
+            page_numbers = doc.add_pages_from_pdf(
+                [_create_test_pdf(), _create_test_pdf(), _create_test_pdf()],
+                page_numbers=1
+            )
+            # Each imported page becomes page 1, 2, 3 in the target document
+            assert page_numbers == [1, 2, 3]
+            assert len(doc.pages) == 3
+
+    def test_add_pages_from_pdf_single_integer_page_number_with_mixed_sources(self, tmp_path):
+        """add_pages_from_pdf should work with mixed source types and single integer page_number."""
+        pdf_path = tmp_path / "source.pdf"
+        pdf_path.write_bytes(_create_test_pdf())
+
+        with Document() as doc:
+            # Mix of path, bytes with page 1
+            page_numbers = doc.add_pages_from_pdf(
+                [
+                    pdf_path,  # file path
+                    _create_test_pdf(),  # bytes
+                ],
+                page_numbers=1
+            )
+            assert page_numbers == [1, 2]
+            assert len(doc.pages) == 2
+
+    def test_add_pages_from_pdf_single_integer_with_page_numbers_list(self, tmp_path):
+        """add_pages_from_pdf should accept a single integer alongside explicit list."""
+        pdf_path = tmp_path / "source.pdf"
+        # Create a 3-page PDF
+        pdf_content = (
+            b"%PDF-1.4\n"
+            b"1 0 obj << /Type /Catalog /Pages 2 0 R >>\n"
+            b"endobj\n"
+            b"2 0 obj << /Type /Pages /Count 3 /Kids [3 0 R 4 0 R 5 0 R] >>\n"
+            b"endobj\n"
+            b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\n"
+            b"endobj\n"
+            b"4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\n"
+            b"endobj\n"
+            b"5 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\n"
+            b"endobj\n"
+            b"xref\n"
+            b"0 6\n"
+            b"0000000000 65535 f \n"
+            b"0000000009 00000 n \n"
+            b"0000000062 00000 n \n"
+            b"0000000126 00000 n \n"
+            b"0000000190 00000 n \n"
+            b"0000000254 00000 n \n"
+            b"trailer << /Root 1 0 R /Size 6 >>\n"
+            b"startxref\n"
+            b"318\n"
+            b"%%EOF"
+        )
+        pdf_path.write_bytes(pdf_content)
+
+        with Document() as doc:
+            # Add pages 1, 2, 3 from the same PDF using single integer
+            page_numbers = doc.add_pages_from_pdf(
+                [pdf_path, pdf_path, pdf_path],
+                page_numbers=1
+            )
+            # All pages are page 1 from the source, but become pages 1, 2, 3 in target
+            assert page_numbers == [1, 2, 3]
+            assert len(doc.pages) == 3
+
+    def test_add_pages_from_pdf_single_integer_with_bytesio(self):
+        """add_pages_from_pdf should work with BytesIO and single integer page_number."""
+        pdf_bytes = _create_test_pdf()
+
+        with Document() as doc:
+            from io import BytesIO
+
+            # Use page 1 from multiple streams
+            page_numbers = doc.add_pages_from_pdf(
+                [BytesIO(pdf_bytes), BytesIO(pdf_bytes), BytesIO(pdf_bytes)],
+                page_numbers=1
+            )
+            assert page_numbers == [1, 2, 3]
+            assert len(doc.pages) == 3
+
+    def test_add_pages_from_pdf_single_integer_invalid_negative(self):
+        """add_pages_from_pdf should raise ValueError for negative integer page_numbers."""
+        with Document() as doc:
+            with pytest.raises(ValueError, match="page_numbers must contain positive"):
+                doc.add_pages_from_pdf(
+                    [_create_test_pdf(), _create_test_pdf()],
+                    page_numbers=-1
+                )
+
+    def test_add_pages_from_pdf_single_integer_invalid_type(self):
+        """add_pages_from_pdf should raise TypeError for non-integer page_numbers."""
+        with Document() as doc:
+            with pytest.raises(
+                TypeError, match="page_numbers must be an integer, a list of integers, or None"
+            ):
+                doc.add_pages_from_pdf(
+                    [_create_test_pdf(), _create_test_pdf()],
+                    page_numbers="not an int"
+                )
+
+    def test_add_pages_from_pdf_single_integer_zero(self):
+        """add_pages_from_pdf should raise ValueError for page_numbers=0."""
+        with Document() as doc:
+            with pytest.raises(ValueError, match="page_numbers must contain positive"):
+                doc.add_pages_from_pdf([_create_test_pdf()], page_numbers=0)
+
+    def test_add_pages_from_pdf_single_integer_bool_true(self):
+        """add_pages_from_pdf should raise TypeError for page_numbers=True (boolean)."""
+        with Document() as doc:
+            with pytest.raises(
+                TypeError, match="page_numbers must be an integer, a list of integers, or None"
+            ):
+                doc.add_pages_from_pdf([_create_test_pdf()], page_numbers=True)
+
+    def test_add_pages_from_pdf_single_integer_bool_false(self):
+        """add_pages_from_pdf should raise TypeError for page_numbers=False (boolean)."""
+        with Document() as doc:
+            with pytest.raises(
+                TypeError, match="page_numbers must be an integer, a list of integers, or None"
+            ):
+                doc.add_pages_from_pdf([_create_test_pdf()], page_numbers=False)
