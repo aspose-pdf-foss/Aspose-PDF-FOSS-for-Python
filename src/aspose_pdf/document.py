@@ -10532,6 +10532,169 @@ class Document:
 
         return self
 
+    def append_page_from(self, other: Document, page_number: int) -> Document:
+        """Extract a single page from another document and append it to this one.
+
+        This method is a convenience wrapper around :meth:`append_pages` for
+        the common case of appending a single page. It accepts a page number
+        instead of a list or range, making the API more convenient for single-page
+        operations.
+
+        The source document remains unchanged and can be used independently after
+        the append operation.
+
+        Parameters
+        ----------
+        other : Document
+            The document from which the page should be extracted and appended.
+            Must be a valid Document instance that has not been disposed.
+        page_number : int
+            The one-based page number to extract. Page numbers start at 1.
+
+        Returns
+        -------
+        Document
+            This document (self), allowing for method chaining.
+
+        Raises
+        ------
+        TypeError
+            If *other* is not a Document instance, or if *page_number* is not
+            an integer.
+        PdfValidationException
+            If *other* has been disposed, if the page number is invalid, or if
+            the page is out of range.
+        AsposePdfException
+            If the document has been disposed.
+        IndexError
+            If *page_number* is not a valid page number.
+
+        Examples
+        --------
+        Append a specific page by number::
+
+            from aspose_pdf import Document
+
+            with Document("source.pdf") as source:
+                with Document("target.pdf") as target:
+                    target.append_page_from(source, 1)
+                    target.save("combined.pdf")
+
+        Append the last page::
+
+            with Document("scans.pdf") as source:
+                with Document("output.pdf") as target:
+                    target.append_page_from(source, len(source))
+                    target.save("last_page_only.pdf")
+
+        Method chaining::
+
+            with Document("main.pdf") as doc:
+                for extra in ["appendix1.pdf", "appendix2.pdf"]:
+                    with Document(extra) as append_doc:
+                        doc.append_page_from(append_doc, 1)
+                doc.save("full_document.pdf")
+
+        Notes
+        -----
+        - All page resources, annotations, form fields, and bookmarks that
+          belong to the selected page are imported.
+        - The source document remains independent and can be disposed or reused.
+        - Page numbers in the target document are updated to accommodate the
+          newly appended page.
+        - This is equivalent to ``target.append_pages(source, [page_number])``
+          but more convenient for single-page operations.
+        """
+        return self.append_pages(other, [page_number])
+
+    def insert_page_from(self, index: int, other: Document, page_number: int) -> Document:
+        """Extract a single page from another document and insert it at the given position.
+
+        This method is a convenience wrapper around :meth:`insert_pages` for
+        the common case of inserting a single page. It accepts a page number
+        instead of a list or range, making the API more convenient for single-page
+        operations.
+
+        The source document remains unchanged and can be used independently after
+        the insert operation.
+
+        Parameters
+        ----------
+        index : int
+            The 1-based position where the page should be inserted. Pages at and
+            after this position are shifted right. For example, ``index=1``
+            inserts at the beginning; ``index=len(doc)+1`` appends (equivalent
+            to ``append_page_from``).
+        other : Document
+            The document from which the page should be extracted and inserted.
+            Must be a valid Document instance that has not been disposed.
+        page_number : int
+            The one-based page number to extract. Page numbers start at 1.
+
+        Returns
+        -------
+        Document
+            This document (self), allowing for method chaining.
+
+        Raises
+        ------
+        TypeError
+            If *other* is not a Document instance, or if *index* or *page_number*
+            is not an integer.
+        PdfValidationException
+            If *other* has been disposed, if the index or page number is invalid,
+            or if the page is out of range.
+        AsposePdfException
+            If the document has been disposed.
+        IndexError
+            If *index* is not a valid insertion position (must be >= 1), or if
+            *page_number* is not a valid page number.
+
+        Examples
+        --------
+        Insert a specific page at the beginning::
+
+            from aspose_pdf import Document
+
+            with Document("source.pdf") as source:
+                with Document("target.pdf") as target:
+                    target.insert_page_from(1, source, 1)
+                    target.save("combined.pdf")
+
+        Insert a page in the middle::
+
+            with Document("appendix.pdf") as source:
+                with Document("report.pdf") as target:
+                    target.insert_page_from(3, source, 1)
+                    target.save("report_with_appendix.pdf")
+
+        Insert the last page::
+
+            with Document("scans.pdf") as source:
+                with Document("output.pdf") as target:
+                    target.insert_page_from(1, source, len(source))
+                    target.save("last_page_first.pdf")
+
+        Method chaining::
+
+            with Document("main.pdf") as doc:
+                for extra in ["appendix1.pdf", "appendix2.pdf"]:
+                    with Document(extra) as insert_doc:
+                        doc.insert_page_from(2, insert_doc, 1)
+                doc.save("full_document.pdf")
+
+        Notes
+        -----
+        - All page resources, annotations, form fields, and bookmarks that
+          belong to the selected page are imported.
+        - The source document remains independent and can be disposed or reused.
+        - Page numbers in the target document are updated to accommodate the
+          newly inserted page.
+        - This is equivalent to ``target.insert_pages(index, source, [page_number])``
+          but more convenient for single-page operations.
+        """
+        return self.insert_pages(index, other, [page_number])
+
     def _import_pages_from(
         self,
         other: Document,

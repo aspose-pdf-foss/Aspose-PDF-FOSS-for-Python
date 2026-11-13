@@ -1519,6 +1519,59 @@ Supported:
   ```
   This is equivalent to ``document.pages.insert(index, document.extract_pages(selection))``
   but more convenient and prevents accidental temporary document leaks.
+- **Insert a single page from another document:** `Document.insert_page_from(index, other, page_number) -> Document`
+  extracts a single page from another document and inserts it at the given position.
+  This is a convenient alternative to :meth:`~aspose_pdf.Document.insert_pages` when
+  you need to insert only one page and prefer to pass a page number directly instead
+  of wrapping it in a list.
+
+  The source document remains unchanged and can be used independently after the insert
+  operation. The method returns `self` for method chaining:
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Insert at the beginning
+      document.insert_page_from(1, cover, 1)
+
+      # Insert in the middle
+      document.insert_page_from(3, appendix, 1)
+
+      # Insert the last page from another document
+      document.insert_page_from(5, scans, len(scans))
+
+      # Chain multiple insertions
+      document.insert_page_from(2, source1, 1).insert_page_from(10, source2, 1)
+  ```
+
+  This is equivalent to ``document.insert_pages(index, other, [page_number])``
+  but more convenient for single-page operations.
+- **Append a single page from another document:** `Document.append_page_from(other, page_number) -> Document`
+  extracts a single page from another document and appends it to this one.
+  This is a convenient alternative to :meth:`~aspose_pdf.Document.append_pages` when
+  you need to append only one page and prefer to pass a page number directly instead
+  of wrapping it in a list.
+
+  The source document remains unchanged and can be used independently after the append
+  operation. The method returns `self` for method chaining:
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("main.pdf") as document:
+      # Append a page from another document
+      document.append_page_from(source, 1)
+
+      # Append the last page from another document
+      document.append_page_from(scans, len(scans))
+
+      # Chain multiple appends
+      document.append_page_from(source1, 1).append_page_from(source2, 1)
+  ```
+
+  This is equivalent to ``document.append_pages(source, [page_number])``
+  but more convenient for single-page operations.
 - **Concatenate documents from an iterable:** `Document.concatenate(documents) -> Document`
   creates a new document by concatenating an iterable (list, tuple, generator, etc.) of
   documents in order. All pages, resources, annotations, form fields, and bookmarks are
