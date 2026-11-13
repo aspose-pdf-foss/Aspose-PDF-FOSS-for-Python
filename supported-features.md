@@ -1416,6 +1416,36 @@ Supported:
       # Remove the last page
       last = document.remove_page(len(document))
   ```
+- **Remove multiple pages at once:** `Document.remove_pages(selection) -> list[Page]`
+  removes the specified pages from the document and returns them as a list of
+  :class:`~aspose_pdf.pages.Page` objects. *selection* can be a one-based iterable of
+  page numbers (e.g., ``[1, 3, 5]``), a page range string such as ``"1-3,7,10-"``,
+  ``odd``, ``even``, or ``last``. This provides a convenient way to remove several
+  pages at once without creating a temporary document. All page properties are
+  preserved in the returned pages. The page count decreases by the number of removed
+  pages, and all page numbers after the removed pages are shifted down.
+
+  When *selection* contains repeated page numbers, the extraction preserves duplicates
+  (each occurrence becomes a separate page object), but deletion removes each unique
+  page only once. For example, ``remove_pages([1, 2, 2, 3])`` returns 4 page objects
+  (with page 2 appearing twice) but removes 3 unique pages from the document.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Remove specific pages
+      removed = document.remove_pages([1, 3, 5])
+
+      # Remove a range of pages
+      removed = document.remove_pages("2-5")
+
+      # Remove odd pages only
+      removed = document.remove_pages("odd")
+
+      # Insert removed pages into another document
+      other_doc.pages.insert(1, removed[0])
+  ```
 - **Select pages using familiar range expressions.**
   `parse_page_range("1-3,7,10-", page_count)` (exported from `aspose_pdf`)
   returns a tuple of one-based indices for text extraction, page rendering

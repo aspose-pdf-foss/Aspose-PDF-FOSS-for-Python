@@ -253,6 +253,14 @@ flowchart TD
   :meth:`~aspose_pdf.Document.extract_pages`. The page count decreases by one, and all page
   numbers after the removed page are shifted down by one. Page properties like content,
   annotations, form fields, layers, and page labels are preserved in the returned page.
+- `Document.remove_pages(selection)` removes multiple pages from the document and returns them as
+  a list of :class:`~aspose_pdf.pages.Page` objects. *selection* can be a one-based iterable of
+  page numbers (e.g., ``[1, 3, 5]``), a page range string such as ``"1-3,7,10-"``, ``odd``,
+  ``even``, or ``last``. This provides a convenient way to remove several pages at once without
+  creating a temporary document. All page properties are preserved in the returned pages.
+  When *selection* contains repeated page numbers, the extraction preserves duplicates
+  (each occurrence becomes a separate page object), but deletion removes each unique
+  page only once.
 - `Document.destinations` names places in the document — `destinations["chapter-2"] =
   XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
   (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks

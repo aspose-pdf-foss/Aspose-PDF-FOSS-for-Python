@@ -1258,6 +1258,105 @@ class Document:
         # Return the page from the extracted document
         return extracted.pages[1]
 
+    @page_api(selections=("selection",))
+    def remove_pages(self, selection: Iterable[int] | str) -> list[Page]:
+        """Remove selected pages from the document and return them.
+
+        This method removes the specified pages from the document and returns
+        them as a list of :class:`~aspose_pdf.pages.Page` objects that can be
+        inserted into another document using
+        :meth:`~aspose_pdf.pages.PageCollection.insert` or
+        :meth:`~aspose_pdf.pages.PageCollection.add`.
+
+        Parameters
+        ----------
+        selection : iterable of int or str
+            The pages to remove. This can be:
+            - A one-based iterable of page numbers (e.g., ``[1, 3, 5]``)
+            - A page range string such as ``"1-3,7,10-"``
+            - String ranges include both endpoints and may descend (``"last-1"``);
+              an omitted end selects through the last page.
+            - ``odd`` and ``even`` select physical odd/even pages; ``last`` names
+              the final page. Order and repeated pages are retained.
+
+        Returns
+        -------
+        list of Page
+            The removed pages in the order they were selected. Each page can be
+            inserted into another document.
+
+        Raises
+        ------
+        IndexError
+            If the document is empty or if any page number is out of range.
+        TypeError
+            If *selection* is not an iterable of integers or a string.
+
+        Examples
+        --------
+        ::
+            # Remove specific pages by number
+            removed_pages = doc.remove_pages([1, 3, 5])
+
+            # Remove a range of pages
+            removed_pages = doc.remove_pages("2-5")
+
+            # Remove odd pages only
+            removed_pages = doc.remove_pages("odd")
+
+            # Insert removed pages into another document
+            other_doc.pages.insert(1, removed_pages[0])
+
+        Notes
+        -----
+        After removal, the page count decreases by the number of removed pages,
+        and all page numbers after the removed pages are shifted down. The
+        removed pages retain all their properties: content, annotations, form
+        fields, layer assignments, page labels, and bookmarks that point to them.
+
+        The *selection* parameter supports the same syntax as
+        :meth:`~aspose_pdf.Document.extract_pages`:
+
+        - A one-based iterable of page numbers (e.g., ``[1, 3, 5]``)
+        - A page range string such as ``"1-3,7,10-"``
+        - ``odd`` and ``even`` select physical odd/even pages; ``last`` names
+          the final page.
+
+        When the *selection* contains repeated page numbers, the extraction
+        preserves duplicates (each occurrence becomes a separate page object),
+        but deletion removes each unique page only once. For example,
+        ``remove_pages([1, 2, 2, 3])`` returns 4 page objects (with page 2
+        appearing twice) but removes 3 unique pages from the document.
+        """
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        # The @page_api decorator has already converted the selection
+        # For selections, it wraps the value in _EngineSelection
+        # We need to get the zero-based indices from it
+        # The selection is now an _EngineSelection object or None
+        zero_based_indices = tuple(selection) if selection is not None else ()
+
+        # Check for empty selection
+        if not zero_based_indices:
+            return []
+
+        # Extract the pages first (to return them)
+        # We need to convert back to one-based indices for extract_pages
+        one_based_indices = tuple(idx + 1 for idx in zero_based_indices)
+        extracted = self.extract_pages(one_based_indices)
+
+        # Delete the pages from the original document
+        # Deduplicate and sort in reverse order to avoid shifting issues
+        unique_zero_based = tuple(sorted(set(zero_based_indices), reverse=True))
+        for pos in unique_zero_based:
+            self._engine_pdf.delete(pos)
+
+        # Return the list of pages from the extracted document
+        # Note: extracted.pages is 1-indexed like the original document
+        return list(extracted.pages)
+
     def move_page(self, page_number: int, new_position: int) -> Page:
         """Move a page to *new_position*, keeping the page itself.
 
