@@ -1476,6 +1476,35 @@ Supported:
   ```
   This is equivalent to ``document.pages.insert(index, document.extract_pages(selection))``
   but more convenient and prevents accidental temporary document leaks.
+- **Concatenate documents from an iterable:** `Document.concatenate(documents) -> Document`
+  creates a new document by concatenating an iterable (list, tuple, generator, etc.) of
+  documents in order. All pages, resources, annotations, form fields, and bookmarks are
+  imported. The source documents remain unchanged. Use :meth:`merge` if you need to
+  create section bookmarks for each source document.
+
+  ```python
+  from aspose_pdf import Document
+
+  # Basic concatenation from a list
+  with Document.concatenate([doc1, doc2, doc3]) as combined:
+      combined.save("combined.pdf")
+
+  # Using a generator expression
+  sources = ["doc1.pdf", "doc2.pdf", "doc3.pdf"]
+  with Document.concatenate(
+      Document(f) for f in sources
+  ) as combined:
+      combined.save("merged.pdf")
+
+  # Combining with append
+  with Document("main.pdf") as doc:
+      with Document.concatenate(extras) as extra_pages:
+          doc.append(extra_pages)
+          doc.save("full.pdf")
+  ```
+  This is equivalent to creating an empty document and appending each source
+  document in order, but more convenient for an iterable. The result is a new
+  independent document that can be used with the context manager protocol.
 - **Select pages using familiar range expressions.**
   `parse_page_range("1-3,7,10-", page_count)` (exported from `aspose_pdf`)
   returns a tuple of one-based indices for text extraction, page rendering

@@ -9562,6 +9562,94 @@ class Document:
             resolved += 1
         return resolved
 
+    @staticmethod
+    def concatenate(
+        documents: Iterable[Document],
+    ) -> Document:
+        """Concatenate an iterable of documents into a new document.
+
+        This static method provides a convenient way to combine multiple
+        documents into a single document from an iterable, similar to
+        ``itertools.chain`` but for PDF documents.
+
+        All pages, resources, annotations, form fields, and bookmarks from
+        the source documents are imported. The source documents remain
+        unchanged and can be used independently after the concatenation.
+
+        Parameters
+        ----------
+        documents : iterable of Document
+            An iterable (list, tuple, generator, etc.) of Document instances
+            to concatenate. The iterable may be empty, in which case an empty
+            document is returned.
+
+        Returns
+        -------
+        Document
+            A new document containing all pages from the source documents
+            in the order they appear in the iterable.
+
+        Raises
+        ------
+        TypeError
+            If any item in the iterable is not a Document instance.
+        AsposePdfException
+            If any document in the iterable has been disposed.
+
+        Examples
+        --------
+        Basic concatenation from a list::
+
+            from aspose_pdf import Document
+
+            with Document("first.pdf") as doc1:
+                with Document("second.pdf") as doc2:
+                    with Document("third.pdf") as doc3:
+                        combined = Document.concatenate([doc1, doc2, doc3])
+                        combined.save("combined.pdf")
+
+        Using a generator expression::
+
+            sources = ["doc1.pdf", "doc2.pdf", "doc3.pdf"]
+            with Document.concatenate(
+                Document(f) for f in sources
+            ) as combined:
+                combined.save("merged.pdf")
+
+        Method chaining with append::
+
+            with Document("main.pdf") as doc:
+                extras = [Document("a.pdf"), Document("b.pdf"), Document("c.pdf")]
+                with Document.concatenate(extras) as extra_pages:
+                    doc.append(extra_pages)
+                    doc.save("full.pdf")
+
+        Notes
+        -----
+        - This is equivalent to creating an empty document and appending
+          each source document in order, but more convenient for an iterable.
+        - The source documents remain independent and can be disposed or reused.
+        - Page numbers in the resulting document are assigned sequentially.
+        - Use :meth:`merge` if you need to create section bookmarks for
+          each source document.
+        """
+        result = Document()
+
+        try:
+            for doc in documents:
+                if not isinstance(doc, Document):
+                    raise TypeError("All items to concatenate must be Document instances")
+                doc._ensure_not_disposed()
+
+                if doc._engine_pdf is not None:
+                    result._import_pages_from(doc)
+        except Exception:
+            # If an error occurs, dispose the result document
+            result.dispose()
+            raise
+
+        return result
+
     def merge(
         self,
         *documents: Document,

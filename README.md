@@ -269,6 +269,11 @@ flowchart TD
   one document to another without creating a temporary document. All page resources, annotations,
   form fields, and bookmarks that belong to the selected pages are preserved. The source document
   remains unchanged.
+- `Document.concatenate(documents)` concatenates an iterable of documents into a new document.
+  This static method provides a convenient way to combine multiple documents from an iterable
+  (list, tuple, generator, etc.) into a single document. All pages, resources, annotations,
+  form fields, and bookmarks are imported. The source documents remain unchanged. Use
+  :meth:`merge` if you need to create section bookmarks for each source document.
 - `Document.destinations` names places in the document — `destinations["chapter-2"] =
   XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
   (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks
