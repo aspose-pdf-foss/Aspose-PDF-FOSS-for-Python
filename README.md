@@ -521,6 +521,22 @@ with Document("input.pdf") as document:
     print(document.info)
 ```
 
+You can also parse and validate page range expressions without loading a document first:
+
+```python
+from aspose_pdf import PageRanges
+
+# Parse a range without a document (requires page_count for specific ranges)
+indices = PageRanges.parse("1-3,7,10", page_count=15)
+# (1, 2, 3, 7, 10)
+
+# Use with Document.get_page_indices() after loading
+with Document("report.pdf") as doc:
+    PageRanges.validate("1-3,7,10", doc.page_count)
+    # Or use doc.get_page_indices("1-3,7,10") directly
+    indices = doc.get_page_indices("1-3,7,10")
+```
+
 `Document(source, password=..., limits=...)` is equivalent to `Document().load_from(source, ...)`
 — a missing file, non-PDF data, or a missing password raises rather than handing back a silently
 empty document.
@@ -2467,6 +2483,13 @@ and delete workflows. 277 public types are organized by module below.
 - `PageLabelCollection` (`Document.page_labels`) — a mutable mapping from the page a label range
   starts at to its `PageLabel(style, prefix, start)`; `NumberingStyle` names the five styles and
   `NONE`; `label(page_index) -> str | None`, `clear()`
+- `PageRanges` — a convenience class for parsing and validating page range expressions without
+  requiring a loaded document. `PageRanges.parse(expression, page_count=None, one_based=True,
+  limits=None) -> tuple[int, ...]` returns one-based page numbers from a page range string.
+  Use `page_count` to validate against an actual document size, or omit it to use the default
+  of 10,000 pages for expressions containing `last`. `PageRanges.validate(expression,
+  page_count, one_based=True, limits=None)` validates an expression without returning the
+  parsed indices.
 
 ### Text Extraction And Editing
 

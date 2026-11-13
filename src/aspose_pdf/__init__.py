@@ -123,7 +123,7 @@ from .lowcode import (
 from .optimization import OptimizationOptions
 from .outlines import OutlineCollection, OutlineItem
 from .page_labels import NumberingStyle, PageLabel, PageLabelCollection
-from .page_ranges import parse_page_range
+from .page_ranges import PageRanges, parse_page_range
 from .page_size import PageSize
 from .pages import Page, PageCollection
 from .paths import GraphicsPath
@@ -280,6 +280,7 @@ __all__ = [
     "PageLayout",
     "PageMode",
     "PageNumberStamp",
+    "PageRanges",
     "PageSize",
     "PageStamp",
     "PageTextComparison",

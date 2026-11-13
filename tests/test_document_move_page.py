@@ -363,7 +363,6 @@ class TestMovePagePageIdentity:
 
 def test_move_page_from_bytes_round_trip():
     """move_page works on a document built from bytes, and back to bytes."""
-    import io
 
     buffer = io.BytesIO()
     with _numbered_document(3) as doc:

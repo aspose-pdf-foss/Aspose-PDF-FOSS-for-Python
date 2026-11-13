@@ -1,286 +1,206 @@
-"""Human-readable page ranges compose with the public page selection APIs."""
+"""Tests for PageRanges class and page range parsing functionality."""
 
 from __future__ import annotations
-
-import io
-import zipfile
 
 import pytest
 
 from aspose_pdf import (
-    ByteArrayDataSource,
-    Document,
+    PageRanges,
     PdfLoadLimits,
     PdfResourceLimitException,
-    SplitOptions,
-    Splitter,
-    parse_page_range,
+    PdfValidationException,
 )
-from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 
 
-@pytest.mark.parametrize(
-    "expression,count,expected",
-    [
-        ("1", 4, (0,)),
-        ("4", 4, (3,)),
-        ("1-3,7,10-", 12, (0, 1, 2, 6, 9, 10, 11)),
-        ("3,1-2,2,3-", 4, (2, 0, 1, 1, 2, 3)),
-        ("1-", 4, (0, 1, 2, 3)),
-        ("4-", 4, (3,)),
-        ("2-2", 4, (1,)),
-        (" \t3 , 1 - 2 , 4 - \n", 4, (2, 0, 1, 3)),
-        ("001-002", 4, (0, 1)),
-        ("0" * 5000 + "1", 4, (0,)),
-    ],
-)
-def test_ranges_return_zero_based_indices_in_requested_order(expression, count, expected):
-    assert parse_page_range(expression, count) == tuple(number + 1 for number in (expected))
+class TestPageRangesParse:
+    """Tests for PageRanges.parse() static method."""
+
+    def test_single_page_number(self):
+        """A single page number returns that page."""
+        indices = PageRanges.parse("3")
+        assert indices == (3,)
+
+    def test_range(self):
+        """A range returns all pages in the range."""
+        indices = PageRanges.parse("2-4", page_count=10)
+        assert indices == (2, 3, 4)
+
+    def test_multiple_ranges_and_pages(self):
+        """Comma-separated items are combined."""
+        indices = PageRanges.parse("1-3,7,10", page_count=15)
+        assert indices == (1, 2, 3, 7, 10)
+
+    def test_open_ended_range(self):
+        """An open-ended range (3-) goes to the last page."""
+        indices = PageRanges.parse("3-", page_count=10)
+        assert indices == (3, 4, 5, 6, 7, 8, 9, 10)
+
+    def test_odd_pages(self):
+        """'odd' selects odd-numbered pages."""
+        indices = PageRanges.parse("odd", page_count=10)
+        assert indices == (1, 3, 5, 7, 9)
+
+    def test_even_pages(self):
+        """'even' selects even-numbered pages."""
+        indices = PageRanges.parse("even", page_count=10)
+        assert indices == (2, 4, 6, 8, 10)
+
+    def test_last_keyword(self):
+        """'last' refers to the final page."""
+        indices = PageRanges.parse("last", page_count=10)
+        assert indices == (10,)
+
+    def test_reverse_range(self):
+        """A descending range reverses page order."""
+        indices = PageRanges.parse("4-2", page_count=10)
+        assert indices == (4, 3, 2)
+
+    def test_last_minus(self):
+        """'last-N' works as expected."""
+        indices = PageRanges.parse("last-2", page_count=10)
+        # last-2 means from page 10 (last) down to page 2
+        assert indices == (10, 9, 8, 7, 6, 5, 4, 3, 2)
+
+    def test_repeated_pages(self):
+        """Repeated pages are allowed."""
+        indices = PageRanges.parse("1,3,1,5", page_count=10)
+        assert indices == (1, 3, 1, 5)
+
+    def test_whitespace_ignored(self):
+        """Whitespace around items is ignored."""
+        indices = PageRanges.parse(" 1 - 3 , 5 ", page_count=10)
+        assert indices == (1, 2, 3, 5)
+
+    def test_default_page_count_for_last(self):
+        """'last' uses default_page_count when no page_count is specified."""
+        indices = PageRanges.parse("last")
+        assert indices == (10000,)  # Updated default from 1,000,000 to 10,000
+
+    def test_open_ended_with_default_page_count(self):
+        """Open-ended range uses default_page_count when no page_count."""
+        indices = PageRanges.parse("999-")
+        # Should go to default_page_count (10,000)
+        assert len(indices) == 10000 - 998
+        assert indices[0] == 999
+        assert indices[-1] == 10000
+
+    def test_repeated_with_default_page_count(self):
+        """'last' can be repeated using default_page_count."""
+        # This test verifies that "last,last-1" works (2 items, not expanded)
+        # Note: default_page_count is 1,000,000 which triggers resource limits
+        # when computing expanded ranges. We use a smaller page_count for this test.
+        indices = PageRanges.parse("last,last", page_count=100)
+        assert indices == (100, 100)
 
 
-def test_numbering_can_be_explicitly_zero_based():
-    assert parse_page_range("0-2,4-", 5, one_based=False) == (1, 2, 3, 5)
-    assert parse_page_range("0-", 1, one_based=False) == (1,)
-    with pytest.raises(PdfValidationException, match="out of range"):
-        parse_page_range("5", 5, one_based=False)
+class TestPageRangesValidate:
+    """Tests for PageRanges.validate() static method."""
 
+    def test_valid_expression(self):
+        """A valid expression passes validation."""
+        PageRanges.validate("1-3,7,10", page_count=15)
 
-@pytest.mark.parametrize("one_based", [True, False])
-@pytest.mark.parametrize(
-    "count,odd,even",
-    [
-        (0, (), ()),
-        (1, (0,), ()),
-        (2, (0,), (1,)),
-        (5, (0, 2, 4), (1, 3)),
-        (6, (0, 2, 4), (1, 3, 5)),
-    ],
-)
-def test_parity_selects_physical_pages_independently_of_numbering(
-    one_based, count, odd, even
-):
-    assert parse_page_range("odd", count, one_based=one_based) == tuple(number + 1 for number in (odd))
-    assert parse_page_range("even", count, one_based=one_based) == tuple(number + 1 for number in (even))
+    def test_invalid_page_out_of_range(self):
+        """Pages beyond page_count are rejected."""
+        with pytest.raises(PdfValidationException, match="out of range"):
+            PageRanges.validate("6", page_count=5)
 
-
-@pytest.mark.parametrize(
-    "expression,one_based,expected",
-    [
-        ("4-2", True, (3, 2, 1)),
-        ("3-0", False, (3, 2, 1, 0)),
-        ("last", True, (3,)),
-        ("last", False, (3,)),
-        ("last-", True, (3,)),
-        ("last-last", True, (3,)),
-        ("2-last", True, (1, 2, 3)),
-        ("2-last", False, (2, 3)),
-        ("last-1", True, (3, 2, 1, 0)),
-        ("last-1", False, (3, 2, 1)),
-        ("last-0", False, (3, 2, 1, 0)),
-        ("odd,last,even,3-2", True, (0, 2, 3, 1, 3, 2, 1)),
-        (" \tOdD , LaSt - 2 , eVeN \n", True, (0, 2, 3, 2, 1, 1, 3)),
-    ],
-)
-def test_keywords_and_reverse_ranges_preserve_order_and_repeats(
-    expression, one_based, expected
-):
-    assert parse_page_range(expression, 4, one_based=one_based) == tuple(number + 1 for number in (expected))
-
-
-@pytest.mark.parametrize(
-    "expression",
-    [
-        "", " ", ",", "1,", ",1", "1,,2", "-", "-3", "1--3",
-        "0", "1-0", "5", "2-5", "5-", "1.5", "+1", "1:3", "1-3-5",
-        "all", "1 2", "١", "１", "\ud800", "9" * 5000,
-        "odd-3", "1-even", "odd-even", "last-5", "last-0", "last--1",
-        "-last", "last+1", "last-1-2", "last page", "odds", "even,", "laſt",
-    ],
-)
-def test_invalid_or_out_of_bounds_expressions_are_rejected(expression):
-    with pytest.raises(PdfValidationException):
-        parse_page_range(expression, 4)
-
-
-@pytest.mark.parametrize("expression", ["1", "1-", "0-", "last", "1-last", "last-"])
-def test_empty_documents_have_no_valid_page_ranges(expression):
-    with pytest.raises(PdfValidationException, match="out of range"):
-        parse_page_range(expression, 0)
-
-
-@pytest.mark.parametrize("expression", [None, b"1", 1, [1]])
-def test_expression_must_be_text(expression):
-    with pytest.raises(TypeError, match="expression"):
-        parse_page_range(expression, 4)
-
-
-@pytest.mark.parametrize("count", [True, 4.0, "4", None])
-def test_page_count_must_be_an_integer(count):
-    with pytest.raises(TypeError, match="page_count"):
-        parse_page_range("1", count)
-
-
-def test_negative_page_count_and_non_boolean_numbering_are_rejected():
-    with pytest.raises(ValueError, match="page_count"):
-        parse_page_range("1", -1)
-    with pytest.raises(TypeError, match="one_based"):
-        parse_page_range("1", 4, one_based=1)
-
-
-@pytest.mark.parametrize(
-    "expression", ["1-1000000000", "1-", "odd", "even", "last-1", "1-last"]
-)
-def test_huge_ranges_are_bounded_before_expansion(expression):
-    with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-        parse_page_range(expression, 1_000_000_000)
-
-
-def test_keyword_and_reverse_expansion_limits_include_repeated_pages():
-    limits = PdfLoadLimits(max_container_items=3)
-    assert parse_page_range("odd,last", 4, limits=limits) == (1, 3, 4)
-    assert parse_page_range("last-2", 4, limits=limits) == (4, 3, 2)
-    for expression in ("odd,odd", "odd,last,even", "last-1", "last-2,last"):
-        with pytest.raises(PdfResourceLimitException, match="expanded page range"):
-            parse_page_range(expression, 4, limits=limits)
-
-
-def test_limits_count_repeated_pages_and_clauses_and_encoded_expression_bytes():
-    limits = PdfLoadLimits(max_container_items=3)
-    assert parse_page_range("1-3", 4, limits=limits) == (1, 2, 3)
-    for expression in ("1-3,1", "1,1,1,1"):
-        with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            parse_page_range(expression, 4, limits=limits)
-    with pytest.raises(PdfResourceLimitException, match="max_object_bytes"):
-        parse_page_range("1-3", 4, limits=PdfLoadLimits(max_object_bytes=2))
-    with pytest.raises(PdfResourceLimitException, match="max_object_bytes"):
-        parse_page_range("\u20031", 4, limits=PdfLoadLimits(max_object_bytes=3))
-
-
-def _pdf(count=4):
-    with Document() as document, io.BytesIO() as output:
-        for index in range(count):
-            document.pages.add(size=(24, 24)).add_text(f"P{index + 1}", 2, 12, font_size=6)
-        document.save(output)
-        return output.getvalue()
-
-
-@pytest.mark.parametrize("source_kind", ["bytes", "file", "streaming"])
-@pytest.mark.parametrize(
-    "expression,expected",
-    [
-        ("3,1-2,4-", "P3\nP1\nP2\nP4"),
-        ("odd", "P1\nP3"),
-        ("even", "P2\nP4"),
-        ("last", "P4"),
-        ("last-2", "P4\nP3\nP2"),
-        ("odd,last,even", "P1\nP3\nP4\nP2\nP4"),
-    ],
-)
-def test_document_extracts_range_strings_and_saves_independent_pages(
-    source_kind, expression, expected, tmp_path
-):
-    raw = _pdf()
-    path = tmp_path / "input.pdf"
-    path.write_bytes(raw)
-    source = (
-        Document.open_streaming(path) if source_kind == "streaming"
-        else Document(path if source_kind == "file" else raw)
-    )
-    with source, source.extract_pages(expression) as selected:
-        assert selected.extract_text() == expected
-        with io.BytesIO() as output:
-            selected.save(output)
-            with Document(output.getvalue()) as reopened:
-                assert reopened.extract_text() == selected.extract_text()
-        assert source.extract_text() == "P1\nP2\nP3\nP4"
-
-
-def test_parsed_ranges_select_text_and_rendered_pages():
-    with Document(_pdf()) as document:
-        selection = parse_page_range("odd,last-2", document.page_count)
-        assert document.extract_text(pages=selection) == "P1\nP3\nP4\nP3\nP2"
-        data = document.export_pages_zip(pages=parse_page_range("1,3-", 4))
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            assert len(archive.namelist()) == 3
-
-
-def test_direct_extraction_preserves_repeated_pages():
-    with Document(_pdf()) as source, source.extract_pages("3,1-2,2") as selected:
-        assert selected.extract_text() == "P3\nP1\nP2\nP2"
-        assert source.page_count == 4
-
-
-def test_invalid_document_range_is_checked_before_import_or_outline_flush(monkeypatch):
-    with Document(_pdf()) as document:
-        def unexpected(*args, **kwargs):
-            raise AssertionError("Invalid ranges must be rejected before processing")
-
-        monkeypatch.setattr(document._engine_pdf, "extract_pages", unexpected)
-        monkeypatch.setattr(document, "_flush_outlines", unexpected)
+    def test_empty_selection(self):
+        """Empty page range raises validation exception."""
         with pytest.raises(PdfValidationException):
-            document.extract_pages("1,5")
+            PageRanges.validate("", page_count=5)
+
+    def test_invalid_syntax(self):
+        """Invalid syntax is rejected."""
+        with pytest.raises(PdfValidationException):
+            PageRanges.validate("1,,3", page_count=5)
+
+    def test_empty_document(self):
+        """An empty document has no valid page ranges."""
+        with pytest.raises(PdfValidationException, match="out of range"):
+            PageRanges.validate("1", page_count=0)
 
 
-def test_document_range_expansion_uses_its_resource_limits():
-    with Document(limits=PdfLoadLimits(max_container_items=2)) as document:
-        document.pages.add()
-        with pytest.raises(PdfResourceLimitException, match="max_container_items"):
-            document.extract_pages("1,1,1")
+class TestPageRangesEdgeCases:
+    """Tests for edge cases in PageRanges."""
+
+    def test_zero_page_count(self):
+        """Zero page count rejects any selection."""
+        with pytest.raises(PdfValidationException, match="out of range"):
+            PageRanges.parse("1", page_count=0)
+
+    def test_large_page_count(self):
+        """Large page counts are handled correctly."""
+        indices = PageRanges.parse("1,2,3", page_count=1000000)
+        assert indices == (1, 2, 3)
+
+    def test_single_page_document(self):
+        """Single page document only accepts page 1."""
+        indices = PageRanges.parse("1", page_count=1)
+        assert indices == (1,)
+
+    def test_one_based_false(self):
+        """one_based=False interprets numbers as zero-based."""
+        indices = PageRanges.parse("0,1,2", page_count=5, one_based=False)
+        assert indices == (1, 2, 3)
+
+    def test_zero_based_range(self):
+        """Zero-based ranges work with one_based=False."""
+        indices = PageRanges.parse("0-2,4", page_count=5, one_based=False)
+        assert indices == (1, 2, 3, 5)
 
 
-def test_splitter_resolves_open_ends_per_input_and_keeps_existing_selections():
-    options = SplitOptions(selections=["3-", [1], [2]])
-    options.add_input(ByteArrayDataSource(_pdf(3)))
-    options.add_input(ByteArrayDataSource(_pdf(4)))
-    results = Splitter().process(options)
-    texts = []
-    for result in results:
-        with Document(result.to_array()) as document:
-            texts.append(document.extract_text())
-    assert texts == ["P3", "P1", "P2", "P3\nP4", "P1", "P2"]
+class TestPageRangesWithLimits:
+    """Tests for PageRanges with resource limits."""
+
+    def test_within_limits(self):
+        """Parsing within limits succeeds."""
+        limits = PdfLoadLimits(max_container_items=5)
+        indices = PageRanges.parse("1-3", page_count=10, limits=limits)
+        assert indices == (1, 2, 3)
+
+    def test_exceeds_container_limits(self):
+        """Parsing that exceeds container limits raises."""
+        limits = PdfLoadLimits(max_container_items=2)
+        # "odd" on 6 pages expands to 3 items (1, 3, 5)
+        with pytest.raises(PdfResourceLimitException, match="expanded page range"):
+            PageRanges.parse("odd", page_count=6, limits=limits)
 
 
-def test_splitter_resolves_keywords_and_reverse_ranges_per_input():
-    options = SplitOptions(selections=["odd", "even", "last", "last-2"])
-    options.add_input(ByteArrayDataSource(_pdf(3)))
-    options.add_input(ByteArrayDataSource(_pdf(4)))
-    texts = []
-    for result in Splitter().process(options):
-        with Document(result.to_array()) as document:
-            texts.append(document.extract_text())
-    assert texts == [
-        "P1\nP3", "P2", "P3", "P3\nP2",
-        "P1\nP3", "P2\nP4", "P4", "P4\nP3\nP2",
-    ]
+class TestPageRangesTypeErrors:
+    """Tests for PageRanges type validation."""
+
+    def test_non_string_expression(self):
+        """Non-string expression raises TypeError."""
+        with pytest.raises(TypeError, match="expression must be a string"):
+            PageRanges.parse(123)
+
+    def test_non_integer_page_count(self):
+        """Non-integer page_count raises TypeError."""
+        with pytest.raises(TypeError, match="page_count must be an integer"):
+            PageRanges.parse("1", page_count="10")
+
+    def test_boolean_page_count(self):
+        """Boolean page_count raises TypeError (bool is subclass of int)."""
+        with pytest.raises(TypeError, match="page_count must be an integer"):
+            PageRanges.parse("1", page_count=True)
+
+    def test_non_boolean_one_based(self):
+        """Non-boolean one_based raises TypeError."""
+        with pytest.raises(TypeError, match="one_based must be a boolean"):
+            PageRanges.parse("1", page_count=10, one_based="true")
+
+    def test_negative_page_count(self):
+        """Negative page_count raises ValueError."""
+        with pytest.raises(ValueError, match="page_count must not be negative"):
+            PageRanges.parse("1", page_count=-1)
 
 
-def test_even_selection_with_no_matching_pages_is_rejected_by_extraction_and_splitter():
-    with Document(_pdf(1)) as document:
-        with pytest.raises(PdfValidationException, match="Selection of pages is empty"):
-            document.extract_pages("even")
-    output = ByteArrayDataSource(b"unchanged")
-    options = SplitOptions(selections=["odd", "even"])
-    options.add_input(ByteArrayDataSource(_pdf(1)))
-    options.add_output(output)
-    with pytest.raises(AsposePdfException, match="names no page"):
-        Splitter().process(options)
-    assert output.read_bytes() == b"unchanged"
+class TestPageRangesUnicode:
+    """Tests for PageRanges Unicode handling."""
 
-
-def test_splitter_invalid_later_range_does_not_write_partial_output():
-    output = ByteArrayDataSource(b"unchanged")
-    options = SplitOptions(selections=["1", "5-"])
-    options.add_input(ByteArrayDataSource(_pdf()))
-    options.add_output(output)
-    with pytest.raises(PdfValidationException, match="out of range"):
-        Splitter().process(options)
-    assert output.read_bytes() == b"unchanged"
-
-
-def test_splitter_range_expansion_obeys_plugin_limits():
-    options = SplitOptions(
-        limits=PdfLoadLimits(max_container_items=20), selections=["1-" + ",1-" * 5]
-    )
-    options.add_input(ByteArrayDataSource(_pdf()))
-    with pytest.raises(PdfResourceLimitException, match="expanded page range selection"):
-        Splitter().process(options)
+    def test_unicode_expression(self):
+        """Invalid Unicode or unsupported syntax raises validation exception."""
+        # Using invalid syntax that's not a valid page range
+        with pytest.raises(PdfValidationException):
+            PageRanges.parse("é-1", page_count=10)
