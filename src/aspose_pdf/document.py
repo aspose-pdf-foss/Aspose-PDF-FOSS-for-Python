@@ -1357,6 +1357,124 @@ class Document:
         # Note: extracted.pages is 1-indexed like the original document
         return list(extracted.pages)
 
+    def add_page(self, page: Page) -> Page:
+        """Add a page from another document to the end of this document.
+
+        This is a convenient method equivalent to ``document.pages.add(page)``.
+        It imports a :class:`~aspose_pdf.pages.Page` object from another document
+        into this one, bringing along all its content, resources, annotations,
+        form fields, layers, and page labels.
+
+        Parameters
+        ----------
+        page : Page
+            The page to add. Must be a valid Page instance from any Document
+            (including this one). The page's source document must not be disposed.
+
+        Returns
+        -------
+        Page
+            The added page in this document, which can be used for further
+            modifications.
+
+        Raises
+        ------
+        TypeError
+            If *page* is not a Page instance.
+        PdfValidationException
+            If the page's source document has been disposed or is invalid.
+        AsposePdfException
+            If this document has been disposed.
+
+        Examples
+        --------
+        Add a page from another document::
+
+            with Document("source.pdf") as source:
+                with Document() as target:
+                    target.add_page(source.pages[1])
+                    target.save("output.pdf")
+
+        Move a page between documents::
+
+            removed_page = source_doc.remove_page(1)
+            target_doc.add_page(removed_page)
+
+        Notes
+        -----
+        The imported page retains all its properties: content, annotations,
+        form fields, layer assignments, page labels, and bookmarks that point
+        to it. If adding a page from the same document, it is copied rather
+        than moved.
+
+        See Also
+        --------
+        insert_page : Insert a page at a specific position.
+        remove_page : Remove and return a page.
+        """
+        return self.pages.add(page)
+
+    def insert_page(self, index: int, page: Page) -> Page:
+        """Insert a page from another document at *index* in this document.
+
+        This is a convenient method equivalent to ``document.pages.insert(index, page)``.
+        It imports a :class:`~aspose_pdf.pages.Page` object from another document
+        into this one at the specified position, bringing along all its content,
+        resources, annotations, form fields, layers, and page labels.
+
+        Parameters
+        ----------
+        index : int
+            The one-based position where the page should be inserted. Pages at
+            and after this position are shifted right. For example, ``index=1``
+            inserts at the beginning; ``index=len(doc)+1`` appends.
+        page : Page
+            The page to insert. Must be a valid Page instance from any Document
+            (including this one). The page's source document must not be disposed.
+
+        Returns
+        -------
+        Page
+            The inserted page in this document, which can be used for further
+            modifications.
+
+        Raises
+        ------
+        TypeError
+            If *page* is not a Page instance.
+        PdfValidationException
+            If the page's source document has been disposed or is invalid.
+        AsposePdfException
+            If this document has been disposed.
+
+        Examples
+        --------
+        Insert a page at the beginning::
+
+            with Document("source.pdf") as source:
+                with Document("target.pdf") as target:
+                    target.insert_page(1, source.pages[1])
+                    target.save("output.pdf")
+
+        Insert a page at a specific position::
+
+            removed_page = doc.remove_page(3)
+            doc.insert_page(1, removed_page)  # Move to beginning
+
+        Notes
+        -----
+        The imported page retains all its properties: content, annotations,
+        form fields, layer assignments, page labels, and bookmarks that point
+        to it. If inserting a page from the same document, it is copied rather
+        than moved.
+
+        See Also
+        --------
+        add_page : Add a page at the end.
+        insert_pages : Insert multiple pages from another document.
+        """
+        return self.pages.insert(index, page)
+
     def move_page(self, page_number: int, new_position: int) -> Page:
         """Move a page to *new_position*, keeping the page itself.
 

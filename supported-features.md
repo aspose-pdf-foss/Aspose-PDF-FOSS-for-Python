@@ -1416,6 +1416,49 @@ Supported:
       # Remove the last page
       last = document.remove_page(len(document))
   ```
+- **Add a single page to the end of a document:** `Document.add_page(page: Page) -> Page`
+  imports a :class:`~aspose_pdf.pages.Page` object from another document into this one at the end,
+  bringing along all its content, resources, annotations, form fields, layers, and page labels.
+  This is a convenient method equivalent to ``document.pages.add(page)``.
+
+  The page's source document must not be disposed. If the page comes from the same document, it
+  is copied rather than moved. This complements :meth:`~aspose_pdf.Document.remove_page`, which
+  returns a :class:`~aspose_pdf.pages.Page` object that can be added back or inserted elsewhere.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("source.pdf") as source:
+      with Document() as target:
+          # Add a page from another document
+          target.add_page(source.pages[1])
+
+          # Move a page: remove and add
+          removed = source.remove_page(1)
+          target.add_page(removed)
+  ```
+
+- **Insert a single page at a specific position:** `Document.insert_page(index: int, page: Page) -> Page`
+  imports a :class:`~aspose_pdf.pages.Page` object from another document into this one at the
+  specified position, bringing along all its content, resources, annotations, form fields, layers,
+  and page labels. This is a convenient method equivalent to ``document.pages.insert(index, page)``.
+
+  The page's source document must not be disposed. If the page comes from the same document, it
+  is copied rather than moved. This complements :meth:`~aspose_pdf.Document.remove_page`, which
+  returns a :class:`~aspose_pdf.pages.Page` object that can be inserted at a specific position.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("source.pdf") as source:
+      with Document("target.pdf") as target:
+          # Insert a page at the beginning
+          target.insert_page(1, source.pages[1])
+
+          # Move a page to a specific position
+          removed = source.remove_page(2)
+          target.insert_page(1, removed)
+  ```
 - **Remove multiple pages at once:** `Document.remove_pages(selection) -> list[Page]`
   removes the specified pages from the document and returns them as a list of
   :class:`~aspose_pdf.pages.Page` objects. *selection* can be a one-based iterable of

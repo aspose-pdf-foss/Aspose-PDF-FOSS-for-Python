@@ -253,6 +253,15 @@ flowchart TD
   :meth:`~aspose_pdf.Document.extract_pages`. The page count decreases by one, and all page
   numbers after the removed page are shifted down by one. Page properties like content,
   annotations, form fields, layers, and page labels are preserved in the returned page.
+- `Document.add_page(page)` adds a page from another document to the end of this document.
+  It imports a :class:`~aspose_pdf.pages.Page` object, bringing along all its content,
+  resources, annotations, form fields, layers, and page labels. This is a convenient method
+  equivalent to ``document.pages.add(page)``. The page's source document must not be disposed.
+- `Document.insert_page(index, page)` inserts a page from another document at *index* in this
+  document. It imports a :class:`~aspose_pdf.pages.Page` object at the specified position,
+  bringing along all its content, resources, annotations, form fields, layers, and page labels.
+  This is a convenient method equivalent to ``document.pages.insert(index, page)``. The page's
+  source document must not be disposed.
 - `Document.remove_pages(selection)` removes multiple pages from the document and returns them as
   a list of :class:`~aspose_pdf.pages.Page` objects. *selection* can be a one-based iterable of
   page numbers (e.g., ``[1, 3, 5]``), a page range string such as ``"1-3,7,10-"``, ``odd``,
