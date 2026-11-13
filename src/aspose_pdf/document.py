@@ -9577,6 +9577,144 @@ class Document:
 
         return self
 
+    def append_pages(self, other: Document, selection: Iterable[int] | str) -> Document:
+        """Extract selected pages from another document and append them to this one.
+
+        This method combines :meth:`extract_pages` and :meth:`append` into a single
+        operation, providing a convenient way to transfer specific pages from one
+        document to another without creating a temporary document.
+
+        The source document remains unchanged and can be used independently after
+        the append operation.
+
+        Parameters
+        ----------
+        other : Document
+            The document from which pages should be extracted and appended. Must be
+            a valid Document instance that has not been disposed.
+        selection : iterable of int or str
+            The pages to extract. This can be:
+            - A one-based iterable of page numbers (e.g., ``[1, 3, 5]``)
+            - A page range string such as ``"1-3,7,10-"``
+            - String ranges include both endpoints and may descend (``"last-1"``);
+              an omitted end selects through the last page.
+            - ``odd`` and ``even`` select physical odd/even pages; ``last`` names
+              the final page. Order and repeated pages are retained.
+
+        Returns
+        -------
+        Document
+            This document (self), allowing for method chaining.
+
+        Raises
+        ------
+        TypeError
+            If *other* is not a Document instance, or if *selection* is not
+            an iterable of integers or a string.
+        PdfValidationException
+            If *other* has been disposed, if the selection is invalid, or if
+            any page in the selection is out of range.
+        AsposePdfException
+            If the document has been disposed.
+
+        Examples
+        --------
+        Append specific pages by number::
+
+            from aspose_pdf import Document
+
+            with Document("source.pdf") as source:
+                with Document("target.pdf") as target:
+                    target.append_pages(source, [1, 3, 5])
+                    target.save("combined.pdf")
+
+        Append pages using a range string::
+
+            with Document("all_pages.pdf") as source:
+                with Document("report.pdf") as target:
+                    target.append_pages(source, "1-5,10-")
+                    target.save("report_with_appendix.pdf")
+
+        Append odd pages only::
+
+            with Document("scans.pdf") as source:
+                with Document("output.pdf") as target:
+                    target.append_pages(source, "odd")
+                    target.save("odd_pages_only.pdf")
+
+        Method chaining::
+
+            with Document("main.pdf") as doc:
+                for extra in ["appendix1.pdf", "appendix2.pdf"]:
+                    with Document(extra) as append_doc:
+                        doc.append_pages(append_doc, "1-")
+                doc.save("full_document.pdf")
+
+        Notes
+        -----
+        - All page resources, annotations, form fields, and bookmarks that
+          belong to the selected pages are imported.
+        - The source document remains independent and can be disposed or reused.
+        - Page numbers in the target document are updated to accommodate the
+          newly appended pages.
+        - This is equivalent to ``target.append(source.extract_pages(selection))``
+          but more convenient and prevents accidental temporary document leaks.
+        """
+        self._ensure_not_disposed()
+        if not isinstance(other, Document):
+            raise TypeError("other must be a Document instance")
+        other._ensure_not_disposed()
+
+        # Handle page selection - convert to tuple of zero-based indices
+        if isinstance(selection, str):
+            from aspose_pdf.page_ranges import parse_page_range
+
+            one_based_indices = parse_page_range(
+                selection, other.page_count, limits=other._load_limits
+            )
+            page_indices = tuple(index - 1 for index in one_based_indices)
+        else:
+            # Validate that selection is iterable of integers
+            try:
+                one_based_indices = tuple(selection)
+            except TypeError as exc:
+                raise TypeError(
+                    "selection must be an iterable of integers or a string"
+                ) from exc
+            
+            # Validate that all page numbers are valid one-based indices (>= 1)
+            for idx in one_based_indices:
+                if isinstance(idx, bool) or not isinstance(idx, int):
+                    raise TypeError(
+                        "selection must be an iterable of integers"
+                    )
+                if idx < 1:
+                    raise PdfValidationException(
+                        f"Page number must be >= 1, got {idx}"
+                    )
+                if idx > other.page_count:
+                    raise PdfValidationException(
+                        f"Page number {idx} is out of range for document with {other.page_count} pages"
+                    )
+            
+            page_indices = tuple(index - 1 for index in one_based_indices)
+
+        # Validate that selection is not empty
+        if not page_indices:
+            raise PdfValidationException("Selection of pages is empty")
+
+        # Extract and import pages in one operation
+        other._flush_outlines()
+        self._flush_outlines()
+        self._engine_pdf.append(other._engine_pdf, pages=page_indices)
+
+        # Refresh the outlines collection to reflect the new pages
+        self._outlines = None
+        if self._form is not None:
+            self._form._load_fields()
+
+        return self
+
     def _import_pages_from(
         self,
         other: Document,

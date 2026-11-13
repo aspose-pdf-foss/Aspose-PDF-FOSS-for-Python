@@ -33,6 +33,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Append selected pages from another document.** Added `Document.append_pages(other, selection) -> Document`.
+  This convenience method combines extraction and appending into a single call, eliminating the need
+  to create a temporary document with `extract_pages()` and then dispose it. The `selection` can be
+  a one-based iterable of page numbers (e.g., `[1, 3, 5]`) or a page range string such as
+  `"1-3,7,10-"`, `odd`, `even`, or `last`. All page resources, annotations, form fields, and bookmarks
+  travel with the pages. The method returns `self` for chaining, and raises `TypeError` for invalid
+  sources or selections, and `PdfValidationException` for out-of-range pages or empty selections.
+
 - **Add `PageCollection.pop()` method.** Added `PageCollection.pop(index=None) -> Page` to remove
   and return a page from the collection, following Python's `list.pop()` convention. Without an
   argument, `pop()` removes the last page; with an index, it removes the specified page. The
