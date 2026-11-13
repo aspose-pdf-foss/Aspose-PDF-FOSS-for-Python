@@ -261,6 +261,14 @@ flowchart TD
   When *selection* contains repeated page numbers, the extraction preserves duplicates
   (each occurrence becomes a separate page object), but deletion removes each unique
   page only once.
+- `Document.insert_pages(index, other, selection)` extracts selected pages from another document
+  and inserts them at a specific position. *index* is the 1-based position where pages should be
+  inserted; pages at and after this position are shifted right. *selection* can be a one-based
+  iterable of page numbers (e.g., ``[1, 3, 5]``), a page range string such as ``"1-3,7,10-"``,
+  ``odd``, ``even``, or ``last``. This provides a convenient way to transfer specific pages from
+  one document to another without creating a temporary document. All page resources, annotations,
+  form fields, and bookmarks that belong to the selected pages are preserved. The source document
+  remains unchanged.
 - `Document.destinations` names places in the document — `destinations["chapter-2"] =
   XYZDestination(page=7, top=760)` — so a link, a bookmark or another file points at the name
   (`page.add_link(rect, "chapter-2")`) and repointing it moves every reference at once. Bookmarks

@@ -1446,6 +1446,36 @@ Supported:
       # Insert removed pages into another document
       other_doc.pages.insert(1, removed[0])
   ```
+
+- **Insert selected pages at a specific position:** `Document.insert_pages(index, other, selection) -> Document`
+  extracts the specified pages from another document and inserts them at the
+  given position. *index* is the 1-based insertion position (pages at and after
+  this position are shifted right). *selection* accepts the same syntax as
+  :meth:`~aspose_pdf.Document.extract_pages` (an iterable of one-based page
+  numbers or a page range string). All page resources, annotations, form fields,
+  and bookmarks are preserved. The source document remains unchanged.
+
+  The method returns `self` for method chaining, making it easy to assemble
+  documents from multiple sources:
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Insert at the beginning
+      document.insert_pages(1, cover, [1])
+
+      # Insert in the middle
+      document.insert_pages(3, appendix, "1-5")
+
+      # Insert odd pages only
+      document.insert_pages(5, scans, "odd")
+
+      # Insert and chain with other operations
+      document.insert_pages(2, source, [1, 3]).insert_pages(10, other, "last")
+  ```
+  This is equivalent to ``document.pages.insert(index, document.extract_pages(selection))``
+  but more convenient and prevents accidental temporary document leaks.
 - **Select pages using familiar range expressions.**
   `parse_page_range("1-3,7,10-", page_count)` (exported from `aspose_pdf`)
   returns a tuple of one-based indices for text extraction, page rendering

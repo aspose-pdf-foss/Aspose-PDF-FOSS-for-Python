@@ -9824,6 +9824,169 @@ class Document:
 
         return self
 
+    def insert_pages(
+        self, index: int, other: Document, selection: Iterable[int] | str
+    ) -> Document:
+        """Extract selected pages from another document and insert them at *index*.
+
+        This method combines :meth:`extract_pages` and :meth:`PageCollection.insert`
+        into a single operation, providing a convenient way to transfer specific
+        pages from one document to another at a specific position without creating
+        a temporary document.
+
+        The source document remains unchanged and can be used independently after
+        the insert operation.
+
+        Parameters
+        ----------
+        index : int
+            The 1-based position where pages should be inserted. Pages at and
+            after this position are shifted right. For example, ``index=1``
+            inserts at the beginning; ``index=len(doc)+1`` appends (equivalent
+            to ``append_pages``).
+        other : Document
+            The document from which pages should be extracted and inserted. Must be
+            a valid Document instance that has not been disposed.
+        selection : iterable of int or str
+            The pages to extract. This can be:
+            - A one-based iterable of page numbers (e.g., ``[1, 3, 5]``)
+            - A page range string such as ``"1-3,7,10-"``
+            - String ranges include both endpoints and may descend (``"last-1"``);
+              an omitted end selects through the last page.
+            - ``odd`` and ``even`` select physical odd/even pages; ``last`` names
+              the final page. Order and repeated pages are retained.
+
+        Returns
+        -------
+        Document
+            This document (self), allowing for method chaining.
+
+        Raises
+        ------
+        TypeError
+            If *other* is not a Document instance, or if *selection* is not
+            an iterable of integers or a string.
+        PdfValidationException
+            If *other* has been disposed, if the selection is invalid, or if
+            any page in the selection is out of range.
+        AsposePdfException
+            If the document has been disposed.
+        IndexError
+            If *index* is not a valid insertion position (must be >= 1).
+
+        Examples
+        --------
+        Insert specific pages by number at the beginning::
+
+            from aspose_pdf import Document
+
+            with Document("source.pdf") as source:
+                with Document("target.pdf") as target:
+                    target.insert_pages(1, source, [1, 3, 5])
+                    target.save("combined.pdf")
+
+        Insert pages using a range string::
+
+            with Document("appendix.pdf") as source:
+                with Document("report.pdf") as target:
+                    target.insert_pages(3, source, "1-5")
+                    target.save("report_with_appendix.pdf")
+
+        Insert odd pages at a specific position::
+
+            with Document("scans.pdf") as source:
+                with Document("output.pdf") as target:
+                    target.insert_pages(5, source, "odd")
+                    target.save("odd_pages_inserted.pdf")
+
+        Method chaining::
+
+            with Document("main.pdf") as doc:
+                for extra in ["appendix1.pdf", "appendix2.pdf"]:
+                    with Document(extra) as insert_doc:
+                        doc.insert_pages(2, insert_doc, "1-")
+                doc.save("full_document.pdf")
+
+        Notes
+        -----
+        - All page resources, annotations, form fields, and bookmarks that
+          belong to the selected pages are imported.
+        - The source document remains independent and can be disposed or reused.
+        - Page numbers in the target document are updated to accommodate the
+          newly inserted pages.
+        - This is equivalent to ``target.pages.insert(index, source.extract_pages(selection))``
+          but more convenient and prevents accidental temporary document leaks.
+        """
+        self._ensure_not_disposed()
+        if not isinstance(other, Document):
+            raise TypeError("other must be a Document instance")
+        other._ensure_not_disposed()
+
+        # Validate insertion index - must be >= 1
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError("index must be an integer")
+        if index < 1:
+            raise IndexError(f"Insertion index must be >= 1, got {index}")
+
+        # Handle page selection - convert to tuple of zero-based indices
+        if isinstance(selection, str):
+            from aspose_pdf.page_ranges import parse_page_range
+
+            one_based_indices = parse_page_range(
+                selection, other.page_count, limits=other._load_limits
+            )
+            page_indices = tuple(idx - 1 for idx in one_based_indices)
+        else:
+            # Validate that selection is iterable of integers
+            try:
+                one_based_indices = tuple(selection)
+            except TypeError as exc:
+                raise TypeError(
+                    "selection must be an iterable of integers or a string"
+                ) from exc
+
+            # Validate that all page numbers are valid one-based indices (>= 1)
+            for idx in one_based_indices:
+                if isinstance(idx, bool) or not isinstance(idx, int):
+                    raise TypeError(
+                        "selection must be an iterable of integers"
+                    )
+                if idx < 1:
+                    raise PdfValidationException(
+                        f"Page number must be >= 1, got {idx}"
+                    )
+                if idx > other.page_count:
+                    raise PdfValidationException(
+                        f"Page number {idx} is out of range for document with {other.page_count} pages"
+                    )
+
+            page_indices = tuple(idx - 1 for idx in one_based_indices)
+
+        # Validate that selection is not empty
+        if not page_indices:
+            raise PdfValidationException("Selection of pages is empty")
+
+        # Convert insertion index to zero-based and validate against current count
+        # For insertion at index N, the valid range is 1 to len(self)+1
+        target_index = index - 1  # Convert to zero-based
+        current_count = len(self)
+        if target_index > current_count:
+            raise IndexError(
+                f"Insertion index {index} is beyond document length {current_count}"
+            )
+
+        # Extract and import pages in one operation
+        other._flush_outlines()
+        self._flush_outlines()
+        self._engine_pdf.append(other._engine_pdf, pages=page_indices, at=target_index)
+
+        # Refresh the outlines collection to reflect the new pages
+        self._outlines = None
+        if self._form is not None:
+            self._form._load_fields()
+
+        return self
+
     def _import_pages_from(
         self,
         other: Document,
