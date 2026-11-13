@@ -1420,7 +1420,7 @@ with Document("manual.pdf") as document:
 ```
 
 The report finds missing names/pages, malformed destinations and action chains,
-and cycles. Page and annotation indices start at zero. Use `pages=[1, 3]` to select
+and cycles. Page indices start at one and annotation indices start at zero. Use `pages=[1, 3]` to select
 link sources; bookmark and destination-definition checks remain enabled unless
 `include_outlines=False` or `include_named_destinations=False` is passed.
 External target reachability and full PDF conformance are outside these checks.

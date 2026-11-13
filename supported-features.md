@@ -7228,7 +7228,7 @@ Supported:
   names as needed. No optional dependency or network access is needed.
   - Issues are frozen, detached values available from `aspose_pdf` and
     `aspose_pdf.link_validation`. `source` is `annotation`, `outline` or
-    `named_destination`; `page_index`/`annotation_index` are one-based, and
+    `named_destination`; `page_index` is one-based and `annotation_index` is zero-based, and
     `outline_path` is a tuple of zero-based sibling indices from the root.
     `destination_name` identifies a referenced name or a definition being
     checked; byte-string names use Latin-1 as in `NamedDestinationCollection`.
