@@ -3193,11 +3193,16 @@ class Document:
         size: PageSize | Sequence[float] | str | None = None,
         dpi: float = 72.0,
         fit: str = "cover",
+        rows: int = 2,
+        columns: int = 2,
+        margin: float = 0.0,
+        order: str = "row",
     ) -> list[int]:
-        """Add one or more pages from image files, bytes, or streams, one per image.
+        """Add one or more pages from image files, bytes, or streams.
 
-        Images are embedded as full-page images. Each source gets its own page,
-        laid out according to the *layout* mode.
+        Images are embedded as full-page images. Each source gets its own page
+        when ``layout="grid"`` (the default), or multiple images are arranged
+        on each page according to the *layout* mode.
 
         Parameters
         ----------
@@ -3205,11 +3210,13 @@ class Document:
             Image file paths, raw image bytes, or file-like objects with a ``read()``
             method (JPEG, PNG, BMP, GIF, WebP).
         layout : str, optional
-            Layout strategy. Currently only ``"grid"`` is supported (default),
-            which places one image per page filling the entire page.
+            Layout strategy. ``"grid"`` (default) places one image per page filling
+            the entire page. ``"n_up"`` arranges multiple images on each page in a
+            grid defined by *rows* and *columns*.
         size : PageSize, (width, height), or str, optional
             Page size to use. If ``None`` (default), each page matches its
-            image's natural size at *dpi*.
+            image's natural size at *dpi*. When ``layout="n_up"``, the page size
+            defaults to the first image's size at *dpi*.
         dpi : float, optional
             Resolution to use when deriving page size from image pixels.
             Default is 72 DPI.
@@ -3218,7 +3225,17 @@ class Document:
             scales the image to cover the entire page, cropping if necessary.
             ``"contain"`` scales the image to fit entirely within the page,
             preserving aspect ratio. ``"stretch"`` stretches the image to
-            fill the page, potentially distorting it.
+            fill the page, potentially distorting it. Only used with ``layout="grid"``.
+        rows : int, optional
+            Number of rows in the grid when ``layout="n_up"``. Default is 2.
+        columns : int, optional
+            Number of columns in the grid when ``layout="n_up"``. Default is 2.
+        margin : float, optional
+            Margin around each cell in points when ``layout="n_up"``. Default is 0.
+        order : str, optional
+            Grid traversal order when ``layout="n_up"``. ``"row"`` (default) fills
+            left-to-right then top-to-bottom; ``"column"`` fills top-to-bottom
+            then left-to-right.
 
         Returns
         -------
@@ -3229,6 +3246,8 @@ class Document:
         ------
         PdfValidationException
             If any image data is invalid or the size is malformed.
+        PdfValidationException
+            If ``layout="n_up"`` with invalid *rows*, *columns*, *margin*, or *order*.
 
         Notes
         -----
@@ -3239,9 +3258,17 @@ class Document:
         --------
         ::
 
-            # Add several pages from image files
+            # Add several pages from image files (one per page)
             page_numbers = document.add_pages_from_images(
                 ["scan1.png", "scan2.png", "scan3.png"]
+            )
+
+            # Create 4-up layout (2x2) from multiple images
+            page_numbers = document.add_pages_from_images(
+                ["img1.png", "img2.png", "img3.png", "img4.png"],
+                layout="n_up",
+                rows=2,
+                columns=2
             )
 
             # Add pages from image bytes
@@ -3252,18 +3279,6 @@ class Document:
             from io import BytesIO
             image_data = download_image_from_network()
             page_numbers = document.add_pages_from_images([BytesIO(image_data)])
-
-            # Add pages with explicit A4 size
-            page_numbers = document.add_pages_from_images(
-                ["img1.jpg", "img2.jpg"],
-                size="A4"
-            )
-
-            # Use fit mode to control image placement
-            page_numbers = document.add_pages_from_images(
-                ["img1.jpg", "img2.jpg"],
-                fit="contain"
-            )
         """
         if not isinstance(image_sources, list):
             raise TypeError(f"image_sources must be a list of paths, bytes, or file-like objects, got {type(image_sources).__name__}")
@@ -3271,16 +3286,36 @@ class Document:
             return []
 
         # Validate layout
-        if layout != "grid":
+        if layout not in ("grid", "n_up"):
             raise PdfValidationException(
-                f"layout must be 'grid', got {layout!r}"
+                f"layout must be 'grid' or 'n_up', got {layout!r}"
             )
 
-        # Validate fit parameter - must be one of the supported modes
-        if fit not in ("stretch", "contain", "cover"):
+        # Validate fit parameter - only used with grid layout
+        if layout == "grid" and fit not in ("stretch", "contain", "cover"):
             raise PdfValidationException(
                 "fit must be 'stretch', 'contain', or 'cover'"
             )
+
+        # Validate n_up parameters
+        if layout == "n_up":
+            if not isinstance(rows, int) or isinstance(rows, bool) or rows < 1:
+                raise PdfValidationException(
+                    f"rows must be a positive integer, got {rows!r}"
+                )
+            if not isinstance(columns, int) or isinstance(columns, bool) or columns < 1:
+                raise PdfValidationException(
+                    f"columns must be a positive integer, got {columns!r}"
+                )
+            margin_float = float(margin)
+            if margin_float < 0:
+                raise PdfValidationException(
+                    f"margin must be non-negative, got {margin!r}"
+                )
+            if str(order).lower() not in ("row", "column"):
+                raise PdfValidationException(
+                    f"order must be 'row' or 'column', got {order!r}"
+                )
 
         page_numbers = []
 
@@ -3295,18 +3330,70 @@ class Document:
             page = Page.from_image(self, source, size=size, dpi=dpi, fit=fit)
             page_numbers.append(page.number)
 
+        # Apply n_up layout if requested
+        if layout == "n_up":
+            # Import the n_up function from the engine
+            from aspose_pdf.engine import imposition
+
+            # Get the count and first page number of pages we just added
+            added_count = len(page_numbers)
+            first_page_num = page_numbers[0] if page_numbers else 1
+
+            # Extract the added pages into a temporary document
+            temp_doc = self.extract_pages(
+                list(range(first_page_num, first_page_num + added_count))
+            )
+
+            # Apply n_up to the temporary document
+            imposed = imposition.n_up(
+                temp_doc._engine_pdf,
+                rows=rows,
+                columns=columns,
+                page_size=size,
+                margin=margin_float,
+                gutter=0.0,
+                order=order,
+                crop_marks=False,
+            )
+
+            # Create a new document for the imposed pages
+            imposed_doc = Document(limits=self._load_limits)
+            imposed_doc._engine_pdf = imposed
+
+            # Clear the original pages and import the n-up result
+            # Remove the original pages
+            pages_to_remove = list(range(first_page_num, first_page_num + added_count))
+            self.remove_pages(pages_to_remove)
+
+            # Import pages from the imposed document
+            # Track the page count before import
+            page_count_before = len(self.pages)
+            self._import_pages_from(imposed_doc)
+
+            # Return the page numbers of the newly added pages (after n_up)
+            # These are the pages that were just imported
+            page_numbers = list(range(page_count_before + 1, len(self.pages) + 1))
+
         return page_numbers
 
     def add_pages_from_pdf(
         self,
         pdf_sources: list[str | Path | bytes | bytearray | BinaryIO],
         page_numbers: int | list[int] | None = None,
+        layout: str = "grid",
+        *,
+        rows: int = 2,
+        columns: int = 2,
+        margin: float = 0.0,
+        order: str = "row",
     ) -> list[int]:
-        """Add one or more pages from PDF files, bytes, or streams, one per source.
+        """Add one or more pages from PDF files, bytes, or streams.
 
         Each PDF source is opened and its first page is imported into the current
         document. The page's content, resources, annotations, and other properties
-        are preserved during the import.
+        are preserved during the import. When ``layout="grid"`` (the default),
+        each source gets its own page. When ``layout="n_up"``, multiple pages
+        are arranged on each sheet according to *rows* and *columns*.
 
         Parameters
         ----------
@@ -3318,6 +3405,20 @@ class Document:
             (default), page 1 is imported from each source. If an integer, it
             is used for all sources. If a list, each element corresponds to the
             source at the same index.
+        layout : str, optional
+            Layout strategy. ``"grid"`` (default) places one PDF page per output
+            page. ``"n_up"`` arranges multiple PDF pages on each page in a grid
+            defined by *rows* and *columns*.
+        rows : int, optional
+            Number of rows in the grid when ``layout="n_up"``. Default is 2.
+        columns : int, optional
+            Number of columns in the grid when ``layout="n_up"``. Default is 2.
+        margin : float, optional
+            Margin around each cell in points when ``layout="n_up"``. Default is 0.
+        order : str, optional
+            Grid traversal order when ``layout="n_up"``. ``"row"`` (default) fills
+            left-to-right then top-to-bottom; ``"column"`` fills top-to-bottom
+            then left-to-right.
 
         Returns
         -------
@@ -3336,6 +3437,8 @@ class Document:
         TypeError
             If any source is not a supported type or a file-like object's
             ``read()`` method does not return bytes or bytearray.
+        PdfValidationException
+            If ``layout="n_up"`` with invalid *rows*, *columns*, *margin*, or *order*.
 
         Notes
         -----
@@ -3347,9 +3450,17 @@ class Document:
         --------
         ::
 
-            # Add pages from multiple PDF files (page 1 from each)
+            # Add pages from multiple PDF files (one per page)
             page_numbers = document.add_pages_from_pdf(
                 ["document1.pdf", "document2.pdf", "document3.pdf"]
+            )
+
+            # Create 4-up layout (2x2) from multiple PDFs
+            page_numbers = document.add_pages_from_pdf(
+                ["doc1.pdf", "doc2.pdf", "doc3.pdf", "doc4.pdf"],
+                layout="n_up",
+                rows=2,
+                columns=2
             )
 
             # Add the same page from each source (e.g., page 2 from all)
@@ -3380,6 +3491,32 @@ class Document:
             )
         if not pdf_sources:
             return []
+
+        # Validate layout
+        if layout not in ("grid", "n_up"):
+            raise PdfValidationException(
+                f"layout must be 'grid' or 'n_up', got {layout!r}"
+            )
+
+        # Validate n_up parameters
+        if layout == "n_up":
+            if not isinstance(rows, int) or isinstance(rows, bool) or rows < 1:
+                raise PdfValidationException(
+                    f"rows must be a positive integer, got {rows!r}"
+                )
+            if not isinstance(columns, int) or isinstance(columns, bool) or columns < 1:
+                raise PdfValidationException(
+                    f"columns must be a positive integer, got {columns!r}"
+                )
+            margin_float = float(margin)
+            if margin_float < 0:
+                raise PdfValidationException(
+                    f"margin must be non-negative, got {margin!r}"
+                )
+            if str(order).lower() not in ("row", "column"):
+                raise PdfValidationException(
+                    f"order must be 'row' or 'column', got {order!r}"
+                )
 
         # Validate and normalize page_numbers
         if page_numbers is None:
@@ -3424,6 +3561,48 @@ class Document:
             # Create page from PDF (handles paths, bytes, bytearrays, and file-like objects)
             page = Page.from_pdf(self, source, page_number=page_num)
             page_numbers_added.append(page.number)
+
+        # Apply n_up layout if requested
+        if layout == "n_up":
+            # Import the n_up function from the engine
+            from aspose_pdf.engine import imposition
+
+            # Get the count and first page number of pages we just added
+            added_count = len(page_numbers_added)
+            first_page_num = page_numbers_added[0] if page_numbers_added else 1
+
+            # Extract the added pages into a temporary document
+            temp_doc = self.extract_pages(
+                list(range(first_page_num, first_page_num + added_count))
+            )
+
+            # Apply n_up to the temporary document
+            imposed = imposition.n_up(
+                temp_doc._engine_pdf,
+                rows=rows,
+                columns=columns,
+                margin=margin_float,
+                gutter=0.0,
+                order=order,
+                crop_marks=False,
+            )
+
+            # Create a new document for the imposed pages
+            imposed_doc = Document(limits=self._load_limits)
+            imposed_doc._engine_pdf = imposed
+
+            # Clear the original pages and import the n-up result
+            # Remove the original pages
+            pages_to_remove = list(range(first_page_num, first_page_num + added_count))
+            self.remove_pages(pages_to_remove)
+
+            # Import pages from the imposed document
+            # Track the page count before import
+            page_count_before = len(self.pages)
+            self._import_pages_from(imposed_doc)
+
+            # Return the page numbers of the newly added pages (after n_up)
+            page_numbers_added = list(range(page_count_before + 1, len(self.pages) + 1))
 
         return page_numbers_added
 

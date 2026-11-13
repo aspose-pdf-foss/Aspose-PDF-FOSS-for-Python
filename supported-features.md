@@ -1749,62 +1749,108 @@ Supported:
   text or other data. Removing them is not secure erasure of unreferenced
   objects, form data or earlier PDF revisions.
 - **Import one or more pages from PDF sources in one call.**
-  `Document.add_pages_from_pdf(pdf_sources, page_numbers=None)` imports the
-  first page from each PDF source, or the specified page number, and returns a
-  list of one-based page numbers for the newly added pages. Each imported page
-  retains its content, resources, annotations, form fields, layers, and page
-  boxes.
-  - `pdf_sources` is a list of file paths (`str`/`Path`), raw bytes,
-    `bytearray`, or file-like objects with a ``read()`` method.
-  - `page_numbers` is an optional integer or list of one-based page indices.
-    ``None`` (default) imports page 1 from each source. A single integer uses
-    the same page for all sources; a list must match `pdf_sources` in length,
-    so each source gets its own page number.
-  - Each source is loaded temporarily and closed after import; the source
-    document is left untouched.
-  - The imported page becomes a new page at the end of the document. The page's
-    number is sequential: the first imported page is `1`, the second is `2`,
-    etc., regardless of which page was imported from each source.
-  - `PdfValidationException` is raised for invalid PDF data, malformed page
-    numbers, or when page numbers exceed the source document's page count.
-  - `FileNotFoundError` is raised for non-existent file paths.
-  - `TypeError` is raised for invalid source types or when a file-like object's
-    ``read()`` method does not return bytes or `bytearray`.
-  - `ValueError` is raised when `page_numbers` length does not match
-    `pdf_sources` length, or when page numbers are negative or non-integer.
+  `Document.add_pages_from_pdf(pdf_sources, page_numbers=None, layout="grid",
+  rows=2, columns=2, margin=0.0, order="row")` imports pages from each PDF
+  source. When ``layout="grid"`` (the default), one page is imported per source
+  and added to the document. When ``layout="n_up"``, multiple pages are arranged
+  on each sheet in a grid defined by *rows* and *columns*.
 
-  ```python
-  from aspose_pdf import Document
-  from io import BytesIO
+  Parameters
+  ----------
+  pdf_sources : list of str, Path, bytes, bytearray, or BinaryIO
+      PDF file paths, raw bytes, bytearrays, or file-like objects with a
+      ``read()`` method.
+  page_numbers : int or list of int, optional
+      One-based page numbers to import from each source PDF. If ``None``
+      (default), page 1 is imported from each source. If an integer, it
+      is used for all sources. If a list, each element corresponds to the
+      source at the same index.
+  layout : str, optional
+      Layout strategy. ``"grid"`` (default) places one PDF page per output
+      page. ``"n_up"`` arranges multiple PDF pages on each page in a grid
+      defined by *rows* and *columns*.
+  rows : int, optional
+      Number of rows in the grid when ``layout="n_up"``. Default is 2.
+  columns : int, optional
+      Number of columns in the grid when ``layout="n_up"``. Default is 2.
+  margin : float, optional
+      Margin around each cell in points when ``layout="n_up"``. Default is 0.
+  order : str, optional
+      Grid traversal order when ``layout="n_up"``. ``"row"`` (default) fills
+      left-to-right then top-to-bottom; ``"column"`` fills top-to-bottom
+      then left-to-right.
 
-  with Document() as document:
-      # Add pages from multiple PDF files (page 1 from each)
-      page_numbers = document.add_pages_from_pdf(
-          ["document1.pdf", "document2.pdf", "document3.pdf"]
-      )
-      print(f"Added pages: {page_numbers}")
+  Returns
+  -------
+  list of int
+      One-based page numbers of the newly added pages, in order.
 
-      # Add the same page from all sources (e.g., page 2 from each)
-      page_numbers = document.add_pages_from_pdf(
-          ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
-          page_numbers=2
-      )
+  Raises
+  ------
+  PdfValidationException
+      If any PDF data is invalid or layout parameters are invalid.
+  FileNotFoundError
+      If any PDF path does not exist.
+  IndexError
+      If any page number exceeds the number of pages in the corresponding
+      source PDF, or if a negative page number is provided.
+  TypeError
+      If any source is not a supported type or a file-like object's
+      ``read()`` method does not return bytes or bytearray.
+  ValueError
+      If page_numbers length does not match pdf_sources length.
 
-      # Add specific pages from each source
-      page_numbers = document.add_pages_from_pdf(
-          ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
-          page_numbers=[2, 1, 3]
-      )
+  Notes
+  -----
+  Each source PDF is loaded temporarily during the import and closed
+  afterwards. The imported page retains its original properties:
+  content, annotations, form fields, layers, and page boxes.
 
-      # Add pages from bytes
+  Examples
+  --------
+  Add pages from multiple PDF files (one per page, default grid layout)::
+
+      with Document() as document:
+          page_numbers = document.add_pages_from_pdf(
+              ["document1.pdf", "document2.pdf", "document3.pdf"]
+          )
+          print(f"Added pages: {page_numbers}")
+
+  Create a 4-up layout (2x2 grid) from multiple PDF pages::
+
+      with Document() as document:
+          page_numbers = document.add_pages_from_pdf(
+              ["doc1.pdf", "doc2.pdf", "doc3.pdf", "doc4.pdf"],
+              layout="n_up",
+              rows=2,
+              columns=2
+          )
+          print(f"Added {len(page_numbers)} pages (4 images on {len(page_numbers)} pages)")
+
+  Add the same page from all sources (e.g., page 2 from each)::
+
+      with Document() as document:
+          page_numbers = document.add_pages_from_pdf(
+              ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+              page_numbers=2
+          )
+
+  Add specific pages from each source::
+
+      with Document() as document:
+          page_numbers = document.add_pages_from_pdf(
+              ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+              page_numbers=[2, 1, 3]
+          )
+
+  Add pages from bytes::
+
       with open("source.pdf", "rb") as f:
           page_numbers = document.add_pages_from_pdf([f.read()])
 
-      # Add pages from file-like objects (e.g., BytesIO)
-      page_numbers = document.add_pages_from_pdf([BytesIO(pdf_bytes)])
+  Add pages from file-like objects (e.g., BytesIO)::
 
-      document.save("from_pdf.pdf")
-  ```
+      page_numbers = document.add_pages_from_pdf([BytesIO(pdf_bytes)])
 
 - **Find visually duplicate pages.**
   `Document.find_duplicate_pages(pages=None, dpi=72,
@@ -5763,55 +5809,90 @@ Boundaries:
 
 - **Add pages from image files, bytes, or streams.**
   `Document.add_pages_from_images(image_sources, layout="grid", size=None,
-  dpi=72.0, fit="cover")` adds one page per image, embedding the image as a
-  full-page image. Each source in the list can be a file path (`str` or `Path`),
-  raw image bytes (`bytes`/`bytearray`), or a file-like object with a ``read()``
-  method (e.g., `io.BytesIO` or an open file handle). The layout is currently
-  only `"grid"` (one image per page filling the page); the page size defaults to
-  the image's natural size at *dpi* or can be specified with `size="A4"`,
-  `size=(300, 400)`, etc. The DPI controls how pixels map to points (72 DPI =
-  1 pixel = 1 point).
-  - The `fit` parameter controls how images are placed on the page:
-    - `"cover"` (default): scales the image to cover the entire page, cropping
-      if necessary.
-    - `"contain"`: scales the image to fit entirely within the page, preserving
-      aspect ratio.
-    - `"stretch"`: stretches the image to fill the page, potentially distorting
-      it.
-  - JPEG and PNG work without optional dependencies. Static BMP, GIF,
-    and WebP require the ``images`` extra. Animated GIFs are not supported.
-  - The method returns a list of one-based page numbers for the newly added
-    pages. An empty list returns an empty list; a single image returns `[1]`.
-  - Invalid image bytes, unreadable files, or malformed `size` raise
-    `PdfValidationException` or `FileNotFoundError`. Invalid layout mode,
-    invalid `fit` mode, or non-list input raises `TypeError`.
-  - File-like objects must have a ``read()`` method that returns ``bytes`` or
-    ``bytearray``. Other types raise ``TypeError``.
+  dpi=72.0, fit="cover", rows=2, columns=2, margin=0.0, order="row")` adds
+  pages from image sources. When ``layout="grid"`` (the default), one page is
+  added per image source, embedding the image as a full-page image. When
+  ``layout="n_up"``, multiple images are arranged on each sheet in a grid
+  defined by *rows* and *columns*.
 
-  ```python
-  from aspose_pdf import Document
-  from io import BytesIO
+  Parameters
+  ----------
+  image_sources : list of str, Path, bytes, bytearray, or BinaryIO
+      Image file paths, raw image bytes, or file-like objects with a ``read()``
+      method (JPEG, PNG, BMP, GIF, WebP).
+  layout : str, optional
+      Layout strategy. ``"grid"`` (default) places one image per page filling
+      the entire page. ``"n_up"`` arranges multiple images on each page in a
+      grid defined by *rows* and *columns*.
+  size : PageSize, (width, height), or str, optional
+      Page size to use. If ``None`` (default), each page matches its
+      image's natural size at *dpi*. When ``layout="n_up"``, the page size
+      defaults to the first image's size at *dpi*.
+  dpi : float, optional
+      Resolution to use when deriving page size from image pixels.
+      Default is 72 DPI.
+  fit : str, optional
+      How to fit the image within each page. ``"cover"`` (default)
+      scales the image to cover the entire page, cropping if necessary.
+      ``"contain"`` scales the image to fit entirely within the page,
+      preserving aspect ratio. ``"stretch"`` stretches the image to
+      fill the page, potentially distorting it. Only used with ``layout="grid"``.
+  rows : int, optional
+      Number of rows in the grid when ``layout="n_up"``. Default is 2.
+  columns : int, optional
+      Number of columns in the grid when ``layout="n_up"``. Default is 2.
+  margin : float, optional
+      Margin around each cell in points when ``layout="n_up"``. Default is 0.
+  order : str, optional
+      Grid traversal order when ``layout="n_up"``. ``"row"`` (default) fills
+      left-to-right then top-to-bottom; ``"column"`` fills top-to-bottom
+      then left-to-right.
 
-  # Add pages from image files
-  page_numbers = document.add_pages_from_images(["scan1.png", "scan2.jpg"])
+  Returns
+  -------
+  list of int
+      One-based page numbers of the newly added pages, in order.
 
-  # Add pages from image bytes (e.g., downloaded from network)
-  with open("image.png", "rb") as f:
-      document.add_pages_from_images([f.read()])
+  Raises
+  ------
+  PdfValidationException
+      If any image data is invalid or layout parameters are invalid.
+  TypeError
+      If image_sources is not a list or a file-like object's ``read()``
+      method does not return bytes or bytearray.
 
-  # Add pages from file-like objects (e.g., BytesIO)
-  image_data = download_image_from_network()
-  page_numbers = document.add_pages_from_images([BytesIO(image_data)])
+  Notes
+  -----
+  JPEG and PNG work without optional dependencies. Static BMP, GIF,
+  and WebP require the ``images`` extra. Animated GIFs are not supported.
 
-  # Add pages with explicit A4 size
-  page_numbers = document.add_pages_from_images(
-      ["img1.jpg", "img2.jpg"],
-      size="A4"
-  )
+  Examples
+  --------
+  Add several pages from image files (one per page, default grid layout)::
 
-  # Add pages from bytes with custom DPI
-  page_numbers = document.add_pages_from_images([image_bytes], dpi=144)
-  ```
+      page_numbers = document.add_pages_from_images(
+          ["scan1.png", "scan2.png", "scan3.png"]
+      )
+
+  Create a 4-up layout (2x2 grid) from multiple images::
+
+      page_numbers = document.add_pages_from_images(
+          ["img1.png", "img2.png", "img3.png", "img4.png"],
+          layout="n_up",
+          rows=2,
+          columns=2
+      )
+      print(f"Added {len(page_numbers)} pages (4 images on {len(page_numbers)} pages)")
+
+  Add pages from image bytes::
+
+      with open("image.png", "rb") as f:
+          page_numbers = document.add_pages_from_images([f.read()])
+
+  Add pages from file-like objects (e.g., BytesIO)::
+
+      image_data = download_image_from_network()
+      page_numbers = document.add_pages_from_images([BytesIO(image_data)])
 
 ## Forms
 
