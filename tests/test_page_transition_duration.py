@@ -174,3 +174,85 @@ class TestTransitionValidation:
         for trans_type in valid_types:
             page.transition = {"Type": trans_type}
             assert page.transition["Type"] == trans_type
+
+
+class TestPageCollectionTransitionAndDuration:
+    """Tests for PageCollection.transition and PageCollection.duration properties."""
+
+    def test_empty_page_collection_transition_is_none(self, document):
+        """Empty PageCollection.transition should return None."""
+        assert document.pages.transition is None
+
+    def test_empty_page_collection_duration_is_none(self, document):
+        """Empty PageCollection.duration should return None."""
+        assert document.pages.duration is None
+
+    def test_single_page_transition_via_collection(self, document):
+        """PageCollection.transition on single page should return the transition."""
+        document.pages.add()
+        transition = {"Type": "Split", "M": "H"}
+        document.pages.transition = transition
+        assert document.pages.transition == transition
+
+    def test_single_page_duration_via_collection(self, document):
+        """PageCollection.duration on single page should return the duration."""
+        document.pages.add()
+        document.pages.duration = 2.5
+        assert document.pages.duration == 2.5
+
+    def test_multi_page_transition_via_collection(self, multi_page_document):
+        """PageCollection.transition on multiple pages should return a list."""
+        transition = {"Type": "Split", "M": "H"}
+        multi_page_document.pages.transition = transition
+        result = multi_page_document.pages.transition
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert all(t == transition for t in result)
+
+    def test_multi_page_duration_via_collection(self, multi_page_document):
+        """PageCollection.duration on multiple pages should return a list."""
+        multi_page_document.pages.duration = 2.0
+        result = multi_page_document.pages.duration
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert all(d == 2.0 for d in result)
+
+    def test_multi_page_individual_transitions_still_work(self, multi_page_document):
+        """Setting PageCollection.transition shouldn't break individual page transitions."""
+        multi_page_document.pages[1].transition = {"Type": "Split"}
+        multi_page_document.pages[2].transition = {"Type": "Blinds"}
+        multi_page_document.pages[3].transition = {"Type": "Wipe"}
+
+        # Now set collection transition
+        multi_page_document.pages.transition = {"Type": "Dissolve"}
+
+        # All should have the collection transition
+        assert multi_page_document.pages.transition == [
+            {"Type": "Dissolve"},
+            {"Type": "Dissolve"},
+            {"Type": "Dissolve"}
+        ]
+
+    def test_multi_page_transition_none(self, multi_page_document):
+        """Setting PageCollection.transition to None should remove all transitions."""
+        multi_page_document.pages[1].transition = {"Type": "Split"}
+        multi_page_document.pages[2].transition = {"Type": "Blinds"}
+
+        multi_page_document.pages.transition = None
+
+        result = multi_page_document.pages.transition
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert all(t is None for t in result)
+
+    def test_multi_page_duration_none(self, multi_page_document):
+        """Setting PageCollection.duration to None should remove all durations."""
+        multi_page_document.pages[1].duration = 1.0
+        multi_page_document.pages[2].duration = 2.0
+
+        multi_page_document.pages.duration = None
+
+        result = multi_page_document.pages.duration
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert all(d is None for d in result)
