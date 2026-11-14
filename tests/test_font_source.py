@@ -309,6 +309,30 @@ def test_descriptor_matches_is_case_insensitive():
     assert not descriptor.matches("")
 
 
+def test_descriptor_invalid_woff_raises():
+    # Corrupted WOFF that has the correct signature but fails to decode
+    invalid_woff = b"wOFF" + b"\x00" * 20  # valid signature but malformed data
+    descriptor = FontDescriptor("InvalidWOFF", data=invalid_woff)
+    with pytest.raises(FontEmbeddingException):
+        descriptor.get_font_bytes()
+
+
+def test_descriptor_invalid_woff2_raises():
+    # Corrupted WOFF2 that has the correct signature but fails to decode
+    # (brotli unavailable case) - use uppercase WOFF2 to test case-insensitivity
+    invalid_woff2 = b"WOF2" + b"\x00" * 20  # valid signature but malformed data
+    descriptor = FontDescriptor("InvalidWOFF2", data=invalid_woff2)
+    with pytest.raises(FontEmbeddingException):
+        descriptor.get_font_bytes()
+
+
+def test_descriptor_raw_sfnt_bytes_returned():
+    # Non-WOFF data should be returned as-is (assumed to be SFNT)
+    sfnt = _make_truetype("Raw Font")
+    descriptor = FontDescriptor("Raw Font", data=sfnt)
+    assert descriptor.get_font_bytes() == sfnt
+
+
 # ---------------------------------------------------------------------------
 # FontRepository
 # ---------------------------------------------------------------------------

@@ -60,12 +60,23 @@ class FontDescriptor:
 
         Raises:
             FontEmbeddingException: if the descriptor is not backed by data or
-                a readable file.
+                a readable file, or if WOFF/WOFF2 decoding fails.
         """
         resolved_limits = _coerce_limits(limits)
         raw = self._read_raw_bytes(resolved_limits)
         decoded = decode_woff(raw, limits=resolved_limits)
-        return decoded if decoded is not None else raw
+        if decoded is not None:
+            return decoded
+        # If the data looks like WOFF/WOFF2 but decoding failed, raise.
+        # Check for WOFF1 (wOFF) or WOFF2 (wOF2) signatures (case-insensitive).
+        # The signature always starts with 'w' (case-insensitive), followed by OFF or OF2.
+        if len(raw) >= 4 and raw[0:1].upper() == b"W":
+            if raw[1:4].upper() in (b"OFF", b"OF2"):
+                raise FontEmbeddingException(
+                    f"Font {self.name!r}: WOFF/WOFF2 decoding failed"
+                )
+        # Not WOFF/WOFF2; return the raw bytes (e.g., raw SFNT).
+        return raw
 
     def _read_raw_bytes(self, limits: PdfLoadLimits) -> bytes:
         """Read the original backing bytes without decoding font wrappers."""

@@ -9,6 +9,10 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `FontDescriptor.get_font_bytes()` now raises `FontEmbeddingException` when
+  WOFF/WOFF2 decoding fails instead of returning raw WOFF bytes, which would
+  produce an invalid font program in the resulting PDF.
+
 - Validate `ExtractedTable.page_index` against one-based indexing. The
   constructor now raises `PdfValidationException` for `page_index <= 0`,
   consistent with the documented one-based page numbering.
