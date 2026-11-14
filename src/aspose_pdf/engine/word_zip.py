@@ -107,7 +107,7 @@ def export_zip(
                 for word in words:
                     writer.writerow(
                         [
-                            str(word.page_index + 1),
+                            str(word.page_index),
                             word.text,
                             *[str(value) for value in word.rect],
                             "".join(_json_tokens(word.quad)),

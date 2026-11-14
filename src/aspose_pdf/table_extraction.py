@@ -37,7 +37,7 @@ class ExtractedTable:
         if (
             isinstance(self.page_index, bool)
             or not isinstance(self.page_index, int)
-            or self.page_index < 0
+            or self.page_index < 1
         ):
             raise PdfValidationException("page_index must be a non-negative integer")
         rows = _matrix(self.rows, "rows")
@@ -149,7 +149,7 @@ def _page_tables(
     from aspose_pdf.engine.text_export import page_blocks
 
     return [
-        ExtractedTable(page_index, block.rows, block.spans)
+        ExtractedTable(page_index + 1, block.rows, block.spans)
         for block in page_blocks(
             pdf, page_index, include_images=False,
             clip_to_page=clip_to_page, cell_text_limit=None,
