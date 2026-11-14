@@ -55,7 +55,7 @@ def _source() -> Document:
 
 def _text(document: Document) -> list[str]:
     return [
-        document.pages[(index) + 1].to_markdown(title="").strip().split("\n")[0]
+        document.pages[(index) + 1].to_markdown().strip().split("\n")[0]
         for index in range(len(document.pages))
     ]
 

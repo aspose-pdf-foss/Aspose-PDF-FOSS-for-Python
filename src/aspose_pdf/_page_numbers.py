@@ -109,12 +109,6 @@ def numbered_records(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: numbered_records(item) for key, item in value.items()}
     if is_dataclass(value) and not isinstance(value, type):
-        # Skip ExtractedTable, TextWord, and ExtractedBlock since they already use 1-based page_index
-        from aspose_pdf.block_extraction import ExtractedBlock
-        from aspose_pdf.table_extraction import ExtractedTable
-        from aspose_pdf.text import TextWord
-        if isinstance(value, (ExtractedTable, TextWord, ExtractedBlock)):
-            return value
         changes = {}
         for field in fields(value):
             item = getattr(value, field.name)

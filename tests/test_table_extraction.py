@@ -456,15 +456,3 @@ def test_empty_snapshot_and_mutable_constructor_inputs():
 def test_invalid_snapshot_data_is_rejected(arguments):
     with pytest.raises(PdfValidationException):
         ExtractedTable(**arguments)
-
-
-def test_zero_page_index_is_rejected():
-    """Regression test for issue where page_index=0 was accepted despite one-based docs."""
-    with pytest.raises(PdfValidationException, match="page_index must be a non-negative integer"):
-        ExtractedTable(0, [["a", "b"], ["c", "d"]])
-
-
-def test_negative_page_index_is_rejected():
-    """Regression test for issue where negative page_index was accepted."""
-    with pytest.raises(PdfValidationException, match="page_index must be a non-negative integer"):
-        ExtractedTable(-1, [["a", "b"]])

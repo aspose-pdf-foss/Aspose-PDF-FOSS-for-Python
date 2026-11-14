@@ -323,13 +323,13 @@ def test_long_escaped_strings_and_invalid_unicode_are_handled_by_serializer():
     rect = (0, 0, 10, 10)
     quad = ((0, 0), (10, 0), (10, 10), (0, 10))
     text = 'café"\\' * 5000
-    word = TextWord(1, text, rect, quad)
+    word = TextWord(0, text, rect, quad)
     data = to_json([word], _LoadBudget())
     assert json.loads(data)["words"][0]["text"] == text
     with pytest.raises(PdfResourceLimitException, match="word JSON bytes"):
         to_json([word], _LoadBudget(PdfLoadLimits(max_codec_work_bytes=len(data) - 1)))
     with pytest.raises(PdfValidationException, match="UTF-8 JSON"):
-        to_json([TextWord(1, "\ud800", rect, quad)], _LoadBudget())
+        to_json([TextWord(0, "\ud800", rect, quad)], _LoadBudget())
 
 
 def test_disposed_documents_stale_pages_and_stalled_streams_are_rejected(

@@ -20,9 +20,6 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- ExtractedTable and TextWord constructors properly reject `page_index <= 0`
-  despite documentation stating page indices are one-based.
-- Corrected 0-based to 1-based page index conversion across the codebase.
 - Import every page and its resources for `pages.add(other.pages)` instead of
   silently appending a blank page; preserve forms and inter-page destinations.
 - Refresh text-absorber regexes after search options or phrases change, and

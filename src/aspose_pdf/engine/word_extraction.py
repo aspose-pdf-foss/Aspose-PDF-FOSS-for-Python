@@ -78,7 +78,7 @@ class _WordParser(_RegionParser):
                 self._budget.check(
                     len(self.words) + 1, "max_container_items", "extracted words"
                 )
-                self.words.append(TextWord(self.page_index + 1, text, rect, quad))
+                self.words.append(TextWord(self.page_index, text, rect, quad))
         self._word_text = []
         self._word_key = self._word_box = self._word_matrix = None
 

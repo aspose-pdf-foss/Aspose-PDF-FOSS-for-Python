@@ -104,7 +104,7 @@ class TextWord:
         if (
             isinstance(self.page_index, bool)
             or not isinstance(self.page_index, int)
-            or self.page_index < 1
+            or self.page_index < 0
         ):
             raise PdfValidationException("page_index must be a non-negative integer")
         if (

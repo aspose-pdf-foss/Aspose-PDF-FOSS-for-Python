@@ -158,7 +158,7 @@ def extract_blocks(
             retained += len(block.image or b"")
             budget.check(retained, "max_total_decoded_bytes", "extracted block data")
             result.append(ExtractedBlock(
-                index + 1, block.kind, block.x, block.y, text=block.text, level=block.level,
+                index, block.kind, block.x, block.y, text=block.text, level=block.level,
                 items=block.items, rows=block.rows, column_spans=block.spans,
                 ordered=block.ordered, alt=block.alt, image=block.image,
             ))

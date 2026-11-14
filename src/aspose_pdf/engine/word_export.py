@@ -33,7 +33,7 @@ def to_json(words: Iterable[TextWord], budget: _LoadBudget) -> bytes:
                 if index:
                     write(b",")
                 record = dict(
-                    page_index=word.page_index,
+                    page_index=word.page_index + 1,
                     text=word.text,
                     rect=word.rect,
                     quad=word.quad,
@@ -54,7 +54,7 @@ def to_csv(words: Iterable[TextWord], writer: CsvWriter) -> bytes:
     for word in words:
         writer.writerow(
             [
-                str(word.page_index),
+                str(word.page_index + 1),
                 word.text,
                 *[str(value) for value in word.rect],
                 "".join(_json_tokens(word.quad)),
