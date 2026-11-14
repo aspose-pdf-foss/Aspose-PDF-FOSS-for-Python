@@ -2252,17 +2252,8 @@ class Page:
             paragraph_gap=paragraph_gap, clip_to_page=clip_to_page, skip_artifacts=skip_artifacts, overwrite=overwrite,
         )
 
-    def to_html(
-        self,
-        pages: Sequence[int] | None = None,
-        *,
-        embed_images: bool = True,
-    ) -> str:
+    def to_html(self, *, embed_images: bool = True) -> str:
         """Return this page's inferred structure as an HTML fragment document.
-
-        *pages* selects which pages to export. The default ``None`` exports
-        only this page. Pass a sequence of one-based page numbers (e.g.
-        ``[1, 3, 5]``) to export specific pages.
 
         The conversion answers "what does this page *say*", not "what does it
         look like": the same layout analysis :meth:`Document.auto_tag` uses
@@ -2271,41 +2262,21 @@ class Page:
         positioning, colour and fonts are deliberately dropped -- for a
         facsimile, use :meth:`to_svg`.
         """
-        if pages is None:
-            pages = [self.number]
-        return self._document.to_html(
-            pages=pages,
-            embed_images=embed_images,
+        from aspose_pdf.engine.text_export import to_html
+
+        return to_html(
+            [self._blocks(embed_images)], embed_images=embed_images
         )
 
-    def to_markdown(
-        self,
-        pages: Sequence[int] | None = None,
-        *,
-        embed_images: bool = True,
-        markdown_format: str = "GFM",
-        title: str | None = None,
-        paragraph_gap: float | None = None,
-        clip_to_page: bool = True,
-    ) -> str:
+    def to_markdown(self, *, embed_images: bool = True) -> str:
         """Return this page's inferred structure as Markdown (GFM).
-
-        *pages* selects which pages to export. The default ``None`` exports
-        only this page. Pass a sequence of one-based page numbers (e.g.
-        ``[1, 3, 5]``) to export specific pages. ``markdown_format`` is
-        ``"GFM"`` (GitHub Flavored Markdown, the default) or ``"CommonMark"``.
 
         See :meth:`to_html` for what the conversion does and does not carry.
         """
-        if pages is None:
-            pages = [self.number]
-        return self._document.to_markdown(
-            pages=pages,
-            title=title,
-            embed_images=embed_images,
-            markdown_format=markdown_format,
-            paragraph_gap=paragraph_gap,
-            clip_to_page=clip_to_page,
+        from aspose_pdf.engine.text_export import to_markdown
+
+        return to_markdown(
+            [self._blocks(embed_images)], embed_images=embed_images
         )
 
     def _blocks(self, embed_images: bool) -> list:
