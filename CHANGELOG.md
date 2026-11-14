@@ -7,6 +7,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Validate `ExtractedTable.page_index` against one-based indexing. The
+  constructor now raises `PdfValidationException` for `page_index <= 0`,
+  consistent with the documented one-based page numbering.
+
 ### Changed
 
 - **Breaking: public page numbers now start at 1, matching Aspose.PDF .NET.**
