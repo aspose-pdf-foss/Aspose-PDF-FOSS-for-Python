@@ -12,10 +12,8 @@ from functools import wraps
 from inspect import signature
 from typing import Any
 
-from aspose_pdf.block_extraction import ExtractedBlock
 from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.load_limits import PdfLoadLimits, _LoadBudget
-from aspose_pdf.table_extraction import ExtractedTable
 
 
 def page_index(
@@ -115,9 +113,6 @@ def numbered_records(value: Any) -> Any:
         for field in fields(value):
             item = getattr(value, field.name)
             if field.name in {"page_index", "other_page_index"} and item is not None:
-                # ExtractedTable and ExtractedBlock use one-based page_index, so don't modify them
-                if isinstance(value, (ExtractedTable, ExtractedBlock)) and field.name == "page_index":
-                    continue
                 changes[field.name] = item + 1
             elif field.name == "page_indexes":
                 changes[field.name] = tuple(index + 1 for index in item)

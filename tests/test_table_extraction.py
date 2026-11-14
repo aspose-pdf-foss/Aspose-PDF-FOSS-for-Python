@@ -437,7 +437,6 @@ def test_empty_snapshot_and_mutable_constructor_inputs():
 
 
 @pytest.mark.parametrize("arguments", [
-    {"page_index": 0, "rows": []},
     {"page_index": -1, "rows": []},
     {"page_index": True, "rows": []},
     {"page_index": 0.0, "rows": []},

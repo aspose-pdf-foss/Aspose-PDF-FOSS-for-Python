@@ -20,9 +20,6 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **ExtractedTable constructor now correctly validates page_index.** The constructor
-  rejects `page_index=0` as invalid since page_index is one-based per documentation.
-  Zero/negative indices raise `PdfValidationException: page_index must be a non-negative integer`.
 - Import every page and its resources for `pages.add(other.pages)` instead of
   silently appending a blank page; preserve forms and inter-page destinations.
 - Refresh text-absorber regexes after search options or phrases change, and
