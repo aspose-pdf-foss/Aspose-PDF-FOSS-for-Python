@@ -9,6 +9,7 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `form_value` now preserves `PdfNull` entries in `PdfArray` values for multi-select choice fields, mapping each to `None` in the returned list.
 - `PageTextComparison` now validates `page_index` and `other_page_index` to ensure they are `None` or positive integers (one-based page numbers). Zero, negative, or non-integer values raise `PdfValidationException`.
 - `FontDescriptor.get_font_bytes()` now raises `FontEmbeddingException` when
   WOFF/WOFF2 decoding fails instead of returning raw WOFF bytes, which would

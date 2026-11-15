@@ -250,6 +250,8 @@ def form_value(resolve: Any, budget: Any, value: Any, kind: str) -> Any:
     Text for text and choice fields; ``True``/``False`` for a check box (off
     unless the value names another state); a radio button's state name, or
     ``None`` at ``Off``; a list where several choices are selected.
+    For choice, listbox, and combobox fields, PdfNull entries in a PdfArray
+    are mapped to None.
     """
     if value is None or isinstance(value, PdfNull):
         return False if kind == "checkbox" else None
@@ -277,5 +279,10 @@ def form_value(resolve: Any, budget: Any, value: Any, kind: str) -> Any:
                 items.append(decode_pdf_text_string(item))
             elif isinstance(item, PdfName):
                 items.append(item.name.lstrip("/"))
+            elif isinstance(item, PdfNull):
+                # Only preserve PdfNull as None for choice fields where it is
+                # semantically meaningful to have null selections in an array.
+                if kind in ("choice", "listbox", "combobox"):
+                    items.append(None)
         return items if len(items) > 1 else (items[0] if items else None)
     return str(value)

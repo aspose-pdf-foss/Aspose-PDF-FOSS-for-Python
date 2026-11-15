@@ -7,6 +7,7 @@ from aspose_pdf.engine.cos import (
     PdfDictionary,
     PdfDocument,
     PdfName,
+    PdfNull,
     PdfNumber,
     PdfString,
 )
@@ -137,6 +138,41 @@ class TestFormFieldTypesExtraction(unittest.TestCase):
         result = ext.extract_form_fields()
         self.assertEqual(result["combo1"]["value"], "Selected")
         self.assertEqual(result["combo1"]["type"], "combobox")
+
+    def test_choice_multi_with_null(self):
+        doc = _make_cos_doc_with_acroform(
+            [
+                ("ch3", "Ch", 0, PdfArray([PdfString(b"A"), PdfNull(), PdfString(b"B")])),
+            ]
+        )
+        ext = CosExtractor(doc, b"")
+        result = ext.extract_form_fields()
+        self.assertEqual(result["ch3"]["value"], ["A", None, "B"])
+        self.assertEqual(result["ch3"]["type"], "listbox")
+
+    def test_choice_multi_with_multiple_nulls(self):
+        doc = _make_cos_doc_with_acroform(
+            [
+                ("ch4", "Ch", 0, PdfArray([PdfNull(), PdfString(b"X"), PdfNull(), PdfString(b"Y")])),
+            ]
+        )
+        ext = CosExtractor(doc, b"")
+        result = ext.extract_form_fields()
+        self.assertEqual(result["ch4"]["value"], [None, "X", None, "Y"])
+        self.assertEqual(result["ch4"]["type"], "listbox")
+
+    def test_text_field_with_array_and_null(self):
+        """Text fields should not get None for PdfNull in arrays."""
+        doc = _make_cos_doc_with_acroform(
+            [
+                ("txt_array", "Tx", 0, PdfArray([PdfString(b"Hello"), PdfNull(), PdfString(b"World")])),
+            ]
+        )
+        ext = CosExtractor(doc, b"")
+        result = ext.extract_form_fields()
+        # PdfNull should be dropped for non-choice fields
+        self.assertEqual(result["txt_array"]["value"], ["Hello", "World"])
+        self.assertEqual(result["txt_array"]["type"], "text")
 
 
 if __name__ == "__main__":
