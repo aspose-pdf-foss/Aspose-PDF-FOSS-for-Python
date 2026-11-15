@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from aspose_pdf.exceptions import PdfValidationException
+
 __all__ = ["PageTextComparison"]
 
 
@@ -30,3 +32,20 @@ class PageTextComparison:
     other_text: str | None
     matches: bool
     unified_diff: str
+
+    def __post_init__(self) -> None:
+        """Validate that page_index and other_page_index are None or positive integers."""
+        for name, value in (
+            ("page_index", self.page_index),
+            ("other_page_index", self.other_page_index),
+        ):
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise PdfValidationException(
+                    f"{name} must be an integer, got {type(value).__name__}"
+                )
+            if value < 1:
+                raise PdfValidationException(
+                    f"{name} must be a positive integer, got {value}"
+                )

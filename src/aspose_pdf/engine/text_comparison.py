@@ -115,6 +115,11 @@ def compare_text(
     results = []
     retained = 0
     for index, other_index in zip_longest(selection, other_selection):
+        # Convert zero-based engine indices to one-based for PageTextComparison
+        # (which uses one-based page numbers per its documentation)
+        page_idx = index + 1 if index is not None else None
+        other_page_idx = other_index + 1 if other_index is not None else None
+
         texts = []
         normalized = []
         for source, page in ((document, index), (other, other_index)):
@@ -144,6 +149,6 @@ def compare_text(
             difference, size = _diff(*normalized, index, other_index, budget, retained)
             retained += size
         results.append(
-            PageTextComparison(index, other_index, *texts, matches, difference)
+            PageTextComparison(page_idx, other_page_idx, *texts, matches, difference)
         )
     return results

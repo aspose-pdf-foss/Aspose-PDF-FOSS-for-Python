@@ -9,6 +9,7 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `PageTextComparison` now validates `page_index` and `other_page_index` to ensure they are `None` or positive integers (one-based page numbers). Zero, negative, or non-integer values raise `PdfValidationException`.
 - `FontDescriptor.get_font_bytes()` now raises `FontEmbeddingException` when
   WOFF/WOFF2 decoding fails instead of returning raw WOFF bytes, which would
   produce an invalid font program in the resulting PDF.

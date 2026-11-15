@@ -673,3 +673,59 @@ def test_streaming_unselected_oversized_content_is_not_decoded(tmp_path, exclude
             left.compare_text(
                 right, pages=[2], other_pages=[2], exclude_regions=exclude_regions
             )
+
+
+@pytest.mark.parametrize(
+    "page_index,other_page_index,error_msg",
+    [
+        (0, 1, "page_index must be a positive integer"),
+        (1, 0, "other_page_index must be a positive integer"),
+        (-1, 1, "page_index must be a positive integer"),
+        (1, -1, "other_page_index must be a positive integer"),
+        (-5, -10, "page_index must be a positive integer"),
+        (True, 1, "page_index must be an integer"),
+        (1, False, "other_page_index must be an integer"),
+        ("1", 1, "page_index must be an integer"),
+        (1.5, 1, "page_index must be an integer"),
+        (None, 1, None),  # None is valid
+        (1, None, None),  # None is valid
+    ],
+)
+def test_page_index_validation(page_index, other_page_index, error_msg):
+    """Test that PageTextComparison validates page indices correctly."""
+    if error_msg is None:
+        # Valid cases should not raise
+        cmp = PageTextComparison(
+            page_index=page_index,
+            other_page_index=other_page_index,
+            text="",
+            other_text="",
+            matches=True,
+            unified_diff="",
+        )
+        assert cmp.page_index == page_index
+        assert cmp.other_page_index == other_page_index
+    else:
+        with pytest.raises(PdfValidationException, match=error_msg):
+            PageTextComparison(
+                page_index=page_index,
+                other_page_index=other_page_index,
+                text="",
+                other_text="",
+                matches=True,
+                unified_diff="",
+            )
+
+
+def test_page_index_valid_positive_integers():
+    """Test that valid positive integers are accepted."""
+    cmp = PageTextComparison(
+        page_index=1,
+        other_page_index=2,
+        text="a",
+        other_text="a",
+        matches=True,
+        unified_diff="",
+    )
+    assert cmp.page_index == 1
+    assert cmp.other_page_index == 2

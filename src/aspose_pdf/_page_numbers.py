@@ -109,11 +109,12 @@ def numbered_records(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: numbered_records(item) for key, item in value.items()}
     if is_dataclass(value) and not isinstance(value, type):
-        # ExtractedTable and ExtractedBlock already use 1-based page_index, so skip conversion
+        # ExtractedTable, ExtractedBlock, and PageTextComparison already use 1-based page_index
         from aspose_pdf.block_extraction import ExtractedBlock
         from aspose_pdf.table_extraction import ExtractedTable
+        from aspose_pdf.text_comparison import PageTextComparison
 
-        if isinstance(value, (ExtractedTable, ExtractedBlock)):
+        if isinstance(value, (ExtractedTable, ExtractedBlock, PageTextComparison)):
             return value
         changes = {}
         for field in fields(value):
