@@ -602,3 +602,21 @@ def test_sign_data_pkcs7_rejects_insecure_hash_algorithms():
     with pytest.raises(UnsupportedAlgorithm) as exc_info:
         SigningUtils.sign_data_pkcs7(DATA, leaf, lk, hash_algo="foo")
     assert "Unsupported digest algorithm" in str(exc_info.value)
+
+
+def test_hash_from_name_docstring_does_not_call_sha3_insecure():
+    """hash_from_name docstring must not list SHA-3 variants among insecure algorithms."""
+    import inspect
+    import re
+
+    doc = inspect.getdoc(cms_mod.hash_from_name) or ""
+    clauses = re.split(r"[.;]", doc.lower())
+    sha3_insecure = any("insecure" in clause and re.search(r"sha-?3", clause) for clause in clauses)
+    assert not sha3_insecure, "hash_from_name docstring should not call SHA-3 insecure"
+
+
+def test_validate_hash_algorithm_for_signing_removed():
+    """validate_hash_algorithm_for_signing was never released and has been removed."""
+    assert not hasattr(cms_mod, "validate_hash_algorithm_for_signing"), (
+        "validate_hash_algorithm_for_signing should not exist"
+    )

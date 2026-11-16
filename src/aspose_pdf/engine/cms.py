@@ -62,7 +62,7 @@ def hash_from_name(name: str | None) -> hashes.HashAlgorithm:
 
     This function is used for parsing existing signatures and constructing
     new ones. It accepts all supported algorithms including insecure ones
-    (MD5, SHA1, SHA3 variants) to allow verification of legacy signatures.
+    (MD5, SHA1) to allow verification of legacy signatures.
     """
     cls = _HASH_BY_NAME.get((name or "").lower())
     if cls is None:
@@ -107,37 +107,6 @@ def validate_hash_algorithm_for_cades(name: str) -> None:
             "SHA3_256, SHA3_384, or SHA3_512"
         )
 
-
-def validate_hash_algorithm_for_signing(name: str) -> None:
-    """Deprecated: use `validate_hash_algorithm_for_pkcs7` or `validate_hash_algorithm_for_cades` instead.
-
-    This function was removed in favor of separate validation functions for PKCS#7 and CAdES.
-    For backward compatibility, this wrapper accepts all algorithms that `validate_hash_algorithm_for_cades`
-    would accept (including SHA-3 variants) for CAdES signing.
-
-    Raises TypeError if the algorithm is insecure (MD5, SHA1).
-    Raises UnsupportedAlgorithm if the algorithm is completely unknown.
-
-    SHA-224, SHA-256, SHA-384, SHA-512, and SHA-3 variants (sha3_256, sha3_384, sha3_512)
-    are accepted for CAdES signing. For PKCS#7, use `validate_hash_algorithm_for_pkcs7`
-    which only accepts SHA-224, SHA-256, SHA-384, and SHA-512.
-    """
-    from warnings import warn
-
-    algo = (name or "").lower()
-    if algo not in _HASH_BY_NAME:
-        raise UnsupportedAlgorithm(f"Unsupported digest algorithm: {name!r}")
-    if algo not in _CADES_SECURE_HASH_ALGOS:
-        warn(
-            "validate_hash_algorithm_for_signing is deprecated. Use validate_hash_algorithm_for_cades for CAdES "
-            "or validate_hash_algorithm_for_pkcs7 for PKCS#7.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        raise TypeError(
-            "hash_algorithm must be one of hashes.SHA224, SHA256, SHA384, SHA512, "
-            "SHA3_256, SHA3_384, or SHA3_512"
-        )
 
 
 @dataclass
