@@ -583,6 +583,12 @@ from io import BytesIO
 buffer = BytesIO()
 doc.to_stream(buffer)
 pdf_bytes = buffer.getvalue()
+
+# Method chaining with to_stream
+buffer = BytesIO()
+with Document("input.pdf") as doc:
+    doc.pages.add()
+    doc.to_stream(buffer)
 ```
 
 These methods provide convenient ways to serialize a document

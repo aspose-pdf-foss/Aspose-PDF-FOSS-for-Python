@@ -133,7 +133,6 @@ class TestDocumentToStream:
 
         # Load it and make an incremental change
         doc = Document.from_file(test_file)
-        original_size = test_file.stat().st_size
 
         # Add some content
         doc.pages[1].add_text("Incremental update", x=72, y=700, font_size=12)
@@ -207,4 +206,37 @@ class TestDocumentToStream:
         actual_bytes = buffer.read()
 
         assert actual_bytes == expected_bytes
+        doc.dispose()
+
+    def test_to_stream_returns_self_for_chaining(self, pdf_bytes):
+        """to_stream returns self for method chaining."""
+        doc = Document.from_bytes(pdf_bytes)
+        buffer = io.BytesIO()
+
+        result = doc.to_stream(buffer)
+
+        # Should return the document instance itself
+        assert result is doc
+        # Verify the method was called (stream was written to)
+        assert buffer.tell() > 0
+        doc.dispose()
+
+    def test_to_stream_method_chaining_with_multiple_to_stream(self, pdf_bytes):
+        """Multiple to_stream calls can be chained on the same document."""
+        doc = Document.from_bytes(pdf_bytes)
+        buffer1 = io.BytesIO()
+        buffer2 = io.BytesIO()
+
+        # Chain multiple to_stream calls on the same document
+        result = doc.to_stream(buffer1).to_stream(buffer2)
+
+        # Verify chaining works (returns self)
+        assert result is doc
+
+        # Both streams should have been written to
+        buffer1.seek(0)
+        buffer2.seek(0)
+        assert buffer1.read(5) == b"%PDF-"
+        assert buffer2.read(5) == b"%PDF-"
+
         doc.dispose()

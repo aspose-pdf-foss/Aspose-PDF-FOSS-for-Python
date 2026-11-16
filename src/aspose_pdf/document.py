@@ -2921,7 +2921,7 @@ class Document:
         stream: BinaryIO,
         *,
         incremental: bool | None = None,
-    ) -> None:
+    ) -> Document:
         """Write the document to a binary stream.
 
         This is a convenience method equivalent to ``save(stream, ...)``
@@ -2944,8 +2944,8 @@ class Document:
 
         Returns
         -------
-        None
-            The method writes to the stream directly and returns ``None``.
+        Document
+            The document instance for method chaining.
 
         Raises
         ------
@@ -2972,6 +2972,12 @@ class Document:
                 buffer = BytesIO()
                 doc.to_stream(buffer, incremental=True)
 
+            # Method chaining
+            buffer = BytesIO()
+            with Document("input.pdf") as doc:
+                doc.pages.add()
+                doc.to_stream(buffer)
+
         Notes
         -----
         The stream is **not** closed after writing. You can continue to
@@ -2983,6 +2989,7 @@ class Document:
 
         # save_to_stream handles incremental correctly by calling save internally
         self.save_to_stream(stream, save_format=None, incremental=incremental)
+        return self
 
     def iter_pages(self) -> Iterator[Page]:
         """Iterate over the pages of the document one at a time.
