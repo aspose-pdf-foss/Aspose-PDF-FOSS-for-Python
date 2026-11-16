@@ -687,8 +687,6 @@ def test_streaming_unselected_oversized_content_is_not_decoded(tmp_path, exclude
         (1, False, "other_page_index must be an integer"),
         ("1", 1, "page_index must be an integer"),
         (1.5, 1, "page_index must be an integer"),
-        (None, 1, None),  # None is valid
-        (1, None, None),  # None is valid
     ],
 )
 def test_page_index_validation(page_index, other_page_index, error_msg):
@@ -729,3 +727,41 @@ def test_page_index_valid_positive_integers():
     )
     assert cmp.page_index == 1
     assert cmp.other_page_index == 2
+
+
+@pytest.mark.parametrize(
+    "page_index,other_page_index,text,other_text,error_msg",
+    [
+        (None, 1, "hello", "world", "page_index must be None when text is not None"),
+        (1, None, "hello", "world", "other_page_index must be None when other_text is not None"),
+        (None, None, "hello", None, "page_index must be None when text is not None"),
+        (None, None, None, "hello", "other_page_index must be None when other_text is not None"),
+    ],
+)
+def test_none_index_requires_none_text(page_index, other_page_index, text, other_text, error_msg):
+    """Test that None index requires corresponding text to be None."""
+    with pytest.raises(PdfValidationException, match=error_msg):
+        PageTextComparison(
+            page_index=page_index,
+            other_page_index=other_page_index,
+            text=text,
+            other_text=other_text,
+            matches=True,
+            unified_diff="",
+        )
+
+
+def test_none_index_with_none_text_is_valid():
+    """Test that None index with None text is valid for missing pages."""
+    cmp = PageTextComparison(
+        page_index=None,
+        other_page_index=1,
+        text=None,
+        other_text="hello",
+        matches=False,
+        unified_diff="",
+    )
+    assert cmp.page_index is None
+    assert cmp.other_page_index == 1
+    assert cmp.text is None
+    assert cmp.other_text == "hello"

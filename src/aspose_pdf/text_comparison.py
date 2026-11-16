@@ -35,11 +35,15 @@ class PageTextComparison:
 
     def __post_init__(self) -> None:
         """Validate that page_index and other_page_index are None or positive integers."""
-        for name, value in (
-            ("page_index", self.page_index),
-            ("other_page_index", self.other_page_index),
+        for name, value, text_name, text_value in (
+            ("page_index", self.page_index, "text", self.text),
+            ("other_page_index", self.other_page_index, "other_text", self.other_text),
         ):
             if value is None:
+                if text_value is not None:
+                    raise PdfValidationException(
+                        f"{name} must be None when {text_name} is not None"
+                    )
                 continue
             if isinstance(value, bool) or not isinstance(value, int):
                 raise PdfValidationException(
