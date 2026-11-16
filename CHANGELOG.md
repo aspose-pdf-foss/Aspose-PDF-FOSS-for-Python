@@ -22,7 +22,7 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- `sign_data_cades` and `sign_data_pkcs7` now reject insecure hash algorithms (MD5, SHA1, SHA3-256, SHA3-384, SHA3-512) by raising `TypeError` or `UnsupportedAlgorithm`. Only SHA-224, SHA-256, SHA-384, and SHA-512 are accepted.
+- `sign_data_cades` now accepts SHA-3 variants (sha3_256, sha3_384, sha3_512) for signing. MD5 and SHA-1 remain refused. PKCS#7 signing (`sign_data_pkcs7`) continues to reject SHA-3 variants because the cryptography library's PKCS#7 builder does not support them. Only SHA-224, SHA-256, SHA-384, and SHA-512 are accepted for PKCS#7.
 
 - `form_value` now preserves `PdfNull` entries in `PdfArray` values for multi-select choice fields, mapping each to `None` in the returned list.
 - `PageTextComparison` now validates `page_index` and `other_page_index` to ensure they are `None` or positive integers (one-based page numbers). Zero, negative, or non-integer values raise `PdfValidationException`.

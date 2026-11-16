@@ -553,17 +553,19 @@ def test_encrypted_lta_requires_and_accepts_verified_embedded_evidence(algorithm
 
 
 def test_sign_data_cades_rejects_insecure_hash_algorithms():
-    """CAdES signatures must reject MD5, SHA1, and SHA3 variants like PKCS#7 does."""
+    """CAdES signatures must reject MD5, SHA1, but accept SHA-3 variants."""
     _root, _rk, leaf, lk = _chain()
 
-    # Secure algorithms should work
-    for algo in ("sha256", "sha224", "sha384", "sha512"):
+    # Secure algorithms should work (including SHA-3 for CAdES)
+    for algo in ("sha256", "sha224", "sha384", "sha512", "sha3_256", "sha3_384", "sha3_512"):
         blob = SigningUtils.sign_data_cades(DATA, leaf, lk, hash_algo=algo)
         info = cms_mod.parse_signed_data(blob)
         assert info.ess_cert_ids
+        # Verify the signature is intact
+        assert cms_mod.verify_signer(info, DATA).intact
 
     # Insecure algorithms should raise TypeError
-    for algo in ("md5", "sha1", "sha3_256", "sha3_384", "sha3_512"):
+    for algo in ("md5", "sha1"):
         with pytest.raises(TypeError) as exc_info:
             SigningUtils.sign_data_cades(DATA, leaf, lk, hash_algo=algo)
         assert "hash_algorithm" in str(exc_info.value).lower()
@@ -575,7 +577,7 @@ def test_sign_data_cades_rejects_insecure_hash_algorithms():
 
 
 def test_sign_data_pkcs7_rejects_insecure_hash_algorithms():
-    """PKCS#7 signatures must also reject MD5, SHA1, and SHA3 variants."""
+    """PKCS#7 signatures must reject MD5, SHA1, and SHA3 variants (unsupported by PKCS#7)."""
     _root, _rk, leaf, lk = _chain()
 
     # Secure algorithms should work
@@ -585,7 +587,13 @@ def test_sign_data_pkcs7_rejects_insecure_hash_algorithms():
         assert not info.ess_cert_ids  # PKCS#7 doesn't have ESS binding
 
     # Insecure algorithms should raise TypeError
-    for algo in ("md5", "sha1", "sha3_256", "sha3_384", "sha3_512"):
+    for algo in ("md5", "sha1"):
+        with pytest.raises(TypeError) as exc_info:
+            SigningUtils.sign_data_pkcs7(DATA, leaf, lk, hash_algo=algo)
+        assert "hash_algorithm" in str(exc_info.value).lower()
+
+    # SHA-3 variants are not supported by PKCS#7 builder and should be rejected
+    for algo in ("sha3_256", "sha3_384", "sha3_512"):
         with pytest.raises(TypeError) as exc_info:
             SigningUtils.sign_data_pkcs7(DATA, leaf, lk, hash_algo=algo)
         assert "hash_algorithm" in str(exc_info.value).lower()

@@ -48,9 +48,13 @@ _HASH_BY_NAME = {
 }
 
 
-# Secure hash algorithms that are acceptable for signing.
-# These are the algorithms accepted by cryptography's add_signer method.
-_SECURE_HASH_ALGOS = frozenset({"sha224", "sha256", "sha384", "sha512"})
+# Secure hash algorithms acceptable for PKCS#7 signing (via cryptography's add_signer).
+# SHA-3 variants are NOT supported by cryptography's PKCS#7 builder.
+_PKCS7_SECURE_HASH_ALGOS = frozenset({"sha224", "sha256", "sha384", "sha512"})
+
+# Secure hash algorithms acceptable for CAdES signing.
+# CAdES (built on CMS) supports the same algorithms as PKCS#7 plus SHA-3 variants.
+_CADES_SECURE_HASH_ALGOS = frozenset({"sha224", "sha256", "sha384", "sha512", "sha3_256", "sha3_384", "sha3_512"})
 
 
 def hash_from_name(name: str | None) -> hashes.HashAlgorithm:
@@ -66,21 +70,73 @@ def hash_from_name(name: str | None) -> hashes.HashAlgorithm:
     return cls()
 
 
-def validate_hash_algorithm_for_signing(name: str) -> None:
-    """Validate that *name* is a secure hash algorithm suitable for signing.
+def validate_hash_algorithm_for_pkcs7(name: str) -> None:
+    """Validate that *name* is a secure hash algorithm suitable for PKCS#7 signing.
 
-    Raises TypeError if the algorithm is insecure (MD5, SHA1, SHA3 variants).
+    Raises TypeError if the algorithm is insecure (MD5, SHA1) or not supported by
+    cryptography's PKCS#7 builder (SHA-3 variants).
     Raises UnsupportedAlgorithm if the algorithm is completely unknown.
 
-    Only SHA-224, SHA-256, SHA-384, and SHA-512 are accepted for signing,
+    Only SHA-224, SHA-256, SHA-384, and SHA-512 are accepted for PKCS#7 signing,
     matching the cryptography library's add_signer constraints.
     """
     algo = (name or "").lower()
     if algo not in _HASH_BY_NAME:
         raise UnsupportedAlgorithm(f"Unsupported digest algorithm: {name!r}")
-    if algo not in _SECURE_HASH_ALGOS:
+    if algo not in _PKCS7_SECURE_HASH_ALGOS:
         raise TypeError(
             "hash_algorithm must be one of hashes.SHA224, SHA256, SHA384, or SHA512"
+        )
+
+
+def validate_hash_algorithm_for_cades(name: str) -> None:
+    """Validate that *name* is a secure hash algorithm suitable for CAdES signing.
+
+    Raises TypeError if the algorithm is insecure (MD5, SHA1).
+    Raises UnsupportedAlgorithm if the algorithm is completely unknown.
+
+    SHA-224, SHA-256, SHA-384, SHA-512, and SHA-3 variants (sha3_256, sha3_384, sha3_512)
+    are accepted for CAdES signing.
+    """
+    algo = (name or "").lower()
+    if algo not in _HASH_BY_NAME:
+        raise UnsupportedAlgorithm(f"Unsupported digest algorithm: {name!r}")
+    if algo not in _CADES_SECURE_HASH_ALGOS:
+        raise TypeError(
+            "hash_algorithm must be one of hashes.SHA224, SHA256, SHA384, SHA512, "
+            "SHA3_256, SHA3_384, or SHA3_512"
+        )
+
+
+def validate_hash_algorithm_for_signing(name: str) -> None:
+    """Deprecated: use `validate_hash_algorithm_for_pkcs7` or `validate_hash_algorithm_for_cades` instead.
+
+    This function was removed in favor of separate validation functions for PKCS#7 and CAdES.
+    For backward compatibility, this wrapper accepts all algorithms that `validate_hash_algorithm_for_cades`
+    would accept (including SHA-3 variants) for CAdES signing.
+
+    Raises TypeError if the algorithm is insecure (MD5, SHA1).
+    Raises UnsupportedAlgorithm if the algorithm is completely unknown.
+
+    SHA-224, SHA-256, SHA-384, SHA-512, and SHA-3 variants (sha3_256, sha3_384, sha3_512)
+    are accepted for CAdES signing. For PKCS#7, use `validate_hash_algorithm_for_pkcs7`
+    which only accepts SHA-224, SHA-256, SHA-384, and SHA-512.
+    """
+    from warnings import warn
+
+    algo = (name or "").lower()
+    if algo not in _HASH_BY_NAME:
+        raise UnsupportedAlgorithm(f"Unsupported digest algorithm: {name!r}")
+    if algo not in _CADES_SECURE_HASH_ALGOS:
+        warn(
+            "validate_hash_algorithm_for_signing is deprecated. Use validate_hash_algorithm_for_cades for CAdES "
+            "or validate_hash_algorithm_for_pkcs7 for PKCS#7.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        raise TypeError(
+            "hash_algorithm must be one of hashes.SHA224, SHA256, SHA384, SHA512, "
+            "SHA3_256, SHA3_384, or SHA3_512"
         )
 
 
@@ -475,7 +531,7 @@ def build_cades_signed_data(
     verified by :func:`verify_signer`.
     """
     # Validate hash algorithm before proceeding
-    validate_hash_algorithm_for_signing(hash_algo)
+    validate_hash_algorithm_for_cades(hash_algo)
 
     if signing_time is None:
         signing_time = datetime.now(UTC)
