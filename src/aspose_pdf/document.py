@@ -1258,6 +1258,64 @@ class Document:
         # Return the page from the extracted document
         return extracted.pages[1]
 
+    def extract_page(self, page_number: int) -> Document:
+        """Return an independent document containing just the specified page.
+
+        This is a convenience method equivalent to ``extract_pages([page_number])``
+        for extracting a single page. It returns a new Document containing only
+        the specified page, without modifying the original document.
+
+        Parameters
+        ----------
+        page_number : int
+            The one-based page number to extract. Page numbers start at 1.
+
+        Returns
+        -------
+        Document
+            A new Document containing only the specified page. The returned
+            document is independent and can be modified without affecting
+            the source document.
+
+        Raises
+        ------
+        PdfValidationException
+            If *page_number* is not a valid page number (must be between 1 and
+            the number of pages in the document).
+
+        Examples
+        --------
+        Extract a single page into a new document::
+
+            # Extract page 3 into a new document
+            single_page_doc = doc.extract_page(3)
+            single_page_doc.save("page-3.pdf")
+
+            # Extract the last page
+            last_page_doc = doc.extract_page(len(doc))
+            last_page_doc.save("last-page.pdf")
+
+        Work with an extracted page without modifying the source::
+
+            with doc.extract_page(2) as extracted:
+                # Work with the extracted page
+                extracted.pages[1].add_text("Modified", x=72, y=700)
+                extracted.save("modified-page.pdf")
+
+            # Original document is unchanged
+            assert len(doc) == original_count
+
+        Notes
+        -----
+        The extracted page retains all its properties: content, annotations,
+        form fields, layer assignments, page labels, and bookmarks that point
+        to it. The source document remains unchanged after extraction.
+
+        This method is equivalent to ``extract_pages([page_number])`` but
+        provides a more convenient API for extracting a single page.
+        """
+        return self.extract_pages([page_number])
+
     @page_api(selections=("selection",))
     def remove_pages(self, selection: Iterable[int] | str) -> list[Page]:
         """Remove selected pages from the document and return them.

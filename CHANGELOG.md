@@ -7,6 +7,10 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Add `Document.extract_page()` method.** Added `Document.extract_page(page_number) -> Document` to extract a single page into a new, independent document. This is a convenience method equivalent to `extract_pages([page_number])` for extracting one page. The source document remains unchanged, and the returned document contains only the specified page with all its content, annotations, form fields, layers, page labels, and bookmarks. Use it when you need to work with a single page without modifying the source document.
+
 ### Fixed
 
 - `form_value` now preserves `PdfNull` entries in `PdfArray` values for multi-select choice fields, mapping each to `None` in the returned list.
