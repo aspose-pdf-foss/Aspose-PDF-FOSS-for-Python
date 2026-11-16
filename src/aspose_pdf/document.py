@@ -1178,6 +1178,31 @@ class Document:
         """
         return self.page_count
 
+    def __iter__(self) -> Iterator[Page]:
+        """Iterate over the pages of the document in order.
+
+        This makes ``for page in document`` equivalent to
+        ``for page in document.pages``.
+
+        Yields
+        ------
+        Page
+            Each page of the document, starting at page one.
+
+        Examples
+        --------
+        ::
+
+            doc = Document("report.pdf")
+            for page in doc:  # Same as: for page in doc.pages:
+                print(page.number)
+
+        This method is provided for Pythonic convenience and consistency
+        with other container types, mirroring :meth:`__len__`. The
+        :attr:`pages` collection remains the canonical way to access pages.
+        """
+        return iter(self.pages)
+
     def remove_page(self, page_number: int) -> Page:
         """Remove a page from the document and return it.
 

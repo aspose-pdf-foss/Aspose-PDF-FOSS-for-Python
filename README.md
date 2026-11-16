@@ -616,6 +616,16 @@ with Document("report.pdf") as doc:
     print(f"Total pages: {len(doc)}")  # Same as: print(f"Total pages: {doc.page_count}")
 ```
 
+**Iterate over pages directly.** The `Document` class implements `__iter__`, so you
+can loop over pages without explicitly accessing the `pages` collection:
+
+```python
+from aspose_pdf import Document
+
+with Document("report.pdf") as doc:
+    for page in doc:
+        print(f"Page {page.number}")
+
 ## Additional Examples
 
 More real, runnable examples from the project's own documentation are collected below.
