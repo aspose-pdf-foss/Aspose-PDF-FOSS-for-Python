@@ -6,6 +6,7 @@ This module provides the main Document class that wraps the native PDF engine.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import closing
@@ -9917,6 +9918,114 @@ class Document:
             resolved += 1
         return resolved
 
+    @page_api(selections=("pages",))
+    def rotate_pages(
+        self,
+        degrees: int | float,
+        *,
+        pages: Iterable[int] | None = None,
+        relative: bool = True,
+    ) -> int:
+        """Turn *pages* clockwise, or set their rotation outright.
+
+        This is the document-wide form of :meth:`Page.rotate`: every page when
+        none are named, otherwise the one-based page numbers in *pages*. It is
+        what a batch of sideways scans needs, without a loop over the collection.
+
+        By default the rotation is **relative**: *degrees* is added to what each
+        page already says, so two calls with 90 turn a page 180. With
+        ``relative=False`` the page's rotation is **set** to *degrees* instead,
+        which is useful when a scan batch mixes orientations. Results are always
+        normalised to 0, 90, 180 or 270.
+
+        Parameters
+        ----------
+        degrees : int or float
+            Degrees to turn clockwise (or the rotation to set). Must be a
+            multiple of 90; negative values turn counter-clockwise.
+        pages : iterable of int, optional
+            One-based page numbers to change. Omitted means every page.
+            Repeated numbers are turned once, preserving first-seen order.
+        relative : bool, optional
+            Add to each page's current rotation (default), or set it when
+            ``False``.
+
+        Returns
+        -------
+        int
+            How many pages were processed, after removing repeated page
+            numbers.
+
+        Raises
+        ------
+        TypeError
+            If *relative* is not a boolean.
+        PdfValidationException
+            If *degrees* is not a multiple of 90, if a page number is invalid,
+            or, in relative mode, if a selected page carries a numeric rotation
+            that is not a multiple of 90.
+        AsposePdfException
+            If the document has been disposed.
+
+        Examples
+        --------
+        Turn every page of a sideways scan::
+
+            with Document("scan.pdf") as document:
+                document.rotate_pages(90)
+                document.save("upright.pdf")
+
+        Set only the even pages to 180 degrees::
+
+            with Document("scan.pdf") as document:
+                document.rotate_pages(180, pages=[2, 4], relative=False)
+                document.save("turned.pdf")
+
+        Notes
+        -----
+        Only each page's ``/Rotate`` entry changes; page content, boxes,
+        annotations, form fields and navigation are untouched. Repeated page
+        numbers are turned once. All pages and rotations are checked before the
+        first page is changed, so invalid input leaves the document as it was.
+        A non-numeric existing ``/Rotate`` value is read as 0, as elsewhere in
+        the API, and is replaced by the resulting valid rotation.
+        """
+        self._ensure_not_disposed()
+        if not isinstance(relative, bool):
+            raise TypeError("relative must be a boolean")
+        if isinstance(degrees, bool) or not isinstance(degrees, (int, float)):
+            raise PdfValidationException(
+                "Rotation degrees must be an integer number."
+            )
+        if isinstance(degrees, float) and not math.isfinite(degrees):
+            raise PdfValidationException("Rotation must be a multiple of 90 degrees.")
+        if degrees % 90 != 0:
+            raise PdfValidationException("Rotation must be a multiple of 90 degrees.")
+        delta = int(degrees)
+
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+        count = len(self._engine_pdf.pages)
+        indices = range(count) if pages is None else pages
+        selected = list(dict.fromkeys(indices))
+
+        # Plan every new rotation before changing a page, so a malformed
+        # existing value cannot leave half the document turned.
+        rotations: list[tuple[int, int]] = []
+        for index in selected:
+            current = self._page_at(index).rotation
+            target = (current + delta) % 360 if relative else delta % 360
+            if target % 90 != 0:
+                raise PdfValidationException(
+                    f"Page {index + 1} has a rotation of {current} degrees, "
+                    "which is not a multiple of 90."
+                )
+            rotations.append((index, target))
+
+        for index, target in rotations:
+            self._page_at(index).rotation = target
+        return len(rotations)
+
     @staticmethod
     def concatenate(
         documents: Iterable[Document],
@@ -11123,6 +11232,7 @@ class Document:
     _api_split_spreads = split_spreads.__wrapped__
     _api_split_grid = split_grid.__wrapped__
     _api_resize_pages = resize_pages.__wrapped__
+    _api_rotate_pages = rotate_pages.__wrapped__
     _api_flatten = flatten.__wrapped__
 
     def _page_at(self, index: int) -> Page:

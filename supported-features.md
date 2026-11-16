@@ -2350,6 +2350,36 @@ Supported:
     exactly, every glyph box, its height and the link's `/Rect` scale by the same
     0.9407 and shift by the same 26 points, and our own raster of the result
     differs from pdfium's on 0.07% of samples.
+- **Rotate pages in bulk.** `Document.rotate_pages(degrees, *, pages=None,
+  relative=True) -> int` is the document-wide form of `Page.rotate`: every page
+  when `pages` is omitted, otherwise the one-based page numbers listed. The
+  default adds *degrees* clockwise to each page's current rotation;
+  `relative=False` sets the rotation outright, for batches that mix
+  orientations. Only each page's `/Rotate` entry changes, so content, boxes,
+  annotations, form fields and navigation stay as they were. Results are
+  normalised to 0, 90, 180 or 270.
+  - *degrees* must be an integer number of degrees and a multiple of 90;
+    negative values turn counter-clockwise. Repeated page numbers are turned
+    once, preserving first-seen order. Empty documents and empty selections
+    return 0.
+  - All options, page numbers and resulting rotations are checked before the
+    first page is changed. Invalid degrees or page numbers raise
+    `PdfValidationException`; a selected page whose existing numeric rotation
+    is not a multiple of 90 cannot be turned relative to that value and is
+    reported by number. Absolute mode can replace such a value with a valid
+    one, and a non-numeric `/Rotate` value is read as 0 and replaced.
+  - The method returns the number of pages processed, after removing repeated
+    page numbers. It works on streaming and encrypted inputs, and the edit
+    survives full and incremental saves.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("scan.pdf") as document:
+      document.rotate_pages(90)                      # every page, relatively
+      document.rotate_pages(180, pages=[2, 4], relative=False)
+      document.save("upright.pdf")
+  ```
 - **Shift existing page content without resizing the sheet.**
   `Page.translate_content(dx, dy)` moves text, images, paths and annotations
   together, for scan alignment corrections or a binding margin. Offsets are

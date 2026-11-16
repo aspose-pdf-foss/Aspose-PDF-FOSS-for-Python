@@ -9,6 +9,15 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Rotate several pages with `Document.rotate_pages()`.** Added
+  `Document.rotate_pages(degrees, *, pages=None, relative=True) -> int` to turn
+  every page or a one-based selection by a multiple of 90 degrees. The default
+  adds to each page's existing rotation; `relative=False` sets it outright,
+  which is useful when a scan batch mixes orientations. Only `/Rotate` changes,
+  so content, boxes, annotations and form fields are preserved. Repeated page
+  numbers are turned once, and invalid degrees or page numbers are rejected
+  before any page changes. The method returns the number of pages processed.
+
 - **Add `Document.extract_page()` method.** Added `Document.extract_page(page_number) -> Document` to extract a single page into a new, independent document. This is a convenience method equivalent to `extract_pages([page_number])` for extracting one page. The source document remains unchanged, and the returned document contains only the specified page with all its content, annotations, form fields, layers, page labels, and bookmarks. Use it when you need to work with a single page without modifying the source document.
 
 ### Fixed

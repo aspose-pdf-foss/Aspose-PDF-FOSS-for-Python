@@ -312,6 +312,9 @@ flowchart TD
   `fit`, `fill` or `stretch`, centred, with annotations and the production boxes travelling along —
   while `Page.scale_content(0.95)` shrinks the drawing inside the sheet it is on. Setting
   `Page.size` still changes the sheet alone.
+- `Page.rotate(90)` turns one page and `Document.rotate_pages(90, pages=[...])` turns several,
+  adding to what each page already says or setting it outright with `relative=False`. Only
+  `/Rotate` changes, so text, boxes, annotations and form fields stay put.
 - `Page.translate_content(dx, dy)` shifts existing text, images and annotations
   together to correct scan alignment or make room for binding, keeping the sheet size.
 - `Document.generate_outlines()` builds the bookmark tree from the document's own headings — the
