@@ -732,10 +732,10 @@ def test_page_index_valid_positive_integers():
 @pytest.mark.parametrize(
     "page_index,other_page_index,text,other_text,error_msg",
     [
-        (None, 1, "hello", "world", "page_index must be None when text is not None"),
-        (1, None, "hello", "world", "other_page_index must be None when other_text is not None"),
-        (None, None, "hello", None, "page_index must be None when text is not None"),
-        (None, None, None, "hello", "other_page_index must be None when other_text is not None"),
+        (None, 1, "hello", "world", "text must be None when page_index is None"),
+        (1, None, "hello", "world", "other_text must be None when other_page_index is None"),
+        (None, None, "hello", None, "text must be None when page_index is None"),
+        (None, None, None, "hello", "other_text must be None when other_page_index is None"),
     ],
 )
 def test_none_index_requires_none_text(page_index, other_page_index, text, other_text, error_msg):
