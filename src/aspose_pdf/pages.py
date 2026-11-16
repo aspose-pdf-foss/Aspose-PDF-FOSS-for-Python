@@ -3867,6 +3867,78 @@ class PageCollection:
             return page.number
         return 0
 
+    def remove(self, page: Page) -> Page:
+        """Remove a specific page from the collection.
+
+        This method removes the first occurrence of *page* from the collection,
+        similar to Python's built-in list.remove(). The removed page is returned
+        as a :class:`~aspose_pdf.pages.Page` object that can be inserted into
+        another document.
+
+        Parameters
+        ----------
+        page : Page
+            The Page object to remove from the collection.
+
+        Returns
+        -------
+        Page
+            The removed page, which can be inserted into another document
+            using :meth:`~aspose_pdf.pages.PageCollection.insert` or
+            :meth:`~aspose_pdf.pages.PageCollection.add`.
+
+        Raises
+        ------
+        TypeError
+            If *page* is not a Page instance.
+        ValueError
+            If *page* is not found in the collection.
+        PdfValidationException
+            If the collection or its document has been disposed.
+
+        Examples
+        --------
+        Remove a specific page by reference::
+
+            page_to_remove = document.pages[2]
+            removed_page = document.pages.remove(page_to_remove)
+
+        Remove and insert into another document::
+
+            source_page = source_doc.pages[1]
+            removed = target_doc.pages.remove(source_page)
+            other_doc.pages.add(removed)
+
+        Notes
+        -----
+        After removal, the page count decreases by one, and all page numbers
+        after the removed page are shifted down. The removed page retains
+        all its properties: content, annotations, form fields, layer
+        assignments, page labels, and bookmarks that point to it.
+        """
+        self._ensure_not_disposed()
+        if not isinstance(page, Page):
+            raise TypeError(
+                f"Argument must be a Page instance, got {type(page).__name__}"
+            )
+
+        if not self.contains(page):
+            raise ValueError("Page is not in the collection")
+
+        # Get the one-based page number before extraction
+        # We need to extract the page first to return it, similar to pop()
+        one_based_index = page.number
+
+        # Extract the page first (to return it)
+        extracted = self._document.extract_pages([one_based_index])
+
+        # Now delete the page from the original document
+        zero_based_index = one_based_index - 1
+        self._document._engine_pdf.delete(zero_based_index)
+
+        # Return the first (and only) page from the extracted document
+        return extracted.pages[1]
+
     def extend(self, pages: Iterable[Page]) -> None:
         """Add all pages from an iterable to the collection.
 

@@ -1416,6 +1416,31 @@ Supported:
       # Remove the last page
       last = document.remove_page(len(document))
   ```
+
+- **Remove a page by reference:** `PageCollection.remove(page: Page) -> Page`
+  removes a specific :class:`~aspose_pdf.pages.Page` from the collection and
+  returns it, similar to Python's built-in list.remove(). This provides a
+  convenient way to remove a page when you have a reference to it rather than
+  a page number. The removed page can be inserted into another document using
+  :meth:`~aspose_pdf.pages.PageCollection.insert` or
+  :meth:`~aspose_pdf.pages.PageCollection.add`. All page properties are
+  preserved in the returned page.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Remove a specific page by reference
+      page_to_move = document.pages[3]
+      removed = document.pages.remove(page_to_move)
+      other_doc.pages.add(removed)
+
+      # Remove and re-add the same page (copies it)
+      page = document.pages[1]
+      document.pages.remove(page)
+      document.pages.add(page)
+  ```
+
 - **Add a single page to the end of a document:** `Document.add_page(page: Page) -> Page`
   imports a :class:`~aspose_pdf.pages.Page` object from another document into this one at the end,
   bringing along all its content, resources, annotations, form fields, layers, and page labels.

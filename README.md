@@ -253,6 +253,10 @@ flowchart TD
   :meth:`~aspose_pdf.Document.extract_pages`. The page count decreases by one, and all page
   numbers after the removed page are shifted down by one. Page properties like content,
   annotations, form fields, layers, and page labels are preserved in the returned page.
+- `Document.pages.remove(page)` removes a specific :class:`~aspose_pdf.pages.Page` from the
+  collection and returns it, similar to Python's built-in list.remove(). The removed page can be
+  inserted into another document. This provides a convenient way to remove a page by reference
+  rather than by page number. All page properties are preserved in the returned page.
 - `Document.add_page(page)` adds a page from another document to the end of this document.
   It imports a :class:`~aspose_pdf.pages.Page` object, bringing along all its content,
   resources, annotations, form fields, layers, and page labels. This is a convenient method
