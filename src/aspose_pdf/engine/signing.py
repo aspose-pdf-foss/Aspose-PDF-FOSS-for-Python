@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import pkcs7
 from cryptography.x509.oid import NameOID
 
-from aspose_pdf.engine.cms import hash_from_name
+from aspose_pdf.engine.cms import hash_from_name, validate_hash_algorithm_for_signing
 
 logger = logging.getLogger("aspose_pdf.signing")
 
@@ -204,6 +204,8 @@ class SigningUtils:
         bytes
             DER-encoded PKCS#7 signature (detached).
         """
+        # Validate hash algorithm before proceeding
+        validate_hash_algorithm_for_signing(hash_algo)
         builder = (
             pkcs7.PKCS7SignatureBuilder()
             .set_data(data)

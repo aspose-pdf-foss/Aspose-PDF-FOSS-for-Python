@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 
 from aspose_pdf.engine import cms as cms_mod
@@ -549,3 +550,47 @@ def test_encrypted_lta_requires_and_accepts_verified_embedded_evidence(algorithm
     result = reopened.signatures[0].validate(ValidationOptions(trusted_certificates=[root]))
     assert result.status == ValidationStatus.VALID, result.errors
     assert result.pades_level == PadesLevel.LTA
+
+
+def test_sign_data_cades_rejects_insecure_hash_algorithms():
+    """CAdES signatures must reject MD5, SHA1, and SHA3 variants like PKCS#7 does."""
+    _root, _rk, leaf, lk = _chain()
+
+    # Secure algorithms should work
+    for algo in ("sha256", "sha224", "sha384", "sha512"):
+        blob = SigningUtils.sign_data_cades(DATA, leaf, lk, hash_algo=algo)
+        info = cms_mod.parse_signed_data(blob)
+        assert info.ess_cert_ids
+
+    # Insecure algorithms should raise TypeError
+    for algo in ("md5", "sha1", "sha3_256", "sha3_384", "sha3_512"):
+        with pytest.raises(TypeError) as exc_info:
+            SigningUtils.sign_data_cades(DATA, leaf, lk, hash_algo=algo)
+        assert "hash_algorithm" in str(exc_info.value).lower()
+
+    # Unknown algorithms should raise UnsupportedAlgorithm (preserves original contract)
+    with pytest.raises(UnsupportedAlgorithm) as exc_info:
+        SigningUtils.sign_data_cades(DATA, leaf, lk, hash_algo="foo")
+    assert "Unsupported digest algorithm" in str(exc_info.value)
+
+
+def test_sign_data_pkcs7_rejects_insecure_hash_algorithms():
+    """PKCS#7 signatures must also reject MD5, SHA1, and SHA3 variants."""
+    _root, _rk, leaf, lk = _chain()
+
+    # Secure algorithms should work
+    for algo in ("sha256", "sha224", "sha384", "sha512"):
+        blob = SigningUtils.sign_data_pkcs7(DATA, leaf, lk, hash_algo=algo)
+        info = cms_mod.parse_signed_data(blob)
+        assert not info.ess_cert_ids  # PKCS#7 doesn't have ESS binding
+
+    # Insecure algorithms should raise TypeError
+    for algo in ("md5", "sha1", "sha3_256", "sha3_384", "sha3_512"):
+        with pytest.raises(TypeError) as exc_info:
+            SigningUtils.sign_data_pkcs7(DATA, leaf, lk, hash_algo=algo)
+        assert "hash_algorithm" in str(exc_info.value).lower()
+
+    # Unknown algorithms should raise UnsupportedAlgorithm (preserves original contract)
+    with pytest.raises(UnsupportedAlgorithm) as exc_info:
+        SigningUtils.sign_data_pkcs7(DATA, leaf, lk, hash_algo="foo")
+    assert "Unsupported digest algorithm" in str(exc_info.value)

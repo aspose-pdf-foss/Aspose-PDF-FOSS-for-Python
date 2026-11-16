@@ -48,12 +48,40 @@ _HASH_BY_NAME = {
 }
 
 
-def hash_from_name(name: str | None):
-    """Return a ``cryptography`` hash instance for an asn1crypto algo name."""
+# Secure hash algorithms that are acceptable for signing.
+# These are the algorithms accepted by cryptography's add_signer method.
+_SECURE_HASH_ALGOS = frozenset({"sha224", "sha256", "sha384", "sha512"})
+
+
+def hash_from_name(name: str | None) -> hashes.HashAlgorithm:
+    """Return a ``cryptography`` hash instance for an asn1crypto algo name.
+
+    This function is used for parsing existing signatures and constructing
+    new ones. It accepts all supported algorithms including insecure ones
+    (MD5, SHA1, SHA3 variants) to allow verification of legacy signatures.
+    """
     cls = _HASH_BY_NAME.get((name or "").lower())
     if cls is None:
         raise UnsupportedAlgorithm(f"Unsupported digest algorithm: {name!r}")
     return cls()
+
+
+def validate_hash_algorithm_for_signing(name: str) -> None:
+    """Validate that *name* is a secure hash algorithm suitable for signing.
+
+    Raises TypeError if the algorithm is insecure (MD5, SHA1, SHA3 variants).
+    Raises UnsupportedAlgorithm if the algorithm is completely unknown.
+
+    Only SHA-224, SHA-256, SHA-384, and SHA-512 are accepted for signing,
+    matching the cryptography library's add_signer constraints.
+    """
+    algo = (name or "").lower()
+    if algo not in _HASH_BY_NAME:
+        raise UnsupportedAlgorithm(f"Unsupported digest algorithm: {name!r}")
+    if algo not in _SECURE_HASH_ALGOS:
+        raise TypeError(
+            "hash_algorithm must be one of hashes.SHA224, SHA256, SHA384, or SHA512"
+        )
 
 
 @dataclass
@@ -446,6 +474,9 @@ def build_cades_signed_data(
     ``signing-certificate-v2``.  It is otherwise a normal detached CMS and is
     verified by :func:`verify_signer`.
     """
+    # Validate hash algorithm before proceeding
+    validate_hash_algorithm_for_signing(hash_algo)
+
     if signing_time is None:
         signing_time = datetime.now(UTC)
 
