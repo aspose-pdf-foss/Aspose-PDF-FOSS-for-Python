@@ -1519,6 +1519,36 @@ Supported:
   ```
   This is equivalent to ``document.pages.insert(index, document.extract_pages(selection))``
   but more convenient and prevents accidental temporary document leaks.
+- **Add multiple pages to the end of a document:** `PageCollection.extend(iterable) -> None`
+  adds all pages from an iterable (list, tuple, generator, etc.) to the page collection.
+  This provides a more Pythonic alternative to looping with `pages.add()` for adding
+  multiple pages at once.
+
+  Pages from the same document are copied (resources are duplicated), while pages from
+  other documents are imported with their full resource hierarchy (annotations, form
+  fields, structure tree, etc.). The source document remains unchanged.
+
+  ```python
+  from aspose_pdf import Document
+
+  with Document("report.pdf") as document:
+      # Extend with pages from another document
+      source_pages = [source.pages[1], source.pages[3], source.pages[5]]
+      document.pages.extend(source_pages)
+
+      # Extend with all pages from another document
+      document.pages.extend(source.pages)
+
+      # Extend with a generator
+      selected = (source.pages[i] for i in [0, 2, 4])
+      document.pages.extend(selected)
+
+      # Extend with a range of pages
+      document.pages.extend(document.extract_pages("1-5").pages)
+  ```
+  This method follows Python's `list.extend()` convention and is the
+  `PageCollection` equivalent of `Document.append_pages()` but for a collection
+  of existing `Page` objects rather than extracting from another document.
 - **Insert a single page from another document:** `Document.insert_page_from(index, other, page_number) -> Document`
   extracts a single page from another document and inserts it at the given position.
   This is a convenient alternative to :meth:`~aspose_pdf.Document.insert_pages` when

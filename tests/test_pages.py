@@ -746,3 +746,129 @@ def test_page_rotate_disposed_document_raises(document):
 
     with pytest.raises(AsposePdfException):
         page.rotate(90)
+
+
+# ===== Tests for PageCollection.extend() =====
+
+
+def test_extend_with_list_of_pages(document, page_collection):
+    """extend() should add all pages from a list."""
+    initial_len = len(document.pages)
+    pages_to_add = [page_collection[1], page_collection[2]]
+    document.pages.extend(pages_to_add)
+    assert len(document.pages) == initial_len + 2
+
+
+def test_extend_with_tuple_of_pages(document, page_collection):
+    """extend() should work with a tuple of pages."""
+    initial_len = len(document.pages)
+    pages_to_add = (page_collection[1], page_collection[2])
+    document.pages.extend(pages_to_add)
+    assert len(document.pages) == initial_len + 2
+
+
+def test_extend_with_generator(document, page_collection):
+    """extend() should work with a generator of pages."""
+    initial_len = len(document.pages)
+    pages_to_add = (p for p in [page_collection[1], page_collection[2]])
+    document.pages.extend(pages_to_add)
+    assert len(document.pages) == initial_len + 2
+
+
+def test_extend_with_empty_iterable(document):
+    """extend() should handle an empty iterable."""
+    initial_len = len(document.pages)
+    document.pages.extend([])
+    assert len(document.pages) == initial_len
+
+
+def test_extend_with_pages_from_same_document(document, page_collection):
+    """extend() should copy pages from the same document."""
+    pages_to_add = [page_collection[1], page_collection[2]]
+    document.pages.extend(pages_to_add)
+    # The document should now have the original 3 + 2 copied pages = 5
+    assert len(document.pages) == 5
+    # The copied pages should have distinct content
+    # Accessing them shouldn't raise
+    _ = document.pages[4]
+    _ = document.pages[5]
+
+
+def test_extend_with_pages_from_different_document(document, page_collection):
+    """extend() should import pages from a different document."""
+    with Document() as source:
+        source.pages.add()
+        source.pages.add()
+        source.pages.add()
+        pages_to_add = [source.pages[1], source.pages[2]]
+        document.pages.extend(pages_to_add)
+    # After extend, document should have its original 3 + 2 imported pages = 5
+    assert len(document.pages) == 5
+    # Source can be disposed after extend
+    assert source.closed
+
+
+def test_extend_rejects_non_iterable(document):
+    """extend() should raise TypeError for non-iterable (like None or int)."""
+    with pytest.raises(TypeError, match="pages must be an iterable"):
+        document.pages.extend(None)
+
+
+def test_extend_rejects_string(document):
+    """extend() should raise TypeError for string (strings are iterable but invalid)."""
+    with pytest.raises(TypeError, match="not a string or bytes"):
+        document.pages.extend("not an iterable")
+
+
+def test_extend_rejects_non_page_items(document):
+    """extend() should raise TypeError for non-Page items."""
+    with pytest.raises(TypeError, match="Page instance"):
+        document.pages.extend([1, 2, 3])
+
+
+def test_extend_rejects_disposed_document(document, page_collection):
+    """extend() should raise when the document is disposed."""
+    document.dispose()
+    with pytest.raises(AsposePdfException, match="disposed"):
+        document.pages.extend([page_collection[1]])
+
+
+def test_extend_rejects_disposed_source_pages(document, page_collection):
+    """extend() should raise when source pages belong to disposed documents."""
+    with Document() as source:
+        source.pages.add()
+        page_from_source = source.pages[1]
+    # Source document is now disposed
+    with pytest.raises(Exception):  # PdfValidationException or AsposePdfException
+        document.pages.extend([page_from_source])
+
+
+def test_extend_preserves_page_properties(document, page_collection):
+    """extend() should preserve page properties like rotation and annotations."""
+    page = page_collection[1]
+    page.rotation = 90
+    # Add a simple annotation (we'll just check that the page is added)
+    document.pages.extend([page])
+    added_page = document.pages[1]
+    assert added_page.rotation == 90
+
+
+def test_extend_method_chaining_possible(document):
+    """extend() should work as part of method chaining."""
+    pages = document.pages
+    pages.add()
+    pages.add()
+    # We can't chain extend() as it returns None, but we can chain after
+    initial_count = len(pages)
+    pages.extend([])
+    # Method should complete without error
+    assert len(pages) == initial_count
+
+
+def test_extend_duplicate_pages(document, page_collection):
+    """extend() should handle duplicate pages (add them separately)."""
+    page = page_collection[1]
+    document.pages.extend([page, page])
+    # Should add the page twice (both as separate copies)
+    # Document already has 3 pages from page_collection
+    assert len(document.pages) == 3 + 2

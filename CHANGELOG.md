@@ -59,6 +59,13 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   returned page can be inserted into another document using `pages.insert()` or `pages.add()`.
   This provides a more Pythonic alternative to `Document.remove_page()` for many use cases.
 
+- **Add `PageCollection.extend()` method.** Added `PageCollection.extend(iterable) -> None` to add
+  all pages from an iterable to the collection. This provides a more Pythonic alternative to
+  looping with `pages.add()` for adding multiple pages at once. Pages from the same document are
+  copied (resources are duplicated), while pages from other documents are imported with their
+  full resource hierarchy. Raises `TypeError` for non-iterable arguments, non-Page items, or
+  strings/bytes. Validates all items before adding any to ensure atomic behavior.
+
 - **Check if a `Document` is closed.** Added the `Document.closed` property that
   returns `True` after `dispose()` or exiting a context manager, and `False`
   otherwise. This follows the convention of Python built-in file objects and

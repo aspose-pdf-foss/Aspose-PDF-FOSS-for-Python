@@ -3867,6 +3867,79 @@ class PageCollection:
             return page.number
         return 0
 
+    def extend(self, pages: Iterable[Page]) -> None:
+        """Add all pages from an iterable to the collection.
+
+        This method adds each page from the given iterable to the end of the
+        collection, preserving all page content, resources, annotations, form
+        fields, and other properties. Pages from the same document are copied,
+        while pages from other documents are imported with their full resource
+        hierarchy.
+
+        Parameters
+        ----------
+        pages : iterable of Page
+            An iterable (list, tuple, generator, etc.) of Page objects to add.
+            Each item must be a Page instance belonging to a valid document.
+
+        Raises
+        ------
+        TypeError
+            If *pages* is not iterable, or if any item is not a Page instance.
+        PdfValidationException
+            If the collection or its document has been disposed.
+        AsposePdfException
+            If a page's document has been disposed or has no content.
+
+        Examples
+        --------
+        Extend with a list of pages::
+
+            pages_to_add = [doc1.pages[1], doc1.pages[3], doc1.pages[5]]
+            document.pages.extend(pages_to_add)
+
+        Extend with pages from another document::
+
+            document.pages.extend(source_document.pages)
+
+        Extend with pages selected by index::
+
+            selected_pages = [source_document.pages[i] for i in [0, 2, 4]]
+            document.pages.extend(selected_pages)
+
+        Notes
+        -----
+        - Pages are added in the order they appear in the iterable.
+        - Pages from the same document are copied (resources are duplicated).
+        - Pages from other documents are imported with their resources.
+        - After adding, page counts increase and later page numbers shift.
+        """
+        self._ensure_not_disposed()
+
+        # Validate that pages is iterable (reject non-iterables like None, int, etc.)
+        # Note: strings are iterable in Python but shouldn't be valid, so we reject them explicitly
+        if isinstance(pages, (str, bytes)):
+            raise TypeError(
+                "pages must be an iterable of Page instances, not a string or bytes"
+            )
+
+        try:
+            pages_list = list(pages)
+        except TypeError as exc:
+            raise TypeError("pages must be an iterable of Page instances") from exc
+
+        # Validate all items are Page instances BEFORE adding any pages
+        # This ensures the collection remains unchanged on failure
+        for i, page in enumerate(pages_list):
+            if not isinstance(page, Page):
+                raise TypeError(
+                    f"Item at index {i} is not a Page instance, got {type(page).__name__}"
+                )
+
+        # Now add all pages (this can still fail if a page's document is disposed)
+        for page in pages_list:
+            self.add(page)
+
     def _dispose(self) -> None:
         """Internal use only."""
         pass
