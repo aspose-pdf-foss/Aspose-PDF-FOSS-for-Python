@@ -20,10 +20,18 @@ Example
 
 Data sources abstract over files, in-memory bytes, and binary streams, so the
 same plugin works regardless of where the PDF data lives.
+
+Abstract base class
+-------------------
+:class:`PdfPlugin` is an abstract base class (ABC) and cannot be instantiated
+directly. Subclasses must implement the :meth:`~PdfPlugin.process` method.
+The built-in plugins (:class:`Merger`, :class:`Optimizer`, :class:`Splitter`,
+etc.) are concrete implementations that are ready to use.
 """
 
 from __future__ import annotations
 
+import abc
 import inspect
 import io
 import math
@@ -667,13 +675,15 @@ class FormFillerOptions(PluginOptions):
 # ---------------------------------------------------------------------------
 
 
-class PdfPlugin:
+class PdfPlugin(abc.ABC):
     """Base class for low-code plugins."""
 
+    @abc.abstractmethod
     def process(self, options: PluginOptions) -> ResultContainer:
-        raise NotImplementedError(
-            "Plugin subclasses must implement process()"
-        )
+        """Process the given options and return a result container.
+        
+        Subclasses must implement this method to perform their specific operation.
+        """
 
     @staticmethod
     def _require_inputs(options: PluginOptions) -> None:

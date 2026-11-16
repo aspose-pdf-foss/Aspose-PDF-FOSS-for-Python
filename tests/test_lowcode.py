@@ -416,9 +416,31 @@ def test_text_extractor_writes_outputs_paired_by_position():
 # ---------------------------------------------------------------------------
 
 
-def test_base_plugin_process_not_implemented():
-    with pytest.raises(NotImplementedError):
-        PdfPlugin().process(PluginOptions())
+def test_base_plugin_cannot_be_instantiated():
+    """PdfPlugin is an abstract base class and cannot be instantiated directly."""
+    with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+        PdfPlugin()
+
+
+def test_base_plugin_subclass_must_implement_process():
+    """Subclasses that don't implement process() cannot be instantiated."""
+    class IncompletePlugin(PdfPlugin):
+        pass
+
+    with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+        IncompletePlugin()
+
+
+def test_base_plugin_subclass_can_be_instantiated_with_process():
+    """Subclasses that implement process() can be instantiated."""
+    class CompletePlugin(PdfPlugin):
+        def process(self, options: PluginOptions) -> ResultContainer:
+            return ResultContainer([OperationResult(b"test")])
+
+    plugin = CompletePlugin()
+    result = plugin.process(PluginOptions())
+    assert len(result) == 1
+    assert result[0].to_array() == b"test"
 
 
 def test_plugin_enum_values():
