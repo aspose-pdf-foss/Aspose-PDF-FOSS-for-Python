@@ -511,3 +511,133 @@ def test_a_scaled_page_still_extracts_and_renders():
         assert "readable" in reopened.pages[1].extract_text()
         raster = reopened.render_page(1, dpi=36)
         assert raster.width > 0
+
+
+class TestSetPageSize:
+    """Tests for the set_page_size compatibility method."""
+
+    def test_basic_functionality_matches_resize(self):
+        """set_page_size should behave like resize with mode='fit'."""
+        from aspose_pdf import Document, PageSize
+
+        doc1 = Document()
+        page1 = doc1.pages.add(PageSize.A4)
+        page1.set_page_size(842, 595)
+
+        doc2 = Document()
+        page2 = doc2.pages.add(PageSize.A4)
+        page2.resize((842, 595), mode="fit")
+
+        assert page1.size.width == page2.size.width
+        assert page1.size.height == page2.size.height
+        assert page1.rotation == page2.rotation
+        doc1.close()
+        doc2.close()
+
+    def test_returns_self_for_chaining(self):
+        """set_page_size should return self for method chaining."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        result = page.set_page_size(842, 595)
+        assert result is page
+        doc.close()
+
+    def test_chains_with_other_methods(self):
+        """set_page_size should chain with other page methods."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        result = page.set_page_size(842, 595).rotate(90)
+        assert result is page
+        assert page.rotation == 90
+        doc.close()
+
+    def test_negative_width_raises_value_error(self):
+        """set_page_size should raise ValueError for negative width."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        with pytest.raises(ValueError, match="width must be above zero"):
+            page.set_page_size(-100, 595)
+        doc.close()
+
+    def test_negative_height_raises_value_error(self):
+        """set_page_size should raise ValueError for negative height."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        with pytest.raises(ValueError, match="height must be above zero"):
+            page.set_page_size(842, -100)
+        doc.close()
+
+    def test_nan_width_raises_value_error(self):
+        """set_page_size should raise ValueError for NaN width."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        with pytest.raises(ValueError, match="width must be finite"):
+            page.set_page_size(float("nan"), 595)
+        doc.close()
+
+    def test_nan_height_raises_value_error(self):
+        """set_page_size should raise ValueError for NaN height."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        with pytest.raises(ValueError, match="height must be finite"):
+            page.set_page_size(842, float("nan"))
+        doc.close()
+
+    def test_infinite_width_raises_value_error(self):
+        """set_page_size should raise ValueError for infinite width."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        with pytest.raises(ValueError, match="width must be finite"):
+            page.set_page_size(float("inf"), 595)
+        doc.close()
+
+    def test_zero_width_raises_value_error(self):
+        """set_page_size should raise ValueError for zero width."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        with pytest.raises(ValueError, match="width must be above zero"):
+            page.set_page_size(0, 595)
+        doc.close()
+
+    def test_zero_height_raises_value_error(self):
+        """set_page_size should raise ValueError for zero height."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        with pytest.raises(ValueError, match="height must be above zero"):
+            page.set_page_size(842, 0)
+        doc.close()
+
+    def test_media_box_reflects_new_size(self):
+        """set_page_size should update the media box."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        page.set_page_size(842, 595)
+        media_box = page.media_box
+        assert media_box[2] - media_box[0] == pytest.approx(842)
+        assert media_box[3] - media_box[1] == pytest.approx(595)
+        doc.close()
+
+    def test_rotation_is_preserved(self):
+        """set_page_size should not change the page rotation."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        page.rotation = 90
+        page.set_page_size(842, 595)
+        assert page.rotation == 90
+        doc.close()
+
+    def test_crop_box_travels_with_content(self):
+        """set_page_size should scale the crop box with the content."""
+        doc = Document()
+        page = doc.pages.add(PageSize.A4)
+        page.crop_box = (0, 0, 300, 400)
+        page.set_page_size(842, 595)
+        # mode="fit" uses the minimum scale to preserve aspect ratio
+        min_scale = min(842 / 595.2755905511812, 595 / 841.8897637795276)
+        # The crop box is scaled but also shifted due to centering
+        # Just verify the dimensions are scaled by the fit factor
+        crop_width = page.crop_box[2] - page.crop_box[0]
+        crop_height = page.crop_box[3] - page.crop_box[1]
+        assert crop_width == pytest.approx(300 * min_scale)
+        assert crop_height == pytest.approx(400 * min_scale)
+        doc.close()

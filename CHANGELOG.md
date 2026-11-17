@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Page.set_page_size(width, height) -> Page` method.** This compatibility method sets the page's MediaBox to the given dimensions and scales the page's drawing content onto the new sheet with aspect ratio preserved. It raises `ValueError` for non‑positive or non‑finite dimensions. The method delegates to `resize((width, height), mode="fit")` so behavior is identical, providing compatibility with Aspose.PDF for .NET code.
+
 - **Add `CaretAnnotation` class and `add_caret()` method.** Added `CaretAnnotation` class with `symbol` property (accepts "Paragraph" or "None") and `AnnotationCollection.add_caret(rect, contents='', *, title=None, color=(0,0,0), symbol='None')` to create caret markup annotations.
 
 - **Rotate several pages with `Document.rotate_pages()`.** Added

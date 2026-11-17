@@ -513,6 +513,65 @@ class Page:
         )
         return self
 
+    def set_page_size(self, width: float, height: float) -> Page:
+        """Set the page size to the given width and height, scaling content to fit.
+
+        This is a compatibility name for :meth:`resize` with ``mode="fit"``.
+        It sets the page's MediaBox to ``(0, 0, width, height)`` and scales
+        the page's drawing content onto the new sheet, centred with the
+        aspect ratio preserved.
+
+        Parameters
+        ----------
+        width : float
+            Page width in points. Must be a finite positive number.
+        height : float
+            Page height in points. Must be a finite positive number.
+
+        Returns
+        -------
+        Page
+            The same page for method chaining.
+
+        Raises
+        ------
+        ValueError
+            If *width* or *height* is negative, zero, NaN, or infinite.
+
+        Notes
+        -----
+        After calling ``page.set_page_size(w, h)``, ``page.size.width == w``
+        and ``page.size.height == h`` (within floating-point tolerance),
+        and ``page.media_box`` reflects the new size. The page's rotation
+        is unchanged, and other boxes (CropBox, TrimBox, etc.) travel with
+        the content as they are scaled.
+
+        This method is provided for compatibility with Aspose.PDF for .NET
+        code; it delegates to :meth:`resize` so the behavior is identical.
+        """
+        # Validate inputs early, raising ValueError as per the API contract.
+        # This matches what PageSize.__post_init__ does internally.
+        try:
+            width = float(width)
+        except (TypeError, ValueError):
+            raise ValueError("width must be a number") from None
+        try:
+            height = float(height)
+        except (TypeError, ValueError):
+            raise ValueError("height must be a number") from None
+        import math
+        if not math.isfinite(width):
+            raise ValueError("width must be finite")
+        if not math.isfinite(height):
+            raise ValueError("height must be finite")
+        if width <= 0:
+            raise ValueError("width must be above zero")
+        if height <= 0:
+            raise ValueError("height must be above zero")
+
+        # Delegate to resize so the two can never disagree.
+        return self.resize((width, height), mode="fit")
+
     def get_box(self, boundary: PageBoundary | str) -> tuple[float, float, float, float]:
         """The page box *boundary* names, with its default applied.
 
