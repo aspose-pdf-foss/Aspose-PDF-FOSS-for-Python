@@ -584,6 +584,48 @@ class PdfFileEditor:
             ),
         )
 
+    def try_make_n_up(
+        self,
+        input_file: str,
+        output_file: str,
+        rows: int = 2,
+        columns: int = 2,
+        *,
+        page_size: Any = None,
+        margin: float = 0.0,
+        gutter: float = 0.0,
+        order: str = "row",
+        crop_marks: bool = False,
+        crop_mark_length: float = 9.0,
+        crop_mark_offset: float = 3.0,
+        crop_mark_width: float = 0.5,
+    ) -> bool:
+        """Attempt to impose *input_file* as ``rows x columns`` pages per sheet into *output_file*.
+
+        This is an alias for :meth:`make_n_up` for compatibility with Aspose.PDF for .NET.
+        All keyword arguments are forwarded to :meth:`make_n_up`.
+
+        Returns
+        -------
+        bool
+            ``True`` on success, ``False`` on failure (and
+            :attr:`last_exception` says why).
+        """
+        return self.make_n_up(
+            input_file,
+            output_file,
+            rows,
+            columns,
+            page_size=page_size,
+            margin=margin,
+            gutter=gutter,
+            order=order,
+            crop_marks=crop_marks,
+            crop_mark_length=crop_mark_length,
+            crop_mark_offset=crop_mark_offset,
+            crop_mark_width=crop_mark_width,
+        )
+
     def make_booklet(
         self,
         source: str,

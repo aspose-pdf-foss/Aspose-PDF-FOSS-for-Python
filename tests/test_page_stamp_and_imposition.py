@@ -406,6 +406,21 @@ def test_the_facade_reports_a_failure_rather_than_raising(tmp_path):
     assert editor.make_booklet("no-such-file.pdf", str(tmp_path / "out2.pdf")) is False
 
 
+def test_try_make_n_up_exists_and_aliases_make_n_up(tmp_path):
+    source = tmp_path / "source.pdf"
+    _source(5).save(source)
+    editor = PdfFileEditor()
+    n_up = tmp_path / "nup.pdf"
+    assert editor.try_make_n_up(str(source), str(n_up), 2, 2) is True
+    assert Document(n_up).page_count == 2
+
+
+def test_try_make_n_up_reports_failure_like_make_n_up(tmp_path):
+    editor = PdfFileEditor()
+    assert editor.try_make_n_up("no-such-file.pdf", str(tmp_path / "out.pdf")) is False
+    assert isinstance(editor.last_exception, Exception)
+
+
 # ---------------------------------------------------------------------------
 # A text stamp in an embedded font
 # ---------------------------------------------------------------------------
