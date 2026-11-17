@@ -28,6 +28,7 @@ import pytest
 
 from aspose_pdf import Document, PageSize
 from aspose_pdf.annotations import (
+    CaretAnnotation,
     CircleAnnotation,
     FreeTextAnnotation,
     HighlightAnnotation,
@@ -92,6 +93,7 @@ def test_each_subtype_is_read_as_its_own_class():
     annotations.add_squiggly((48, 435, 300, 452))
     annotations.add_stamp((250, 560, 380, 590), "Approved")
     annotations.add_redact((48, 415, 200, 432))
+    annotations.add_caret((50, 50, 80, 80), "insert here", symbol="Paragraph")
 
     expected = [
         TextAnnotation,
@@ -108,6 +110,7 @@ def test_each_subtype_is_read_as_its_own_class():
         SquigglyAnnotation,
         StampAnnotation,
         RedactAnnotation,
+        CaretAnnotation,
     ]
     assert [type(item) for item in page.annotations] == expected
     # And the classes come back after a save, from the file's own /Subtype.
@@ -116,13 +119,11 @@ def test_each_subtype_is_read_as_its_own_class():
 
 def test_a_subtype_with_no_class_of_its_own_is_still_read():
     _, page = _page()
-    page.annotations.add("Caret", (10, 10, 30, 30), "a caret")
     page.annotations.add("Movie", (40, 10, 60, 30), "a movie")
     kinds = [type(item) for item in page.annotations]
-    # Caret is a markup annotation; Movie is not one at all.
-    assert kinds[0] is MarkupAnnotation
-    assert kinds[1].__name__ == "Annotation"
-    assert page.annotations[1].subtype == "Movie"
+    # Movie is not a markup annotation at all.
+    assert kinds[0].__name__ == "Annotation"
+    assert page.annotations[0].subtype == "Movie"
 
 
 def test_the_typed_classes_are_slotted_like_the_base():
@@ -511,3 +512,66 @@ def test_a_shape_rectangle_is_not_moved_by_the_typed_layer():
     square.interior_color = (1, 0, 0)
     square.opacity = 0.5
     assert square.rect == (50.0, 300.0, 200.0, 360.0)
+
+
+# ---------------------------------------------------------------------------
+# CaretAnnotation
+# ---------------------------------------------------------------------------
+
+
+def test_caret_annotation_is_read_as_its_own_class():
+    _document, page = _page()
+    caret = page.annotations.add_caret((50, 300, 90, 340), "insert text here", symbol="Paragraph")
+    assert type(caret) is CaretAnnotation
+    assert caret.symbol == "Paragraph"
+    assert caret.subtype == "Caret"
+
+
+def test_caret_annotation_symbol_property():
+    document, page = _page()
+    caret = page.annotations.add_caret((50, 300, 90, 340), "insert text here", symbol="Paragraph")
+    assert caret.symbol == "Paragraph"
+    caret.symbol = "None"
+    assert caret.symbol == "None"
+    # Round trip preserves symbol
+    reloaded = _roundtrip(document).pages[1].annotations[-1]
+    assert reloaded.symbol == "None"
+
+
+def test_caret_annotation_with_none_symbol():
+    _, page = _page()
+    caret = page.annotations.add_caret((150, 300, 190, 340), "break para", symbol="None")
+    assert caret.symbol == "None"
+    assert type(caret) is CaretAnnotation
+
+
+def test_caret_annotation_survives_round_trip():
+    document, page = _page()
+    page.annotations.add_caret((50, 100, 90, 140), "test caret", symbol="Paragraph")
+    reloaded = _roundtrip(document).pages[1].annotations[-1]
+    assert type(reloaded) is CaretAnnotation
+    assert reloaded.symbol == "Paragraph"
+    assert reloaded.contents == "test caret"
+
+
+def test_generic_add_caret_returns_caret_annotation():
+    """Verify generic add("Caret") returns the new dedicated CaretAnnotation class."""
+    _, page = _page()
+    caret = page.annotations.add("Caret", (10, 10, 30, 30), "note")
+    assert type(caret) is CaretAnnotation
+    assert caret.subtype == "Caret"
+    assert hasattr(caret, "symbol")
+
+
+def test_caret_symbol_validation():
+    """Verify symbol property only accepts 'None' or 'Paragraph'."""
+    _, page = _page()
+    caret = page.annotations.add_caret((50, 300, 90, 340), "test", symbol="Paragraph")
+    # Valid values work
+    caret.symbol = "None"
+    assert caret.symbol == "None"
+    caret.symbol = "Paragraph"
+    assert caret.symbol == "Paragraph"
+    # Invalid value raises ValueError
+    with pytest.raises(ValueError, match="Invalid symbol value"):
+        caret.symbol = "InvalidValue"

@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `CaretAnnotation` class and `add_caret()` method.** Added `CaretAnnotation` class with `symbol` property (accepts "Paragraph" or "None") and `AnnotationCollection.add_caret(rect, contents='', *, title=None, color=(0,0,0), symbol='None')` to create caret markup annotations.
+
 - **Rotate several pages with `Document.rotate_pages()`.** Added
   `Document.rotate_pages(degrees, *, pages=None, relative=True) -> int` to turn
   every page or a one-based selection by a multiple of 90 degrees. The default

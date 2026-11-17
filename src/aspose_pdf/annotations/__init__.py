@@ -697,6 +697,33 @@ class CircleAnnotation(_ShapeAnnotation):
     __slots__ = ()
 
 
+class CaretAnnotation(MarkupAnnotation):
+    """A caret (``/``) symbol used to indicate where text should be inserted (``Caret``).
+
+    ISO 32000-1 12.5.6.4: a caret annotation has a symbol (``/Sym``) that is
+    either ``None`` (no symbol) or ``Paragraph`` (new paragraph symbol).
+    """
+
+    __slots__ = ()
+
+    @property
+    def symbol(self) -> str:
+        """The symbol drawn inside the caret's rectangle (``/Sym``).
+
+        Either ``None`` (no symbol) or ``Paragraph`` (new paragraph symbol).
+        """
+        value = self.get_property("Sym")
+        return str(value) if value is not None else "None"
+
+    @symbol.setter
+    def symbol(self, value: str) -> None:
+        if value not in ("None", "Paragraph"):
+            raise ValueError(
+                f"Invalid symbol value '{value}'. Must be 'None' or 'Paragraph'."
+            )
+        self.set_property("Sym", Name(str(value).lstrip("/")))
+
+
 class LineAnnotation(_ShapeAnnotation):
     """A single line between two points (``Line``)."""
 
@@ -1131,7 +1158,12 @@ class AnnotationCollection:
 
     def _wrap(self, index: int, data: dict[str, Any]) -> Annotation:
         subtype = str(data.get("Subtype", ""))
-        annotation_cls = _ANNOTATION_CLASSES.get(subtype, Annotation)
+        # Special case: read Caret annotations as CaretAnnotation for the
+        # dedicated class, even though the generic add("Caret") returns MarkupAnnotation
+        if subtype == "Caret":
+            annotation_cls = CaretAnnotation
+        else:
+            annotation_cls = _ANNOTATION_CLASSES.get(subtype, Annotation)
         return annotation_cls(self._page, index, data)
 
     def add(
@@ -1382,6 +1414,29 @@ class AnnotationCollection:
             border_width,
             opacity,
             properties,
+        )
+
+    def add_caret(
+        self,
+        rect: tuple[float, float, float, float],
+        contents: str = "",
+        *,
+        title: str | None = None,
+        color: Any = (0.0, 0.0, 0.0),
+        symbol: str = "None",
+    ) -> CaretAnnotation:
+        """Add a caret (``/``) symbol annotation (``Caret``).
+
+        The symbol is either ``None`` (no symbol) or ``Paragraph``
+        (new paragraph symbol).
+        """
+        return self._add(  # type: ignore[return-value]
+            AnnotationType.CARET.value,
+            rect,
+            contents,
+            title,
+            {"C": _color_components(color), "Sym": Name(str(symbol).lstrip("/"))},
+            None,
         )
 
     def _shape(
