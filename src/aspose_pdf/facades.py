@@ -669,6 +669,24 @@ class PdfFileEditor:
             ),
         )
 
+    def try_make_booklet(self, input_file: str, output_file: str) -> bool:
+        """Attempt to create a booklet from *input_file* to *output_file*.
+
+        This is an alias for :meth:`make_booklet` for compatibility with
+        Aspose.PDF for .NET. The operation is performed with default settings.
+
+        Returns
+        -------
+        bool
+            ``True`` on success, ``False`` on failure (and
+            :attr:`last_exception` says why).
+        """
+        try:
+            return self.make_booklet(input_file, output_file)
+        except PDF_OPERATION_ERRORS as exc:
+            self._operation_fail(exc)
+            return False
+
     def _impose(self, source: str, destination: str, impose: Any) -> bool:
         """Open *source*, impose it, write *destination*; dispose of both either way."""
         self._ensure_not_disposed()
