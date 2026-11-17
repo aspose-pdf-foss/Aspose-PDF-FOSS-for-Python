@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Document.hide_tool_bar` property.** Added a property alias `Document.hide_tool_bar` (getter and setter) that delegates to `Document.viewer_preferences.hide_toolbar`. This provides compatibility with Aspose.PDF for .NET code that accesses `document.HideToolBar`.
+
 - **Add `Document.center_window` property.** Added a property alias `Document.center_window` (getter and setter) that delegates to `Document.viewer_preferences.center_window`. This provides compatibility with Aspose.PDF for .NET code that accesses `document.CenterWindow`.
 
 - **Add `PdfFileEditor.try_make_booklet()` method.** Added `try_make_booklet(input_file, output_file) -> bool` as a compatibility alias for `make_booklet()` to match the Aspose.PDF for .NET API surface. The method delegates to `make_booklet()` with default settings, providing compatibility with Aspose.PDF for .NET code.

@@ -633,6 +633,18 @@ class Document:
         self.viewer_preferences.center_window = value
 
     @property
+    def hide_tool_bar(self) -> bool:
+        """Hide the viewer's toolbar while the document is open.
+
+        This is a compatibility alias for :attr:`viewer_preferences.hide_toolbar`.
+        """
+        return self.viewer_preferences.hide_toolbar
+
+    @hide_tool_bar.setter
+    def hide_tool_bar(self, value: bool) -> None:
+        self.viewer_preferences.hide_toolbar = value
+
+    @property
     def form(self) -> Form:
         """Get the interactive form of the document."""
         self._ensure_not_disposed()

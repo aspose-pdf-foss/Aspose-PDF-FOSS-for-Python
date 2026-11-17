@@ -474,3 +474,36 @@ def test_document_center_window_is_an_alias_for_viewer_preferences():
     loaded.center_window = True
     reopened_loaded = _reloaded(loaded)
     assert reopened_loaded.center_window is True
+
+
+def test_document_hide_tool_bar_is_an_alias_for_viewer_preferences():
+    """Document.hide_tool_bar is a compatibility alias for viewer_preferences.hide_toolbar."""
+    document = _pages()
+
+    # Reading from Document.hide_tool_bar should match viewer_preferences.hide_toolbar
+    assert document.hide_tool_bar == document.viewer_preferences.hide_toolbar
+
+    # Setting Document.hide_tool_bar should update viewer_preferences.hide_toolbar
+    document.hide_tool_bar = True
+    assert document.viewer_preferences.hide_toolbar is True
+    assert document.hide_tool_bar is True
+
+    # Setting viewer_preferences.hide_toolbar should be visible via Document.hide_tool_bar
+    document.viewer_preferences.hide_toolbar = False
+    assert document.hide_tool_bar is False
+    assert document.viewer_preferences.hide_toolbar is False
+
+    # The value should persist after saving and reloading
+    reopened = _reloaded(document)
+    assert reopened.hide_tool_bar is False
+    assert reopened.viewer_preferences.hide_toolbar is False
+
+    # Test on a document loaded from file
+    loaded = Document("tests/fixtures_4pages.pdf")
+    assert isinstance(loaded.hide_tool_bar, bool)
+    assert loaded.hide_tool_bar == loaded.viewer_preferences.hide_toolbar
+
+    # Set and verify round-trip
+    loaded.hide_tool_bar = True
+    reopened_loaded = _reloaded(loaded)
+    assert reopened_loaded.hide_tool_bar is True
