@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PdfFileEditor.try_concatenate()` method.** Added `try_concatenate(first_input_file, second_input_file, output_file) -> bool` as a compatibility alias for `concatenate([first_input_file, second_input_file], output_file)` to match the Aspose.PDF for .NET API surface. The method delegates to `concatenate()` so behavior is identical, providing compatibility with Aspose.PDF for .NET code.
+
 - **Add `PdfFileEditor.try_make_n_up()` method.** Added `try_make_n_up(input_file, output_file, rows=2, columns=2, *, page_size=None, margin=0.0, gutter=0.0, order="row", crop_marks=False, crop_mark_length=9.0, crop_mark_offset=3.0, crop_mark_width=0.5) -> bool` as a compatibility alias for `make_n_up()` to match the Aspose.PDF for .NET API surface. The method delegates to `make_n_up()` with all optional keyword arguments forwarded.
 
 - **Add `Page.set_page_size(width, height) -> Page` method.** This compatibility method sets the page's MediaBox to the given dimensions and scales the page's drawing content onto the new sheet with aspect ratio preserved. It raises `ValueError` for non‑positive or non‑finite dimensions. The method delegates to `resize((width, height), mode="fit")` so behavior is identical, providing compatibility with Aspose.PDF for .NET code.

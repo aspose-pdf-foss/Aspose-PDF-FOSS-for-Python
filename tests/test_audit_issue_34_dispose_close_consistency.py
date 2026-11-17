@@ -132,6 +132,42 @@ def test_pdf_file_editor_concatenate_disposes_inputs_and_merge_result(
     assert sum(disposed) == 3  # two loads + merged SimplePdf from merge()
 
 
+def test_pdf_file_editor_try_concatenate_matches_concatenate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    out1 = tmp_path / "cat1.pdf"
+    out2 = tmp_path / "cat2.pdf"
+    _tiny_valid_pdf(a)
+    _tiny_valid_pdf(b)
+
+    # Test successful concatenation
+    editor1 = PdfFileEditor()
+    result1 = editor1.concatenate([str(a), str(b)], str(out1))
+
+    editor2 = PdfFileEditor()
+    result2 = editor2.try_concatenate(str(a), str(b), str(out2))
+
+    assert result1 is True
+    assert result2 is True
+    assert out1.exists()
+    assert out2.exists()
+
+
+def test_pdf_file_editor_try_concatenate_failure_handling(tmp_path: Path) -> None:
+    a = tmp_path / "a.pdf"
+    out = tmp_path / "cat.pdf"
+    _tiny_valid_pdf(a)
+
+    # Test failure when second file is missing
+    editor = PdfFileEditor()
+    result = editor.try_concatenate(str(a), str(tmp_path / "nonexistent.pdf"), str(out))
+    assert result is False
+    assert editor.last_exception is not None
+    assert not out.exists(), "Output file should not be created on failure"
+
+
 def test_pdf_extractor_close_disposes_bound_engine(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(SimplePdf, "MIN_MMAP_SIZE", 0)
     pdf_path = tmp_path / "ext.pdf"

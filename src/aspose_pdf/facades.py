@@ -541,6 +541,22 @@ class PdfFileEditor:
                         exc,
                     )
 
+    def try_concatenate(self, first_input_file: str, second_input_file: str, output_file: str) -> bool:
+        """Attempt to concatenate two PDF files into one.
+
+        This is an alias for :meth:`concatenate([first_input_file, second_input_file], output_file)`
+        for compatibility with Aspose.PDF for .NET.
+
+        Args:
+            first_input_file: First file to concatenate
+            second_input_file: Second file to concatenate
+            output_file: Output file path
+
+        Returns:
+            True on success, False on failure (and :attr:`last_exception` says why).
+        """
+        return self.concatenate([first_input_file, second_input_file], output_file)
+
     def make_n_up(
         self,
         source: str,
