@@ -441,3 +441,36 @@ def test_preferences_are_refused_once_the_document_is_disposed():
         preferences.hide_toolbar
     with pytest.raises(Exception, match="dispose"):
         document.page_mode
+
+
+def test_document_center_window_is_an_alias_for_viewer_preferences():
+    """Document.center_window is a compatibility alias for viewer_preferences.center_window."""
+    document = _pages()
+
+    # Reading from Document.center_window should match viewer_preferences.center_window
+    assert document.center_window == document.viewer_preferences.center_window
+
+    # Setting Document.center_window should update viewer_preferences.center_window
+    document.center_window = True
+    assert document.viewer_preferences.center_window is True
+    assert document.center_window is True
+
+    # Setting viewer_preferences.center_window should be visible via Document.center_window
+    document.viewer_preferences.center_window = False
+    assert document.center_window is False
+    assert document.viewer_preferences.center_window is False
+
+    # The value should persist after saving and reloading
+    reopened = _reloaded(document)
+    assert reopened.center_window is False
+    assert reopened.viewer_preferences.center_window is False
+
+    # Test on a document loaded from file
+    loaded = Document("tests/fixtures_4pages.pdf")
+    assert isinstance(loaded.center_window, bool)
+    assert loaded.center_window == loaded.viewer_preferences.center_window
+
+    # Set and verify round-trip
+    loaded.center_window = True
+    reopened_loaded = _reloaded(loaded)
+    assert reopened_loaded.center_window is True

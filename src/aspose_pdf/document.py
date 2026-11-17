@@ -621,6 +621,18 @@ class Document:
         return ViewerPreferences(self)
 
     @property
+    def center_window(self) -> bool:
+        """Put the window in the middle of the screen.
+
+        This is a compatibility alias for :attr:`viewer_preferences.center_window`.
+        """
+        return self.viewer_preferences.center_window
+
+    @center_window.setter
+    def center_window(self, value: bool) -> None:
+        self.viewer_preferences.center_window = value
+
+    @property
     def form(self) -> Form:
         """Get the interactive form of the document."""
         self._ensure_not_disposed()
