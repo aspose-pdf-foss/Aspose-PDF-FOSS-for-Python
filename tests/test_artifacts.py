@@ -99,6 +99,10 @@ class TestWrapArtifact:
                 {"artifact_type": "Layout", "attached": ["Top"]},
                 "not to a\nLayout one",
             ),
+            (
+                {"artifact_type": None, "attached": ["Top"]},
+                "not to a\nLayout one",
+            ),
         ],
     )
     def test_refusals(self, kwargs, message):

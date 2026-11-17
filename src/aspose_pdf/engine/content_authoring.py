@@ -810,7 +810,7 @@ def wrap_artifact(
                 "An artifact is attached to one or more of: "
                 + ", ".join(ARTIFACT_EDGES)
             )
-        if name == "Layout":
+        if name == "Layout" or name is None:
             raise PdfValidationException(
                 "/Attached belongs to a Pagination or Page artifact, not to a "
                 "Layout one"
