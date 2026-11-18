@@ -522,3 +522,118 @@ def test_get_box_answers_the_boundary_the_viewer_preferences_name():
     assert tuple(page.get_box(document.viewer_preferences.view_area)) == (
         10.0, 10.0, 400.0, 500.0,
     )
+
+
+# ---------------------------------------------------------------------------
+# Page.get_page_rect
+# ---------------------------------------------------------------------------
+
+
+def test_get_page_rect_default_considers_rotation():
+    # Rotation 0: rectangle unchanged
+    page = _page()
+    page.crop_box = (10, 10, 100, 100)
+    assert page.get_page_rect() == (10.0, 10.0, 100.0, 100.0)
+
+
+def test_get_page_rect_consider_rotation_false_returns_raw_cropbox():
+    # consider_rotation=False returns the same as get_box("CropBox")
+    page = _page()
+    page.crop_box = (10, 10, 100, 100)
+    page.rotation = 90
+    assert page.get_page_rect(consider_rotation=False) == (10.0, 10.0, 100.0, 100.0)
+    assert page.get_page_rect(consider_rotation=False) == page.get_box("CropBox")
+
+
+def test_get_page_rect_consider_rotation_true_with_0_degree_rotation():
+    # Rotation 0: rectangle unchanged
+    page = _page()
+    page.crop_box = (10, 10, 100, 100)
+    assert page.get_page_rect(consider_rotation=True) == (10.0, 10.0, 100.0, 100.0)
+
+
+def test_get_page_rect_consider_rotation_true_with_90_degree_rotation():
+    # Rotation 90°: rectangle is transformed
+    # MediaBox is Letter: (0, 0, 612, 792)
+    # CropBox: (10, 10, 100, 100) -> after 90° rotation
+    page = _page()
+    page.crop_box = (10, 10, 100, 100)
+    page.rotation = 90
+    rect = page.get_page_rect(consider_rotation=True)
+    # w=612, h=792
+    # (x, y) -> (y, w - x)
+    # (10, 10) -> (10, 602)
+    # (10, 100) -> (100, 602)
+    # (100, 10) -> (10, 512)
+    # (100, 100) -> (100, 512)
+    # min/max: (10, 512, 100, 602)
+    assert rect[0] == pytest.approx(10.0)
+    assert rect[1] == pytest.approx(512.0)
+    assert rect[2] == pytest.approx(100.0)
+    assert rect[3] == pytest.approx(602.0)
+
+
+def test_get_page_rect_consider_rotation_true_with_180_degree_rotation():
+    # Rotation 180°: rectangle is transformed
+    # (x, y) -> (w - x, h - y)
+    page = _page()
+    page.crop_box = (10, 10, 100, 100)
+    page.rotation = 180
+    rect = page.get_page_rect(consider_rotation=True)
+    # w=612, h=792
+    # (10, 10) -> (602, 782)
+    # (10, 100) -> (602, 692)
+    # (100, 10) -> (512, 782)
+    # (100, 100) -> (512, 692)
+    # min/max: (512, 692, 602, 782)
+    assert rect[0] == pytest.approx(512.0)
+    assert rect[1] == pytest.approx(692.0)
+    assert rect[2] == pytest.approx(602.0)
+    assert rect[3] == pytest.approx(782.0)
+
+
+def test_get_page_rect_consider_rotation_true_with_270_degree_rotation():
+    # Rotation 270°: rectangle is transformed
+    # (x, y) -> (h - y, x)
+    page = _page()
+    page.crop_box = (10, 10, 100, 100)
+    page.rotation = 270
+    rect = page.get_page_rect(consider_rotation=True)
+    # h=792
+    # (10, 10) -> (782, 10)
+    # (10, 100) -> (692, 10)
+    # (100, 10) -> (782, 100)
+    # (100, 100) -> (692, 100)
+    # min/max: (692, 10, 782, 100)
+    assert rect[0] == pytest.approx(692.0)
+    assert rect[1] == pytest.approx(10.0)
+    assert rect[2] == pytest.approx(782.0)
+    assert rect[3] == pytest.approx(100.0)
+
+
+def test_get_page_rect_falls_back_to_media_box_when_cropbox_unset():
+    # When CropBox is unset, falls back to MediaBox
+    page = _page()
+    # CropBox defaults to MediaBox
+    rect = page.get_page_rect(consider_rotation=False)
+    assert rect == page.media_box
+
+
+def test_get_page_rect_falls_back_to_media_box_with_rotation():
+    # When CropBox is unset with 90° rotation
+    page = _page()
+    page.rotation = 90
+    rect = page.get_page_rect(consider_rotation=True)
+    mb = page.media_box
+    w = mb[2] - mb[0]
+    h = mb[3] - mb[1]
+    # MediaBox (0, 0, w, h) with 90° rotation
+    # (0, 0) -> (0, w)
+    # (0, h) -> (h, w)
+    # (w, 0) -> (0, 0)
+    # (w, h) -> (h, 0)
+    # min/max: (0, 0, h, w)
+    assert rect[0] == pytest.approx(0.0)
+    assert rect[1] == pytest.approx(0.0)
+    assert rect[2] == pytest.approx(h)
+    assert rect[3] == pytest.approx(w)

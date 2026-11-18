@@ -588,6 +588,72 @@ class Page:
             return self.crop_box
         return self._production_box(name)
 
+    def get_page_rect(self, consider_rotation: bool = True) -> tuple[float, float, float, float]:
+        """The page rectangle (CropBox or MediaBox fallback), optionally adjusted for rotation.
+
+        This method provides compatibility with Aspose.PDF for .NET's ``GetPageRect``
+        method. When *consider_rotation* is ``False``, it returns the same value as
+        :meth:`get_box("CropBox")`. When ``True``, the rectangle is transformed
+        according to the page's rotation so that after transformation the top-right
+        corner is at (max X, max Y).
+
+        Parameters
+        ----------
+        consider_rotation : bool, optional
+            If ``True``, the rectangle is rotated according to the page's rotation
+            (0, 90, 180, 270 degrees). Default is ``True``.
+
+        Returns
+        -------
+        tuple[float, float, float, float]
+            The page rectangle as ``(x0, y0, x1, y1)``.
+
+        Raises
+        ------
+        ValueError
+            If the page's rotation is not a multiple of 90 degrees.
+
+        Notes
+        -----
+        The rotation is applied relative to the page's MediaBox. For a 90° or 270°
+        rotation, the width and height are swapped in the resulting rectangle.
+        """
+        # Get the raw box (CropBox or MediaBox fallback)
+        raw_box = self.get_box("CropBox")
+
+        if not consider_rotation:
+            return raw_box
+
+        # Get the page's rotation, normalized to [0, 360)
+        rot = self.rotation % 360
+
+        # For 0° rotation, no transformation needed
+        if rot == 0:
+            return raw_box
+
+        x0, y0, x1, y1 = raw_box
+        mb = self.media_box
+        w = mb[2] - mb[0]
+        h = mb[3] - mb[1]
+
+        # Rotate the rectangle coordinates based on page rotation
+        # The rotation transforms coordinates so that after rotation, the
+        # top-right corner is at (max X, max Y)
+        if rot == 90:
+            # 90° clockwise: (x, y) -> (y, w - x)
+            pts = [(y, w - x) for x, y in [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]]
+        elif rot == 180:
+            # 180°: (x, y) -> (w - x, h - y)
+            pts = [(w - x, h - y) for x, y in [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]]
+        elif rot == 270:
+            # 270° clockwise (90° counter-clockwise): (x, y) -> (h - y, x)
+            pts = [(h - y, x) for x, y in [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]]
+        else:
+            raise ValueError(f"Rotation {rot} is not a multiple of 90 degrees")
+
+        xs, ys = zip(*pts)
+        return (min(xs), min(ys), max(xs), max(ys))
+
     def set_box(
         self,
         boundary: PageBoundary | str,
