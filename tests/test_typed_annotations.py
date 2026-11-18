@@ -469,6 +469,81 @@ def test_an_annotation_without_either_link_says_so():
     assert square.replies == []
 
 
+def test_delete_reply_by_integer_index():
+    _, page = _page()
+    note = page.annotations.add_text((40, 560, 60, 580), "Main", title="Alice")
+    note.reply("First reply", title="Bob")
+    note.reply("Second reply", title="Carol")
+    note.reply("Third reply", title="Dave")
+
+    # Delete by positive index (0)
+    note.delete_reply(0)
+    assert [r.contents for r in note.replies] == ["Second reply", "Third reply"]
+
+    # Delete by positive index (1)
+    note.delete_reply(1)
+    assert [r.contents for r in note.replies] == ["Second reply"]
+
+    # Re-add for negative index test
+    note.reply("Fourth reply", title="Eve")
+    note.delete_reply(-1)  # Delete last
+    assert [r.contents for r in note.replies] == ["Second reply"]
+
+
+def test_delete_reply_by_annotation_object():
+    _, page = _page()
+    note = page.annotations.add_text((40, 560, 60, 580), "Main", title="Alice")
+    reply1 = note.reply("First reply", title="Bob")
+    reply2 = note.reply("Second reply", title="Carol")
+
+    # Delete by annotation object
+    note.delete_reply(reply1)
+    assert [r.contents for r in note.replies] == ["Second reply"]
+
+    # Delete remaining reply
+    note.delete_reply(reply2)
+    assert note.replies == []
+
+
+def test_delete_reply_invalid_index_raises_indexerror():
+    _, page = _page()
+    note = page.annotations.add_text((40, 560, 60, 580), "Main", title="Alice")
+    note.reply("Reply", title="Bob")
+
+    with pytest.raises(IndexError, match="out of range"):
+        note.delete_reply(5)
+
+    with pytest.raises(IndexError, match="out of range"):
+        note.delete_reply(-5)
+
+
+def test_delete_reply_wrong_annotation_raises_valueerror():
+    _, page = _page()
+    note1 = page.annotations.add_text((40, 560, 60, 580), "Main1", title="Alice")
+    note2 = page.annotations.add_text((40, 540, 60, 560), "Main2", title="Alice")
+    reply = note1.reply("Reply", title="Bob")
+
+    # Try to delete a reply that belongs to note1 from note2
+    with pytest.raises(ValueError, match="Annotation is not a reply to this annotation"):
+        note2.delete_reply(reply)
+
+
+def test_delete_reply_preserves_popup():
+    _, page = _page()
+    note = page.annotations.add_text((40, 560, 60, 580), "Main", title="Alice")
+    reply = note.reply("Reply", title="Bob")
+    reply.add_popup()
+
+    popup_ref = reply.popup
+    assert popup_ref is not None
+
+    note.delete_reply(0)
+
+    # Popup should still exist (it's not deleted with the reply)
+    assert popup_ref is not None
+    assert popup_ref.contents == ""  # Popup still exists, just detached
+
+
 def test_linking_to_an_annotation_that_is_not_there_is_refused():
     document, page = _page()
     page.annotations.add_square((0, 0, 10, 10))

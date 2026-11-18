@@ -278,13 +278,14 @@ class Annotation:
 
     # Declared, so a misspelled name raises instead of being taken and
     # quietly lost; see ``Page`` in ``pages.py``.
-    __slots__ = ("_data", "_index", "_page")
+    __slots__ = ("_data", "_index", "_page", "_ref")
 
 
-    def __init__(self, page: Page, index: int, data: dict[str, Any]) -> None:
+    def __init__(self, page: Page, index: int, data: dict[str, Any], ref: Any = None) -> None:
         self._page = page
         self._index = index
         self._data = dict(data)
+        self._ref = ref  # PDF object reference for stable lookup after deletions
 
     def _sync(self) -> None:
         annotations = self._page._document._engine_pdf.get_annotations(self._page._index)
@@ -461,6 +462,77 @@ class Annotation:
             self._page._index, self._index, payload
         )
         return self._page.annotations[index]
+
+    def delete_reply(self, reply: TextAnnotation | int) -> None:
+        """Remove the given reply annotation from this annotation's ``/Replies`` list.
+
+        If *reply* is an integer, it is treated as the zero-based index in the
+        current ``replies`` list; negative indices are supported like Python list
+        indexing. If *reply* is a ``TextAnnotation``, it must be one of this
+        annotation's replies (i.e., its ``/IRT`` points to this annotation);
+        otherwise a ``ValueError`` is raised.
+
+        The method does not delete the popup annotation, if any, associated with
+        the removed reply.
+
+        Args:
+            reply: The reply annotation or its index in the ``replies`` list.
+
+        Raises:
+            IndexError: If the integer index is out of range.
+            ValueError: If the annotation is not a reply to this annotation.
+        """
+        annotations = self._page.annotations
+        links = self._links()
+        replies_indices = links["replies"]
+
+        if isinstance(reply, int):
+            reply_index = reply
+            # Support negative indices like Python lists
+            if reply_index < 0:
+                reply_index += len(replies_indices)
+            if reply_index < 0 or reply_index >= len(replies_indices):
+                raise IndexError("Reply index out of range")
+            # Get the actual annotation index from the page's annotation collection
+            actual_index = replies_indices[reply_index]
+            annotations.delete(actual_index)
+        else:
+            # reply is a TextAnnotation
+            # Validate that reply is actually a TextAnnotation instance
+            if not isinstance(reply, TextAnnotation):
+                raise ValueError("reply must be a TextAnnotation or an integer index")
+
+            # Find the current index of this reply on the page
+            # First try object identity comparison (ann is reply)
+            # This handles the case where the annotation object was just retrieved
+            reply_index_on_page = None
+            for idx in range(len(annotations)):
+                ann = annotations[idx]
+                if ann is reply:
+                    reply_index_on_page = idx
+                    break
+
+            # If identity didn't match, try using the PDF object reference
+            if reply_index_on_page is None:
+                if reply._ref is None:
+                    raise ValueError("Annotation cannot be identified (no PDF object reference)")
+                reply_ref = reply._ref
+                for idx in range(len(annotations)):
+                    ann = annotations[idx]
+                    if ann._ref is reply_ref:
+                        reply_index_on_page = idx
+                        break
+
+            if reply_index_on_page is None:
+                raise ValueError("Annotation is not a reply to this annotation")
+
+            # Now check if this annotation's in_reply_to points to this annotation
+            current_links = annotations._page._document._engine_pdf.annotation_links(
+                annotations._page._index, reply_index_on_page
+            )
+            if current_links["in_reply_to"] != self._index:
+                raise ValueError("Annotation is not a reply to this annotation")
+            annotations.delete(reply_index_on_page)
 
     def add_popup(
         self,
@@ -1249,7 +1321,10 @@ class AnnotationCollection:
             annotation_cls = CaretAnnotation
         else:
             annotation_cls = _ANNOTATION_CLASSES.get(subtype, Annotation)
-        return annotation_cls(self._page, index, data)
+        # Get the PDF object reference for stable lookup after deletions
+        refs = self._page._document._engine_pdf._annotation_refs(self._page._index)
+        ref = refs[index] if index < len(refs) else None
+        return annotation_cls(self._page, index, data, ref)
 
     def add(
         self,
