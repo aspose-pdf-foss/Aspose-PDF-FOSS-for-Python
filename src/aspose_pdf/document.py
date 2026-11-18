@@ -6940,6 +6940,17 @@ class Document:
         self._ensure_not_disposed()
         return self.validate_pdfua().is_valid
 
+    @property
+    def is_pdf_ua_compliant(self) -> bool:
+        """Alias for :attr:`is_pdfua_compliant`.
+
+        Provides a snake_case alias for the .NET PascalCase property
+        ``IsPdfUaCompliant``. The extra underscore in ``is_pdf_ua_compliant``
+        mirrors the ``PdfUa`` segment in the .NET property name.
+        Returns the same boolean result as :attr:`is_pdfua_compliant`.
+        """
+        return self.is_pdfua_compliant
+
     def validate_pdfua(self, part: int = 1) -> PdfUaValidationResult:
         """Validate catalog-level PDF/UA prerequisites (heuristic).
 

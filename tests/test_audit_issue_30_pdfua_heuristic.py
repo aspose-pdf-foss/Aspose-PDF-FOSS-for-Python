@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from aspose_pdf.document import Document
 from aspose_pdf.pdfua import PdfUaValidationResult
 
@@ -140,3 +142,29 @@ def test_empty_document_validate_pdfua() -> None:
     result = doc.validate_pdfua()
     assert not result.is_valid
     assert "No document loaded" in result.errors[0]
+
+
+def test_is_pdf_ua_compliant_alias_matches_is_pdfua_compliant() -> None:
+    """The alias is_pdf_ua_compliant should return the same value as is_pdfua_compliant."""
+    # Test with non-compliant document
+    doc1 = Document()
+    doc1.load_from(_minimal_pdf_no_tagging())
+    assert not doc1.is_pdfua_compliant
+    assert doc1.is_pdf_ua_compliant == doc1.is_pdfua_compliant
+
+    # Test with compliant document (after PDF/UA conversion)
+    doc2 = _pdfua_ready_doc()
+    assert doc2.is_pdfua_compliant
+    assert doc2.is_pdf_ua_compliant == doc2.is_pdfua_compliant
+
+    # Both should match
+    assert doc1.is_pdf_ua_compliant == doc1.is_pdfua_compliant
+    assert doc2.is_pdf_ua_compliant == doc2.is_pdfua_compliant
+
+
+def test_is_pdf_ua_compliant_is_readonly() -> None:
+    """The alias is_pdf_ua_compliant should be read-only."""
+    doc = Document()
+    doc.load_from(_minimal_pdf_no_tagging())
+    with pytest.raises(AttributeError):
+        doc.is_pdf_ua_compliant = True
