@@ -320,6 +320,15 @@ class Permissions(int):
         """Every permission and whether it is granted."""
         return {name: bool(int(self) & bit) for name, bit in _NAMES}
 
+    def to_int(self) -> int:
+        """The signed 32-bit integer value used for the /P entry.
+
+        This is the raw /P value as it appears in the PDF encryption dictionary,
+        including reserved bits. The value is interpreted as a two's complement
+        32-bit signed integer per the PDF specification.
+        """
+        return int(self)
+
     @property
     def is_everything(self) -> bool:
         """Whether every permission Table 22 defines is granted."""

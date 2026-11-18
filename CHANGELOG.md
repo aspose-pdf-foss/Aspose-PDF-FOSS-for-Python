@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Permissions.to_int()` method.** Added `to_int(self) -> int` method to the `Permissions` class. This method returns the signed 32-bit integer value used for the /P entry in the PDF encryption dictionary, including reserved bits. The returned value matches what `Permissions.of()` expects to reconstruct the same `Permissions` instance. For `Permissions.all()` the value is `-4` and for `Permissions.none()` it is `-3904`, both representing the actual /P values in two's complement 32-bit form. The value for `none()` is `-3904` (not `-3901`), as it correctly clears bits 0 and 1 per PDF spec Table 22, which \"shall be 0\".
+
 - **Add `CircleAnnotation.frame` and `SquareAnnotation.frame` properties.** Added `frame: tuple[float, float, float, float] | None` property to `CircleAnnotation` and `SquareAnnotation` classes. The property reads/writes the PDF `/RD` (Rectangle Differences) entry, returning `None` when not present and accepting a 4-tuple of numeric values to set the inset. Validation raises `TypeError` for non-tuple or non-numeric items, and `ValueError` for wrong-length tuples.
 
 - **Add `AnnotationCollection.find_by_name()` method.** Added `find_by_name(name: str) -> Annotation | None` to `AnnotationCollection`. The method returns the first annotation whose `/NM` (name) entry matches the given name exactly (case-sensitive), or `None` if no annotation has that name. Raises `ValueError` if `name` is not a string.

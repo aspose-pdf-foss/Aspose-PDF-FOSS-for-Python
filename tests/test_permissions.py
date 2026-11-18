@@ -496,3 +496,45 @@ class TestPublicKeyPermissions:
         ) as opened:
             assert opened.permissions.can_print
             assert not opened.permissions.can_copy
+
+
+# ---------------------------------------------------------------------------
+# to_int method
+# ---------------------------------------------------------------------------
+class TestToInt:
+    def test_all_returns_minus_four(self):
+        """Permissions.all().to_int() returns the /P value for everything allowed."""
+        assert Permissions.all().to_int() == -4
+
+    def test_none_returns_correct_value(self):
+        """Permissions.none().to_int() returns the /P value for nothing allowed."""
+        # The correct value is -3904 (reserved bits set, permission bits clear)
+        assert Permissions.none().to_int() == -3904
+
+    def test_allows_and_denying_return_correct_values(self):
+        """to_int() returns the correct /P value for custom permissions."""
+        value = Permissions.allowing("print")
+        assert value.to_int() == int(value)
+
+        value = Permissions.denying("copy")
+        assert value.to_int() == int(value)
+
+    def test_to_int_matches_of(self):
+        """Permissions.of(to_int()) returns an equal Permissions object."""
+        for p in [Permissions.all(), Permissions.none(), Permissions.allowing("print")]:
+            assert Permissions.of(p.to_int()) == p
+
+    def test_to_int_is_always_an_int(self):
+        """to_int() always returns an int for any Permissions instance."""
+        assert isinstance(Permissions.all().to_int(), int)
+        assert isinstance(Permissions.none().to_int(), int)
+        assert isinstance(Permissions.allowing("print").to_int(), int)
+        assert isinstance(Permissions.denying("copy").to_int(), int)
+
+    def test_to_int_never_raises(self):
+        """to_int() never raises an exception."""
+        Permissions.all().to_int()
+        Permissions.none().to_int()
+        Permissions.allowing("print").to_int()
+        Permissions.denying("copy").to_int()
+        Permissions.of(-3904).to_int()
