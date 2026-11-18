@@ -104,8 +104,9 @@ flowchart TD
   font — the writer emits two-byte character codes, `/ToUnicode`, and the CID-to-glyph mapping —
   and, with the optional `text-layout` extra, pass `TextLayoutOptions` for HarfBuzz-driven
   OpenType shaping, Unicode bidi runs, ordered font fallback, and width-constrained line
-  wrapping; a character the font can't represent raises `FontEmbeddingException` instead of
-  silently falling back to `.notdef`.
+  wrapping. A character that the font can't represent raises PdfValidationException for
+  Standard-14 fonts (when the encoding lacks the character) or FontEmbeddingException for
+  embedded fonts (when the font file has no glyph for that Unicode scalar).
 - The facade layer carries the classes ported Aspose.PDF code expects — `PdfFileInfo`,
   `PdfFileSecurity`, `PdfBookmarkEditor`, `PdfAnnotationEditor`, `PdfFileStamp`, `PdfPageEditor`,
   `PdfXmpMetadata`, `PdfConverter` beside `PdfExtractor` and `PdfFileEditor`. Each binds a

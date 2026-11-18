@@ -40,6 +40,7 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `Page.add_text()` now correctly documents its exception behavior: `PdfValidationException` is raised for Standard-14 fonts when the encoding lacks a character, and `FontEmbeddingException` is raised for embedded fonts when the font file lacks a glyph for the character. Previously the README incorrectly claimed `FontEmbeddingException` for all missing glyph cases.
 - `wrap_artifact` now correctly raises `PdfValidationException` when `/Attached` is provided on a Layout artifact (when `artifact_type=None`). Previously, the check for `name == "Layout"` was skipped because `name` was `None`, allowing invalid PDFs to be produced that fail PDF/UA or PDF/A validation.
 - `PageTextComparison.__post_init__` now enforces that a `None` page index requires corresponding text to be `None`. Passing `page_index=None` with non-`None` text (or `other_page_index=None` with non-`None` other_text) raises `PdfValidationException` with the message "text must be None when page_index is None" or "other_text must be None when other_page_index is None".
 - `sign_data_cades` now refuses MD5 and SHA-1 with `TypeError` (as `sign_data_pkcs7` already did). SHA-2 and SHA-3 variants (sha224, sha256, sha384, sha512, sha3_256, sha3_384, sha3_512) continue to be accepted. PKCS#7 signing (`sign_data_pkcs7`) continues to reject SHA-3 variants because the cryptography library's PKCS#7 builder does not support them. Only SHA-224, SHA-256, SHA-384, and SHA-512 are accepted for PKCS#7.
