@@ -433,7 +433,6 @@ def test_round_trip_json(document):
 
     # Export
     json_data = document.export_links_json()
-    payload = json.loads(json_data)
 
     # Clear the document
     with Document() as new_doc:

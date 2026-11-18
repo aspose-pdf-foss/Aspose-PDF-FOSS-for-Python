@@ -40,6 +40,7 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Lint check: removed unused variables `data` (test_export_pages_zip.py), `page2` (test_export_words_zip.py), `payload` (test_link_import.py), and `xref_start` (test_page_from_pdf.py); replaced single-element list slice with `next()` per RUF015 in test_export_pages_zip.py.
 - `Page.add_text()` now correctly documents its exception behavior: `PdfValidationException` is raised for Standard-14 fonts when the encoding lacks a character, and `FontEmbeddingException` is raised for embedded fonts when the font file lacks a glyph for the character. Previously the README incorrectly claimed `FontEmbeddingException` for all missing glyph cases.
 - `wrap_artifact` now correctly raises `PdfValidationException` when `/Attached` is provided on a Layout artifact (when `artifact_type=None`). Previously, the check for `name == "Layout"` was skipped because `name` was `None`, allowing invalid PDFs to be produced that fail PDF/UA or PDF/A validation.
 - `PageTextComparison.__post_init__` now enforces that a `None` page index requires corresponding text to be `None`. Passing `page_index=None` with non-`None` text (or `other_page_index=None` with non-`None` other_text) raises `PdfValidationException` with the message "text must be None when page_index is None" or "other_text must be None when other_page_index is None".

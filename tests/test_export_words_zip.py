@@ -280,7 +280,7 @@ def test_single_page_method():
     """Page.export_words_zip works like Document.export_words_zip with pages=[page.number]."""
     with Document() as document:
         page1 = _page(document, "page one content")
-        page2 = _page(document, "page two content")
+        _page(document, "page two content")
         
         # Get page 1's words
         page1_data = page1.export_words_zip()

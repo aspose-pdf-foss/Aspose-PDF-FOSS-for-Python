@@ -29,7 +29,6 @@ def _create_minimal_pdf_with_pages(num_pages: int = 3) -> bytes:
     
     # Xref and trailer
     total_objects = 3 + num_pages
-    xref_start = len("".join(pdf_body))
     
     pdf_body.append("xref\n")
     pdf_body.append(f"0 {total_objects + 1}\n")

@@ -215,7 +215,6 @@ def test_archive_output_bytes_are_bounded():
     with Document() as document:
         for _ in range(3):
             _page(document)
-        data = document.export_pages_as_zip()
         
         # Set a very low limit that will definitely fail
         document._load_limits = PdfLoadLimits(max_codec_work_bytes=100)
@@ -229,8 +228,8 @@ def test_pdf_bytes_per_page_are_bounded():
     """Individual page PDF bytes are bounded by max_object_bytes."""
     with Document() as document:
         _page(document)
-        data = document.export_pages_as_zip()
-        page_size = len([n for n in _files(data) if n.endswith(".pdf")][0])
+        files_dict = _files(document.export_pages_as_zip())
+        page_size = len(next(n for n in files_dict if n.endswith(".pdf")))
     
     with Document() as document:
         _page(document)
@@ -306,7 +305,7 @@ def test_each_part_is_disposed_after_serialization():
         
         document._engine_pdf.extract_pages = track_extraction
         
-        data = document.export_pages_as_zip()
+        document.export_pages_as_zip()
         
         # Each part should be disposed after being written
         gc.collect()
