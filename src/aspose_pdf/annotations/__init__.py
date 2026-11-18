@@ -1257,6 +1257,25 @@ class AnnotationCollection:
     def clear(self) -> None:
         self._page._document._engine_pdf.clear_annotations(self._page._index)
 
+    def find_by_name(self, name: str) -> Annotation | None:
+        """Return the annotation whose ``/NM`` (name) entry matches *name*.
+
+        The match is exact and case-sensitive. If no annotation has that name,
+        ``None`` is returned.
+
+        The returned annotation is owned by the page; modifying it changes the
+        underlying PDF document.
+
+        Raises:
+            ValueError: If *name* is not a string.
+        """
+        if not isinstance(name, str):
+            raise ValueError("name must be a string")
+        for annotation in self:
+            if annotation.get_property("NM") == name:
+                return annotation
+        return None
+
     # -- one factory per subtype ------------------------------------------
     #
     # Each of these is ``add`` with the entries that subtype is defined by

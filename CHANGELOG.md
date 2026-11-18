@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `AnnotationCollection.find_by_name()` method.** Added `find_by_name(name: str) -> Annotation | None` to `AnnotationCollection`. The method returns the first annotation whose `/NM` (name) entry matches the given name exactly (case-sensitive), or `None` if no annotation has that name. Raises `ValueError` if `name` is not a string.
+
 - **Add `Document.hide_tool_bar` property.** Added a property alias `Document.hide_tool_bar` (getter and setter) that delegates to `Document.viewer_preferences.hide_toolbar`. This provides compatibility with Aspose.PDF for .NET code that accesses `document.HideToolBar`.
 
 - **Add `Document.center_window` property.** Added a property alias `Document.center_window` (getter and setter) that delegates to `Document.viewer_preferences.center_window`. This provides compatibility with Aspose.PDF for .NET code that accesses `document.CenterWindow`.
