@@ -306,3 +306,118 @@ class TestRemovePages:
         with pytest.raises(Exception):
             doc.remove_pages([1])
         doc.dispose()
+
+
+class TestRemovePagesByPattern:
+    """Test Document.remove_pages_by_pattern() method."""
+
+    def test_remove_pages_by_pattern_basic(self):
+        """remove_pages_by_pattern removes pages containing a literal string."""
+        doc = Document()
+        doc.pages.add().add_text("Page 1 with BLANK", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("Page 2 no match", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("Page 3 with BLANK", x=72, y=720, font_size=12)
+
+        removed = doc.remove_pages_by_pattern("BLANK", regex=False, case_sensitive=True)
+
+        assert removed == [1, 3]
+        assert doc.page_count == 1
+
+    def test_remove_pages_by_pattern_regex(self):
+        """remove_pages_by_pattern removes pages matching a regex."""
+        doc = Document()
+        doc.pages.add().add_text("Page 123", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("Page 456", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("Just text", x=72, y=720, font_size=12)
+
+        removed = doc.remove_pages_by_pattern(r"Page \d+", regex=True, case_sensitive=True)
+
+        assert removed == [1, 2]
+        assert doc.page_count == 1
+
+    def test_remove_pages_by_pattern_case_insensitive(self):
+        """remove_pages_by_pattern supports case-insensitive matching."""
+        doc = Document()
+        doc.pages.add().add_text("BLANK", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("blank", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("Blank", x=72, y=720, font_size=12)
+
+        removed = doc.remove_pages_by_pattern("blank", regex=False, case_sensitive=False)
+
+        assert removed == [1, 2, 3]
+        assert doc.page_count == 0
+
+    def test_remove_pages_by_pattern_no_match(self):
+        """remove_pages_by_pattern returns empty list when no pages match."""
+        doc = Document()
+        doc.pages.add().add_text("Page 1", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("Page 2", x=72, y=720, font_size=12)
+
+        removed = doc.remove_pages_by_pattern("NOTFOUND", regex=False, case_sensitive=True)
+
+        assert removed == []
+        assert doc.page_count == 2
+
+    def test_remove_pages_by_pattern_empty_page(self):
+        """remove_pages_by_pattern never removes empty pages."""
+        doc = Document()
+        doc.pages.add().add_text("BLANK", x=72, y=720, font_size=12)
+        doc.pages.add()  # Empty page
+
+        removed = doc.remove_pages_by_pattern("BLANK", regex=False, case_sensitive=True)
+
+        assert removed == [1]
+        assert doc.page_count == 1
+
+    def test_remove_pages_by_pattern_page_selection(self):
+        """remove_pages_by_pattern respects page selection."""
+        doc = Document()
+        doc.pages.add().add_text("BLANK", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("BLANK", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("BLANK", x=72, y=720, font_size=12)
+
+        removed = doc.remove_pages_by_pattern("BLANK", regex=False, case_sensitive=True, pages=[1, 3])
+
+        assert removed == [1, 3]
+        assert doc.page_count == 1
+
+    def test_remove_pages_by_pattern_empty_pages_list(self):
+        """remove_pages_by_pattern returns empty list with empty pages list."""
+        doc = Document()
+        doc.pages.add().add_text("BLANK", x=72, y=720, font_size=12)
+
+        removed = doc.remove_pages_by_pattern("BLANK", regex=False, case_sensitive=True, pages=[])
+
+        assert removed == []
+        assert doc.page_count == 1
+
+    def test_remove_pages_by_pattern_invalid_regex(self):
+        """remove_pages_by_pattern raises ValueError for invalid regex when regex=True."""
+        doc = Document()
+        doc.pages.add().add_text("Page 1", x=72, y=720, font_size=12)
+
+        with pytest.raises(ValueError):
+            doc.remove_pages_by_pattern("[invalid", regex=True, case_sensitive=True)
+
+    def test_remove_pages_by_pattern_compiled_regex(self):
+        """remove_pages_by_pattern accepts compiled regex patterns."""
+        import re
+
+        doc = Document()
+        doc.pages.add().add_text("Page 123", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("Page 456", x=72, y=720, font_size=12)
+        doc.pages.add().add_text("Just text", x=72, y=720, font_size=12)
+
+        pattern = re.compile(r"Page \d+")
+        removed = doc.remove_pages_by_pattern(pattern, regex=True, case_sensitive=True)
+
+        assert removed == [1, 2]
+        assert doc.page_count == 1
+
+    def test_remove_pages_by_pattern_pages_out_of_range(self):
+        """remove_pages_by_pattern raises IndexError for out of range page selection."""
+        doc = Document()
+        doc.pages.add().add_text("Page 1", x=72, y=720, font_size=12)
+
+        with pytest.raises(IndexError):
+            doc.remove_pages_by_pattern("test", pages=[5])

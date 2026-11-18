@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Document.remove_pages_by_pattern` method.** Added `remove_pages_by_pattern(self, pattern: str | re.Pattern[str], *, regex: bool = False, case_sensitive: bool = True, pages: Iterable[int] | None = None) -> list[int]`. This method extracts the full-page text from each selected page, matches against *pattern*, and removes every page whose text contains at least one match. Returns the original one-based page numbers of the removed pages. Raises `ValueError` for invalid regex when *regex* is True. Pages with no extractable text are never removed.
+
 - **Add `Document.is_pdf_ua_compliant` property.** Added a read-only property alias `Document.is_pdf_ua_compliant` that delegates to `Document.is_pdfua_compliant`. This provides a compatibility name for users porting code from Aspose.PDF for .NET where the property is named `IsPdfUaCompliant`.
 
 - **Add `TextAnnotation.delete_reply()` method.** Added `delete_reply(self, reply: TextAnnotation | int) -> None` to `MarkupAnnotation` (inherited by `TextAnnotation`). The method removes a reply annotation from this annotation's `/Replies` list. If `reply` is an integer, it is treated as the zero-based index (negative indices supported like Python lists); if `reply` is a `TextAnnotation`, it must be a reply to this annotation. Raises `IndexError` for out-of-range indices and `ValueError` if the annotation is not a reply to this annotation. The popup annotation, if any, associated with the removed reply is left unchanged.

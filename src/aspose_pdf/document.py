@@ -1465,6 +1465,116 @@ class Document:
         # Note: extracted.pages is 1-indexed like the original document
         return list(extracted.pages)
 
+
+    def remove_pages_by_pattern(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        regex: bool = False,
+        case_sensitive: bool = True,
+        pages: Iterable[int] | None = None,
+    ) -> list[int]:
+        """Remove pages whose text contains a match for *pattern*.
+
+        This method extracts the full-page text from each selected page,
+        matches against *pattern* using the same semantics as :meth:`find_text`,
+        and removes every page whose text contains at least one match.
+        It returns the original one-based page numbers of the removed pages.
+
+        Args:
+            pattern: Text or compiled regex pattern to search for.
+            regex: Treat *pattern* as a regular expression (default: False).
+                When True, *pattern* is treated as a regex; when False,
+                *pattern* is treated as literal text and special regex
+                characters are escaped.
+            case_sensitive: Match case exactly (default: True).
+                Ignored when *pattern* is a compiled regex; the regex's
+                own flags are preserved.
+            pages: One-based page numbers to scan, or None for all pages.
+                Order and repeats are preserved. An empty iterable returns
+                an empty list without removing any pages.
+
+        Returns:
+            List of one-based page numbers that were removed. Empty list
+            if no pages matched.
+
+        Raises:
+            ValueError: If *pattern* is an invalid regular expression when
+                *regex* is True.
+            PdfValidationException: If the pattern is empty or if page
+                selections are invalid.
+
+        Examples:
+            Remove all pages containing "BLANK"::
+
+                removed = doc.remove_pages_by_pattern("BLANK", regex=False)
+
+            Remove pages matching a regex pattern::
+
+                removed = doc.remove_pages_by_pattern(r"Page \\d+", regex=True)
+
+            Remove specific pages matching a pattern::
+
+                removed = doc.remove_pages_by_pattern(
+                    "error", pages=[1, 2, 3, 4], case_sensitive=False
+                )
+
+        Notes:
+            Pages with no extractable text (empty content streams) are
+            never considered a match and are never removed. The operation
+            preserves document structure (page order, metadata, etc.)
+            except for the removed pages.
+        """
+        from aspose_pdf.engine.text_search import _matcher
+        from aspose_pdf.exceptions import PdfValidationException
+        from aspose_pdf.load_limits import _LoadBudget
+
+        self._ensure_not_disposed()
+        if self._engine_pdf is None:
+            raise AsposePdfException("No document loaded")
+
+        budget = _LoadBudget(self.load_limits)
+        try:
+            matcher, _ = _matcher(pattern, regex, case_sensitive, context_chars=0, budget=budget)
+        except PdfValidationException as exc:
+            # Convert to ValueError for public API consistency
+            raise ValueError(str(exc)) from exc
+
+
+        # Get page indices to scan (zero-based for extraction)
+        if pages is None:
+            indexes = range(1, self.page_count + 1)
+        else:
+            indexes = [int(p) for p in pages]
+
+        if not indexes:
+            return []
+
+        # Validate page numbers and get zero-based indices
+        page_count = self.page_count
+        valid_zero_based: list[int] = []
+        for p in indexes:
+            if p < 1 or p > page_count:
+                raise IndexError(
+                    f"Page number {p} is out of range. "
+                    f"Document has {page_count} page(s)."
+                )
+            valid_zero_based.append(p - 1)
+
+        # Extract text from selected pages and find matches
+        removed_pages: list[int] = []
+        for zero_based_index in valid_zero_based:
+            text = self._engine_pdf.extract_page_text(zero_based_index)
+            if text and list(matcher.finditer(text)):
+                removed_pages.append(zero_based_index + 1)
+
+        if not removed_pages:
+            return []
+
+        # Remove the matching pages using remove_pages
+        self.remove_pages(removed_pages)
+
+        return removed_pages
     def add_page(self, page: Page) -> Page:
         """Add a page from another document to the end of this document.
 
