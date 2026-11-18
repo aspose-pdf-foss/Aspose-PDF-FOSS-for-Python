@@ -575,3 +575,79 @@ def test_caret_symbol_validation():
     # Invalid value raises ValueError
     with pytest.raises(ValueError, match="Invalid symbol value"):
         caret.symbol = "InvalidValue"
+
+
+def test_circle_frame_initial_value_is_none():
+    """Verify a newly created circle annotation has no frame by default."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    assert circle.frame is None
+
+
+def test_circle_frame_set_and_get():
+    """Verify frame can be set and retrieved."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    circle.frame = (1.0, 2.0, 3.0, 4.0)
+    assert circle.frame == (1.0, 2.0, 3.0, 4.0)
+
+
+def test_circle_frame_set_none():
+    """Verify frame can be set to None."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    circle.frame = (1.0, 1.0, 1.0, 1.0)
+    assert circle.frame == (1.0, 1.0, 1.0, 1.0)
+    circle.frame = None
+    assert circle.frame is None
+
+
+def test_circle_frame_validation_type():
+    """Verify frame raises TypeError for non-tuple input."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    with pytest.raises(TypeError, match="frame must be a 4-tuple"):
+        circle.frame = "invalid"
+
+
+def test_circle_frame_validation_length():
+    """Verify frame raises ValueError for wrong-length tuple."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    with pytest.raises(ValueError, match="frame must be a 4-tuple"):
+        circle.frame = (1.0, 2.0, 3.0)
+
+
+def test_circle_frame_validation_numeric():
+    """Verify frame raises TypeError for non-numeric items."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    with pytest.raises(TypeError, match="frame\\[2\\] must be a number"):
+        circle.frame = (1.0, 2.0, "text", 4.0)
+
+
+def test_circle_frame_validation_boolean():
+    """Verify frame raises TypeError for boolean items (bools are not numbers)."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    with pytest.raises(TypeError, match="frame\\[2\\] must be a number"):
+        circle.frame = (1.0, 2.0, True, 4.0)
+
+
+def test_circle_frame_survives_round_trip():
+    """Verify frame value is preserved after save/load."""
+    document, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    circle.frame = (0.5, 1.0, 1.5, 2.0)
+    reloaded = _roundtrip(document).pages[1].annotations[-1]
+    assert reloaded.frame == (0.5, 1.0, 1.5, 2.0)
+
+
+def test_square_frame_works_like_circle():
+    """Verify SquareAnnotation also has the frame property."""
+    _, page = _page()
+    square = page.annotations.add_square((50, 50, 150, 150))
+    assert hasattr(square, "frame")
+    assert square.frame is None
+    square.frame = (2.0, 2.0, 2.0, 2.0)
+    assert square.frame == (2.0, 2.0, 2.0, 2.0)

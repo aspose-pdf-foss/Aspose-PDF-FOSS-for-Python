@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `CircleAnnotation.frame` and `SquareAnnotation.frame` properties.** Added `frame: tuple[float, float, float, float] | None` property to `CircleAnnotation` and `SquareAnnotation` classes. The property reads/writes the PDF `/RD` (Rectangle Differences) entry, returning `None` when not present and accepting a 4-tuple of numeric values to set the inset. Validation raises `TypeError` for non-tuple or non-numeric items, and `ValueError` for wrong-length tuples.
+
 - **Add `AnnotationCollection.find_by_name()` method.** Added `find_by_name(name: str) -> Annotation | None` to `AnnotationCollection`. The method returns the first annotation whose `/NM` (name) entry matches the given name exactly (case-sensitive), or `None` if no annotation has that name. Raises `ValueError` if `name` is not a string.
 
 - **Add `Document.hide_tool_bar` property.** Added a property alias `Document.hide_tool_bar` (getter and setter) that delegates to `Document.viewer_preferences.hide_toolbar`. This provides compatibility with Aspose.PDF for .NET code that accesses `document.HideToolBar`.

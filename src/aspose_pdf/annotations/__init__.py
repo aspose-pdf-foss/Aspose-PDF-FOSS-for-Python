@@ -689,12 +689,86 @@ class SquareAnnotation(_ShapeAnnotation):
     """A rectangle drawn inside the annotation's rectangle (``Square``)."""
 
     __slots__ = ()
+    @property
+    def frame(self) -> tuple[float, float, float, float] | None:
+        """The inset rectangle describing the difference between ``Rect`` and the actual shape.
+
+        Returns a 4-tuple of floats ``(delta_x1, delta_y1, delta_x2, delta_y2)``
+        representing the numerical differences between the annotation's ``/Rect``
+        entry and the actual boundaries of the shape. ``None`` when the frame
+        is not stored or not computable.
+
+        Assigning a valid 4-float tuple updates the internal appearance such that
+        the next appearance generation reflects the specified inset, if supported.
+        """
+        value = self.get_property("RD")
+        if isinstance(value, (list, tuple)) and len(value) >= 4:
+            return tuple(float(item) for item in value[:4])
+        return None
+
+    @frame.setter
+    def frame(self, value: tuple[float, float, float, float] | None) -> None:
+        if value is None:
+            self.set_property("RD", None)
+            return
+        if not isinstance(value, tuple):
+            raise TypeError(
+                "frame must be a 4-tuple of floats or None"
+            )
+        if len(value) != 4:
+            raise ValueError(
+                f"frame must be a 4-tuple, not a {len(value)}-tuple"
+            )
+        for i, item in enumerate(value):
+            if not isinstance(item, (int, float)) or isinstance(item, bool):
+                raise TypeError(
+                    f"frame[{i}] must be a number, not {type(item).__name__}"
+                )
+        self.set_property("RD", value)
+
 
 
 class CircleAnnotation(_ShapeAnnotation):
     """An ellipse drawn inside the annotation's rectangle (``Circle``)."""
 
     __slots__ = ()
+    @property
+    def frame(self) -> tuple[float, float, float, float] | None:
+        """The inset rectangle describing the difference between ``Rect`` and the actual shape.
+
+        Returns a 4-tuple of floats ``(delta_x1, delta_y1, delta_x2, delta_y2)``
+        representing the numerical differences between the annotation's ``/Rect``
+        entry and the actual boundaries of the shape. ``None`` when the frame
+        is not stored or not computable.
+
+        Assigning a valid 4-float tuple updates the internal appearance such that
+        the next appearance generation reflects the specified inset, if supported.
+        """
+        value = self.get_property("RD")
+        if isinstance(value, (list, tuple)) and len(value) >= 4:
+            return tuple(float(item) for item in value[:4])
+        return None
+
+    @frame.setter
+    def frame(self, value: tuple[float, float, float, float] | None) -> None:
+        if value is None:
+            self.set_property("RD", None)
+            return
+        if not isinstance(value, tuple):
+            raise TypeError(
+                "frame must be a 4-tuple of floats or None"
+            )
+        if len(value) != 4:
+            raise ValueError(
+                f"frame must be a 4-tuple, not a {len(value)}-tuple"
+            )
+        for i, item in enumerate(value):
+            if not isinstance(item, (int, float)) or isinstance(item, bool):
+                raise TypeError(
+                    f"frame[{i}] must be a number, not {type(item).__name__}"
+                )
+        self.set_property("RD", value)
+
 
 
 class CaretAnnotation(MarkupAnnotation):
