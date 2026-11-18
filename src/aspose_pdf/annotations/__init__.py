@@ -970,12 +970,17 @@ class FreeTextAnnotation(MarkupAnnotation):
 
     @property
     def alignment(self) -> int | None:
-        """How the lines are set (``/Q``): 0 left, 1 centred, 2 right."""
+        """How the lines are set (``/Q``): 0 left, 1 centred, 2 right.
+
+        Accepts integer values 0, 1, or 2, or the strings 'left', 'center', 'right'.
+        Float values that represent an integer (e.g., 1.0) are accepted; other floats
+        raise PdfValidationException.
+        """
         value = self.get_property("Q")
         return int(value) if isinstance(value, (int, float)) else None
 
     @alignment.setter
-    def alignment(self, value: int | str | None) -> None:
+    def alignment(self, value: int | float | str | None) -> None:
         if value is None:
             self.set_property("Q", None)
             return
@@ -989,6 +994,12 @@ class FreeTextAnnotation(MarkupAnnotation):
                     "Alignment is 'left', 'center' or 'right' (``/Q`` 0, 1, 2)."
                 )
             value = names[key]
+        if isinstance(value, float) and not value.is_integer():
+            from aspose_pdf.exceptions import PdfValidationException
+
+            raise PdfValidationException(
+                "Alignment must be an integer (0, 1, 2) or 'left', 'center', 'right'."
+            )
         if int(value) not in (0, 1, 2):
             from aspose_pdf.exceptions import PdfValidationException
 

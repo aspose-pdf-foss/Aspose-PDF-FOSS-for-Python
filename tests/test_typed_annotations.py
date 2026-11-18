@@ -322,6 +322,12 @@ def test_the_text_entries_of_a_free_text_annotation():
         free_text.alignment = "sideways"
     with pytest.raises(PdfValidationException, match=r"0 \(left\)"):
         free_text.alignment = 7
+    # Float 1.0 is accepted (represents integer 1)
+    free_text.alignment = 1.0
+    assert free_text.alignment == 1
+    # Float 1.5 is rejected (non-zero fractional part)
+    with pytest.raises(PdfValidationException, match="integer"):
+        free_text.alignment = 1.5
 
 
 def test_the_sticky_note_entries():

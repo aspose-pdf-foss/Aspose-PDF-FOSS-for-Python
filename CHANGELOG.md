@@ -54,6 +54,7 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Validate `ExtractedTable.page_index` against one-based indexing. The
   constructor now raises `PdfValidationException` for `page_index <= 0`,
   consistent with the documented one-based page numbering.
+- `FreeTextAnnotation.alignment` now raises `PdfValidationException` when a float value is assigned (e.g., `1.5`), instead of silently truncating to an integer.
 
 ### Changed
 
