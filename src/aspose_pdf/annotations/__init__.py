@@ -1193,6 +1193,22 @@ class AnnotationCollection:
     def __init__(self, page: Page) -> None:
         self._page = page
 
+    @property
+    def sync_root(self) -> object:
+        """Return the object to use for synchronization.
+
+        This property returns the AnnotationCollection instance itself (``self``)
+        and is provided as a compatibility alias for .NET code that expects to
+        lock on ``annotation_collection.SyncRoot``.
+
+        The property is read-only; attempting to assign to it raises
+        ``AttributeError``.
+
+        Returns:
+            self: The AnnotationCollection instance itself.
+        """
+        return self
+
     def _items(self) -> list[dict[str, Any]]:
         return self._page._document._engine_pdf.get_annotations(self._page._index)
 

@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `AnnotationCollection.sync_root` property.** Added a read-only property `sync_root` to `AnnotationCollection`. The property returns `self`, the AnnotationCollection instance itself, and is provided as a compatibility alias for .NET code that expects to lock on `annotation_collection.SyncRoot`. The property raises `AttributeError` on assignment.
+
 - **Add `Page.file_attachments` property.** Added `file_attachments: EmbeddedFileCollection` property to `Page`. This provides a typed collection of file-attachment annotations on a page, accessible by title (the `/T` entry). The collection supports iteration, indexing, and `delete_by_key(key)` to remove annotations by their title. Returns an `EmbeddedFileCollection` with `keys` property (list of title strings) and `__len__`, `__iter__`, `__getitem__` for sequence behavior.
 
 - **Add `Color.from_gray()` method.** Added `from_gray(value) -> Color` as a classmethod that provides a compatibility alias for `Color.gray(value)`. This allows .NET code that uses `Color.FromGray(g)` to run unchanged. The method delegates to `gray` so behavior is identical: it accepts a value in 0..1 or 0..255 and returns a DeviceGray color.
