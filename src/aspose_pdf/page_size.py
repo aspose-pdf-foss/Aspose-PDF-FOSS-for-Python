@@ -219,8 +219,9 @@ _NAMED: dict[str, PageSize] = {
     "11X17": PageSize.TABLOID,
 }
 
-# Compatibility alias for PageLetter (from Aspose.PDF for .NET).
-# This is the same object returned by PageSize.by_name("LETTER") and PageSize.LETTER.
-# Added as a class attribute (not a @property) for consistency with other named sizes
-# like PageSize.LETTER, PageSize.A4, etc.
+# Compatibility aliases for PageLetter and PageLegal (from Aspose.PDF for .NET).
+# These are the same objects returned by PageSize.by_name("LETTER")/PageSize.LEGAL and
+# PageSize.LETTER/PageSize.LEGAL respectively. Added as class attributes (not @property)
+# for consistency with other named sizes like PageSize.LETTER, PageSize.A4, etc.
 PageSize.page_letter = PageSize.LETTER
+PageSize.page_legal = PageSize.LEGAL

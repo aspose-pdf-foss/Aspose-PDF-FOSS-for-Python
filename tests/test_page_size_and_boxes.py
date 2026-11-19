@@ -128,6 +128,12 @@ def test_page_letter_is_a_compatibility_property():
     assert PageSize.page_letter == PageSize(612.0, 792.0)
 
 
+def test_page_legal_is_a_compatibility_property():
+    assert PageSize.page_legal is PageSize.by_name("LEGAL")
+    assert PageSize.page_legal is PageSize.page_legal
+    assert PageSize.page_legal == PageSize(612.0, 1008.0)
+
+
 def test_a_size_has_to_be_two_positive_finite_numbers():
     for bad in [(0, 10), (10, 0), (-1, 10), (10, float("nan")), (float("inf"), 10)]:
         with pytest.raises(ValueError):
