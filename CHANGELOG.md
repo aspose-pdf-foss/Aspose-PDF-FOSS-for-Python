@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Field.clear_value()` method.** Added `clear_value(self) -> Field` to the `Field` class. This method resets the field's `value` attribute to its `default_value`. Does not modify `default_value` or `actions`. Returns `self` to allow method chaining. Works for text, checkbox, radio, listbox, and combobox fields. Signature fields and push-button fields raise `PdfValidationException` because they do not support `default_value`.
+
 - **Add `Document.remove_pages_by_pattern` method.** Added `remove_pages_by_pattern(self, pattern: str | re.Pattern[str], *, regex: bool = False, case_sensitive: bool = True, pages: Iterable[int] | None = None) -> list[int]`. This method extracts the full-page text from each selected page, matches against *pattern*, and removes every page whose text contains at least one match. Returns the original one-based page numbers of the removed pages. Raises `ValueError` for invalid regex when *regex* is True. Pages with no extractable text are never removed.
 
 - **Add `Document.is_pdf_ua_compliant` property.** Added a read-only property alias `Document.is_pdf_ua_compliant` that delegates to `Document.is_pdfua_compliant`. This provides a compatibility name for users porting code from Aspose.PDF for .NET where the property is named `IsPdfUaCompliant`.

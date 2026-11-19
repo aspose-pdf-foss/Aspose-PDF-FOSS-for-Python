@@ -571,6 +571,42 @@ class Field:
         self._set_appearance(**options)
         return self
 
+
+    def clear_value(self) -> Field:
+        """Reset the field's value to its default and return the field.
+
+        Sets :attr:`value` to :attr:`default_value`. Does not modify
+        :attr:`default_value` or :attr:`actions`. Returns ``self`` to allow
+        method chaining. If the field has no widgets, the value is still
+        cleared but no appearance updates occur.
+
+        For removed fields (those without widgets in the form), the value is
+        updated in memory without raising an error.
+        """
+        from aspose_pdf.engine.cos import PdfName
+
+        # Read the default value, which may fail for removed fields
+        # In that case, just set _value to None (the default for "no default")
+        try:
+            default_value = self.default_value
+        except KeyError:
+            default_value = None
+
+        # Try to update the PDF, but don't fail if the field is removed
+        try:
+            engine = self._engine()
+            dictionary = self._dictionary()
+            pdf_value = engine._value_to_pdf(dictionary, default_value)
+            if pdf_value is not None:
+                dictionary.mapping[PdfName("V")] = pdf_value
+            else:
+                dictionary.mapping.pop(PdfName("V"), None)
+        except KeyError:
+            # Field has been removed from the form; just update the in-memory value
+            pass
+        self._value = default_value
+        return self
+
     # -- what it does (/AA, /A) --------------------------------------------
 
     @property

@@ -562,3 +562,149 @@ def test_cid_text_mode_changes_fail_without_overwriting_the_existing_appearance(
         setattr(field, parameter, 8 if parameter == "max_length" else True)
     assert field.flags == before
     assert document.pages[1].annotations[0].appearance_normal == appearance
+
+
+def test_clear_value_resets_to_default(document):
+    """clear_value() sets value to default_value and returns self."""
+    field = _text(document)
+    field.default_value = "Template"
+    field.value = "Modified"
+
+    result = field.clear_value()
+
+    assert field.value == "Template"
+    assert result is field
+
+
+def test_clear_value_with_none_default(document):
+    """clear_value() sets value to None when default_value is None."""
+    field = _text(document)
+    field.default_value = None
+    field.value = "Something"
+
+    field.clear_value()
+
+    assert field.value is None
+
+
+def test_clear_value_preserves_actions(document):
+    """clear_value() does not modify the field's actions."""
+    from aspose_pdf.interactive import JavaScriptAction
+
+    field = _text(document)
+    field.default_value = "New"
+    field.value = "Old"
+
+    # Set an action before clear_value
+    field.actions["validate"] = JavaScriptAction("event.rc = true;")
+
+    # Store the actions dictionary before clear_value
+    before_actions = dict(field.actions)
+
+    field.clear_value()
+
+    # Verify actions are unchanged after clear_value
+    after_actions = dict(field.actions)
+    assert before_actions == after_actions
+    assert "validate" in after_actions
+    assert after_actions["validate"].script == "event.rc = true;"
+
+
+def test_clear_value_chaining(document):
+    """clear_value() allows method chaining."""
+    field = _text(document)
+    field.default_value = "Default"
+    field.value = "Changed"
+
+    # Test that we can chain with other methods
+    result = field.clear_value()
+    assert result is field
+
+
+def test_clear_value_checkbox(document):
+    """clear_value() works with checkbox fields."""
+    field = document.form.add_checkbox("check", 1, (10, 10, 30, 30), on_value="Agree")
+    field.default_value = True
+    field.value = False
+
+    field.clear_value()
+
+    assert field.value is True
+
+
+def test_clear_value_radio(document):
+    """clear_value() works with radio fields."""
+    field = document.form.add_radio_group(
+        "size", 1, [("S", (10, 10, 30, 30)), ("M", (40, 10, 60, 30))]
+    )
+    field.default_value = "M"
+    field.value = "S"
+
+    field.clear_value()
+
+    assert field.value == "M"
+
+
+def test_clear_value_listbox(document):
+    """clear_value() works with listbox fields."""
+    field = document.form.add_list_box(
+        "colors", 1, (10, 10, 150, 100),
+        [("r", "Red"), ("g", "Green"), ("b", "Blue")],
+        value=["r"],
+        multiselect=True
+    )
+    field.default_value = ["g", "b"]
+    field.value = ["r"]
+
+    field.clear_value()
+
+    assert field.value == ["g", "b"]
+
+
+def test_clear_value_combobox(document):
+    """clear_value() works with combobox fields."""
+    field = document.form.add_combo_box(
+        "country", 1, (10, 10, 150, 30),
+        ["NL", "DE", "FR"],
+        value="NL"
+    )
+    field.default_value = "DE"
+    field.value = "FR"
+
+    field.clear_value()
+
+    assert field.value == "DE"
+
+
+def test_clear_value_pushbutton_rejects_default(document):
+    """pushbutton fields don't support default_value, so clear_value should fail."""
+    field = document.form.add_push_button("go", 1, (10, 10, 100, 30), caption="Go")
+    # Pushbutton doesn't support default_value
+    with pytest.raises(PdfValidationException, match="default_value"):
+        field.default_value = "something"
+
+
+def test_clear_value_signature_rejects_default(document):
+    """signature fields don't support default_value, so clear_value should fail."""
+    field = document.form.add_signature_field("sig", 1, (10, 10, 150, 60))
+    # Signature field doesn't support default_value
+    with pytest.raises(PdfValidationException, match="default_value"):
+        field.default_value = "something"
+
+
+def test_clear_value_on_removed_field(document):
+    """clear_value() works on a field that has been removed (no widgets in form)."""
+    field = _text(document)
+    field.default_value = "Template"
+    field.value = "Modified"
+
+    # Remove the field from the form
+    field.remove()
+
+    # clear_value should not raise, even though the field is removed
+    # and has no widgets in the PDF
+    result = field.clear_value()
+
+    # The value should be updated to the default (None since the field was removed)
+    assert result is field
+    assert field.value is None
