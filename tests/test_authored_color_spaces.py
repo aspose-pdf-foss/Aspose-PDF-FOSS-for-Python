@@ -231,6 +231,17 @@ def test_the_color_factories():
     assert Color.from_hex("036").components == (0.0, 0.2, 0.4)
 
 
+def test_from_rgb_is_an_alias_for_rgb():
+    # from_rgb is provided for .NET compatibility; it must match rgb exactly
+    assert Color.from_rgb(0.5, 0.25, 0.75).components == (0.5, 0.25, 0.75)
+    assert Color.from_rgb(255, 128, 0).components == (1.0, 128 / 255, 0.0)
+    # Verify from_rgb and rgb produce identical results
+    assert Color.from_rgb(0.5, 0.25, 0.75).components == Color.rgb(0.5, 0.25, 0.75).components
+    assert Color.from_rgb(255, 128, 0).components == Color.rgb(255, 128, 0).components
+    # Verify the symmetry: from_rgb then read via rgb and vice versa
+    assert Color.from_rgb(0.1, 0.2, 0.3).components == Color.rgb(0.1, 0.2, 0.3).components
+
+
 def test_a_colors_space_is_the_one_its_components_name():
     assert Color.gray(0).color_space == "DeviceGray"
     assert Color.rgb(0, 0, 0).color_space == "DeviceRGB"

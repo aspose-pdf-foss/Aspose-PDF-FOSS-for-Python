@@ -93,14 +93,15 @@ class GradientAxialShading:
 class Color:
     """A colour in one of the three PDF device spaces, or a gradient pattern.
 
-    Build one with :meth:`gray`, :meth:`rgb`, :meth:`cmyk` or :meth:`from_hex`
-    rather than through the constructor, whose signature is the one ported code
-    uses (``Color(pattern, r, g, b)``) and so keeps RGB in three separate
-    arguments.
+    Build one with :meth:`gray`, :meth:`rgb`, :meth:`from_rgb`, :meth:`cmyk` or
+    :meth:`from_hex` rather than through the constructor, whose signature is the
+    one ported code uses (``Color(pattern, r, g, b)``) and so keeps RGB in three
+    separate arguments.
 
     :attr:`components` is what a drawing operation reads: one number for grey,
-    three for RGB, four for CMYK. Channels are 0..1; :meth:`rgb` and :meth:`gray`
-    also take 0..255, as every colour entry point in the package does.
+    three for RGB, four for CMYK. Channels are 0..1; :meth:`rgb`, :meth:`from_rgb`
+    and :meth:`gray` also take 0..255, as every colour entry point in the package
+    does.
     """
 
     __slots__ = ("_components", "_pattern_color_space")
@@ -134,6 +135,11 @@ class Color:
     def rgb(cls, r: float, g: float, b: float) -> Color:
         """A DeviceRGB colour, in 0..1 or 0..255."""
         return cls._of(_channels((r, g, b)))
+
+    @classmethod
+    def from_rgb(cls, r: float, g: float, b: float) -> Color:
+        """Alias for :meth:`rgb`."""
+        return cls.rgb(r, g, b)
 
     @classmethod
     def cmyk(cls, c: float, m: float, y: float, k: float) -> Color:

@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Color.from_rgb()` method.** Added `from_rgb(r, g, b) -> Color` as a classmethod that provides a compatibility alias for `Color.rgb(r, g, b)`. This allows .NET code that uses `Color.FromRgb(r, g, b)` to run unchanged. The method delegates to `rgb` so behavior is identical: it accepts values in 0..1 or 0..255 and clamps them as `rgb` does.
+
 - **Add `PageSize.page_legal` property.** Added a read-only property alias `PageSize.page_legal` that returns `PageSize.by_name("LEGAL")`. This provides a compatibility name for users porting code from Aspose.PDF for .NET where the property is named `PageLegal`. The property returns a cached instance with width 612.0 and height 1008.0 PDF points (356x216 mm).
 
 - **Add `PageSize.page_letter` property.** Added a read-only property alias `PageSize.page_letter` that returns `PageSize.by_name("LETTER")`. This provides a compatibility name for users porting code from Aspose.PDF for .NET where the property is named `PageLetter`. The property returns a cached instance with width 612.0 and height 792.0 PDF points (279x216 mm).
