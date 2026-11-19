@@ -538,3 +538,86 @@ class TestToInt:
         Permissions.allowing("print").to_int()
         Permissions.denying("copy").to_int()
         Permissions.of(-3904).to_int()
+
+
+# ---------------------------------------------------------------------------
+# is_subset_of method
+# ---------------------------------------------------------------------------
+class TestIsSubsetOf:
+    def test_subset_of_all_returns_true(self):
+        """Any permission set is a subset of Permissions.all()."""
+        restricted = Permissions.allowing("print")
+        assert restricted.is_subset_of(Permissions.all()) is True
+
+        minimal = Permissions.allowing("copy")
+        assert minimal.is_subset_of(Permissions.all()) is True
+
+        none_perms = Permissions.none()
+        assert none_perms.is_subset_of(Permissions.all()) is True
+
+    def test_none_is_subset_of_anything(self):
+        """Permissions.none() is a subset of any permission set."""
+        none_perms = Permissions.none()
+        assert none_perms.is_subset_of(Permissions.all()) is True
+        assert none_perms.is_subset_of(Permissions.none()) is True
+        assert none_perms.is_subset_of(Permissions.allowing("print")) is True
+        assert none_perms.is_subset_of(Permissions.allowing("copy")) is True
+
+    def test_subset_with_matching_permissions(self):
+        """If self's permissions are all in other, returns True."""
+        restricted = Permissions.allowing("print", "copy")
+        admin = Permissions.allowing("print", "copy", "modify")
+        assert restricted.is_subset_of(admin) is True
+
+    def test_not_subset_when_missing_permissions(self):
+        """If self has permissions not in other, returns False."""
+        restricted = Permissions.allowing("copy")
+        minimal = Permissions.allowing("print")
+        assert restricted.is_subset_of(minimal) is False
+
+    def test_equal_sets_are_mutual_subsets(self):
+        """Equal permission sets are subsets of each other."""
+        p1 = Permissions.allowing("print", "copy")
+        p2 = Permissions.allowing("print", "copy")
+        assert p1.is_subset_of(p2) is True
+        assert p2.is_subset_of(p1) is True
+
+    def test_raises_typeerror_for_non_permissions(self):
+        """Raises TypeError when other is not a Permissions instance."""
+        perms = Permissions.allowing("print")
+        with pytest.raises(TypeError, match="other must be a Permissions instance"):
+            perms.is_subset_of(123)
+        with pytest.raises(TypeError, match="other must be a Permissions instance"):
+            perms.is_subset_of(-3900)
+        with pytest.raises(TypeError, match="other must be a Permissions instance"):
+            perms.is_subset_of(None)
+        with pytest.raises(TypeError, match="other must be a Permissions instance"):
+            perms.is_subset_of("Permissions.all()")
+
+    def test_denying_permissions(self):
+        """Test subset behavior with denying() constructor."""
+        # Permissions.denying("copy") allows everything except copy
+        all_except_copy = Permissions.denying("copy")
+        # Permissions.allowing("print") only allows print
+        only_print = Permissions.allowing("print")
+        # only_print is a subset of all_except_copy (print is allowed in both)
+        assert only_print.is_subset_of(all_except_copy) is True
+
+        # Permissions.allowing("copy") is NOT a subset of all_except_copy
+        only_copy = Permissions.allowing("copy")
+        assert only_copy.is_subset_of(all_except_copy) is False
+
+    def test_reserved_bits_mismatch_returns_false(self):
+        """Permissions.of() with incorrect reserved bits returns False."""
+        # A raw /P value with permission bits but wrong reserved bits (bits 1,2 must be 0)
+        # 20 = 4+16 (print + copy) with all reserved bits cleared, which is invalid
+        wrong_reserved = 20  # Permission bits set but reserved bits = 0 instead of 1s
+        perms = Permissions.of(wrong_reserved)
+        normal_perms = Permissions.allowing("print")
+
+        # This should return False because reserved bits don't match Permissions.none()
+        assert perms.is_subset_of(normal_perms) is False
+        assert perms.is_subset_of(Permissions.all()) is False
+
+        # Even comparing to itself should return False because of wrong reserved bits
+        assert perms.is_subset_of(perms) is False

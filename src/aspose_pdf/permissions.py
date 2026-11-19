@@ -339,6 +339,25 @@ class Permissions(int):
         """Whether no permission Table 22 defines is granted."""
         return not int(self) & _GRANTS
 
+    def is_subset_of(self, other: Permissions) -> bool:
+        """Whether every permission allowed by self is also allowed by other.
+
+        Returns True if and only if:
+        - Every permission bit set in self is also set in other
+        - The reserved bits of self match those of Permissions.none()
+
+        Raises TypeError if other is not a Permissions instance.
+        """
+        if not isinstance(other, Permissions):
+            raise TypeError(
+                f"other must be a Permissions instance, not {type(other).__name__}"
+            )
+        # Check that reserved bits match Permissions.none()
+        if int(self) & ~_GRANTS != int(Permissions.none()) & ~_GRANTS:
+            return False
+        # Check that all permission bits of self are also in other
+        return int(self) & int(other) == int(self)
+
     def __repr__(self) -> str:
         if self.is_everything:
             inside = "everything"
