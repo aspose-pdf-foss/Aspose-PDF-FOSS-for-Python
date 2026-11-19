@@ -805,6 +805,14 @@ def test_line_annotation_starting_style_validation():
         line.starting_style = "InvalidValue"
 
 
+def test_line_annotation_ending_style_validation():
+    """Verify ending_style setter raises ValueError for invalid values."""
+    _, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    with pytest.raises(ValueError, match="Invalid ending_style"):
+        line.ending_style = "InvalidValue"
+
+
 def test_line_annotation_starting_style_clears_appearance():
     """Verify starting_style setter clears existing appearance stream."""
     _document, page = _page()
@@ -843,6 +851,88 @@ def test_starting_style_preserves_end_none():
     # Roundtrip should preserve the end style
     reloaded = _roundtrip(document).pages[1].annotations[0]
     assert reloaded.line_endings == ("Circle", "None")
+
+
+def test_all_valid_ending_styles():
+    """Verify all valid line ending styles can be set via ending_style."""
+    valid_styles = ["None", "Square", "Circle", "Diamond", "OpenArrow", "ClosedArrow", "Butt", "ROpenArrow", "RClosedArrow", "Slash"]
+    _, page = _page()
+    for style in valid_styles:
+        line = page.annotations.add_line((10, 10), (100, 10))
+        line.ending_style = style
+        assert line.ending_style == style
+
+
+def test_ending_style_preserves_start_none():
+    """Verify ending_style preserves Name(\"None\") start style."""
+    document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    # Start with LE = [Name("None"), Name("Square")]
+    line.set_property("LE", [Name("None"), Name("Square")])
+    assert line.get_property("LE") == [Name("None"), Name("Square")]
+    assert line.line_endings == ("None", "Square")
+
+    # Change end style to "Circle" - should preserve the "None" start
+    line.ending_style = "Circle"
+    assert line.get_property("LE") == [Name("None"), Name("Circle")]
+    assert line.line_endings == ("None", "Circle")
+
+    # Roundtrip should preserve the start style
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.line_endings == ("None", "Circle")
+
+
+def test_ending_style_with_start_none_removes_array():
+    """Verify setting end to \"None\" with start \"None\" removes the LE array."""
+    document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    # Start with LE = [Name("None"), Name("Square")]
+    line.set_property("LE", [Name("None"), Name("Square")])
+
+    # Change end style to "None" - should remove the LE array
+    line.ending_style = "None"
+    assert line.get_property("LE") is None
+    assert line.line_endings == ()
+
+    # Roundtrip should have no LE array
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.line_endings == ()
+
+
+def test_ending_style_setter_preserves_start():
+    """Verify ending_style setter preserves the start style."""
+    document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    line.set_property("LE", [Name("OpenArrow"), Name("ClosedArrow")])
+    line.ending_style = "Square"
+    assert line.get_property("LE") == [Name("OpenArrow"), Name("Square")]
+    assert line.line_endings == ("OpenArrow", "Square")
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.line_endings == ("OpenArrow", "Square")
+
+
+def test_ending_style_read_write_symmetry():
+    """Verify ending_style read-write symmetry with line_endings[1]."""
+    _document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    line.line_endings = (None, "Square")
+
+    # Read via ending_style should match line_endings[1]
+    assert line.ending_style == line.line_endings[1]
+
+    # Write via ending_style should update line_endings[1]
+    line.ending_style = "Circle"
+    assert line.line_endings[1] == "Circle"
+    assert line.ending_style == "Circle"
+
+
+def test_polyline_has_ending_style_property():
+    """Verify PolyLineAnnotation inherits the ending_style property."""
+    _, page = _page()
+    polyline = page.annotations.add_polyline([(10, 10), (100, 10)])
+    assert hasattr(polyline, "ending_style")
+    polyline.ending_style = "Square"
+    assert polyline.ending_style == "Square"
 
 
 def test_starting_style_with_end_none_removes_array():
