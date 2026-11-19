@@ -122,6 +122,12 @@ def test_by_name_ignores_case_and_separators():
     assert PageSize.by_name("11x17") is PageSize.TABLOID
 
 
+def test_page_letter_is_a_compatibility_property():
+    assert PageSize.page_letter is PageSize.by_name("LETTER")
+    assert PageSize.page_letter is PageSize.page_letter
+    assert PageSize.page_letter == PageSize(612.0, 792.0)
+
+
 def test_a_size_has_to_be_two_positive_finite_numbers():
     for bad in [(0, 10), (10, 0), (-1, 10), (10, float("nan")), (float("inf"), 10)]:
         with pytest.raises(ValueError):
