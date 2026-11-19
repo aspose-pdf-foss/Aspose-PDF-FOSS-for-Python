@@ -242,6 +242,25 @@ def test_from_rgb_is_an_alias_for_rgb():
     assert Color.from_rgb(0.1, 0.2, 0.3).components == Color.rgb(0.1, 0.2, 0.3).components
 
 
+def test_from_gray_is_an_alias_for_gray():
+    # from_gray is provided for .NET compatibility; it must match gray exactly
+    assert Color.from_gray(0.25).components == (0.25,)
+    assert Color.from_gray(200).components == (200 / 255,)
+    # Verify from_gray and gray produce identical results
+    assert Color.from_gray(0.25).components == Color.gray(0.25).components
+    assert Color.from_gray(200).components == Color.gray(200).components
+    # Verify the symmetry: from_gray then read via gray and vice versa
+    assert Color.from_gray(0.75).components == Color.gray(0.75).components
+    # Verify cross-assignment produces same behavior as gray
+    c1 = Color.from_gray(0.75)
+    c2 = Color.gray(0.75)
+    assert c1.components == c2.components
+    assert c1.r == c2.r
+    assert c1.g == c2.g
+    assert c1.b == c2.b
+    assert c1.color_space == c2.color_space
+
+
 def test_a_colors_space_is_the_one_its_components_name():
     assert Color.gray(0).color_space == "DeviceGray"
     assert Color.rgb(0, 0, 0).color_space == "DeviceRGB"

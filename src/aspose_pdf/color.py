@@ -132,6 +132,11 @@ class Color:
         return cls._of(_channels((value,)))
 
     @classmethod
+    def from_gray(cls, value: float) -> Color:
+        """Alias for :meth:`gray`. Accepts a gray component in the range 0-1 or 0-255 and returns a DeviceGray color."""
+        return cls.gray(value)
+
+    @classmethod
     def rgb(cls, r: float, g: float, b: float) -> Color:
         """A DeviceRGB colour, in 0..1 or 0..255."""
         return cls._of(_channels((r, g, b)))
