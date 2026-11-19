@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO
 
 from aspose_pdf._page_numbers import layout_api, page_index, page_indices
 from aspose_pdf.actions import PAGE_TRIGGERS, ActionCollection
-from aspose_pdf.annotations import AnnotationCollection
+from aspose_pdf.annotations import AnnotationCollection, EmbeddedFileCollection
 from aspose_pdf.color import ColorValue
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 from aspose_pdf.image_resolution import ImageResolutionIssue
@@ -223,6 +223,16 @@ class Page:
         if not hasattr(self, "_annotations"):
             self._annotations = AnnotationCollection(self)
         return self._annotations
+
+    @property
+    def file_attachments(self) -> EmbeddedFileCollection:
+        """Get the collection of file-attachment annotations on this page.
+
+        The collection is keyed by the annotation's ``/T`` (title) entry.
+        Iteration yields :class:`FileAttachmentAnnotation` instances in page order.
+        """
+        self._document._ensure_not_disposed()
+        return EmbeddedFileCollection(self)
 
     @property
     def media_box(self) -> tuple[float, float, float, float]:

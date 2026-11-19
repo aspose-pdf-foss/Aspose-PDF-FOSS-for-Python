@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Page.file_attachments` property.** Added `file_attachments: EmbeddedFileCollection` property to `Page`. This provides a typed collection of file-attachment annotations on a page, accessible by title (the `/T` entry). The collection supports iteration, indexing, and `delete_by_key(key)` to remove annotations by their title. Returns an `EmbeddedFileCollection` with `keys` property (list of title strings) and `__len__`, `__iter__`, `__getitem__` for sequence behavior.
+
 - **Add `Color.from_gray()` method.** Added `from_gray(value) -> Color` as a classmethod that provides a compatibility alias for `Color.gray(value)`. This allows .NET code that uses `Color.FromGray(g)` to run unchanged. The method delegates to `gray` so behavior is identical: it accepts a value in 0..1 or 0..255 and returns a DeviceGray color.
 
 - **Add `Color.from_rgb()` method.** Added `from_rgb(r, g, b) -> Color` as a classmethod that provides a compatibility alias for `Color.rgb(r, g, b)`. This allows .NET code that uses `Color.FromRgb(r, g, b)` to run unchanged. The method delegates to `rgb` so behavior is identical: it accepts values in 0..1 or 0..255 and clamps them as `rgb` does.

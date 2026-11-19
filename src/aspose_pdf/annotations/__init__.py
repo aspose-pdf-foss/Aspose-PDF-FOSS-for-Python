@@ -34,6 +34,7 @@ __all__ = [
     "AnnotationFlags",
     "AnnotationType",
     "CircleAnnotation",
+    "EmbeddedFileCollection",
     "FileAttachmentAnnotation",
     "FreeTextAnnotation",
     "HighlightAnnotation",
@@ -1913,3 +1914,106 @@ class AnnotationCollection:
         return self._page._document._engine_pdf.generate_appearances(
             self._page._index, force=force
         )
+
+
+class EmbeddedFileCollection:
+    """Sequence-like wrapper over file-attachment annotations on a page.
+
+    The collection is keyed by the annotation's ``/T`` (title) entry, which
+    serves as a unique identifier for the file attachment. Iteration yields
+    :class:`FileAttachmentAnnotation` instances in page order.
+    """
+
+    __slots__ = ("_page",)
+
+    def __init__(self, page: Page) -> None:
+        self._page = page
+
+    def _items(self) -> list[dict[str, Any]]:
+        """Return all file-attachment annotation data for this page."""
+        return [
+            item
+            for item in self._page._document._engine_pdf.get_annotations(self._page._index)
+            if item.get("Subtype") == "FileAttachment"
+        ]
+
+    @property
+    def keys(self) -> list[str]:
+        """Return the titles of all file-attachment annotations on this page.
+
+        The titles are returned in page order (the order they appear in the
+        ``/Annots`` array).
+        """
+        return [str(item.get("T", "")) for item in self._items()]
+
+    def delete_by_key(self, key: str) -> None:
+        """Remove the file-attachment annotation whose title matches *key*.
+
+        The title is the annotation's ``/T`` entry. If multiple annotations have
+        the same title, only the first one is removed.
+
+        Args:
+            key: The title of the annotation to remove.
+
+        Raises:
+            KeyError: If no annotation with that title exists on this page.
+        """
+        items = self._items()
+        for index, item in enumerate(items):
+            if str(item.get("T", "")) == key:
+                self._page._document._engine_pdf.delete_annotation(
+                    self._page._index, self._find_original_index(index)
+                )
+                return
+        raise KeyError(key)
+
+    def _find_original_index(self, filtered_index: int) -> int:
+        """Map from filtered (file-attachment only) index to original annotation index."""
+        items = self._page._document._engine_pdf.get_annotations(self._page._index)
+        original_index = 0
+        file_attachment_count = 0
+        while file_attachment_count <= filtered_index and original_index < len(items):
+            if items[original_index].get("Subtype") == "FileAttachment":
+                if file_attachment_count == filtered_index:
+                    return original_index
+                file_attachment_count += 1
+            original_index += 1
+        return original_index
+
+    def __len__(self) -> int:
+        return len(self._items())
+
+    def __iter__(self) -> Iterator[FileAttachmentAnnotation]:
+        items = self._items()
+        refs = self._page._document._engine_pdf._annotation_refs(self._page._index)
+        for index, data in enumerate(items):
+            original_index = self._find_original_index(index)
+            ref = refs[original_index] if original_index < len(refs) else None
+            yield FileAttachmentAnnotation(self._page, original_index, data, ref)
+
+    def __getitem__(self, index: int) -> FileAttachmentAnnotation:
+        items = self._items()
+        if index < 0:
+            index += len(items)
+        if index < 0 or index >= len(items):
+            raise IndexError("FileAttachment index out of range")
+        original_index = self._find_original_index(index)
+        refs = self._page._document._engine_pdf._annotation_refs(self._page._index)
+        ref = refs[original_index] if original_index < len(refs) else None
+        return FileAttachmentAnnotation(
+            self._page, original_index, items[index], ref
+        )
+
+    def __delitem__(self, index: int) -> None:
+        items = self._items()
+        if index < 0:
+            index += len(items)
+        if index < 0 or index >= len(items):
+            raise IndexError("FileAttachment index out of range")
+        original_index = self._find_original_index(index)
+        self._page._document._engine_pdf.delete_annotation(
+            self._page._index, original_index
+        )
+
+    def __repr__(self) -> str:
+        return f"EmbeddedFileCollection({len(self)} file attachment(s))"
