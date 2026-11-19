@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `LineAnnotation.starting_style` property.** Added a property `starting_style: str` to `LineAnnotation` and `PolyLineAnnotation`. The property returns the first element of the annotation's `/LE` array, or `"None"` if the array is missing. The setter accepts only valid line ending styles: `"None"`, `"Square"`, `"Circle"`, `"Diamond"`, `"OpenArrow"`, `"ClosedArrow"`, `"Butt"`, `"ROpenArrow"`, `"RClosedArrow"`, `"Slash"`. Setting the property preserves the second element of the `/LE` array, or removes the array entirely if both start and end are `"None"`. Setting the property clears any existing appearance stream. This property provides a direct way to control the start line ending without manipulating the whole `line_endings` list, matching the Aspose.PDF for .NET API.
+
 - **Add `AnnotationCollection.sync_root` property.** Added a read-only property `sync_root` to `AnnotationCollection`. The property returns `self`, the AnnotationCollection instance itself, and is provided as a compatibility alias for .NET code that expects to lock on `annotation_collection.SyncRoot`. The property raises `AttributeError` on assignment.
 
 - **Add `Page.file_attachments` property.** Added `file_attachments: EmbeddedFileCollection` property to `Page`. This provides a typed collection of file-attachment annotations on a page, accessible by title (the `/T` entry). The collection supports iteration, indexing, and `delete_by_key(key)` to remove annotations by their title. Returns an `EmbeddedFileCollection` with `keys` property (list of title strings) and `__len__`, `__iter__`, `__getitem__` for sequence behavior.

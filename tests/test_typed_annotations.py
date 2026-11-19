@@ -35,6 +35,7 @@ from aspose_pdf.annotations import (
     InkAnnotation,
     LineAnnotation,
     MarkupAnnotation,
+    Name,
     PolygonAnnotation,
     PolyLineAnnotation,
     PopupAnnotation,
@@ -732,3 +733,139 @@ def test_square_frame_works_like_circle():
     assert square.frame is None
     square.frame = (2.0, 2.0, 2.0, 2.0)
     assert square.frame == (2.0, 2.0, 2.0, 2.0)
+
+
+# ---------------------------------------------------------------------------
+# LineAnnotation.starting_style
+# ---------------------------------------------------------------------------
+
+
+def test_line_annotation_has_starting_style_property():
+    """Verify starting_style property exists and is accessible via dir()."""
+    _, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    assert hasattr(line, "starting_style")
+    assert "starting_style" in dir(line)
+
+
+def test_line_annotation_starting_style_getter():
+    """Verify starting_style returns the first element of LE array."""
+    _, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    line.set_property("LE", [Name("Square"), Name("OpenArrow")])
+    assert line.starting_style == "Square"
+
+
+def test_line_annotation_starting_style_getter_default():
+    """Verify starting_style returns 'None' when LE array is missing."""
+    _, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    assert line.starting_style == "None"
+
+
+def test_line_annotation_starting_style_setter():
+    """Verify starting_style setter updates the LE array."""
+    document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    line.starting_style = "Square"
+    assert line.get_property("LE") == [Name("Square")]
+    assert line.starting_style == "Square"
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.starting_style == "Square"
+
+
+def test_line_annotation_starting_style_setter_preserves_end():
+    """Verify starting_style setter preserves the end style."""
+    document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    line.set_property("LE", [Name("OpenArrow"), Name("ClosedArrow")])
+    line.starting_style = "Square"
+    assert line.get_property("LE") == [Name("Square"), Name("ClosedArrow")]
+    assert line.line_endings == ("Square", "ClosedArrow")
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.line_endings == ("Square", "ClosedArrow")
+
+
+def test_line_annotation_starting_style_setter_clears_le_when_both_none():
+    """Verify starting_style setter removes LE array when both start and end are None."""
+    document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    line.set_property("LE", [Name("Square"), Name("None")])
+    line.starting_style = "None"
+    assert line.get_property("LE") is None
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.starting_style == "None"
+
+
+def test_line_annotation_starting_style_validation():
+    """Verify starting_style setter raises ValueError for invalid values."""
+    _, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    with pytest.raises(ValueError, match="Invalid starting_style"):
+        line.starting_style = "InvalidValue"
+
+
+def test_line_annotation_starting_style_clears_appearance():
+    """Verify starting_style setter clears existing appearance stream."""
+    _document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    line.starting_style = "Square"
+    line.generate_appearance()
+    assert line.has_appearance is True
+    line.starting_style = "OpenArrow"
+    assert line.has_appearance is False
+
+
+def test_all_valid_starting_styles():
+    """Verify all valid line ending styles can be set."""
+    valid_styles = ["None", "Square", "Circle", "Diamond", "OpenArrow", "ClosedArrow", "Butt", "ROpenArrow", "RClosedArrow", "Slash"]
+    _, page = _page()
+    for style in valid_styles:
+        line = page.annotations.add_line((10, 10), (100, 10))
+        line.starting_style = style
+        assert line.starting_style == style
+
+
+def test_starting_style_preserves_end_none():
+    """Verify starting_style preserves Name(\"None\") end style."""
+    document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    # Start with LE = [Name("Square"), Name("None")]
+    line.set_property("LE", [Name("Square"), Name("None")])
+    assert line.get_property("LE") == [Name("Square"), Name("None")]
+    assert line.line_endings == ("Square", "None")
+
+    # Change start style to "Circle" - should preserve the "None" end
+    line.starting_style = "Circle"
+    assert line.get_property("LE") == [Name("Circle"), Name("None")]
+    assert line.line_endings == ("Circle", "None")
+
+    # Roundtrip should preserve the end style
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.line_endings == ("Circle", "None")
+
+
+def test_starting_style_with_end_none_removes_array():
+    """Verify setting start to \"None\" with end \"None\" removes the LE array."""
+    document, page = _page()
+    line = page.annotations.add_line((10, 10), (100, 10))
+    # Start with LE = [Name("Square"), Name("None")]
+    line.set_property("LE", [Name("Square"), Name("None")])
+
+    # Change start style to "None" - should remove the LE array
+    line.starting_style = "None"
+    assert line.get_property("LE") is None
+    assert line.line_endings == ()
+
+    # Roundtrip should have no LE array
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.line_endings == ()
+
+
+def test_polyline_has_starting_style_property():
+    """Verify PolyLineAnnotation inherits the starting_style property."""
+    _, page = _page()
+    polyline = page.annotations.add_polyline([(10, 10), (100, 10)])
+    assert hasattr(polyline, "starting_style")
+    polyline.starting_style = "Square"
+    assert polyline.starting_style == "Square"

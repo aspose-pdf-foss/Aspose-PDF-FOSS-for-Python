@@ -895,6 +895,63 @@ class LineAnnotation(_ShapeAnnotation):
     )
 
     @property
+    def starting_style(self) -> str:
+        """The line ending style at the start point (first element of ``/LE``).
+
+        Returns the first element of the ``/LE`` array, or ``"None"`` if the
+        array is missing or the first entry is ``None``. Valid styles are:
+        ``"None"``, ``"Square"``, ``"Circle"``, ``"Diamond"``, ``"OpenArrow"``,
+        ``"ClosedArrow"``, ``"Butt"``, ``"ROpenArrow"``, ``"RClosedArrow"``,
+        ``"Slash"``.
+        """
+        le = self.get_property("LE")
+        if isinstance(le, (list, tuple)) and le:
+            return str(le[0]).lstrip("/") if le[0] is not None else "None"
+        return "None"
+
+    @starting_style.setter
+    def starting_style(self, value: str) -> None:
+        valid_styles = {
+            "None",
+            "Square",
+            "Circle",
+            "Diamond",
+            "OpenArrow",
+            "ClosedArrow",
+            "Butt",
+            "ROpenArrow",
+            "RClosedArrow",
+            "Slash",
+        }
+        if value not in valid_styles:
+            raise ValueError(
+                f"Invalid starting_style value '{value}'. "
+                f"Must be one of: {', '.join(sorted(valid_styles))}."
+            )
+        le = self.get_property("LE")
+        if isinstance(le, (list, tuple)) and len(le) >= 1:
+            current_end = le[1] if len(le) >= 2 else None
+        else:
+            current_end = None
+
+        # Determine if we should remove the LE array (both start and end are "None")
+        # We check if current_end is Name("None") or the string "None"
+        current_end_is_none = current_end is None
+        if not current_end_is_none and isinstance(current_end, (str, Name)):
+            current_end_is_none = str(current_end).lstrip("/") == "None"
+
+        if value == "None" and current_end_is_none:
+            self.set_property("LE", None)
+        else:
+            new_le = [Name(str(value).lstrip("/"))]
+            # Preserve the end style even if it's "None" (Name("None"))
+            if current_end is not None:
+                new_le.append(Name(str(current_end).lstrip("/")))
+            self.set_property("LE", new_le)
+
+        self.appearance_normal = None
+
+    @property
     def start(self) -> tuple[float, float] | None:
         """Where the line starts, from ``/L``."""
         points = self._line_points()
@@ -949,6 +1006,7 @@ class PolyLineAnnotation(PolygonAnnotation):
     __slots__ = ()
 
     line_endings = LineAnnotation.line_endings
+    starting_style = LineAnnotation.starting_style
 
 
 class InkAnnotation(MarkupAnnotation):
