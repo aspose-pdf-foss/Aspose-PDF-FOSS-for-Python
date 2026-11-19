@@ -604,8 +604,7 @@ def _bounding_rect(flat: list[float], border_width: float | None) -> tuple[float
     """The box around a coordinate list, grown enough to hold what is drawn.
 
     12.5.2 requires the annotation rectangle to contain the annotation, so a
-    stroke of some width needs room for half of it on each side -- plus a little,
-    because a join or a line ending reaches past the stroke itself.
+    stroke of some width needs room for half of it on each side.
     """
     from aspose_pdf.exceptions import PdfValidationException
 
@@ -613,7 +612,7 @@ def _bounding_rect(flat: list[float], border_width: float | None) -> tuple[float
         raise PdfValidationException("There are no points to put a rectangle around.")
     xs = flat[0::2]
     ys = flat[1::2]
-    margin = float(border_width if border_width is not None else 1.0) + 2.0
+    margin = float(border_width if border_width is not None else 1.0)
     return (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
 
 
@@ -1806,7 +1805,7 @@ class AnnotationCollection:
 
             raise PdfValidationException("A line is two points.")
         if rect is None:
-            margin = float(border_width if border_width is not None else 1.0) + 2.0
+            margin = float(border_width if border_width is not None else 1.0)
             rect = (
                 min(points[0], points[2]) - margin,
                 min(points[1], points[3]) - margin,

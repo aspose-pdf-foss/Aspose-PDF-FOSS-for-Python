@@ -220,6 +220,40 @@ def test_a_line_gets_a_rectangle_that_holds_it():
     assert x0 < 50 and x1 > 150
     assert y0 < 100 < y1
 
+def test_a_line_with_zero_border_has_exact_bounding_box():
+    # border_width=0 means no margin beyond the line itself
+    _, page = _page()
+    line = page.annotations.add_line((10, 10), (20, 20), border_width=0)
+    assert line.rect == (10.0, 10.0, 20.0, 20.0)
+
+
+def test_a_line_with_default_border_has_expected_margin():
+    # border_width=None defaults to 1.0, so margin is 1.0 on each side
+    _, page = _page()
+    line = page.annotations.add_line((10, 10), (20, 20))
+    assert line.rect == (9.0, 9.0, 21.0, 21.0)
+
+
+def test_a_polygon_with_zero_border_has_exact_bounding_box():
+    # border_width=0 means no margin beyond the polygon itself
+    _, page = _page()
+    polygon = page.annotations.add_polygon([(10, 10), (20, 10), (20, 20)], border_width=0)
+    assert polygon.rect == (10.0, 10.0, 20.0, 20.0)
+
+
+def test_a_polyline_with_zero_border_has_exact_bounding_box():
+    # border_width=0 means no margin beyond the polyline itself
+    _, page = _page()
+    polyline = page.annotations.add_polyline([(10, 10), (20, 20)], border_width=0)
+    assert polyline.rect == (10.0, 10.0, 20.0, 20.0)
+
+
+def test_an_ink_with_zero_border_has_exact_bounding_box():
+    # border_width=0 means no margin beyond the ink strokes
+    _, page = _page()
+    ink = page.annotations.add_ink([[(10, 10), (20, 20)]], border_width=0)
+    assert ink.rect == (10.0, 10.0, 20.0, 20.0)
+
 
 def test_vertices_are_points_in_and_points_out():
     document, page = _page()
