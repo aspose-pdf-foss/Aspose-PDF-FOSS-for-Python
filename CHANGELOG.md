@@ -72,7 +72,6 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- `add_line` default rect no longer includes extra 2‑unit margin when `border_width=0`. The annotation rectangle now equals the exact bounding box of the line when `border_width=0`, i.e., `page.annotations.add_line((10, 10), (20, 20), border_width=0).rect` is `(10, 10, 20, 20)` instead of `(8, 8, 22, 22)`. The same fix applies to `add_polygon`, `add_polyline`, and `add_ink` which use the same `_bounding_rect` helper.
 - Lint check: removed unused variables `data` (test_export_pages_zip.py), `page2` (test_export_words_zip.py), `payload` (test_link_import.py), and `xref_start` (test_page_from_pdf.py); replaced single-element list slice with `next()` per RUF015 in test_export_pages_zip.py.
 - `Page.add_text()` now correctly documents its exception behavior: `PdfValidationException` is raised for Standard-14 fonts when the encoding lacks a character, and `FontEmbeddingException` is raised for embedded fonts when the font file lacks a glyph for the character. Previously the README incorrectly claimed `FontEmbeddingException` for all missing glyph cases.
 - `wrap_artifact` now correctly raises `PdfValidationException` when `/Attached` is provided on a Layout artifact (when `artifact_type=None`). Previously, the check for `name == "Layout"` was skipped because `name` was `None`, allowing invalid PDFs to be produced that fail PDF/UA or PDF/A validation.
