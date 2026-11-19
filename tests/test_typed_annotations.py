@@ -769,6 +769,44 @@ def test_square_frame_works_like_circle():
     assert square.frame == (2.0, 2.0, 2.0, 2.0)
 
 
+def test_caret_annotation_has_frame_property():
+    """Verify CaretAnnotation has the frame property like Square and Circle."""
+    _, page = _page()
+    caret = page.annotations.add_caret((50, 50, 150, 150), "test")
+    assert hasattr(caret, "frame")
+    assert caret.frame is None
+    caret.frame = (1.0, 2.0, 3.0, 4.0)
+    assert caret.frame == (1.0, 2.0, 3.0, 4.0)
+
+
+def test_caret_annotation_frame_set_none():
+    """Verify setting frame to None removes the /RD entry."""
+    _, page = _page()
+    caret = page.annotations.add_caret((50, 50, 150, 150), "test")
+    caret.frame = (1.0, 2.0, 3.0, 4.0)
+    assert caret.frame == (1.0, 2.0, 3.0, 4.0)
+    caret.frame = None
+    assert caret.frame is None
+
+
+def test_caret_annotation_frame_validation():
+    """Verify frame setter validates input types and lengths."""
+    _, page = _page()
+    caret = page.annotations.add_caret((50, 50, 150, 150), "test")
+
+    with pytest.raises(TypeError, match="frame must be a 4-tuple of floats or None"):
+        caret.frame = [1.0, 2.0, 3.0, 4.0]
+
+    with pytest.raises(ValueError, match="frame must be a 4-tuple, not a 3-tuple"):
+        caret.frame = (1.0, 2.0, 3.0)
+
+    with pytest.raises(TypeError, match="frame\\[0\\] must be a number, not str"):
+        caret.frame = ("a", 2.0, 3.0, 4.0)
+
+    with pytest.raises(TypeError, match="frame\\[1\\] must be a number, not bool"):
+        caret.frame = (1.0, True, 3.0, 4.0)
+
+
 # ---------------------------------------------------------------------------
 # LineAnnotation.starting_style
 # ---------------------------------------------------------------------------
