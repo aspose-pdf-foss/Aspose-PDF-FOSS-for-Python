@@ -997,3 +997,48 @@ def test_polyline_has_starting_style_property():
     assert hasattr(polyline, "starting_style")
     polyline.starting_style = "Square"
     assert polyline.starting_style == "Square"
+
+
+def test_page_stamp_count_property_exists():
+    """Verify Page.stamp_count property exists and is accessible."""
+    _, page = _page()
+    assert hasattr(page, "stamp_count")
+    # Property should be a read-only property
+    assert isinstance(type(page).stamp_count, property)
+
+
+def test_page_stamp_count_returns_zero_when_no_stamps():
+    """Verify stamp_count returns 0 when there are no stamp annotations."""
+    _, page = _page()
+    assert page.stamp_count == 0
+
+
+def test_page_stamp_count_returns_one_after_adding_stamp():
+    """Verify stamp_count returns 1 after adding a stamp annotation."""
+    _, page = _page()
+    page.annotations.add_stamp((100, 100, 200, 200), "Approved")
+    assert page.stamp_count == 1
+
+
+def test_page_stamp_count_counts_all_stamps():
+    """Verify stamp_count counts all stamp annotations, not other annotation types."""
+    _, page = _page()
+    page.annotations.add_stamp((100, 100, 200, 200), "Approved")
+    page.annotations.add_stamp((200, 200, 300, 300), "Draft")
+    page.annotations.add_text((50, 50, 60, 60), "note")
+    page.annotations.add_square((50, 300, 200, 360))
+    assert page.stamp_count == 2
+
+
+def test_page_stamp_count_is_page_specific():
+    """Verify stamp_count is per-page, not shared across pages."""
+    document = Document()
+    page1 = document.pages.add(PageSize.A4)
+    page2 = document.pages.add(PageSize.A4)
+
+    page1.annotations.add_stamp((100, 100, 200, 200), "Approved")
+    page1.annotations.add_stamp((200, 200, 300, 300), "Draft")
+    page2.annotations.add_stamp((50, 50, 100, 100), "Signed")
+
+    assert page1.stamp_count == 2
+    assert page2.stamp_count == 1

@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, Any, BinaryIO
 
 from aspose_pdf._page_numbers import layout_api, page_index, page_indices
 from aspose_pdf.actions import PAGE_TRIGGERS, ActionCollection
-from aspose_pdf.annotations import AnnotationCollection, EmbeddedFileCollection
+from aspose_pdf.annotations import (
+    AnnotationCollection,
+    AnnotationType,
+    EmbeddedFileCollection,
+)
 from aspose_pdf.color import ColorValue
 from aspose_pdf.exceptions import AsposePdfException, PdfValidationException
 from aspose_pdf.image_resolution import ImageResolutionIssue
@@ -223,6 +227,18 @@ class Page:
         if not hasattr(self, "_annotations"):
             self._annotations = AnnotationCollection(self)
         return self._annotations
+
+    @property
+    def stamp_count(self) -> int:
+        """Get the number of stamp annotations on this page.
+
+        Returns:
+            The count of annotations whose subtype is ``Stamp``.
+        """
+        self._document._ensure_not_disposed()
+        return sum(
+            1 for ann in self.annotations if ann.subtype == AnnotationType.STAMP
+        )
 
     @property
     def file_attachments(self) -> EmbeddedFileCollection:

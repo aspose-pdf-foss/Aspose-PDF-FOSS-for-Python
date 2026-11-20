@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Page.stamp_count` property.** Added a read-only property `stamp_count: int` to `Page`. This property returns the number of annotations on the page whose subtype is ``Stamp``. The count is computed by filtering the page's annotations collection and does not include other annotation types. Returns ``0`` when no stamp annotations exist.
+
 - **Add `StructureElement.alternative_text` property.** Added a read/write property `alternative_text: str | None` to `StructureElement`. This property is an exact alias for :attr:`alt_text`, provided for compatibility with Aspose.PDF for .NET which uses the name ``AlternativeText``. Reading returns the same value as :attr:`alt_text`; assigning a string updates :attr:`alt_text`; assigning ``None`` or an empty string removes the ``/Alt`` entry. Setting a non-string value raises ``TypeError``. This allows .NET code using ``element.AlternativeText`` to run unchanged.
 
 - **Add `PdfPageEditor.get_page_rotation` method.** Added `get_page_rotation(self, page: int) -> int` to `PdfPageEditor`. The method returns the page's clockwise rotation in degrees: 0, 90, 180, or 270. Page numbers are 1-based. Raises `ValueError` if the page number is less than 1 or greater than the document's page count, and `PdfValidationException` if no document is bound. This provides a compatibility method for Aspose.PDF for .NET code that uses `PdfPageEditor.GetPageRotation`.
