@@ -72,6 +72,12 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `split_by_field_value()` now correctly handles widget-level field values instead of only field-level values. Each widget can have its own `/V` attribute, and the method now retrieves the value from the widget on the specific page.
+- `split_by_field_value()` now correctly converts 1-based page indices to 0-based for internal comparison with widget page indices.
+- `split_by_field_value()` now properly handles `include_preamble=False` by updating `start_page` when skipping leading pages before the first boundary.
+- `split_by_field_value()` with a pattern now creates boundaries when values do NOT match the pattern, not when they match.
+- Fixed `create_form_field()` in `simple_pdf.py` to add widgets to existing fields instead of raising an exception.
+
 - Lint check: removed unused variables `data` (test_export_pages_zip.py), `page2` (test_export_words_zip.py), `payload` (test_link_import.py), and `xref_start` (test_page_from_pdf.py); replaced single-element list slice with `next()` per RUF015 in test_export_pages_zip.py.
 - `Page.add_text()` now correctly documents its exception behavior: `PdfValidationException` is raised for Standard-14 fonts when the encoding lacks a character, and `FontEmbeddingException` is raised for embedded fonts when the font file lacks a glyph for the character. Previously the README incorrectly claimed `FontEmbeddingException` for all missing glyph cases.
 - `wrap_artifact` now correctly raises `PdfValidationException` when `/Attached` is provided on a Layout artifact (when `artifact_type=None`). Previously, the check for `name == "Layout"` was skipped because `name` was `None`, allowing invalid PDFs to be produced that fail PDF/UA or PDF/A validation.

@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING
 
 from aspose_pdf.exceptions import PdfValidationException
 
-from .bookmark_split import _snapshot
-
 if TYPE_CHECKING:
     from .simple_pdf import SimplePdf
 
@@ -17,27 +15,44 @@ if TYPE_CHECKING:
 def _get_field_value_for_page(pdf: SimplePdf, field_name: str, page_index: int) -> str | None:
     """Get the field's value as it appears on the given page.
     
-    Since a field's value is shared across all its widgets, we return the
-    value if the field has any widget on this page, otherwise None.
+    Returns the widget's value if the field has a widget on this page, otherwise None.
+    Each widget can have its own value, which takes precedence over the field's value.
+
+    Args:
+        page_index: 1-based page number (1, 2, 3, ...)
+
+    Returns:
+        The field's value on this page, or None if no widget exists on this page.
     """
-    from .form_fields import field_attribute, field_widgets
+    from .form_fields import field_attribute, field_widgets, widget_dictionaries
     
     if pdf._cos_doc is None:
         return None
     
+    # Convert 1-based page_index to 0-based for comparison with field_widgets
+    page_index_0based = page_index - 1
+
     # Find the field by name
     for candidate, entry in pdf._iter_form_fields():
         if candidate == field_name:
-            # Check if this field has a widget on the specified page
-            widgets_on_page = field_widgets(pdf, entry)
-            for idx, _ in widgets_on_page:
-                if idx == page_index:
-                    # Get the field's value
-                    value = field_attribute(pdf, entry, "V")
-                    ft = field_attribute(pdf, entry, "FT")
-                    kind = ft.name.lstrip("/") if hasattr(ft, "name") else "text"
-                    from .form_fields import form_value
-                    return form_value(pdf._resolve, pdf._load_budget, value, kind)
+            # Get all widgets for this field
+            widgets = widget_dictionaries(pdf, entry)
+
+            # Find the widget on the specified page
+            for widget in widgets:
+                widget_page_idx = field_widgets(pdf, widget)
+                for idx, _ in widget_page_idx:
+                    # field_widgets returns 0-based page indices
+                    if idx == page_index_0based:
+                        # Get the widget's own value first
+                        value = field_attribute(pdf, widget, "V")
+                        if value is None:
+                            # Fall back to field value if widget doesn't have its own
+                            value = field_attribute(pdf, entry, "V")
+                        ft = field_attribute(pdf, entry, "FT")
+                        kind = ft.name.lstrip("/") if hasattr(ft, "name") else "text"
+                        from .form_fields import form_value
+                        return form_value(pdf._resolve, pdf._load_budget, value, kind)
     
     return None
 
@@ -124,6 +139,17 @@ def _refresh_targets(pdf: SimplePdf) -> None:
         stack.extend(item.get("children", ()))
 
 
+def _snapshot(pdf: SimplePdf, start_page: int, end_page: int) -> SimplePdf:
+    """Create a new PDF with pages from start_page to end_page (1-indexed, inclusive).
+
+    Note: This implementation does not preserve outlines from the source document.
+    The returned PDF has an empty outlines structure.
+    """
+    # Convert to 0-indexed list of page indices
+    pages = list(range(start_page - 1, end_page))
+    return pdf.extract_pages(pages)
+
+
 def split_by_field_value(
     pdf: SimplePdf,
     field_name: str,
@@ -138,6 +164,11 @@ def split_by_field_value(
     Yields new SimplePdf instances for each part. Each part is an independent
     PDF with its own page and object counts, resource limits, and outlines.
     The source document and its files are not modified.
+
+    When pattern is provided, boundaries are created at pages where the value
+    does NOT match the pattern (i.e., where the value changes or differs from
+    the expected pattern). When pattern is None, boundaries are created at
+    pages where any value change is detected.
     """
     if pdf._cos_doc is None:
         return
@@ -187,21 +218,28 @@ def split_by_field_value(
             
             curr_matches = re.search(compiled_pattern, curr_text) is not None
             
-            # When matching pattern, create boundary at each matching value
-            if curr_matches:
+            # When matching pattern, do NOT create boundary (values are the same)
+            # Create boundary only when value does NOT match pattern
+            if not curr_matches:
                 boundaries.append(page_num)
     
+    # Initialize start_page before preamble handling
+    start_page = 1
+
     # Add leading preamble handling
     if boundaries:
         first_boundary = boundaries[0]
         if not include_preamble and first_boundary > 1:
             # Skip leading pages before first boundary
             boundaries = boundaries[1:]
+            start_page = first_boundary
+    elif not include_preamble:
+        # No boundaries and include_preamble=False means no parts to return
+        return
     
     # Generate parts
-    start_page = 1
     for boundary in boundaries:
-        part = _snapshot(pdf, start_page, boundary - 1, outlines=None)
+        part = _snapshot(pdf, start_page, boundary - 1)
         try:
             _check_result(part)
             _refresh_targets(part)
@@ -211,20 +249,9 @@ def split_by_field_value(
             raise
         start_page = boundary
     
-    # Final part from last boundary to end
+    # Final part from last boundary to end (or from page 1 if no boundaries)
     if start_page <= page_count:
-        part = _snapshot(pdf, start_page, page_count, outlines=None)
-        try:
-            _check_result(part)
-            _refresh_targets(part)
-            yield part
-        except BaseException:
-            part.dispose()
-            raise
-    
-    # If no boundaries and include_preamble, return whole document as one part
-    if not boundaries and include_preamble:
-        part = _snapshot(pdf, 1, page_count, outlines=None)
+        part = _snapshot(pdf, start_page, page_count)
         try:
             _check_result(part)
             _refresh_targets(part)

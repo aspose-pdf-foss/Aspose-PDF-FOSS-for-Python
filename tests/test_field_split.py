@@ -221,8 +221,8 @@ class TestSplitByFieldValue:
                 page = doc.pages.add(size=(600, 800))
                 page.add_text(f"Page {i + 1}", 12, 750)
             
-            # Create nested field
-            doc.pages[0]
+            # Create nested field (accessing a page by 1-based index for validation)
+            doc.pages[1]
             doc.form.add_text_field("Address.Country", 1, (50, 700, 200, 720), value="USA")
             doc.form.add_text_field("Address.Country", 2, (50, 700, 200, 720), value="USA")
             doc.form.add_text_field("Address.Country", 3, (50, 700, 200, 720), value="Canada")
