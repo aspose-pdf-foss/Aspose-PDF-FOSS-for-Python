@@ -16,6 +16,7 @@ Replies and popups are the one thing the property channel cannot carry: they are
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Iterator
 from enum import Enum, IntFlag
 from typing import TYPE_CHECKING, Any
@@ -144,6 +145,23 @@ def _pairs(values: list[float], what: str, group: int) -> list[Any]:
     if group == 1:
         return points
     return [tuple(points[i : i + group]) for i in range(0, len(points), group)]
+
+
+def _parse_font_size_from_da(da: str) -> float | None:
+    """Parse the font size from a default appearance string.
+
+    The DA string has the form "/FontName N Tf ..." where N is the font size.
+    Returns the font size as a float, or None if not found.
+
+    Examples:
+        "/Helv 12 Tf 0 g" -> 12.0
+        "/Times-Roman 10.5 Tf 1 0 0 rg" -> 10.5
+    """
+    # Pattern: /FontName followed by a number, then Tf
+    match = re.search(r"/[^\s]+\s+([0-9.]+)\s+Tf", da)
+    if match:
+        return float(match.group(1))
+    return None
 
 
 def _number_property(key: str, doc: str) -> property:
@@ -1197,6 +1215,92 @@ class FreeTextAnnotation(MarkupAnnotation):
     rich_text = _text_property(
         "RC", "The rich-text form of the contents (``/RC``), an XHTML fragment."
     )
+
+    @property
+    def text_height(self) -> float:
+        """The total height of the text content in points.
+
+        Calculated as ``font_size * 1.2 * num_lines`` where ``font_size`` is
+        parsed from the default appearance string and ``num_lines`` is the
+        number of lines in the contents (split by newlines).
+
+        Returns ``0.0`` if the contents is empty.
+
+        Raises ``ValueError`` if the default appearance is missing or does not
+        contain a numeric font size.
+        """
+        da = self.default_appearance
+        if not da:
+            raise ValueError(
+                "default_appearance is not set; cannot determine font size."
+            )
+
+        # Parse font size from DA string (e.g., "/Helv 12 Tf 0 g" -> 12)
+        font_size = _parse_font_size_from_da(da)
+        if font_size is None:
+            raise ValueError(
+                "default_appearance does not contain a valid font size."
+            )
+
+        # Count lines from contents
+        contents = self.contents
+        if not contents:
+            return 0.0
+        num_lines = contents.count("\n") + 1
+
+        # Calculate height: font_size * 1.2 * num_lines
+        return font_size * 1.2 * num_lines
+
+    @text_height.setter
+    def text_height(self, value: float) -> None:
+        """Set the text height and adjust the annotation's rect height accordingly.
+
+        The left, bottom, and right coordinates are preserved. The top is
+        adjusted to achieve the desired text height. If default_appearance
+        is set and valid, the font size is updated so that subsequent reads
+        of ``text_height`` return the set value.
+
+        Raises ``ValueError`` if ``value`` is zero or negative.
+        """
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError("text_height must be a number.")
+        if value <= 0:
+            raise ValueError("text_height must be positive.")
+
+        rect = self.rect
+        # rect is (left, bottom, right, top)
+        # We preserve left, bottom, right and set new top
+        new_top = rect[1] + value
+        self.rect = (rect[0], rect[1], rect[2], new_top)
+
+        # Update DA only if it is set and valid to reflect the new height
+        da = self.default_appearance
+        if not da:
+            return
+
+        # Parse current font name from DA (e.g., "/Helv" or "/Times-Roman")
+        font_match = re.search(r"/([^\s]+)\s+[0-9.]+\s+Tf", da)
+        if not font_match:
+            # Invalid DA format; skip updating font size
+            return
+
+        font_name = font_match.group(1)
+
+        # Calculate new font size: value = new_font_size * 1.2 * num_lines
+        contents = self.contents
+        num_lines = contents.count("\n") + 1 if contents else 1
+        new_font_size = value / 1.2 / num_lines
+
+        # Extract the color and other operators after Tf
+        rest_match = re.search(r"/[^\s]+\s+[0-9.]+\s+Tf(.*)", da)
+        if rest_match:
+            rest = rest_match.group(1)
+        else:
+            rest = ""
+
+        # Build new DA with new font size
+        new_da = f"/{font_name} {new_font_size} Tf{rest}"
+        self.default_appearance = new_da
 
     @property
     def alignment(self) -> int | None:
