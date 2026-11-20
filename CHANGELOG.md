@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Form.document` property.** Added a read-only property `document: Document` to `Form`. This property returns the exact :class:`~aspose_pdf.Document` instance that was passed to the :class:`~aspose_pdf.Form` constructor. This provides a compatibility alias for Aspose.PDF for .NET code that expects `Form.Document`.
+
 - **Add `Form.field_names` property.** Added a property `field_names: list[str]` to `Form`. This property returns a list of field names for all fields currently present in the form, in the order they appear in the document's `/Fields` array. The list is newly allocated on each call; modifying it does not affect the form. Returns an empty list when no fields exist. This provides a compatibility alias for Aspose.PDF for .NET code that expects `Form.FieldNames`.
 
 - **Add `LineAnnotation.ending_style` property.** Added a property `ending_style: str` to `LineAnnotation` and `PolyLineAnnotation`. The property returns the second element of the annotation's `/LE` array, or `"None"` if the array is missing or has fewer than two elements. The setter accepts only valid line ending styles: `"None"`, `"Square"`, `"Circle"`, `"Diamond"`, `"OpenArrow"`, `"ClosedArrow"`, `"Butt"`, `"ROpenArrow"`, `"RClosedArrow"`, `"Slash"`. Setting the property preserves the first element of the `/LE` array, or removes the array entirely if both start and end are `"None"`. Setting the property clears any existing appearance stream. This property provides a direct way to control the end line ending without manipulating the whole `line_endings` list, matching the Aspose.PDF for .NET API.

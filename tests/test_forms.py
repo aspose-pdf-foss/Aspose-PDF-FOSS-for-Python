@@ -2,7 +2,8 @@
 
 import pytest
 
-from aspose_pdf.forms import UnsignedContent, UnsignedContentAbsorber
+from aspose_pdf import Document
+from aspose_pdf.forms import Form, UnsignedContent, UnsignedContentAbsorber
 from aspose_pdf.generated.forms import (
     UnsignedContent as GenUnsignedContent,
 )
@@ -204,3 +205,47 @@ def test_form_field_names_empty():
 
     assert doc.form.field_names == []
     assert doc.form.fields == []
+
+
+def test_form_document_property():
+    """Form.document returns the Document instance passed to the constructor."""
+
+    doc1 = Document()
+    doc1.pages.add()
+    doc1.pages.add()
+
+    doc2 = Document()
+    doc2.pages.add()
+
+    form1 = Form(doc1)
+    form2 = Form(doc2)
+
+    # Verify document property returns the exact Document instance
+    assert form1.document is doc1
+    assert form2.document is doc2
+
+    # Verify page counts match
+    assert len(form1.document.pages) == 2
+    assert len(form2.document.pages) == 1
+
+    # Verify document is read-only
+    with pytest.raises(AttributeError):
+        form1.document = doc2
+
+
+def test_form_document_property_with_different_page_counts():
+    """Form.document correctly identifies documents with different page counts."""
+
+    doc1 = Document()
+    doc1.pages.add()  # 1 page
+
+    doc2 = Document()
+    doc2.pages.add()
+    doc2.pages.add()  # 2 pages
+
+    form1 = Form(doc1)
+    form2 = Form(doc2)
+
+    # Verify the property correctly identifies each document by page count
+    assert len(form1.document.pages) == 1
+    assert len(form2.document.pages) == 2

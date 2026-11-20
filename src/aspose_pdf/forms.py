@@ -760,6 +760,15 @@ class Form:
         """
         return [field.name for field in self.fields]
 
+    @property
+    def document(self) -> Document:
+        """The document that this form belongs to.
+
+        Returns the exact :class:`~aspose_pdf.Document` instance that was passed
+        to the :class:`~aspose_pdf.Form` constructor. The property is read-only.
+        """
+        return self._document
+
     def __iter__(self) -> Iterator[Field]:
         return iter(self._fields.values())
 
