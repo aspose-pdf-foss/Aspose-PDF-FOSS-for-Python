@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PdfXmpMetadata.get_prefix_by_namespace_uri` method.** Added `get_prefix_by_namespace_uri(namespace_uri: str) -> str` to `PdfXmpMetadata`. The method returns the prefix bound to the given namespace URI (e.g., `'dc'` for `'http://purl.org/dc/elements/1.1/'`), or an empty string if the URI is unknown. The lookup reflects prefixes added via `set_value` with the same URI.
+
 - **Add `FreeTextAnnotation.text_height` property.** Added a read/write property `text_height: float` to `FreeTextAnnotation`. The getter returns the total height of the text content in points, calculated as `font_size * 1.2 * num_lines` where `font_size` is parsed from the default appearance string and `num_lines` is the number of lines in the contents. The setter updates the annotation's rect height to the specified value while preserving the left, bottom, and right coordinates, and also updates the default appearance font size so that subsequent reads return the set value. Setting to zero or a negative value raises `ValueError`. This provides a convenient way to size a FreeText annotation to fit its text content without manual calculation.
 
 - **Add `Cell.col_span` property.** Added a property `col_span: int` to `Cell`. This property provides a compatibility alias for Aspose.PDF for .NET code that expects `Cell.ColSpan`. Reading returns the same value as :attr:`column_span`; assigning sets :attr:`column_span` to the given integer. This allows .NET code using `cell.ColSpan` to run unchanged.

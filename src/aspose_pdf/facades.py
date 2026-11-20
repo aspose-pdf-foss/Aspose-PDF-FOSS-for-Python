@@ -1524,9 +1524,31 @@ class PdfXmpMetadata(_BoundFacade):
 
     def set_value(self, prefix: str, name: str, value: Any, *, uri: str = "") -> None:
         """Set one XMP property, and write the packet back to the document."""
+        from aspose_pdf.xmp import NamespaceProvider
+
         packet = self.packet
         packet.set_value(prefix, name, value, uri=uri)
+        # Ensure the packet has a namespace_provider and register the prefix->uri mapping
+        # Only register if prefix is non-empty to preserve existing behavior for empty-prefix calls
+        if uri and packet.namespace_provider is None:
+            packet.namespace_provider = NamespaceProvider(include_defaults=True)
+        if uri and prefix and packet.namespace_provider is not None:
+            packet.namespace_provider.register(prefix, uri)
         self.document.xmp_metadata = packet
+
+    def get_prefix_by_namespace_uri(self, namespace_uri: str) -> str:
+        """Return the prefix bound to *namespace_uri*, or an empty string if unknown."""
+        if not namespace_uri:
+            return ""
+        provider = self.packet.namespace_provider
+        # Try the packet's provider first (includes custom registrations)
+        if provider is not None:
+            result = provider.get_prefix(namespace_uri)
+            if result:
+                return result
+        # Fall back to standard XMP namespaces
+        from aspose_pdf.engine.data.xmp import _STANDARD_URI_TO_PREFIX
+        return _STANDARD_URI_TO_PREFIX.get(namespace_uri, "")
 
     def sync_from_info(self) -> None:
         """Copy the ``/Info`` entries into the XMP packet (``Document.sync_metadata``)."""

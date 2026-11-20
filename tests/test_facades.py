@@ -510,6 +510,41 @@ def test_the_info_dictionary_and_the_packet_are_synced_either_way():
     assert facade.document.info["Title"] == "Back to Info"
 
 
+def test_get_prefix_by_namespace_uri():
+    facade = PdfXmpMetadata()
+    facade.bind_pdf(io.BytesIO(_document(1)))
+
+    # Standard namespace: http://purl.org/dc/elements/1.1/ -> 'dc'
+    assert facade.get_prefix_by_namespace_uri("http://purl.org/dc/elements/1.1/") == "dc"
+
+    # Unknown URI returns empty string
+    assert facade.get_prefix_by_namespace_uri("https://example.com/unknown/") == ""
+
+    # Standard namespace: http://ns.adobe.com/xap/1.0/ -> 'xmp'
+    assert facade.get_prefix_by_namespace_uri("http://ns.adobe.com/xap/1.0/") == "xmp"
+
+    # Empty URI returns empty string
+    assert facade.get_prefix_by_namespace_uri("") == ""
+
+    # Register new mapping via set_value and verify it's reflected in get_prefix_by_namespace_uri
+    facade.set_value("ex", "custom", "value", uri="http://example.org/new/")
+    assert facade.get_prefix_by_namespace_uri("http://example.org/new/") == "ex"
+
+    # Re-test the standard one to ensure it still works after custom registration
+    assert facade.get_prefix_by_namespace_uri("http://purl.org/dc/elements/1.1/") == "dc"
+
+
+def test_set_value_with_empty_prefix_and_uri():
+    """Verify set_value with empty prefix and non-empty URI works (uses existing packet behavior)."""
+    facade = PdfXmpMetadata()
+    facade.bind_pdf(io.BytesIO(_document(1)))
+
+    # This should not raise ValueError - empty prefix is valid when a URI is provided
+    facade.set_value("", "title", "TestTitle", uri="http://purl.org/dc/elements/1.1/")
+    # The value should be retrievable via get_value (using URI as prefix_or_uri)
+    assert facade.get_value("http://purl.org/dc/elements/1.1/", "title") == "TestTitle"
+
+
 # ---------------------------------------------------------------------------
 # PdfConverter
 # ---------------------------------------------------------------------------
