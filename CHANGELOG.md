@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Cell.col_span` property.** Added a property `col_span: int` to `Cell`. This property provides a compatibility alias for Aspose.PDF for .NET code that expects `Cell.ColSpan`. Reading returns the same value as :attr:`column_span`; assigning sets :attr:`column_span` to the given integer. This allows .NET code using `cell.ColSpan` to run unchanged.
+
 - **Add `Form.document` property.** Added a read-only property `document: Document` to `Form`. This property returns the exact :class:`~aspose_pdf.Document` instance that was passed to the :class:`~aspose_pdf.Form` constructor. This provides a compatibility alias for Aspose.PDF for .NET code that expects `Form.Document`.
 
 - **Add `Form.field_names` property.** Added a property `field_names: list[str]` to `Form`. This property returns a list of field names for all fields currently present in the form, in the order they appear in the document's `/Fields` array. The list is newly allocated on each call; modifying it does not affect the form. Returns an empty list when no fields exist. This provides a compatibility alias for Aspose.PDF for .NET code that expects `Form.FieldNames`.

@@ -139,6 +139,22 @@ class Cell:
     border_colors: Mapping[str, Any] | None = None
     link: Action | Destination | str | None = None
 
+    @property
+    def col_span(self) -> int:
+        """Gets or sets the column span.
+
+        This property provides a compatibility alias for Aspose.PDF for .NET
+        code that expects ``Cell.ColSpan``. It returns the same value as
+        :attr:`column_span` and can be assigned to in the same way.
+        """
+        return self.column_span
+
+    @col_span.setter
+    def col_span(self, value: int) -> None:
+        if isinstance(value, bool) or int(value) < 1:
+            raise PdfValidationException("column_span is a whole number from one")
+        self.column_span = value
+
     def __post_init__(self) -> None:
         self.text = "" if self.text is None else str(self.text)
         if isinstance(self.column_span, bool) or int(self.column_span) < 1:

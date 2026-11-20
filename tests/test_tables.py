@@ -226,6 +226,47 @@ def test_a_column_span_covers_the_columns_it_says():
     assert rows[0].cells[0].width == pytest.approx(300)
 
 
+def test_col_span_is_an_alias_for_column_span():
+    """col_span provides a compatibility alias for .NET code expecting Cell.ColSpan."""
+    # Reading col_span returns the same value as column_span
+    c1 = Cell("test", column_span=3)
+    c2 = Cell("test", column_span=5)
+    assert c1.col_span == 3
+    assert c2.col_span == 5
+    assert c1.col_span == c1.column_span
+    assert c2.col_span == c2.column_span
+
+    # Assigning to col_span updates column_span
+    c1.col_span = 7
+    c2.col_span = 9
+    assert c1.column_span == 7
+    assert c2.column_span == 9
+    assert c1.col_span == 7
+    assert c2.col_span == 9
+
+
+def test_col_span_validation_matches_column_span():
+    """col_span uses the same validation as column_span - validation happens at init and on setter."""
+    # Validation occurs during Cell initialization
+    with pytest.raises(PdfValidationException, match="whole number from one"):
+        Cell("x", column_span=0)
+    with pytest.raises(PdfValidationException, match="whole number from one"):
+        Cell("x", column_span=-1)
+    with pytest.raises(PdfValidationException, match="whole number from one"):
+        Cell("x", column_span=True)
+    # col_span property setter performs the same validation
+    c = Cell("x", column_span=2)
+    with pytest.raises(PdfValidationException, match="whole number from one"):
+        c.col_span = 0
+    with pytest.raises(PdfValidationException, match="whole number from one"):
+        c.col_span = -1
+    with pytest.raises(PdfValidationException, match="whole number from one"):
+        c.col_span = True
+    # Valid assignments work
+    c.col_span = 5
+    assert c.column_span == 5
+
+
 # ---------------------------------------------------------------------------
 # Wrapping and row height
 # ---------------------------------------------------------------------------
