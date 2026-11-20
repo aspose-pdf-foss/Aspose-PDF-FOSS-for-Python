@@ -15651,138 +15651,15 @@ class SimplePdf:
         elif top_index != 0:
             raise PdfValidationException("top_index applies only to listbox fields")
 
+        existing = self.get_form_fields()
+        if name in existing:
+            raise PdfValidationException(f"Form field '{name}' already exists")
         acro, root_fields = self._ensure_acroform_for_authoring()
         if self._cos_doc is None:
             raise AsposePdfException("COS document required for form authoring")
         parent_ref, siblings = self._ensure_form_parent_path(root_fields, parts[:-1])
-
-        # Check if field already exists
-        existing_field = self._find_named_field(siblings, parts[-1])
-
-        if existing_field is not None:
-            # Field exists - add widgets to existing field
-            field_ref, field_entry = existing_field
-            # Verify field type matches
-            existing_ft = self._resolve(field_entry.mapping.get(PdfName("FT")))
-            existing_type = existing_ft.name.lstrip("/") if isinstance(existing_ft, PdfName) else None
-            expected_ft_name = {
-                "checkbox": "Btn",
-                "radio": "Btn",
-                "pushbutton": "Btn",
-                "listbox": "Ch",
-                "combobox": "Ch",
-                "signature": "Sig",
-            }.get(field_type, "Tx")
-
-            if existing_type != expected_ft_name:
-                raise PdfValidationException(
-                    f"Form field '{name}' already exists with type '{existing_type}', "
-                    f"cannot create with type '{field_type}'"
-                )
-
-            # For radio/checkbox fields, verify options match
-            if field_type in ("radio", "checkbox"):
-                existing_opt = self._resolve(field_entry.mapping.get(PdfName("Opt")))
-                if existing_opt is not None and isinstance(existing_opt, PdfArray):
-                    existing_options = [self._decode_text_option(item) for item in existing_opt.items]
-                    if options is not None and list(options) != existing_options:
-                        raise PdfValidationException(
-                            f"Form field '{name}' already has different options"
-                        )
-
-            # Get existing widget page references to avoid duplicates
-            existing_widgets = []
-            kids = self._resolve(field_entry.mapping.get(PdfName("Kids")))
-            if isinstance(kids, PdfArray):
-                existing_widgets = [self._resolve(kid) for kid in kids.items]
-
-            existing_page_refs = set()
-            for widget in existing_widgets:
-                page_ref = widget.mapping.get(PdfName("P"))
-                if page_ref and hasattr(page_ref, 'object_number'):
-                    existing_page_refs.add(page_ref.object_number)
-
-            # Collect new widgets that aren't already present
-            new_widgets = []
-            for spec, page, page_ref, rect in prepared_widgets:
-                if page_ref.object_number not in existing_page_refs:
-                    new_widgets.append((spec, page, page_ref, rect))
-
-            if not new_widgets:
-                # All widgets already exist on the same pages - this is a duplicate
-                raise PdfValidationException(f"Form field '{name}' already has widget on the specified page(s)")
-
-            # Add new widgets to the existing field's Kids array
-            kid_refs = []
-            for index, (spec, page, page_ref, rect) in enumerate(new_widgets):
-                mk_map: dict[PdfName, Any] = {
-                    PdfName("BC"): PdfArray([PdfNumber(0)]),
-                    PdfName("BG"): PdfArray([PdfNumber(0.95 if field_type in ("checkbox", "radio", "pushbutton") else 1)]),
-                }
-                from .content_authoring import normalize_color
-                if border_color is not None:
-                    mk_map[PdfName("BC")] = PdfArray([PdfNumber(float(c)) for c in normalize_color(border_color)])
-                if background is not None:
-                    mk_map[PdfName("BG")] = PdfArray([PdfNumber(float(c)) for c in normalize_color(background)])
-                if rotation is not None:
-                    degrees = int(rotation)
-                    if degrees % 90 != 0:
-                        raise PdfValidationException("A widget's rotation is a multiple of 90 degrees (/MK /R).")
-                    mk_map[PdfName("R")] = PdfNumber(degrees % 360)
-                widget_map: dict[PdfName, Any] = {
-                    PdfName("Type"): PdfName("Annot"),
-                    PdfName("Subtype"): PdfName("Widget"),
-                    PdfName("Rect"): PdfArray([PdfNumber(coord) for coord in rect]),
-                    PdfName("P"): page_ref,
-                    PdfName("Parent"): field_ref,
-                    PdfName("F"): PdfNumber(4),
-                    PdfName("BS"): PdfDictionary({PdfName("W"): PdfNumber(1), PdfName("S"): PdfName("S")}),
-                }
-                if border_width is not None or border_style is not None:
-                    bs_map = {PdfName("W"): PdfNumber(1), PdfName("S"): PdfName("S")}
-                    if border_width is not None:
-                        width = float(border_width)
-                        if width < 0:
-                            raise PdfValidationException("A border width cannot be negative.")
-                        bs_map[PdfName("W")] = PdfNumber(width)
-                    if border_style is not None:
-                        bs_map[PdfName("S")] = PdfName(self._border_style_letter(border_style))
-                    widget_map[PdfName("BS")] = PdfDictionary(bs_map)
-                if field_type == "checkbox":
-                    widget_map[PdfName("AS")] = PdfName(on_value)
-                    mk_map[PdfName("CA")] = PdfString(b"4")
-                elif field_type == "radio":
-                    widget_map[PdfName("AS")] = PdfName(radio_states[index])
-                widget_map[PdfName("MK")] = PdfDictionary(mk_map)
-                # Add widget value if specified
-                widget_value = spec.get("value")
-                if widget_value is None:
-                    widget_value = value
-                if widget_value is not None:
-                    widget_map[PdfName("V")] = PdfString(widget_value)
-                widget_ref = self._cos_doc.register_object(PdfDictionary(widget_map))
-                kid_refs.append(widget_ref)
-                annots = self._resolve(page.mapping.get(PdfName("Annots")))
-                if not isinstance(annots, PdfArray):
-                    annots = PdfArray([])
-                    page.mapping[PdfName("Annots")] = annots
-                annots.items.append(widget_ref)
-
-            # Update existing field's Kids array
-            if isinstance(kids, PdfArray):
-                for kid_ref in kid_refs:
-                    kids.items.append(kid_ref)
-            else:
-                field_entry.mapping[PdfName("Kids")] = PdfArray(kid_refs)
-
-            # Generate appearances for the field
-            inherited = self._acroform_inherited(acro)
-            self._gen_field_appearance_rec(field_ref, inherited, acro, keep_existing=True)
-            acro.mapping[PdfName("NeedAppearances")] = PdfBoolean(False)
-            return
-
-        # Field doesn't exist, create it with the new widgets
-        # (Continue with field creation below)
+        if self._find_named_field(siblings, parts[-1]) is not None:
+            raise PdfValidationException(f"Form field '{name}' already exists")
 
         # An embedded Type0 (CID) field font: register it in /DR, point /DA at
         # it, and bake a CID-encoded /AP so non-Latin values render.
