@@ -33,7 +33,11 @@ from aspose_pdf import (
     PdfXmpMetadata,
     TextStamp,
 )
-from aspose_pdf.exceptions import AsposePdfException, PdfSecurityException
+from aspose_pdf.exceptions import (
+    AsposePdfException,
+    PdfSecurityException,
+    PdfValidationException,
+)
 from aspose_pdf.outlines import OutlineItem
 
 
@@ -470,6 +474,57 @@ def test_deleting_every_page_is_refused():
     facade.bind_pdf(io.BytesIO(_document(2)))
     assert facade.delete_pages([1, 2]) is False
     assert isinstance(facade.last_exception, Exception)
+
+
+def test_get_page_rotation_returns_the_rotation_of_a_page():
+    """get_page_rotation should return the page's rotation in degrees."""
+    document = Document()
+    document.pages.add(PageSize.A5)
+    document.pages.add(PageSize.A4)
+    document.pages.add(PageSize.A5)
+    document.pages[1].rotation = 0
+    document.pages[2].rotation = 90
+    document.pages[3].rotation = 180
+    buffer = io.BytesIO()
+    document.save(buffer)
+
+    facade = PdfPageEditor()
+    facade.bind_pdf(io.BytesIO(buffer.getvalue()))
+    assert facade.get_page_rotation(1) == 0
+    assert facade.get_page_rotation(2) == 90
+    assert facade.get_page_rotation(3) == 180
+
+
+def test_get_page_rotation_raises_value_error_for_invalid_page():
+    """get_page_rotation should raise ValueError for page < 1 or > page count."""
+    facade = PdfPageEditor()
+    facade.bind_pdf(io.BytesIO(_document(3)))
+
+    with pytest.raises(ValueError, match="outside this document"):
+        facade.get_page_rotation(0)
+    with pytest.raises(ValueError, match="outside this document"):
+        facade.get_page_rotation(4)
+    with pytest.raises(ValueError, match="outside this document"):
+        facade.get_page_rotation(-1)
+
+
+def test_get_page_rotation_raises_if_not_bound():
+    """get_page_rotation should raise PdfValidationException if not bound."""
+    facade = PdfPageEditor()
+    assert not facade.is_bound
+
+    with pytest.raises(PdfValidationException, match="No document is bound"):
+        facade.get_page_rotation(1)
+
+
+def test_get_page_rotation_after_dispose_raises():
+    """get_page_rotation should raise after the facade is disposed."""
+    facade = PdfPageEditor()
+    facade.bind_pdf(io.BytesIO(_document(1)))
+    facade.close()
+
+    with pytest.raises(AsposePdfException, match="disposed"):
+        facade.get_page_rotation(1)
 
 
 # ---------------------------------------------------------------------------

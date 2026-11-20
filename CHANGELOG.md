@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PdfPageEditor.get_page_rotation` method.** Added `get_page_rotation(self, page: int) -> int` to `PdfPageEditor`. The method returns the page's clockwise rotation in degrees: 0, 90, 180, or 270. Page numbers are 1-based. Raises `ValueError` if the page number is less than 1 or greater than the document's page count, and `PdfValidationException` if no document is bound. This provides a compatibility method for Aspose.PDF for .NET code that uses `PdfPageEditor.GetPageRotation`.
+
 - **Add `PdfXmpMetadata.get_prefix_by_namespace_uri` method.** Added `get_prefix_by_namespace_uri(namespace_uri: str) -> str` to `PdfXmpMetadata`. The method returns the prefix bound to the given namespace URI (e.g., `'dc'` for `'http://purl.org/dc/elements/1.1/'`), or an empty string if the URI is unknown. The lookup reflects prefixes added via `set_value` with the same URI.
 
 - **Add `FreeTextAnnotation.text_height` property.** Added a read/write property `text_height: float` to `FreeTextAnnotation`. The getter returns the total height of the text content in points, calculated as `font_size * 1.2 * num_lines` where `font_size` is parsed from the default appearance string and `num_lines` is the number of lines in the contents. The setter updates the annotation's rect height to the specified value while preserving the left, bottom, and right coordinates, and also updates the default appearance font size so that subsequent reads return the set value. Setting to zero or a negative value raises `ValueError`. This provides a convenient way to size a FreeText annotation to fit its text content without manual calculation.

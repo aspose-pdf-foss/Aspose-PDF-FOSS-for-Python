@@ -29,6 +29,7 @@ from aspose_pdf.exceptions import (
     PDF_OPERATION_ERRORS,
     AsposePdfException,
     PdfResourceLimitException,
+    PdfValidationException,
 )
 from aspose_pdf.load_limits import PdfLoadLimits
 from aspose_pdf.permissions import Permissions
@@ -1432,6 +1433,20 @@ class PdfPageEditor(_BoundFacade):
             return True
         except PDF_OPERATION_ERRORS as exc:
             return self._operation_fail(exc)
+
+    def get_page_rotation(self, page: int) -> int:
+        """A page's clockwise rotation in degrees: 0, 90, 180, or 270.
+
+        Page numbers are 1-based.
+        """
+        self._ensure_not_disposed()
+        if self._document is None:
+            raise PdfValidationException("No document is bound")
+        try:
+            index = self._page_index(page)
+        except AsposePdfException as exc:
+            raise ValueError(str(exc)) from exc
+        return int(self.document._page_at(index).rotation)
 
     def move_page(self, page_number: int, new_position: int) -> bool:
         """Move a page to *new_position* (1-based), shifting the rest along."""
