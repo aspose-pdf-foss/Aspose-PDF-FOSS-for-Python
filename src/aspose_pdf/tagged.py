@@ -157,12 +157,30 @@ class StructureElement:
 
     @property
     def alt_text(self) -> str | None:
-        """Get or set the ``/Alt`` alternate description."""
+        """Get or set the ``/Alt`` alternate description.
+
+        Setting ``None`` or an empty string removes the ``/Alt`` entry.
+        """
         return self._content._engine._tagged_element_text(self._element, "Alt")
 
     @alt_text.setter
     def alt_text(self, value: str | None) -> None:
         self._content._engine._tagged_set_element_text(self._element, "Alt", value)
+
+    @property
+    def alternative_text(self) -> str | None:
+        """Get or set the ``/Alt`` alternate description.
+
+        This is an alias for :attr:`alt_text`, provided for compatibility with
+        Aspose.PDF for .NET which uses the name ``AlternativeText``.
+
+        Setting ``None`` or an empty string removes the ``/Alt`` entry.
+        """
+        return self.alt_text
+
+    @alternative_text.setter
+    def alternative_text(self, value: str | None) -> None:
+        self.alt_text = value
 
     @property
     def actual_text(self) -> str | None:

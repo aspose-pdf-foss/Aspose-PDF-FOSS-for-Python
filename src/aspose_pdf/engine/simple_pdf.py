@@ -6943,7 +6943,7 @@ class SimplePdf:
         self, element: PdfDictionary, key: str, value: str | None
     ) -> None:
         self._tagged_require_attached(element)
-        if value is None:
+        if value is None or value == "":
             element.mapping.pop(PdfName(key), None)
         elif not isinstance(value, str):
             raise TypeError(f"{key} text must be a string or None")

@@ -178,3 +178,40 @@ def test_remediation_handles_parent_tree_number_tree_kids() -> None:
     assert tagged.element_for_mcid(1, 2) == figure
     assert PdfName("Kids") not in parent_tree.mapping
     assert isinstance(parent_tree.mapping.get(PdfName("Nums")), PdfArray)
+
+
+def test_alternative_text_is_an_alias_for_alt_text() -> None:
+    """Test that alternative_text is a working alias for alt_text."""
+    document = _auto_tagged_document()
+    tagged = document.tagged_content
+    heading, body = tagged.root_elements
+
+    # Test 1: Setting alt_text and reading via alternative_text
+    heading.alt_text = "Alt1"
+    assert heading.alternative_text == "Alt1"
+
+    # Test 2: Setting alternative_text and reading via alt_text
+    heading.alternative_text = "Alt2"
+    assert heading.alt_text == "Alt2"
+
+    # Test 3: Both properties return the same value
+    heading.alt_text = "Shared"
+    assert heading.alt_text == heading.alternative_text == "Shared"
+
+    # Test 4: Setting alternative_text to None removes the entry
+    heading.alternative_text = None
+    assert heading.alt_text is None
+    assert heading.alternative_text is None
+
+    # Test 5: Setting alternative_text to empty string removes the entry
+    body.alt_text = "BodyAlt"
+    body.alternative_text = ""
+    assert body.alt_text is None
+    assert body.alternative_text is None
+
+    # Test 6: Setting non-string raises TypeError via alternative_text
+    with pytest.raises(TypeError, match="Alt text must be a string or None"):
+        heading.alternative_text = 123
+
+    with pytest.raises(TypeError, match="Alt text must be a string or None"):
+        heading.alternative_text = ["list", "not", "allowed"]
