@@ -162,3 +162,45 @@ def test_unsigned_content_repr_reflects_collection_sizes():
     assert "pages=3" in repr_str
     assert "form_fields=1" in repr_str
     assert "annotations=0" in repr_str
+
+
+def test_form_field_names_property():
+    """Form.field_names returns list of field names matching [field.name for field in fields]."""
+    from aspose_pdf import Document
+
+    doc = Document()
+    doc.pages.add()
+    doc.form.add_text_field("Alpha", 1, (50, 700, 200, 720), value="a")
+    doc.form.add_text_field("Beta", 1, (50, 680, 200, 700), value="b")
+    doc.form.add_text_field("Gamma", 1, (50, 660, 200, 680), value="c")
+
+    field_names = doc.form.field_names
+    expected_names = [field.name for field in doc.form.fields]
+    assert field_names == expected_names
+    assert field_names == ["Alpha", "Beta", "Gamma"]
+
+
+def test_form_field_names_immutability():
+    """Modifying the returned list does not affect subsequent calls."""
+    from aspose_pdf import Document
+
+    doc = Document()
+    doc.pages.add()
+    doc.form.add_text_field("Single", 1, (50, 700, 200, 720), value="x")
+
+    first_call = doc.form.field_names
+    first_call.append("TAMPERED")
+    second_call = doc.form.field_names
+    assert second_call == ["Single"]
+    assert second_call is not first_call
+
+
+def test_form_field_names_empty():
+    """Form.field_names returns empty list when no fields exist."""
+    from aspose_pdf import Document
+
+    doc = Document()
+    doc.pages.add()
+
+    assert doc.form.field_names == []
+    assert doc.form.fields == []

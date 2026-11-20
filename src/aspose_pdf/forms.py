@@ -750,6 +750,16 @@ class Form:
         """A list of all fields in the form."""
         return list(self._fields.values())
 
+    @property
+    def field_names(self) -> list[str]:
+        """A list of all field names in the form.
+
+        Returns a new list on each call; modifying it does not affect the form.
+        Returns an empty list when no fields exist. Names are identical to
+        ``field.name`` for each :class:`Field` in :attr:`fields`.
+        """
+        return [field.name for field in self.fields]
+
     def __iter__(self) -> Iterator[Field]:
         return iter(self._fields.values())
 
