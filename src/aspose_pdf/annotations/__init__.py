@@ -748,6 +748,42 @@ class MarkupAnnotation(Annotation):
         lengths = _numbers(value, "A border dash pattern")
         self._set_border("D", lengths)
 
+    @property
+    def border(self) -> tuple[float | None, str | None, tuple[float, ...]]:
+        """The border's width, style, and dash pattern as a 3-tuple.
+
+        Returns ``(border_width, border_style, border_dash)``. A missing entry
+        is ``None`` (or ``()`` for the dash pattern).
+        """
+        return (self.border_width, self.border_style, self.border_dash)
+
+    @border.setter
+    def border(self, value: tuple[float | None, str | None, Any]) -> None:
+        """Set all three border entries at once.
+
+        ``value`` must be a 3-tuple of
+        ``(width: float | None, style: str | None, dash: tuple | None)``.
+
+        ``None`` entries in the tuple leave the corresponding existing value
+        unchanged, so ``(None, 'D', None)`` updates only the style. A tuple of
+        incorrect length raises ``ValueError``. The setter does not regenerate
+        the appearance stream; call :meth:`generate_appearance` separately if
+        needed.
+        """
+        if not isinstance(value, tuple) or len(value) != 3:
+            raise ValueError(
+                "border must be a 3-tuple of (width, style, dash)"
+            )
+
+        width, style, dash = value
+
+        if width is not None:
+            self.border_width = float(width)
+        if style is not None:
+            self.border_style = style
+        if dash is not None:
+            self.border_dash = dash
+
 
 
 class LinkAnnotation(Annotation):

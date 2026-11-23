@@ -179,6 +179,90 @@ def test_removing_the_last_border_entry_removes_the_dictionary():
     assert b"/BS" not in _saved(document)
 
 
+def test_the_border_property_returns_a_3_tuple():
+    _document, page = _page()
+    square = page.annotations.add_square((50, 300, 200, 360))
+
+    # Initially all entries are absent
+    assert square.border == (None, None, ())
+
+    # Set individual entries
+    square.border_width = 2.5
+    square.border_style = "D"
+    square.border_dash = (4.0, 2.0)
+
+    # The border property returns all three as a tuple
+    assert square.border == (2.5, "D", (4.0, 2.0))
+
+
+def test_the_border_property_sets_all_entries_at_once():
+    _document, page = _page()
+    square = page.annotations.add_square((50, 300, 200, 360))
+    square.border_width = 2.5
+    square.border_style = "D"
+    square.border_dash = (4.0, 2.0)
+
+    # Set all three at once with a new value
+    square.border = (1.0, "S", ())
+
+    assert square.border_width == 1.0
+    assert square.border_style == "S"
+    assert square.border_dash == ()
+
+
+def test_the_border_property_allows_partial_update_with_none():
+    _document, page = _page()
+    square = page.annotations.add_square((50, 300, 200, 360))
+    square.border = (2.5, "D", (4.0, 2.0))
+
+    # Update only style and dash, leave width unchanged
+    square.border = (None, "B", (1.0, 1.0))
+
+    # Width stays at 2.5, style and dash change
+    assert square.border == (2.5, "B", (1.0, 1.0))
+
+
+def test_the_border_property_raises_valueerror_for_wrong_length():
+    _document, page = _page()
+    square = page.annotations.add_square((50, 300, 200, 360))
+
+    with pytest.raises(ValueError) as exc_info:
+        square.border = (1.0, "D")
+    assert "3-tuple" in str(exc_info.value)
+
+    with pytest.raises(ValueError) as exc_info:
+        square.border = (1.0, "D", (1.0,), "extra")
+    assert "3-tuple" in str(exc_info.value)
+
+
+def test_the_border_property_works_independently_per_instance():
+    _document, page = _page()
+    sq1 = page.annotations.add_square((50, 300, 200, 360))
+    sq2 = page.annotations.add_square((50, 200, 200, 260))
+
+    sq1.border = (2.5, "D", (4.0, 2.0))
+    sq2.border = (1.0, "S", ())
+
+    assert sq1.border == (2.5, "D", (4.0, 2.0))
+    assert sq2.border == (1.0, "S", ())
+
+    # Update sq1 only
+    sq1.border = (None, "B", (1.0, 1.0))
+
+    assert sq1.border == (2.5, "B", (1.0, 1.0))
+    assert sq2.border == (1.0, "S", ())
+
+
+def test_roundtrip_preserves_border_property():
+    document, page = _page()
+    square = page.annotations.add_square((50, 300, 200, 360))
+    square.border = (2.5, "D", (4.0, 2.0))
+
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+
+    assert reloaded.border == (2.5, "D", (4.0, 2.0))
+
+
 def test_a_colour_entry_takes_grey_rgb_or_cmyk():
     _, page = _page()
     square = page.annotations.add_square((50, 300, 200, 360))
