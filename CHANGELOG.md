@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PolygonAnnotation.perimeter` property.** Added a read-only property `perimeter: float` to `PolygonAnnotation`. This property returns the total length of the polygon's boundary, computed as the sum of Euclidean distances between consecutive vertices plus the distance from the last vertex back to the first (closing the loop). Returns ``0.0`` if fewer than 2 vertices are present. No exceptions are raised.
+
 - **Add `MemoryFontSource.font_bytes` property.** Added a read-only property `font_bytes: bytes` to `MemoryFontSource`. This property is a compatibility alias for :attr:`font_data`, provided for porting code from Aspose.PDF for .NET which uses the name ``FontBytes``. Reading returns the exact same bytes object as :attr:`font_data`. Assigning to this property raises ``AttributeError``.
 
 - **Add `XmpField.local_name` property.** Added a read/write property `local_name: str` to `XmpField`. This property is a compatibility alias for :attr:`name`, provided for porting code from Aspose.PDF for .NET which uses the name ``LocalName``. Reading returns the same value as :attr:`name`; assigning a string updates :attr:`name`. This allows .NET code using `field.LocalName` to run unchanged.

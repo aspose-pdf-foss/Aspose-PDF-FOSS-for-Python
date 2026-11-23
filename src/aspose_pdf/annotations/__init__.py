@@ -1115,6 +1115,31 @@ class PolygonAnnotation(_ShapeAnnotation):
         """,
     )
 
+    @property
+    def perimeter(self) -> float:
+        """The total length of the polygon's boundary.
+
+        Returns the sum of Euclidean distances between consecutive vertices,
+        plus the distance from the last vertex back to the first (closing the loop).
+        Returns 0.0 if fewer than 2 vertices are present.
+
+        The perimeter is computed on each access from the current ``vertices``.
+        For typical polygon annotations (fewer than a dozen vertices) this is
+        effectively instant. For very large vertex lists, the cost is linear in
+        the number of vertices.
+        """
+        points = self.vertices
+        if len(points) < 2:
+            return 0.0
+
+        total = 0.0
+        for i in range(len(points)):
+            x1, y1 = points[i]
+            x2, y2 = points[(i + 1) % len(points)]
+            total += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+
+        return total
+
 
 class PolyLineAnnotation(PolygonAnnotation):
     """An open shape through a list of points (``PolyLine``)."""

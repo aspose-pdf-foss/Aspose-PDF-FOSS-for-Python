@@ -242,6 +242,25 @@ def test_a_polyline_also_has_line_endings():
     assert polyline.vertices == [(10.0, 10.0), (20.0, 20.0)]
 
 
+def test_polygon_perimeter():
+    document, page = _page()
+    # Triangle with vertices at (0,0), (3,0), (0,4) -> perimeter = 3 + 4 + 5 = 12
+    polygon = page.annotations.add_polygon([(0.0, 0.0), (3.0, 0.0), (0.0, 4.0)])
+    assert polygon.perimeter == 12.0
+
+    # Single point -> perimeter = 0.0 (fewer than 2 vertices)
+    single = page.annotations.add_polygon([(10.0, 10.0)])
+    assert single.perimeter == 0.0
+
+    # Two points -> perimeter = 2 * distance (closing the loop)
+    two = page.annotations.add_polygon([(0.0, 0.0), (3.0, 0.0)])
+    assert two.perimeter == 6.0
+
+    # Round-trip preserves perimeter
+    reloaded = _roundtrip(document).pages[1].annotations[0]
+    assert reloaded.perimeter == 12.0
+
+
 def test_ink_is_a_list_of_strokes():
     document, page = _page()
     ink = page.annotations.add_ink(
