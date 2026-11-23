@@ -156,6 +156,31 @@ class PageSize:
             raise ValueError("rectangle origin must be finite")
         return (x0, y0, x0 + self.width, y0 + self.height)
 
+    def contains(self, other: PageSize, *, allow_equal: bool = True) -> bool:
+        """Test whether this size can accommodate *other*.
+
+        The check is axis-aligned and orientation-sensitive: it does not consider
+        rotation. Both width and height of this size must be greater than (when
+        *allow_equal* is ``False``) or greater than or equal to (when *allow_equal*
+        is ``True``, the default) those of *other*.
+
+        Args:
+            other: The size to test against.
+            allow_equal: If ``True``, sizes that match exactly are considered to
+                contain each other. If ``False``, this size must be strictly larger.
+
+        Returns:
+            ``True`` if this size can accommodate *other*, ``False`` otherwise.
+
+        Raises:
+            TypeError: If *other* is not a :class:`PageSize`.
+        """
+        if not isinstance(other, PageSize):
+            raise TypeError("other must be a PageSize")
+        if allow_equal:
+            return self.width >= other.width and self.height >= other.height
+        return self.width > other.width and self.height > other.height
+
 
 def _positive(value: float, name: str) -> float:
     """*value* as a finite positive float, or a refusal that names the field."""

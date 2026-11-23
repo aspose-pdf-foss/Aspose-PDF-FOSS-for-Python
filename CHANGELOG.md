@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PageSize.contains` method.** Added `contains(self, other: PageSize, *, allow_equal: bool = True) -> bool` to `PageSize`. The method returns ``True`` if this size's width and height are both greater than (when ``allow_equal=False``) or greater than or equal to (when ``allow_equal=True``, the default) those of *other*. The check is axis-aligned and orientation-sensitive: it does not consider rotation. Raises ``TypeError`` if *other* is not a ``PageSize``.
+
 - **Add `MarkupAnnotation.border` property.** Added a read/write property `border: tuple[float | None, str | None, tuple[float, ...]]` to `MarkupAnnotation`, making it available on all markup annotation subtypes including `SquareAnnotation`. Reading returns a 3-tuple ``(border_width, border_style, border_dash)`` where missing entries are ``None`` (or ``()`` for the dash pattern). Assigning a 3-tuple updates all three entries at once: ``None`` entries in the tuple leave the corresponding existing value unchanged, so ``(None, 'D', None)`` updates only the style. A tuple of incorrect length raises ``ValueError``. The setter does not regenerate the appearance stream; call :meth:`generate_appearance` separately if needed.
 
 - **Add `PolygonAnnotation.perimeter` property.** Added a read-only property `perimeter: float` to `PolygonAnnotation`. This property returns the total length of the polygon's boundary, computed as the sum of Euclidean distances between consecutive vertices plus the distance from the last vertex back to the first (closing the loop). Returns ``0.0`` if fewer than 2 vertices are present. No exceptions are raised.

@@ -170,6 +170,53 @@ def test_a_size_is_immutable():
 
 
 # ---------------------------------------------------------------------------
+# PageSize.contains
+# ---------------------------------------------------------------------------
+
+
+def test_contains_returns_true_when_this_size_is_larger():
+    # A4 is larger than A5 in both dimensions
+    assert PageSize.A4.contains(PageSize.A5) is True
+
+
+def test_contains_returns_false_when_this_size_is_smaller():
+    # A5 is smaller than A4 in both dimensions
+    assert PageSize.A5.contains(PageSize.A4) is False
+
+
+def test_contains_returns_true_for_identical_sizes_with_allow_equal_default():
+    # Identical sizes contain each other when allow_equal is True (default)
+    assert PageSize.A4.contains(PageSize.A4) is True
+
+
+def test_contains_returns_false_for_identical_sizes_with_allow_equal_false():
+    # Identical sizes do not contain each other when allow_equal is False
+    assert PageSize.A4.contains(PageSize.A4, allow_equal=False) is False
+
+
+def test_contains_raises_typeerror_for_nonPageSize():
+    with pytest.raises(TypeError):
+        PageSize.A4.contains((500, 800))
+
+
+def test_contains_raises_typeerror_for_string():
+    with pytest.raises(TypeError):
+        PageSize.A4.contains("A5")
+
+
+def test_contains_with_allow_equal_true():
+    # Test allow_equal=True explicitly
+    assert PageSize.A4.contains(PageSize.A5, allow_equal=True) is True
+
+
+def test_contains_with_allow_equal_false():
+    # Test allow_equal=False with strictly smaller size
+    assert PageSize.A4.contains(PageSize.A5, allow_equal=False) is True
+    # Identical sizes should return False
+    assert PageSize.A4.contains(PageSize.A4, allow_equal=False) is False
+
+
+# ---------------------------------------------------------------------------
 # Creating a page of a given size
 # ---------------------------------------------------------------------------
 
