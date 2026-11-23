@@ -222,6 +222,30 @@ def test_memory_font_source_parses_and_keeps_bytes():
     assert descriptor.get_font_bytes() == blob
 
 
+def test_memory_font_source_font_bytes_property():
+    blob = _make_truetype("Font1")
+    source = MemoryFontSource(blob, name="Font1")
+    # font_bytes returns the same object as font_data (identity)
+    assert source.font_bytes is source.font_data
+    assert source.font_bytes is blob
+
+
+def test_memory_font_source_font_bytes_multiple_sources():
+    blob1 = _make_truetype("Font1")
+    blob2 = _make_truetype("Font2")
+    source1 = MemoryFontSource(blob1, name="Font1")
+    source2 = MemoryFontSource(blob2, name="Font2")
+    assert source1.font_bytes is blob1
+    assert source2.font_bytes is blob2
+
+
+def test_memory_font_source_font_bytes_is_readonly():
+    blob = _make_truetype("Font1")
+    source = MemoryFontSource(blob, name="Font1")
+    with pytest.raises(AttributeError):
+        source.font_bytes = b""
+
+
 def test_file_font_source_reads_real_name_not_filename(tmp_path):
     path = tmp_path / "whatever-filename.ttf"
     blob = _make_truetype("Real Family")

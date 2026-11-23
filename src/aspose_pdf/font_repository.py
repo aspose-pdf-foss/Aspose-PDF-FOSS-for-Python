@@ -186,8 +186,19 @@ class MemoryFontSource(FontSource):
         name: str | None = None,
     ) -> None:
         super().__init__(priority=priority)
-        self.font_data = bytes(font_data)
+        self.font_data = font_data if isinstance(font_data, bytes) else bytes(font_data)
         self.name = name
+
+    @property
+    def font_bytes(self) -> bytes:
+        """Return the font file byte array.
+
+        This property is a compatibility alias for ``font_data``, provided for
+        porting code from Aspose.PDF for .NET which uses the name ``FontBytes``.
+        Reading returns the same bytes object as :attr:`font_data`.
+        Assigning to this property is not supported and raises ``AttributeError``.
+        """
+        return self.font_data
 
     def get_font_definitions(self) -> list[FontDescriptor]:
         return self._descriptors_from_bytes(

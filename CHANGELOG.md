@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `MemoryFontSource.font_bytes` property.** Added a read-only property `font_bytes: bytes` to `MemoryFontSource`. This property is a compatibility alias for :attr:`font_data`, provided for porting code from Aspose.PDF for .NET which uses the name ``FontBytes``. Reading returns the exact same bytes object as :attr:`font_data`. Assigning to this property raises ``AttributeError``.
+
 - **Add `XmpField.local_name` property.** Added a read/write property `local_name: str` to `XmpField`. This property is a compatibility alias for :attr:`name`, provided for porting code from Aspose.PDF for .NET which uses the name ``LocalName``. Reading returns the same value as :attr:`name`; assigning a string updates :attr:`name`. This allows .NET code using `field.LocalName` to run unchanged.
 
 - **Add `Page.stamp_count` property.** Added a read-only property `stamp_count: int` to `Page`. This property returns the number of annotations on the page whose subtype is ``Stamp``. The count is computed by filtering the page's annotations collection and does not include other annotation types. Returns ``0`` when no stamp annotations exist.
