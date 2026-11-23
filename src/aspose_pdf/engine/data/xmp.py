@@ -216,6 +216,24 @@ class XmpField:
         """
         return self.name == "" and self.prefix == "" and self.namespace_uri == "" and self.value is None
 
+    @property
+    def local_name(self) -> str:
+        """Return the name of the local.
+
+        This is a compatibility alias for :attr:`name`, provided for porting
+        code from Aspose.PDF for .NET that expects a ``LocalName`` property.
+        """
+        return self.name
+
+    @local_name.setter
+    def local_name(self, value: str) -> None:
+        """Set the name of the local.
+
+        This is a compatibility alias for :attr:`name`, provided for porting
+        code from Aspose.PDF for .NET that expects a ``LocalName`` property.
+        """
+        self.name = value
+
     LANG = "lang"
 
 

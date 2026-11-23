@@ -974,3 +974,58 @@ def test_xmp_field_is_empty_consistent_with_explicit_condition():
     non_empty_field = XmpField(name="test", prefix="dc", namespace_uri=DC, value="value")
     assert empty_field.is_empty == (empty_field.name == "" and empty_field.prefix == "" and empty_field.namespace_uri == "" and empty_field.value is None)
     assert non_empty_field.is_empty == (non_empty_field.name == "" and non_empty_field.prefix == "" and non_empty_field.namespace_uri == "" and non_empty_field.value is None)
+
+
+# ---------------------------------------------------------------------------
+# XmpField.local_name property (compatibility alias for .name)
+# ---------------------------------------------------------------------------
+
+
+def test_xmp_field_local_name_read_returns_same_as_name():
+    field = XmpField(name="part")
+    assert field.local_name == "part"
+    assert field.local_name == field.name
+
+
+def test_xmp_field_local_name_read_on_field_with_prefix():
+    field = XmpField(prefix="dc", name="title", namespace_uri=DC)
+    assert field.local_name == "title"
+    assert field.local_name == field.name
+
+
+def test_xmp_field_local_name_write_updates_name():
+    field = XmpField(name="original")
+    field.local_name = "modified"
+    assert field.name == "modified"
+    assert field.local_name == "modified"
+
+
+def test_xmp_field_local_name_write_with_empty_string():
+    field = XmpField(name="title")
+    field.local_name = ""
+    assert field.name == ""
+
+
+def test_xmp_field_local_name_is_symmetric_with_name():
+    field1 = XmpField(name="part")
+    field2 = XmpField(name="conformance")
+
+    # Read test: local_name should equal name
+    assert field1.local_name == field1.name
+    assert field2.local_name == field2.name
+
+    # Write via local_name, read via name
+    field1.local_name = "modified1"
+    assert field1.name == "modified1"
+
+    # Write via name, read via local_name
+    field2.name = "modified2"
+    assert field2.local_name == "modified2"
+
+
+def test_xmp_field_local_name_accepts_any_string():
+    field = XmpField()
+    field.local_name = "test-name_123"
+    assert field.name == "test-name_123"
+    field.local_name = ""
+    assert field.name == ""
