@@ -1176,62 +1176,6 @@ class PolygonAnnotation(_ShapeAnnotation):
 
         return total
 
-    @property
-    def bounding_box(self) -> tuple[float, float, float, float]:
-        """The smallest axis-aligned rectangle containing the polygon (``Rect``).
-
-        Returns a 4-tuple ``(x_min, y_min, x_max, y_max)`` computed from the
-        current ``vertices``. Raises ``ValueError`` if the vertices list is empty.
-
-        Assigning a valid 4-tuple updates the annotation's ``/Rect`` to match the
-        given bounding box; this does not move the vertices, it only adjusts the
-        annotation's bounding rectangle metadata. Setting with invalid input
-        (e.g., non-monotonic coordinates) raises ``ValueError``. The property
-        does not affect the annotation's appearance unless ``generate_appearance()``
-        is called.
-        """
-        points = self.vertices
-        if not points:
-            raise ValueError("PolygonAnnotation.bounding_box requires at least one vertex")
-
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        computed = (min(xs), min(ys), max(xs), max(ys))
-
-        # Check if user explicitly set bounding_box via setter by looking for a
-        # marker in properties
-        if self.get_property("_bbox_override"):
-            return self.rect
-
-        return computed
-
-    @bounding_box.setter
-    def bounding_box(self, value: tuple[float, float, float, float]) -> None:
-        if not isinstance(value, tuple):
-            raise TypeError(
-                "bounding_box must be a 4-tuple of floats"
-            )
-        if len(value) != 4:
-            raise ValueError(
-                f"bounding_box must be a 4-tuple, not a {len(value)}-tuple"
-            )
-        for i, item in enumerate(value):
-            if not isinstance(item, (int, float)) or isinstance(item, bool):
-                raise TypeError(
-                    f"bounding_box[{i}] must be a number, not {type(item).__name__}"
-                )
-        x_min, y_min, x_max, y_max = value
-        if x_min > x_max:
-            raise ValueError(
-                f"bounding_box x_min ({x_min}) must be <= x_max ({x_max})"
-            )
-        if y_min > y_max:
-            raise ValueError(
-                f"bounding_box y_min ({y_min}) must be <= y_max ({y_max})"
-            )
-        self.set_property("_bbox_override", True)
-        self.rect = value
-
 
 class PolyLineAnnotation(PolygonAnnotation):
     """An open shape through a list of points (``PolyLine``)."""
