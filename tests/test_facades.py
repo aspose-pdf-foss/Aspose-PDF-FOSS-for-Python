@@ -321,6 +321,56 @@ def test_a_bookmark_on_a_page_the_document_does_not_have_is_refused():
         facade.create_bookmark_of_page("Nope", 5)
 
 
+def test_bookmarks_are_modified_by_title():
+    facade = PdfBookmarkEditor()
+    facade.bind_pdf(io.BytesIO(_document(4)))
+    facade.create_bookmarks([("Alpha", 1), ("Beta", 2), ("Alpha", 3)])
+    facade.extract_bookmarks()[1].add(OutlineItem("Beta", 2))
+
+    before = [item.title for item in facade.extract_bookmarks()]
+    nested_before = [child.title for child in facade.extract_bookmarks()[1].children]
+    assert before == ["Alpha", "Beta", "Alpha"]
+    assert nested_before == ["Beta"]
+
+    facade.modify_bookmarks("Alpha", "A1")
+    facade.modify_bookmarks("Beta", "B1")
+    facade.modify_bookmarks("NonExistent", "X")
+
+    after = [item.title for item in facade.extract_bookmarks()]
+    nested_after = [child.title for child in facade.extract_bookmarks()[1].children]
+    assert after == ["A1", "B1", "A1"]
+    assert nested_after == ["B1"]
+
+
+def test_bookmarks_modify_title_type_errors():
+    facade = PdfBookmarkEditor()
+    facade.bind_pdf(io.BytesIO(_document(2)))
+    facade.create_bookmarks([("Test", 1)])
+
+    with pytest.raises(TypeError, match="s_title must be a string"):
+        facade.modify_bookmarks(123, "New")
+
+    with pytest.raises(TypeError, match="d_title must be a string"):
+        facade.modify_bookmarks("Test", 456)
+
+
+def test_bookmarks_modify_preserves_destination_and_style():
+    facade = PdfBookmarkEditor()
+    facade.bind_pdf(io.BytesIO(_document(3)))
+    original = facade.create_bookmark_of_page("Old Title", 1, color="#cc3300", open=True)
+    original.destination = "named_dest"
+
+    facade.modify_bookmarks("Old Title", "New Title")
+
+    bookmarks = facade.extract_bookmarks()
+    assert len(bookmarks) == 1
+    modified = bookmarks[0]
+    assert modified.title == "New Title"
+    assert modified.destination == "named_dest"
+    assert modified.color == pytest.approx((0.8, 0.2, 0.0))
+    assert modified.open is True
+
+
 # ---------------------------------------------------------------------------
 # PdfAnnotationEditor
 # ---------------------------------------------------------------------------

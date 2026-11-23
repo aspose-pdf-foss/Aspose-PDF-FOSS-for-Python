@@ -1205,6 +1205,33 @@ class PdfBookmarkEditor(_BoundFacade):
             outlines.remove(item)
         return len(doomed)
 
+    def modify_bookmarks(self, s_title: str, d_title: str) -> None:
+        """Rename all bookmarks whose title exactly matches *s_title* to *d_title*.
+
+        The change is applied recursively to all levels of the outline tree.
+        The bookmark's destination, style, and children are preserved.
+        No error is raised if *s_title* is not found.
+
+        Raises
+        ------
+        TypeError
+            If *s_title* or *d_title* is not a string.
+        """
+        if not isinstance(s_title, str):
+            raise TypeError(f"s_title must be a string, got {type(s_title).__name__}")
+        if not isinstance(d_title, str):
+            raise TypeError(f"d_title must be a string, got {type(d_title).__name__}")
+
+        outlines = self.document.outlines
+
+        def walk(entries: list[Any]) -> None:
+            for entry in entries:
+                if entry.title == s_title:
+                    entry.title = d_title
+                walk(entry.children)
+
+        walk(list(outlines))
+
 
 class PdfAnnotationEditor(_BoundFacade):
     """Reading, deleting and flattening annotations across pages.

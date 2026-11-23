@@ -39,6 +39,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Add `PageSize.page_legal` property.** Added a read-only property alias `PageSize.page_legal` that returns `PageSize.by_name("LEGAL")`. This provides a compatibility name for users porting code from Aspose.PDF for .NET where the property is named `PageLegal`. The property returns a cached instance with width 612.0 and height 1008.0 PDF points (356x216 mm).
 
+- **Add `PdfBookmarkEditor.modify_bookmarks` method.** Added `modify_bookmarks(self, s_title: str, d_title: str) -> None` to `PdfBookmarkEditor`. The method recursively traverses all levels of the outline tree and replaces any bookmark title that exactly matches `s_title` with `d_title`. The bookmark's destination, style, and children are preserved. No error is raised if `s_title` is not found; the method performs a no-op in that case.
+
 - **Add `PageSize.page_letter` property.** Added a read-only property alias `PageSize.page_letter` that returns `PageSize.by_name("LETTER")`. This provides a compatibility name for users porting code from Aspose.PDF for .NET where the property is named `PageLetter`. The property returns a cached instance with width 612.0 and height 792.0 PDF points (279x216 mm).
 
 - **Add `Field.clear_value()` method.** Added `clear_value(self) -> Field` to the `Field` class. This method resets the field's `value` attribute to its `default_value`. Does not modify `default_value` or `actions`. Returns `self` to allow method chaining. Works for text, checkbox, radio, listbox, and combobox fields. Signature fields and push-button fields raise `PdfValidationException` because they do not support `default_value`.
