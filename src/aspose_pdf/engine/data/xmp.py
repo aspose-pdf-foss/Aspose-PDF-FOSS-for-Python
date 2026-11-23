@@ -193,6 +193,9 @@ class XmpField:
     holds any RDF qualifiers attached to the value (the ``rdf:value`` +
     qualifier-sibling form); it is used for fields nested inside an array item
     or struct member — top-level qualified properties use :class:`XmpProperty`.
+
+    Use :attr:`is_empty` to check whether this field has no identifying metadata
+    or value.
     """
 
     prefix: str = ""
@@ -202,6 +205,16 @@ class XmpField:
     language: str | None = None
     is_uri: bool = False
     qualifiers: list[XmpField] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        """Return ``True`` if this field has no identifying metadata or value.
+
+        Returns ``True`` when ``name``, ``prefix``, and ``namespace_uri`` are
+        all empty strings and ``value`` is ``None``; otherwise ``False``.
+        This property does not consider ``language``, ``is_uri``, or ``qualifiers``.
+        """
+        return self.name == "" and self.prefix == "" and self.namespace_uri == "" and self.value is None
 
     LANG = "lang"
 

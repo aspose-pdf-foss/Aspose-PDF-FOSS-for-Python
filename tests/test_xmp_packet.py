@@ -922,3 +922,55 @@ def test_engine_metadata_stream_written_to_catalog():
     out = pdf.to_bytes()
     assert b"/Type /Metadata" in out or b"/Type/Metadata" in out
     assert b"<dc:title>T</dc:title>" in out
+
+
+# ---------------------------------------------------------------------------
+# XmpField.is_empty property
+# ---------------------------------------------------------------------------
+
+
+def test_xmp_field_is_empty_true_for_default_instance():
+    field = XmpField()
+    assert field.is_empty is True
+
+
+def test_xmp_field_is_empty_false_when_name_set():
+    field = XmpField(name="title")
+    assert field.is_empty is False
+
+
+def test_xmp_field_is_empty_false_when_prefix_set():
+    field = XmpField(prefix="dc")
+    assert field.is_empty is False
+
+
+def test_xmp_field_is_empty_false_when_namespace_uri_set():
+    field = XmpField(namespace_uri="http://purl.org/dc/elements/1.1/")
+    assert field.is_empty is False
+
+
+def test_xmp_field_is_empty_false_when_value_set():
+    field = XmpField(value="test")
+    assert field.is_empty is False
+
+
+def test_xmp_field_is_empty_false_with_qualifiers_present():
+    field = XmpField(name="title", prefix="dc", namespace_uri=DC, value="Test", qualifiers=[XmpField(name="qual")])
+    assert field.is_empty is False
+
+
+def test_xmp_field_is_empty_false_with_language_present():
+    field = XmpField(name="title", prefix="dc", namespace_uri=DC, value="Test", language="en")
+    assert field.is_empty is False
+
+
+def test_xmp_field_is_empty_false_with_is_uri_set():
+    field = XmpField(name="title", prefix="dc", namespace_uri=DC, value="http://example.com", is_uri=True)
+    assert field.is_empty is False
+
+
+def test_xmp_field_is_empty_consistent_with_explicit_condition():
+    empty_field = XmpField()
+    non_empty_field = XmpField(name="test", prefix="dc", namespace_uri=DC, value="value")
+    assert empty_field.is_empty == (empty_field.name == "" and empty_field.prefix == "" and empty_field.namespace_uri == "" and empty_field.value is None)
+    assert non_empty_field.is_empty == (non_empty_field.name == "" and non_empty_field.prefix == "" and non_empty_field.namespace_uri == "" and non_empty_field.value is None)

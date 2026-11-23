@@ -39,6 +39,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Add `PageSize.page_legal` property.** Added a read-only property alias `PageSize.page_legal` that returns `PageSize.by_name("LEGAL")`. This provides a compatibility name for users porting code from Aspose.PDF for .NET where the property is named `PageLegal`. The property returns a cached instance with width 612.0 and height 1008.0 PDF points (356x216 mm).
 
+- **Add `XmpField.is_empty` property.** Added a read-only property `is_empty: bool` to `XmpField`. This property provides a compatibility alias for Aspose.PDF for .NET code that expects `XmpField.IsEmpty`. The property returns `True` when `name`, `prefix`, and `namespace_uri` are all empty strings and `value` is `None`; otherwise `False`. It does not consider `language`, `is_uri`, or `qualifiers`.
+
 - **Add `PdfBookmarkEditor.modify_bookmarks` method.** Added `modify_bookmarks(self, s_title: str, d_title: str) -> None` to `PdfBookmarkEditor`. The method recursively traverses all levels of the outline tree and replaces any bookmark title that exactly matches `s_title` with `d_title`. The bookmark's destination, style, and children are preserved. No error is raised if `s_title` is not found; the method performs a no-op in that case.
 
 - **Add `PageSize.page_letter` property.** Added a read-only property alias `PageSize.page_letter` that returns `PageSize.by_name("LETTER")`. This provides a compatibility name for users porting code from Aspose.PDF for .NET where the property is named `PageLetter`. The property returns a cached instance with width 612.0 and height 792.0 PDF points (279x216 mm).
