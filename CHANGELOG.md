@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PolygonAnnotation.bounding_box` property.** Added a read/write property `bounding_box: tuple[float, float, float, float]` to `PolygonAnnotation`. Reading returns a 4-tuple ``(x_min, y_min, x_max, y_max)`` computed from the current vertices. Raises ``ValueError`` if the vertices list is empty. Assigning a valid 4-tuple updates the annotation's ``/Rect`` to match the given bounding box; this does not move the vertices, it only adjusts the annotation's bounding rectangle metadata. Setting with invalid input (e.g., non-monotonic coordinates) raises ``ValueError``. This provides a convenient way to obtain or adjust the axis-aligned rectangle containing a polygon annotation for layout, grouping, and collision-detection tasks.
+
 - **Add `PolygonAnnotation.perimeter` property.** Added a read-only property `perimeter: float` to `PolygonAnnotation`. This property returns the total length of the polygon's boundary, computed as the sum of Euclidean distances between consecutive vertices plus the distance from the last vertex back to the first (closing the loop). Returns ``0.0`` if fewer than 2 vertices are present. No exceptions are raised.
 
 - **Add `MemoryFontSource.font_bytes` property.** Added a read-only property `font_bytes: bytes` to `MemoryFontSource`. This property is a compatibility alias for :attr:`font_data`, provided for porting code from Aspose.PDF for .NET which uses the name ``FontBytes``. Reading returns the exact same bytes object as :attr:`font_data`. Assigning to this property raises ``AttributeError``.
