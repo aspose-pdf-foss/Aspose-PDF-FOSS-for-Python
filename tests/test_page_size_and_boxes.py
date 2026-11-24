@@ -169,6 +169,34 @@ def test_a_size_is_immutable():
         PageSize.A4.width = 1
 
 
+def test_is_square_is_read_only():
+    with pytest.raises(AttributeError):
+        PageSize(100, 100).is_square = False
+
+
+def test_is_square_property():
+    # Square within tolerance: difference < 1e-9
+    assert PageSize(100.0, 100.0).is_square is True
+    assert PageSize(100.0, 100.0 + 1e-10).is_square is True
+    assert PageSize(100.0, 100.0 - 1e-10).is_square is True
+    assert PageSize(595.275591, 595.275591).is_square is True
+    # Not square: difference >= 1e-9
+    assert PageSize(100.0, 100.1).is_square is False
+    assert PageSize(100.0, 101.0).is_square is False
+    assert PageSize(100.0, 100.0 + 1e-9).is_square is False
+    # Negative dimensions are not allowed by validation, but if they were,
+    # -1.0 and 1.0 would not be equal (diff = 2.0 >= 1e-9)
+    # Rotated changes the result when width != height
+    assert PageSize(100.0, 200.0).rotated().is_square is False
+    assert PageSize(200.0, 100.0).rotated().is_square is False
+    # Scaled preserves squareness
+    assert PageSize(100.0, 100.0).scaled(2.0).is_square is True
+    assert PageSize(100.0, 100.0).scaled(0.5).is_square is True
+    # A4 is not square
+    assert PageSize.A4.is_square is False
+    assert PageSize.A4.rotated().is_square is False
+
+
 # ---------------------------------------------------------------------------
 # PageSize.contains
 # ---------------------------------------------------------------------------

@@ -121,6 +121,11 @@ class PageSize:
         scale = _positive(factor, "factor")
         return PageSize(self.width * scale, self.height * scale)
 
+    @property
+    def is_square(self) -> bool:
+        """Return True if the page is square within a 1e-9 point tolerance."""
+        return abs(self.width - self.height) < 1e-9
+
     def __eq__(self, other: object) -> bool:
         """Two sizes are equal when they write the same numbers into a file.
 
