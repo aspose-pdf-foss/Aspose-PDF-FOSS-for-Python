@@ -9,6 +9,8 @@ compression/GC decoupling, and the public ``Document`` / low-code surfaces.
 import io
 import zlib
 
+import pytest
+
 from aspose_pdf import (
     ByteArrayDataSource,
     Document,
@@ -549,3 +551,153 @@ def test_dedup_images_soft_mask_difference_prevents_collapse():
     assert masked.object_number != plain.object_number
     assert masked.object_number in cos.objects
     assert plain.object_number in cos.objects
+
+
+# ---------------------------------------------------------------------------
+# from_dict / to_dict round-tripping
+# ---------------------------------------------------------------------------
+
+
+def test_from_dict_accepts_partial_keys_and_ignores_unknown():
+    data = {
+        "remove_unused_objects": False,
+        "image_compression_quality": 90,
+        "typo_key": "should_be_ignored",
+        "image_target_dpi": 150,
+    }
+    opts = OptimizationOptions.from_dict(data)
+
+    assert opts.remove_unused_objects is False
+    assert opts.image_compression_quality == 90
+    assert opts.image_target_dpi == 150
+    # Use defaults for missing keys
+    assert opts.remove_unused_streams is True
+    assert opts.link_duplicate_streams is True
+
+
+def test_from_dict_validates_boolean_fields():
+    data = {"remove_unused_objects": "not_a_bool"}
+
+    with pytest.raises(ValueError) as exc_info:
+        OptimizationOptions.from_dict(data)
+
+    assert "remove_unused_objects must be a boolean value" in str(exc_info.value)
+
+
+def test_from_dict_validates_image_compression_quality_type():
+    data = {"image_compression_quality": "not_an_int"}
+
+    with pytest.raises(ValueError) as exc_info:
+        OptimizationOptions.from_dict(data)
+
+    assert "image_compression_quality must be an integer or None" in str(exc_info.value)
+
+
+def test_from_dict_validates_image_compression_quality_range():
+    data = {"image_compression_quality": 150}
+
+    with pytest.raises(ValueError) as exc_info:
+        OptimizationOptions.from_dict(data)
+
+    assert "image_compression_quality must be between 0 and 100" in str(exc_info.value)
+
+
+def test_from_dict_validates_image_max_dimension_type():
+    data = {"image_max_dimension": "not_an_int"}
+
+    with pytest.raises(ValueError) as exc_info:
+        OptimizationOptions.from_dict(data)
+
+    assert "image_max_dimension must be an integer or None" in str(exc_info.value)
+
+
+def test_from_dict_validates_image_max_dimension_positive():
+    data = {"image_max_dimension": 0}
+
+    with pytest.raises(ValueError) as exc_info:
+        OptimizationOptions.from_dict(data)
+
+    assert "image_max_dimension must be a positive pixel count" in str(exc_info.value)
+
+
+def test_from_dict_validates_image_target_dpi_type():
+    data = {"image_target_dpi": "not_an_int"}
+
+    with pytest.raises(ValueError) as exc_info:
+        OptimizationOptions.from_dict(data)
+
+    assert "image_target_dpi must be an integer or None" in str(exc_info.value)
+
+
+def test_from_dict_validates_image_target_dpi_positive():
+    data = {"image_target_dpi": -10}
+
+    with pytest.raises(ValueError) as exc_info:
+        OptimizationOptions.from_dict(data)
+
+    assert "image_target_dpi must be a positive DPI value" in str(exc_info.value)
+
+
+def test_from_dict_allows_none_for_optional_int_fields():
+    data = {
+        "image_compression_quality": None,
+        "image_max_dimension": None,
+        "image_target_dpi": None,
+    }
+    opts = OptimizationOptions.from_dict(data)
+
+    assert opts.image_compression_quality is None
+    assert opts.image_max_dimension is None
+    assert opts.image_target_dpi is None
+
+
+def test_from_dict_roundtrips_with_to_dict():
+    orig = OptimizationOptions(
+        remove_unused_objects=False,
+        remove_unused_streams=True,
+        allow_reuse_page_content=True,
+        link_duplicate_streams=True,
+        unembed_fonts=False,
+        image_compression_quality=75,
+        image_max_dimension=2000,
+        image_target_dpi=150,
+        image_progressive=False,
+        remove_duplicate_images=True,
+        compress_fonts=True,
+        use_object_streams=True,
+        subset_fonts=False,
+    )
+    data = orig.to_dict()
+    restored = OptimizationOptions.from_dict(data)
+
+    assert restored.remove_unused_objects is orig.remove_unused_objects
+    assert restored.remove_unused_streams is orig.remove_unused_streams
+    assert restored.allow_reuse_page_content is orig.allow_reuse_page_content
+    assert restored.link_duplicate_streams is orig.link_duplicate_streams
+    assert restored.unembed_fonts is orig.unembed_fonts
+    assert restored.image_compression_quality == orig.image_compression_quality
+    assert restored.image_max_dimension == orig.image_max_dimension
+    assert restored.image_target_dpi == orig.image_target_dpi
+    assert restored.image_progressive is orig.image_progressive
+    assert restored.remove_duplicate_images is orig.remove_duplicate_images
+    assert restored.compress_fonts is orig.compress_fonts
+    assert restored.use_object_streams is orig.use_object_streams
+    assert restored.subset_fonts is orig.subset_fonts
+
+
+def test_from_dict_empty_dict_uses_all_defaults():
+    opts = OptimizationOptions.from_dict({})
+
+    assert opts.remove_unused_objects is True
+    assert opts.remove_unused_streams is True
+    assert opts.allow_reuse_page_content is True
+    assert opts.link_duplicate_streams is True
+    assert opts.unembed_fonts is False
+    assert opts.image_compression_quality is None
+    assert opts.image_max_dimension is None
+    assert opts.image_target_dpi is None
+    assert opts.image_progressive is False
+    assert opts.remove_duplicate_images is True
+    assert opts.compress_fonts is True
+    assert opts.use_object_streams is True
+    assert opts.subset_fonts is False

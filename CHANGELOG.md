@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `OptimizationOptions.from_dict` classmethod.** Added `from_dict(cls, data: dict[str, object]) -> OptimizationOptions` to `OptimizationOptions`. The method constructs an `OptimizationOptions` instance from a dictionary, mapping keys to constructor parameters. Unrecognized keys are ignored, and missing keys use constructor defaults. Boolean fields require `bool` values, and integer fields (`image_compression_quality`, `image_max_dimension`, `image_target_dpi`) require `int` or `None`. Raises `ValueError` for invalid types or out-of-range numeric values (e.g., `image_compression_quality` outside 0–100). The returned instance round-trips with the existing `to_dict` method.
+
 - **Add `PageCollection.reverse()` method.** Added `reverse(self) -> None` to `PageCollection`. The method reverses the order of pages in-place: the first page becomes the last, the second-to-last becomes the second, etc. The method modifies the collection and the underlying document; no new document is created. If the collection is empty or has one page, the method is a no-op. The operation preserves all page metadata and properties (e.g., rotation, annotations, form fields, page labels, bookmarks that point to pages).
 
 - **Add `PageSize.difference` method.** Added `difference(self, other: PageSize) -> tuple[float, float]` to `PageSize`. The method returns a tuple *(delta_width, delta_height)* where *delta_width* is *other.width* minus *self.width* and *delta_height* is *other.height* minus *self.height*. The result is signed: a positive value means *other* is larger in that dimension. Raises ``TypeError`` if *other* does not have *width* and *height* attributes.
