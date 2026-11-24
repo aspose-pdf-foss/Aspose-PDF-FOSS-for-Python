@@ -863,6 +863,10 @@ class PdfFileEditor:
 
         Returns:
             True on success, False on failure
+
+        Note:
+            Position must be between 1 and N+1 inclusive, where N is the number
+            of pages in the base document.
         """
         self._ensure_not_disposed()
         self._operation_start()
@@ -874,11 +878,18 @@ class PdfFileEditor:
             base = SimplePdf.from_file(source)
             to_insert = SimplePdf.from_file(insert_file)
 
+            if position < 1:
+                return self._operation_fail(
+                    AsposePdfException("position must be >= 1")
+                )
+            if position > len(base.pages) + 1:
+                return self._operation_fail(
+                    AsposePdfException(
+                        f"position must be <= {len(base.pages) + 1}"
+                    )
+                )
+
             pos = position - 1
-            if pos < 0:
-                pos = 0
-            if pos > len(base.pages):
-                pos = len(base.pages)
 
             # The same page import the rest of the library uses. Passing the
             # rectangles and the content bytes -- which is what this did --

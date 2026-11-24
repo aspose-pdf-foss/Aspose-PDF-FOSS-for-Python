@@ -111,15 +111,83 @@ def test_insert_and_merge_agree(documents, tmp_path):
     [
         (1, ["other text", "base text"]),
         (2, ["base text", "other text"]),
-        (99, ["base text", "other text"]),  # past the end lands at the end
-        (0, ["other text", "base text"]),  # and before the start, at the start
     ],
 )
 def test_the_position_is_where_the_page_lands(documents, tmp_path, position, expected):
+    # documents fixture creates 1-page base and 1-page insert
     base, other = documents
     output = tmp_path / f"out{position}.pdf"
     PdfFileEditor().insert(str(base), str(other), str(output), position)
     assert [page["text"] for page in _facts(output)["pages"]] == expected
+
+
+def test_insert_at_end_of_two_page_document(tmp_path: Path) -> None:
+    # Test position=len+1 for a 2-page document
+    base_path = tmp_path / "base.pdf"
+    insert_path = tmp_path / "insert.pdf"
+    output_path = tmp_path / "out.pdf"
+
+    base = Document()
+    base.pages.add().add_text("base 1", x=40, y=700)
+    base.pages.add().add_text("base 2", x=40, y=700)
+    base.save(str(base_path))
+
+    insert = Document()
+    insert.pages.add().add_text("other", x=40, y=700)
+    insert.save(str(insert_path))
+
+    PdfFileEditor().insert(str(base_path), str(insert_path), str(output_path), 3)
+
+    facts = _facts(output_path)
+    assert [page["text"] for page in facts["pages"]] == ["base 1", "base 2", "other"]
+
+
+def test_position_zero_returns_false_and_sets_last_exception(documents, tmp_path):
+    base, other = documents
+    output = tmp_path / "out0.pdf"
+    editor = PdfFileEditor()
+    result = editor.insert(str(base), str(other), str(output), 0)
+    assert result is False
+    assert editor.last_exception is not None
+    assert "position must be >= 1" in str(editor.last_exception)
+
+
+def test_position_beyond_length_plus_one_returns_false_and_sets_last_exception(
+    documents, tmp_path
+):
+    base, other = documents
+    output = tmp_path / "out99.pdf"
+    editor = PdfFileEditor()
+    result = editor.insert(str(base), str(other), str(output), 99)
+    assert result is False
+    assert editor.last_exception is not None
+    assert "position must be <=" in str(editor.last_exception)
+
+
+def test_insert_into_empty_base_at_position_1(tmp_path: Path) -> None:
+    # Test inserting at position=1 into an empty document (0 pages)
+    base_path = tmp_path / "base.pdf"
+    insert_path = tmp_path / "insert.pdf"
+    output_path = tmp_path / "out.pdf"
+
+    # Create empty base (no pages)
+    base = Document()
+    base.save(str(base_path))
+
+    # Create document with one page to insert
+    insert = Document()
+    insert.pages.add().add_text("inserted", x=40, y=700)
+    insert.save(str(insert_path))
+
+    # Insert at position=1 (valid for empty document)
+    editor = PdfFileEditor()
+    result = editor.insert(str(base_path), str(insert_path), str(output_path), 1)
+    assert result is True
+
+    # Verify the inserted page is present
+    output = Document(str(output_path))
+    assert len(output.pages) == 1
+    assert "inserted" in output.pages[1].extract_text()
 
 
 def test_several_pages_keep_their_order(tmp_path):
