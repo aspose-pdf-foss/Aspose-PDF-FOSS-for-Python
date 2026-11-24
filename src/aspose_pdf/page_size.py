@@ -11,7 +11,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Protocol
+
+
+class SupportsSize(Protocol):
+    """A duck-typed object with width and height attributes."""
+
+    width: float
+    height: float
+
 
 __all__ = ["PageSize"]
 
@@ -185,6 +193,30 @@ class PageSize:
         if allow_equal:
             return self.width >= other.width and self.height >= other.height
         return self.width > other.width and self.height > other.height
+
+    def difference(self, other: SupportsSize) -> tuple[float, float]:
+        """The difference from this size to *other*.
+
+        Returns a tuple *(delta_width, delta_height)* where *delta_width* is
+        *other.width* minus *self.width* and *delta_height* is *other.height*
+        minus *self.height*. The result is signed: a positive value means
+        *other* is larger in that dimension.
+
+        Args:
+            other: The size to subtract from this one.
+
+        Returns:
+            A tuple *(delta_width, delta_height)* of the dimension differences.
+
+        Raises:
+            TypeError: If *other* does not have *width* and *height* attributes.
+        """
+        try:
+            other_width = other.width
+            other_height = other.height
+        except AttributeError as exc:
+            raise TypeError("other must have width and height attributes") from exc
+        return (other_width - self.width, other_height - self.height)
 
 
 def _positive(value: float, name: str) -> float:

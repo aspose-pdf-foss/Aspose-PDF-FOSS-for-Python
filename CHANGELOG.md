@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PageSize.difference` method.** Added `difference(self, other: PageSize) -> tuple[float, float]` to `PageSize`. The method returns a tuple *(delta_width, delta_height)* where *delta_width* is *other.width* minus *self.width* and *delta_height* is *other.height* minus *self.height*. The result is signed: a positive value means *other* is larger in that dimension. Raises ``TypeError`` if *other* does not have *width* and *height* attributes.
+
 - **Add `PageSize.is_square` property.** Added a read-only property `is_square: bool` to `PageSize`. This property returns ``True`` if ``abs(self.width - self.height) < 1e-9``, otherwise ``False``. The comparison uses a fixed tolerance of 1e-9 PDF points to account for floating-point rounding. The value reflects the current dimensions, so calling ``rotated()`` or ``scaled()`` may change the result. Assigning to this property raises ``AttributeError`` because the property is read-only.
 
 - **Add `PageSize.contains` method.** Added `contains(self, other: PageSize, *, allow_equal: bool = True) -> bool` to `PageSize`. The method returns ``True`` if this size's width and height are both greater than (when ``allow_equal=False``) or greater than or equal to (when ``allow_equal=True``, the default) those of *other*. The check is axis-aligned and orientation-sensitive: it does not consider rotation. Raises ``TypeError`` if *other* is not a ``PageSize``.

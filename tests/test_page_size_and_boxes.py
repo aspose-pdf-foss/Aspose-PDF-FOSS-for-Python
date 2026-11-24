@@ -245,6 +245,62 @@ def test_contains_with_allow_equal_false():
 
 
 # ---------------------------------------------------------------------------
+# PageSize.difference
+# ---------------------------------------------------------------------------
+
+
+def test_difference_returns_correct_delta_for_two_sizes():
+    # Two different size pairs that yield distinct expected deltas
+    s1 = PageSize(200, 300)  # width=200, height=300
+    s2 = PageSize(150, 400)  # width=150, height=400
+    # s1.difference(s2): (150 - 200, 400 - 300) = (-50, 100)
+    # s2.difference(s1): (200 - 150, 300 - 400) = (50, -100)
+    assert s1.difference(s2) == (-50.0, 100.0)
+    assert s2.difference(s1) == (50.0, -100.0)
+
+
+def test_difference_with_identical_sizes_returns_zero():
+    size = PageSize(300, 400)
+    assert size.difference(size) == (0.0, 0.0)
+
+
+def test_difference_returns_floats():
+    # The method should return floats even for integer inputs
+    result = PageSize(100, 200).difference(PageSize(150, 300))
+    assert result == (50.0, 100.0)
+    assert isinstance(result[0], float)
+    assert isinstance(result[1], float)
+
+
+def test_difference_raises_typeerror_for_invalid_other():
+    size = PageSize(100, 200)
+    with pytest.raises(TypeError):
+        size.difference((150, 300))  # tuple has no width/height attributes
+    with pytest.raises(TypeError):
+        size.difference({"width": 150, "height": 300})  # dict, not duck-typed properly
+    with pytest.raises(TypeError):
+        size.difference("A4")  # string, no width/height attributes
+
+
+def test_difference_with_named_sizes():
+    # Test with named PageSize constants
+    # A4: 595.275591 x 841.889764 pt, A3: 841.889764 x 1190.551181 pt
+    # A4.difference(A3): (841.889764 - 595.275591, 1190.551181 - 841.889764)
+    assert PageSize.A4.difference(PageSize.A3) == pytest.approx((246.614173, 348.661417))
+    assert PageSize.A3.difference(PageSize.A4) == pytest.approx((-246.614173, -348.661417))
+
+
+def test_difference_does_not_mutate_either_size():
+    s1 = PageSize(200, 300)
+    s2 = PageSize(150, 400)
+    orig_s1 = (s1.width, s1.height)
+    orig_s2 = (s2.width, s2.height)
+    s1.difference(s2)
+    assert (s1.width, s1.height) == orig_s1
+    assert (s2.width, s2.height) == orig_s2
+
+
+# ---------------------------------------------------------------------------
 # Creating a page of a given size
 # ---------------------------------------------------------------------------
 
