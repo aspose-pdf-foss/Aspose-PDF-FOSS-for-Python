@@ -139,35 +139,6 @@ class Cell:
     border_colors: Mapping[str, Any] | None = None
     link: Action | Destination | str | None = None
 
-    def get_text_width(self) -> float:
-        """The estimated width in points of the cell's text using its font settings.
-
-        The width is calculated based on the font metrics:
-        - Monospace fonts (e.g., Courier): font_size * 0.5 * len(text)
-        - Proportional fonts (e.g., Times-Roman, Helvetica): font_size * 0.4 * len(text)
-
-        If font_name is not set or unrecognized, Helvetica metrics are used.
-        Returns 0.0 if text is empty or font_size is None.
-        """
-        if not self.text or self.font_size is None:
-            return 0.0
-
-        font_name = self.font_name
-        if font_name is None:
-            # Fall back to Helvetica
-            font_name = "Helvetica"
-
-        # Determine if monospace font
-        is_monospace = font_name.startswith("Courier")
-
-        if is_monospace:
-            # Monospace: each character is font_size * 0.5 wide
-            return self.font_size * 0.5 * len(self.text)
-        else:
-            # Proportional: average character width is font_size * 0.4
-            return self.font_size * 0.4 * len(self.text)
-
-
     @property
     def col_span(self) -> int:
         """Gets or sets the column span.
