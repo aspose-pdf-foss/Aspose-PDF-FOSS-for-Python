@@ -633,3 +633,81 @@ def test_a_font_that_is_not_one_of_the_fourteen_is_refused():
     table.add_row(["x"])
     with pytest.raises(PdfValidationException, match="standard 14"):
         page.add_table(table, 60, 700)
+
+
+# ---------------------------------------------------------------------------
+# get_text_width
+# ---------------------------------------------------------------------------
+
+
+def test_get_text_width_returns_zero_for_empty_text():
+    """Empty text should return 0.0 regardless of font settings."""
+    c = Cell("", font_name="Courier", font_size=10)
+    assert c.get_text_width() == 0.0
+    c2 = Cell("")
+    assert c2.get_text_width() == 0.0
+
+
+def test_get_text_width_returns_zero_for_none_font_size():
+    """None font_size should return 0.0."""
+    c = Cell("text", font_name="Courier", font_size=None)
+    assert c.get_text_width() == 0.0
+    c2 = Cell("text", font_size=None)
+    assert c2.get_text_width() == 0.0
+
+
+def test_get_text_width_monospace_courier():
+    """Courier is a monospace font: font_size * 0.5 * len(text)."""
+    c = Cell("text", font_name="Courier", font_size=10)
+    # 10 * 0.5 * 4 = 20.0
+    assert c.get_text_width() == 20.0
+
+
+def test_get_text_width_proportional_times_roman():
+    """Times-Roman is a proportional font: font_size * 0.4 * len(text)."""
+    c = Cell("text", font_name="Times-Roman", font_size=10)
+    # 10 * 0.4 * 4 = 16.0
+    assert c.get_text_width() == 16.0
+
+
+def test_get_text_width_falls_back_to_helvetica():
+    """Unrecognized or missing font_name falls back to Helvetica metrics."""
+    c1 = Cell("text", font_size=10)  # No font_name
+    c2 = Cell("text", font_name="Helvetica", font_size=10)
+    c3 = Cell("text", font_name="Comic Sans", font_size=10)
+    # All should use Helvetica metrics (proportional): 10 * 0.4 * 4 = 16.0
+    assert c1.get_text_width() == 16.0
+    assert c2.get_text_width() == 16.0
+    assert c3.get_text_width() == 16.0
+
+
+def test_get_text_width_with_different_font_sizes():
+    """Different font sizes produce proportional width changes."""
+    c1 = Cell("text", font_name="Courier", font_size=20)
+    c2 = Cell("text", font_name="Courier", font_size=5)
+    # 20 * 0.5 * 4 = 40.0
+    # 5 * 0.5 * 4 = 10.0
+    assert c1.get_text_width() == 40.0
+    assert c2.get_text_width() == 10.0
+
+
+def test_get_text_width_with_different_text_lengths():
+    """Different text lengths produce proportional width changes."""
+    c1 = Cell("t", font_name="Courier", font_size=10)
+    c2 = Cell("text", font_name="Courier", font_size=10)
+    c3 = Cell("text text", font_name="Courier", font_size=10)
+    # 10 * 0.5 * 1 = 5.0
+    # 10 * 0.5 * 4 = 20.0
+    # 10 * 0.5 * 9 = 45.0
+    assert c1.get_text_width() == 5.0
+    assert c2.get_text_width() == 20.0
+    assert c3.get_text_width() == 45.0
+
+
+def test_get_text_width_non_courier_monospace():
+    """Other non-Courier fonts use proportional metrics."""
+    c1 = Cell("text", font_name="Helvetica", font_size=10)
+    c2 = Cell("text", font_name="Times-Bold", font_size=10)
+    # Both use proportional: 10 * 0.4 * 4 = 16.0
+    assert c1.get_text_width() == 16.0
+    assert c2.get_text_width() == 16.0
