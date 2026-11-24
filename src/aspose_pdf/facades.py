@@ -780,6 +780,76 @@ class PdfFileEditor:
                         exc,
                     )
 
+    def extract_pages(
+        self, source: str, destination: str, pages: list[int]
+    ) -> bool:
+        """Extract arbitrary pages from source to destination.
+
+        Args:
+            source: Source file path
+            destination: Output file path
+            pages: List of 1-based page numbers to extract (duplicates allowed)
+
+        Returns:
+            True on success, False on failure
+
+        Raises:
+            ValueError: If pages list is empty, if any page number is <= 0, or if any page number exceeds the source document's page count
+        """
+        self._ensure_not_disposed()
+        self._operation_start()
+        doc: Any = None
+        result: Any = None
+        try:
+            from aspose_pdf.engine.simple_pdf import SimplePdf
+
+            doc = SimplePdf.from_file(source)
+
+            page_count = len(doc.pages)
+            if page_count == 0:
+                return self._operation_fail(
+                    AsposePdfException("Source document has no pages")
+                )
+
+            if not pages:
+                raise ValueError("pages list must not be empty")
+
+            for p in pages:
+                if p <= 0:
+                    raise ValueError(
+                        f"Page number must be positive, got {p}"
+                    )
+                if p > page_count:
+                    raise ValueError(
+                        f"Page number {p} exceeds source document page count {page_count}"
+                    )
+
+            indices = [p - 1 for p in pages]
+            result = doc.extract_pages(indices)
+            result.save(destination)
+            return True
+        except ValueError:
+            raise
+        except PDF_OPERATION_ERRORS as exc:
+            return self._operation_fail(exc)
+        finally:
+            if result is not None:
+                try:
+                    result.dispose()
+                except PDF_OPERATION_ERRORS as exc:
+                    logger.warning(
+                        "PdfFileEditor: dispose failed for extract_pages result: %s",
+                        exc,
+                    )
+            if doc is not None:
+                try:
+                    doc.dispose()
+                except PDF_OPERATION_ERRORS as exc:
+                    logger.warning(
+                        "PdfFileEditor: dispose failed for extract_pages source: %s",
+                        exc,
+                    )
+
     def insert(
         self, source: str, insert_file: str, destination: str, position: int
     ) -> bool:
