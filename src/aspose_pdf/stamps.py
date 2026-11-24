@@ -391,6 +391,35 @@ class PageNumberStamp(TextStamp):
     value: str = "{page}"
     starting_number: int = 1
 
+    @staticmethod
+    def add_page_number(value: str, page_number: int, starting_number: int = 1) -> str:
+        """Compute a formatted page number string without creating a stamp instance.
+
+        Args:
+            value: Format string containing ``{page}`` placeholder or a plain string.
+            page_number: The page number offset (can be negative or zero).
+            starting_number: The base number to start counting from. Defaults to 1.
+
+        Returns:
+            The formatted string with ``{page}`` replaced by the computed number,
+            or the computed number as a string if ``{page}`` is not present.
+
+        Raises:
+            ValueError: If ``value`` is not a string, ``page_number`` is not an int,
+                or ``starting_number`` is not an int.
+        """
+        if not isinstance(value, str):
+            raise ValueError("value must be a string")
+        if not isinstance(page_number, int):
+            raise ValueError("page_number must be an int")
+        if not isinstance(starting_number, int):
+            raise ValueError("starting_number must be an int")
+
+        n = max(1, starting_number + page_number - 1)
+        if "{page}" in value:
+            return value.replace("{page}", str(n))
+        return str(n)
+
     def _validate(self) -> None:
         super()._validate()
         if int(self.starting_number) != self.starting_number:

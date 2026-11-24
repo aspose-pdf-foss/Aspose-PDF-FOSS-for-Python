@@ -265,3 +265,36 @@ def test_labels_are_read_from_streaming_encrypted_pdfs(tmp_path):
                 assert _texts(reopened) == ["", "A-6/2"]
                 assert [page.label for page in reopened.pages] == ["A-5", "A-6"]
     assert source.read_bytes() == original
+
+
+def test_page_number_stamp_add_page_number_static_method():
+    # Basic substitution with {page} placeholder
+    assert PageNumberStamp.add_page_number("Page:{page}", 3, starting_number=3) == "Page:5"
+    # Negative page_number clamped to 1
+    assert PageNumberStamp.add_page_number("{page}", -2, starting_number=1) == "1"
+    # Without {page}, returns the computed number alone
+    assert PageNumberStamp.add_page_number("Page-", 5, starting_number=7) == "11"
+    # Default starting_number of 1
+    assert PageNumberStamp.add_page_number("{page}", 5) == "5"
+    # Zero page_number edge case
+    assert PageNumberStamp.add_page_number("P-{page}", 0, starting_number=1) == "P-1"
+    # Large numbers
+    assert PageNumberStamp.add_page_number("Page {page}", 100, starting_number=100) == "Page 199"
+
+
+def test_page_number_stamp_add_page_number_validation():
+    # value must be a string
+    with pytest.raises(ValueError, match="value must be a string"):
+        PageNumberStamp.add_page_number(123, 5)
+    with pytest.raises(ValueError, match="value must be a string"):
+        PageNumberStamp.add_page_number(None, 5)
+    # page_number must be an int
+    with pytest.raises(ValueError, match="page_number must be an int"):
+        PageNumberStamp.add_page_number("{page}", "5")
+    with pytest.raises(ValueError, match="page_number must be an int"):
+        PageNumberStamp.add_page_number("{page}", 5.5)
+    # starting_number must be an int
+    with pytest.raises(ValueError, match="starting_number must be an int"):
+        PageNumberStamp.add_page_number("{page}", 5, starting_number=1.5)
+    with pytest.raises(ValueError, match="starting_number must be an int"):
+        PageNumberStamp.add_page_number("{page}", 5, starting_number="1")
