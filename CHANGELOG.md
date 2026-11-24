@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `PageCollection.reverse()` method.** Added `reverse(self) -> None` to `PageCollection`. The method reverses the order of pages in-place: the first page becomes the last, the second-to-last becomes the second, etc. The method modifies the collection and the underlying document; no new document is created. If the collection is empty or has one page, the method is a no-op. The operation preserves all page metadata and properties (e.g., rotation, annotations, form fields, page labels, bookmarks that point to pages).
+
 - **Add `PageSize.difference` method.** Added `difference(self, other: PageSize) -> tuple[float, float]` to `PageSize`. The method returns a tuple *(delta_width, delta_height)* where *delta_width* is *other.width* minus *self.width* and *delta_height* is *other.height* minus *self.height*. The result is signed: a positive value means *other* is larger in that dimension. Raises ``TypeError`` if *other* does not have *width* and *height* attributes.
 
 - **Add `PageSize.is_square` property.** Added a read-only property `is_square: bool` to `PageSize`. This property returns ``True`` if ``abs(self.width - self.height) < 1e-9``, otherwise ``False``. The comparison uses a fixed tolerance of 1e-9 PDF points to account for floating-point rounding. The value reflects the current dimensions, so calling ``rotated()`` or ``scaled()`` may change the result. Assigning to this property raises ``AttributeError`` because the property is read-only.

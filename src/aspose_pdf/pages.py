@@ -4002,6 +4002,25 @@ class PageCollection:
         """Public API alias for :meth:`pop`."""
         return self.pop(index)
 
+    def reverse(self) -> None:
+        """Reverse the order of pages in the collection in-place.
+
+        The first page becomes the last, the second-to-last becomes the second,
+        etc. The method modifies the collection and the underlying document;
+        no new document is created.
+
+        If the collection is empty or has one page, the method is a no-op.
+
+        The operation preserves all page metadata and properties (e.g., rotation,
+        annotations, form fields, page labels, bookmarks that point to pages).
+
+        Returns
+        -------
+        None
+        """
+        self._ensure_not_disposed()
+        self._document._engine_pdf.reverse()
+
     def contains(self, page: Page) -> bool:
         """Return True if page is present in the collection."""
         self._ensure_not_disposed()

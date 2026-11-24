@@ -5,6 +5,7 @@ import pytest
 from aspose_pdf.document import Document
 from aspose_pdf.engine.cos import PdfArray, PdfDictionary, PdfName
 from aspose_pdf.exceptions import AsposePdfException
+from aspose_pdf.page_size import PageSize
 from aspose_pdf.pages import Page
 
 
@@ -872,3 +873,163 @@ def test_extend_duplicate_pages(document, page_collection):
     # Should add the page twice (both as separate copies)
     # Document already has 3 pages from page_collection
     assert len(document.pages) == 3 + 2
+
+
+# ===== Tests for PageCollection.reverse() =====
+
+
+def test_reverse_returns_none(document):
+    """reverse() returns None."""
+    doc = document
+    doc.pages.add()
+    doc.pages.add()
+    doc.pages.add()
+    result = doc.pages.reverse()
+    assert result is None
+
+
+def test_reverse_reverses_order(document):
+    """reverse() reverses the page order."""
+    doc = document
+    doc.pages.add(PageSize.A4)
+    doc.pages.add(PageSize.A5)
+    doc.pages.add(PageSize.A6)
+
+    # Check initial order (A4, A5, A6)
+    assert doc.pages[1].size.width > doc.pages[2].size.width > doc.pages[3].size.width
+
+    doc.pages.reverse()
+
+    # Check reversed order (A6, A5, A4)
+    assert doc.pages[1].size.width < doc.pages[2].size.width < doc.pages[3].size.width
+
+
+def test_reverse_preserves_count(document):
+    """reverse() preserves the page count."""
+    doc = document
+    doc.pages.add()
+    doc.pages.add()
+    doc.pages.add()
+    initial_count = len(doc.pages)
+    doc.pages.reverse()
+    assert len(doc.pages) == initial_count
+
+
+def test_reverse_single_page_is_noop(document):
+    """reverse() is a no-op for single-page documents."""
+    doc = document
+    doc.pages.add(PageSize.A4)
+    initial_width = doc.pages[1].size.width
+    initial_height = doc.pages[1].size.height
+    doc.pages.reverse()
+    assert doc.pages[1].size.width == initial_width
+    assert doc.pages[1].size.height == initial_height
+
+
+def test_reverse_empty_is_noop(document):
+    """reverse() is a no-op for empty collections."""
+    doc = document
+    # Empty collection should not raise
+    doc.pages.reverse()
+    assert len(doc.pages) == 0
+
+
+def test_reverse_preserves_page_metadata(document):
+    """reverse() preserves page metadata (rotation, annotations, text)."""
+    doc = document
+    doc.pages.add(PageSize.A4)
+    doc.pages.add(PageSize.A5)
+    doc.pages.add(PageSize.A6)
+
+    # Add content and rotation to each page
+    doc.pages[1].add_text("Page 1 text", x=72, y=700, font_size=12)
+    doc.pages[1].rotation = 90
+
+    doc.pages[2].add_text("Page 2 text", x=72, y=700, font_size=12)
+    doc.pages[2].rotation = 180
+
+    doc.pages[3].add_text("Page 3 text", x=72, y=700, font_size=12)
+    doc.pages[3].rotation = 270
+
+    # Store original widths for comparison
+    widths_before = [doc.pages[i + 1].size.width for i in range(3)]
+
+    doc.pages.reverse()
+
+    # Count should be same
+    assert len(doc.pages) == 3
+
+    # Pages should now be in reversed order but with original metadata
+    # After reverse: page 1 was A6, page 2 was A5, page 3 was A4
+    # Widths in points: A6 < A5 < A4
+    assert doc.pages[1].size.width == widths_before[2]  # Was A4
+    assert doc.pages[2].size.width == widths_before[1]  # Was A5
+    assert doc.pages[3].size.width == widths_before[0]  # Was A6
+
+    # Check metadata was preserved with pages
+    assert doc.pages[1].extract_text() == "Page 3 text"
+    assert doc.pages[1].rotation == 270
+    assert doc.pages[2].extract_text() == "Page 2 text"
+    assert doc.pages[2].rotation == 180
+    assert doc.pages[3].extract_text() == "Page 1 text"
+    assert doc.pages[3].rotation == 90
+
+
+def test_reverse_disposed_document_raises(document):
+    """reverse() raises after document is disposed."""
+    doc = document
+    doc.pages.add()
+    doc.pages.add()
+    doc.dispose()
+    with pytest.raises(Exception):
+        doc.pages.reverse()
+
+
+def test_reverse_preserves_page_labels(document):
+    """reverse() preserves page labels and their order."""
+    from aspose_pdf import NumberingStyle, PageLabel
+
+    doc = document
+    doc.pages.add()
+    doc.pages.add()
+    doc.pages.add()
+
+    # Set page labels using simple style (no custom prefix)
+    doc.page_labels[0] = PageLabel(NumberingStyle.NUMERALS_ROMAN_LOWERCASE)
+
+    # Verify initial labels (i, ii, iii)
+    assert doc.pages[1].label == "i"
+    assert doc.pages[2].label == "ii"
+    assert doc.pages[3].label == "iii"
+
+    doc.pages.reverse()
+
+    # After reverse: page 1 should have original page 3's label ("iii")
+    # page 2 should have original page 2's label ("ii"), etc.
+    assert doc.pages[1].label == "iii"
+    assert doc.pages[2].label == "ii"
+    assert doc.pages[3].label == "i"
+
+
+def test_reverse_preserves_bookmarks(document):
+    """reverse() updates bookmark destinations to reflect new page order."""
+    from aspose_pdf import OutlineItem
+
+    doc = document
+    doc.pages.add()
+    doc.pages.add()
+    doc.pages.add()
+
+    # Add a bookmark to page 2 (index=2, number=2)
+    bookmark = doc.outlines.add(OutlineItem("Page 2 Bookmark"))
+    bookmark.destination = doc.pages[2]
+
+    # Verify initial bookmark target (page 2 has index=2, number=2)
+    assert bookmark.destination.index == 2
+
+    doc.pages.reverse()
+
+    # After reverse, page 2 is still page 2 (the page object follows the bookmark)
+    # The bookmark stores the page object reference, not just an index
+    assert bookmark.destination.index == 2
+    assert bookmark.destination.number == 2

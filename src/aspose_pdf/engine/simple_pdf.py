@@ -11106,6 +11106,49 @@ class SimplePdf:
         # Refresh the cached pages list to update the MediaBox from the page tree.
         self._refresh_pages_list()
 
+    def reverse(self) -> None:
+        """Reverse the order of pages in-place.
+
+        The first page becomes the last, the second-to-last becomes the second,
+        etc. The method modifies the collection and the underlying document;
+        no new document is created.
+
+        If the document is empty or has one page, the method is a no-op.
+
+        The operation preserves all page metadata and properties (e.g., rotation,
+        annotations, form fields, page labels, bookmarks that point to pages).
+        """
+        self._ensure_not_disposed()
+        count = len(self.pages)
+        if count <= 1:
+            return
+
+        # Ensure page cache is valid before reordering
+        self._ensure_page_cache()
+        if len(self._page_refs) != count:
+            raise PdfValidationException(
+                f"The page tree names {len(self._page_refs)} page(s) but "
+                f"{count} page(s) are known; the document is malformed"
+            )
+
+        # Materialize page inheritance so pages retain their properties
+        self._materialize_page_inheritance()
+
+        # Refresh the cached pages list to reflect inherited values
+        # before the reversal, so _order_pages reorders the correct values.
+        self._refresh_pages_list()
+
+        # Create reversed order list: [n-1, n-2, ..., 1, 0]
+        order = list(range(count - 1, -1, -1))
+
+        from .interleave import _order_pages
+
+        _order_pages(self, order)
+
+        # Refresh the cached pages list to update the MediaBox from the page tree.
+        self._refresh_pages_list()
+
+
     def add(self, page: Any) -> None:
         """Add a page to the end with COS synchronization."""
         self.insert(len(self.pages), page)
