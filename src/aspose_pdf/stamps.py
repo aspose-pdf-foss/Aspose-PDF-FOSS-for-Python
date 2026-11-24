@@ -232,6 +232,54 @@ class TextStamp(Stamp):
         """Resolve text with document context before measuring or encoding it."""
         return self._text(page_index, len(pdf.pages))
 
+    @property
+    def text_width(self) -> float:
+        """The horizontal space the text would occupy when rendered.
+
+        Returns the width in points that this stamp's text would occupy when
+        drawn with the current ``font_name``, ``font_size``, and ``font`` settings.
+        The value is computed from the font's glyph advance widths and does not
+        consider rotation, zoom, or alignment.
+
+        If the font cannot be resolved (e.g., an invalid ``font_name`` with no
+        ``font`` object), returns ``0.0``.
+        """
+        if self.font is not None:
+            # Embedded font path (Type0/CID font with 2-byte CID codes)
+            try:
+                from aspose_pdf.engine.font_authoring import prepare_authored_font
+
+                authored = prepare_authored_font(self.font, limits=None)
+                text = self._text(0, 1)
+                encoded = authored.encode(text)
+                widths = authored.cid_widths()
+                total = sum(
+                    widths.get((encoded[i] << 8) | encoded[i + 1], 0)
+                    for i in range(0, len(encoded) - 1, 2)
+                )
+                return total / 1000.0 * float(self.font_size)
+            except Exception:
+                return 0.0
+        else:
+            # Standard font path
+            try:
+                from aspose_pdf.engine.std_metrics import text_width as std_text_width
+
+                face = str(self.font_name).lstrip("/")
+                text = self._text(0, 1)
+                from aspose_pdf.engine.agl import encode_with_base_encoding
+                from aspose_pdf.engine.std_fonts import StandardFonts
+
+                encoding = StandardFonts.get_default_encoding(face)
+                codes = encode_with_base_encoding(text, encoding)
+                if codes is None:
+                    return 0.0
+                size = float(self.font_size)
+                width = std_text_width(codes, face, size)
+                return width if width is not None else 0.0
+            except Exception:
+                return 0.0
+
     def _validate(self) -> None:
         super()._validate()
         if float(self.font_size) <= 0.0:
