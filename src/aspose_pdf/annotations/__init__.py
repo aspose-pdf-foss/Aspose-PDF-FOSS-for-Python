@@ -16,7 +16,6 @@ Replies and popups are the one thing the property channel cannot carry: they are
 
 from __future__ import annotations
 
-import copy
 import re
 from collections.abc import Iterable, Iterator
 from enum import Enum, IntFlag
@@ -1181,80 +1180,6 @@ class PolygonAnnotation(_ShapeAnnotation):
             total += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
 
         return total
-
-    def to_polyline(self) -> PolyLineAnnotation:
-        """Create a PolyLineAnnotation with the same geometry as this polygon.
-
-        Returns a new :class:`PolyLineAnnotation` on the same page that copies
-        the ``vertices``, ``interior_color``, ``opacity``, ``border_width``,
-        ``border_style``, and ``border_dash`` from this polygon. The vertices
-        list is copied, not shared. Annotation metadata such as ``in_reply_to``,
-        ``replies``, ``popup``, or ``parent_annotation`` is not copied.
-
-        The returned polyline is not added to the page; the caller must insert
-        it before it becomes visible.
-
-        Args:
-            None
-
-        Returns:
-            A new :class:`PolyLineAnnotation` instance with a copy of this
-            polygon's vertices and styling.
-
-        Raises:
-            ValueError: If the polygon's vertices list is empty or contains
-                fewer than 2 points (insufficient to form a polyline).
-        """
-        points = self.vertices
-        if len(points) < 2:
-            raise ValueError(
-                "A polygon must have at least two vertices to convert to a polyline"
-            )
-
-        # Build the data dictionary for the new polyline
-        # The annotation needs _data to be initialized properly
-        new_polyline = PolyLineAnnotation.__new__(PolyLineAnnotation)
-        new_polyline._page = self._page
-        new_polyline._index = None
-        new_polyline._ref = None
-
-        # Initialize _data with all required entries
-        # Note: Top-level keys like Subtype, Rect, Contents, T, AP are stored
-        # directly in _data. All other entries (including Vertices, IC, CA, BS, C)
-        # go into Properties because they are type-specific properties.
-
-        # Get the raw property values from the polygon
-        # These are already in the correct format (floats for coordinates, etc.)
-        props = dict(self.properties)
-
-        # Deep-copy the vertices list so that mutating the original polygon's
-        # vertices does not affect the polyline's vertices
-        if "Vertices" in props:
-            props["Vertices"] = copy.deepcopy(props["Vertices"])
-
-        # Deep-copy the border dictionary (BS) if present to prevent shared mutation
-        if "BS" in props:
-            props["BS"] = copy.deepcopy(props["BS"])
-
-        # Deep-copy the stroke color (C) if present to prevent shared mutation
-        if "C" in props:
-            props["C"] = copy.deepcopy(props["C"])
-
-        # Compute the bounding rectangle from vertices and border
-        # Get the vertices flat list for rect computation
-        vertices_flat = props.get("Vertices", [coord for point in points for coord in point])
-        border_width = self.border_width
-        rect = _bounding_rect(vertices_flat, border_width)
-
-        new_polyline._data = {
-            "Subtype": "PolyLine",
-            "Rect": rect,
-            "Contents": "",
-            "T": "",
-            "Properties": props
-        }
-
-        return new_polyline
 
 
 class PolyLineAnnotation(PolygonAnnotation):
