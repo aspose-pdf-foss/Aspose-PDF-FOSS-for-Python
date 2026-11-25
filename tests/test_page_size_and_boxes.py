@@ -316,6 +316,160 @@ def test_difference_does_not_mutate_either_size():
 
 
 # ---------------------------------------------------------------------------
+# PageSize.clamped
+# ---------------------------------------------------------------------------
+
+
+def test_clamped_returns_a_new_page_size_with_clamped_dimensions():
+    # Size smaller than min in both dimensions -> clamped to min
+    under = PageSize(100, 180)
+    min_size = PageSize(150, 250)
+    max_size = PageSize(300, 400)
+    result = under.clamped(min_size, max_size)
+    assert result == PageSize(150, 250)
+    # Verify it's a new instance
+    assert result is not under
+
+
+def test_clamped_with_size_larger_than_max_clamps_to_max():
+    # Size larger than max in both dimensions -> clamped to max
+    over = PageSize(320, 450)
+    min_size = PageSize(150, 250)
+    max_size = PageSize(300, 400)
+    result = over.clamped(min_size, max_size)
+    assert result == PageSize(300, 400)
+
+
+def test_clamped_with_size_within_range_returns_original():
+    # Size within the range -> returns a copy
+    within = PageSize(200, 300)
+    min_size = PageSize(150, 250)
+    max_size = PageSize(300, 400)
+    result = within.clamped(min_size, max_size)
+    assert result == PageSize(200, 300)
+    assert result is not within
+
+
+def test_clamped_with_partial_underclamping():
+    # Width under min, height within range
+    partial = PageSize(100, 300)
+    min_size = PageSize(150, 250)
+    max_size = PageSize(300, 400)
+    result = partial.clamped(min_size, max_size)
+    assert result == PageSize(150, 300)
+
+
+def test_clamped_with_partial_overclamping():
+    # Width within range, height over max
+    partial = PageSize(200, 450)
+    min_size = PageSize(150, 250)
+    max_size = PageSize(300, 400)
+    result = partial.clamped(min_size, max_size)
+    assert result == PageSize(200, 400)
+
+
+def test_clamped_raises_typeerror_for_nonPageSize_min():
+    size = PageSize(200, 300)
+    min_size = (150, 250)
+    max_size = PageSize(300, 400)
+    with pytest.raises(TypeError):
+        size.clamped(min_size, max_size)
+
+
+def test_clamped_raises_typeerror_for_nonPageSize_max():
+    size = PageSize(200, 300)
+    min_size = PageSize(150, 250)
+    max_size = (300, 400)
+    with pytest.raises(TypeError):
+        size.clamped(min_size, max_size)
+
+
+def test_clamped_raises_valueerror_when_min_width_exceeds_max():
+    size = PageSize(200, 300)
+    with pytest.raises(ValueError, match=r"min_size\.width must not exceed max_size\.width"):
+        size.clamped(PageSize(350, 250), PageSize(300, 400))
+
+
+def test_clamped_raises_valueerror_when_min_height_exceeds_max():
+    size = PageSize(200, 300)
+    with pytest.raises(ValueError, match=r"min_size\.height must not exceed max_size\.height"):
+        size.clamped(PageSize(150, 450), PageSize(300, 400))
+
+
+def test_clamped_with_negative_min_width_raises_valueerror():
+    # Test that clamped rejects negative dimensions in min_size by bypassing constructor
+    size = PageSize(200, 300)
+    min_size = object.__new__(PageSize)
+    object.__setattr__(min_size, "width", -10.0)
+    object.__setattr__(min_size, "height", 250.0)
+    max_size = PageSize(300, 400)
+    with pytest.raises(ValueError, match=r"min_size\.width must be non-negative"):
+        size.clamped(min_size, max_size)
+
+
+def test_clamped_with_negative_min_height_raises_valueerror():
+    # Test that clamped rejects negative dimensions in min_size by bypassing constructor
+    size = PageSize(200, 300)
+    min_size = object.__new__(PageSize)
+    object.__setattr__(min_size, "width", 150.0)
+    object.__setattr__(min_size, "height", -20.0)
+    max_size = PageSize(300, 400)
+    with pytest.raises(ValueError, match=r"min_size\.height must be non-negative"):
+        size.clamped(min_size, max_size)
+
+
+def test_clamped_with_zero_min_width_is_accepted():
+    # Zero is not negative, so it should be accepted per the spec
+    size = PageSize(200, 300)
+    # Use object.__new__ to bypass PageSize constructor validation
+    min_size = object.__new__(PageSize)
+    object.__setattr__(min_size, "width", 0.0)
+    object.__setattr__(min_size, "height", 250.0)
+    max_size = PageSize(300, 400)
+    result = size.clamped(min_size, max_size)
+    # With min_width=0, width should be clamped to at least 0, but self.width=200 > 0
+    # So the result width should be 200 (self.width is within range [0, 300])
+    assert result.width == 200
+    assert result.height == 300
+
+
+def test_clamped_with_zero_min_height_is_accepted():
+    # Zero is not negative, so it should be accepted per the spec
+    size = PageSize(200, 300)
+    # Use object.__new__ to bypass PageSize constructor validation
+    min_size = object.__new__(PageSize)
+    object.__setattr__(min_size, "width", 150.0)
+    object.__setattr__(min_size, "height", 0.0)
+    max_size = PageSize(300, 400)
+    result = size.clamped(min_size, max_size)
+    # With min_height=0, height should be clamped to at least 0, but self.height=300 > 0
+    # So the result height should be 300 (self.height is within range [0, 400])
+    assert result.width == 200
+    assert result.height == 300
+
+
+def test_clamped_original_size_is_unchanged():
+    original = PageSize(100, 200)
+    min_size = PageSize(150, 250)
+    max_size = PageSize(300, 400)
+    result = original.clamped(min_size, max_size)
+    assert original == PageSize(100, 200)
+    assert result == PageSize(150, 250)
+
+
+def test_clamped_with_named_sizes():
+    # Test with named PageSize constants
+    under = PageSize.LETTER  # 612 x 792 (portrait, shorter side first)
+    min_size = PageSize.A3  # 841.89 x 1190.55 (portrait)
+    max_size = PageSize.A2  # 1190.55 x 1683.78 (portrait)
+    result = under.clamped(min_size, max_size)
+    # LETTER width (612) < A3 width (841.89), so width is clamped to A3 width
+    # LETTER height (792) < A3 height (1190.55), so height is clamped to A3 height
+    assert result.width == pytest.approx(841.889764)  # clamped to A3 width
+    assert result.height == pytest.approx(1190.551181)  # clamped to A3 height
+
+
+# ---------------------------------------------------------------------------
 # Creating a page of a given size
 # ---------------------------------------------------------------------------
 

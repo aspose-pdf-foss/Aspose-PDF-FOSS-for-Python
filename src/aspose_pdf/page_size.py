@@ -129,6 +129,43 @@ class PageSize:
         scale = _positive(factor, "factor")
         return PageSize(self.width * scale, self.height * scale)
 
+    def clamped(self, min_size: PageSize, max_size: PageSize) -> PageSize:
+        """This size with each dimension bounded to the inclusive range *[min_size, max_size]*.
+
+        The resulting width is ``max(min_size.width, min(self.width, max_size.width))``
+        and the resulting height is ``max(min_size.height, min(self.height, max_size.height))``.
+
+        Args:
+            min_size: The minimum allowed size.
+            max_size: The maximum allowed size.
+
+        Returns:
+            A new PageSize with dimensions clamped to the range *[min_size, max_size]*.
+
+        Raises:
+            ValueError: If ``min_size.width > max_size.width``, ``min_size.height > max_size.height``,
+                or either dimension of ``min_size`` is negative.
+            TypeError: If ``min_size`` or ``max_size`` is not a PageSize.
+        """
+        if not isinstance(min_size, PageSize):
+            raise TypeError("min_size must be a PageSize")
+        if not isinstance(max_size, PageSize):
+            raise TypeError("max_size must be a PageSize")
+
+        if min_size.width < 0:
+            raise ValueError("min_size.width must be non-negative")
+        if min_size.height < 0:
+            raise ValueError("min_size.height must be non-negative")
+
+        if min_size.width > max_size.width:
+            raise ValueError("min_size.width must not exceed max_size.width")
+        if min_size.height > max_size.height:
+            raise ValueError("min_size.height must not exceed max_size.height")
+
+        new_width = max(min_size.width, min(self.width, max_size.width))
+        new_height = max(min_size.height, min(self.height, max_size.height))
+        return PageSize(new_width, new_height)
+
     @property
     def is_square(self) -> bool:
         """Return True if the page is square within a 1e-9 point tolerance."""
