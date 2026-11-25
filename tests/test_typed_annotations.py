@@ -1134,6 +1134,54 @@ def test_polyline_has_starting_style_property():
     assert polyline.starting_style == "Square"
 
 
+def test_polygon_to_polyline():
+    """Verify PolygonAnnotation.to_polyline() creates a PolyLineAnnotation."""
+    _, page = _page()
+
+    # Create a polygon with properties
+    poly = page.annotations.add_polygon([(10, 10), (100, 10), (100, 100), (10, 100)])
+    poly.interior_color = (1.0, 0.0, 0.0)
+    poly.opacity = 0.8
+    poly.border = (2.0, 'S', ())
+    poly.generate_appearance()
+
+    # Convert to polyline
+    polyline = poly.to_polyline()
+
+    # Verify the polyline is of the correct type
+    assert isinstance(polyline, PolyLineAnnotation)
+
+    # Verify the vertices are copied (not shared)
+    assert list(polyline.vertices) == [(10.0, 10.0), (100.0, 10.0), (100.0, 100.0), (10.0, 100.0)]
+
+    # Verify the color is copied
+    assert polyline.interior_color == (1.0, 0.0, 0.0)
+
+    # Verify opacity is copied
+    assert polyline.opacity == 0.8
+
+    # Verify border is copied
+    assert polyline.border == (2.0, 'S', ())
+
+    # Verify vertices are copied, not shared
+    poly.vertices = [(20, 20), (200, 20), (200, 200), (20, 200)]
+    assert list(polyline.vertices) == [(10.0, 10.0), (100.0, 10.0), (100.0, 100.0), (10.0, 100.0)]
+
+    # Verify page reference is the same
+    assert polyline._page is page
+
+
+def test_polygon_to_polyline_insufficient_vertices():
+    """Verify to_polyline raises ValueError for polygons with fewer than 2 vertices."""
+    _, page = _page()
+
+    # Single vertex - valid polygon, but not enough for polyline
+    poly = page.annotations.add_polygon([(10, 10)])
+
+    with pytest.raises(ValueError, match="at least two vertices"):
+        poly.to_polyline()
+
+
 def test_page_stamp_count_property_exists():
     """Verify Page.stamp_count property exists and is accessible."""
     _, page = _page()
