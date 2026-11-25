@@ -280,6 +280,14 @@ class TextBlock:
             self.add_paragraph(part, **options) for part in _split_paragraphs(text)
         ]
 
+    def remove_paragraph(self, index: int) -> Paragraph:
+        """Remove and return the paragraph at the given index.
+
+        Supports negative indices (e.g., -1 for the last paragraph).
+        Raises IndexError if the index is out of range.
+        """
+        return self.paragraphs.pop(index)
+
     @property
     def is_empty(self) -> bool:
         """Whether there is nothing here that would put a mark on a page."""

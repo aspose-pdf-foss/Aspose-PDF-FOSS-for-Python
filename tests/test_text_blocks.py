@@ -121,6 +121,47 @@ class TestTextBlockObject:
         assert len(added) == 2
         assert all(p.tag == "H2" for p in added)
 
+    def test_remove_paragraph(self):
+        block = TextBlock()
+        block.add_paragraph("First")
+        p1 = block.add_paragraph("Second")
+        p2 = block.add_paragraph("Third")
+
+        removed = block.remove_paragraph(0)
+        assert removed.text == "First"
+        assert [p.text for p in block.paragraphs] == ["Second", "Third"]
+        assert block.paragraphs[0] is p1
+        assert block.paragraphs[1] is p2
+
+    def test_remove_paragraph_negative_index(self):
+        block = TextBlock()
+        p0 = block.add_paragraph("Alpha")
+        block.add_paragraph("Beta")
+
+        removed = block.remove_paragraph(-1)
+        assert removed.text == "Beta"
+        assert [p.text for p in block.paragraphs] == ["Alpha"]
+        assert block.paragraphs[0] is p0
+
+    def test_remove_paragraph_empty_block_raises_indexerror(self):
+        block = TextBlock()
+        with pytest.raises(IndexError):
+            block.remove_paragraph(0)
+
+    def test_remove_paragraph_out_of_range_raises_indexerror(self):
+        block = TextBlock()
+        block.add_paragraph("one")
+        with pytest.raises(IndexError):
+            block.remove_paragraph(5)
+
+    def test_remove_paragraph_returns_detached_paragraph(self):
+        block = TextBlock()
+        p = block.add_paragraph("detached", alignment="center")
+        removed = block.remove_paragraph(0)
+        assert removed is p
+        assert removed.alignment == "center"
+        assert len(block.paragraphs) == 0
+
     def test_is_empty(self):
         assert TextBlock().is_empty
         assert TextBlock(paragraphs=[Paragraph("  ")]).is_empty
