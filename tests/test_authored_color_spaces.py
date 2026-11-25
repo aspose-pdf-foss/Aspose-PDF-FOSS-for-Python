@@ -336,3 +336,54 @@ def test_is_opaque_property():
         GradientAxialShading(Color.rgb(1, 0, 0), Color.rgb(0, 0, 1), Point(0, 0), Point(1, 1))
     )
     assert gradient.is_opaque is False
+
+
+def test_to_gray_rgb_color():
+    """to_gray() computes grayscale from RGB using luminance formula."""
+    # Red: 0.299*1 + 0.587*0 + 0.114*0 = 0.299
+    c = Color.rgb(1, 0, 0)
+    g = c.to_gray()
+    assert g.components[0] == pytest.approx(0.299)
+    assert g.color_space == "DeviceGray"
+    # Verify original not modified
+    assert c.components == (1.0, 0.0, 0.0)
+
+
+def test_to_gray_cmyk_color():
+    """to_gray() converts CMYK to RGB then applies luminance formula."""
+    # CMYK black (0,0,0,1) -> RGB(0,0,0) -> gray = 0.0
+    c = Color.cmyk(0, 0, 0, 1)
+    g = c.to_gray()
+    assert g.components == (0.0,)
+    assert g.color_space == "DeviceGray"
+    # CMYK white (0,0,0,0) -> RGB(1,1,1) -> gray = 0.299+0.587+0.114 = 1.0
+    c = Color.cmyk(0, 0, 0, 0)
+    g = c.to_gray()
+    assert g.components[0] == pytest.approx(1.0)
+    assert g.color_space == "DeviceGray"
+    # Verify original not modified
+    assert c.components == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_to_gray_gray_color():
+    """to_gray() returns a new gray color with the same gray level."""
+    c = Color.gray(0.7)
+    g = c.to_gray()
+    assert g.components == (0.7,)
+    assert g.color_space == "DeviceGray"
+    # Should be a different instance but equal
+    assert g == Color.gray(0.7)
+    # Verify original not modified
+    assert c.components == (0.7,)
+
+
+def test_to_gray_gradient_color_raises():
+    """to_gray() raises for gradient colors."""
+    from aspose_pdf.color import GradientAxialShading, Point
+
+    gradient = Color(
+        GradientAxialShading(Color.rgb(1, 0, 0), Color.rgb(0, 0, 1), Point(0, 0), Point(1, 1))
+    )
+    assert gradient.pattern_color_space is not None
+    with pytest.raises(ValueError):
+        gradient.to_gray()

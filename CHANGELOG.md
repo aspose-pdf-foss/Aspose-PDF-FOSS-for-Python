@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `Color.to_gray()` method.** Added `to_gray(self) -> Color` to `Color`. The method returns a new `Color` instance in DeviceGray space whose gray level is computed from the current color using the standard luminance formula: 0.299*R + 0.587*G + 0.114*B. For RGB colors, the formula is applied directly. For CMYK colors, the color is first converted to RGB using the library's existing additive conversion (`aspose_pdf.engine.graphics_absorb._cmyk_rgb`), then the same luminance formula is applied. For DeviceGray colors, the gray level is preserved. Raises `ValueError` for gradient/pattern colors. The original Color instance is not modified.
+
 - **Add `Color.is_opaque` property.** Added a read-only property `is_opaque: bool` to `Color`. This property returns ``True`` for device colors (DeviceGray, DeviceRGB, DeviceCMYK) and ``False`` for gradient/pattern colors. It is derived from whether the color has a ``pattern_color_space`` set and can be used to detect colors that are safe for PDF overprint or PDF/A transparency contexts.
 
 - **Add `PageSize.clamped` method.** Added `clamped(self, min_size: PageSize, max_size: PageSize) -> PageSize` to `PageSize`. The method returns a new PageSize with each dimension bounded to the inclusive range *[min_size, max_size]*. The resulting width is ``max(min_size.width, min(self.width, max_size.width))`` and similarly for height. Raises ``ValueError`` if ``min_size.width > max_size.width``, ``min_size.height > max_size.height``, or either dimension of ``min_size`` is negative. Raises ``TypeError`` if ``min_size`` or ``max_size`` is not a PageSize. The original PageSize instance is unchanged.

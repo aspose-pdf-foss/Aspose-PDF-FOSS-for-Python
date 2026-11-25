@@ -236,6 +236,38 @@ class Color:
             f"{self.color_space if components else 'a gradient'}."
         )
 
+    def to_gray(self) -> Color:
+        """Return a DeviceGray color whose gray level matches the luminance of this color.
+
+        For an RGB color, the gray level is computed as 0.299*R + 0.587*G + 0.114*B.
+        For a CMYK color, the color is first converted to RGB using the library's
+        existing conversion, then the same luminance formula is applied.
+        For a DeviceGray color, the gray level is preserved.
+
+        Raises :class:`ValueError` if the color is a gradient (pattern color space).
+        """
+        if self.pattern_color_space is not None:
+            raise ValueError(
+                "A gradient (pattern) colour has no grayscale equivalent."
+            )
+
+        if len(self._components) == 1:
+            # Already DeviceGray, return a new instance with the same gray value
+            return Color.gray(self._components[0])
+        elif len(self._components) == 3:
+            # DeviceRGB: apply luminance formula
+            r, g, b = self._components
+            gray = 0.299 * r + 0.587 * g + 0.114 * b
+            return Color.gray(gray)
+        else:
+            # DeviceCMYK: convert to RGB first using library's existing conversion, then apply luminance
+            from aspose_pdf.engine.graphics_absorb import _cmyk_rgb
+
+            c, m, y, k = self._components
+            r, g, b = _cmyk_rgb(c, m, y, k)
+            gray = 0.299 * r + 0.587 * g + 0.114 * b
+            return Color.gray(gray)
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Color):
             return NotImplemented
