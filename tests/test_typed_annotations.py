@@ -525,6 +525,38 @@ def test_replies_can_be_threaded_onto_a_reply():
     assert [item.contents for item in note.replies] == ["first"]
 
 
+def test_reply_performance_is_linear():
+    """Test that adding n replies to the same annotation runs in O(n) time.
+
+    The reply() operation should not scale quadratically with the number of
+    annotations on the page. This test verifies that adding 256 replies completes
+    quickly (under 200ms) without scanning all annotations for each reply.
+    """
+    import time
+
+    doc = Document()
+    page = doc.pages.add(PageSize.A4)
+
+    # Pre-create 256 annotations (repliable) to simulate a realistic workload
+    annos = []
+    for i in range(256):
+        annos.append(page.annotations.add_text((100 + i, 100, 100 + i + 10, 110), f"Annotation {i}"))
+
+    # Reply to the first annotation 256 times
+    start = time.perf_counter()
+    for i in range(256):
+        annos[0].reply(f"Reply {i}")
+    elapsed = (time.perf_counter() - start) * 1000
+
+    # Verify correctness
+    assert len(annos[0].replies) == 256
+    assert all(r.contents == f"Reply {i}" for i, r in enumerate(annos[0].replies))
+
+    # Performance check: 256 replies should complete in under 200ms (linear scaling)
+    # With the old O(n²) implementation, this would take several seconds
+    assert elapsed < 200, f"reply() took {elapsed:.1f}ms for 256 replies, expected < 200ms"
+
+
 # ---------------------------------------------------------------------------
 # Popups
 # ---------------------------------------------------------------------------

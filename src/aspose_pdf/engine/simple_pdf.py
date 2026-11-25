@@ -11579,6 +11579,59 @@ class SimplePdf:
                 )
         return results
 
+    def get_annotation(self, page_index: int, annot_index: int) -> dict[str, Any] | None:
+        """Get a single annotation by index without scanning all annotations.
+
+        This is an optimized version of get_annotations() when you only need
+        one annotation. It resolves the annotation reference directly without
+        scanning the entire /Annots array.
+        """
+        self._ensure_not_disposed()
+        if self._cos_doc is None:
+            return None
+        if page_index < 0 or page_index >= len(self.pages):
+            return None
+        page_dict = self._get_page_dict(page_index)
+        if not isinstance(page_dict, PdfDictionary):
+            return None
+
+        annots = page_dict.mapping.get(PdfName("Annots"))
+        if annots is None:
+            return None
+
+        resolved_annots = self._resolve(annots)
+        if not isinstance(resolved_annots, PdfArray):
+            return None
+
+        if annot_index < 0 or annot_index >= len(resolved_annots.items):
+            return None
+
+        annot_ref = resolved_annots.items[annot_index]
+        annot_dict = self._resolve(annot_ref)
+        if not isinstance(annot_dict, PdfDictionary):
+            return None
+
+        entry: dict[str, Any] = {
+            "Subtype": self._get_cos_name(
+                annot_dict.mapping.get(PdfName("Subtype"))
+            ),
+            "Rect": self._get_cos_rect(annot_dict.mapping.get(PdfName("Rect"))),
+            "Contents": self._get_cos_string(
+                annot_dict.mapping.get(PdfName("Contents"))
+            ),
+            "T": self._get_cos_string(annot_dict.mapping.get(PdfName("T"))),
+            "has_AP": False,
+        }
+        ap = self._resolve(annot_dict.mapping.get(PdfName("AP")))
+        if isinstance(ap, PdfDictionary):
+            n = self._resolve(ap.get(PdfName("N")))
+            if isinstance(n, PdfDictionary):
+                entry["has_AP"] = True
+            if isinstance(n, PdfStream):
+                entry["AP_N"] = n.content
+        entry["Properties"] = self._extract_annotation_properties(annot_dict)
+        return entry
+
     # Keys handled explicitly elsewhere (or unsafe to round-trip generically);
     # every other entry of an annotation dictionary travels through the generic
     # property channel so all subtypes preserve their defining attributes.
@@ -12127,26 +12180,52 @@ class SimplePdf:
                 links[name] = numbers.get(value.object_number)
         own = refs[annot_index]
         if isinstance(own, PdfIndirectReference):
-            for index, ref in enumerate(refs):
-                other = self._resolve(ref)
-                if index == annot_index or not isinstance(other, PdfDictionary):
-                    continue
-                irt = other.mapping.get(PdfName("IRT"))
-                if (
-                    isinstance(irt, PdfIndirectReference)
-                    and irt.object_number == own.object_number
-                ):
-                    links["replies"].append(index)
+            # Try to read replies from parent's /Replies array for O(1) lookups
+            parent_annot = self._resolve(own)
+            if isinstance(parent_annot, PdfDictionary):
+                replies_array = parent_annot.mapping.get(PdfName("Replies"))
+                if isinstance(replies_array, PdfArray):
+                    for ref in replies_array.items:
+                        if isinstance(ref, PdfIndirectReference):
+                            idx = numbers.get(ref.object_number)
+                            if idx is not None and idx != annot_index:
+                                links["replies"].append(idx)
+                else:
+                    # Fallback to scanning if /Replies array is missing or invalid,
+                    # then populate the array for future O(1) lookups
+                    replies_indices = []
+                    for index, ref in enumerate(refs):
+                        other = self._resolve(ref)
+                        if index == annot_index or not isinstance(other, PdfDictionary):
+                            continue
+                        irt = other.mapping.get(PdfName("IRT"))
+                        if (
+                            isinstance(irt, PdfIndirectReference)
+                            and irt.object_number == own.object_number
+                        ):
+                            replies_indices.append(index)
+                    # Populate the /Replies array for O(1) lookups in the future
+                    # Note: We always create the array if we found replies, so we don't
+                    # need a separate fallback scan
+                    if replies_indices:
+                        replies_array = PdfArray([])
+                        parent_annot.mapping[PdfName("Replies")] = replies_array
+                        for idx in replies_indices:
+                            replies_array.items.append(refs[idx])
+                    links["replies"].extend(replies_indices)
         return links
 
     def add_annotation_reply(
         self, page_index: int, parent_index: int, data: dict[str, Any]
-    ) -> int:
+    ) -> tuple[int, Any]:
         """Add an annotation that replies to the one at *parent_index*.
 
         ISO 32000-1 12.5.6.2: a reply is an ordinary markup annotation carrying
         ``/IRT``, the annotation it is in reply to, and ``/RT /Reply`` to say that
         it replies rather than grouping. A viewer shows the two as one thread.
+
+        Returns:
+            A tuple of (index, reference) for the newly created reply annotation.
         """
         parent_ref = self._annotation_ref(page_index, parent_index)
         payload = dict(data)
@@ -12156,10 +12235,21 @@ class SimplePdf:
         index = self.add_annotation(page_index, payload)
         if index is None:
             raise PdfValidationException("The reply could not be added to the page")
-        annot = self._resolve(self._annotation_ref(page_index, index))
+        reply_ref = self._annotation_ref(page_index, index)
+        annot = self._resolve(reply_ref)
         if isinstance(annot, PdfDictionary):
             annot.mapping[PdfName("IRT")] = parent_ref
-        return index
+
+        # Add reply to parent's /Replies array for O(1) lookups
+        parent_annot = self._resolve(parent_ref)
+        if isinstance(parent_annot, PdfDictionary):
+            replies_array = parent_annot.mapping.get(PdfName("Replies"))
+            if not isinstance(replies_array, PdfArray):
+                replies_array = PdfArray([])
+                parent_annot.mapping[PdfName("Replies")] = replies_array
+            replies_array.items.append(reply_ref)
+
+        return index, reply_ref
 
     def add_annotation_popup(
         self,
@@ -12168,12 +12258,15 @@ class SimplePdf:
         rect: Any,
         *,
         is_open: bool = False,
-    ) -> int:
+    ) -> tuple[int, Any]:
         """Add the popup window of the annotation at *parent_index*.
 
         Linked both ways, as 12.5.6.14 requires: the popup's ``/Parent`` names the
         annotation it belongs to and that annotation's ``/Popup`` names the popup.
         One alone leaves a window a viewer cannot associate with anything.
+
+        Returns:
+            A tuple of (index, reference) for the newly created popup annotation.
         """
         parent_ref = self._annotation_ref(page_index, parent_index)
         index = self.add_annotation(
@@ -12194,7 +12287,7 @@ class SimplePdf:
             popup.mapping[PdfName("Parent")] = parent_ref
         if isinstance(parent, PdfDictionary):
             parent.mapping[PdfName("Popup")] = popup_ref
-        return index
+        return index, popup_ref
 
     def insert_annotation(
         self, page_index: int, annot_index: int, data: dict[str, Any]
@@ -12356,6 +12449,23 @@ class SimplePdf:
             annots_array.items
         ):
             return
+
+        # Remove this annotation's reference from its parent's /Replies array
+        annot_ref = annots_array.items[annot_index]
+        if isinstance(annot_ref, PdfIndirectReference):
+            annot = self._resolve(annot_ref)
+            if isinstance(annot, PdfDictionary):
+                irt = annot.mapping.get(PdfName("IRT"))
+                if isinstance(irt, PdfIndirectReference):
+                    # This annotation is in reply to another; remove it from parent's /Replies
+                    parent_annot = self._resolve(irt)
+                    if isinstance(parent_annot, PdfDictionary):
+                        replies_array = parent_annot.mapping.get(PdfName("Replies"))
+                        if isinstance(replies_array, PdfArray):
+                            try:
+                                replies_array.items.remove(annot_ref)
+                            except ValueError:
+                                pass  # Already removed or not in array
 
         del annots_array.items[annot_index]
 

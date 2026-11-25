@@ -477,10 +477,11 @@ class Annotation:
             payload["T"] = title
         if properties:
             payload["Properties"] = dict(properties)
-        index = self._page._document._engine_pdf.add_annotation_reply(
+        index, reply_ref = self._page._document._engine_pdf.add_annotation_reply(
             self._page._index, self._index, payload
         )
-        return self._page.annotations[index]
+        # Use _get_annotation_by_index to avoid O(n) scan of all annotations
+        return self._page.annotations._get_annotation_by_index(index, reply_ref)
 
     def delete_reply(self, reply: TextAnnotation | int) -> None:
         """Remove the given reply annotation from this annotation's ``/Replies`` list.
@@ -569,13 +570,13 @@ class Annotation:
         if rect is None:
             x0, y0, x1, y1 = self.rect
             rect = (x1, y0, x1 + max(144.0, x1 - x0), y0 + max(72.0, y1 - y0))
-        index = self._page._document._engine_pdf.add_annotation_popup(
+        index, popup_ref = self._page._document._engine_pdf.add_annotation_popup(
             self._page._index,
             self._index,
             tuple(float(value) for value in rect),
             is_open=is_open,
         )
-        return self._page.annotations[index]
+        return self._page.annotations._get_annotation_by_index(index, popup_ref)
 
     def generate_appearance(self, *, force: bool = False) -> bool:
         """Synthesise a normal appearance stream (``/AP /N``) for this annotation.
@@ -1638,21 +1639,29 @@ class AnnotationCollection:
         )
 
     def __len__(self) -> int:
-        return len(self._items())
+        # Use the reference list length for O(1) count
+        engine = self._page._document._engine_pdf
+        refs = engine._annotation_refs(self._page._index)
+        return len(refs)
 
     def __iter__(self) -> Iterator[Annotation]:
         for index, data in enumerate(self._items()):
             yield self._wrap(index, data)
 
     def __getitem__(self, index: int) -> Annotation:
-        items = self._items()
-        if index < 0:
-            index += len(items)
-        if index < 0 or index >= len(items):
+        # For positive indices, use _get_annotation_by_index for O(1) access
+        # For negative indices, we need to convert to positive first
+        if index >= 0:
+            return self._get_annotation_by_index(index)
+        # For negative indices, convert to positive using the reference list
+        engine = self._page._document._engine_pdf
+        refs = engine._annotation_refs(self._page._index)
+        index += len(refs)
+        if index < 0 or index >= len(refs):
             raise IndexError("Annotation index out of range")
-        return self._wrap(index, items[index])
+        return self._get_annotation_by_index(index)
 
-    def _wrap(self, index: int, data: dict[str, Any]) -> Annotation:
+    def _wrap(self, index: int, data: dict[str, Any], ref: Any = None) -> Annotation:
         subtype = str(data.get("Subtype", ""))
         # Special case: read Caret annotations as CaretAnnotation for the
         # dedicated class, even though the generic add("Caret") returns MarkupAnnotation
@@ -1660,9 +1669,10 @@ class AnnotationCollection:
             annotation_cls = CaretAnnotation
         else:
             annotation_cls = _ANNOTATION_CLASSES.get(subtype, Annotation)
-        # Get the PDF object reference for stable lookup after deletions
-        refs = self._page._document._engine_pdf._annotation_refs(self._page._index)
-        ref = refs[index] if index < len(refs) else None
+        # Use the provided reference if available, otherwise compute it from _annotation_refs
+        if ref is None:
+            refs = self._page._document._engine_pdf._annotation_refs(self._page._index)
+            ref = refs[index] if index < len(refs) else None
         return annotation_cls(self._page, index, data, ref)
 
     def add(
@@ -1687,7 +1697,8 @@ class AnnotationCollection:
         if properties:
             payload["Properties"] = dict(properties)
         self._page._document._engine_pdf.add_annotation(self._page._index, payload)
-        return self[len(self) - 1]
+        # Use _get_annotation_by_index to avoid O(n) scan of all annotations
+        return self._get_annotation_by_index(len(self) - 1)
 
     def insert(
         self,
@@ -1752,6 +1763,30 @@ class AnnotationCollection:
         if index < 0 or index >= len(items):
             raise IndexError("Annotation index out of range")
         self._page._document._engine_pdf.delete_annotation(self._page._index, index)
+
+    def _get_annotation_by_index(self, index: int, ref: Any = None) -> Annotation:
+        """Get a single annotation by index without scanning all annotations.
+
+        This is an internal method used when we already know the index of the
+        annotation we want and want to avoid the O(n) cost of _items().
+
+        Args:
+            index: The zero-based index of the annotation on the page.
+            ref: The PDF object reference for stable lookup after deletions.
+                 If not provided, it will be computed from _annotation_refs.
+
+        Returns:
+            The annotation at the given index.
+        """
+        engine = self._page._document._engine_pdf
+        data = engine.get_annotation(self._page._index, index)
+        if data is None:
+            raise IndexError("Annotation index out of range")
+        # Use the provided reference if available, otherwise compute it
+        if ref is None:
+            refs = engine._annotation_refs(self._page._index)
+            ref = refs[index] if index < len(refs) else None
+        return self._wrap(index, data, ref)
 
     def clear(self) -> None:
         self._page._document._engine_pdf.clear_annotations(self._page._index)
