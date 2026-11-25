@@ -25,6 +25,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
+from aspose_pdf.annotations import StampAnnotation
 from aspose_pdf.exceptions import (
     PDF_OPERATION_ERRORS,
     AsposePdfException,
@@ -1647,6 +1648,38 @@ class PdfFileStamp(_BoundFacade):
             **options,
         )
         return self.add_stamp(stamp, page_numbers)
+
+    def get_stamps_on_page(self, page_number: int) -> list[StampAnnotation]:
+        """Return all stamp annotations on the given 1-based *page_number*.
+
+        Args:
+            page_number: The 1-based page index to inspect.
+
+        Returns:
+            A list of :class:`~aspose_pdf.annotations.StampAnnotation` objects
+            present on the page, in the order they appear in the page's
+            annotation collection. Empty if the page has no stamp annotations.
+
+        Raises:
+            TypeError: If *page_number* is not an integer.
+            IndexError: If *page_number* is less than 1 or greater than the
+                document's page count.
+        """
+        self._ensure_not_disposed()
+        if self._document is None:
+            raise AsposePdfException("No document is bound")
+        if isinstance(page_number, bool) or not isinstance(page_number, int):
+            raise TypeError("page_number must be an integer")
+        try:
+            index = self._page_index(page_number)
+        except AsposePdfException as exc:
+            raise IndexError(str(exc)) from exc
+        page = self.document._page_at(index)
+        stamps: list[StampAnnotation] = []
+        for annotation in page.annotations:
+            if isinstance(annotation, StampAnnotation):
+                stamps.append(annotation)
+        return stamps
 
     def _running_text(
         self,
