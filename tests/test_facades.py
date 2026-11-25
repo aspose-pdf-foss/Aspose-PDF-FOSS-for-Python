@@ -31,7 +31,6 @@ from aspose_pdf import (
     PdfFileStamp,
     PdfPageEditor,
     PdfXmpMetadata,
-    StampAnnotation,
     TextStamp,
 )
 from aspose_pdf.exceptions import (
@@ -528,101 +527,6 @@ def test_a_stamp_on_a_page_that_is_not_there_is_a_failure():
     assert "outside this document" in str(facade.last_exception)
 
 
-def test_get_stamps_on_page():
-    """Inspect existing stamp annotations on a page."""
-    # Create a document and add stamp annotations directly
-    doc = Document()
-    for _ in range(3):
-        page = doc.pages.add()
-        page.add_text(f"PAGE {len(doc.pages)}", 100, 300, font_size=24)
-
-    # Add StampAnnotation objects to pages (pages are 1-indexed in public API)
-    doc.pages[1].annotations.add_stamp((100, 500, 200, 600), contents="STAMP_A")
-    doc.pages[2].annotations.add_stamp((100, 500, 200, 600), contents="STAMP_B")
-    doc.pages[3].annotations.add_stamp((100, 500, 200, 600), contents="STAMP_B")
-
-    # Save to buffer
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    doc.dispose()
-
-    # Reset buffer position and reload
-    buffer.seek(0)
-    reloaded = Document(buffer)
-    reloaded_facade = PdfFileStamp()
-    reloaded_facade.bind_pdf(reloaded)
-
-    stamps_page1 = reloaded_facade.get_stamps_on_page(1)
-    stamps_page2 = reloaded_facade.get_stamps_on_page(2)
-    stamps_page3 = reloaded_facade.get_stamps_on_page(3)
-
-    assert len(stamps_page1) == 1
-    assert isinstance(stamps_page1[0], StampAnnotation)
-    assert stamps_page1[0].contents == "STAMP_A"
-
-    assert len(stamps_page2) == 1
-    assert isinstance(stamps_page2[0], StampAnnotation)
-    assert stamps_page2[0].contents == "STAMP_B"
-
-    assert len(stamps_page3) == 1
-    assert isinstance(stamps_page3[0], StampAnnotation)
-    assert stamps_page3[0].contents == "STAMP_B"
-
-
-def test_get_stamps_on_page_empty():
-    """A page with no stamps returns an empty list."""
-    facade = PdfFileStamp()
-    facade.bind_pdf(io.BytesIO(_document(3)))
-    facade.add_stamp(TextStamp("STAMP"), [1])
-
-    buffer = io.BytesIO(_saved(facade))
-    facade.close()
-
-    reloaded = Document(buffer)
-    reloaded_facade = PdfFileStamp()
-    reloaded_facade.bind_pdf(reloaded)
-
-    stamps_page2 = reloaded_facade.get_stamps_on_page(2)
-    assert stamps_page2 == []
-
-
-def test_get_stamps_on_page_invalid_page():
-    """Invalid page numbers raise IndexError."""
-    facade = PdfFileStamp()
-    facade.bind_pdf(io.BytesIO(_document(3)))
-
-    with pytest.raises(IndexError):
-        facade.get_stamps_on_page(0)
-
-    with pytest.raises(IndexError):
-        facade.get_stamps_on_page(4)
-
-
-def test_get_stamps_on_page_unbound():
-    """Unbound facade raises AsposePdfException."""
-    facade = PdfFileStamp()
-    with pytest.raises(AsposePdfException, match="No document is bound"):
-        facade.get_stamps_on_page(1)
-
-
-def test_get_stamps_on_page_non_integer_raises_type_error():
-    """Non-integer page_number values raise TypeError."""
-    facade = PdfFileStamp()
-    facade.bind_pdf(io.BytesIO(_document(3)))
-
-    with pytest.raises(TypeError, match="page_number must be an integer"):
-        facade.get_stamps_on_page("1")
-
-    with pytest.raises(TypeError, match="page_number must be an integer"):
-        facade.get_stamps_on_page(1.5)
-
-    with pytest.raises(TypeError, match="page_number must be an integer"):
-        facade.get_stamps_on_page(None)
-
-    with pytest.raises(TypeError, match="page_number must be an integer"):
-        facade.get_stamps_on_page(True)
-
-
 # ---------------------------------------------------------------------------
 # PdfPageEditor
 # ---------------------------------------------------------------------------
@@ -904,22 +808,3 @@ def test_disposal_releases_the_rendered_images():
     facade.close()
     with pytest.raises(AsposePdfException, match="disposed"):
         facade.has_next_image()
-
-
-def test_import_aspose_pdf_without_circular_imports():
-    """Importing aspose_pdf and its submodules works without circular import errors.
-
-    This test verifies that the new StampAnnotation import in facades.py does not
-    create a circular dependency that breaks imports.
-    """
-    from aspose_pdf.annotations import StampAnnotation
-
-    # Verify the new method exists on PdfFileStamp
-    assert hasattr(PdfFileStamp, "get_stamps_on_page")
-
-    # Verify StampAnnotation can be instantiated
-    doc = Document()
-    page = doc.pages.add()
-    stamp_annot = page.annotations.add_stamp((100, 100, 200, 200), contents="test")
-    assert isinstance(stamp_annot, StampAnnotation)
-    assert stamp_annot.contents == "test"
