@@ -27,7 +27,7 @@ _POINTS_PER_INCH = 72.0
 _MM_PER_INCH = 25.4
 
 
-@dataclass(frozen=True, slots=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class PageSize:
     """A page's width and height in PDF points.
 

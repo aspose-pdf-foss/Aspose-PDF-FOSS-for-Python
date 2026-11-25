@@ -174,6 +174,21 @@ def test_is_square_is_read_only():
         PageSize(100, 100).is_square = False
 
 
+def test_page_size_serialization_with_object_to_dict():
+    # Verify that PageSize serialization produces consistent JSON regardless of
+    # whether the class uses __slots__ or __dict__. The _object_to_dict function
+    # in utils.py handles both cases, but we must ensure the output is identical.
+    from aspose_pdf.utils import _object_to_dict
+
+    size = PageSize(100.0, 200.0)
+    described = _object_to_dict(size)
+    assert described == {"width": 100.0, "height": 200.0}
+    # The described dict should not include internal fields like __dict__ or is_square
+    assert "is_square" not in described
+    assert "__dict__" not in described
+    assert "__slots__" not in described
+
+
 def test_is_square_property():
     # Square within tolerance: difference < 1e-9
     assert PageSize(100.0, 100.0).is_square is True
