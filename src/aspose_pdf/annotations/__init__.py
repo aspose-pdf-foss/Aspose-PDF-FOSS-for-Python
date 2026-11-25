@@ -307,8 +307,12 @@ class Annotation:
         self._ref = ref  # PDF object reference for stable lookup after deletions
 
     def _sync(self) -> None:
-        annotations = self._page._document._engine_pdf.get_annotations(self._page._index)
-        self._data = dict(annotations[self._index])
+        data = self._page._document._engine_pdf.get_annotation(
+            self._page._index, self._index
+        )
+        if data is None:
+            raise IndexError("Annotation index out of range")
+        self._data = dict(data)
 
     def _update(self, **changes: Any) -> None:
         self._page._document._engine_pdf.update_annotation(

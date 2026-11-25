@@ -296,6 +296,32 @@ def test_caret_generate_appearance_end_to_end():
     assert b"\nf\n" in ann.appearance_normal
 
 
+
+def test_generate_appearance_updates_has_appearance_property():
+    """Verify that generate_appearance() correctly updates the has_appearance property.
+
+    This test verifies the fix for O(n²) performance where _sync() was calling
+    get_annotations() instead of get_annotation(). The fix ensures has_appearance
+    is correctly updated after generating an appearance.
+    """
+    doc = _new_page_doc()
+    ann = doc.pages[1].annotations.add(
+        "Square", (100, 100, 200, 200), "", properties={"C": [1, 0, 0]}
+    )
+    # Initially no appearance
+    assert not ann.has_appearance
+    # After generate_appearance(), has_appearance should be True
+    assert ann.generate_appearance() is True
+    assert ann.has_appearance
+    # The appearance data should be accessible
+    assert b"1 0 0 RG" in ann.appearance_normal
+    # Verify the cached data matches what's in the engine
+    engine = doc._engine_pdf
+    engine_data = engine.get_annotations(0)[0]
+    assert engine_data["has_AP"] == ann.has_appearance
+    assert engine_data["AP_N"] == ann.appearance_normal
+
+
 def test_generate_appearance_unsupported_subtype_returns_false():
     doc = _new_page_doc()
     ann = doc.pages[1].annotations.add("Sound", (0, 0, 20, 20), "note")
