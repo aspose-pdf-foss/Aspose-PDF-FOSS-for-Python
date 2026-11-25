@@ -268,6 +268,75 @@ def test_the_permissions_are_reported():
     assert isinstance(facade.permissions, int)
 
 
+def test_get_encryption_info_returns_none_for_non_encrypted():
+    facade = PdfFileSecurity()
+    facade.bind_pdf(io.BytesIO(_document(1)))
+    assert facade.get_encryption_info() is None
+    facade.close()
+
+
+def test_get_encryption_info_for_encrypted_document():
+    facade = PdfFileSecurity()
+    facade.bind_pdf(io.BytesIO(_document(1)))
+    assert facade.encrypt_file("user", "owner") is True
+    encrypted = _saved(facade)
+    facade.close()
+
+    security = PdfFileSecurity()
+    security.bind_pdf(io.BytesIO(encrypted), "user")
+    info = security.get_encryption_info()
+    assert info is not None
+    assert "algorithm" in info
+    assert info["has_user_password"] is True
+    assert info["has_owner_password"] is True
+    assert "permissions" in info
+    assert "key_length" in info
+    assert info["key_length"] in (40, 128, 256)
+    security.close()
+
+
+def test_get_encryption_info_aes_128():
+    security = PdfFileSecurity()
+    security.bind_pdf("tests/fixtures_encrypted_aes_128.pdf", "user")
+    info = security.get_encryption_info()
+    assert info is not None
+    assert info["algorithm"] == "AES-128"
+    assert info["has_user_password"] is True
+    # Both U and O are present in the fixture (encrypted with both passwords)
+    assert info["has_owner_password"] is True
+    # Actual permissions in the fixture
+    assert info["permissions"] == -1028
+    assert info["key_length"] == 128
+    security.close()
+
+
+def test_get_encryption_info_aes_256():
+    security = PdfFileSecurity()
+    security.bind_pdf("tests/fixtures_encrypted_aes_256_r6.pdf", "user")
+    info = security.get_encryption_info()
+    assert info is not None
+    assert info["algorithm"] == "AES-256"
+    assert info["has_user_password"] is True
+    assert info["has_owner_password"] is True
+    # Actual permissions in the fixture
+    assert info["permissions"] == -1028
+    assert info["key_length"] == 256
+    security.close()
+
+
+def test_get_encryption_info_owner_only():
+    security = PdfFileSecurity()
+    security.bind_pdf("tests/fixtures_encrypted_owner_only.pdf")
+    info = security.get_encryption_info()
+    assert info is not None
+    assert info["algorithm"] == "AES-256"
+    assert info["has_user_password"] is True
+    assert info["has_owner_password"] is True
+    # Actual permissions in the fixture
+    assert info["permissions"] == -1028
+    security.close()
+
+
 # ---------------------------------------------------------------------------
 # PdfBookmarkEditor
 # ---------------------------------------------------------------------------

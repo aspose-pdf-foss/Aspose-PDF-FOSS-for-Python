@@ -2889,6 +2889,23 @@ class SimplePdf:
             pdf._cos_decrypt_key = extractor._stream_decrypt_key
             pdf._cos_decrypt_algorithm = extractor._stream_decrypt_algorithm
 
+            # Extract and store U and O values from the encryption dictionary
+            # These are needed for get_encryption_info() after decryption
+            from .cos import PdfName, PdfString
+
+            def as_bytes(obj: Any) -> bytes | None:
+                o = extractor._resolve(obj)
+                if isinstance(o, PdfString):
+                    raw = o.value
+                    return raw if isinstance(raw, bytes) else raw.encode("latin-1")
+                return None
+
+            enc_ref = extractor._doc.trailer.mapping.get(PdfName("Encrypt"))
+            enc = extractor._resolve(enc_ref)
+            if isinstance(enc, PdfDictionary):
+                pdf.U = as_bytes(enc.mapping.get(PdfName("U")))
+                pdf.O = as_bytes(enc.mapping.get(PdfName("O")))
+
         # No page is invented for a document whose page tree is empty or absent:
         # it used to be given a blank Letter sheet here, so a caller was told the
         # file had a page, rendered it and got a sheet the file never described.

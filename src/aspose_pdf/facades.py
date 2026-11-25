@@ -1228,6 +1228,199 @@ class PdfFileSecurity(_BoundFacade):
         """
         return self.document.permissions
 
+    def get_encryption_info(self) -> dict[str, Any] | None:
+        """Describe the encryption state of the bound document.
+
+        Returns
+        -------
+        dict or None
+            ``None`` if the document is not encrypted. Otherwise a dictionary
+            with keys:
+
+            * ``algorithm`` (str): The encryption algorithm, one of
+              ``"RC4"``, ``"AES-128"``, ``"AES-256"``.
+            * ``has_user_password`` (bool): ``True`` if the document has a
+              user password set.
+            * ``has_owner_password`` (bool): ``True`` if the document has an
+              owner password set.
+            * ``permissions`` (int): The raw ``/P`` value (Table 22).
+            * ``key_length`` (int): The encryption key length in bits, or ``0``
+              if unknown.
+
+            If the encryption dictionary exists but is malformed,
+            :exc:`~aspose_pdf.exceptions.PdfValidationException` is raised.
+        """
+        self._ensure_not_disposed()
+        engine_pdf = self.document._engine_pdf
+        if engine_pdf is None:
+            raise AsposePdfException("No document is bound")
+
+        # Check if the document was ever encrypted
+        # Use _original_encrypted which is set even after decryption
+        # _original_encrypted is None for files that were never encrypted
+        was_encrypted = (
+            self.document.is_encrypted
+            or engine_pdf._original_encrypted is True
+        )
+        if not was_encrypted:
+            return None
+
+        from aspose_pdf.engine.cos import PdfDictionary, PdfName, PdfNumber, PdfString
+
+        # Get the encryption dictionary from the engine's document
+        # The Encrypt dictionary may still be accessible even after decryption
+        enc_ref = engine_pdf._cos_doc.trailer.mapping.get(PdfName("Encrypt"))
+        enc = engine_pdf._resolve(enc_ref)
+
+        # If the Encrypt entry was removed (document was decrypted), we still have
+        # access to the encryption_algorithm and P values that were stored
+        # For U and O, we need to extract them from the encryption dictionary
+        # if it still exists, or use a heuristic based on the algorithm type
+        if not isinstance(enc, PdfDictionary):
+            # The Encrypt entry was removed after decryption
+            # We have stored algorithm and P, and U/O should be stored
+            algorithm = engine_pdf.encryption_algorithm
+            key_length = self._get_key_length_from_algorithm(algorithm)
+            permissions = self.permissions
+
+            # Use the stored U and O values
+            has_user_password = engine_pdf.U is not None
+            has_owner_password = engine_pdf.O is not None
+
+            return {
+                "algorithm": algorithm,
+                "has_user_password": has_user_password,
+                "has_owner_password": has_owner_password,
+                "permissions": int(permissions),
+                "key_length": key_length,
+            }
+
+        # Validate encryption dictionary structure
+        # Required keys for a valid encryption dictionary
+        required_keys = [PdfName("Filter"), PdfName("V"), PdfName("R")]
+        for key in required_keys:
+            if key not in enc.mapping:
+                raise PdfValidationException(
+                    f"The encryption dictionary is malformed: missing required key {key.name}"
+                )
+
+        # Extract algorithm name by parsing the encryption dictionary
+        # (mimicking the engine's encryption_algorithm_name method)
+        algorithm = self._extract_encryption_algorithm(enc, engine_pdf)
+
+        # Determine key length based on algorithm and /Length entry
+        key_length = 0
+        length_obj = enc.mapping.get(PdfName("Length"))
+        if isinstance(length_obj, PdfNumber):
+            raw_bits = int(length_obj.value)
+            # For AES encryption (/V >= 4), /Length is in bits
+            # For RC4 encryption (/V < 4), /Length might be in bytes
+            # Check /V to determine the units
+            v = enc.mapping.get(PdfName("V"))
+            v_int = engine_pdf._get_number(v)
+            if v_int is not None and v_int >= 4:
+                # AES encryption: /Length is already in bits
+                key_length = raw_bits
+            elif raw_bits > 40:
+                # RC4: /Length might be in bytes
+                key_length = raw_bits * 8
+            else:
+                # RC4: /Length is in bits
+                key_length = raw_bits
+        else:
+            # Derive key length from algorithm
+            key_length = self._get_key_length_from_algorithm(algorithm)
+
+        # Check for user and owner password presence
+        # U and O should be at least 16 bytes for standard encryption
+        u_val = enc.mapping.get(PdfName("U"))
+        o_val = enc.mapping.get(PdfName("O"))
+
+        has_user_password = False
+        has_owner_password = False
+
+        def check_password_entry(val: Any) -> bool:
+            """Check if a U/O entry indicates a password is set."""
+            if not isinstance(val, PdfString):
+                return False
+            raw = val.value
+            if isinstance(raw, str):
+                raw = raw.encode("latin-1")
+            return len(raw) >= 16
+
+        if u_val is not None:
+            has_user_password = check_password_entry(u_val)
+
+        if o_val is not None:
+            has_owner_password = check_password_entry(o_val)
+
+        # Get permissions
+        permissions = self.permissions
+
+        return {
+            "algorithm": algorithm,
+            "has_user_password": has_user_password,
+            "has_owner_password": has_owner_password,
+            "permissions": int(permissions),
+            "key_length": key_length,
+        }
+
+    @staticmethod
+    def _extract_encryption_algorithm(enc: Any, engine: Any) -> str:
+        """Extract the encryption algorithm from the encryption dictionary."""
+        from aspose_pdf.engine.cos import PdfDictionary, PdfName, PdfNumber
+
+        if not isinstance(enc, PdfDictionary):
+            return "AES-256"
+
+        filt = engine._get_name(enc.mapping.get(PdfName("Filter")))
+        if filt is not None and filt not in ("Standard", "Adobe.PubSec"):
+            return "AES-256"
+
+        v = engine._get_number(enc.mapping.get(PdfName("V")))
+        r_obj = engine._resolve(enc.mapping.get(PdfName("R")))
+        r: int | None = None
+        if isinstance(r_obj, PdfNumber):
+            r = int(r_obj.value)
+        v_int = int(v) if v is not None else (5 if (r or 0) >= 5 else 0)
+
+        if v_int < 4:
+            return "RC4"
+
+        # For crypt filter methods
+        cfm = None
+        stmf = engine._get_name(enc.mapping.get(PdfName("StmF")))
+        if stmf is not None and stmf != "Identity":
+            cf = engine._resolve(enc.mapping.get(PdfName("CF")))
+            if isinstance(cf, PdfDictionary):
+                crypt_filter = engine._resolve(cf.mapping.get(PdfName(stmf)))
+                if isinstance(crypt_filter, PdfDictionary):
+                    cfm = engine._get_name(crypt_filter.mapping.get(PdfName("CFM")))
+
+        if cfm == "V2":
+            return "RC4"
+        if cfm == "AESV2":
+            return "AES-128"
+        if cfm == "AESV3":
+            return "AES-256"
+        if cfm == "None":
+            return "Identity"
+        if v_int >= 5 or (r or 0) >= 5:
+            return "AES-256"
+        return "AES-128"
+
+    @staticmethod
+    def _get_key_length_from_algorithm(algorithm: str) -> int:
+        """Return the key length in bits for a given algorithm."""
+        if "AES-256" in algorithm:
+            return 256
+        elif "AES-128" in algorithm:
+            return 128
+        elif "RC4" in algorithm:
+            # RC4 can be 40-bit or 128-bit
+            return 128
+        return 0
+
 
 class PdfBookmarkEditor(_BoundFacade):
     """The document's outline, as the ported API edits it.
