@@ -321,3 +321,18 @@ def test_color_equality_and_repr():
     assert Color.rgb(1, 0, 0) != (1, 0, 0)
     assert repr(Color.cmyk(0, 0, 0, 1)) == "Color.cmyk(0, 0, 0, 1)"
     assert repr(Color.gray(0.5)) == "Color.gray(0.5)"
+
+
+def test_is_opaque_property():
+    """Color.is_opaque returns True for device colors and False for gradient colors."""
+    assert Color.gray(0.5).is_opaque is True
+    assert Color.rgb(1, 0, 0).is_opaque is True
+    assert Color.cmyk(0, 0, 0, 1).is_opaque is True
+    assert Color.from_hex("#ff0000").is_opaque is True
+
+    from aspose_pdf.color import GradientAxialShading, Point
+
+    gradient = Color(
+        GradientAxialShading(Color.rgb(1, 0, 0), Color.rgb(0, 0, 1), Point(0, 0), Point(1, 1))
+    )
+    assert gradient.is_opaque is False

@@ -195,6 +195,15 @@ class Color:
         return self._pattern_color_space
 
     @property
+    def is_opaque(self) -> bool:
+        """Return True if the color is opaque (device color), False if it is a gradient/pattern color."""
+        return self._pattern_color_space is None
+
+    @is_opaque.setter
+    def is_opaque(self, value: bool) -> None:
+        raise AttributeError("is_opaque is a read-only property")
+
+    @property
     def r(self) -> float:
         """Get the red component."""
         return self._channel(0)
