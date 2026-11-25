@@ -860,6 +860,92 @@ def test_circle_frame_survives_round_trip():
     assert reloaded.frame == (0.5, 1.0, 1.5, 2.0)
 
 
+def test_circle_center_initial_no_frame():
+    """Verify a newly created circle annotation without frame has correct center."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    # center of rect (100,200,300,400) = ((100+300)/2, (200+400)/2) = (200, 300)
+    assert circle.center == (200.0, 300.0)
+
+
+def test_circle_center_with_frame():
+    """Verify center is computed from inner rect when frame is set."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    # frame = (10, 30, 50, 70) -> inner rect = (110, 230, 250, 330)
+    # center = ((110+250)/2, (230+330)/2) = (180.0, 280.0)
+    circle.frame = (10, 30, 50, 70)
+    assert circle.center == (180.0, 280.0)
+
+
+def test_circle_center_read_only():
+    """Verify center is read-only and assignment raises TypeError."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    with pytest.raises(TypeError, match="read-only"):
+        circle.center = (100.0, 200.0)
+
+
+def test_circle_center_degenerate_frame():
+    """Verify center falls back to rect center when inner rect is degenerate."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    # frame = (100, 100, 100, 100) -> inner rect = (200, 300, 200, 300) which is degenerate
+    circle.frame = (100, 100, 100, 100)
+    # Should fall back to center of rect: (200.0, 300.0)
+    assert circle.center == (200.0, 300.0)
+
+
+def test_circle_center_updates_when_frame_changes():
+    """Verify center value updates when frame is changed."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    # Without frame: center of rect (100,200,300,400) = (200.0, 300.0)
+    assert circle.center == (200.0, 300.0)
+    # With frame (10,10,10,10): inner rect (110,210,290,390), center (200.0, 300.0)
+    circle.frame = (10, 10, 10, 10)
+    assert circle.center == (200.0, 300.0)
+    # Back to no frame
+    circle.frame = None
+    assert circle.center == (200.0, 300.0)
+
+
+def test_circle_center_updates_when_rect_changes():
+    """Verify center value updates when rect is changed."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    circle.frame = (10, 10, 10, 10)
+    # Initial: rect (100,200,300,400), frame (10,10,10,10)
+    # Inner rect (110,210,290,390), center = (200.0, 300.0)
+    assert circle.center == (200.0, 300.0)
+    # Change rect
+    circle.rect = (0, 0, 100, 100)
+    # New: rect (0,0,100,100), frame (10,10,10,10)
+    # Inner rect (10,10,90,90), center = (50.0, 50.0)
+    assert circle.center == (50.0, 50.0)
+
+
+def test_circle_center_type():
+    """Verify center returns a tuple of floats."""
+    _, page = _page()
+    circle = page.annotations.add_circle((0, 0, 100, 100))
+    center = circle.center
+    assert isinstance(center, tuple)
+    assert len(center) == 2
+    assert isinstance(center[0], float)
+    assert isinstance(center[1], float)
+
+
+def test_circle_center_round_trip():
+    """Verify center value is consistent after save/load."""
+    document, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    circle.frame = (10, 20, 30, 40)
+    expected_center = circle.center
+    reloaded = _roundtrip(document).pages[1].annotations[-1]
+    assert reloaded.center == expected_center
+
+
 def test_square_frame_works_like_circle():
     """Verify SquareAnnotation also has the frame property."""
     _, page = _page()

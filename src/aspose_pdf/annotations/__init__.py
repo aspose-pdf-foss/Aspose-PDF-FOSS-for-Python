@@ -865,6 +865,49 @@ class CircleAnnotation(_ShapeAnnotation):
 
     __slots__ = ()
     @property
+    def center(self) -> tuple[float, float]:
+        """The geometric center of the circle annotation.
+
+        Returns a 2-tuple of floats ``(cx, cy)`` giving the center point.
+        Computed as the center of the inner rectangle (``Rect`` adjusted by
+        ``frame``, or ``Rect`` if ``frame`` is ``None``). If the inner rectangle
+        is degenerate, returns the center of ``Rect``.
+
+        This property is read-only; assigning to it raises ``TypeError``.
+        """
+        rect = self.rect
+        frame = self.frame
+
+        if frame is None:
+            # No frame: center of the full rect
+            cx = (rect[0] + rect[2]) / 2.0
+            cy = (rect[1] + rect[3]) / 2.0
+            return (cx, cy)
+
+        # With frame: inner rect is (x1+dx1, y1+dy1, x2-dx2, y2-dy2)
+        inner_x1 = rect[0] + frame[0]
+        inner_y1 = rect[1] + frame[1]
+        inner_x2 = rect[2] - frame[2]
+        inner_y2 = rect[3] - frame[3]
+
+        # Check if inner rectangle is degenerate (invalid)
+        if inner_x1 >= inner_x2 or inner_y1 >= inner_y2:
+            # Fall back to center of the full rect
+            cx = (rect[0] + rect[2]) / 2.0
+            cy = (rect[1] + rect[3]) / 2.0
+            return (cx, cy)
+
+        cx = (inner_x1 + inner_x2) / 2.0
+        cy = (inner_y1 + inner_y2) / 2.0
+        return (cx, cy)
+
+    @center.setter
+    def center(self, value: Any) -> None:
+        raise TypeError(
+            "center is a read-only property and cannot be assigned to"
+        )
+
+    @property
     def frame(self) -> tuple[float, float, float, float] | None:
         """The inset rectangle describing the difference between ``Rect`` and the actual shape.
 
