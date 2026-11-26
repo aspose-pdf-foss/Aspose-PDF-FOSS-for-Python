@@ -27,6 +27,7 @@ from aspose_pdf import (
     HorizontalAlignment,
     ImageStamp,
     PageNumberStamp,
+    PageStamp,
     TextStamp,
     VerticalAlignment,
 )
@@ -759,3 +760,114 @@ def test_text_width_with_embedded_font():
     # The property should return a positive value for valid standard fonts
     # when font is None (standard font path)
     assert ts.text_width > 0
+
+
+def test_stamp_clone_creates_independent_copy():
+    """Stamp.clone() returns a new instance with copied attributes."""
+    s1 = TextStamp(
+        value="test",
+        opacity=0.5,
+        rotate=45.0,
+        background=True,
+        horizontal_alignment=HorizontalAlignment.LEFT,
+        vertical_alignment=VerticalAlignment.CENTER,
+        x_indent=10,
+        y_indent=20,
+        zoom=1.5,
+    )
+    s_clone = s1.clone()
+
+    # Check all attributes are equal
+    assert abs(s_clone.opacity - s1.opacity) < 1e-9
+    assert abs(s_clone.rotate - s1.rotate) < 1e-9
+    assert s_clone.background == s1.background
+    assert s_clone.horizontal_alignment == s1.horizontal_alignment
+    assert s_clone.vertical_alignment == s1.vertical_alignment
+    assert abs(s_clone.x_indent - s1.x_indent) < 1e-9
+    assert abs(s_clone.y_indent - s1.y_indent) < 1e-9
+    assert abs(s_clone.zoom - s1.zoom) < 1e-9
+    assert s_clone.artifact == s1.artifact
+    assert s_clone.artifact_type == s1.artifact_type
+    assert s_clone.artifact_subtype == s1.artifact_subtype
+    assert s_clone.value == s1.value
+    assert s_clone.font_size == s1.font_size
+    assert s_clone.font_name == s1.font_name
+
+
+def test_stamp_clone_is_independent():
+    """Modifying the clone does not affect the original."""
+    s_orig = TextStamp(
+        value="stamp",
+        opacity=0.3,
+        rotate=90.0,
+        background=False,
+        horizontal_alignment=HorizontalAlignment.CENTER,
+        vertical_alignment=VerticalAlignment.CENTER,
+        x_indent=5,
+        y_indent=15,
+        zoom=2.0,
+    )
+
+    s_clone = s_orig.clone()
+
+    # Mutate clone
+    s_clone.opacity = 0.99
+    s_clone.rotate = 180.0
+    s_clone.background = True
+    s_clone.horizontal_alignment = HorizontalAlignment.RIGHT
+    s_clone.vertical_alignment = VerticalAlignment.BOTTOM
+    s_clone.x_indent = 100
+    s_clone.y_indent = 200
+    s_clone.zoom = 3.33
+
+    # Original should be unchanged
+    assert abs(s_orig.opacity - 0.3) < 1e-9
+    assert abs(s_orig.rotate - 90.0) < 1e-9
+    assert s_orig.background is False
+    assert s_orig.horizontal_alignment == HorizontalAlignment.CENTER
+    assert s_orig.vertical_alignment == VerticalAlignment.CENTER
+    assert abs(s_orig.x_indent - 5) < 1e-9
+    assert abs(s_orig.y_indent - 15) < 1e-9
+    assert abs(s_orig.zoom - 2.0) < 1e-9
+
+
+def test_stamp_clone_preserves_type():
+    """Stamp.clone() returns an instance of the same subclass."""
+    text_stamp = TextStamp("test")
+    image_stamp = ImageStamp(b"fake", width=10, height=10)
+    page_num_stamp = PageNumberStamp()
+    page_stamp = PageStamp(source=None, page_index=1)
+
+    assert isinstance(text_stamp.clone(), TextStamp)
+    assert isinstance(image_stamp.clone(), ImageStamp)
+    assert isinstance(page_num_stamp.clone(), PageNumberStamp)
+    assert isinstance(page_stamp.clone(), PageStamp)
+
+
+def test_stamp_clone_never_raises():
+    """Stamp.clone() never raises exceptions for valid stamp configurations."""
+    s1 = TextStamp("test")
+    s1.clone()  # Base case
+
+    s2 = ImageStamp(b"fake", width=10, height=10)
+    s2.clone()  # ImageStamp
+
+    s3 = PageNumberStamp("{page}")
+    s3.clone()  # PageNumberStamp
+
+    # All attributes at non-default values
+    s4 = TextStamp(
+        value="x",
+        opacity=0.0,
+        rotate=360.0,
+        background=True,
+        horizontal_alignment=HorizontalAlignment.RIGHT,
+        vertical_alignment=VerticalAlignment.TOP,
+        x_indent=-100,
+        y_indent=-100,
+        zoom=0.1,
+        artifact=False,
+        artifact_type="Layout",
+        artifact_subtype="Header",
+    )
+    s4.clone()  # Edge case attributes

@@ -21,7 +21,7 @@ instead of over it. One stamp added to many pages is one object in the file.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -105,6 +105,22 @@ class Stamp:
     bottom of the sheet is a header or a footer, and anything else a stamp puts
     on a page is a watermark.
     """
+
+    def clone(self) -> Stamp:
+        """Return a new stamp instance with all attribute values copied from this one.
+
+        The returned instance is independent: modifying its attributes does not
+        affect this instance. The method preserves the current configuration
+        exactly and never raises exceptions.
+
+        Returns:
+            A new Stamp instance with the same attribute values.
+        """
+        kwargs: dict[str, Any] = {}
+        for f in fields(self):
+            if f.init:
+                kwargs[f.name] = getattr(self, f.name)
+        return type(self)(**kwargs)
 
     def _validate(self) -> None:
         if not 0.0 <= float(self.opacity) <= 1.0:
