@@ -16058,8 +16058,6 @@ class SimplePdf:
         """Remove one terminal field and its widget annotations."""
         self._ensure_not_disposed()
         parts = self._form_field_name_parts(name)
-        if name not in self.get_form_fields():
-            return False
         if self._cos_doc is None:
             return False
         root = self._resolve(self._cos_doc.trailer.mapping.get(PdfName("Root")))

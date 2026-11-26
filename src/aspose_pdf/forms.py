@@ -1697,7 +1697,9 @@ class Form:
         order = self.calculation_order
         if not self._document._engine_pdf.remove_form_field(name):
             raise KeyError(f"Field '{name}' not found")
-        self._load_fields()
+        # Mark the field as removed and remove from the dict without a full reload
+        field._removed = True
+        self._fields.pop(name, None)
         if name in order:
             self.calculation_order = [entry for entry in order if entry != name]
         return field

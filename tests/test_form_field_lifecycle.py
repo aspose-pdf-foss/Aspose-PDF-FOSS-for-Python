@@ -139,3 +139,30 @@ def test_disposed_document_rejects_retained_field_value_changes(document):
         field.value = "ghost"
 
     assert field.value == "before"
+
+
+def test_remove_field_via_remove_method(document):
+    """Test that Field.remove() works correctly and marks field as removed."""
+    field = _add_text(document, name="test_field", value="test_value")
+
+    # Remove the field using the remove() method
+    removed_field = field.remove()
+
+    # Verify the field object is returned
+    assert removed_field.name == "test_field"
+
+    # Verify the field is marked as removed
+    assert removed_field._removed is True
+
+    # Verify the field is no longer in the form
+    assert len(document.form) == 0
+    assert "test_field" not in document.form.field_names
+
+    # Verify the removed field cannot be accessed or modified
+    with pytest.raises(KeyError, match="no longer in the form"):
+        removed_field.value = "new_value"
+
+    # Verify we can add a new field with the same name
+    new_field = _add_text(document, name="test_field", value="new_value")
+    assert new_field.value == "new_value"
+    assert len(document.form) == 1
