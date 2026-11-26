@@ -197,6 +197,25 @@ class ListItem:
         self.items.append(item)
         return item
 
+    def get_item(self, index: int) -> ListItem:
+        """Return the sub-item at the given index.
+
+        Supports negative indexing. Raises ``IndexError`` if the index is out
+        of range. If the item at the requested position is a string, a new
+        ``ListItem`` with that string as ``text`` is constructed and returned
+        without modifying the internal ``items`` list.
+        """
+        if not isinstance(index, int):
+            raise TypeError("index must be an int")
+        if index < 0:
+            index = len(self.items) + index
+        if index < 0 or index >= len(self.items):
+            raise IndexError("list index out of range")
+        item = self.items[index]
+        if isinstance(item, ListItem):
+            return item
+        return ListItem(str(item))
+
 
 @dataclass
 class TextList:

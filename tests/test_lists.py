@@ -166,6 +166,62 @@ class TestTextListObject:
         with pytest.raises(PdfValidationException, match="carries its own options"):
             TextList().add_item(ListItem("x"), font_size=9)
 
+    def test_get_item_returns_sub_item(self):
+        parent = ListItem("root")
+        parent.add_item("first")
+        parent.add_item("second")
+        parent.add_item("third")
+        item0 = parent.get_item(0)
+        assert item0.text == "first"
+        item1 = parent.get_item(1)
+        assert item1.text == "second"
+        item2 = parent.get_item(2)
+        assert item2.text == "third"
+
+    def test_get_item_supports_negative_index(self):
+        parent = ListItem("root")
+        parent.add_item("first")
+        parent.add_item("second")
+        parent.add_item("third")
+        item_neg1 = parent.get_item(-1)
+        assert item_neg1.text == "third"
+        item_neg2 = parent.get_item(-2)
+        assert item_neg2.text == "second"
+        item_neg3 = parent.get_item(-3)
+        assert item_neg3.text == "first"
+
+    def test_get_item_raises_indexerror_for_out_of_range(self):
+        parent = ListItem("root")
+        parent.add_item("first")
+        parent.add_item("second")
+        parent.add_item("third")
+        with pytest.raises(IndexError, match="list index out of range"):
+            parent.get_item(5)
+        with pytest.raises(IndexError, match="list index out of range"):
+            parent.get_item(-4)
+
+    def test_get_item_converts_string_to_listitem(self):
+        parent = ListItem("root")
+        parent.items = ["string_item", ListItem("real_item")]
+        item0 = parent.get_item(0)
+        assert isinstance(item0, ListItem)
+        assert item0.text == "string_item"
+        item1 = parent.get_item(1)
+        assert isinstance(item1, ListItem)
+        assert item1.text == "real_item"
+        assert parent.items[0] == "string_item"
+
+    def test_get_item_raises_typeerror_for_non_int_index(self):
+        parent = ListItem("root")
+        parent.add_item("first")
+        with pytest.raises(TypeError, match="index must be an int"):
+            parent.get_item(0.5)
+
+    def test_get_item_raises_indexerror_on_empty_list(self):
+        parent = ListItem("root")
+        with pytest.raises(IndexError, match="list index out of range"):
+            parent.get_item(0)
+
     def test_is_empty(self):
         assert TextList().is_empty
         assert TextList(["  "]).is_empty
