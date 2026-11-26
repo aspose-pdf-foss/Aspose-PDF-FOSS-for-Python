@@ -236,6 +236,27 @@ class TestValidationResult:
         r = ValidationResult(status=ValidationStatus.VALID)
         assert r.message == ""
 
+    def test_is_pades_baseline_with_baseline_levels(self):
+        for level in ("B", "T", "LT", "LTA"):
+            r = ValidationResult(status=ValidationStatus.VALID, pades_level=level)
+            assert r.is_pades_baseline is True
+
+    def test_is_pades_baseline_with_none(self):
+        r = ValidationResult(status=ValidationStatus.VALID, pades_level=None)
+        assert r.is_pades_baseline is False
+
+    def test_is_pades_baseline_with_non_baseline_levels(self):
+        for level in ("ES", "X", "none"):
+            r = ValidationResult(status=ValidationStatus.VALID, pades_level=level)
+            assert r.is_pades_baseline is False
+
+    def test_is_pades_baseline_with_padeslevel_enum(self):
+        from aspose_pdf.validation import PadesLevel
+        r = ValidationResult(status=ValidationStatus.VALID, pades_level=PadesLevel.B)
+        assert r.is_pades_baseline is True
+        r = ValidationResult(status=ValidationStatus.VALID, pades_level=PadesLevel.NONE)
+        assert r.is_pades_baseline is False
+
 
 # ---------------------------------------------------------------------------
 # PdfSignature.validate() – ByteRange edge cases

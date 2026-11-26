@@ -277,6 +277,17 @@ class ValidationResult:
         """Return ``True`` when the signature passed all checks."""
         return self.status == ValidationStatus.VALID
 
+    @property
+    def is_pades_baseline(self) -> bool:
+        """Return ``True`` if ``pades_level`` is a PAdES baseline level (B, T, LT, LTA)."""
+        if self.pades_level is None:
+            return False
+        # Accept both PadesLevel enum members and string values
+        if isinstance(self.pades_level, PadesLevel):
+            return self.pades_level in (PadesLevel.B, PadesLevel.T, PadesLevel.LT, PadesLevel.LTA)
+        # Also handle string values for backwards compatibility
+        return self.pades_level in ("B", "T", "LT", "LTA")
+
     def __repr__(self) -> str:
         return (
             f"ValidationResult("
