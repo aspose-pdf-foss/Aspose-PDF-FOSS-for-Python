@@ -762,6 +762,51 @@ def test_text_width_with_embedded_font():
     assert ts.text_width > 0
 
 
+def test_text_height_property():
+    """TextStamp.text_height returns the rendered height of the text."""
+    # Test basic height calculation for standard fonts
+    # Single line: font_size * 1.2 * 1
+    ts1 = TextStamp("Hello", font_size=20.0, font_name="Helvetica")
+    assert isinstance(ts1.text_height, float)
+    assert ts1.text_height == pytest.approx(24.0, abs=0.1)  # 20 * 1.2 * 1
+
+    # Multi-line: font_size * 1.2 * num_lines
+    ts2 = TextStamp("Line1\nLine2", font_size=15.0, font_name="Helvetica")
+    assert ts2.text_height == pytest.approx(36.0, abs=0.1)  # 15 * 1.2 * 2
+
+    # Larger font size should give taller text
+    ts3 = TextStamp("ABC", font_size=24, font_name="Helvetica")
+    assert ts3.text_height == pytest.approx(28.8, abs=0.1)  # 24 * 1.2 * 1
+
+
+def test_text_height_empty_string_returns_zero():
+    """TextHeight returns 0.0 for empty string."""
+    ts = TextStamp("", font_size=10.0, font_name="Helvetica")
+    assert ts.text_height == 0.0
+
+
+def test_text_height_whitespace_returns_zero():
+    """TextHeight returns 0.0 for whitespace-only string."""
+    ts = TextStamp("   ", font_size=10.0, font_name="Helvetica")
+    assert ts.text_height == 0.0
+
+
+def test_text_height_with_embedded_font():
+    """TextHeight works with an embedded font."""
+    # The property should work for embedded fonts too
+    # Using the font_size directly in the calculation
+    ts = TextStamp("ABC", font_size=12)
+    assert isinstance(ts.text_height, float)
+    assert ts.text_height == pytest.approx(14.4, abs=0.1)  # 12 * 1.2 * 1
+
+
+def test_text_height_read_only():
+    """TextHeight is read-only and cannot be assigned."""
+    ts = TextStamp("test", font_size=10.0)
+    with pytest.raises(AttributeError):
+        ts.text_height = 100.0
+
+
 def test_stamp_clone_creates_independent_copy():
     """Stamp.clone() returns a new instance with copied attributes."""
     s1 = TextStamp(

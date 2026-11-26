@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `TextStamp.text_height` property.** Added a read-only property `text_height: float` to `TextStamp`. This property returns the vertical space in points that the stamp's text would occupy when rendered, computed as ``font_size * 1.2 * num_lines`` where ``num_lines`` is the number of lines obtained by splitting ``value`` on newline characters. Returns ``0.0`` if ``value`` is empty or contains only whitespace.
+
 - **Add `Color.to_gray()` method.** Added `to_gray(self) -> Color` to `Color`. The method returns a new `Color` instance in DeviceGray space whose gray level is computed from the current color using the standard luminance formula: 0.299*R + 0.587*G + 0.114*B. For RGB colors, the formula is applied directly. For CMYK colors, the color is first converted to RGB using the library's existing additive conversion (`aspose_pdf.engine.graphics_absorb._cmyk_rgb`), then the same luminance formula is applied. For DeviceGray colors, the gray level is preserved. Raises `ValueError` for gradient/pattern colors. The original Color instance is not modified.
 
 - **Add `Color.is_opaque` property.** Added a read-only property `is_opaque: bool` to `Color`. This property returns ``True`` for device colors (DeviceGray, DeviceRGB, DeviceCMYK) and ``False`` for gradient/pattern colors. It is derived from whether the color has a ``pattern_color_space`` set and can be used to detect colors that are safe for PDF overprint or PDF/A transparency contexts.

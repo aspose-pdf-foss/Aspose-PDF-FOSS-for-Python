@@ -296,6 +296,24 @@ class TextStamp(Stamp):
             except Exception:
                 return 0.0
 
+    @property
+    def text_height(self) -> float:
+        """The vertical space the text would occupy when rendered.
+
+        Returns the height in points that this stamp's text would occupy when
+        drawn with the current ``font_name``, ``font_size``, and ``font`` settings.
+        The value is computed as ``font_size * 1.2 * num_lines``, where ``num_lines``
+        is the number of lines obtained by splitting ``value`` on newline characters.
+
+        If ``value`` is empty or contains only whitespace, returns ``0.0``.
+        """
+        text = str(self.value) if self.value is not None else ""
+        if not text or text.isspace():
+            return 0.0
+
+        num_lines = text.count("\n") + 1
+        return float(self.font_size) * 1.2 * num_lines
+
     def _validate(self) -> None:
         super()._validate()
         if float(self.font_size) <= 0.0:
