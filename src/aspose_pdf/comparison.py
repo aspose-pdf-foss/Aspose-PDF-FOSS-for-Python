@@ -183,13 +183,44 @@ class DocumentComparison:
 
         Returns:
             List of one-based page numbers that differ between the documents.
+            Only includes pages that exist in both documents (compared pages).
+            Extra pages in the longer document are excluded.
         """
         return sorted({
             change.page_number
             for change in self.changes
             if change.page_number is not None
+            and change.page_index is not None
+            and change.other_page_index is not None
             and change.change_type in (ChangeType.MODIFIED_PAGE, ChangeType.ADDED_PAGE, ChangeType.DELETED_PAGE)
         })
+
+    def get_summary(self) -> dict[str, int]:
+        """Return a summary of the comparison results as a dictionary.
+
+        Returns:
+            A dict with four keys:
+                - 'added': number of pages added in the right document
+                - 'deleted': number of pages deleted from the left document
+                - 'modified': number of pages modified
+                - 'unchanged': number of pages with no changes
+
+            The 'unchanged' count is computed as:
+            min(left_document.pages.count, right_document.pages.count) - len(get_changed_pages())
+            Extra pages in the longer document are not counted as unchanged.
+        """
+        added = len(self.get_additions())
+        deleted = len(self.get_deletions())
+        modified = len(self.get_modifications())
+        min_pages = min(len(self.left_document.pages), len(self.right_document.pages))
+        changed_pages = len(self.get_changed_pages())
+        unchanged = min_pages - changed_pages
+        return {
+            "added": added,
+            "deleted": deleted,
+            "modified": modified,
+            "unchanged": unchanged,
+        }
 
     def get_additions(self) -> list[ContentChange]:
         """Return changes where content was added in the right document.

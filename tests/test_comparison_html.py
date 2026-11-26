@@ -12,7 +12,12 @@ from itertools import repeat
 
 import pytest
 
-from aspose_pdf import Document, PdfLoadLimits, PdfResourceLimitException
+from aspose_pdf import (
+    Document,
+    DocumentComparison,
+    PdfLoadLimits,
+    PdfResourceLimitException,
+)
 from aspose_pdf.exceptions import (
     AsposePdfException,
     PdfParseException,
@@ -453,3 +458,109 @@ def test_empty_selections_and_disposed_documents():
     with Document() as other:
         with pytest.raises(AsposePdfException, match="disposed"):
             left.export_comparison_html(other)
+
+
+def test_get_summary_returns_correct_counts():
+    """Test that get_summary() returns accurate counts for comparison results."""
+    # Test 1: Two identical 2-page docs → no changes
+    with Document() as left, Document() as right:
+        left.pages.add().add_text("Page 1", x=72, y=700)
+        left.pages.add().add_text("Page 2", x=72, y=700)
+        right.pages.add().add_text("Page 1", x=72, y=700)
+        right.pages.add().add_text("Page 2", x=72, y=700)
+
+        comp = DocumentComparison.compare(left, right, compare_text=True, compare_visual=False)
+        summary = comp.get_summary()
+
+        assert summary == {"added": 0, "deleted": 0, "modified": 0, "unchanged": 2}
+        assert isinstance(summary["added"], int)
+        assert isinstance(summary["deleted"], int)
+        assert isinstance(summary["modified"], int)
+        assert isinstance(summary["unchanged"], int)
+
+
+def test_get_summary_with_added_pages():
+    """Test get_summary() when right document has extra pages."""
+    with Document() as left, Document() as right:
+        left.pages.add().add_text("Only", x=72, y=700)
+        right.pages.add().add_text("Only", x=72, y=700)
+        right.pages.add().add_text("Extra", x=72, y=700)
+        right.pages.add().add_text("More", x=72, y=700)
+
+        comp = DocumentComparison.compare(left, right, compare_text=True, compare_visual=False)
+        summary = comp.get_summary()
+
+        # Left has 1 page, right has 3 pages
+        # Page 1 matches (no change for compared pages)
+        # Pages 2, 3 in right are extra → added
+        assert summary["added"] == 2
+        assert summary["deleted"] == 0
+        assert summary["modified"] == 0
+        # unchanged = min(1, 3) - 0 compared changes = 1
+        assert summary["unchanged"] == 1
+
+
+def test_get_summary_with_modified_pages():
+    """Test get_summary() when pages are modified."""
+    with Document() as left, Document() as right:
+        left.pages.add().add_text("Original", x=72, y=700)
+        left.pages.add().add_text("Same", x=72, y=700)
+        right.pages.add().add_text("Modified", x=72, y=700)  # Changed
+        right.pages.add().add_text("Same", x=72, y=700)  # Same
+
+        comp = DocumentComparison.compare(left, right, compare_text=True, compare_visual=False)
+        summary = comp.get_summary()
+
+        # Left has 2 pages, right has 2 pages
+        # Page 1 is modified, page 2 is unchanged
+        assert summary["added"] == 0
+        assert summary["deleted"] == 0
+        assert summary["modified"] == 1
+        assert summary["unchanged"] == 1
+
+
+def test_get_summary_with_deleted_pages():
+    """Test get_summary() when left document has extra pages."""
+    with Document() as left, Document() as right:
+        left.pages.add().add_text("Extra1", x=72, y=700)
+        left.pages.add().add_text("Extra2", x=72, y=700)
+        left.pages.add().add_text("Same", x=72, y=700)
+        right.pages.add().add_text("Same", x=72, y=700)
+
+        comp = DocumentComparison.compare(left, right, compare_text=True, compare_visual=False)
+        summary = comp.get_summary()
+
+        # Left has 3 pages, right has 1 page
+        # Page 1: "Extra1" vs "Same" → modified (content differs)
+        # Page 2: "Extra2" has no counterpart in right → deleted
+        # Page 3: "Same" has no counterpart in right → deleted
+        assert summary["added"] == 0
+        assert summary["deleted"] == 2
+        assert summary["modified"] == 1
+        # unchanged = min(3, 1) - 1 compared change = 0
+        assert summary["unchanged"] == 0
+
+
+def test_get_summary_empty_documents():
+    """Test get_summary() with empty documents."""
+    with Document() as left, Document() as right:
+        comp = DocumentComparison.compare(left, right, compare_text=True, compare_visual=False)
+        summary = comp.get_summary()
+
+        assert summary == {"added": 0, "deleted": 0, "modified": 0, "unchanged": 0}
+
+
+def test_get_summary_with_visual_comparison():
+    """Test get_summary() with visual comparison enabled."""
+    with Document() as left, Document() as right:
+        left.pages.add().add_text("Same", x=72, y=700)
+        right.pages.add().add_text("Same", x=72, y=700)
+
+        comp = DocumentComparison.compare(left, right, compare_text=True, compare_visual=True)
+        summary = comp.get_summary()
+
+        # Both text and visual match
+        assert summary["added"] == 0
+        assert summary["deleted"] == 0
+        assert summary["modified"] == 0
+        assert summary["unchanged"] == 1

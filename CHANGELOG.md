@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `DocumentComparison.get_summary()` method.** Added `get_summary(self) -> dict[str, int]` to `DocumentComparison`. The method returns a dictionary with keys `'added'`, `'deleted'`, `'modified'`, and `'unchanged'` containing the counts of changes detected during comparison. The counts are computed from existing methods: `'added'` is `len(self.get_additions())`, `'deleted'` is `len(self.get_deletions())`, `'modified'` is `len(self.get_modifications())`, and `'unchanged'` is `min(left_document.pages.count, right_document.pages.count) - len(self.get_changed_pages())`. Extra pages in the longer document are not counted as unchanged. The method never raises exceptions and always returns all four keys with integer values (possibly zero).
+
 - **Add `TextStamp.trim()` method.** Added `trim(self) -> None` to `TextStamp`. The method removes leading and trailing whitespace (space, tab, carriage-return, newline) from the ``value`` attribute in-place. If ``value`` is empty or contains only whitespace, it becomes an empty string. Internal line breaks and spacing are preserved. The method never raises exceptions.
 
 - **Add `TextStamp.text_height` property.** Added a read-only property `text_height: float` to `TextStamp`. This property returns the vertical space in points that the stamp's text would occupy when rendered, computed as ``font_size * 1.2 * num_lines`` where ``num_lines`` is the number of lines obtained by splitting ``value`` on newline characters. Returns ``0.0`` if ``value`` is empty or contains only whitespace.
