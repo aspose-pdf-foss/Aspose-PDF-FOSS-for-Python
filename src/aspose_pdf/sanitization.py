@@ -78,6 +78,32 @@ class SanitizationReport:
             if entry.name != "pages_flattened"
         )
 
+    def to_dict(self) -> dict[str, int]:
+        """Return a dictionary with all count fields.
+
+        The keys are exactly: ``'metadata_entries'``, ``'scripts'``, ``'actions'``,
+        ``'attachments'``, ``'layers'``, ``'pages_flattened'``, ``'comments'``,
+        ``'links'``, ``'form_fields'``. Each maps to its integer count. The
+        returned dictionary is a fresh instance; modifying it does not affect the
+        report.
+
+        Returns
+        -------
+        dict[str, int]
+            A snapshot of the report's counts.
+        """
+        return {
+            "metadata_entries": self.metadata_entries,
+            "scripts": self.scripts,
+            "actions": self.actions,
+            "attachments": self.attachments,
+            "layers": self.layers,
+            "pages_flattened": self.pages_flattened,
+            "comments": self.comments,
+            "links": self.links,
+            "form_fields": self.form_fields,
+        }
+
     def __bool__(self) -> bool:
         return self.total > 0
 

@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `SanitizationReport.to_dict()` method.** Added `to_dict(self) -> dict[str, int]` to `SanitizationReport`. The method returns a fresh dictionary with keys `'metadata_entries'`, `'scripts'`, `'actions'`, `'attachments'`, `'layers'`, `'pages_flattened'`, `'comments'`, `'links'`, and `'form_fields'`, each mapping to its corresponding integer count. Modifying the returned dictionary does not affect the report instance.
+
 - **Add `ListItem.get_item()` method.** Added `get_item(self, index: int) -> ListItem` to `ListItem`. The method returns the sub-item at the given zero-based index, supporting negative indices (e.g., -1 for the last sub-item). Raises `IndexError` if the index is out of range. If the item at the requested position is a string, a new `ListItem` with that string as `text` is constructed and returned without modifying the internal `items` list.
 
 - **Add `DocumentComparison.get_summary()` method.** Added `get_summary(self) -> dict[str, int]` to `DocumentComparison`. The method returns a dictionary with keys `'added'`, `'deleted'`, `'modified'`, and `'unchanged'` containing the counts of changes detected during comparison. The counts are computed from existing methods: `'added'` is `len(self.get_additions())`, `'deleted'` is `len(self.get_deletions())`, `'modified'` is `len(self.get_modifications())`, and `'unchanged'` is `min(left_document.pages.count, right_document.pages.count) - len(self.get_changed_pages())`. Extra pages in the longer document are not counted as unchanged. The method never raises exceptions and always returns all four keys with integer values (possibly zero).

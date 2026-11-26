@@ -141,6 +141,62 @@ def test_pages_flattened_is_not_counted_as_a_thing_removed():
     assert bool(report)
 
 
+def test_to_dict_returns_dict_with_all_field_names():
+    """to_dict() returns a fresh dict with the correct keys and values."""
+    report = SanitizationReport()
+    result = report.to_dict()
+    expected_keys = {
+        "metadata_entries",
+        "scripts",
+        "actions",
+        "attachments",
+        "layers",
+        "pages_flattened",
+        "comments",
+        "links",
+        "form_fields",
+    }
+    assert set(result.keys()) == expected_keys
+    for key in expected_keys:
+        assert isinstance(result[key], int)
+        assert result[key] == 0
+
+
+def test_to_dict_returns_correct_counts_for_non_zero_report():
+    """to_dict() returns correct counts when fields have non-zero values."""
+    report = SanitizationReport(
+        metadata_entries=2,
+        scripts=1,
+        attachments=3,
+        comments=1,
+        links=2,
+    )
+    result = report.to_dict()
+    assert result["metadata_entries"] == 2
+    assert result["scripts"] == 1
+    assert result["actions"] == 0
+    assert result["attachments"] == 3
+    assert result["layers"] == 0
+    assert result["pages_flattened"] == 0
+    assert result["comments"] == 1
+    assert result["links"] == 2
+    assert result["form_fields"] == 0
+
+
+def test_to_dict_returns_fresh_dict():
+    """Modifying the returned dict does not affect the report."""
+    report = SanitizationReport(scripts=1, comments=2)
+    result1 = report.to_dict()
+    result1["scripts"] = 999
+    result1["comments"] = 999
+    assert report.scripts == 1
+    assert report.comments == 2
+    # Calling to_dict again returns fresh dict with original values
+    result2 = report.to_dict()
+    assert result2["scripts"] == 1
+    assert result2["comments"] == 2
+
+
 # ---------------------------------------------------------------------------
 # Metadata
 # ---------------------------------------------------------------------------
