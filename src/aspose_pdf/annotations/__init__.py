@@ -908,6 +908,46 @@ class CircleAnnotation(_ShapeAnnotation):
         )
 
     @property
+    def radius(self) -> float:
+        """The radius of the circle in points.
+
+        Returns half of the minimum of the width and height of the inner
+        rectangle (``Rect`` adjusted by ``frame``, or ``Rect`` if ``frame`` is
+        ``None``). If the inner rectangle is degenerate (non-positive width or
+        height), returns ``0.0``.
+
+        This property is read-only; assigning to it raises ``TypeError``.
+        """
+        rect = self.rect
+        if rect is None:
+            return 0.0
+
+        frame = self.frame
+
+        if frame is None:
+            # No frame: use full rect dimensions
+            width = rect[2] - rect[0]
+            height = rect[3] - rect[1]
+        else:
+            # With frame: inner rect is (x1+dx1, y1+dy1, x2-dx2, y2-dy2)
+            inner_width = (rect[2] - rect[0]) - (frame[2] + frame[0])
+            inner_height = (rect[3] - rect[1]) - (frame[3] + frame[1])
+            width = inner_width
+            height = inner_height
+
+        # If either dimension is non-positive, radius is 0.0
+        if width <= 0 or height <= 0:
+            return 0.0
+
+        return min(width, height) / 2.0
+
+    @radius.setter
+    def radius(self, value: Any) -> None:
+        raise TypeError(
+            "radius is a read-only property and cannot be assigned to"
+        )
+
+    @property
     def frame(self) -> tuple[float, float, float, float] | None:
         """The inset rectangle describing the difference between ``Rect`` and the actual shape.
 

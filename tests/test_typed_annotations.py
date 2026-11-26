@@ -946,6 +946,103 @@ def test_circle_center_round_trip():
     assert reloaded.center == expected_center
 
 
+def test_circle_radius_exists():
+    """Verify radius property exists and is accessible."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    assert hasattr(circle, "radius")
+    assert "radius" in dir(circle)
+
+
+def test_circle_radius_basic():
+    """Verify radius returns correct value without frame."""
+    _, page = _page()
+    # Circle1: rect (100,100,300,300) -> width=200, height=200 -> radius=100
+    circle1 = page.annotations.add_circle((100, 100, 300, 300))
+    assert circle1.radius == 100.0
+    # Circle2: rect (100,100,300,200) -> width=200, height=100 -> radius=50
+    circle2 = page.annotations.add_circle((100, 100, 300, 200))
+    assert circle2.radius == 50.0
+
+
+def test_circle_radius_with_frame():
+    """Verify radius computes from inner rectangle when frame is set."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 100, 300, 300))
+    # rect (100,100,300,300), no frame -> width=200, height=200, radius=100
+    assert circle.radius == 100.0
+    # frame (10,20,30,40) -> inner_width = 200-(30+10)=160, inner_height = 200-(40+20)=140
+    # radius = min(160, 140)/2 = 70
+    circle.frame = (10, 20, 30, 40)
+    assert circle.radius == 70.0
+
+
+def test_circle_radius_degenerate():
+    """Verify radius returns 0.0 for degenerate inner rectangle."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 100, 300, 300))
+    # frame (150,0,150,0) -> inner_width = 200-(150+150)=-100 (degenerate)
+    circle.frame = (150, 0, 150, 0)
+    assert circle.radius == 0.0
+    # frame (0,150,0,150) -> inner_height = 200-(150+150)=-100 (degenerate)
+    circle.frame = (0, 150, 0, 150)
+    assert circle.radius == 0.0
+
+
+def test_circle_radius_read_only():
+    """Verify radius is read-only and assignment raises TypeError."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    with pytest.raises(TypeError, match="read-only"):
+        circle.radius = 50.0
+
+
+def test_circle_radius_type():
+    """Verify radius returns a float."""
+    _, page = _page()
+    circle = page.annotations.add_circle((0, 0, 100, 100))
+    radius = circle.radius
+    assert isinstance(radius, float)
+
+
+def test_circle_radius_updates_with_rect():
+    """Verify radius value updates when rect is changed."""
+    _, page = _page()
+    circle = page.annotations.add_circle((0, 0, 100, 100))
+    # rect (0,0,100,100) -> width=100, height=100 -> radius=50
+    assert circle.radius == 50.0
+    # Change rect to (0,0,200,100) -> width=200, height=100 -> radius=50
+    circle.rect = (0, 0, 200, 100)
+    assert circle.radius == 50.0
+    # Change rect to (0,0,200,200) -> width=200, height=200 -> radius=100
+    circle.rect = (0, 0, 200, 200)
+    assert circle.radius == 100.0
+
+
+def test_circle_radius_updates_with_frame():
+    """Verify radius value updates when frame is changed."""
+    _, page = _page()
+    circle = page.annotations.add_circle((100, 100, 300, 300))
+    # Without frame: radius = min(200,200)/2 = 100
+    assert circle.radius == 100.0
+    # With frame (10,10,10,10): inner_width=180, inner_height=180, radius=90
+    circle.frame = (10, 10, 10, 10)
+    assert circle.radius == 90.0
+    # No frame: radius = min(200,200)/2 = 100
+    circle.frame = None
+    assert circle.radius == 100.0
+
+
+def test_circle_radius_round_trip():
+    """Verify radius value is consistent after save/load."""
+    document, page = _page()
+    circle = page.annotations.add_circle((100, 200, 300, 400))
+    circle.frame = (10, 20, 30, 40)
+    expected_radius = circle.radius
+    reloaded = _roundtrip(document).pages[1].annotations[-1]
+    assert reloaded.radius == expected_radius
+
+
 def test_square_frame_works_like_circle():
     """Verify SquareAnnotation also has the frame property."""
     _, page = _page()
