@@ -104,6 +104,43 @@ class SanitizationReport:
             "form_fields": self.form_fields,
         }
 
+    def combined_with(self, other: SanitizationReport) -> SanitizationReport:
+        """Return a new report whose fields are the sum of this report and ``other``.
+
+        Each field of the returned report equals ``self.field + other.field``.
+        ``pages_flattened`` is included in the sum (unlike in ``total``).
+
+        Parameters
+        ----------
+        other : SanitizationReport
+            The report to combine with.
+
+        Returns
+        -------
+        SanitizationReport
+            A new report with summed field values.
+
+        Raises
+        ------
+        TypeError
+            If ``other`` is not a ``SanitizationReport`` instance.
+        """
+        if not isinstance(other, SanitizationReport):
+            raise TypeError(
+                f"combined_with() requires a SanitizationReport, got {type(other).__name__}"
+            )
+        return SanitizationReport(
+            metadata_entries=self.metadata_entries + other.metadata_entries,
+            scripts=self.scripts + other.scripts,
+            actions=self.actions + other.actions,
+            attachments=self.attachments + other.attachments,
+            layers=self.layers + other.layers,
+            pages_flattened=self.pages_flattened + other.pages_flattened,
+            comments=self.comments + other.comments,
+            links=self.links + other.links,
+            form_fields=self.form_fields + other.form_fields,
+        )
+
     def __bool__(self) -> bool:
         return self.total > 0
 

@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `SanitizationReport.combined_with()` method.** Added `combined_with(self, other: 'SanitizationReport') -> 'SanitizationReport'` to `SanitizationReport`. The method returns a new report whose each field equals `self.field + other.field`. Raises `TypeError` if `other` is not a `SanitizationReport`. The original reports remain unchanged. The returned report's `total` property equals the sum of the summed fields (excluding `pages_flattened`).
+
 - **Add `SanitizationReport.to_dict()` method.** Added `to_dict(self) -> dict[str, int]` to `SanitizationReport`. The method returns a fresh dictionary with keys `'metadata_entries'`, `'scripts'`, `'actions'`, `'attachments'`, `'layers'`, `'pages_flattened'`, `'comments'`, `'links'`, and `'form_fields'`, each mapping to its corresponding integer count. Modifying the returned dictionary does not affect the report instance.
 
 - **Add `ListItem.get_item()` method.** Added `get_item(self, index: int) -> ListItem` to `ListItem`. The method returns the sub-item at the given zero-based index, supporting negative indices (e.g., -1 for the last sub-item). Raises `IndexError` if the index is out of range. If the item at the requested position is a string, a new `ListItem` with that string as `text` is constructed and returned without modifying the internal `items` list.

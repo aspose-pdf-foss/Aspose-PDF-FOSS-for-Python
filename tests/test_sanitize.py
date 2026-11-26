@@ -198,6 +198,68 @@ def test_to_dict_returns_fresh_dict():
 
 
 # ---------------------------------------------------------------------------
+# combined_with
+# ---------------------------------------------------------------------------
+
+
+def test_combined_with_raises_type_error_for_non_report():
+    """combined_with() raises TypeError if other is not a SanitizationReport."""
+    report = SanitizationReport(metadata_entries=1, scripts=2)
+    with pytest.raises(TypeError, match="combined_with\\(\\) requires a SanitizationReport"):
+        report.combined_with({"metadata_entries": 1, "scripts": 2})  # type: ignore
+
+
+def test_combined_with_sums_all_fields():
+    """combined_with() returns a new report with pairwise summed fields."""
+    report_a = SanitizationReport(metadata_entries=1, scripts=2, attachments=3)
+    report_b = SanitizationReport(actions=4, layers=5, comments=6)
+    combined = report_a.combined_with(report_b)
+    expected = SanitizationReport(
+        metadata_entries=1,
+        scripts=2,
+        actions=4,
+        attachments=3,
+        layers=5,
+        pages_flattened=0,
+        comments=6,
+        links=0,
+        form_fields=0,
+    )
+    assert combined == expected
+
+
+def test_combined_with_originals_unchanged():
+    """combined_with() does not modify the original reports."""
+    report_a = SanitizationReport(metadata_entries=1, scripts=2)
+    report_b = SanitizationReport(actions=3, layers=4)
+    report_a.combined_with(report_b)
+    assert report_a.metadata_entries == 1
+    assert report_a.scripts == 2
+    assert report_b.actions == 3
+    assert report_b.layers == 4
+
+
+def test_combined_with_total_excludes_pages_flattened():
+    """combined_with()'s total excludes pages_flattened like the original."""
+    report_a = SanitizationReport(metadata_entries=1, scripts=2, pages_flattened=10)
+    report_b = SanitizationReport(actions=3, layers=4, pages_flattened=5)
+    combined = report_a.combined_with(report_b)
+    # total should be: 1+2+3+4 = 10 (metadata_entries + scripts + actions + layers)
+    assert combined.total == 10
+    # pages_flattened is 15 but not counted in total
+    assert combined.pages_flattened == 15
+
+
+def test_combined_with_zero_reports():
+    """combined_with() works with zero-value reports."""
+    report_a = SanitizationReport()
+    report_b = SanitizationReport(metadata_entries=5, scripts=3)
+    combined = report_a.combined_with(report_b)
+    assert combined.metadata_entries == 5
+    assert combined.scripts == 3
+
+
+# ---------------------------------------------------------------------------
 # Metadata
 # ---------------------------------------------------------------------------
 
