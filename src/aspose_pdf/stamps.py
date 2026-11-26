@@ -468,6 +468,81 @@ class PageNumberStamp(TextStamp):
             return value.replace("{page}", str(n))
         return str(n)
 
+    def page_number_from_text(self, text: str, *, starting_number: int | None = None) -> int | None:
+        """Determine which page number would produce the given text.
+
+        This method inverts the formatting performed by :meth:`add_page_number`
+        to infer the page number offset that would generate the supplied text
+        using the stamp's current ``value`` template and the given (or instance)
+        ``starting_number``.
+
+        Args:
+            text: The formatted text to parse.
+            starting_number: The base number to start counting from. Defaults to the
+                instance's ``starting_number``. This parameter overrides the instance's
+                ``starting_number`` for this call.
+
+        Returns:
+            The integer page offset that would produce the text when passed to
+            :meth:`add_page_number`, or ``None`` if the text does not match the
+            expected format.
+
+        Raises:
+            ValueError: If ``starting_number`` is not a positive integer.
+
+        Note:
+            This method uses the instance's ``value`` attribute for parsing.
+            The comparison is case-sensitive and exact (no trimming or normalization).
+        """
+        sn = self.starting_number if starting_number is None else starting_number
+        if not isinstance(sn, int) or sn < 1:
+            raise ValueError("starting_number must be a positive integer")
+
+        # Get the value template from the instance
+        value = self.value
+
+        if "{page}" in value:
+            # The format must have exactly one {page} placeholder
+            if value.count("{page}") != 1:
+                raise ValueError("value must contain exactly one {page} placeholder")
+            # Extract the prefix and suffix around {page} from the template
+            prefix, suffix = value.split("{page}", 1)
+
+            # Check if text has the expected prefix and suffix
+            if text.startswith(prefix) and text.endswith(suffix):
+                # Extract the page number part
+                inner = text[len(prefix):len(text) - len(suffix) if suffix else len(text)]
+
+                try:
+                    page_num = int(inner)
+                except ValueError:
+                    return None
+
+                # Calculate the page_number offset that would produce this
+                # n = max(1, starting_number + page_number - 1)
+                # If n = page_num, then page_number = page_num - starting_number + 1
+                computed = page_num - sn + 1
+                # Verify this produces the same output
+                expected = self.add_page_number(value, computed, sn)
+                if expected == text:
+                    return computed
+                return None
+            return None
+        else:
+            # No {page} placeholder - text should be just the computed number
+            try:
+                page_num = int(text)
+            except ValueError:
+                return None
+
+            # The value represents the computed number directly
+            computed = page_num - sn + 1
+            # Verify this produces the same output
+            expected = self.add_page_number(value, computed, sn)
+            if expected == text:
+                return computed
+            return None
+
     def _validate(self) -> None:
         super()._validate()
         if int(self.starting_number) != self.starting_number:

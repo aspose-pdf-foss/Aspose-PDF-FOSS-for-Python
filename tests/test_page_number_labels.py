@@ -298,3 +298,90 @@ def test_page_number_stamp_add_page_number_validation():
         PageNumberStamp.add_page_number("{page}", 5, starting_number=1.5)
     with pytest.raises(ValueError, match="starting_number must be an int"):
         PageNumberStamp.add_page_number("{page}", 5, starting_number="1")
+
+
+def test_page_number_stamp_page_number_from_text_basic():
+    """Test basic page_number_from_text functionality with {page} placeholder."""
+    stamp = PageNumberStamp("Page {page}", font_size=12.0)
+    # For stamp with starting_number=1, text "Page 5" -> page_number=5
+    assert stamp.page_number_from_text("Page 5") == 5
+    # Default starting_number=1, so "Page 1" -> page_number=1
+    assert stamp.page_number_from_text("Page 1") == 1
+    # Starting number 3, so "Page 5" -> page_number=3 (since 3+3-1=5)
+    assert stamp.page_number_from_text("Page 5", starting_number=3) == 3
+    # Starting number 10, so "Page 12" -> page_number=3 (since 10+3-1=12)
+    assert stamp.page_number_from_text("Page 12", starting_number=10) == 3
+
+
+def test_page_number_stamp_page_number_from_text_instance_starting_number():
+    """Test that instance's starting_number is used when parameter is omitted."""
+    stamp = PageNumberStamp("Page {page}", font_size=12.0, starting_number=10)
+    # With instance starting_number=10, "Page 12" -> page_number=3 (since 10+3-1=12)
+    assert stamp.page_number_from_text("Page 12") == 3
+    # Instance starting_number=5, "Page 7" -> page_number=3 (since 5+3-1=7)
+    stamp2 = PageNumberStamp("Page-{page}", font_size=10.0, starting_number=5)
+    assert stamp2.page_number_from_text("Page-7") == 3
+
+
+def test_page_number_stamp_page_number_from_text_no_match():
+    """Test that non-matching text returns None."""
+    stamp = PageNumberStamp("Page {page}")
+    # Wrong prefix
+    assert stamp.page_number_from_text("Num 5") is None
+    # Wrong suffix
+    assert stamp.page_number_from_text("Page 5!") is None
+    # Non-numeric content
+    assert stamp.page_number_from_text("Page abc") is None
+
+
+def test_page_number_stamp_page_number_from_text_no_page_placeholder():
+    """Test behavior when value has no {page} placeholder."""
+    stamp = PageNumberStamp("Page-", font_size=12.0)
+    # Without {page}, value just adds starting_number + page_number - 1
+    # With starting_number=7: "11" -> page_number=5 (since 7+5-1=11)
+    assert stamp.page_number_from_text("11", starting_number=7) == 5
+    # Without {page}, "5" with starting_number=1 -> page_number=5
+    assert stamp.page_number_from_text("5", starting_number=1) == 5
+
+
+def test_page_number_stamp_page_number_from_text_validation():
+    """Test validation of starting_number parameter."""
+    stamp = PageNumberStamp("Page {page}", starting_number=5)
+    # starting_number must be positive integer
+    with pytest.raises(ValueError, match="starting_number must be a positive integer"):
+        stamp.page_number_from_text("Page 5", starting_number=0)
+    with pytest.raises(ValueError, match="starting_number must be a positive integer"):
+        stamp.page_number_from_text("Page 5", starting_number=-1)
+    with pytest.raises(ValueError, match="starting_number must be a positive integer"):
+        stamp.page_number_from_text("Page 5", starting_number=1.5)
+    with pytest.raises(ValueError, match="starting_number must be a positive integer"):
+        stamp.page_number_from_text("Page 5", starting_number="1")
+
+
+def test_page_number_stamp_page_number_from_text_edge_cases():
+    """Test edge cases for page_number_from_text."""
+    stamp = PageNumberStamp("{page}")
+    # Zero page_number clamped to 1
+    assert stamp.page_number_from_text("1", starting_number=1) == 1
+    # Large numbers with matching template
+    stamp2 = PageNumberStamp("Page {page}", starting_number=100)
+    assert stamp2.page_number_from_text("Page 199", starting_number=100) == 100
+    # Negative page_number clamped to 1
+    assert stamp.page_number_from_text("1", starting_number=1) == 1
+
+
+def test_page_number_stamp_page_number_from_text_instance_state():
+    """Test that page_number_from_text does not modify instance state."""
+    stamp = PageNumberStamp("Page {page}", font_size=12.0, starting_number=5)
+    original_value = stamp.value
+    original_starting = stamp.starting_number
+    stamp.page_number_from_text("Page 5")
+    assert stamp.value == original_value
+    assert stamp.starting_number == original_starting
+
+
+def test_page_number_stamp_page_number_from_text_multiple_placeholders():
+    """Test that multiple {page} placeholders raise ValueError."""
+    stamp = PageNumberStamp("{page}-{page}", font_size=12.0)
+    with pytest.raises(ValueError, match="value must contain exactly one \\{page\\} placeholder"):
+        stamp.page_number_from_text("5-5")
