@@ -916,3 +916,64 @@ def test_stamp_clone_never_raises():
         artifact_subtype="Header",
     )
     s4.clone()  # Edge case attributes
+
+
+def test_text_stamp_trim_leading_trailing_whitespace():
+    """trim() removes leading and trailing whitespace from value."""
+    ts = TextStamp(value="  leading and trailing \t\n")
+    ts.trim()
+    assert ts.value == "leading and trailing"
+
+
+def test_text_stamp_trim_whitespace_only_becomes_empty():
+    """trim() converts whitespace-only string to empty string."""
+    ts = TextStamp(value="\n\r\t")
+    ts.trim()
+    assert ts.value == ""
+
+
+def test_text_stamp_trim_empty_stays_empty():
+    """trim() leaves empty string empty."""
+    ts = TextStamp(value="")
+    ts.trim()
+    assert ts.value == ""
+
+
+def test_text_stamp_trim_preserves_internal_line_breaks():
+    """trim() preserves internal line breaks and spacing."""
+    ts = TextStamp(value="  line1\n  line2\n  line3  ")
+    ts.trim()
+    assert ts.value == "line1\n  line2\n  line3"
+
+
+def test_text_stamp_trim_handles_none():
+    """trim() handles None value by converting to empty string."""
+    ts = TextStamp(value=None)
+    ts.trim()
+    assert ts.value == ""
+
+
+def test_text_stamp_trim_returns_none():
+    """trim() returns None, not a value."""
+    ts = TextStamp(value="  test  ")
+    result = ts.trim()
+    assert result is None
+
+
+def test_text_stamp_trim_never_raises():
+    """trim() never raises exceptions."""
+    # Various edge cases that should not raise
+    TextStamp(value=" \t\r\n").trim()
+    TextStamp(value="no whitespace").trim()
+    TextStamp(value=" \n\t\r").trim()
+    TextStamp(value="mixed   \n  spaces").trim()
+
+
+def test_text_stamp_trim_non_string_unchanged():
+    """trim() leaves non-string values unchanged."""
+    ts = TextStamp(value=123)
+    ts.trim()
+    assert ts.value == 123
+    ts2 = TextStamp(value=[1, 2, 3])
+    ts2.trim()
+    assert ts2.value == [1, 2, 3]

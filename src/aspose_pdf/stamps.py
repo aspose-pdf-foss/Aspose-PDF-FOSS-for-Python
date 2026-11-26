@@ -248,6 +248,21 @@ class TextStamp(Stamp):
         """Resolve text with document context before measuring or encoding it."""
         return self._text(page_index, len(pdf.pages))
 
+    def trim(self) -> None:
+        """Remove leading and trailing whitespace from the text value.
+
+        Strips space, tab, carriage-return, and newline characters from the
+        beginning and end of ``value``. Internal line breaks and spacing are
+        preserved. If ``value`` is empty or contains only whitespace, sets it
+        to an empty string. Non-string values are left unchanged.
+
+        The method never raises exceptions.
+        """
+        if isinstance(self.value, str):
+            self.value = self.value.strip(" \t\r\n")
+        elif self.value is None:
+            self.value = ""
+
     @property
     def text_width(self) -> float:
         """The horizontal space the text would occupy when rendered.
