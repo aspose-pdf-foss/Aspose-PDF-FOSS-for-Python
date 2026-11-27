@@ -165,6 +165,49 @@ def test_unsigned_content_repr_reflects_collection_sizes():
     assert "annotations=0" in repr_str
 
 
+def test_unsigned_content_clear_clears_only_specified_category():
+    content = UnsignedContent(
+        pages=["p1", "p2"],
+        form_fields=["f1"],
+        annotations=["a1"],
+    )
+    content.clear("pages")
+    assert content.pages == []
+    assert content.form_fields == ["f1"]
+    assert content.annotations == ["a1"]
+
+
+def test_unsigned_content_clear_form_fields():
+    content = UnsignedContent(
+        pages=["p1"],
+        form_fields=["f1", "f2"],
+        annotations=["a1"],
+    )
+    content.clear("form_fields")
+    assert content.pages == ["p1"]
+    assert content.form_fields == []
+    assert content.annotations == ["a1"]
+
+
+def test_unsigned_content_clear_annotations():
+    content = UnsignedContent(
+        pages=["p1"],
+        form_fields=["f1"],
+        annotations=["a1", "a2", "a3"],
+    )
+    content.clear("annotations")
+    assert content.pages == ["p1"]
+    assert content.form_fields == ["f1"]
+    assert content.annotations == []
+
+
+def test_unsigned_content_clear_invalid_category_raises():
+    content = UnsignedContent(pages=["p1"], form_fields=["f1"], annotations=["a1"])
+    with pytest.raises(ValueError) as exc_info:
+        content.clear("invalid")
+    assert str(exc_info.value) == "category must be one of 'pages', 'form_fields', or 'annotations'"
+
+
 def test_form_field_names_property():
     """Form.field_names returns list of field names matching [field.name for field in fields]."""
     from aspose_pdf import Document

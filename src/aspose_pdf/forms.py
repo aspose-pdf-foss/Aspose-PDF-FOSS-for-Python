@@ -1851,6 +1851,24 @@ class UnsignedContent:
         self.annotations.clear()
         self._extra.clear()
 
+    def clear(self, category: str) -> None:
+        """Remove all items from the specified category.
+
+        Args:
+            category: Must be one of 'pages', 'form_fields', or 'annotations'.
+
+        Raises:
+            ValueError: If category is not one of the allowed values.
+        """
+        if category == "pages":
+            self.pages.clear()
+        elif category == "form_fields":
+            self.form_fields.clear()
+        elif category == "annotations":
+            self.annotations.clear()
+        else:
+            raise ValueError("category must be one of 'pages', 'form_fields', or 'annotations'")
+
     def __repr__(self) -> str:
         return (
             f"UnsignedContent(pages={len(self.pages)}, "
