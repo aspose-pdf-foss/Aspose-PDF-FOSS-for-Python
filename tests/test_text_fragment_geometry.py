@@ -24,6 +24,7 @@ import io
 import pytest
 
 from aspose_pdf import Document
+from aspose_pdf.annotations import LinkAnnotation
 from aspose_pdf.text import TextFragment, TextFragmentAbsorber, TextSearchOptions
 
 
@@ -247,3 +248,43 @@ def test_the_geometry_does_not_change_what_a_fragment_is():
     assert (plain.rect, plain.quads, plain.font_name, plain.font_size, plain.color) == (None,) * 5
     assert plain == TextFragment(page_index=1, text="x", start=1, end=2)
     assert repr(plain) == "TextFragment(page=1, text='x', start=1, end=2)"
+
+
+def test_rectangle_property_returns_rect():
+    """TextFragment.rectangle is an alias for rect (Aspose.NET compatibility)."""
+    frag = TextFragment(page_index=1, text="hello", start=0, rect=(10.0, 20.0, 30.0, 40.0))
+    assert frag.rectangle == (10.0, 20.0, 30.0, 40.0)
+    assert frag.rectangle is frag.rect
+
+
+def test_rectangle_property_setter_updates_rect():
+    """Assigning to TextFragment.rectangle updates rect (Aspose.NET compatibility)."""
+    frag = TextFragment(page_index=1, text="hello", start=0)
+    frag.rectangle = (5.0, 10.0, 15.0, 20.0)
+    assert frag.rect == (5.0, 10.0, 15.0, 20.0)
+    assert frag.rectangle == (5.0, 10.0, 15.0, 20.0)
+
+
+def test_rectangle_none_when_rect_none():
+    """TextFragment.rectangle is None when rect is None (unplaced fragment)."""
+    frag = TextFragment(page_index=1, text="hello", start=0)
+    assert frag.rect is None
+    assert frag.rectangle is None
+
+
+def test_link_annotation_create_creates_new_annotation():
+    """LinkAnnotation.create creates a new link annotation (Aspose.NET compatibility)."""
+    doc = Document()
+    page = doc.pages.add()
+    page.add_text("Test text", 72, 700, font_size=12)
+
+    rect = (100.0, 600.0, 200.0, 650.0)
+    link = LinkAnnotation.create(page, rect)
+
+    assert isinstance(link, LinkAnnotation)
+    assert link.rect == rect
+    assert link.subtype == "Link"
+
+    # Verify the annotation was actually added to the page
+    assert len(page.annotations) == 1
+    assert page.annotations[0].rect == rect

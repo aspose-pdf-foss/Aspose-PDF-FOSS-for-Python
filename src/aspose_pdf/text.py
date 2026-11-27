@@ -253,6 +253,10 @@ class TextFragment:
         Where the fragment sits on the page, ``(x0, y0, x1, y1)`` in default
         user space, lower-left corner first. ``None`` when the fragment could
         not be placed -- see :class:`TextFragmentAbsorber` for when that is.
+    rectangle : tuple or None
+        Alias for :attr:`rect`. Provided for compatibility with Aspose.PDF for
+        Python via .NET. Used with :meth:`LinkAnnotation.create` to create links
+        over text fragments.
     quads : list of tuple or None
         One quadrilateral per baseline the fragment covers, each four
         ``(x, y)`` corners anticlockwise from the lower left; a fragment that
@@ -473,6 +477,29 @@ class TextFragment:
         self._subscript = value.subscript
         self._rise = value.rise
         self._subscript = value.subscript
+
+    @property
+    def rectangle(self) -> tuple[float, float, float, float] | None:
+        """Get rectangle of the TextFragment.
+
+        Returns the same value as :attr:`rect`. The rectangle is ``(x0, y0, x1, y1)``
+        in default user space, lower-left corner first. ``None`` when the fragment
+        could not be placed on the page.
+
+        This property is provided for compatibility with Aspose.PDF for Python via .NET.
+        """
+        return self.rect
+
+    @rectangle.setter
+    def rectangle(self, value: tuple[float, float, float, float] | None) -> None:
+        """Set rectangle of the TextFragment.
+
+        Assigning to this property updates :attr:`rect` with the same value.
+        The rectangle is ``(x0, y0, x1, y1)`` in default user space.
+
+        This property is provided for compatibility with Aspose.PDF for Python via .NET.
+        """
+        self.rect = value
 
     def __repr__(self) -> str:
         where = "" if self.rect is None else f", rect={tuple(round(v, 2) for v in self.rect)}"

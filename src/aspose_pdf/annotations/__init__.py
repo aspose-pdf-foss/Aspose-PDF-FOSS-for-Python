@@ -796,10 +796,82 @@ class LinkAnnotation(Annotation):
 
     Authored through :meth:`aspose_pdf.pages.Page.add_link`, which takes an
     action, a destination, or the name of one.
+
+    This class also accepts a constructor signature for Aspose.PDF for Python via .NET
+    compatibility: ``LinkAnnotation(page, rect)`` creates a new link annotation.
     """
 
     # Empty: a subclass without its own would hand back a __dict__.
     __slots__ = ()
+
+    def __init__(
+        self,
+        page: Page,
+        rect_or_index: int | tuple[float, float, float, float] | None = None,
+        data: dict[str, Any] | None = None,
+        ref: Any = None,
+    ) -> None:
+        """Initialize a link annotation.
+
+        For Aspose.PDF for Python via .NET compatibility, this constructor accepts
+        ``LinkAnnotation(page, rect)`` and creates a new link annotation on the page.
+
+        Parameters
+        ----------
+        page : Page
+            The page on which to create the link annotation (Aspose.NET style), or
+            the page containing an existing annotation (internal style).
+        rect_or_index : int or tuple or None, optional
+            When an int, it's the annotation index (internal style).
+            When a tuple, it's the rectangle ``(x0, y0, x1, y1)`` for the link
+            (Aspose.NET style), and a new annotation is created.
+            When None, data must be provided (internal style).
+        data : dict or None, optional
+            Annotation data dictionary (internal style).
+        ref : Any, optional
+            PDF object reference (internal style).
+        """
+        # Aspose.NET style: LinkAnnotation(page, rect)
+        if isinstance(rect_or_index, tuple):
+            rect = tuple(float(v) for v in rect_or_index)
+            # Create a new link annotation and call parent __init__ with the created annotation's data
+            page.annotations.add("Link", rect, "")
+            # Initialize with the newly created annotation's data
+            object.__setattr__(self, "_page", page)
+            object.__setattr__(self, "_index", len(page.annotations) - 1)
+            object.__setattr__(self, "_data", dict(page._document._engine_pdf.get_annotation(page._index, len(page.annotations) - 1)))
+            object.__setattr__(self, "_ref", None)
+            return
+
+        # Internal style: LinkAnnotation(page, index, data, ref)
+        # Call parent __init__ with all arguments
+        super().__init__(page, rect_or_index, data if data is not None else {}, ref)
+
+    @classmethod
+    def create(
+        cls,
+        page: Page,
+        rect: tuple[float, float, float, float],
+    ) -> LinkAnnotation:
+        """Create a new link annotation on *page* covering *rect*.
+
+        This classmethod provides compatibility with Aspose.PDF for Python via .NET's
+        ``LinkAnnotation(page, rect)`` pattern. It creates a new Link annotation
+        annotation and returns it.
+
+        Parameters
+        ----------
+        page : Page
+            The page on which to create the link annotation.
+        rect : tuple
+            The rectangle ``(x0, y0, x1, y1)`` for the link in PDF user space.
+
+        Returns
+        -------
+        LinkAnnotation
+            A new link annotation instance.
+        """
+        return page.annotations.add("Link", tuple(float(v) for v in rect), "")
 
 
 class _ShapeAnnotation(MarkupAnnotation):
