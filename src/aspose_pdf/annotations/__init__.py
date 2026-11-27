@@ -640,6 +640,52 @@ def _bounding_rect(flat: list[float], border_width: float | None) -> tuple[float
     return (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
 
 
+def _transform_rect_for_rotation(
+    rect: tuple[float, float, float, float],
+    page: Any,
+    rotation: int,
+) -> tuple[float, float, float, float]:
+    """Transform annotation rectangle for a page with the given rotation.
+
+    When a page is rotated, annotation rectangles must be transformed so they
+    appear in the correct position after the page rotation is applied.
+
+    Parameters
+    ----------
+    rect : tuple[float, float, float, float]
+        The annotation rectangle as (x0, y0, x1, y1) in unrotated coordinates.
+    page : Page
+        The page containing the annotation.
+    rotation : int
+        The page's clockwise rotation in degrees (90, 180, 270).
+
+    Returns
+    -------
+    tuple[float, float, float, float]
+        The transformed rectangle.
+    """
+    x0, y0, x1, y1 = rect
+    mb = page.media_box
+    w = mb[2] - mb[0]
+    h = mb[3] - mb[1]
+
+    # Transform the rectangle coordinates based on page rotation
+    if rotation == 90:
+        # 90° clockwise: (x, y) -> (y, w - x)
+        pts = [(y, w - x) for x, y in [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]]
+    elif rotation == 180:
+        # 180°: (x, y) -> (w - x, h - y)
+        pts = [(w - x, h - y) for x, y in [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]]
+    elif rotation == 270:
+        # 270° clockwise (90° counter-clockwise): (x, y) -> (h - y, x)
+        pts = [(h - y, x) for x, y in [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]]
+    else:
+        return rect
+
+    xs, ys = zip(*pts)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def quad_from_rect(
     x0: float, y0: float, x1: float, y1: float
 ) -> tuple[tuple[float, float], ...]:
@@ -1836,14 +1882,133 @@ class AnnotationCollection:
 
     def add(
         self,
-        subtype: str,
-        rect: tuple[float, float, float, float],
-        contents: str,
+        subtype_or_annotation: str | Annotation,
+        rect: tuple[float, float, float, float] | None = None,
+        contents: str | None = None,
         *,
         title: str | None = None,
         appearance_normal: bytes | bytearray | None = None,
         properties: dict[str, Any] | None = None,
+        consider_rotation: bool = False,
     ) -> Annotation:
+        """Add an annotation to the page.
+
+        There are two calling forms:
+
+        1. ``add(subtype, rect, contents, **kwargs)`` creates a new annotation
+           with the given subtype, rectangle, and contents. Additional keyword
+           arguments are the same as below.
+
+        2. ``add(annotation, consider_rotation=False)`` adds a copy of an
+           existing annotation to this page. The annotation's subtype, rectangle,
+           contents, and other properties are copied. If *consider_rotation* is
+           ``True``, the rectangle is recalculated based on this page's rotation.
+
+        Parameters
+        ----------
+        subtype_or_annotation : str or Annotation
+            Either the annotation subtype (Text, Link, FreeText, etc.) as a
+            string, or an existing Annotation object to copy.
+        rect_or_rotation : tuple[float, float, float, float] or bool, optional
+            Either the annotation rectangle as (x0, y0, x1, y1) when creating
+            a new annotation, or the consider_rotation boolean when copying
+            an existing annotation.
+        contents_or_title : str or bool, optional
+            Either the annotation contents text when creating a new annotation,
+            or the consider_rotation boolean when copying an existing annotation
+            (for compatibility with reference API that uses positional args).
+        title : str, optional
+            The annotation's title (T entry).
+        appearance_normal : bytes or bytearray, optional
+            The normal appearance stream as bytes.
+        properties : dict, optional
+            Type-specific properties dictionary.
+        consider_rotation : bool, optional
+            When adding an existing annotation, whether to recalculate the
+            rectangle based on this page's rotation. Default is False.
+
+        Returns
+        -------
+        Annotation
+            The newly added annotation.
+
+        Raises
+        ------
+        TypeError
+            If called with incorrect arguments (neither form matches).
+        """
+        # Handle the form: add(annotation, consider_rotation)
+        if isinstance(subtype_or_annotation, Annotation):
+            # The second argument (rect) should be either:
+            # - a bool (consider_rotation)
+            # - None or missing
+            # Anything else (like a tuple) means it's being passed incorrectly
+            # Note: we don't check contents here because it's a keyword-only arg
+            if rect is not None and not isinstance(rect, bool):
+                raise TypeError(
+                    "add() when first argument is Annotation must have bool or None "
+                    "as second argument (consider_rotation), got "
+                    f"{type(rect).__name__}"
+                )
+            # Determine consider_rotation from second arg (positional or keyword)
+            if isinstance(rect, bool):
+                actual_rotation = rect
+            else:
+                actual_rotation = consider_rotation
+
+            annot = subtype_or_annotation
+            # Extract the annotation's data
+            data = dict(annot._data)
+            payload: dict[str, Any] = {
+                "Subtype": data.get("Subtype", "Text"),
+                "Rect": tuple(float(v) for v in data.get("Rect", (0, 0, 0, 0))),
+                "Contents": str(data.get("Contents", "")),
+            }
+            # Copy optional fields if present; allow title override
+            if title is not None:
+                payload["T"] = title
+            elif data.get("T"):
+                payload["T"] = data["T"]
+            # Copy appearance - convert AP_N to AP format expected by engine
+            if appearance_normal is not None:
+                payload["AP"] = {"N": bytes(appearance_normal)}
+            elif data.get("AP_N"):
+                # Convert AP_N to AP format (AP = {"N": stream_content})
+                payload["AP"] = {"N": data["AP_N"]}
+            elif data.get("AP"):
+                # Copy appearance if not overridden (full AP dict)
+                payload["AP"] = data["AP"]
+            if properties is not None:
+                payload["Properties"] = dict(properties)
+            elif data.get("Properties"):
+                payload["Properties"] = dict(data["Properties"])
+
+            # Apply rotation transformation if requested
+            if actual_rotation:
+                page_rotation = self._page._document._engine_pdf.get_page_rotation(
+                    self._page._index
+                )
+                if page_rotation != 0:
+                    payload["Rect"] = _transform_rect_for_rotation(
+                        payload["Rect"], self._page, page_rotation
+                    )
+
+            self._page._document._engine_pdf.add_annotation(self._page._index, payload)
+            return self._get_annotation_by_index(len(self) - 1)
+
+        # Handle the original form: add(subtype, rect, contents, **kwargs)
+        if not isinstance(subtype_or_annotation, str):
+            raise TypeError(
+                f"First argument must be str (subtype) or Annotation, "
+                f"got {type(subtype_or_annotation).__name__}"
+            )
+
+        if rect is None:
+            raise TypeError("add() with subtype must have rect argument")
+        if contents is None:
+            raise TypeError("add() with subtype must have contents argument")
+
+        subtype = subtype_or_annotation
         payload: dict[str, Any] = {
             "Subtype": _subtype_value(subtype),
             "Rect": tuple(float(v) for v in rect),
