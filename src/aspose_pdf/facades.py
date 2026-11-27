@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, BinaryIO, ClassVar
 
 from aspose_pdf.exceptions import (
     PDF_OPERATION_ERRORS,
@@ -1037,6 +1037,16 @@ class PdfFileInfo(_BoundFacade):
     the dictionary holds is reachable with :meth:`get_meta_info` and
     :meth:`set_meta_info`. Page numbers are 1-based.
 
+    The constructor accepts an optional source, which can be a file path,
+    bytes, a stream, or an open Document:
+
+        info = PdfFileInfo("report.pdf")
+        info = PdfFileInfo("report.pdf", "password")
+        info = PdfFileInfo(stream, "password")
+        info = PdfFileInfo(document)
+
+    Or use the no-arg constructor and bind later:
+
         info = PdfFileInfo()
         info.bind_pdf("report.pdf")
         info.title = "Quarterly report"
@@ -1044,6 +1054,26 @@ class PdfFileInfo(_BoundFacade):
     """
 
     _what = "PdfFileInfo"
+
+    def __init__(
+        self,
+        source: str | Path | bytes | bytearray | BinaryIO | Any = None,
+        password: str | None = None,
+    ) -> None:
+        """Initialize PdfFileInfo, optionally binding to a source.
+
+        Parameters
+        ----------
+        source : str, Path, bytes, bytearray, BinaryIO, or Document, optional
+            The PDF to open. If a Document, it is borrowed (not disposed with
+            this facade). If omitted, a new empty facade is created; call
+            bind_pdf() later.
+        password : str, optional
+            Password for an encrypted *source*. Ignored if source is a Document.
+        """
+        super().__init__()
+        if source is not None:
+            self.bind_pdf(source, password)
 
     #: The ``/Info`` keys this facade names, by property.
     _KEYS: ClassVar[dict[str, str]] = {

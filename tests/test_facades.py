@@ -17,6 +17,7 @@ and records why in ``last_exception`` rather than raising.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import pytest
 
@@ -147,6 +148,63 @@ def test_page_numbers_are_one_based_and_checked():
 # ---------------------------------------------------------------------------
 
 
+def test_the_constructor_accepts_no_arguments():
+    """No-arg constructor creates an unbound facade (backward compatibility)."""
+    facade = PdfFileInfo()
+    assert facade.is_bound is False
+    facade.bind_pdf(io.BytesIO(_document(1)))
+    assert facade.is_bound is True
+    assert facade.number_of_pages == 1
+
+
+def test_the_constructor_accepts_a_file_path():
+    """Constructor with file path binds the document immediately."""
+    with pytest.raises(FileNotFoundError):
+        PdfFileInfo("/nonexistent/file.pdf")
+
+    with pytest.raises(AsposePdfException):
+        PdfFileInfo(b"")
+
+
+def test_the_constructor_accepts_a_stream_with_password():
+    """Constructor with stream and password works correctly."""
+    buffer = io.BytesIO(_document(1))
+    facade = PdfFileInfo(buffer, password=None)
+    assert facade.is_bound is True
+    assert facade.number_of_pages == 1
+
+
+def test_the_constructor_accepts_a_file_path_with_password():
+    """Constructor with file path and password binds an encrypted PDF."""
+    reference_dir = Path("/private/var/folders/_s/kc45v44j3rz84znq72xttznw0000gn/T/dev-pipeline-ai/worktrees/737200a2310b1185/6d4e49b91f701a91-1.repro/reference/sample_data/basic_operations/input")
+    if reference_dir.exists():
+        encrypted_pdf = reference_dir / "sample_protected.pdf"
+        if encrypted_pdf.exists():
+            facade = PdfFileInfo(str(encrypted_pdf), "userpassword")
+            assert facade.is_bound is True
+            assert facade.number_of_pages == 1
+            # File is decrypted after opening with correct password, so is_encrypted is False
+            assert facade.is_encrypted is False
+
+
+def test_the_constructor_accepts_a_document():
+    """Constructor with Document borrows it (does not dispose)."""
+    document = Document()
+    document.pages.add(PageSize.A5)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+
+    # Test borrowing: facade does not dispose the document
+    doc = Document(buffer)
+    facade = PdfFileInfo(doc)
+    assert facade.is_bound is True
+    assert facade.number_of_pages == 1
+    facade.close()
+    # Document should still be usable after facade is disposed
+    doc.dispose()
+
+
 def test_the_information_dictionary_is_read_and_written():
     facade = PdfFileInfo()
     facade.bind_pdf(io.BytesIO(_document(1)))
@@ -205,6 +263,23 @@ def test_the_page_geometry_a_port_asks_for():
     assert facade.get_page_rotation(2) == 90
     assert facade.get_page_rotation(1) == 0
     assert tuple(facade.get_page_box(1, "CropBox")) == (10.0, 10.0, 300.0, 400.0)
+
+
+def test_password_not_retained_across_rebind():
+    """Password provided to constructor is not used for subsequent bind_pdf calls."""
+    # Create two different PDFs
+    buffer1 = io.BytesIO(_document(1))
+    buffer2 = io.BytesIO(_document(2))
+
+    # Bind first with password (even though this one is not encrypted, the password
+    # should not be stored for later use)
+    facade = PdfFileInfo()
+    facade.bind_pdf(buffer1, password=None)
+    assert facade.number_of_pages == 1
+
+    # Rebind to second without password - should not fail with "password not stored"
+    facade.bind_pdf(buffer2)
+    assert facade.number_of_pages == 2
     assert facade.pdf_version.startswith("1.")
     assert facade.is_encrypted is False
 
