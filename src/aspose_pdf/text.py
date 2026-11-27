@@ -42,6 +42,7 @@ __all__ = [
     "TextMarkupResult",
     "TextSearchMatch",
     "TextSearchOptions",
+    "TextState",
     "TextWord",
 ]
 
@@ -169,6 +170,64 @@ class TextSearchMatch:
     quads: tuple[tuple[tuple[float, float], ...], ...] | None = None
 
 
+class TextState:
+    """Text state for a text fragment.
+
+    Provides access to text formatting attributes that apply to a text fragment.
+    This class mirrors the Aspose.PDF for Python via .NET TextState API.
+
+    Attributes
+    ----------
+    superscript : bool
+        ``True`` if the text is formatted as superscript.
+    subscript : bool
+        ``True`` if the text is formatted as subscript.
+    font_name : str or None
+        The name of the font used for the text.
+    font_size : float or None
+        The size of the font in points.
+    color : tuple or None
+        The color of the text as ``(r, g, b)`` with values 0..1.
+    rise : float
+        The vertical offset of the text from the baseline.
+    """
+
+    def __init__(
+        self,
+        superscript: bool = False,
+        subscript: bool = False,
+        font_name: str | None = None,
+        font_size: float | None = None,
+        color: tuple[float, float, float] | None = None,
+        rise: float = 0.0,
+    ) -> None:
+        self.superscript: bool = superscript
+        self.subscript: bool = subscript
+        self.font_name: str | None = font_name
+        self.font_size: float | None = font_size
+        self.color: tuple[float, float, float] | None = color
+        self.rise: float = rise
+
+    def __repr__(self) -> str:
+        return (
+            f"TextState(superscript={self.superscript}, subscript={self.subscript}, "
+            f"font_name={self.font_name!r}, font_size={self.font_size}, "
+            f"color={self.color}, rise={self.rise})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, TextState):
+            return NotImplemented
+        return (
+            self.superscript == other.superscript
+            and self.subscript == other.subscript
+            and self.font_name == other.font_name
+            and self.font_size == other.font_size
+            and self.color == other.color
+            and self.rise == other.rise
+        )
+
+
 @dataclass
 class TextFragment:
     """A text fragment found inside a PDF page.
@@ -206,6 +265,9 @@ class TextFragment:
     color : tuple or None
         The colour the glyphs are painted in as ``(r, g, b)``, each 0..1,
         resolved through the colour space in force.
+    text_state : TextState or None
+        The text state for the fragment, including superscript, subscript,
+        font name, font size, color, and rise.
     """
 
     page_index: int
@@ -218,6 +280,10 @@ class TextFragment:
     font_size: float | None = None
     color: tuple[float, float, float] | None = None
     _editor: Any = field(default=None, init=False, repr=False, compare=False)
+    # Backing fields for text_state properties
+    _superscript: bool = field(default=False, init=False, repr=False, compare=False)
+    _subscript: bool = field(default=False, init=False, repr=False, compare=False)
+    _rise: float = field(default=0.0, init=False, repr=False, compare=False)
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialize a text fragment.
@@ -373,6 +439,40 @@ class TextFragment:
             and self.start == other.start
             and self.end == other.end
         )
+
+    @property
+    def text_state(self) -> TextState:
+        """Get or set text state for the text that TextFragment object represents.
+
+        Returns a TextState instance reflecting the current fragment attributes.
+        The text state provides access to superscript, subscript, font name,
+        font size, color, and rise attributes.
+
+        Note: Modifying the returned TextState does not update the fragment.
+        Assign a new TextState to update the fragment's attributes.
+        """
+        return TextState(
+            superscript=self._superscript,
+            subscript=self._subscript,
+            font_name=self.font_name,
+            font_size=self.font_size,
+            color=self.color,
+            rise=self._rise,
+        )
+
+    @text_state.setter
+    def text_state(self, value: TextState) -> None:
+        """Set text state for the fragment, updating its font-related attributes."""
+        if value is None:
+            return
+        # Sync font-related attributes from text_state for compatibility
+        self.font_name = value.font_name
+        self.font_size = value.font_size
+        self.color = value.color
+        self._superscript = value.superscript
+        self._subscript = value.subscript
+        self._rise = value.rise
+        self._subscript = value.subscript
 
     def __repr__(self) -> str:
         where = "" if self.rect is None else f", rect={tuple(round(v, 2) for v in self.rect)}"

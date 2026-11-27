@@ -26,6 +26,7 @@ from aspose_pdf.text import (
     TextFragmentAbsorber,
     TextFragmentCollection,
     TextSearchOptions,
+    TextState,
 )
 
 # ---------------------------------------------------------------------------
@@ -125,6 +126,130 @@ class TestTextFragmentAsposeNetApi:
         assert frag.page_index == 0
         assert frag.start == 0
         assert frag.end == 0
+
+
+# ---------------------------------------------------------------------------
+# TextState
+# ---------------------------------------------------------------------------
+
+
+class TestTextState:
+    def test_default_values(self):
+        state = TextState()
+        assert state.superscript is False
+        assert state.subscript is False
+        assert state.font_name is None
+        assert state.font_size is None
+        assert state.color is None
+        assert state.rise == 0.0
+
+    def test_with_custom_values(self):
+        state = TextState(
+            superscript=True,
+            subscript=False,
+            font_name="Arial",
+            font_size=12.0,
+            color=(1.0, 0.0, 0.0),
+            rise=2.0,
+        )
+        assert state.superscript is True
+        assert state.subscript is False
+        assert state.font_name == "Arial"
+        assert state.font_size == 12.0
+        assert state.color == (1.0, 0.0, 0.0)
+        assert state.rise == 2.0
+
+    def test_equality(self):
+        state1 = TextState(font_name="Arial", font_size=12.0)
+        state2 = TextState(font_name="Arial", font_size=12.0)
+        state3 = TextState(font_name="Arial", font_size=10.0)
+        assert state1 == state2
+        assert state1 != state3
+
+    def test_repr(self):
+        state = TextState(font_name="Arial", font_size=12.0)
+        assert "TextState" in repr(state)
+        assert "Arial" in repr(state)
+        assert "12.0" in repr(state)
+
+
+# ---------------------------------------------------------------------------
+# TextState property on TextFragment
+# ---------------------------------------------------------------------------
+
+
+class TestTextFragmentTextState:
+    def test_text_state_default(self):
+        frag = TextFragment(page_index=1, text="hello", start=0)
+        state = frag.text_state
+        assert isinstance(state, TextState)
+        assert state.superscript is False
+        assert state.subscript is False
+
+    def test_text_state_from_font_name(self):
+        frag = TextFragment(page_index=1, text="hello", start=0, font_name="Arial")
+        state = frag.text_state
+        assert state.font_name == "Arial"
+
+    def test_text_state_from_font_size(self):
+        frag = TextFragment(page_index=1, text="hello", start=0, font_size=12.0)
+        state = frag.text_state
+        assert state.font_size == 12.0
+
+    def test_text_state_from_color(self):
+        color = (1.0, 0.0, 0.0)
+        frag = TextFragment(page_index=1, text="hello", start=0, color=color)
+        state = frag.text_state
+        assert state.color == color
+
+    def test_text_state_superscript(self):
+        frag = TextFragment(page_index=1, text="hello", start=0)
+        state = frag.text_state
+        # Mutating the returned TextState creates a new instance, so we need to
+        # assign a new TextState to the fragment to update it
+        state.superscript = True
+        frag.text_state = state
+        assert frag.text_state.superscript is True
+
+    def test_text_state_subscript(self):
+        frag = TextFragment(page_index=1, text="hello", start=0)
+        state = frag.text_state
+        state.subscript = True
+        frag.text_state = state
+        assert frag.text_state.subscript is True
+
+    def test_text_state_syncs_with_font_attributes(self):
+        """Test that text_state always reflects current font attributes."""
+        frag = TextFragment(page_index=1, text="hello", start=0, font_name="Arial", font_size=12.0)
+        state1 = frag.text_state
+        assert state1.font_name == "Arial"
+        assert state1.font_size == 12.0
+
+        # Mutate the fragment directly
+        frag.font_name = "Times"
+        frag.font_size = 14.0
+
+        # text_state should reflect the new values
+        state2 = frag.text_state
+        assert state2.font_name == "Times"
+        assert state2.font_size == 14.0
+
+    def test_text_state_setter(self):
+        state = TextState(superscript=True, font_name="Arial", font_size=14.0)
+        frag = TextFragment(page_index=1, text="hello", start=0)
+        frag.text_state = state
+        # The text_state property creates a new instance, so we check the
+        # fragment's attributes are synced from the setter
+        assert frag.font_name == "Arial"
+        assert frag.font_size == 14.0
+
+    def test_text_state_rise_syncs(self):
+        """Test that rise attribute is properly synced with text_state setter."""
+        state = TextState(rise=3.0, superscript=True, font_name="Arial", font_size=12.0)
+        frag = TextFragment(page_index=1, text="hello", start=0)
+        frag.text_state = state
+        # Check that rise is stored and returned via text_state
+        assert frag.text_state.rise == 3.0
 
 
 # ---------------------------------------------------------------------------
