@@ -18,6 +18,9 @@ from typing import (
 )
 
 from aspose_pdf._compat_surface import (
+    _DOC_POINTER,
+)
+from aspose_pdf._compat_surface import (
     describe as _describe_unsupported,
 )
 from aspose_pdf._compat_surface import (
@@ -197,9 +200,9 @@ class Document:
     def __init__(
         self,
         source: str | Path | bytes | bytearray | BinaryIO | None = None,
-        options: Any = None,
-        *,
         password: str | None = None,
+        is_managed_stream: bool = False,
+        options: Any = None,
         certificate: Any = None,
         private_key: Any = None,
         key_encryption_key: bytes | bytearray | None = None,
@@ -212,14 +215,27 @@ class Document:
         source : str, Path, bytes, bytearray, or BinaryIO, optional
             PDF to load, with the same semantics (and the same errors) as
             :meth:`load_from`. When omitted, a new empty document is created.
-        options : Any
+        password : str, optional
+            Password for a standard encrypted *source*, or for a CMS password
+            recipient in an ``/Adobe.PubSec`` source. May be passed as the
+            second positional argument for compatibility with Aspose.PDF for
+            Python via .NET. When the second positional argument is a string,
+            it is treated as a password; when it is an options object (e.g.,
+            ``SvgLoadOptions``), it is treated as options and rejected.
+        is_managed_stream : bool, optional
+            Present only for API compatibility: not used. When ``True``, the
+            caller is expected to manage the stream's lifetime. This parameter
+            is the third positional argument for signature compatibility with
+            Aspose.PDF for Python via .NET, and is also accepted as a keyword
+            argument. Only ``False`` or omitted is supported, raising
+            ``TypeError`` otherwise. ``None`` is accepted and treated like omitted.
+        options : Any, optional
             Present only for API compatibility: no load options are
             implemented, so any non-``None`` value raises. Format-specific
             containers such as ``SvgLoadOptions`` raise
-            :exc:`~aspose_pdf.exceptions.UnsupportedFeatureException`.
-        password : str, optional
-            Password for a standard encrypted *source*, or for a CMS password
-            recipient in an ``/Adobe.PubSec`` source.
+            :exc:`~aspose_pdf.exceptions.UnsupportedFeatureException`. When
+            passed as the second positional argument, the type is detected and
+            treated as options.
         certificate, private_key : optional
             Recipient credentials for a *source* encrypted with the public-key
             handler (``/Adobe.PubSec``). Both are ``cryptography`` objects and
@@ -238,6 +254,9 @@ class Document:
         UnsupportedFeatureException
             If *source* or *options* is a compatibility placeholder for a
             format this package does not implement.
+        TypeError
+            If *is_managed_stream* is not ``False`` (only ``False`` or omitted
+            is supported for compatibility).
         """
         self._load_limits = _coerce_limits(limits)
         self._engine_pdf: SimplePdf = SimplePdf()  # Start with empty PDF
@@ -256,10 +275,32 @@ class Document:
         self._pending_signing: list[PendingOperation] = []
         self.file_name: str | None = None
 
-        if options is not None:
-            _reject_load_options(options)
+        # Handle the positional arguments for Aspose.NET compatibility:
+        # The second positional can be either password (string) or options (load options object)
+        # The third positional is is_managed_stream (bool) - no type detection needed
+        # We detect based on type for the second positional argument.
+
+        if isinstance(password, str) or password is None:
+            # Second positional is password
+            actual_password = password
+            actual_is_managed_stream = is_managed_stream
+            actual_options = options
+        else:
+            # Second positional is options (load options object like SvgLoadOptions)
+            actual_password = None
+            actual_options = password
+            actual_is_managed_stream = is_managed_stream  # Third positional
+
+        if actual_is_managed_stream not in (False, None):
+            raise TypeError(
+                "is_managed_stream is not supported; only False or omitted is "
+                "accepted for compatibility. "
+                f"{_DOC_POINTER}"
+            )
+        if actual_options is not None:
+            _reject_load_options(actual_options)
         if source is None:
-            if password is not None:
+            if actual_password is not None:
                 raise TypeError(
                     "password requires a load source; open an existing PDF with "
                     "Document(path, password=...) or Document().load_from(...)"
@@ -278,7 +319,7 @@ class Document:
             return
         self.load_from(
             source,
-            password=password,
+            password=actual_password,
             certificate=certificate,
             private_key=private_key,
             key_encryption_key=key_encryption_key,
