@@ -148,6 +148,7 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `Form.fill()` now runs in O(n) time instead of O(n²) for n fields. The `_build_field_map()` method builds a name-to-reference map once, and `set_field_value()` uses this map for O(1) field lookup instead of scanning all fields for each update. The fix also ensures correct inheritance of attributes like MaxLen from parent fields during appearance refresh by storing the top-level field reference in the map.
 - `Field.remove()` now runs in O(n) time instead of O(n²) when removing n fields one by one. The redundant `get_form_fields()` call that scanned all fields on each removal has been eliminated, and field refresh after removal now updates the in-memory dict directly instead of doing a full scan.
 
 - `Annotation.generate_appearance()` now runs in O(1) time instead of O(n²) per annotation. The `_sync()` method was updated to use `get_annotation()` for O(1) lookup instead of `get_annotations()` which scanned all annotations on the page. This fixes quadratic performance when generating appearances for many annotations on the same page.

@@ -16809,11 +16809,104 @@ class SimplePdf:
             inherited["da"] = da
         self._gen_field_appearance_rec(field, inherited, acro)
 
-    def set_field_value(self, name: str, value: Any) -> None:
-        """Set the value of a form field by name."""
+    def _build_field_map(self) -> dict[str, tuple[Any, PdfDictionary, Any]]:
+        """Build a map from fully qualified field names to (field_ref, field_obj, top_ref).
+
+        Returns a dictionary mapping each field's fully qualified name to a tuple
+        of (field_reference, field_object, top_level_field_reference). The top_level_reference
+        is the one to use for appearance refresh, which is the parent group that has
+        inheritable attributes like MaxLen. This enables O(1) field lookup
+        instead of scanning all fields for each update.
+        """
+        field_map: dict[str, tuple[Any, PdfDictionary, Any]] = {}
+
+        if not self._cos_doc:
+            return field_map
+
+        root_ref = self._cos_doc.trailer.mapping.get(PdfName("Root"))
+        root = self._resolve(root_ref)
+        if not isinstance(root, PdfDictionary):
+            return field_map
+
+        acroform_ref = root.mapping.get(PdfName("AcroForm"))
+        acroform = self._resolve(acroform_ref)
+        if not isinstance(acroform, PdfDictionary):
+            return field_map
+
+        fields_ref = acroform.mapping.get(PdfName("Fields"))
+        fields = self._resolve(fields_ref)
+        if not isinstance(fields, PdfArray):
+            return field_map
+
+        # Populate the map by traversing the field tree once
+        # Each top-level field_ref is passed as the "top" reference for its descendants
+        for field_ref in fields.items:
+            self._populate_field_map_rec(
+                PdfArray([field_ref]), field_map, "", field_ref
+            )
+
+        return field_map
+
+    def _populate_field_map_rec(
+        self,
+        fields_arr: Any,
+        field_map: dict[str, tuple[Any, PdfDictionary, Any]],
+        prefix: str,
+        top_ref: Any,
+    ) -> None:
+        """Recursively populate the field map with all field names and references.
+
+        Args:
+            fields_arr: Array of field references to process
+            field_map: Dictionary to populate with field_name -> (field_ref, field_obj, top_ref)
+            prefix: Current path prefix for building full field names
+            top_ref: The top-level field reference (for appearance refresh)
+        """
+        for field_ref in fields_arr.items:
+            field_obj = self._resolve(field_ref)
+            if not isinstance(field_obj, PdfDictionary):
+                continue
+
+            t = field_obj.mapping.get(PdfName("T"))
+            t = self._resolve(t)
+            if not isinstance(t, PdfString):
+                # A nameless node's kids are named from the node above it.
+                # Pass the same top_ref to all descendants
+                kids = self._resolve(field_obj.mapping.get(PdfName("Kids")))
+                if isinstance(kids, PdfArray):
+                    self._populate_field_map_rec(kids, field_map, prefix, top_ref)
+                continue
+
+            local_name = decode_pdf_text_string(t)
+            full_name = f"{prefix}.{local_name}" if prefix else local_name
+
+            # Store the reference for this field and the top-level reference for appearance refresh
+            field_map[full_name] = (field_ref, field_obj, top_ref)
+
+            # Recurse into kids, passing the same top_ref
+            kids = field_obj.mapping.get(PdfName("Kids"))
+            kids = self._resolve(kids)
+            if isinstance(kids, PdfArray):
+                self._populate_field_map_rec(kids, field_map, full_name, top_ref)
+
+    def set_field_value(self, name: str, value: Any, field_map: dict[str, tuple[Any, PdfDictionary, Any]] | None = None) -> None:
+        """Set the value of a form field by name.
+
+        If field_map is provided, use it for O(1) lookup instead of scanning all fields.
+        """
         self._ensure_not_disposed()
         if not self._cos_doc:
             return
+
+        # Build field map if not provided (backward compatible path)
+        if field_map is None:
+            field_map = self._build_field_map()
+
+        # Look up the field directly
+        if name not in field_map:
+            return
+
+        _field_ref, field_obj, top_ref = field_map[name]
 
         root_ref = self._cos_doc.trailer.mapping.get(PdfName("Root"))
         root = self._resolve(root_ref)
@@ -16825,14 +16918,23 @@ class SimplePdf:
         if not isinstance(acroform, PdfDictionary):
             return
 
-        fields_ref = acroform.mapping.get(PdfName("Fields"))
-        fields = self._resolve(fields_ref)
-        if not isinstance(fields, PdfArray):
-            return
-        for field_ref in fields.items:
-            if self._update_field_value_rec(PdfArray([field_ref]), name, value):
-                self._refresh_field_appearance(field_ref, acroform)
-                return
+        # Update the field value
+        pdf_val = self._value_to_pdf(field_obj, value)
+        if pdf_val is not None:
+            if field_attribute(self, field_obj, "FT") == PdfName("Tx"):
+                from .form_rich_text import plain_text_changes
+
+                field_obj.mapping.update(plain_text_changes(self, field_obj))
+            field_obj.mapping[PdfName("V")] = pdf_val
+            self._update_choice_indices(field_obj, pdf_val)
+        elif field_attribute(self, field_obj, "FT") == PdfName("Ch"):
+            # An explicit empty value prevents a cleared child from
+            # reading its parent's current /V again on the next refresh.
+            field_obj.mapping[PdfName("V")] = PdfNull()
+            field_obj.mapping.pop(PdfName("I"), None)
+
+        # Refresh appearance using the top-level reference (has inheritable attributes like MaxLen)
+        self._refresh_field_appearance(top_ref, acroform)
 
     def _update_field_value_rec(
         self, fields_arr: Any, target_name: str, value: Any, prefix: str = ""

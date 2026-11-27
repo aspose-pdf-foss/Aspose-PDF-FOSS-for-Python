@@ -369,3 +369,34 @@ def test_json_filled_streaming_form_survives_a_full_save(document, tmp_path):
         reopened.save(target)
     with Document(target) as saved:
         assert saved.form.to_dict() == VALUES
+
+
+def test_fill_with_many_fields():
+    """Test that filling 256 fields works correctly with the new O(n) implementation.
+
+    This verifies that the field map optimization works correctly for bulk updates.
+    """
+    doc = Document()
+    page = doc.pages.add()
+
+    # Create 256 text fields
+    for i in range(256):
+        page.add_text(f"Label {i}", x=72, y=700 - i * 12, font_size=8)
+
+    form = doc.form
+    for i in range(256):
+        form.add_text_field(f"field_{i}", page, rect=(72, 700 - i * 12 - 8, 200, 700 - i * 12))
+
+    # Build values dict
+    values = {f"field_{i}": f"value_{i}" for i in range(256)}
+
+    # Fill all fields
+    updated = doc.form.fill(values, strict=False)
+
+    # Verify all fields were updated
+    assert len(updated) == 256
+    assert updated == [f"field_{i}" for i in range(256)]
+
+    # Verify values were set correctly
+    for i in range(256):
+        assert doc.form[f"field_{i}"].value == f"value_{i}"

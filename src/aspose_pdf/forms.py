@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from aspose_pdf._page_numbers import page_index
 from aspose_pdf.actions import FIELD_TRIGGERS, ActionCollection
+from aspose_pdf.engine.cos import PdfDictionary
 from aspose_pdf.engine.form_fields import validate_choice_value, validate_top_index
 from aspose_pdf.engine.form_validation import FormValidationIssue
 from aspose_pdf.exceptions import PdfValidationException
@@ -126,6 +127,21 @@ class Field:
         engine = self._engine()
         try:
             engine.set_field_value(self._name, val)
+        except (TypeError, PdfValidationException):
+            raise
+        except Exception as exc:
+            from aspose_pdf.exceptions import AsposePdfException
+
+            raise AsposePdfException(
+                f"Failed to set value for field '{self._name}'"
+            ) from exc
+        self._value = val
+
+    def _set_value_with_map(self, val: Any, field_map: dict[str, tuple[Any, PdfDictionary, Any]]) -> None:
+        """Set the value using a pre-built field map for O(1) lookup."""
+        engine = self._engine()
+        try:
+            engine.set_field_value(self._name, val, field_map)
         except (TypeError, PdfValidationException):
             raise
         except Exception as exc:
@@ -1324,9 +1340,14 @@ class Form:
                     raise TypeError(f"Text field '{name}' requires a string or None")
                 value = "" if value is None else value
             prepared.append((field, value))
+
+        # Build field map once for O(1) field lookups during bulk updates
+        engine = self._document._engine_pdf
+        field_map = engine._build_field_map()
+
         try:
             for field, value in prepared:
-                field.value = value
+                field._set_value_with_map(value, field_map)
         finally:
             self._load_fields()
         return [field.name for field, _value in prepared]
