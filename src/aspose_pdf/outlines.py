@@ -28,6 +28,11 @@ class OutlineItem:
         unless asked otherwise.
     children : List[OutlineItem]
         Nested child bookmarks.
+
+    .. note::
+        The ``_parent`` attribute is an implementation detail and should not
+        be accessed directly. It is used internally to track parent-child
+        relationships between outline items.
     """
 
     # Declared, so a misspelled name raises instead of being taken and
@@ -37,6 +42,7 @@ class OutlineItem:
         "_destination",
         "_loaded_target",
         "_page_index",
+        "_parent",
         "children",
         "is_bold",
         "is_italic",
@@ -67,6 +73,7 @@ class OutlineItem:
         # two public ways of naming a target drop it, because the caller has
         # then said where the bookmark goes.
         self._loaded_target: tuple[str, object] | None = None
+        self._parent: OutlineItem | None = None
         self._page_index = None if page_index is None else _index(page_index)
         self._destination = destination
         self.children: list[OutlineItem] = []
@@ -146,7 +153,60 @@ class OutlineItem:
         if not isinstance(item, OutlineItem):
             raise TypeError("item must be an OutlineItem")
         self.children.append(item)
+        item._parent = self
         return item
+
+    def move_to(self, new_parent: OutlineItem) -> None:
+        """Move this outline entry to be a child of *new_parent*.
+
+        Detaches this entry from its current parent (if any) and appends it as
+        a child of *new_parent*. If this entry is already a child of
+        *new_parent*, the method does nothing. The operation preserves this
+        entry's own children, title, destination, and all other attributes.
+
+        Parameters
+        ----------
+        new_parent : OutlineItem
+            The new parent outline entry. Must not be ``None``, must not be
+            this entry itself, and must not be an ancestor of this entry.
+
+        Raises
+        ------
+        TypeError
+            If *new_parent* is ``None``.
+        ValueError
+            If *new_parent* is this entry or an ancestor of this entry.
+        """
+        if new_parent is None:
+            raise TypeError("new_parent must not be None")
+        if not isinstance(new_parent, OutlineItem):
+            raise TypeError("new_parent must be an OutlineItem")
+        if new_parent is self:
+            raise ValueError("Cannot move an outline entry to itself")
+        # If already a child of new_parent, do nothing (no-op)
+        if self._parent is new_parent:
+            return
+        # Check if new_parent is an ancestor of self (cycle detection)
+        ancestor = self._parent
+        while ancestor is not None:
+            if ancestor is new_parent:
+                raise ValueError("Cannot move an outline entry to its own ancestor")
+            ancestor = ancestor._parent
+        # Check if new_parent is a descendant of self (cycle detection in reverse)
+        descendant = new_parent
+        while descendant is not None:
+            if descendant is self:
+                raise ValueError("Cannot move an outline entry to its own descendant")
+            descendant = descendant._parent
+
+        # Remove from current parent
+        if self._parent is not None:
+            self._parent.children.remove(self)
+            self._parent = None
+
+        # Add to new parent (which sets _parent)
+        new_parent.children.append(self)
+        self._parent = new_parent
 
     def __repr__(self) -> str:
         return (

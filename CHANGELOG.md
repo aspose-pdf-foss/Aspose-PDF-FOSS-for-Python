@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `OutlineItem.move_to` method.** Added `move_to(self, new_parent: OutlineItem) -> None` to `OutlineItem`. The method detaches the item from its current parent (if any) and appends it as a child of *new_parent*. If the item is already a child of *new_parent*, the method does nothing. If *new_parent* is ``None``, the method raises ``TypeError``. If *new_parent* is the item itself or an ancestor, the method raises ``ValueError`` to prevent cycles. The operation preserves the item's own children, title, destination, and all other attributes.
+
 - **Add `TableBroken` enumeration.** Added `TableBroken` class to `aspose_pdf.tables` with values `NONE`, `VERTICAL`, `VERTICAL_IN_SAME_PAGE`, and `IS_IN_NEXT_PAGE`. Added `broken: TableBroken` and `repeating_columns_count: int` properties to `Table` class. These properties provide compatibility with Aspose.PDF for Python via .NET, allowing code written for the reference API to set `table.broken = ap.TableBroken.VERTICAL` and `table.repeating_columns_count = 2` without raising `AttributeError`. Existing code using the table API continues to work unchanged.
 
 - **Add `LinkAnnotation.create` classmethod.** Added `create(cls, page: Page, rect: tuple[float, float, float, float]) -> LinkAnnotation` to `LinkAnnotation`. This factory method creates a new link annotation on *page* covering *rect* and is provided for Aspose.PDF for Python via .NET compatibility. The existing `Page.add_link(rect, target)` method remains the recommended way to add links.
