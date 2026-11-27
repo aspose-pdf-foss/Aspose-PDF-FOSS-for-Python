@@ -26,6 +26,7 @@ import pytest
 
 from aspose_pdf import Cell, Document, PageSize, Row, Table
 from aspose_pdf.exceptions import PdfValidationException
+from aspose_pdf.tables import TableBroken
 
 
 def _page(size=PageSize.A4):
@@ -633,3 +634,102 @@ def test_a_font_that_is_not_one_of_the_fourteen_is_refused():
     table.add_row(["x"])
     with pytest.raises(PdfValidationException, match="standard 14"):
         page.add_table(table, 60, 700)
+
+
+# ---------------------------------------------------------------------------
+# Table equality (metadata fields excluded)
+# ---------------------------------------------------------------------------
+
+
+def test_table_equality_ignores_broken_and_repeating_columns():
+    """Table equality excludes metadata fields (broken, repeating_columns_count)."""
+    # Two tables with different metadata should still be equal
+    t1 = Table()
+    t1.broken = TableBroken.VERTICAL
+    t1.repeating_columns_count = 2
+    t1.add_row(["A", "B"])
+
+    t2 = Table()
+    t2.broken = TableBroken.NONE
+    t2.repeating_columns_count = 0
+    t2.add_row(["A", "B"])
+
+    assert t1 == t2, "Tables with same content but different metadata should be equal"
+
+
+def test_table_inequality_with_different_content():
+    """Table inequality works correctly when content differs."""
+    t1 = Table()
+    t1.add_row(["A", "B"])
+
+    t2 = Table()
+    t2.add_row(["A", "C"])
+
+    assert t1 != t2, "Tables with different content should not be equal"
+
+
+# ---------------------------------------------------------------------------
+# TableBroken enumeration
+# ---------------------------------------------------------------------------
+
+
+def test_tablebroken_enum_values():
+    """Test that TableBroken has the expected enum values."""
+
+    assert TableBroken.NONE.value == "None"
+    assert TableBroken.VERTICAL.value == "Vertical"
+    assert TableBroken.VERTICAL_IN_SAME_PAGE.value == "VerticalInSamePage"
+    assert TableBroken.IS_IN_NEXT_PAGE.value == "IsInNextPage"
+
+
+def test_tablebroken_default_value():
+    """Test that Table has TableBroken.NONE as default."""
+    table = Table()
+    assert table.broken == TableBroken.NONE
+
+
+def test_table_broken_property():
+    """Test setting different TableBroken values on a table."""
+
+    table = Table()
+    assert table.broken == TableBroken.NONE
+
+    table.broken = TableBroken.VERTICAL
+    assert table.broken == TableBroken.VERTICAL
+
+    table.broken = TableBroken.VERTICAL_IN_SAME_PAGE
+    assert table.broken == TableBroken.VERTICAL_IN_SAME_PAGE
+
+    table.broken = TableBroken.IS_IN_NEXT_PAGE
+    assert table.broken == TableBroken.IS_IN_NEXT_PAGE
+
+    table.broken = TableBroken.NONE
+    assert table.broken == TableBroken.NONE
+
+
+def test_table_repeating_columns_count():
+    """Test the repeating_columns_count property."""
+    table = Table()
+    assert table.repeating_columns_count == 0
+
+    table.repeating_columns_count = 2
+    assert table.repeating_columns_count == 2
+
+    table.repeating_columns_count = 5
+    assert table.repeating_columns_count == 5
+
+
+def test_table_broken_and_repeating_columns_with_document():
+    """Test that broken and repeating_columns_count work with document operations."""
+
+    _, page = _page()
+    table = Table(column_widths=[100, 100])
+    table.broken = TableBroken.VERTICAL
+    table.repeating_columns_count = 1
+    table.add_row(["A", "B"])
+    table.add_row(["C", "D"])
+
+    # Should not raise - these properties are just metadata
+    result = page.add_table(table, 60, 700)
+    assert result["rows"] == 2
+    assert len(result["pages"]) == 1

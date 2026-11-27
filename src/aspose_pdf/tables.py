@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -33,7 +34,23 @@ from aspose_pdf.exceptions import PdfValidationException
 from aspose_pdf.interactive import Action, Destination
 from aspose_pdf.load_limits import PdfLoadLimits
 
-__all__ = ["Cell", "Row", "Table"]
+__all__ = ["Cell", "Row", "Table", "TableBroken"]
+
+
+class TableBroken(str, Enum):  # noqa: UP042
+    """How a table breaks across pages.
+
+    Mirrors Aspose.PDF for .NET's TableBroken enumeration.
+    """
+
+    NONE = "None"
+    """No broken - table behaves normally."""
+    VERTICAL = "Vertical"
+    """Vertical broken - continues on next page."""
+    VERTICAL_IN_SAME_PAGE = "VerticalInSamePage"
+    """Vertical broken in same page."""
+    IS_IN_NEXT_PAGE = "IsInNextPage"
+    """Broken to next page."""
 
 #: How a cell's text sits across its width and down its height.
 _HORIZONTAL = ("left", "center", "centre", "right")
@@ -277,6 +294,8 @@ class Table:
     border_widths: Mapping[str, float] | None = None
     border_colors: Mapping[str, Any] | None = None
     auto_column_widths: bool = False
+    broken: TableBroken = TableBroken.NONE
+    repeating_columns_count: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.auto_column_widths, bool):
@@ -408,6 +427,43 @@ class Table:
 
     def __getitem__(self, index: int) -> Row:
         return self.rows[index]
+
+    def __eq__(self, other: object) -> bool:
+        """Compare table content, ignoring metadata fields (broken, repeating_columns_count).
+
+        Two Table objects are equal if they have the same rows (content, spanning, alignment,
+        styling) and the same configuration that affects how the table is drawn (column widths,
+        borders, colors, fonts, etc.). The broken and repeating_columns_count properties are
+        metadata for Aspose.PDF for .NET compatibility and do not affect the visual appearance
+        or behavior of the table, so they are not included in the comparison.
+        """
+        if not isinstance(other, Table):
+            return NotImplemented
+        return (
+            self.rows == other.rows
+            and self.column_widths == other.column_widths
+            and self.columns == other.columns
+            and self.width == other.width
+            and self.padding == other.padding
+            and self.font_name == other.font_name
+            and self.font_size == other.font_size
+            and self.font == other.font
+            and self.text_color == other.text_color
+            and self.alignment == other.alignment
+            and self.vertical_alignment == other.vertical_alignment
+            and self.line_height == other.line_height
+            and self.row_height == other.row_height
+            and self.border_width == other.border_width
+            and self.border_color == other.border_color
+            and self.background_color == other.background_color
+            and self.header_background_color == other.header_background_color
+            and self.header_text_color == other.header_text_color
+            and self.header_font_size == other.header_font_size
+            and self.repeat_header == other.repeat_header
+            and self.border_widths == other.border_widths
+            and self.border_colors == other.border_colors
+            and self.auto_column_widths == other.auto_column_widths
+        )
 
     def __repr__(self) -> str:
         return f"Table({len(self.rows)} rows, {self.column_count} columns)"

@@ -9,7 +9,7 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Add `TextFragment.rectangle` property.** Added read/write property `rectangle: tuple[float, float, float, float] | None` to `TextFragment`. This property is an alias for `rect`, returning the same value and accepting assignments that update `rect`. It provides compatibility with Aspose.PDF for Python via .NET, enabling code like `LinkAnnotation(page, fragment.rectangle)` to work. Existing usage of `fragment.rect` continues to work unchanged.
+- **Add `TableBroken` enumeration.** Added `TableBroken` class to `aspose_pdf.tables` with values `NONE`, `VERTICAL`, `VERTICAL_IN_SAME_PAGE`, and `IS_IN_NEXT_PAGE`. Added `broken: TableBroken` and `repeating_columns_count: int` properties to `Table` class. These properties provide compatibility with Aspose.PDF for Python via .NET, allowing code written for the reference API to set `table.broken = ap.TableBroken.VERTICAL` and `table.repeating_columns_count = 2` without raising `AttributeError`. Existing code using the table API continues to work unchanged.
 
 - **Add `LinkAnnotation.create` classmethod.** Added `create(cls, page: Page, rect: tuple[float, float, float, float]) -> LinkAnnotation` to `LinkAnnotation`. This factory method creates a new link annotation on *page* covering *rect* and is provided for Aspose.PDF for Python via .NET compatibility. The existing `Page.add_link(rect, target)` method remains the recommended way to add links.
 

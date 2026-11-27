@@ -152,7 +152,7 @@ from .stamps import (
     VerticalAlignment,
 )
 from .table_extraction import ExtractedTable
-from .tables import Cell, Row, Table
+from .tables import Cell, Row, Table, TableBroken
 from .tagged import StructureElement, TaggedContent
 from .text import (
     TextHighlightResult,
@@ -350,6 +350,7 @@ __all__ = [
     "SubmitFormAction",
     "SystemFontSource",
     "Table",
+    "TableBroken",
     "TaggedContent",
     "TextAnnotation",
     "TextBlock",
