@@ -9,6 +9,8 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Add `TextFragment` constructor signatures for Aspose.NET compatibility.** Added support for `TextFragment(text)` and other Aspose.PDF for Python via .NET constructor signatures. The constructor now accepts a single positional argument `text` as a string, creating a new text fragment with default `page_index=0`. The second positional argument is interpreted as `end` when it's a number or as `tab_stops` when it's a list/tuple (stored for API compatibility but not used). Existing library usage such as `TextFragment(page_index, text, start=0, end=-1)` continues to work unchanged.
+
 - **Add `SanitizationReport.combined_with()` method.** Added `combined_with(self, other: 'SanitizationReport') -> 'SanitizationReport'` to `SanitizationReport`. The method returns a new report whose each field equals `self.field + other.field`. Raises `TypeError` if `other` is not a `SanitizationReport`. The original reports remain unchanged. The returned report's `total` property equals the sum of the summed fields (excluding `pages_flattened`).
 
 - **Add `SanitizationReport.to_dict()` method.** Added `to_dict(self) -> dict[str, int]` to `SanitizationReport`. The method returns a fresh dictionary with keys `'metadata_entries'`, `'scripts'`, `'actions'`, `'attachments'`, `'layers'`, `'pages_flattened'`, `'comments'`, `'links'`, and `'form_fields'`, each mapping to its corresponding integer count. Modifying the returned dictionary does not affect the report instance.

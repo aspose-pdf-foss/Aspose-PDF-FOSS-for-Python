@@ -74,6 +74,59 @@ class TestTextFragment:
         assert "world" in repr(frag)
 
 
+class TestTextFragmentAsposeNetApi:
+    """Test Aspose.PDF for Python via .NET API compatibility."""
+
+    def test_text_only(self):
+        """TextFragment(text) - Aspose.NET style with only text."""
+        frag = TextFragment("Hello, world!")
+        assert frag.text == "Hello, world!"
+        assert frag.page_index == 0
+        assert frag.start == 0
+        assert frag.end == 13
+
+    def test_text_only_with_explicit_end(self):
+        """TextFragment(text, end) - Aspose.NET style with explicit end."""
+        frag = TextFragment("Hello", 3)
+        assert frag.text == "Hello"
+        assert frag.end == 3
+
+    def test_text_only_with_rect(self):
+        """TextFragment(text, rect) - Aspose.NET style with rect."""
+        rect = (10.0, 20.0, 30.0, 40.0)
+        frag = TextFragment("Hello", rect=rect)
+        assert frag.text == "Hello"
+        assert frag.rect == rect
+
+    def test_text_only_with_all_params(self):
+        """TextFragment(text, ...) - Aspose.NET style with all params."""
+        quads = (((10.0, 20.0), (30.0, 20.0), (30.0, 40.0), (10.0, 40.0)),)
+        frag = TextFragment(
+            "Hello",
+            5,
+            rect=(10.0, 20.0, 30.0, 40.0),
+            quads=list(quads),
+            font_name="Arial",
+            font_size=12.0,
+            color=(1.0, 0.0, 0.0),
+        )
+        assert frag.text == "Hello"
+        assert frag.end == 5
+        assert frag.rect == (10.0, 20.0, 30.0, 40.0)
+        assert frag.quads == list(quads)
+        assert frag.font_name == "Arial"
+        assert frag.font_size == 12.0
+        assert frag.color == (1.0, 0.0, 0.0)
+
+    def test_no_args(self):
+        """TextFragment() - Aspose.NET style with no args."""
+        frag = TextFragment()
+        assert frag.text == ""
+        assert frag.page_index == 0
+        assert frag.start == 0
+        assert frag.end == 0
+
+
 # ---------------------------------------------------------------------------
 # TextSearchOptions
 # ---------------------------------------------------------------------------

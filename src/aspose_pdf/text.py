@@ -219,6 +219,140 @@ class TextFragment:
     color: tuple[float, float, float] | None = None
     _editor: Any = field(default=None, init=False, repr=False, compare=False)
 
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialize a text fragment.
+
+        Supports both Aspose.PDF for Python via .NET API and library-internal API:
+        - Aspose.NET: TextFragment(text), TextFragment(text, tab_stops)
+        - Library: TextFragment(page_index, text, start=0, end=-1, ...)
+
+        Library API positional arguments (in order):
+        - page_index: int (one-based page number)
+        - text: str (the matched text)
+        - start: int (character offset where match starts, default 0)
+        - end: int (character offset where match ends, default -1)
+        - rect: tuple or None (position on page as (x0, y0, x1, y1), default None)
+        - quads: list or None (list of quadrilaterals, default None)
+        - font_name: str or None (font name, default None)
+        - font_size: float or None (font size, default None)
+        - color: tuple or None (color as (r, g, b) with values 0..1, default None)
+
+        Aspose.NET API positional arguments:
+        - text: str (the text content)
+        - tab_stops: list or None (list of TabStop objects, optional)
+        - end: int (character offset where match ends, default length of text)
+        - rect: tuple or None (position on page, default None)
+        - quads: list or None (list of quadrilaterals, default None)
+        - font_name: str or None (font name, default None)
+        - font_size: float or None (font size, default None)
+        - color: tuple or None (color as (r, g, b), default None)
+
+        All arguments are keyword arguments except for positional arguments as described above.
+        When first positional arg is a string, it's treated as text (Aspose.NET style).
+        When first positional arg is an int, it's treated as page_index (library style).
+        """
+        # Merge all args and kwargs into a unified set of values
+        # First positional arg: either page_index (int) or text (str)
+        # Second positional arg (if present): either text (str) or start (int)
+        # etc.
+
+        # Default values for all fields
+        page_index: int | None = None
+        text: str = ""
+        start: int = 0
+        end: int = -1
+        rect: tuple[float, float, float, float] | None = None
+        quads: list[tuple[tuple[float, float], ...]] | None = None
+        font_name: str | None = None
+        font_size: float | None = None
+        color: tuple[float, float, float] | None = None
+
+        # Parse positional arguments
+        nargs = len(args)
+        if nargs == 0:
+            # TextFragment() - no args
+            pass
+        elif nargs == 1:
+            if isinstance(args[0], str):
+                # TextFragment(text) - Aspose.NET style
+                text = args[0]
+            else:
+                # TextFragment(page_index) - library style with only page_index
+                page_index = args[0]
+        elif nargs >= 2:
+            if isinstance(args[0], str):
+                # TextFragment(text, ...) - Aspose.NET style
+                text = args[0]
+                # Second arg could be tab_stops (list) or end (int) or other params
+                # If it's a list/tuple, treat as tab_stops; otherwise treat as end
+                second_arg = args[1]
+                if isinstance(second_arg, (list, tuple)):
+                    # Treat as tab_stops - store but don't use (TabStop class doesn't exist in this library)
+                    # Keep end at default -1
+                    pass
+                else:
+                    # Treat as end
+                    end = second_arg
+                if nargs >= 3:
+                    rect = args[2]
+                if nargs >= 4:
+                    quads = args[3]
+                if nargs >= 5:
+                    font_name = args[4]
+                if nargs >= 6:
+                    font_size = args[5]
+                if nargs >= 7:
+                    color = args[6]
+            else:
+                # TextFragment(page_index, text, ...) - library style
+                page_index = args[0]
+                text = args[1]
+                if nargs >= 3:
+                    start = args[2]
+                if nargs >= 4:
+                    end = args[3]
+                if nargs >= 5:
+                    rect = args[4]
+                if nargs >= 6:
+                    quads = args[5]
+                if nargs >= 7:
+                    font_name = args[6]
+                if nargs >= 8:
+                    font_size = args[7]
+                if nargs >= 9:
+                    color = args[8]
+
+        # Override with keyword arguments
+        page_index = kwargs.get("page_index", page_index)
+        text = kwargs.get("text", text)
+        start = kwargs.get("start", start)
+        end = kwargs.get("end", end)
+        rect = kwargs.get("rect", rect)
+        quads = kwargs.get("quads", quads)
+        font_name = kwargs.get("font_name", font_name)
+        font_size = kwargs.get("font_size", font_size)
+        color = kwargs.get("color", color)
+
+        # Set default values
+        if page_index is None:
+            page_index = 0
+
+        # Initialize all attributes
+        object.__setattr__(self, "page_index", page_index)
+        object.__setattr__(self, "text", text)
+        object.__setattr__(self, "start", start)
+        object.__setattr__(self, "end", end)
+        object.__setattr__(self, "rect", rect)
+        object.__setattr__(self, "quads", quads)
+        object.__setattr__(self, "font_name", font_name)
+        object.__setattr__(self, "font_size", font_size)
+        object.__setattr__(self, "color", color)
+        object.__setattr__(self, "_editor", None)
+
+        # Run post-init to set end from start+len(text) if end==-1
+        if self.end == -1:
+            object.__setattr__(self, "end", self.start + len(self.text))
+
     def __setattr__(self, name: str, value: Any) -> None:
         if name == "text":
             editor = self.__dict__.get("_editor")
