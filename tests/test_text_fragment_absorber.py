@@ -22,6 +22,7 @@ import re
 import pytest
 
 from aspose_pdf.text import (
+    TextAbsorber,
     TextFragment,
     TextFragmentAbsorber,
     TextFragmentCollection,
@@ -576,6 +577,20 @@ class TestReset:
         absorber.remove_all_text()
         assert absorber.regex_results == []
 
+    def test_remove_all_text_no_args_keeps_errors(self):
+        """remove_all_text() is like reset but without clearing errors."""
+        absorber = TextFragmentAbsorber()
+        absorber._errors.append("some error")
+        absorber.remove_all_text()
+        # remove_all_text() clears fragments but keeps errors
+        assert absorber.errors == ["some error"]
+
+    def test_remove_all_text_invalid_type_raises(self):
+        """Invalid page_or_doc raises TypeError."""
+        absorber = TextFragmentAbsorber()
+        with pytest.raises(TypeError, match="page_or_doc must be a Page, Document, or None"):
+            absorber.remove_all_text("not a page or document")
+
 
 # ---------------------------------------------------------------------------
 # apply_for_all_fragments()
@@ -669,3 +684,35 @@ class TestTextFragmentCollection:
         frag = TextFragment(1, "z", 0)
         col.add(frag)
         assert col[0] == frag
+
+
+# ---------------------------------------------------------------------------
+# TextAbsorber remove_all_text()
+# ---------------------------------------------------------------------------
+
+
+class TestTextAbsorberRemoveAllText:
+    """Test TextAbsorber.remove_all_text() compatibility."""
+
+    def test_remove_all_text_no_args_clears_fragments(self):
+        page = FakePage("data")
+        absorber = TextAbsorber()
+        absorber.visit(page)
+        assert len(absorber.text_fragments) > 0
+        absorber.remove_all_text()
+        assert absorber.text_fragments == []
+
+
+# ---------------------------------------------------------------------------
+# TextFragmentAbsorber remove_all_text edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestTextFragmentAbsorberRemoveAllTextEdgeCases:
+    """Test edge cases for remove_all_text overloads."""
+
+    def test_remove_all_text_invalid_type_raises(self):
+        """Invalid page_or_doc raises TypeError."""
+        absorber = TextFragmentAbsorber()
+        with pytest.raises(TypeError, match="page_or_doc must be a Page, Document, or None"):
+            absorber.remove_all_text("not a page or document")
